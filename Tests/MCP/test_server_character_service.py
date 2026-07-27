@@ -30,9 +30,12 @@ import pytest
 
 
 class _PermissiveFakeService:
-    """Stand-in for NotesInteropService, whose own call-signature mismatch
-    is a separate, pre-existing defect out of this task's scope (see
-    test_server_media_db_path.py and this task's Implementation Notes)."""
+    """Stand-in for NotesInteropService. At the time this test was written,
+    its own call-signature mismatch was a separate, pre-existing defect out
+    of this task's scope (see test_server_media_db_path.py and this task's
+    Implementation Notes); TASK-983 has since fixed that construction for
+    real (see test_server_notes_service.py). Kept here anyway so this
+    file's scope stays the character-service-removal fix alone."""
 
     def __init__(self, *args, **kwargs) -> None:
         pass

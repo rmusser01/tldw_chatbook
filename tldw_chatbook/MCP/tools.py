@@ -12,7 +12,7 @@ import json
 from loguru import logger
 
 # Import tldw_chatbook components
-from ..config import get_cli_setting
+from ..config import get_api_key
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..RAG_Search.simplified.search_service import SimplifiedRAGSearchService
@@ -85,8 +85,15 @@ class MCPTools:
             if not character:
                 return {"error": f"Character {character_id} not found"}
 
-            # Get API key
-            api_key = get_cli_setting("API", f"{provider.lower()}_api_key", "")
+            # Get API key. `get_api_key()` is the declared accessor: it
+            # checks the newer api_settings.<provider> structure, then the
+            # legacy [API] section, then a bare env var -- a direct
+            # get_cli_setting("API", ...) lookup only covered the middle
+            # tier and silently missed a key configured either of the other
+            # two ways (same defect TASK-968 fixed in server.py's
+            # chat_with_llm; this sibling call site in the same MCP module
+            # had the identical shape).
+            api_key = get_api_key(provider)
             if not api_key:
                 return {"error": f"No API key configured for {provider}"}
 
