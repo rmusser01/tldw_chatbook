@@ -1323,9 +1323,7 @@ class ConsoleChatStore:
             presentation is not None
             and type(presentation) is not ConsoleCitationPresentation
         ):
-            raise ValueError(
-                "presentation must be ConsoleCitationPresentation or None"
-            )
+            raise ValueError("presentation must be ConsoleCitationPresentation or None")
         message.citation_presentation = presentation
         return self._snapshot(message)
 
@@ -2185,6 +2183,10 @@ class ConsoleChatStore:
 
     def clear_terminal_citation_state(self, message_id: str) -> None:
         """Clear terminal selection and stream buffers without persisting."""
+        session_id = self._message_session_index.get(message_id)
+        message = self._nodes_by_session.get(session_id or "", {}).get(message_id)
+        if message is not None:
+            self._fold_stream_buffer_without_persistence(message)
         self._terminal_citation_finalizers.pop(message_id, None)
         self._provisional_terminal_selection_ids.discard(message_id)
         self._terminal_persistence_deferred_ids.discard(message_id)
@@ -3081,8 +3083,11 @@ class ConsoleChatStore:
             return
         self._context_summary_by_session[session_id] = (summary, boundary_native_id)
 
-    def _materialize_stream_buffer(self, message: ConsoleChatMessage) -> None:
-        """Fold buffered stream chunks into ``message.content`` if any are new.
+    def _fold_stream_buffer_without_persistence(
+        self,
+        message: ConsoleChatMessage,
+    ) -> bool:
+        """Fold buffered stream chunks into ``message.content`` without a write.
 
         TASK-259: after joining, the chunk list is collapsed to the single
         joined string (in place, preserving any outstanding list references),
@@ -3094,16 +3099,24 @@ class ConsoleChatStore:
         Args:
             message: Store-owned message whose visible content should
                 reflect all chunks appended so far.
+
+        Returns:
+            Whether new chunks were folded into ``message.content``.
         """
         buffer = self._stream_chunks_by_message.get(message.id)
         if not buffer:
-            return
+            return False
         if self._stream_materialized_counts.get(message.id) == len(buffer):
-            return
+            return False
         message.content = "".join(buffer)
         buffer[:] = [message.content]
         self._stream_materialized_counts[message.id] = 1
-        self._persist_pending_message_if_ready(message)
+        return True
+
+    def _materialize_stream_buffer(self, message: ConsoleChatMessage) -> None:
+        """Fold buffered chunks and persist a newly materialized pending row."""
+        if self._fold_stream_buffer_without_persistence(message):
+            self._persist_pending_message_if_ready(message)
 
     @staticmethod
     def _snapshot(message: ConsoleChatMessage) -> ConsoleChatMessage:

@@ -1379,7 +1379,9 @@ def test_repair_deferral_ready_finalizer_uses_one_deferral_entry() -> None:
     assert persistence.create_calls == []
 
 
-def test_builder_unavailable_deferral_materializes_repeatedly_without_early_write() -> None:
+def test_builder_unavailable_deferral_materializes_repeatedly_without_early_write() -> (
+    None
+):
     persistence = _NoCitationKwargPersistence()
     store = ConsoleChatStore(persistence=persistence)
     session = store.ensure_session()
@@ -1459,6 +1461,33 @@ def test_repair_deferral_explicit_cleanup_releases_both_states() -> None:
 
     store.clear_terminal_citation_state(message.id)
 
+    _assert_terminal_transient_state_released(store, message.id)
+
+
+def test_repair_deferral_explicit_cleanup_folds_unmaterialized_chunks_without_write() -> (
+    None
+):
+    persistence = _ReadyCitationPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        terminal_citation_finalizer=lambda body: None,
+        defer_terminal_persistence=True,
+    )
+    store.append_stream_chunk(message.id, "first")
+    store.append_stream_chunk(message.id, " second")
+    assert persistence.create_calls == []
+    assert message.id not in store._stream_materialized_counts
+
+    store.clear_terminal_citation_state(message.id)
+
+    assert persistence.create_calls == []
+    assert store.get_message(message.id).content == "first second"
+    assert persistence.create_calls == []
     _assert_terminal_transient_state_released(store, message.id)
 
 
@@ -1789,8 +1818,7 @@ def test_citation_presentation_store_snapshots_set_and_clear_without_writes() ->
     assert set_result.citation_presentation == presentation
     assert store.get_message(message.id).citation_presentation == presentation
     assert (
-        store.messages_for_session(session.id)[-1].citation_presentation
-        == presentation
+        store.messages_for_session(session.id)[-1].citation_presentation == presentation
     )
     assert persistence.create_calls == []
     assert persistence.update_calls == []
@@ -1970,7 +1998,9 @@ def test_one_terminal_write_persists_only_selected_outcome_body(
     _assert_terminal_transient_state_released(store, message.id)
 
 
-def test_one_terminal_write_repaired_selection_without_backend_updates_same_row() -> None:
+def test_one_terminal_write_repaired_selection_without_backend_updates_same_row() -> (
+    None
+):
     store = ConsoleChatStore()
     session = store.ensure_session()
     message = store.append_message(
