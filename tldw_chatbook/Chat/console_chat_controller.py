@@ -1111,19 +1111,19 @@ class ConsoleChatController:
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing native Console session."""
+        # Resolve the OUTGOING session BEFORE `store.switch_session` below
+        # moves `active_session_id` -- the no-arg default on
+        # `_clear_terminal_run_state` would otherwise target the session
+        # being ARRIVED AT (active_session_id already points there by the
+        # time it runs). Per the spec's "clear the session you are leaving
+        # if terminal" semantic, every session-scoped write in this refactor
+        # is explicit, so this one is too: pass the outgoing session's id
+        # directly. A session you're ARRIVING AT keeps whatever terminal/
+        # in-flight state it already had (parallel-agents spec §2).
+        previous_session_id = self.store.active_session_id
         session = self.store.switch_session(session_id)
-        # `store.switch_session` above has ALREADY moved `active_session_id`
-        # to `session_id`, so the no-arg default here (active session)
-        # targets the session being ARRIVED AT, not the one being left --
-        # verified against `test_controller_session_changes_clear_terminal_
-        # run_copy` (Tests/Chat/test_console_chat_controller.py), which
-        # requires a stale terminal banner on the destination session to be
-        # cleared the moment you switch back to it. Per-session run state is
-        # otherwise preserved (this only fires for TERMINAL statuses), so a
-        # session you're LEAVING keeps its own in-flight/terminal state
-        # untouched -- only the newly-viewed session's stale terminal copy
-        # is swept (parallel-agents spec §2).
-        self._clear_terminal_run_state()
+        if previous_session_id is not None:
+            self._clear_terminal_run_state(session_id=previous_session_id)
         # Binding threading contract (task-5): a conversation switch denies
         # any pending MCP approval round rather than leaving its worker
         # thread blocked on a card the user just navigated away from. Only

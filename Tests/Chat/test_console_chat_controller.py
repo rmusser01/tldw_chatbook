@@ -208,6 +208,13 @@ def test_controller_creates_and_switches_sessions():
 
 
 def test_controller_session_changes_clear_terminal_run_copy() -> None:
+    """A session's own TERMINAL run copy is cleared only when it is the
+    session being LEFT for another one -- never the session being arrived
+    at, and never a session nothing has switched away from yet (spec §2:
+    "clear the session you are leaving if terminal", implemented explicitly
+    in `switch_session` -- see its own comment for why the id must be
+    resolved before the store's active-session swap).
+    """
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     first = store.ensure_session(title="Chat 1")
@@ -215,22 +222,32 @@ def test_controller_session_changes_clear_terminal_run_copy() -> None:
     controller._set_run_state(
         ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
     )
-    controller.new_session(title="Chat 2")
+    second = controller.new_session(title="Chat 2")
 
-    assert controller.run_state.status is ConsoleRunStatus.IDLE
-    assert controller.run_state.visible_copy == ""
+    # `new_session()`'s clear call targets the just-created session (always
+    # a no-op, since it starts idle) -- `first`'s own COMPLETED state is
+    # untouched by creating a sibling.
+    assert controller.run_state_for(first.id).status is ConsoleRunStatus.COMPLETED
+    assert controller.run_state_for(first.id).visible_copy == "Response complete."
+    assert controller.run_state_for(second.id).status is ConsoleRunStatus.IDLE
 
+    # Leaving `second` (idle, non-terminal) for `first`: nothing to clear,
+    # so the facade now shows `first`'s still-untouched COMPLETED state.
+    controller.switch_session(first.id)
+    assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+    # Put the CURRENTLY ACTIVE session (`first`) into a terminal state, then
+    # leave it for `second`: this is the case `switch_session` actually
+    # clears -- the session being LEFT, because it was terminal.
     controller._set_run_state(
         ConsoleRunState(ConsoleRunStatus.BLOCKED, "Provider blocked.")
     )
-    controller.switch_session(first.id)
+    controller.switch_session(second.id)
 
-    # `switch_session` clears a stale TERMINAL run copy on the session being
-    # ARRIVED AT (the swap above already moved active_session_id to `first`
-    # before this clear runs) -- `first`'s own COMPLETED state (set at the
-    # very top of this test) is what gets swept here.
-    assert controller.run_state.status is ConsoleRunStatus.IDLE
-    assert controller.run_state.visible_copy == ""
+    assert controller.run_state_for(first.id).status is ConsoleRunStatus.IDLE
+    assert controller.run_state_for(first.id).visible_copy == ""
+    # `second` (the session arrived at) was never targeted by this switch.
+    assert controller.run_state_for(second.id).status is ConsoleRunStatus.IDLE
 
 
 def test_controller_session_changes_preserve_active_run_copy() -> None:
@@ -260,10 +277,13 @@ def test_controller_session_changes_preserve_active_run_copy() -> None:
     )
     controller.switch_session(first.id)
 
-    # Arriving back at `first`: its own STREAMING state is non-terminal, so
-    # the arrival-side clear leaves it untouched.
+    # Leaving `second` (VALIDATING -- non-terminal) for `first`: nothing to
+    # clear either way, so `first`'s own untouched STREAMING state is what
+    # the facade shows back.
     assert controller.run_state.status is ConsoleRunStatus.STREAMING
     assert controller.run_state.visible_copy == "Streaming response."
+    # `second`'s own non-terminal state also survives being left.
+    assert controller.run_state_for(second.id).status is ConsoleRunStatus.VALIDATING
 
 
 def test_controller_new_session_accepts_settings_snapshot() -> None:
