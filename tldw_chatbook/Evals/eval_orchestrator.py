@@ -81,22 +81,72 @@ class EvaluationOrchestrator:
     def _initialize_database(self, db_path: str, client_id: str) -> EvalsDB:
         """Initialize database connection with proper path."""
         if db_path is None:
-            # Use default path in user data directory
-            from tldw_chatbook.config import load_settings
+            # Resolve the default path through the same shared, profile-aware
+            # mechanism every other DB in the app uses. Do NOT re-derive the
+            # profile / data-root from settings.get(...) with guessed keys --
+            # load_settings() publishes the profile name as "USERS_NAME"
+            # (not "user_id"/"username"), and it does not publish
+            # "user_data_dir" at all, so both lookups used to silently miss.
+            from tldw_chatbook.config import get_user_data_dir
 
-            settings = load_settings()
-            user_data_dir = Path(
-                settings.get("user_data_dir", "~/.local/share/tldw_cli")
-            ).expanduser()
+            user_dir = get_user_data_dir()
+            resolved_path = user_dir / "evals.db"
 
-            # Use user ID from config
-            user_id = settings.get("user_id", settings.get("username", "default_user"))
-            db_path = user_data_dir / user_id / "evals.db"
+            self._warn_if_legacy_data_exists(resolved_path)
+
+            db_path = resolved_path
 
         # Ensure directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
         return EvalsDB(db_path=str(db_path), client_id=client_id)
+
+    @staticmethod
+    def _warn_if_legacy_data_exists(resolved_path: Path) -> None:
+        """Warn once if the profile-resolved evals.db is missing but legacy data exists.
+
+        Before this fix, EVERY profile shared a single Evals database at the
+        literal, hardcoded path "~/.local/share/tldw_cli/default_user/evals.db"
+        -- not "<configured_data_root>/default_user/evals.db". The buggy code
+        read `settings.get("user_data_dir", "~/.local/share/tldw_cli")`, and
+        `load_settings()` never publishes a "user_data_dir" key, so that
+        fallback literal always won even for users with a custom
+        `[paths] data_dir`. The legacy location this function checks must
+        therefore stay hardcoded too, or it would miss exactly the users most
+        likely to be surprised (those who already customized their data root).
+
+        If the newly-resolved, profile-specific path has no data yet but that
+        legacy file does, the user's existing benches/datasets/runs are not
+        lost -- they are simply still sitting at the old, hardcoded path.
+        Surface that clearly instead of silently starting a brand-new, empty
+        database.
+
+        This function never copies, moves, or deletes anything.
+        """
+        legacy_path = (
+            Path("~/.local/share/tldw_cli").expanduser() / "default_user" / "evals.db"
+        )
+
+        if resolved_path == legacy_path:
+            # The configured profile IS "default_user" (with no custom data
+            # root) -- this IS the legacy location, nothing to warn about.
+            return
+
+        if resolved_path.exists():
+            # This profile already has its own data; nothing to warn about.
+            return
+
+        if legacy_path.exists():
+            logger.warning(
+                "No Evals database found for the current profile at {}. "
+                "Older versions of this app ignored the configured profile and "
+                "always wrote Evals data under the 'default_user' profile -- "
+                "your existing benches, datasets and runs are still there: {}. "
+                "Nothing has been moved or copied automatically; if you want "
+                "that data under this profile, copy the file there yourself.",
+                resolved_path,
+                legacy_path,
+            )
 
     @contextmanager
     def _db_operation(self, operation_name: str):
