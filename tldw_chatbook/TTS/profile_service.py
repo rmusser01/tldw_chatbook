@@ -12,6 +12,7 @@ from uuid import UUID
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSConfigurationRevisionError,
+    TTSModelInfo,
     TTSNativeCapabilitySnapshot,
     TTSProviderCatalog,
     TTSVoiceDiscoveryResult,
@@ -217,6 +218,215 @@ def _matches_exact_canonical_value(value: object, canonical: object) -> bool:
     return value == canonical
 
 
+def _canonicalize_exact_profile(value: object) -> TTSGenerationProfile:
+    """Return a fresh profile only when every source field is already canonical."""
+
+    if type(value) is not _TTS_GENERATION_PROFILE_TYPE:
+        raise ProfileValidationError("profiles")
+    profile = cast(TTSGenerationProfile, value)
+    canonical: TTSGenerationProfile | None = None
+    valid = False
+    failed = False
+    try:
+        canonical = TTSGenerationProfile(
+            profile_id=profile.profile_id,
+            display_name=profile.display_name,
+            normalized_name=profile.normalized_name,
+            provider_id=profile.provider_id,
+            model_id=profile.model_id,
+            voice_id=profile.voice_id,
+            response_format=profile.response_format,
+            speed=profile.speed,
+            options=profile.options,
+            revision=profile.revision,
+            created_at=profile.created_at,
+            updated_at=profile.updated_at,
+        )
+        valid = all(
+            _matches_exact_canonical_value(source, expected)
+            for source, expected in (
+                (profile.profile_id, canonical.profile_id),
+                (profile.display_name, canonical.display_name),
+                (profile.normalized_name, canonical.normalized_name),
+                (profile.provider_id, canonical.provider_id),
+                (profile.model_id, canonical.model_id),
+                (profile.voice_id, canonical.voice_id),
+                (profile.response_format, canonical.response_format),
+                (profile.speed, canonical.speed),
+                (profile.options, canonical.options),
+                (profile.revision, canonical.revision),
+                (profile.created_at, canonical.created_at),
+                (profile.updated_at, canonical.updated_at),
+            )
+        )
+    except Exception:  # noqa: BLE001 - hostile profile values fail closed
+        failed = True
+    if failed or not valid or canonical is None:
+        raise ProfileValidationError("profiles")
+    return canonical
+
+
+def _canonicalize_consumed_capability_snapshot(
+    value: object,
+    *,
+    relevant_model_ids: tuple[str, ...],
+) -> TTSNativeCapabilitySnapshot:
+    """Copy only profile-classification capability fields into safe values."""
+
+    canonical: TTSNativeCapabilitySnapshot | None = None
+    failed = False
+    try:
+        if type(value) is not TTSNativeCapabilitySnapshot:
+            raise TypeError
+        snapshot = cast(TTSNativeCapabilitySnapshot, value)
+
+        provider_id = snapshot.provider_id
+        if type(provider_id) is not str or provider_id != _PROFILE_PROVIDER_ID:
+            raise ValueError
+        configuration_revision = snapshot.configuration_revision
+        if type(configuration_revision) is not int or configuration_revision < 0:
+            raise ValueError
+        state = snapshot.state
+        if type(state) is not str or state not in ("complete", "unverified"):
+            raise ValueError
+        if (
+            type(relevant_model_ids) is not tuple
+            or len(relevant_model_ids) > _PROFILE_PAGE_LIMIT
+            or any(type(model_id) is not str for model_id in relevant_model_ids)
+        ):
+            raise ValueError
+        relevant_models = set(relevant_model_ids)
+
+        catalog = snapshot.catalog
+        canonical_catalog: TTSProviderCatalog | None = None
+        if catalog is not None:
+            if type(catalog) is not TTSProviderCatalog:
+                raise TypeError
+            catalog_provider_id = catalog.provider_id
+            if (
+                type(catalog_provider_id) is not str
+                or catalog_provider_id != provider_id
+            ):
+                raise ValueError
+            catalog_revision = catalog.revision
+            if type(catalog_revision) is not int or catalog_revision < 0:
+                raise ValueError
+            health = catalog.health
+            if type(health) is not ProviderHealth:
+                raise TypeError
+            health_state = health.state
+            if type(health_state) is not str or health_state not in (
+                "available",
+                "unavailable",
+                "not_configured",
+                "reconfiguring",
+                "closed",
+            ):
+                raise ValueError
+            health_fresh = health.fresh
+            if type(health_fresh) is not bool:
+                raise TypeError
+            models = catalog.models
+            if type(models) is not tuple:
+                raise TypeError
+
+            canonical_models: list[TTSModelInfo] = []
+            seen_relevant_models: set[str] = set()
+            for model in models:
+                if type(model) is not TTSModelInfo:
+                    raise TypeError
+                model_id = model.model_id
+                if type(model_id) is not str:
+                    raise TypeError
+                if model_id not in relevant_models:
+                    continue
+                if model_id in seen_relevant_models:
+                    raise ValueError
+                seen_relevant_models.add(model_id)
+                formats = model.formats
+                if type(formats) is not tuple or any(
+                    type(response_format) is not str for response_format in formats
+                ):
+                    raise TypeError
+                omit_voice_uses_server_default = model.omit_voice_uses_server_default
+                if type(omit_voice_uses_server_default) is not bool:
+                    raise TypeError
+                canonical_models.append(
+                    TTSModelInfo(
+                        model_id=model_id,
+                        display_name="",
+                        family="",
+                        upstream_mode="",
+                        formats=formats,
+                        voices=(),
+                        supports_speed=False,
+                        supports_options=(),
+                        omit_voice_uses_server_default=(omit_voice_uses_server_default),
+                    )
+                )
+            canonical_catalog = TTSProviderCatalog(
+                provider_id=provider_id,
+                revision=catalog_revision,
+                health=ProviderHealth(
+                    state=cast(Any, health_state),
+                    fresh=health_fresh,
+                ),
+                models=tuple(canonical_models),
+            )
+
+        voice_results = snapshot.voice_results
+        if (
+            type(voice_results) is not MappingProxyType
+            or len(voice_results) > _PROFILE_PAGE_LIMIT
+        ):
+            raise TypeError
+        canonical_voice_results: dict[str, TTSVoiceDiscoveryResult] = {}
+        for model_id in relevant_model_ids:
+            result = voice_results.get(model_id)
+            if result is None:
+                continue
+            if type(result) is not TTSVoiceDiscoveryResult:
+                raise TypeError
+            result_provider_id = result.provider_id
+            result_model_id = result.model_id
+            result_catalog_revision = result.catalog_revision
+            result_voices = result.voices
+            result_state = result.state
+            if (
+                type(result_provider_id) is not str
+                or result_provider_id != provider_id
+                or type(result_model_id) is not str
+                or result_model_id != model_id
+                or type(result_catalog_revision) is not int
+                or result_catalog_revision < 0
+                or type(result_voices) is not tuple
+                or any(type(voice_id) is not str for voice_id in result_voices)
+                or type(result_state) is not str
+                or result_state not in ("complete", "model_missing", "unverified")
+            ):
+                raise ValueError
+            canonical_voice_results[model_id] = TTSVoiceDiscoveryResult(
+                provider_id=provider_id,
+                model_id=model_id,
+                catalog_revision=result_catalog_revision,
+                voices=result_voices,
+                state=cast(Any, result_state),
+            )
+
+        canonical = TTSNativeCapabilitySnapshot(
+            provider_id=provider_id,
+            configuration_revision=configuration_revision,
+            state=cast(Any, state),
+            catalog=canonical_catalog,
+            voice_results=canonical_voice_results,
+        )
+    except Exception:  # noqa: BLE001 - hostile capability values fail closed
+        failed = True
+    if failed or canonical is None:
+        raise ProfileServiceError("operation_failed")
+    return canonical
+
+
 def _profile_is_structurally_supported(profile: TTSGenerationProfile) -> bool:
     return _selection_is_profile_safe(
         profile.provider_id,
@@ -286,11 +496,14 @@ class TTSProfilePageSnapshot:
             self.profiles,
             TTSGenerationProfile,
         )
+        canonical_profiles = tuple(
+            _canonicalize_exact_profile(profile) for profile in profiles
+        )
         total = _validate_nonnegative_integer(self.total, "total")
-        if total < len(profiles):
+        if total < len(canonical_profiles):
             raise ProfileValidationError("total")
         object.__setattr__(self, "repository_generation", generation)
-        object.__setattr__(self, "profiles", profiles)
+        object.__setattr__(self, "profiles", canonical_profiles)
         object.__setattr__(self, "total", total)
 
 
@@ -306,9 +519,9 @@ class LoadedTTSProfile:
             self.repository_generation,
             "generation",
         )
-        if type(self.profile) is not TTSGenerationProfile:
-            raise ProfileValidationError("profiles")
+        profile = _canonicalize_exact_profile(self.profile)
         object.__setattr__(self, "repository_generation", generation)
+        object.__setattr__(self, "profile", profile)
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,8 +676,10 @@ class TTSProfileService:
                 ),
             )
 
+        relevant_models: dict[str, None] = {}
         exact_voice_models: dict[str, None] = {}
         for profile in supported_profiles:
+            relevant_models.setdefault(profile.model_id, None)
             if profile.voice_id is not None:
                 exact_voice_models.setdefault(profile.model_id, None)
 
@@ -477,15 +692,16 @@ class TTSProfileService:
             )
         except Exception:  # noqa: BLE001 - capability detail is not public
             failed = True
-        if failed or type(snapshot) is not TTSNativeCapabilitySnapshot:
+        if failed:
             raise ProfileServiceError("operation_failed")
-        if snapshot.provider_id != _PROFILE_PROVIDER_ID:
-            raise ProfileServiceError("operation_failed")
-        if snapshot.state == "complete":
-            await self._require_configuration_revision(
-                _PROFILE_PROVIDER_ID,
-                snapshot.configuration_revision,
-            )
+        snapshot = _canonicalize_consumed_capability_snapshot(
+            snapshot,
+            relevant_model_ids=tuple(relevant_models),
+        )
+        await self._require_configuration_revision(
+            _PROFILE_PROVIDER_ID,
+            snapshot.configuration_revision,
+        )
 
         availability = tuple(
             self._classify_profile(profile, snapshot) for profile in page.profiles
@@ -568,7 +784,7 @@ class TTSProfileService:
     ) -> LoadedTTSProfile:
         """Update one exact loaded revision after service-owned validation."""
 
-        self._validate_loaded_and_draft(loaded, draft)
+        loaded_profile = self._validate_loaded_and_draft(loaded, draft)
         self._require_repository_generation(loaded.repository_generation)
         if not _selection_is_profile_safe(
             draft.provider_id,
@@ -577,15 +793,15 @@ class TTSProfileService:
             draft.options,
         ):
             raise ProfileServiceError("unsupported_profile")
-        if not self._generation_fields_match(loaded.profile, draft):
+        if not self._generation_fields_match(loaded_profile, draft):
             await self._require_authoritative_capability(draft)
 
         failed = False
         result = None
         try:
             result = await self._repository.update_profile(
-                loaded.profile.profile_id,
-                loaded.profile.revision,
+                loaded_profile.profile_id,
+                loaded_profile.revision,
                 draft,
                 expected_generation=loaded.repository_generation,
             )
@@ -602,8 +818,8 @@ class TTSProfileService:
         profile = self._require_profile_mutation_result(
             value,
             draft,
-            expected_revision=loaded.profile.revision + 1,
-            required_profile_id=loaded.profile.profile_id,
+            expected_revision=loaded_profile.revision + 1,
+            required_profile_id=loaded_profile.profile_id,
         )
         return LoadedTTSProfile(
             repository_generation=loaded.repository_generation,
@@ -617,9 +833,8 @@ class TTSProfileService:
     ) -> LoadedTTSProfile:
         """Copy the immutable loaded version under a new profile identity."""
 
-        self._validate_loaded(loaded)
+        source = self._validate_loaded(loaded)
         self._require_repository_generation(loaded.repository_generation)
-        source = loaded.profile
         draft = TTSProfileDraft(
             display_name=display_name,
             provider_id=source.provider_id,
@@ -669,12 +884,12 @@ class TTSProfileService:
     async def assignment_count(self, loaded: LoadedTTSProfile) -> int:
         """Return the advisory count only for the loaded store generation."""
 
-        self._validate_loaded(loaded)
+        profile = self._validate_loaded(loaded)
         self._require_repository_generation(loaded.repository_generation)
         failed = False
         result = None
         try:
-            result = await self._repository.assignment_count(loaded.profile.profile_id)
+            result = await self._repository.assignment_count(profile.profile_id)
         except (ProfileRepositoryError, ProfileValidationError):
             raise
         except Exception:  # noqa: BLE001 - hide unexpected repository detail
@@ -692,13 +907,13 @@ class TTSProfileService:
     async def delete_profile(self, loaded: LoadedTTSProfile) -> None:
         """Delete one loaded profile while retaining repository protection."""
 
-        self._validate_loaded(loaded)
+        profile = self._validate_loaded(loaded)
         self._require_repository_generation(loaded.repository_generation)
         failed = False
         result = None
         try:
             result = await self._repository.delete_profile(
-                loaded.profile.profile_id,
+                profile.profile_id,
                 expected_generation=loaded.repository_generation,
             )
         except (ProfileRepositoryError, ProfileValidationError):
@@ -721,12 +936,11 @@ class TTSProfileService:
     ) -> TTSPlaygroundSelectionPreset:
         """Copy persisted generation values into one exact no-synthesis preset."""
 
-        self._validate_loaded(loaded)
+        profile = self._validate_loaded(loaded)
         if type(availability) is not TTSProfileAvailability:
             raise ProfileValidationError("availability")
-        if availability.profile_id != loaded.profile.profile_id:
+        if availability.profile_id != profile.profile_id:
             raise ProfileValidationError("profile_id")
-        profile = loaded.profile
         return TTSPlaygroundSelectionPreset(
             provider_id=profile.provider_id,
             model_id=profile.model_id,
@@ -790,61 +1004,36 @@ class TTSProfileService:
         required_profile_id: UUID | None = None,
         forbidden_profile_id: UUID | None = None,
     ) -> TTSGenerationProfile:
-        if type(value) is not _TTS_GENERATION_PROFILE_TYPE:
-            raise ProfileServiceError("operation_failed")
-        profile = cast(TTSGenerationProfile, value)
-        validation_failed = False
+        profile: TTSGenerationProfile | None = None
+        failed = False
         valid = False
         try:
-            revalidated = TTSGenerationProfile(
-                profile_id=profile.profile_id,
-                display_name=profile.display_name,
-                normalized_name=profile.normalized_name,
-                provider_id=profile.provider_id,
-                model_id=profile.model_id,
-                voice_id=profile.voice_id,
-                response_format=profile.response_format,
-                speed=profile.speed,
-                options=profile.options,
-                revision=profile.revision,
-                created_at=profile.created_at,
-                updated_at=profile.updated_at,
-            )
+            profile = _canonicalize_exact_profile(value)
             valid = (
-                profile.profile_id == revalidated.profile_id
-                and profile.display_name == revalidated.display_name
-                and profile.normalized_name == revalidated.normalized_name
-                and profile.provider_id == revalidated.provider_id
-                and profile.model_id == revalidated.model_id
-                and profile.voice_id == revalidated.voice_id
-                and profile.response_format == revalidated.response_format
-                and type(profile.speed) is float
-                and profile.speed == revalidated.speed
-                and _matches_exact_canonical_value(
-                    profile.options,
-                    revalidated.options,
+                _matches_exact_canonical_value(
+                    draft.display_name,
+                    profile.display_name,
                 )
-                and profile.revision == revalidated.revision
-                and profile.created_at == revalidated.created_at
-                and profile.updated_at == revalidated.updated_at
-                and revalidated.display_name == draft.display_name
-                and revalidated.normalized_name == draft.normalized_name
-                and cls._generation_fields_match(revalidated, draft)
-                and revalidated.revision == expected_revision
+                and _matches_exact_canonical_value(
+                    draft.normalized_name,
+                    profile.normalized_name,
+                )
+                and cls._generation_fields_match(profile, draft)
+                and profile.revision == expected_revision
                 and (
                     required_profile_id is None
-                    or revalidated.profile_id == required_profile_id
+                    or profile.profile_id == required_profile_id
                 )
                 and (
                     forbidden_profile_id is None
-                    or revalidated.profile_id != forbidden_profile_id
+                    or profile.profile_id != forbidden_profile_id
                 )
             )
         except Exception:  # noqa: BLE001 - hostile results fail closed
-            validation_failed = True
-        if validation_failed or not valid:
+            failed = True
+        if failed or not valid or profile is None:
             raise ProfileServiceError("operation_failed")
-        return revalidated
+        return profile
 
     def _current_configuration_revision(self) -> int:
         failed = False
@@ -892,12 +1081,14 @@ class TTSProfileService:
             )
         except Exception:  # noqa: BLE001 - capability detail is not public
             failed = True
-        if failed or type(snapshot) is not TTSNativeCapabilitySnapshot:
+        if failed:
             raise ProfileServiceError("operation_failed")
+        snapshot = _canonicalize_consumed_capability_snapshot(
+            snapshot,
+            relevant_model_ids=(draft.model_id,),
+        )
         if snapshot.state != "complete":
             raise ProfileServiceError("profile_unverified")
-        if snapshot.provider_id != _PROFILE_PROVIDER_ID:
-            raise ProfileServiceError("operation_failed")
         await self._require_configuration_revision(
             _PROFILE_PROVIDER_ID,
             snapshot.configuration_revision,
@@ -917,32 +1108,41 @@ class TTSProfileService:
             raise ProfileServiceError("profile_unverified")
 
     @staticmethod
-    def _validate_loaded(loaded: LoadedTTSProfile) -> None:
+    def _validate_loaded(loaded: LoadedTTSProfile) -> TTSGenerationProfile:
         if type(loaded) is not LoadedTTSProfile:
             raise ProfileValidationError("profiles")
+        _validate_nonnegative_integer(
+            loaded.repository_generation,
+            "generation",
+        )
+        return _canonicalize_exact_profile(loaded.profile)
 
     @classmethod
     def _validate_loaded_and_draft(
         cls,
         loaded: LoadedTTSProfile,
         draft: TTSProfileDraft,
-    ) -> None:
-        cls._validate_loaded(loaded)
+    ) -> TTSGenerationProfile:
+        profile = cls._validate_loaded(loaded)
         if type(draft) is not TTSProfileDraft:
             raise ProfileValidationError("profiles")
+        return profile
 
     @staticmethod
     def _generation_fields_match(
         profile: TTSGenerationProfile,
         draft: TTSProfileDraft,
     ) -> bool:
-        return (
-            profile.provider_id == draft.provider_id
-            and profile.model_id == draft.model_id
-            and profile.voice_id == draft.voice_id
-            and profile.response_format == draft.response_format
-            and profile.speed == draft.speed
-            and profile.options == draft.options
+        return all(
+            _matches_exact_canonical_value(source, expected)
+            for source, expected in (
+                (draft.provider_id, profile.provider_id),
+                (draft.model_id, profile.model_id),
+                (draft.voice_id, profile.voice_id),
+                (draft.response_format, profile.response_format),
+                (draft.speed, profile.speed),
+                (draft.options, profile.options),
+            )
         )
 
     @staticmethod

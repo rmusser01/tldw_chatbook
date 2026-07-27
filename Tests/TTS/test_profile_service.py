@@ -103,6 +103,59 @@ def _forged_profile(
     return forged
 
 
+def _forged_loaded_profile(
+    profile: TTSGenerationProfile,
+    *,
+    repository_generation: object = 7,
+) -> LoadedTTSProfile:
+    """Build an adversarial loaded wrapper without service-value validation."""
+
+    forged = object.__new__(LoadedTTSProfile)
+    object.__setattr__(forged, "repository_generation", repository_generation)
+    object.__setattr__(forged, "profile", profile)
+    return forged
+
+
+def _forged_capability_snapshot(
+    snapshot: TTSNativeCapabilitySnapshot,
+    **updates: object,
+) -> TTSNativeCapabilitySnapshot:
+    """Build an adversarial exact snapshot without adapter revalidation."""
+
+    forged = object.__new__(TTSNativeCapabilitySnapshot)
+    for snapshot_field in fields(TTSNativeCapabilitySnapshot):
+        object.__setattr__(
+            forged,
+            snapshot_field.name,
+            updates.get(snapshot_field.name, getattr(snapshot, snapshot_field.name)),
+        )
+    return forged
+
+
+class _ExplodingStr(str):
+    def __eq__(self, _other: object) -> bool:
+        raise RuntimeError(
+            "https://user:credential@example.test/private/path submitted text"
+        )
+
+    def __ne__(self, _other: object) -> bool:
+        raise RuntimeError(
+            "https://user:credential@example.test/private/path submitted text"
+        )
+
+    __hash__ = str.__hash__
+
+
+class _AlwaysEqualStr(str):
+    def __eq__(self, _other: object) -> bool:
+        return True
+
+    def __ne__(self, _other: object) -> bool:
+        return False
+
+    __hash__ = str.__hash__
+
+
 def _model(
     model_id: str,
     *,
@@ -147,6 +200,49 @@ def _capability_snapshot(
         ),
         voice_results={} if voice_results is None else voice_results,
     )
+
+
+def _hostile_capability_snapshot(
+    attack: str,
+    *,
+    model_id: str,
+) -> TTSNativeCapabilitySnapshot:
+    if attack == "health_state":
+        return _capability_snapshot(
+            models=(_model(model_id),),
+            health_state=_ExplodingStr("available"),
+        )
+    if attack == "response_format":
+        return _capability_snapshot(
+            models=(
+                _model(
+                    model_id,
+                    formats=(_ExplodingStr("wav"),),
+                ),
+            ),
+        )
+    if attack == "manufactured_response_format":
+        return _capability_snapshot(
+            models=(
+                _model(
+                    model_id,
+                    formats=(_AlwaysEqualStr("mp3"),),
+                ),
+            ),
+        )
+
+    snapshot = _capability_snapshot(models=(_model(model_id),))
+    if attack == "snapshot_state":
+        return _forged_capability_snapshot(
+            snapshot,
+            state=_ExplodingStr("complete"),
+        )
+    if attack == "configuration_revision":
+        return _forged_capability_snapshot(
+            snapshot,
+            configuration_revision=True,
+        )
+    raise AssertionError(f"Unknown hostile capability attack: {attack}")
 
 
 def _artifact(
@@ -505,6 +601,10 @@ def test_service_values_are_immutable_and_defensively_freeze_containers() -> Non
         profiles=source_profiles,
         total=1,
     )
+    loaded = LoadedTTSProfile(
+        repository_generation=7,
+        profile=profile,
+    )
     source_profiles.clear()
     availability = TTSProfileAvailability(
         profile_id=profile.profile_id,
@@ -532,6 +632,9 @@ def test_service_values_are_immutable_and_defensively_freeze_containers() -> Non
     source_options["nested"].append("changed")
 
     assert page.profiles == (profile,)
+    assert page.profiles[0] is not profile
+    assert loaded.profile == profile
+    assert loaded.profile is not profile
     assert snapshot.profiles == (availability,)
     assert preset.options == {"nested": ("value",)}
     assert isinstance(preset.options, MappingProxyType)
@@ -618,6 +721,74 @@ def test_service_values_do_not_retain_hostile_container_errors() -> None:
     assert "submitted text" not in visible
 
 
+@pytest.mark.parametrize("wrapper", ("page", "loaded"))
+def test_profile_wrappers_reject_forged_mutable_options_safely(
+    wrapper: str,
+) -> None:
+    secret = "https://user:credential@example.test/private/path"
+    forged = _forged_profile(
+        _profile(
+            provider_id="future_native",
+            response_format="flac",
+            speed=1.5,
+        ),
+        options={"endpoint": secret},
+    )
+
+    with pytest.raises(ProfileValidationError) as caught:
+        if wrapper == "page":
+            TTSProfilePageSnapshot(
+                repository_generation=7,
+                profiles=(forged,),
+                total=1,
+            )
+        else:
+            LoadedTTSProfile(
+                repository_generation=7,
+                profile=forged,
+            )
+
+    assert caught.value.code == "profiles"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    visible = " ".join(
+        (
+            str(caught.value),
+            repr(caught.value),
+            "".join(traceback.format_exception(caught.value)),
+        )
+    )
+    assert "credential" not in visible
+    assert "/private/path" not in visible
+
+
+def test_loaded_profile_rejects_hostile_exact_profile_safely() -> None:
+    forged = _forged_profile(
+        _profile(),
+        model_id=_ExplodingStr("model-a"),
+    )
+
+    with pytest.raises(ProfileValidationError) as caught:
+        LoadedTTSProfile(
+            repository_generation=7,
+            profile=forged,
+        )
+
+    assert caught.value.code == "profiles"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    visible = " ".join(
+        (
+            str(caught.value),
+            repr(caught.value),
+            "".join(traceback.format_exception(caught.value)),
+        )
+    )
+    assert "credential" not in visible
+    assert "/private/path" not in visible
+    assert "submitted text" not in visible
+
+
 def test_page_snapshot_stops_lying_unbounded_sequence_at_item_fifty_one() -> None:
     profiles = _GuardedInfiniteSequence(_profile())
 
@@ -662,14 +833,49 @@ def test_availability_snapshot_stops_lying_unbounded_sequence_at_item_fifty_one(
 @pytest.mark.asyncio
 async def test_list_profiles_delegates_with_fixed_fifty_row_limit() -> None:
     service, repository, _tts_service = _service()
-    repository.page = TTSProfilePage(profiles=(_profile(),), total=81)
+    collaborator_profile = _profile()
+    repository.page = TTSProfilePage(profiles=(collaborator_profile,), total=81)
 
     page = await service.list_profiles(search=" nar ", offset=50)
 
     assert repository.calls == [("list", (" nar ", 50, 50))]
     assert page.repository_generation == 7
     assert page.profiles == repository.page.profiles
+    assert page.profiles[0] is not collaborator_profile
     assert page.total == 81
+
+
+@pytest.mark.asyncio
+async def test_list_profiles_rejects_forged_mutable_profile_safely() -> None:
+    repository = _FakeRepository()
+    repository.page = TTSProfilePage(
+        profiles=(
+            _forged_profile(
+                _profile(
+                    provider_id="future_native",
+                    response_format="flac",
+                    speed=1.5,
+                ),
+                options={
+                    "endpoint": ("https://user:credential@example.test/private/path"),
+                },
+            ),
+        ),
+        total=1,
+    )
+    service, repository, _tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.list_profiles()
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "/private/path",
+        "submitted text",
+    )
+    assert [name for name, _value in repository.calls] == ["list"]
 
 
 @pytest.mark.asyncio
@@ -711,26 +917,26 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
         model_id="future-model",
         voice_id="future-voice",
     )
-    invalid_format = _forged_profile(
-        supported,
+    invalid_format = _profile(
         profile_id=UUID(int=4),
         display_name="Invalid format",
-        normalized_name="invalid format",
+        provider_id="future_native",
+        model_id="future-format",
         response_format="mp3",
     )
-    invalid_speed = _forged_profile(
-        supported,
+    invalid_speed = _profile(
         profile_id=UUID(int=5),
         display_name="Invalid speed",
-        normalized_name="invalid speed",
+        provider_id="future_native",
+        model_id="future-speed",
         speed=1.25,
     )
-    invalid_options = _forged_profile(
-        supported,
+    invalid_options = _profile(
         profile_id=UUID(int=6),
         display_name="Invalid options",
-        normalized_name="invalid options",
-        options=MappingProxyType({"endpoint": "secret"}),
+        provider_id="future_native",
+        model_id="future-options",
+        options={"quality": "high"},
     )
     voice_result = TTSVoiceDiscoveryResult(
         provider_id="audio_cpp",
@@ -810,6 +1016,47 @@ async def test_availability_rejects_wrong_provider_snapshot_before_classificatio
     assert tts_service.capability_calls == [("audio_cpp", ())]
     assert tts_service.revision_decisions == []
     assert tts_service.revision_reads == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "attack",
+    (
+        "snapshot_state",
+        "configuration_revision",
+        "health_state",
+        "response_format",
+        "manufactured_response_format",
+    ),
+)
+async def test_availability_sanitizes_malformed_exact_capability_snapshot(
+    attack: str,
+) -> None:
+    tts_service = _FakeTTSService(
+        _hostile_capability_snapshot(attack, model_id="model-a")
+    )
+    service, repository, tts_service = _service(tts_service=tts_service)
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.observe_availability(
+            TTSProfilePageSnapshot(
+                repository_generation=repository.generation,
+                profiles=(_profile(),),
+                total=1,
+            )
+        )
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "/private/path",
+        "submitted text",
+    )
+    assert tts_service.capability_calls == [("audio_cpp", ())]
+    assert tts_service.revision_decisions == []
+    assert tts_service.revision_reads == []
+    assert repository.calls == []
 
 
 @pytest.mark.asyncio
@@ -1198,6 +1445,37 @@ async def test_rename_only_is_derived_from_loaded_generation_fields() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_rejects_hostile_forged_loaded_profile_before_comparison() -> None:
+    service, repository, tts_service = _service()
+    loaded = _forged_loaded_profile(
+        _forged_profile(
+            _profile(revision=4),
+            model_id=_AlwaysEqualStr("model-a"),
+        ),
+        repository_generation=repository.generation,
+    )
+    changed = TTSProfileDraft(
+        display_name="Changed",
+        provider_id="audio_cpp",
+        model_id="model-b",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+
+    with pytest.raises(ProfileValidationError) as caught:
+        await service.update_profile(loaded, changed)
+
+    assert caught.value.code == "profiles"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert repository.calls == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "invalid_result",
     (
@@ -1511,12 +1789,14 @@ async def test_stale_complete_negative_capability_checks_revision_first(
 
 
 @pytest.mark.asyncio
-async def test_complete_capability_rejects_mismatched_provider_before_decision() -> (
-    None
-):
+@pytest.mark.parametrize("snapshot_state", ("complete", "unverified"))
+async def test_capability_rejects_mismatched_provider_before_state_or_decision(
+    snapshot_state: str,
+) -> None:
     tts_service = _FakeTTSService(
         _capability_snapshot(
             provider_id="future_native",
+            state=snapshot_state,
             models=(_model("model-b"),),
         )
     )
@@ -1539,6 +1819,53 @@ async def test_complete_capability_rejects_mismatched_provider_before_decision()
         await service.update_profile(loaded, changed)
 
     _assert_safe_service_error(caught.value, "operation_failed")
+    assert tts_service.capability_calls == [("audio_cpp", ())]
+    assert tts_service.revision_decisions == []
+    assert repository.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "attack",
+    (
+        "snapshot_state",
+        "configuration_revision",
+        "health_state",
+        "response_format",
+        "manufactured_response_format",
+    ),
+)
+async def test_generation_edit_sanitizes_malformed_exact_capability_snapshot(
+    attack: str,
+) -> None:
+    tts_service = _FakeTTSService(
+        _hostile_capability_snapshot(attack, model_id="model-b")
+    )
+    service, repository, tts_service = _service(tts_service=tts_service)
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+    changed = TTSProfileDraft(
+        display_name="Changed",
+        provider_id="audio_cpp",
+        model_id="model-b",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.update_profile(loaded, changed)
+
+    _assert_safe_service_error(
+        caught.value,
+        "operation_failed",
+        "credential",
+        "/private/path",
+        "submitted text",
+    )
     assert tts_service.capability_calls == [("audio_cpp", ())]
     assert tts_service.revision_decisions == []
     assert repository.calls == []
@@ -2030,14 +2357,17 @@ async def test_availability_rejects_generation_change_during_capability_work() -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("snapshot_state", ("complete", "unverified"))
 @pytest.mark.parametrize("evidence_state", ("available", "unavailable"))
-async def test_stale_complete_availability_uses_writer_ordered_decision_first(
+async def test_stale_availability_evidence_uses_writer_ordered_decision_first(
+    snapshot_state: str,
     evidence_state: str,
 ) -> None:
     models = (_model("model-a"),) if evidence_state == "available" else ()
     tts_service = _FakeTTSService(
         _capability_snapshot(
             configuration_revision=3,
+            state=snapshot_state,
             models=models,
         )
     )
@@ -2065,10 +2395,14 @@ async def test_stale_complete_availability_uses_writer_ordered_decision_first(
 
 
 @pytest.mark.asyncio
-async def test_availability_rejects_snapshot_after_configuration_change() -> None:
+@pytest.mark.parametrize("snapshot_state", ("complete", "unverified"))
+async def test_availability_rejects_snapshot_after_configuration_change(
+    snapshot_state: str,
+) -> None:
     tts_service = _FakeTTSService(
         _capability_snapshot(
             configuration_revision=3,
+            state=snapshot_state,
             models=(_model("model-a"),),
         )
     )
@@ -2203,7 +2537,7 @@ async def test_unverified_snapshot_classifies_each_row_from_its_exact_evidence()
         "unavailable",
         "unverified",
     )
-    assert tts_service.revision_decisions == []
+    assert tts_service.revision_decisions == [("audio_cpp", 3)]
 
 
 @pytest.mark.asyncio
