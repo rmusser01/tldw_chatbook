@@ -164,7 +164,15 @@ def _visual_chrome_ready(app: TldwCli, destination_id: str) -> bool:
         ):
             return False
         content = app.screen.query_one("#screen-content")
-        return any(
+        # `all`, not `any`: chrome (nav bar, overflow hint) can be ready
+        # before a screen's own body is -- Lab defers its body past first
+        # paint by design (LabScreen mounts it from `call_after_refresh` so
+        # a ~500-700 ms compose never blocks first paint) -- so every one of
+        # the destination's body selectors must be present, not just one of
+        # them, before the sweep proceeds to snapshot it. Generic over every
+        # destination, not just "lab", so a future lazily-mounted screen is
+        # covered too.
+        return all(
             list(content.query(selector))
             for selector in DESTINATION_BODY_SELECTORS[destination_id]
         )

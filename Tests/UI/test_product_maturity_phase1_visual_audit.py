@@ -155,6 +155,34 @@ def _has_visual_chrome(app: "TldwCli") -> bool:
     )
 
 
+def _destination_body_ready(app: "TldwCli", destination_id: str) -> bool:
+    """Whether every one of a destination's body selectors is mounted.
+
+    Chrome (nav bar, overflow hint) can be ready before a screen's own body
+    is: Lab defers its body past first paint by design (LabScreen mounts it
+    from ``call_after_refresh`` so a ~500-700 ms compose never blocks first
+    paint), so a destination's body is not guaranteed to exist the instant
+    ``_has_visual_chrome`` turns true. Generic over every destination -- not
+    just "lab" -- so a future lazily-mounted screen is covered too.
+
+    Args:
+        app: The running application.
+        destination_id: The destination whose selectors to check.
+
+    Returns:
+        True once every selector in ``DESTINATION_BODY_SELECTORS[destination_id]``
+        matches at least one node under ``#screen-content``.
+    """
+    screen_content = list(app.screen.query("#screen-content"))
+    if not screen_content:
+        return False
+    content = screen_content[0]
+    return all(
+        list(content.query(selector))
+        for selector in DESTINATION_BODY_SELECTORS[destination_id]
+    )
+
+
 async def _wait_until(
     pilot: "Pilot",
     condition: Callable[[], bool],
@@ -251,6 +279,13 @@ async def test_clean_run_top_level_visual_snapshots_survive_terminal_size(
                     pilot,
                     lambda: _has_visual_chrome(app),
                     context=f"{size_label}:{destination.destination_id}:chrome",
+                )
+                await _wait_until(
+                    pilot,
+                    lambda destination_id=destination.destination_id: (
+                        _destination_body_ready(app, destination_id)
+                    ),
+                    context=f"{size_label}:{destination.destination_id}:body",
                 )
 
                 _assert_visual_snapshot_is_healthy(
