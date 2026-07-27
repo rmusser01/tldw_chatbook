@@ -1513,7 +1513,7 @@ class LibraryScreen(BaseAppScreen):
             # the intent explicit and is cheap insurance).
             self._start_library_export_counts_worker()
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
         """Unregister the ingest registry listener registered in ``on_mount``.
 
         ``on_unmount`` (not ``on_screen_suspend``) is the correct pairing:
@@ -1533,6 +1533,9 @@ class LibraryScreen(BaseAppScreen):
         ``False`` after removal) -- so this call is what actually closes
         the window, not the guard.
         """
+        workspace = self._library_file_notes_workspace
+        if workspace is not None:
+            await workspace.shutdown()
         super().on_unmount()
         registry = self._library_ingest_registry()
         if registry is not None:
@@ -4420,7 +4423,11 @@ class LibraryScreen(BaseAppScreen):
         # different note (or left the editor), a slower in-flight fetch for
         # the previous selection must not overwrite the current one -- the
         # same stale-race guard as ``_refresh_library_media_detail``.
-        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+        if (
+            note_id != self._selected_note_id
+            or self._library_notes_view != "editor"
+            or self._library_notes_source != "database"
+        ):
             return
         if not isinstance(detail, Mapping):
             # The note no longer exists -- deleted elsewhere, or a stale
@@ -4445,7 +4452,11 @@ class LibraryScreen(BaseAppScreen):
         # same way ``_refresh_library_media_detail`` re-checks after its own
         # second (highlights) fetch, so a switch that happened during that
         # fetch cannot land keywords for the wrong note.
-        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+        if (
+            note_id != self._selected_note_id
+            or self._library_notes_view != "editor"
+            or self._library_notes_source != "database"
+        ):
             return
         if keywords is not None and isinstance(self._library_note_detail, Mapping):
             enriched_detail = dict(self._library_note_detail)

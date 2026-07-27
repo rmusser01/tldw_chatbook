@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
-from threading import Lock
+from threading import Lock, RLock
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -15,7 +15,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.events import Resize
 from textual.timer import Timer
-from textual.worker import Worker, WorkerState
+from textual.worker import Worker
 from textual.widgets import Button, Input, Static, TextArea, Tree
 
 from tldw_chatbook.config import (
@@ -181,14 +181,16 @@ class LibraryFileNotesWorkspace(Vertical):
         self._autosave_delay = max(0.01, autosave_delay)
         self._poll_timer: Timer | None = None
         self._autosave_timer: Timer | None = None
-        self._workers: set[Worker[Any]] = set()
         self._poll_worker: Worker[Any] | None = None
         self._save_worker: Worker[Any] | None = None
         self._active = False
         self._refresh_lock = asyncio.Lock()
         self._save_lock = asyncio.Lock()
         self._runtime_lock = Lock()
+        self._service_lock = RLock()
         self._root_generation = 0
+        self._root_transitioning = False
+        self._shutdown = False
 
         self._entries: dict[str, FileNoteEntry] = {}
         self._deleted_paths: tuple[str, ...] = ()
@@ -198,7 +200,6 @@ class LibraryFileNotesWorkspace(Vertical):
         self._session_key = ""
         self._save_state: SaveState = "idle"
         self._save_detail = ""
-        self._programmatic_editor_text: str | None = None
         self._delete_confirmation_path = ""
         self._search_generation = 0
         self._search_query = ""
@@ -353,6 +354,8 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def on_mount(self) -> None:
         """Start background initialization and polling for this mount."""
+        if self._shutdown:
+            return
         self._active = True
         self._apply_responsive_layout(self.size.width)
         if self._opened is not None:
@@ -367,51 +370,65 @@ class LibraryFileNotesWorkspace(Vertical):
         self._set_action_status(self._action_detail)
         self._update_root_surface()
         self._update_controls()
-        self._track_worker(
-            self.run_worker(
-                self._initialize(),
-                name="file-notes-initialize",
-                group="file-notes-initialize",
-                exclusive=True,
-            )
+        self.run_worker(
+            self._initialize(),
+            name="file-notes-initialize",
+            group="file-notes-initialize",
+            exclusive=True,
         )
         self._poll_timer = self.set_interval(
             self._poll_interval,
             self._start_poll,
             pause=False,
         )
+        if self._save_state == "dirty":
+            self._arm_autosave()
 
     def on_unmount(self) -> None:
-        """Pause timers and cancel workspace-owned workers."""
+        """Pause timers; Textual cancels node workers during removal."""
+        self._active = False
+        if self._save_state == "saving":
+            self._save_state = "dirty"
+            self._save_detail = "save interrupted"
+        for timer in (self._poll_timer, self._autosave_timer):
+            if timer is not None:
+                timer.stop()
+        self._poll_timer = None
+        self._autosave_timer = None
+        self._poll_worker = None
+        self._save_worker = None
+
+    async def shutdown(self) -> None:
+        """Permanently close this workspace's owned replica once."""
+        if self._shutdown:
+            return
+        self._shutdown = True
         self._active = False
         for timer in (self._poll_timer, self._autosave_timer):
             if timer is not None:
                 timer.stop()
         self._poll_timer = None
         self._autosave_timer = None
-        for worker in tuple(self._workers):
-            if not worker.is_finished:
-                worker.cancel()
-        self._workers.clear()
-        self._poll_worker = None
-        self._save_worker = None
+        if self._owns_replica:
+            await asyncio.to_thread(self._close_owned_replica)
 
-    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        """Forget completed workers so long-running polling stays bounded."""
-        if event.state in {
-            WorkerState.CANCELLED,
-            WorkerState.ERROR,
-            WorkerState.SUCCESS,
-        }:
-            self._workers.discard(event.worker)
+    def _close_owned_replica(self) -> None:
+        with self._runtime_lock:
+            replica = self._replica
+            if replica is None:
+                return
+            service = self._service
+            if service is not None:
+                service.close()
+            else:
+                with self._service_lock:
+                    replica.close()
+            self._replica = None
+            self._service = None
 
     def on_resize(self, event: Resize) -> None:
         """Choose wide or narrow panes from the mounted workspace width."""
         self._apply_responsive_layout(event.size.width)
-
-    def _track_worker(self, worker: Worker[Any]) -> Worker[Any]:
-        self._workers.add(worker)
-        return worker
 
     async def _initialize(self) -> None:
         generation = self._root_generation
@@ -465,6 +482,8 @@ class LibraryFileNotesWorkspace(Vertical):
         str,
     ]:
         with self._runtime_lock:
+            if self._shutdown:
+                return self._root, self._replica, None, ""
             configured_root = self._root
             if self._root_seed is _UNSET and configured_root is None:
                 configured_root = get_cli_setting("file_notes", "root", None)
@@ -493,7 +512,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 or service.root_key != str(root)
                 or previous_replica is not replica
             ):
-                service = FileNotesService(root, replica)
+                service = FileNotesService(
+                    root,
+                    replica,
+                    operation_lock=self._service_lock,
+                )
             return root, replica, service, warning
 
     async def _load_deleted_paths(
@@ -559,6 +582,7 @@ class LibraryFileNotesWorkspace(Vertical):
         status = self.query_one("#file-notes-root-status", Static)
         body = self.query_one("#file-notes-body")
         choose = self.query_one("#file-notes-choose-root", Button)
+        choose.disabled = self._root_transitioning
         if self._root is None:
             status.update("Choose a notes folder.")
             body.display = False
@@ -702,9 +726,10 @@ class LibraryFileNotesWorkspace(Vertical):
     def _update_controls(self) -> None:
         if not self._active or not self.is_mounted:
             return
-        has_service = self._service is not None
-        has_document = self._opened is not None
-        has_deleted = bool(self._selected_deleted_path)
+        transitioning = self._root_transitioning
+        has_service = self._service is not None and not transitioning
+        has_document = self._opened is not None and not transitioning
+        has_deleted = bool(self._selected_deleted_path) and not transitioning
         self.query_one("#file-notes-new", Button).disabled = not has_service
         for selector in ("move", "delete", "protect", "reload"):
             self.query_one(
@@ -723,73 +748,107 @@ class LibraryFileNotesWorkspace(Vertical):
             if self._opened is not None and self._opened.protected
             else "Protect"
         )
+        self.query_one("#file-notes-search", Input).disabled = transitioning
+        self.query_one("#file-notes-path", Input).disabled = transitioning
+        self.query_one("#file-notes-tree", Tree).disabled = transitioning
+        self.query_one("#file-notes-search-results", Tree).disabled = transitioning
         editor = self.query_one("#file-notes-editor", TextArea)
-        editor.read_only = not (self._opened is not None and self._opened.editable)
+        editor.read_only = transitioning or not (
+            self._opened is not None and self._opened.editable
+        )
 
     async def set_root(self, path: str | Path, *, persist: bool = True) -> bool:
         """Adopt one canonical root after the common draft leave guard."""
-        if not self._active:
+        if not self._active or self._shutdown:
             return False
         if not await self.flush_pending_work():
             return False
-        canonical = await asyncio.to_thread(self._canonical_root, path)
-        if canonical is None:
-            return False
         self._root_generation += 1
         generation = self._root_generation
-        if self._replica_seed is _UNSET and self._replica is None:
-            _, replica, _, warning = await asyncio.to_thread(self._build_runtime)
-            self._replica = replica
-            self._runtime_warning = warning
-        service = await asyncio.to_thread(FileNotesService, canonical, self._replica)
-        if not self._active or generation != self._root_generation:
-            return False
-        self._root = canonical
-        self._service = service
-        self._clear_open_document()
-        self._entries = {}
-        self._deleted_paths = ()
-        self._initialized = False
+        self._root_transitioning = True
         self._update_root_surface()
-        if persist:
-            await asyncio.to_thread(
-                save_setting_to_cli_config,
-                "file_notes",
-                "root",
-                str(canonical),
+        self._update_controls()
+        try:
+            canonical = await asyncio.to_thread(self._canonical_root, path)
+            if canonical is None:
+                return False
+            if self._replica_seed is _UNSET and self._replica is None:
+                _, replica, _, warning = await asyncio.to_thread(
+                    self._build_runtime
+                )
+                if not self._active or generation != self._root_generation:
+                    return False
+                self._replica = replica
+                self._runtime_warning = warning
+            service = await asyncio.to_thread(
+                FileNotesService,
+                canonical,
+                self._replica,
+                operation_lock=self._service_lock,
             )
             if not self._active or generation != self._root_generation:
                 return False
-        result = await asyncio.to_thread(service.scan)
-        deleted = await self._load_deleted_paths(
-            replica=self._replica,
-            service=service,
-        )
+            if persist:
+                await asyncio.to_thread(
+                    save_setting_to_cli_config,
+                    "file_notes",
+                    "root",
+                    str(canonical),
+                )
+                if not self._active or generation != self._root_generation:
+                    return False
+            result = await asyncio.to_thread(service.scan)
+            deleted = await self._load_deleted_paths(
+                replica=self._replica,
+                service=service,
+            )
+            if not self._active or generation != self._root_generation:
+                return False
+            self._root = canonical
+            self._service = service
+            self._clear_open_document()
+            self._initialized = True
+            self._apply_scan(result, deleted)
+            return True
+        finally:
+            if generation == self._root_generation:
+                self._root_transitioning = False
+                self._update_root_surface()
+                self._update_controls()
+
+    async def open_path(self, relative_path: str) -> bool:
+        """Flush the old draft, then open a disk file into the same editor."""
+        service = self._service
+        generation = self._root_generation
         if (
             not self._active
+            or self._root_transitioning
+            or self._shutdown
+            or service is None
+        ):
+            return False
+        if self._opened is not None and not await self.flush_pending_work():
+            return False
+        if (
+            not self._active
+            or self._root_transitioning
             or generation != self._root_generation
             or service is not self._service
         ):
             return False
-        self._initialized = True
-        self._apply_scan(result, deleted)
-        return True
-
-    async def open_path(self, relative_path: str) -> bool:
-        """Flush the old draft, then open a disk file into the same editor."""
-        if not self._active or self._service is None:
-            return False
-        if self._opened is not None and not await self.flush_pending_work():
-            return False
         try:
             opened = await asyncio.to_thread(
-                self._service.open_file,
+                service.open_file,
                 relative_path,
             )
         except Exception as error:
             self._set_action_status(f"Open failed: {error}")
             return False
-        if not self._active:
+        if (
+            not self._active
+            or generation != self._root_generation
+            or service is not self._service
+        ):
             return False
         self._apply_opened_document(opened)
         return True
@@ -803,8 +862,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._session_key = uuid4().hex
         self._delete_confirmation_path = ""
         editor = self.query_one("#file-notes-editor", TextArea)
-        self._programmatic_editor_text = opened.body
-        editor.load_text(opened.body)
+        with editor.prevent(TextArea.Changed):
+            editor.load_text(opened.body)
         editor.read_only = not opened.editable
         self.query_one("#file-notes-path", Input).value = opened.relative_path
         self.query_one("#file-notes-breadcrumb", Static).update(opened.relative_path)
@@ -830,8 +889,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._session_key = ""
         self._delete_confirmation_path = ""
         editor = self.query_one("#file-notes-editor", TextArea)
-        self._programmatic_editor_text = ""
-        editor.load_text("")
+        with editor.prevent(TextArea.Changed):
+            editor.load_text("")
         editor.read_only = True
         if not keep_restore_path:
             self._selected_deleted_path = ""
@@ -919,17 +978,16 @@ class LibraryFileNotesWorkspace(Vertical):
     def _start_poll(self) -> None:
         if (
             not self._active
+            or self._root_transitioning
             or self._service is None
             or (self._poll_worker is not None and not self._poll_worker.is_finished)
         ):
             return
-        self._poll_worker = self._track_worker(
-            self.run_worker(
-                self.refresh_files(),
-                name="file-notes-poll",
-                group="file-notes-poll",
-                exclusive=True,
-            )
+        self._poll_worker = self.run_worker(
+            self.refresh_files(),
+            name="file-notes-poll",
+            group="file-notes-poll",
+            exclusive=True,
         )
 
     def _arm_autosave(self) -> None:
@@ -951,13 +1009,11 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         ):
             return
-        self._save_worker = self._track_worker(
-            self.run_worker(
-                self._save_draft(),
-                name="file-notes-autosave",
-                group="file-notes-save",
-                exclusive=False,
-            )
+        self._save_worker = self.run_worker(
+            self._save_draft(),
+            name="file-notes-autosave",
+            group="file-notes-save",
+            exclusive=False,
         )
 
     async def _save_draft(self) -> bool:
@@ -1053,13 +1109,11 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(TextArea.Changed, "#file-notes-editor")
     def _editor_changed(self, event: TextArea.Changed) -> None:
         event.stop()
-        text = event.text_area.text
-        if self._programmatic_editor_text is not None:
-            expected = self._programmatic_editor_text
-            self._programmatic_editor_text = None
-            if text == expected:
-                return
-        if self._opened is None or not self._opened.editable:
+        if (
+            self._root_transitioning
+            or self._opened is None
+            or not self._opened.editable
+        ):
             return
         self._delete_confirmation_path = ""
         self.query_one("#file-notes-delete", Button).label = "Delete"
@@ -1086,13 +1140,11 @@ class LibraryFileNotesWorkspace(Vertical):
     def _start_search(self, query: str) -> None:
         self._search_generation += 1
         generation = self._search_generation
-        self._track_worker(
-            self.run_worker(
-                self._run_search(query, generation),
-                name="file-notes-search",
-                group="file-notes-search",
-                exclusive=True,
-            )
+        self.run_worker(
+            self._run_search(query, generation),
+            name="file-notes-search",
+            group="file-notes-search",
+            exclusive=True,
         )
 
     async def _run_search(self, query: str, generation: int) -> None:
@@ -1143,13 +1195,11 @@ class LibraryFileNotesWorkspace(Vertical):
     def _root_selected(self, path: Path | None) -> None:
         if path is None or not self._active:
             return
-        self._track_worker(
-            self.run_worker(
-                self.set_root(path),
-                name="file-notes-root-change",
-                group="file-notes-root-change",
-                exclusive=True,
-            )
+        self.run_worker(
+            self.set_root(path),
+            name="file-notes-root-change",
+            group="file-notes-root-change",
+            exclusive=True,
         )
 
     @on(Button.Pressed, "#file-notes-back")

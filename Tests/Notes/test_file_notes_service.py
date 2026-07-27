@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sqlite3
 import stat
 import sys
 import types
@@ -687,3 +688,35 @@ def test_replica_failure_warns_but_allows_unprotected_save_and_blocks_delete(
         "replica-error"
     )
     assert path.exists()
+
+
+def test_close_waits_for_active_operation_before_closing_replica(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("body", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    service = FileNotesService(root, replica)
+    scan_started = Event()
+    release_scan = Event()
+    real_walk = service._walk_candidates
+
+    def delayed_walk():
+        scan_started.set()
+        release_scan.wait(5)
+        return real_walk()
+
+    monkeypatch.setattr(service, "_walk_candidates", delayed_walk)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        scan = executor.submit(service.scan)
+        assert scan_started.wait(1)
+        close = executor.submit(service.close)
+        assert not close.done()
+        release_scan.set()
+        assert scan.result().status == "ok"
+        close.result()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        replica.list_deleted(str(root.resolve()))

@@ -144,12 +144,20 @@ class FileNotesService:
         self,
         root: str | os.PathLike[str],
         replica: FileNotesReplica | None,
+        *,
+        operation_lock: RLock | None = None,
     ) -> None:
-        """Bind the service to one canonical root and optional SQLite replica."""
+        """Bind the service to one canonical root and optional SQLite replica.
+
+        Args:
+            root: Filesystem directory kept authoritative by this service.
+            replica: Optional SQLite search and recovery replica.
+            operation_lock: Optional lock shared by services using one replica.
+        """
         self.root = Path(root).expanduser().resolve(strict=False)
         self.root_key = str(self.root)
         self._replica = replica
-        self._operation_lock = RLock()
+        self._operation_lock = operation_lock or RLock()
         self._session_changes: list[SessionChange] = []
         self._entry_cache: dict[str, FileNoteEntry] = {}
 
@@ -158,6 +166,14 @@ class FileNotesService:
     def session_changes(self) -> tuple[SessionChange, ...]:
         """Return Chatbook-only changes made by this service instance."""
         return tuple(self._session_changes)
+
+    @_serialized
+    def close(self) -> None:
+        """Close the bound replica after any active service operation."""
+        replica = self._replica
+        self._replica = None
+        if replica is not None:
+            replica.close()
 
     @_serialized
     def scan(self) -> ScanResult:

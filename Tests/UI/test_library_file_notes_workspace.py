@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import sqlite3
 import sys
+import threading
 import types
 from collections.abc import Callable
 from pathlib import Path
@@ -20,6 +23,7 @@ from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
     LIBRARY_ROW_BROWSE_NOTES,
 )
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
+from tldw_chatbook.Notes.file_notes_service import FileNotesService  # noqa: E402
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
     LibraryFileNotesWorkspace,
@@ -145,6 +149,91 @@ async def test_empty_offline_and_persisted_root_states(
 
 
 @pytest.mark.asyncio
+async def test_root_transition_retains_and_freezes_old_document_until_scan_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_root = tmp_path / "old"
+    old_root.mkdir()
+    (old_root / "old.md").write_text("old body", encoding="utf-8")
+    new_root = tmp_path / "new"
+    new_root.mkdir()
+    (new_root / "new.md").write_text("new body", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=old_root,
+        replica=replica,
+        autosave_delay=10,
+        poll_interval=10,
+    )
+    original_scan = FileNotesService.scan
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+    open_started = threading.Event()
+    release_open = threading.Event()
+
+    def delayed_scan(service):
+        if service.root == new_root.resolve():
+            scan_started.set()
+            release_scan.wait(5)
+        return original_scan(service)
+
+    monkeypatch.setattr(FileNotesService, "scan", delayed_scan)
+    async with _WorkspaceHarness(workspace).run_test(size=(110, 36)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("old.md")
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        _replace_editor_text(editor, "saved before root change")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "root-change draft did not become dirty",
+        )
+        service = workspace._service
+        assert service is not None
+        original_open = service.open_file
+
+        def delayed_open(relative_path):
+            open_started.set()
+            release_open.wait(5)
+            return original_open(relative_path)
+
+        monkeypatch.setattr(service, "open_file", delayed_open)
+        opening = asyncio.create_task(workspace.open_path("old.md"))
+        await _wait_until(pilot, open_started.is_set, "old-root open did not start")
+
+        transition = asyncio.create_task(
+            workspace.set_root(new_root, persist=False)
+        )
+        await _wait_until(
+            pilot,
+            scan_started.is_set,
+            "candidate root scan did not start",
+        )
+        assert workspace.root == old_root.resolve()
+        assert workspace.current_path == "old.md"
+        assert editor.text == "saved before root change"
+        assert editor.read_only
+        assert workspace.query_one("#file-notes-new", Button).disabled
+        assert workspace.query_one("#file-notes-search", Input).disabled
+        assert (old_root / "old.md").read_text(encoding="utf-8") == (
+            "saved before root change"
+        )
+
+        release_scan.set()
+        assert await transition
+        assert workspace.root == new_root.resolve()
+        assert workspace.current_path == ""
+        assert editor.text == ""
+        assert "new.md" in workspace.entries
+        release_open.set()
+        assert not await opening
+    release_scan.set()
+    release_open.set()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_tree_search_open_dirty_and_autosave_keep_one_editor(
     tmp_path: Path,
 ) -> None:
@@ -218,6 +307,8 @@ async def test_tree_search_open_dirty_and_autosave_keep_one_editor(
             "changed body\n"
         )
         assert workspace.query_one("#file-notes-editor", TextArea) is editor
+    await workspace.shutdown()
+    assert replica.list_deleted(str(root.resolve())) == []
     replica.close()
 
 
@@ -542,7 +633,12 @@ async def test_poll_and_narrow_navigation_retain_the_text_area(
         )
         assert refreshed_folder.is_expanded
         await pilot.pause(0.15)
-        assert len(workspace._workers) <= 1
+        active = [
+            worker
+            for worker in workspace.workers
+            if worker.node is workspace and not worker.is_finished
+        ]
+        assert len(active) <= 1
 
         workspace.query_one("#file-notes-back", Button).press()
         await _wait_until(
@@ -556,6 +652,7 @@ async def test_poll_and_narrow_navigation_retain_the_text_area(
 @pytest.mark.asyncio
 async def test_library_database_files_switch_retains_workspace_and_database_canvas(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "notes"
     root.mkdir()
@@ -563,10 +660,9 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
     (root / "other.md").write_text("other file", encoding="utf-8")
     replacement_root = tmp_path / "replacement"
     replacement_root.mkdir()
-    replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(
         root=root,
-        replica=replica,
+        replica_path=tmp_path / "owned.sqlite",
         poll_interval=10,
         autosave_delay=10,
     )
@@ -581,6 +677,20 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         file_notes_workspace_factory=lambda: workspace,
     )
     host = LibraryHarness(app, screen=screen)
+    save_started = threading.Event()
+    release_save = threading.Event()
+    detail_started = threading.Event()
+    release_detail = threading.Event()
+
+    def delayed_detail(**_kwargs):
+        detail_started.set()
+        release_detail.wait(5)
+        return {
+            "id": "db-note-1",
+            "title": "Database note",
+            "content": "body",
+            "version": 1,
+        }
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await _wait_for_library_shell(screen, pilot)
@@ -594,6 +704,17 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         assert screen.query_one("#library-notes-source-strip")
         assert screen._library_file_notes_workspace is None
 
+        app.notes_scope_service.get_note_detail = delayed_detail
+        screen._selected_note_id = "db-note-1"
+        screen._library_notes_view = "editor"
+        detail_task = asyncio.create_task(
+            screen._refresh_library_note_detail("db-note-1")
+        )
+        await _wait_until(
+            pilot,
+            detail_started.is_set,
+            "Database detail fetch did not start",
+        )
         screen.query_one("#library-notes-source-files", Button).press()
         await _wait_until(
             pilot,
@@ -605,13 +726,26 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
             lambda: bool(screen.query("#library-file-notes-workspace")),
             "Files workspace did not replace the Database rail/canvas",
         )
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace._replica is not None,
+            "Files workspace did not initialize",
+        )
         retained = screen.query_one(
             "#library-file-notes-workspace",
             LibraryFileNotesWorkspace,
         )
         editor = retained.query_one("#file-notes-editor", TextArea)
+        owned_replica = retained._replica
+        assert owned_replica is not None
         assert retained is workspace
         assert not screen.query("#library-rail")
+
+        release_detail.set()
+        await detail_task
+        assert screen._library_note_detail is None
+        screen._library_notes_view = "list"
+        screen._selected_note_id = None
 
         screen._apply_local_source_snapshot(
             {
@@ -699,4 +833,47 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
             retained,
             "#file-notes-session-changes",
         )
-    replica.close()
+
+        service = retained._service
+        assert service is not None
+        original_save = service.save_file
+
+        def delayed_save(*args, **kwargs):
+            save_started.set()
+            release_save.wait(5)
+            return original_save(*args, **kwargs)
+
+        monkeypatch.setattr(service, "save_file", delayed_save)
+        _replace_editor_text(editor, "draft across forced remount")
+        await _wait_until(
+            pilot,
+            lambda: retained.save_state == "dirty",
+            "forced-remount draft did not become dirty",
+        )
+        retained._start_autosave()
+        await _wait_until(
+            pilot,
+            lambda: save_started.is_set() and retained.save_state == "saving",
+            "forced-remount save did not start",
+        )
+
+        screen.refresh(recompose=True)
+        await _wait_until(
+            pilot,
+            lambda: retained.save_state == "dirty"
+            and retained._autosave_timer is not None
+            and bool(screen.query("#library-file-notes-workspace")),
+            "Files workspace did not remount during save",
+        )
+        assert retained.save_state == "dirty"
+        assert retained._autosave_timer is not None
+        assert retained.query_one("#file-notes-editor", TextArea).text == (
+            "draft across forced remount"
+        )
+        release_save.set()
+        await pilot.pause()
+        assert retained.query_one("#file-notes-editor", TextArea) is editor
+    assert workspace._shutdown
+    await workspace.shutdown()
+    with pytest.raises(sqlite3.ProgrammingError):
+        owned_replica.list_deleted(str(root.resolve()))
