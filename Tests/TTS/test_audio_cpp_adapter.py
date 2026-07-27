@@ -971,6 +971,43 @@ async def test_observe_voices_reports_unverified_after_catalog_reconfiguration_f
 
 
 @pytest.mark.asyncio
+async def test_stale_catalog_refresh_does_not_publish_an_in_flight_voice_result() -> (
+    None
+):
+    phase = "ready"
+    voice_stream = BlockingStream(_voices_body("fetched-before-stale"))
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            if phase == "stale":
+                raise httpx.ConnectError("catalog transport", request=request)
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        return httpx.Response(200, stream=voice_stream)
+
+    async with _adapter(respond) as adapter:
+        await adapter.ensure_ready()
+        observation = asyncio.create_task(adapter.observe_voices("model"))
+        await voice_stream.started.wait()
+
+        phase = "stale"
+        stale_catalog = await adapter.get_catalog(refresh=True)
+        assert stale_catalog.revision == 1
+        assert stale_catalog.health == TRANSIENT_HEALTH
+
+        voice_stream.release.set()
+        result = await observation
+
+        assert result.state == "unverified"
+        assert result.voices == ()
+        assert adapter._voice_cache == {}
+        assert adapter._voice_shared_results == {}
+
+    assert voice_stream.close_count == 1
+
+
+@pytest.mark.asyncio
 async def test_observe_voices_reports_unverified_after_shutdown() -> None:
     voice_requests = 0
 

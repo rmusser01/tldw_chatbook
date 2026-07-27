@@ -358,12 +358,13 @@ class AudioCppAdapter:
                         model_id,
                         catalog.revision,
                     )
-                    if self._closed:
+                    current = self._catalog
+                    if self._closed or not current.health.fresh:
                         return self._unverified_voice_result(
                             model_id,
-                            self._catalog.revision,
+                            current.revision,
                         )
-                    if self._catalog.revision != catalog.revision:
+                    if current.revision != catalog.revision:
                         continue
 
                     next_generation = current_generation + 1
