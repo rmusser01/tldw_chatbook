@@ -3296,7 +3296,7 @@ temp_dir = ""  # Empty means use system temp
 
 [transcription]
 # Default transcription provider
-# Options: "faster-whisper", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx", "remote-whisper"
+# Options: "faster-whisper", "parakeet-onnx", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx", "remote-whisper"
 # Note: On macOS, defaults to parakeet-mlx or lightning-whisper-mlx if available
 default_provider = "faster-whisper"
 
@@ -3335,6 +3335,10 @@ device = "cpu"
 # Compute type for faster-whisper
 # Options: "int8", "float16", "float32"
 compute_type = "int8"
+
+# Explicit local directory containing the Parakeet v2 INT8 ONNX bundle.
+# parakeet-onnx never downloads model files implicitly.
+parakeet_onnx_model_dir = ""
 
 # Voice Activity Detection
 use_vad_by_default = false
