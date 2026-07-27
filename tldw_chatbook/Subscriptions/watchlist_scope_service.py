@@ -134,7 +134,7 @@ class WatchlistScopeService:
         return value
 
     @staticmethod
-    def _source_id_from_item_id(item_id: Any) -> str:
+    def _source_id_from_item_id(item_id: Any) -> Any:
         item_id_text = str(item_id)
         if ":" in item_id_text:
             return item_id_text.rsplit(":", 1)[-1]
@@ -146,6 +146,30 @@ class WatchlistScopeService:
         if ":" in item_id_text:
             return item_id_text.rsplit(":", 1)[-1]
         return item_id_text
+
+    @staticmethod
+    def _source_id_from_item_id(item_id: Any) -> str:
+        """Resolve a source id that may arrive namespaced.
+
+        `LocalWatchlistsService` returns rows carrying both
+        ``"id": "local:subscription:1"`` and ``"source_id": 1``, and the screen
+        passes the display id -- so `check_now` received the namespaced form
+        while `local.launch_run` does ``int(source_id)``. That raised
+        `ValueError`, `_check_now_source` swallowed it into a debug log, and
+        "Check now" did nothing at all: no run, no items, `last_checked` still
+        NULL, no error the user could see. Found in the 2026-07-28 live UAT;
+        the scrape backend itself was fine, ingesting 10 real items in 268ms
+        once given the integer.
+
+        Mirrors `_run_id_from_item_id` and `_rule_id_from_item_id`, which
+        already do this for the other two entity types.
+        """
+        if isinstance(item_id, str) and ":" in item_id:
+            return item_id.rsplit(":", 1)[-1]
+        # Returned unchanged, not stringified: callers already holding the
+        # integer keep passing an integer, so this cannot alter the value any
+        # existing caller sends downstream.
+        return item_id
 
     @staticmethod
     def _rule_id_from_item_id(item_id: Any) -> str:
@@ -292,7 +316,10 @@ class WatchlistScopeService:
         self._enforce_policy(backend, "runs.launch")
         service = self._service_for_backend(backend)
         launched = await self._maybe_await(
-            service.launch_run(job_id=job_id, source_id=source_id)
+            service.launch_run(
+                job_id=job_id,
+                source_id=self._source_id_from_item_id(source_id),
+            )
         )
         if backend == WatchlistBackend.LOCAL:
             execute_run = getattr(service, "execute_run", None)
