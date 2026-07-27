@@ -13,6 +13,8 @@ from pydantic import ValidationError
 from scripts.stt_eval.io import (
     atomic_write_json,
     atomic_write_jsonl,
+    open_verified_file,
+    revalidate_file_identity,
     resolve_contained_path,
     verify_file,
 )
@@ -110,11 +112,28 @@ def test_manifest_rejects_unknown_fields_at_every_level(
         "model\u0085file.onnx",
         "model\u200bfile.onnx",
         "model\u2060file.onnx",
+        "CON",
+        "con.onnx",
+        "PrN.bin",
+        "AUX",
+        "nul.txt",
+        "COM1",
+        "com9.onnx",
+        "LPT1",
+        "lpt9.bin",
+        "model.",
     ],
 )
 def test_artifact_file_rejects_unsafe_filenames(filename: str) -> None:
     with pytest.raises(ValidationError):
         ArtifactFile(filename=filename, size_bytes=1, sha256="a" * 64)
+
+
+@pytest.mark.parametrize("filename", ["console.onnx", "com10.onnx", "lpt10.bin"])
+def test_artifact_file_accepts_non_reserved_portable_filenames(filename: str) -> None:
+    artifact = ArtifactFile(filename=filename, size_bytes=1, sha256="a" * 64)
+
+    assert artifact.filename == filename
 
 
 @pytest.mark.parametrize(
@@ -180,6 +199,82 @@ def test_referenced_vad_variant_must_exist() -> None:
         ExperimentManifest.model_validate(raw)
 
 
+def _model(raw: dict[str, object], variant_id: str) -> dict[str, object]:
+    models = raw["models"]["models"]  # type: ignore[index]
+    return next(model for model in models if model["variant_id"] == variant_id)
+
+
+@pytest.mark.parametrize(
+    "variant_id",
+    [
+        "parakeet-v2-int8",
+        "parakeet-v2-f32",
+        "parakeet-v3-int8",
+        "parakeet-v3-f32",
+        "faster-whisper-base-int8",
+    ],
+)
+def test_manifest_requires_every_approved_model_role(variant_id: str) -> None:
+    raw = minimal_experiment()
+    raw["models"]["models"] = [  # type: ignore[index]
+        model
+        for model in raw["models"]["models"]  # type: ignore[index]
+        if model["variant_id"] != variant_id
+    ]
+
+    with pytest.raises(ValueError, match="approved qualification model roles"):
+        ExperimentManifest.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    ("variant_id", "field", "value"),
+    [
+        ("parakeet-v2-int8", "precision", "f32"),
+        ("parakeet-v2-int8", "qualification_role", "f32_reference"),
+        ("parakeet-v3-int8", "family", "parakeet_v2"),
+        ("faster-whisper-base-int8", "qualification_role", "candidate_int8"),
+    ],
+)
+def test_manifest_rejects_wrong_model_family_role_or_precision(
+    variant_id: str, field: str, value: str
+) -> None:
+    raw = minimal_experiment()
+    _model(raw, variant_id)[field] = value
+
+    with pytest.raises(ValueError, match="approved qualification model roles"):
+        ExperimentManifest.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    ("variant_id", "mutation"),
+    [
+        ("parakeet-v2-int8", "remove_capabilities"),
+        ("parakeet-v3-int8", "disable_long_form"),
+        ("parakeet-v3-f32", "disable_timestamps"),
+        ("parakeet-v2-f32", "remove_vad"),
+        ("faster-whisper-base-int8", "external_vad_without_variant"),
+    ],
+)
+def test_manifest_requires_model_vad_and_qualification_capabilities(
+    variant_id: str, mutation: str
+) -> None:
+    raw = minimal_experiment()
+    model = _model(raw, variant_id)
+    if mutation == "remove_capabilities":
+        del model["capabilities"]
+    elif mutation == "disable_long_form":
+        model["capabilities"]["supports_long_form"] = False  # type: ignore[index]
+    elif mutation == "disable_timestamps":
+        model["capabilities"]["supports_timestamps"] = False  # type: ignore[index]
+    elif mutation == "remove_vad":
+        model["vad_variant_id"] = None
+    else:
+        model["capabilities"]["vad_mode"] = "external"  # type: ignore[index]
+
+    with pytest.raises(ValidationError):
+        ExperimentManifest.model_validate(raw)
+
+
 def test_closed_matrix_rejects_duplicate_cells() -> None:
     raw = minimal_experiment()
     raw["matrix"].append(copy.deepcopy(raw["matrix"][0]))  # type: ignore[union-attr,index]
@@ -216,6 +311,60 @@ def test_closed_matrix_requires_every_v3_language_even_if_declaration_is_removed
     ]
 
     with pytest.raises(ValueError, match="v3 language/profile coverage"):
+        ExperimentManifest.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    ("language", "baseline_variant_id"),
+    [
+        ("en", "parakeet-v2-f32"),
+        ("uk", "parakeet-v3-f32"),
+        ("uk", "faster-whisper-base-int8"),
+    ],
+)
+def test_closed_matrix_requires_each_approved_comparison_pair(
+    language: str, baseline_variant_id: str
+) -> None:
+    raw = minimal_experiment()
+    raw["requirements"] = [  # type: ignore[index]
+        requirement
+        for requirement in raw["requirements"]  # type: ignore[index]
+        if not (
+            requirement["language"] == language
+            and requirement["baseline_variant_id"] == baseline_variant_id
+        )
+    ]
+    raw["matrix"] = [  # type: ignore[index]
+        cell
+        for cell in raw["matrix"]  # type: ignore[index]
+        if not (
+            cell["language"] == language
+            and cell["baseline_variant_id"] == baseline_variant_id
+        )
+    ]
+
+    with pytest.raises(ValueError, match="required qualification pairings"):
+        ExperimentManifest.model_validate(raw)
+
+
+def test_closed_matrix_rejects_v2_model_substitution_in_v3_cells() -> None:
+    raw = minimal_experiment()
+    for requirement in raw["requirements"]:  # type: ignore[index]
+        if (
+            requirement["language"] == "uk"
+            and requirement["baseline_variant_id"] == "parakeet-v3-f32"
+        ):
+            requirement["model_variant_id"] = "parakeet-v2-int8"
+            requirement["baseline_variant_id"] = "parakeet-v2-f32"
+    for cell in raw["matrix"]:  # type: ignore[index]
+        if (
+            cell["language"] == "uk"
+            and cell["baseline_variant_id"] == "parakeet-v3-f32"
+        ):
+            cell["model_variant_id"] = "parakeet-v2-int8"
+            cell["baseline_variant_id"] = "parakeet-v2-f32"
+
+    with pytest.raises(ValueError, match="required qualification pairings"):
         ExperimentManifest.model_validate(raw)
 
 
@@ -398,10 +547,10 @@ def test_fingerprint_contract_has_fixed_golden_values() -> None:
     )
 
     assert experiment == (
-        "e7a99647bff0024b8191ba7ca99476ed4535b552fe7e99b16f0c2f4996ae217a"
+        "12bcce20375618668c69e205d7c81900a4ddc4ccd71a758c936cbd427648eeaf"
     )
     assert run_fingerprint(experiment, run) == (
-        "c33e0ae286923963581bafa13722698bb0fb3d0e44969233e4ce0608c9814749"
+        "4ee7126674305e0ef0fca3a6e7f6c08dec7bf60f35167b55e92523b3db593fde"
     )
 
 
@@ -463,6 +612,116 @@ def test_verify_file_rejects_mismatches(
             expected_size=expected_size,
             expected_sha256=expected_sha256,
         )
+
+
+def test_verify_file_rejects_oversized_input_before_streaming(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(b"oversize")
+    real_fdopen = os.fdopen
+    read_calls = 0
+
+    class GuardedStream:
+        def __init__(self, descriptor: int, mode: str) -> None:
+            self._stream = real_fdopen(descriptor, mode)
+
+        def read(self, size: int) -> bytes:
+            nonlocal read_calls
+            read_calls += 1
+            if read_calls > 1:
+                raise AssertionError("oversized input consumed a second chunk")
+            return self._stream.read(size)
+
+        def __enter__(self) -> GuardedStream:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self._stream.close()
+
+    monkeypatch.setattr(os, "fdopen", GuardedStream)
+
+    with pytest.raises(ValueError, match="size mismatch"):
+        verify_file(
+            path,
+            expected_size=4,
+            expected_sha256=hashlib.sha256(b"over").hexdigest(),
+            chunk_size=4,
+        )
+
+    assert read_calls == 0
+
+
+def test_verify_file_stops_when_file_grows_during_streaming(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(b"safe")
+    real_fdopen = os.fdopen
+    appended = False
+
+    def append_before_streaming(descriptor: int, mode: str) -> object:
+        nonlocal appended
+        if not appended:
+            with path.open("ab") as growing:
+                growing.write(b"grow")
+            appended = True
+        return real_fdopen(descriptor, mode)
+
+    monkeypatch.setattr(os, "fdopen", append_before_streaming)
+
+    with pytest.raises(ValueError, match="size mismatch"):
+        verify_file(
+            path,
+            expected_size=4,
+            expected_sha256=hashlib.sha256(b"safe").hexdigest(),
+            chunk_size=4,
+        )
+
+    assert appended
+
+
+def test_open_verified_file_consumes_verified_descriptor_after_path_swap(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(b"safe")
+    replacement = tmp_path / "replacement.bin"
+    replacement.write_bytes(b"evil")
+    archived = tmp_path / "archived.bin"
+
+    with open_verified_file(
+        path,
+        expected_size=4,
+        expected_sha256=hashlib.sha256(b"safe").hexdigest(),
+    ) as verified:
+        path.rename(archived)
+        replacement.rename(path)
+
+        assert verified.stream.read() == b"safe"
+        identity = verified.identity
+
+    assert identity.size_bytes == 4
+    assert identity.sha256 == hashlib.sha256(b"safe").hexdigest()
+
+
+def test_revalidate_file_identity_detects_changed_path(tmp_path: Path) -> None:
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(b"safe")
+    replacement = tmp_path / "replacement.bin"
+    replacement.write_bytes(b"evil")
+
+    with open_verified_file(
+        path,
+        expected_size=4,
+        expected_sha256=hashlib.sha256(b"safe").hexdigest(),
+    ) as verified:
+        identity = verified.identity
+
+    replacement.replace(path)
+
+    with pytest.raises(ValueError, match="identity"):
+        revalidate_file_identity(path, identity)
 
 
 def test_verify_file_rejects_symlink(tmp_path: Path) -> None:

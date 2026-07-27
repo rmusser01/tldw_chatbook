@@ -8,8 +8,10 @@ import os
 import secrets
 import stat
 from collections.abc import Iterable
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Mapping
+from typing import BinaryIO, Iterator, Mapping, cast
 
 from pydantic import BaseModel
 
@@ -17,6 +19,26 @@ from scripts.stt_eval.schema import canonical_json
 
 
 DEFAULT_CHUNK_SIZE = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class VerifiedFileIdentity:
+    """Immutable stat and content identity of one verified open file."""
+
+    device: int
+    inode: int
+    size_bytes: int
+    mtime_ns: int
+    ctime_ns: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class VerifiedFile:
+    """A verified stream kept open for the context manager's lifetime."""
+
+    stream: BinaryIO
+    identity: VerifiedFileIdentity
 
 
 def _descriptor_flags() -> int:
@@ -152,6 +174,33 @@ def _validate_sha256(value: str) -> None:
         raise ValueError("expected SHA-256 must be 64 lowercase hex characters")
 
 
+def _open_artifact_descriptor(path: Path, root: Path | None) -> int:
+    try:
+        if root is None:
+            return _open_regular_file_no_symlinks(path)
+        root_descriptor = _open_directory_no_symlinks(root)
+        try:
+            return _open_regular_file_under_root(root_descriptor, path)
+        finally:
+            os.close(root_descriptor)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"artifact file does not exist: {path}") from None
+
+
+def _identity_from_stat(
+    metadata: os.stat_result,
+    sha256: str,
+) -> VerifiedFileIdentity:
+    return VerifiedFileIdentity(
+        device=metadata.st_dev,
+        inode=metadata.st_ino,
+        size_bytes=metadata.st_size,
+        mtime_ns=metadata.st_mtime_ns,
+        ctime_ns=metadata.st_ctime_ns,
+        sha256=sha256,
+    )
+
+
 def stream_file_identity(
     path: Path,
     *,
@@ -164,25 +213,12 @@ def stream_file_identity(
         raise ValueError("chunk size must be positive")
 
     path = Path(path)
-    try:
-        if root is None:
-            descriptor = _open_regular_file_no_symlinks(path)
-        else:
-            root_descriptor = _open_directory_no_symlinks(root)
-            try:
-                descriptor = _open_regular_file_under_root(
-                    root_descriptor,
-                    path,
-                )
-            finally:
-                os.close(root_descriptor)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"artifact file does not exist: {path}") from None
+    descriptor = _open_artifact_descriptor(path, root)
 
     try:
         digest = hashlib.sha256()
         byte_count = 0
-        stream = os.fdopen(descriptor, "rb")
+        stream = cast(BinaryIO, os.fdopen(descriptor, "rb"))
         descriptor = -1
         with stream:
             while True:
@@ -197,15 +233,21 @@ def stream_file_identity(
             os.close(descriptor)
 
 
-def verify_file(
+@contextmanager
+def open_verified_file(
     path: Path,
     *,
     root: Path | None = None,
     expected_size: int,
     expected_sha256: str,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
-) -> None:
-    """Verify a file, anchoring a relative path under ``root`` when given."""
+) -> Iterator[VerifiedFile]:
+    """Verify and yield the exact open file descriptor for safe consumption.
+
+    The yielded stream is rewound and remains open only inside this context.
+    Consumers that can accept a descriptor should read this stream instead of
+    reopening ``path``.
+    """
 
     if (
         isinstance(expected_size, bool)
@@ -214,24 +256,119 @@ def verify_file(
     ):
         raise ValueError("expected size must be a positive integer")
     _validate_sha256(expected_sha256)
-    actual_size, actual_sha256 = stream_file_identity(
+    if chunk_size <= 0:
+        raise ValueError("chunk size must be positive")
+
+    path = Path(path)
+    descriptor = _open_artifact_descriptor(path, root)
+    try:
+        initial_metadata = os.fstat(descriptor)
+        if initial_metadata.st_size != expected_size:
+            raise ValueError(
+                "artifact size mismatch: "
+                f"expected {expected_size}, got {initial_metadata.st_size}"
+            )
+
+        stream = cast(BinaryIO, os.fdopen(descriptor, "rb"))
+        descriptor = -1
+        with stream:
+            digest = hashlib.sha256()
+            byte_count = 0
+            while True:
+                chunk = stream.read(chunk_size)
+                if not chunk:
+                    break
+                byte_count += len(chunk)
+                if byte_count > expected_size:
+                    raise ValueError(
+                        "artifact size mismatch: "
+                        f"expected {expected_size}, got more than {expected_size}"
+                    )
+                digest.update(chunk)
+
+            final_metadata = os.fstat(stream.fileno())
+            if byte_count != expected_size or final_metadata.st_size != expected_size:
+                raise ValueError(
+                    "artifact size mismatch: "
+                    f"expected {expected_size}, got {byte_count}"
+                )
+            actual_sha256 = digest.hexdigest()
+            if actual_sha256 != expected_sha256:
+                raise ValueError(
+                    "artifact SHA-256 mismatch: "
+                    f"expected {expected_sha256}, got {actual_sha256}"
+                )
+
+            initial_identity = _identity_from_stat(
+                initial_metadata,
+                actual_sha256,
+            )
+            identity = _identity_from_stat(final_metadata, actual_sha256)
+            if identity != initial_identity:
+                raise ValueError("artifact identity changed during verification")
+
+            stream.seek(0)
+            yield VerifiedFile(stream=stream, identity=identity)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def verify_file(
+    path: Path,
+    *,
+    root: Path | None = None,
+    expected_size: int,
+    expected_sha256: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> None:
+    """Check a file; prefer ``open_verified_file`` when consuming its bytes."""
+
+    with open_verified_file(
         path,
         root=root,
+        expected_size=expected_size,
+        expected_sha256=expected_sha256,
         chunk_size=chunk_size,
-    )
-    if actual_size != expected_size:
-        raise ValueError(
-            f"artifact size mismatch: expected {expected_size}, got {actual_size}"
-        )
-    if actual_sha256 != expected_sha256:
-        raise ValueError(
-            "artifact SHA-256 mismatch: "
-            f"expected {expected_sha256}, got {actual_sha256}"
-        )
+    ):
+        pass
+
+
+def revalidate_file_identity(
+    path: Path,
+    expected_identity: VerifiedFileIdentity,
+    *,
+    root: Path | None = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> VerifiedFileIdentity:
+    """Detect whether a path still names an earlier verified identity.
+
+    This supports path-only model runtimes, but it is detection rather than
+    authorization: the path can change again after this function returns.
+    """
+
+    try:
+        with open_verified_file(
+            path,
+            root=root,
+            expected_size=expected_identity.size_bytes,
+            expected_sha256=expected_identity.sha256,
+            chunk_size=chunk_size,
+        ) as verified:
+            if verified.identity != expected_identity:
+                raise ValueError("artifact identity changed after verification")
+            return verified.identity
+    except (FileNotFoundError, ValueError) as error:
+        raise ValueError("artifact identity changed after verification") from error
 
 
 def resolve_contained_path(root: Path, relative_path: str | Path) -> Path:
-    """Check a contained path; use ``verify_file(root=...)`` before reading."""
+    """Return a check-only contained path, never authorization to consume it.
+
+    Use ``open_verified_file`` for descriptor-capable consumers. Path-only
+    runtimes must revalidate an earlier ``VerifiedFileIdentity`` immediately
+    before use and still treat the remaining path race as a trust boundary.
+    """
 
     parts = _contained_relative_parts(relative_path)
 
@@ -367,8 +504,12 @@ def atomic_write_jsonl(
 
 
 __all__ = [
+    "VerifiedFile",
+    "VerifiedFileIdentity",
     "atomic_write_json",
     "atomic_write_jsonl",
+    "open_verified_file",
+    "revalidate_file_identity",
     "resolve_contained_path",
     "stream_file_identity",
     "verify_file",

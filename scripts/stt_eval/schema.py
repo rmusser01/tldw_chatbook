@@ -18,9 +18,6 @@ from pydantic import (
     model_validator,
 )
 
-from scripts.stt_eval import SCHEMA_VERSION
-
-
 MAX_BYTE_SIZE = 2**63 - 1
 MAX_COUNT = 2**31 - 1
 MAX_DURATION_SECONDS = 31 * 24 * 60 * 60
@@ -95,7 +92,7 @@ PositiveDuration = Annotated[
 ]
 ThreadCount = Annotated[int, Field(strict=True, gt=0, le=MAX_THREADS)]
 Ratio = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
-SchemaVersion = Literal[SCHEMA_VERSION]
+SchemaVersion = Literal[1]
 
 
 class MeasurementProfile(str, Enum):
@@ -120,6 +117,37 @@ class Precision(str, Enum):
     F32 = "f32"
 
 
+class ModelFamily(str, Enum):
+    """Closed model families approved by TASK-593."""
+
+    PARAKEET_V2 = "parakeet_v2"
+    PARAKEET_V3 = "parakeet_v3"
+    FASTER_WHISPER_BASE = "faster_whisper_base"
+
+
+class QualificationRole(str, Enum):
+    """A model's single role in the qualification comparison."""
+
+    CANDIDATE_INT8 = "candidate_int8"
+    F32_REFERENCE = "f32_reference"
+    COMPARISON_BASELINE = "comparison_baseline"
+
+
+class LanguageScope(str, Enum):
+    """Closed language coverage declared by a qualified model."""
+
+    ENGLISH = "english"
+    V3 = "v3"
+    ALL_EVALUATED = "all_evaluated"
+
+
+class VadMode(str, Enum):
+    """How a qualified model supplies long-form VAD."""
+
+    EXTERNAL = "external"
+    RUNTIME_INTERNAL = "runtime_internal"
+
+
 class StrictModel(BaseModel):
     """Base for immutable persisted records with a closed field set."""
 
@@ -138,8 +166,19 @@ class ArtifactFile(StrictModel):
     def filename_is_one_contained_component(cls, value: str) -> str:
         posix = PurePosixPath(value)
         windows = PureWindowsPath(value)
+        windows_basename = value.split(".", maxsplit=1)[0].upper()
+        windows_reserved = {
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            *(f"COM{number}" for number in range(1, 10)),
+            *(f"LPT{number}" for number in range(1, 10)),
+        }
         if (
             value in {".", ".."}
+            or value.endswith((".", " "))
+            or windows_basename in windows_reserved
             or any(
                 character.isspace() or unicodedata.category(character) in {"Cc", "Cf"}
                 for character in value
@@ -194,12 +233,23 @@ class VadVariant(StrictModel):
     _unique_files = field_validator("files")(_reject_duplicate_artifact_filenames)
 
 
+class ModelCapabilities(StrictModel):
+    """Capabilities required to interpret qualification evidence."""
+
+    language_scope: LanguageScope
+    supports_timestamps: bool
+    supports_long_form: bool
+    vad_mode: VadMode
+
+
 class ModelVariant(StrictModel):
     """Immutable model artifact and local execution identity."""
 
     variant_id: Identifier
     provider: Identifier
     model_id: Identifier
+    family: ModelFamily
+    qualification_role: QualificationRole
     precision: Precision
     runtime: NonEmptyStr
     repository: NonEmptyStr
@@ -207,6 +257,7 @@ class ModelVariant(StrictModel):
     license: NonEmptyStr
     files: ArtifactFiles
     vad_variant_id: Identifier | None
+    capabilities: ModelCapabilities
 
     _unique_files = field_validator("files")(_reject_duplicate_artifact_filenames)
 
@@ -242,6 +293,82 @@ class ModelManifest(StrictModel):
                 raise ValueError(
                     f"model {model.variant_id!r} references unknown VAD variant "
                     f"{model.vad_variant_id!r}"
+                )
+
+        required_roles = {
+            (
+                ModelFamily.PARAKEET_V2,
+                QualificationRole.CANDIDATE_INT8,
+                Precision.INT8,
+            ),
+            (
+                ModelFamily.PARAKEET_V2,
+                QualificationRole.F32_REFERENCE,
+                Precision.F32,
+            ),
+            (
+                ModelFamily.PARAKEET_V3,
+                QualificationRole.CANDIDATE_INT8,
+                Precision.INT8,
+            ),
+            (
+                ModelFamily.PARAKEET_V3,
+                QualificationRole.F32_REFERENCE,
+                Precision.F32,
+            ),
+            (
+                ModelFamily.FASTER_WHISPER_BASE,
+                QualificationRole.COMPARISON_BASELINE,
+                Precision.INT8,
+            ),
+        }
+        actual_roles = {
+            (model.family, model.qualification_role, model.precision)
+            for model in self.models
+        }
+        if actual_roles != required_roles or len(self.models) != len(required_roles):
+            raise ValueError(
+                "model manifest must contain exactly the approved qualification "
+                "model roles"
+            )
+
+        for model in self.models:
+            capabilities = model.capabilities
+            if not (
+                capabilities.supports_timestamps and capabilities.supports_long_form
+            ):
+                raise ValueError(
+                    "qualification models must support timestamps and long-form audio"
+                )
+
+            if model.family in {
+                ModelFamily.PARAKEET_V2,
+                ModelFamily.PARAKEET_V3,
+            }:
+                expected_scope = (
+                    LanguageScope.ENGLISH
+                    if model.family is ModelFamily.PARAKEET_V2
+                    else LanguageScope.V3
+                )
+                if (
+                    model.provider != "onnx-asr"
+                    or capabilities.language_scope is not expected_scope
+                    or capabilities.vad_mode is not VadMode.EXTERNAL
+                    or model.vad_variant_id is None
+                ):
+                    raise ValueError(
+                        "Parakeet qualification models require their approved "
+                        "language scope and external VAD"
+                    )
+            elif (
+                model.provider != "faster-whisper"
+                or capabilities.language_scope is not LanguageScope.ALL_EVALUATED
+                or capabilities.vad_mode is not VadMode.RUNTIME_INTERNAL
+                or model.vad_variant_id is not None
+            ):
+                raise ValueError(
+                    "faster-whisper baseline requires all evaluated languages "
+                    "and runtime-internal VAD"
                 )
         return self
 
@@ -540,15 +667,52 @@ class ExperimentManifest(StrictModel):
     @model_validator(mode="after")
     def closed_matrix_is_complete(self) -> "ExperimentManifest":
         model_ids = {model.variant_id for model in self.models.models}
+        models_by_role = {
+            (model.family, model.qualification_role): model
+            for model in self.models.models
+        }
+        v2_candidate = models_by_role[
+            (ModelFamily.PARAKEET_V2, QualificationRole.CANDIDATE_INT8)
+        ].variant_id
+        v2_f32 = models_by_role[
+            (ModelFamily.PARAKEET_V2, QualificationRole.F32_REFERENCE)
+        ].variant_id
+        v3_candidate = models_by_role[
+            (ModelFamily.PARAKEET_V3, QualificationRole.CANDIDATE_INT8)
+        ].variant_id
+        v3_f32 = models_by_role[
+            (ModelFamily.PARAKEET_V3, QualificationRole.F32_REFERENCE)
+        ].variant_id
+        comparison_baseline = models_by_role[
+            (
+                ModelFamily.FASTER_WHISPER_BASE,
+                QualificationRole.COMPARISON_BASELINE,
+            )
+        ].variant_id
         populations = {
             population.population_id: population
             for population in self.corpus.populations
         }
+        required_requirement_keys: set[tuple[str, str, str]] = set()
+        for declared_population in populations.values():
+            if declared_population.language == "en":
+                candidate = v2_candidate
+                baselines = (v2_f32, comparison_baseline)
+            elif declared_population.language in APPROVED_V3_LANGUAGES:
+                candidate = v3_candidate
+                baselines = (v3_f32, comparison_baseline)
+            else:
+                continue
+            required_requirement_keys.update(
+                (candidate, baseline, declared_population.population_id)
+                for baseline in baselines
+            )
 
         requirement_keys: set[tuple[str, str, str]] = set()
-        v3_profiles_by_language = {
+        v3_profiles_by_language: dict[str, set[MeasurementProfile]] = {
             language: set() for language in APPROVED_V3_LANGUAGES
         }
+        all_profiles = set(MeasurementProfile)
         expected: dict[
             tuple[str, str, str, MeasurementProfile],
             tuple[str, PrimaryMetric],
@@ -583,6 +747,11 @@ class ExperimentManifest(StrictModel):
                     "closed comparison matrix requirement language must match "
                     "its population"
                 )
+            if set(requirement.profiles) != all_profiles:
+                raise ValueError(
+                    "closed comparison matrix must preserve exact v3 "
+                    "language/profile coverage and required qualification pairings"
+                )
             for profile in requirement.profiles:
                 expected[(*requirement_key, profile)] = (
                     requirement.language,
@@ -591,7 +760,11 @@ class ExperimentManifest(StrictModel):
                 if requirement.language in v3_profiles_by_language:
                     v3_profiles_by_language[requirement.language].add(profile)
 
-        all_profiles = set(MeasurementProfile)
+        if requirement_keys != required_requirement_keys:
+            raise ValueError(
+                "closed comparison matrix must preserve exact v3 "
+                "language/profile coverage and required qualification pairings"
+            )
         if any(
             profiles != all_profiles for profiles in v3_profiles_by_language.values()
         ):
@@ -690,9 +863,12 @@ __all__ = [
     "GateSettings",
     "MatrixRequirement",
     "MeasurementProfile",
+    "ModelCapabilities",
+    "ModelFamily",
     "ModelManifest",
     "ModelVariant",
     "PrimaryMetric",
+    "QualificationRole",
     "RunIdentityInputs",
     "RuntimeSettings",
     "StrictModel",
