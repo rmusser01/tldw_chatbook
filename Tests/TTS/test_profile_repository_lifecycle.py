@@ -3441,24 +3441,25 @@ async def test_backup_and_restore_preserve_non_open_lifecycle_errors(
     terminal: bool,
     expected_code: str,
 ) -> None:
-    repository = _repository(tmp_path / "profiles.sqlite3")
+    store_directory = tmp_path / "profile-store"
+    repository = _repository(store_directory / "profiles.sqlite3")
     repository._state = state
     repository._terminal = terminal
 
     for operation in (
-        lambda: repository.backup_to(tmp_path / "backup.sqlite3"),
-        lambda: repository.restore_from(tmp_path / "candidate.sqlite3"),
+        lambda: repository.backup_to(store_directory / "backup.sqlite3"),
+        lambda: repository.restore_from(store_directory / "candidate.sqlite3"),
     ):
         with pytest.raises(ProfileRepositoryError) as caught:
             await operation()
-        _assert_safe_error(caught.value, expected_code, str(tmp_path))
+        _assert_safe_error(caught.value, expected_code, str(store_directory))
 
     assert repository.state is state
     assert repository.generation == 0
     assert repository._connection is None
     assert repository._lease is None
     assert repository._active_database_path is None
-    assert tuple(tmp_path.iterdir()) == ()
+    assert store_directory.exists() is False
 
 
 @pytest.mark.asyncio
