@@ -17,14 +17,20 @@ class TaskResumeState:
     next_action: str = ""
 
     def has_resume_content(self) -> bool:
-        """Return whether the resume panel should be visible."""
+        """Return whether the resume panel should be visible.
+
+        Returns:
+            ``True`` when at least one valid text field contains content.
+        """
         return any(
-            (
-                self.summary.strip(),
-                self.last_step.strip(),
-                self.diff_summary.strip(),
-                self.next_action.strip(),
+            value.strip()
+            for value in (
+                self.summary,
+                self.last_step,
+                self.diff_summary,
+                self.next_action,
             )
+            if isinstance(value, str)
         )
 
     def has_pending_approval(self) -> bool:
@@ -52,16 +58,32 @@ class TaskResumeState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "TaskResumeState":
-        """Restore state while dropping an unresolvable skill-script round."""
-        if not data:
+    def from_dict(cls, data: object | None) -> "TaskResumeState":
+        """Restore validated state while dropping an unresolvable script round.
+
+        Args:
+            data: Untrusted value read from a persisted Console snapshot.
+
+        Returns:
+            A resume state containing only correctly typed snapshot fields.
+        """
+        if not isinstance(data, dict):
             return cls()
+
+        def _text(key: str) -> str:
+            value = data.get(key)
+            return value if isinstance(value, str) else ""
+
+        def _payload(key: str) -> dict[str, Any] | None:
+            value = data.get(key)
+            return dict(value) if isinstance(value, dict) else None
+
         return cls(
-            summary=data.get("summary", ""),
-            last_step=data.get("last_step", ""),
-            pending_approval=data.get("pending_approval"),
-            pending_skill_install=data.get("pending_skill_install"),
+            summary=_text("summary"),
+            last_step=_text("last_step"),
+            pending_approval=_payload("pending_approval"),
+            pending_skill_install=_payload("pending_skill_install"),
             pending_skill_script=None,
-            diff_summary=data.get("diff_summary", ""),
-            next_action=data.get("next_action", ""),
+            diff_summary=_text("diff_summary"),
+            next_action=_text("next_action"),
         )

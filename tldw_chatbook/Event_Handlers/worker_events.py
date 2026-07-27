@@ -17,7 +17,21 @@ if TYPE_CHECKING:
 def chat_wrapper_function(
     app_instance: "TldwCli", strip_thinking_tags: bool = True, **kwargs: Any
 ) -> Any:
-    """Run a retained non-Console LLM call without a root streaming bridge."""
+    """Run a retained non-Console LLM call without a root streaming bridge.
+
+    Args:
+        app_instance: Retained signature parameter; the adapter publishes no
+            application state.
+        strip_thinking_tags: Whether the core chat call removes thinking tags.
+        **kwargs: Arguments forwarded to the core chat function.
+
+    Returns:
+        The non-streaming core chat result.
+
+    Raises:
+        ValueError: If a caller requests streaming, which is owned by native
+            Console's provider gateway.
+    """
     del app_instance
     if kwargs.get("streaming"):
         raise ValueError(

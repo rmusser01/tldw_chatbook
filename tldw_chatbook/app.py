@@ -9040,7 +9040,20 @@ class TldwCli(
 
 
     def chat_wrapper(self, strip_thinking_tags: bool = True, **kwargs: Any) -> Any:
-        """Delegate retained non-streaming CCP and media calls to worker_events."""
+        """Delegate a retained non-streaming CCP or media call.
+
+        Args:
+            strip_thinking_tags: Whether the core chat call removes thinking
+                tags.
+            **kwargs: Arguments forwarded through the retained worker adapter.
+
+        Returns:
+            The non-streaming core chat result.
+
+        Raises:
+            ValueError: If a caller requests streaming, which is owned by the
+                native Console provider gateway.
+        """
         return worker_events.chat_wrapper_function(
             self, strip_thinking_tags=strip_thinking_tags, **kwargs
         )

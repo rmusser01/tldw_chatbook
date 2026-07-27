@@ -31,6 +31,7 @@ try:
     from tldw_chatbook.Constants import TAB_CHAT
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
     from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
     from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
@@ -75,6 +76,32 @@ REMOVED_CHAT_ROOT_NAMES = (
     "media_search_total_pages",
     "current_sidebar_media_item",
 )
+
+
+def test_task_resume_state_rejects_malformed_snapshot_fields() -> None:
+    state = TaskResumeState.from_dict(
+        {
+            "summary": None,
+            "last_step": 7,
+            "diff_summary": [],
+            "next_action": {},
+            "pending_approval": "not-a-payload",
+            "pending_skill_install": ["not-a-payload"],
+            "pending_skill_script": {"request_id": "cannot-resume"},
+        }
+    )
+
+    assert state.summary == ""
+    assert state.last_step == ""
+    assert state.diff_summary == ""
+    assert state.next_action == ""
+    assert state.pending_approval is None
+    assert state.pending_skill_install is None
+    assert state.pending_skill_script is None
+    assert state.has_resume_content() is False
+    assert TaskResumeState.from_dict(["not-a-snapshot"]).to_dict() == (
+        TaskResumeState().to_dict()
+    )
 
 
 class _BlockingProviderGateway:
