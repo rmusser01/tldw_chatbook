@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import sys
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -582,6 +583,48 @@ async def test_repository_page_renders_before_availability_and_selection_arms_ac
 
 
 @pytest.mark.asyncio
+async def test_voice_profile_actions_fit_and_remain_keyboard_reachable_at_80x24() -> (
+    None
+):
+    service = _ActionProfileService(_profile(0))
+    app = _ActionHost(service)
+    action_ids = {
+        "stts-profile-preview-btn",
+        "stts-profile-edit-btn",
+        "stts-profile-duplicate-btn",
+        "stts-profile-refresh-btn",
+        "stts-profile-delete-btn",
+    }
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _select_action_profile(app, pilot)
+        table = app.query_one("#stts-profile-table", DataTable)
+        status = app.query_one("#stts-profile-status", Static)
+        buttons = tuple(
+            app.query_one(f"#{button_id}", Button) for button_id in action_ids
+        )
+
+        assert table.region.height >= 3
+        assert status.region.height > 0
+        assert status.region.right <= app.size.width
+        assert status.region.bottom <= app.size.height
+        for button in buttons:
+            assert button.region.width > 0
+            assert button.region.height > 0
+            assert button.region.right <= app.size.width
+            assert button.region.bottom <= app.size.height
+
+        table.focus()
+        reached: set[str] = set()
+        for _ in range(24):
+            await pilot.press("tab")
+            focused = app.focused
+            if focused is not None and focused.id is not None:
+                reached.add(focused.id)
+        assert action_ids <= reached
+
+
+@pytest.mark.asyncio
 async def test_search_debounces_before_one_active_and_one_latest_page_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -633,6 +676,86 @@ async def test_search_debounces_before_one_active_and_one_latest_page_request(
         await _wait_until(pilot, lambda: len(service.availability_futures) == 2)
         service.availability_futures[1].set_result(_availability(latest_page))
         await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_stale_rendered_rows_cannot_arm_actions_or_emit_preview() -> None:
+    service = _PipelineProfileService()
+    app = _ActionHost(service)
+    initial_page = _page(_profile(0), generation=5)
+    replacement_page = _page(_profile(1), generation=6)
+    action_selectors = (
+        "#stts-profile-preview-btn",
+        "#stts-profile-edit-btn",
+        "#stts-profile-duplicate-btn",
+        "#stts-profile-delete-btn",
+    )
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await pilot.click("#view-profiles-btn")
+        await _wait_until(pilot, lambda: len(service.list_futures) == 1)
+        service.list_futures[0].set_result(initial_page)
+        await _wait_until(pilot, lambda: len(service.availability_futures) == 1)
+        service.availability_futures[0].set_result(_availability(initial_page))
+        await pilot.pause()
+
+        library = app.query_one(STTSProfileLibrary)
+        table = app.query_one("#stts-profile-table", DataTable)
+        initial_loaded = library._loaded_rows[str(initial_page.profiles[0].profile_id)]
+        app.query_one("#stts-profile-refresh-btn", Button).press()
+        await _wait_until(pilot, lambda: len(service.list_futures) == 2)
+        assert _table_cell(table, 0, 0) == "Voice 00"
+
+        table.move_cursor(row=0)
+        table.action_select_cursor()
+        await pilot.pause()
+        stale_selected = library._selected_profile
+        stale_disabled = tuple(
+            app.query_one(selector, Button).disabled for selector in action_selectors
+        )
+
+        library._selected_profile = initial_loaded
+        target_is_current = library._action_target_is_current(initial_loaded)
+        preview = app.query_one("#stts-profile-preview-btn", Button)
+        preview.disabled = False
+        preview.press()
+        await pilot.pause()
+        stale_preview_count = len(app.preview_messages)
+        app.preview_messages.clear()
+
+        service.list_futures[1].set_result(replacement_page)
+        await _wait_until(pilot, lambda: len(service.availability_futures) == 2)
+        service.availability_futures[1].set_result(_availability(replacement_page))
+        await _wait_until(
+            pilot,
+            lambda: library._rendered_repository_generation == 6,
+        )
+        table.move_cursor(row=0)
+        table.action_select_cursor()
+        await pilot.pause()
+        current_loaded = library._selected_profile
+        current_disabled = tuple(
+            app.query_one(selector, Button).disabled for selector in action_selectors
+        )
+        preview.press()
+        await _wait_until(pilot, lambda: bool(app.preview_messages))
+
+        assert (
+            stale_selected,
+            stale_disabled,
+            target_is_current,
+            stale_preview_count,
+        ) == (None, (True, True, True, True), False, 0)
+        assert current_loaded is not None
+        assert current_loaded.repository_generation == 6
+        assert current_disabled == (False, False, False, False)
+        assert library._action_target_is_current(current_loaded)
+        message = app.preview_messages[0]
+        assert isinstance(
+            message,
+            profile_library_module.ProfilePreviewRequested,
+        )
+        assert message.loaded is current_loaded
 
 
 @pytest.mark.asyncio
@@ -971,6 +1094,95 @@ async def test_profile_editor_preserves_opaque_values_and_builds_exact_draft() -
     ]
 
 
+@pytest.mark.parametrize(
+    ("modal_kind", "expected_result"),
+    [("editor", None), ("delete", False)],
+)
+@pytest.mark.asyncio
+async def test_profile_modals_escape_returns_their_cancel_result(
+    modal_kind: str,
+    expected_result: object,
+) -> None:
+    loaded = LoadedTTSProfile(repository_generation=11, profile=_profile(0))
+    if modal_kind == "editor":
+        modal = profile_library_module.TTSProfileEditorModal(
+            loaded,
+            assignment_count=0,
+            mode="edit",
+        )
+    else:
+        modal = profile_library_module.TTSProfileDeleteModal(
+            assignment_count=0,
+        )
+    results: list[object] = []
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(100, 36)) as pilot:
+        app.push_screen(modal, results.append)
+        await pilot.pause()
+        await pilot.press("escape")
+        await _wait_until(pilot, lambda: len(results) == 1)
+
+    assert results == [expected_result]
+
+
+@pytest.mark.parametrize(
+    ("button_selector", "modal_type"),
+    [
+        (
+            "#stts-profile-edit-btn",
+            profile_library_module.TTSProfileEditorModal,
+        ),
+        (
+            "#stts-profile-delete-btn",
+            profile_library_module.TTSProfileDeleteModal,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_switching_stts_view_dismisses_owned_profile_modal_and_worker(
+    button_selector: str,
+    modal_type: type[object],
+) -> None:
+    service = _ActionProfileService(_profile(0))
+    app = _ActionHost(service)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        library, _selected = await _select_action_profile(app, pilot)
+        await pilot.click(button_selector)
+        await _wait_until(pilot, lambda: isinstance(app.screen, modal_type))
+        modal = app.screen
+        action_workers = tuple(
+            worker
+            for worker in app.workers
+            if getattr(worker, "group", None) == "voice_profile_action"
+        )
+        assert len(action_workers) == 1
+        assert not action_workers[0].is_finished
+
+        app.query_one(STTSWindow).current_view = "settings"
+        await _wait_until(pilot, lambda: library.parent is None)
+        await _wait_until(pilot, lambda: not isinstance(app.screen, modal_type))
+        await _wait_until(
+            pilot,
+            lambda: isinstance(
+                app.query_one(".stts-content").children[0],
+                TTSSettingsWidget,
+            ),
+        )
+        await _wait_until(
+            pilot,
+            lambda: all(worker.is_finished for worker in action_workers),
+        )
+
+        assert app.screen is not modal
+        assert all(worker.is_finished for worker in action_workers)
+
+
 @pytest.mark.parametrize("generation_edit", [False, True])
 @pytest.mark.asyncio
 async def test_edit_passes_exact_loaded_token_for_rename_and_generation_changes(
@@ -1038,6 +1250,13 @@ async def test_edit_conflict_retains_the_exact_draft_without_leaking_values(
             if dialog_calls == 2:
                 assert screen.initial_draft is submitted
                 return None
+            if dialog_calls == 3:
+                assert screen.loaded.repository_generation == 12
+                assert screen.initial_draft is None
+                assert screen.initial_name == "Replacement voice"
+                assert screen.initial_model_id == "replacement/model"
+                assert screen.initial_voice_id == "replacement/voice"
+                return None
             profile = screen.loaded.profile
             submitted = TTSProfileDraft(
                 display_name="Conflict draft",
@@ -1062,9 +1281,31 @@ async def test_edit_conflict_retains_the_exact_draft_without_leaking_values(
         await library.edit_selected_profile()
         assert len(service.update_calls) == 1
 
+        replacement = replace(
+            selected.profile,
+            display_name="Replacement voice",
+            normalized_name="replacement voice",
+            model_id="replacement/model",
+            voice_id="replacement/voice",
+        )
+        service.page = _page(replacement, generation=12)
+        app.query_one("#stts-profile-refresh-btn", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: library._rendered_repository_generation == 12,
+        )
+        assert library._retained_editor_draft is None
+        table = app.query_one("#stts-profile-table", DataTable)
+        table.move_cursor(row=0)
+        table.action_select_cursor()
+        await pilot.pause()
+
+        await library.edit_selected_profile()
+        assert dialog_calls == 3
+
 
 @pytest.mark.asyncio
-async def test_duplicate_requires_a_new_name_and_uses_the_exact_source_token(
+async def test_duplicate_uses_source_token_and_name_as_the_only_modal_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _ActionProfileService(_profile(0))
@@ -1083,15 +1324,14 @@ async def test_duplicate_requires_a_new_name_and_uses_the_exact_source_token(
             assert screen.assignment_count == 2
             assert screen.mode == "duplicate"
             assert screen.initial_name == ""
-            profile = screen.loaded.profile
             return TTSProfileDraft(
                 display_name="Explicit copy",
-                provider_id=profile.provider_id,
-                model_id=profile.model_id,
-                voice_id=profile.voice_id,
-                response_format=profile.response_format,
-                speed=profile.speed,
-                options=profile.options,
+                provider_id="audio_cpp",
+                model_id="ignored/model",
+                voice_id="ignored/voice",
+                response_format="wav",
+                speed=1.0,
+                options={},
             )
 
         monkeypatch.setattr(app, "push_screen_wait", _duplicate)
@@ -1143,7 +1383,6 @@ async def test_delete_shows_advisory_count_but_repository_conflict_is_final(
                 screen,
                 profile_library_module.TTSProfileDeleteModal,
             )
-            assert screen.loaded is selected
             assert screen.assignment_count == 0
             return True
 
@@ -1174,7 +1413,6 @@ async def test_assigned_profile_delete_is_blocked_before_repository_mutation(
                 screen,
                 profile_library_module.TTSProfileDeleteModal,
             )
-            assert screen.loaded is selected
             assert screen.assignment_count == 2
             return True
 
@@ -1271,3 +1509,20 @@ async def test_unexpected_action_errors_render_only_value_independent_copy(
         assert status == profile_library_module.PROFILE_ACTION_FAILED_COPY
         assert "/Users/private/key" not in status
         assert "upstream.invalid" not in status
+
+
+def test_profile_library_omits_redundant_state_and_forwarding_entrypoints() -> None:
+    async def _load_service() -> None:
+        return None
+
+    library = STTSProfileLibrary(_load_service)
+
+    assert not hasattr(library, "_active_page_token")
+    assert not hasattr(library, "_latest_request_id")
+    assert not hasattr(profile_library_module, "save_profile_from_artifact")
+    assert (
+        "loaded"
+        not in inspect.signature(
+            profile_library_module.TTSProfileDeleteModal
+        ).parameters
+    )

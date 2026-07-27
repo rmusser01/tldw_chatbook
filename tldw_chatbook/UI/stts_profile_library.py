@@ -101,10 +101,6 @@ _PROFILE_UNVERIFIED_COPY = (
     "without changing persisted values."
 )
 _PROFILE_ACTION_WORKING_COPY = "Checking the exact profile version…"
-_PROFILE_CREATED_COPY = "Voice profile saved. Refreshing the bounded list…"
-_PROFILE_UPDATED_COPY = "Voice profile updated. Refreshing the bounded list…"
-_PROFILE_DUPLICATED_COPY = "Voice profile duplicated. Refreshing the bounded list…"
-_PROFILE_DELETED_COPY = "Voice profile deleted. Refreshing the bounded list…"
 
 
 class _ProfileService(Protocol):
@@ -200,6 +196,8 @@ def _is_store_unavailable(error: BaseException) -> bool:
 
 class TTSProfileEditorModal(ModalScreen[TTSProfileDraft | None]):
     """Focused exact-value editor for one immutable loaded profile token."""
+
+    BINDINGS = (("escape", "dismiss", "Cancel"),)
 
     DEFAULT_CSS = """
     TTSProfileEditorModal {
@@ -403,6 +401,8 @@ class TTSProfileEditorModal(ModalScreen[TTSProfileDraft | None]):
 class TTSProfileDeleteModal(ModalScreen[bool]):
     """Confirm deletion using an advisory assignment count."""
 
+    BINDINGS = (("escape", "dismiss(False)", "Cancel"),)
+
     DEFAULT_CSS = """
     TTSProfileDeleteModal {
         align: center middle;
@@ -446,12 +446,10 @@ class TTSProfileDeleteModal(ModalScreen[bool]):
 
     def __init__(
         self,
-        loaded: LoadedTTSProfile,
         *,
         assignment_count: int,
     ) -> None:
         super().__init__()
-        self.loaded = loaded
         self.assignment_count = assignment_count
 
     def compose(self) -> ComposeResult:
@@ -494,14 +492,8 @@ class TTSProfileDeleteModal(ModalScreen[bool]):
             self.dismiss(True)
 
 
-async def save_profile_from_artifact(
-    service: _ProfileService,
-    display_name: str,
-    artifact: STTSGeneratedAudio,
-) -> LoadedTTSProfile:
-    """Forward one immutable successful artifact to the profile authority."""
-
-    return await service.create_from_artifact(display_name, artifact)
+_OwnedProfileModal = TTSProfileEditorModal | TTSProfileDeleteModal
+_RetainedEditorDraft = tuple[tuple[int, UUID], TTSProfileDraft]
 
 
 class STTSProfileLibrary(Widget):
@@ -512,16 +504,14 @@ class STTSProfileLibrary(Widget):
         height: 100%;
         width: 100%;
         background: $background;
-        padding: 1;
+        padding: 0 1;
     }
 
     #stts-profile-header {
         height: auto;
-        min-height: 3;
         background: $panel;
         border: tall $accent;
         padding: 0 1;
-        margin-bottom: 1;
     }
 
     #stts-profile-title {
@@ -534,7 +524,6 @@ class STTSProfileLibrary(Widget):
 
     #stts-profile-toolbar {
         height: 3;
-        margin-bottom: 1;
     }
 
     #stts-profile-search {
@@ -550,11 +539,18 @@ class STTSProfileLibrary(Widget):
 
     #stts-profile-toolbar Button,
     #stts-profile-actions Button {
+        width: auto;
         height: 3;
-        min-width: 11;
+        min-width: 0;
         border: none;
-        margin-left: 1;
+    }
+
+    #stts-profile-toolbar Button {
         padding: 0 1;
+    }
+
+    #stts-profile-actions Button {
+        padding: 0;
     }
 
     #stts-profile-toolbar Button:focus,
@@ -564,26 +560,23 @@ class STTSProfileLibrary(Widget):
 
     #stts-profile-table {
         height: 1fr;
-        min-height: 8;
+        min-height: 3;
         background: $surface;
         border: round $surface-lighten-1;
     }
 
     #stts-profile-status {
         height: auto;
-        min-height: 4;
-        max-height: 7;
+        max-height: 5;
         background: $panel;
         border: round $surface-lighten-1;
         color: $text;
-        padding: 1;
-        margin-top: 1;
+        padding: 0 1;
     }
 
     #stts-profile-actions {
         height: 3;
         align-horizontal: right;
-        margin-top: 1;
     }
 
     #stts-profile-delete-btn {
@@ -608,9 +601,7 @@ class STTSProfileLibrary(Widget):
         self._live = False
         self._mount_token = 0
         self._request_id = 0
-        self._latest_request_id = 0
         self._active_page_task: asyncio.Task[None] | None = None
-        self._active_page_token: _PageRequest | None = None
         self._active_page_phase = "idle"
         # Cleanup-only work has no current request token or publication
         # authority. It is bounded separately from the one active pipeline.
@@ -625,7 +616,8 @@ class STTSProfileLibrary(Widget):
         self._loaded_rows: dict[str, LoadedTTSProfile] = {}
         self._row_availability: dict[str, TTSProfileAvailability] = {}
         self._selected_profile: LoadedTTSProfile | None = None
-        self._retained_editor_draft: tuple[UUID, TTSProfileDraft] | None = None
+        self._retained_editor_draft: _RetainedEditorDraft | None = None
+        self._active_modal: _OwnedProfileModal | None = None
         self._search: str | None = None
         self._offset = 0
         self._total = 0
@@ -694,6 +686,10 @@ class STTSProfileLibrary(Widget):
         self._mount_token += 1
         self._pending_page_request = None
         self._retained_editor_draft = None
+        modal = self._active_modal
+        if modal is not None:
+            self._dismiss_owned_modal(modal)
+        self._active_modal = None
         timer = self._search_timer
         self._search_timer = None
         if timer is not None:
@@ -707,7 +703,6 @@ class STTSProfileLibrary(Widget):
             if task is not None
         )
         self._active_page_task = None
-        self._active_page_token = None
         self._active_page_phase = "idle"
         self._retained_cleanup_task = None
         for task in tasks:
@@ -729,7 +724,6 @@ class STTSProfileLibrary(Widget):
         if not self._live:
             return
         self._request_id += 1
-        self._latest_request_id = self._request_id
         self._search = search
         self._offset = max(0, offset)
         request = _PageRequest(
@@ -759,7 +753,6 @@ class STTSProfileLibrary(Widget):
             name=f"stts_profile_page_{request.request_id}",
         )
         self._active_page_task = task
-        self._active_page_token = request
         self._active_page_phase = "service"
         task.add_done_callback(self._page_pipeline_done)
 
@@ -773,7 +766,6 @@ class STTSProfileLibrary(Widget):
         if self._active_page_task is not task:
             return
         self._active_page_task = None
-        self._active_page_token = None
         self._active_page_phase = "idle"
         request = self._pending_page_request
         self._pending_page_request = None
@@ -802,7 +794,6 @@ class STTSProfileLibrary(Widget):
         request = self._pending_page_request
         self._pending_page_request = None
         self._active_page_task = None
-        self._active_page_token = None
         self._active_page_phase = "idle"
         self._retained_cleanup_task = task
         task.add_done_callback(self._retained_cleanup_done)
@@ -885,7 +876,7 @@ class STTSProfileLibrary(Widget):
         return (
             self._live
             and request.mount_token == self._mount_token
-            and request.request_id == self._latest_request_id
+            and request.request_id == self._request_id
             and request.search == self._search
             and request.offset == self._offset
         )
@@ -967,6 +958,9 @@ class STTSProfileLibrary(Widget):
         request: _PageRequest,
         page: TTSProfilePageSnapshot,
     ) -> None:
+        retained = self._retained_editor_draft
+        if retained is not None and retained[0][0] != page.repository_generation:
+            self._retained_editor_draft = None
         previous_rows = tuple(loaded.profile for loaded in self._loaded_rows.values())
         preserve_availability = (
             self._rendered_repository_generation == page.repository_generation
@@ -1068,7 +1062,9 @@ class STTSProfileLibrary(Widget):
         self.query_one("#stts-profile-status", Static).update(Text(copy))
 
     def _sync_selected_actions(self) -> None:
-        disabled = self._selected_profile is None
+        disabled = (
+            self._selected_profile is None or not self._rendered_request_is_current()
+        )
         for selector in (
             "#stts-profile-preview-btn",
             "#stts-profile-edit-btn",
@@ -1091,6 +1087,10 @@ class STTSProfileLibrary(Widget):
     @on(DataTable.RowSelected, "#stts-profile-table")
     def _handle_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()
+        if not self._rendered_request_is_current():
+            self._selected_profile = None
+            self._sync_selected_actions()
+            return
         loaded = self._loaded_rows.get(str(event.row_key.value))
         if loaded is None:
             return
@@ -1125,9 +1125,30 @@ class STTSProfileLibrary(Widget):
         )
 
     def _action_target_is_current(self, loaded: LoadedTTSProfile) -> bool:
-        return (
-            self._live and self.parent is not None and self._selected_profile is loaded
-        )
+        return self._rendered_request_is_current() and self._selected_profile is loaded
+
+    def _rendered_request_is_current(self) -> bool:
+        request = self._rendered_request
+        return request is not None and self._request_is_current(request)
+
+    @staticmethod
+    def _dismiss_owned_modal(modal: _OwnedProfileModal) -> None:
+        if modal.is_mounted and modal.is_current:
+            modal.dismiss(False if isinstance(modal, TTSProfileDeleteModal) else None)
+
+    async def _push_owned_modal(self, modal: _OwnedProfileModal) -> object:
+        active = self._active_modal
+        if active is not None:
+            self._dismiss_owned_modal(active)
+        self._active_modal = modal
+        try:
+            return await self.app.push_screen_wait(modal)
+        except asyncio.CancelledError:
+            self._dismiss_owned_modal(modal)
+            raise
+        finally:
+            if self._active_modal is modal:
+                self._active_modal = None
 
     async def _service_for_action(self) -> _ProfileService | None:
         service = self._service
@@ -1177,18 +1198,13 @@ class STTSProfileLibrary(Widget):
         if service is None:
             return None
         try:
-            loaded = await save_profile_from_artifact(
-                service,
-                display_name,
-                artifact,
-            )
+            loaded = await service.create_from_artifact(display_name, artifact)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - map to bounded UI copy
             self._set_status(_error_copy(error))
             return None
         if self._live:
-            self._set_status(_PROFILE_CREATED_COPY)
             self._queue_page_request(self._search, self._offset)
         return loaded
 
@@ -1205,14 +1221,13 @@ class STTSProfileLibrary(Widget):
         if count is None or not self._action_target_is_current(loaded):
             return None
 
+        loaded_key = (loaded.repository_generation, loaded.profile.profile_id)
         retained = self._retained_editor_draft
         initial_draft = (
-            retained[1]
-            if retained is not None and retained[0] == loaded.profile.profile_id
-            else None
+            retained[1] if retained is not None and retained[0] == loaded_key else None
         )
         try:
-            draft = await self.app.push_screen_wait(
+            draft = await self._push_owned_modal(
                 TTSProfileEditorModal(
                     loaded,
                     assignment_count=count,
@@ -1230,7 +1245,6 @@ class STTSProfileLibrary(Widget):
         if type(draft) is not TTSProfileDraft:
             self._set_status(_PROFILE_VALIDATION_COPY)
             return None
-
         try:
             updated = await service.update_profile(loaded, draft)
         except asyncio.CancelledError:
@@ -1240,16 +1254,12 @@ class STTSProfileLibrary(Widget):
                 "conflict",
                 "stale",
             }:
-                self._retained_editor_draft = (
-                    loaded.profile.profile_id,
-                    draft,
-                )
+                self._retained_editor_draft = (loaded_key, draft)
             self._set_status(_error_copy(error))
             return None
 
         self._retained_editor_draft = None
         if self._live:
-            self._set_status(_PROFILE_UPDATED_COPY)
             self._queue_page_request(self._search, self._offset)
         return updated
 
@@ -1267,7 +1277,7 @@ class STTSProfileLibrary(Widget):
             return None
 
         try:
-            draft = await self.app.push_screen_wait(
+            draft = await self._push_owned_modal(
                 TTSProfileEditorModal(
                     loaded,
                     assignment_count=count,
@@ -1284,22 +1294,10 @@ class STTSProfileLibrary(Widget):
         if type(draft) is not TTSProfileDraft:
             self._set_status(_PROFILE_VALIDATION_COPY)
             return None
-        profile = loaded.profile
-        if (
-            draft.provider_id != profile.provider_id
-            or draft.model_id != profile.model_id
-            or draft.voice_id != profile.voice_id
-            or draft.response_format != profile.response_format
-            or draft.speed != profile.speed
-            or draft.options != profile.options
-        ):
-            self._set_status(_PROFILE_VALIDATION_COPY)
-            return None
-
         try:
             duplicated = await service.duplicate_profile(
                 loaded,
-                draft.display_name,
+                cast(TTSProfileDraft, draft).display_name,
             )
         except asyncio.CancelledError:
             raise
@@ -1307,7 +1305,6 @@ class STTSProfileLibrary(Widget):
             self._set_status(_error_copy(error))
             return None
         if self._live:
-            self._set_status(_PROFILE_DUPLICATED_COPY)
             self._queue_page_request(self._search, self._offset)
         return duplicated
 
@@ -1325,11 +1322,8 @@ class STTSProfileLibrary(Widget):
             return False
 
         try:
-            confirmed = await self.app.push_screen_wait(
-                TTSProfileDeleteModal(
-                    loaded,
-                    assignment_count=count,
-                )
+            confirmed = await self._push_owned_modal(
+                TTSProfileDeleteModal(assignment_count=count)
             )
         except asyncio.CancelledError:
             raise
@@ -1352,7 +1346,6 @@ class STTSProfileLibrary(Widget):
             self._set_status(_error_copy(error))
             return False
         if self._live:
-            self._set_status(_PROFILE_DELETED_COPY)
             self._queue_page_request(self._search, self._offset)
         return True
 
@@ -1397,7 +1390,7 @@ class STTSProfileLibrary(Widget):
     def _handle_preview(self, event: Button.Pressed) -> None:
         event.stop()
         loaded = self._selected_profile
-        if loaded is None:
+        if loaded is None or not self._action_target_is_current(loaded):
             return
         availability = self._row_availability.get(str(loaded.profile.profile_id))
         if availability is None:
