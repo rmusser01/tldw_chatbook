@@ -23,7 +23,7 @@ from tldw_chatbook.Evals.eval_errors import (
     BudgetMonitor,
 )
 from tldw_chatbook.Evals.base_runner import BaseEvalRunner, EvalSampleResult
-from tldw_chatbook.Evals.metrics_calculator import MetricsCalculator
+from tldw_chatbook.Evals.eval_runner import MetricsCalculator
 from tldw_chatbook.Evals.dataset_loader import DatasetLoader
 from tldw_chatbook.Evals.exporters import EvaluationExporter
 from tldw_chatbook.Evals.config_loader import EvalConfigLoader

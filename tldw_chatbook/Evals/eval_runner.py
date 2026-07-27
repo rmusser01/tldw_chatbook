@@ -874,6 +874,155 @@ class MetricsCalculator:
         except (ValueError, OverflowError):
             return float("inf")
 
+    @staticmethod
+    def calculate_rouge_scores(predicted: str, expected: str) -> Dict[str, float]:
+        """Calculate all ROUGE scores (ROUGE-1, ROUGE-2, ROUGE-L)."""
+        return {
+            "rouge_1": MetricsCalculator.calculate_rouge_1(predicted, expected),
+            "rouge_2": MetricsCalculator.calculate_rouge_2(predicted, expected),
+            "rouge_l": MetricsCalculator.calculate_rouge_l(predicted, expected),
+        }
+
+    @staticmethod
+    def calculate_classification_metrics(
+        predicted_labels: List[str],
+        true_labels: List[str],
+        labels: Optional[List[str]] = None,
+    ) -> Dict[str, float]:
+        """
+        Calculate classification metrics (accuracy, precision, recall, F1).
+
+        Args:
+            predicted_labels: List of predicted labels
+            true_labels: List of true labels
+            labels: Optional list of all possible labels
+
+        Returns:
+            Dictionary of classification metrics
+        """
+        if len(predicted_labels) != len(true_labels):
+            raise ValueError("Predicted and true labels must have the same length")
+
+        if not predicted_labels:
+            return {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0}
+
+        # Get unique labels if not provided
+        if labels is None:
+            labels = list(set(true_labels) | set(predicted_labels))
+
+        # Calculate confusion matrix
+        confusion_matrix = {}
+        for label in labels:
+            confusion_matrix[label] = {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
+
+        for pred, true in zip(predicted_labels, true_labels):
+            for label in labels:
+                if true == label and pred == label:
+                    confusion_matrix[label]["tp"] += 1
+                elif true != label and pred == label:
+                    confusion_matrix[label]["fp"] += 1
+                elif true == label and pred != label:
+                    confusion_matrix[label]["fn"] += 1
+                else:
+                    confusion_matrix[label]["tn"] += 1
+
+        # Calculate metrics per label
+        label_metrics = {}
+        for label in labels:
+            tp = confusion_matrix[label]["tp"]
+            fp = confusion_matrix[label]["fp"]
+            fn = confusion_matrix[label]["fn"]
+
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = (
+                2 * (precision * recall) / (precision + recall)
+                if (precision + recall) > 0
+                else 0.0
+            )
+
+            label_metrics[label] = {"precision": precision, "recall": recall, "f1": f1}
+
+        # Calculate overall metrics
+        accuracy = sum(
+            1 for p, t in zip(predicted_labels, true_labels) if p == t
+        ) / len(predicted_labels)
+
+        # Macro-averaged metrics
+        macro_precision = sum(m["precision"] for m in label_metrics.values()) / len(
+            label_metrics
+        )
+        macro_recall = sum(m["recall"] for m in label_metrics.values()) / len(
+            label_metrics
+        )
+        macro_f1 = sum(m["f1"] for m in label_metrics.values()) / len(label_metrics)
+
+        return {
+            "accuracy": accuracy,
+            "precision": macro_precision,
+            "recall": macro_recall,
+            "f1": macro_f1,
+            "per_label_metrics": label_metrics,
+        }
+
+    @staticmethod
+    def calculate_all_metrics(
+        predicted: str, expected: str, metric_names: Optional[List[str]] = None
+    ) -> Dict[str, float]:
+        """
+        Calculate all requested metrics.
+
+        Args:
+            predicted: Predicted text
+            expected: Expected text
+            metric_names: List of metric names to calculate
+
+        Returns:
+            Dictionary of metric values
+        """
+        if metric_names is None:
+            metric_names = ["exact_match", "f1", "rouge_1"]
+
+        metrics = {}
+
+        for metric_name in metric_names:
+            if metric_name == "exact_match":
+                metrics[metric_name] = MetricsCalculator.calculate_exact_match(
+                    predicted, expected
+                )
+            elif metric_name == "contains":
+                metrics[metric_name] = MetricsCalculator.calculate_contains_match(
+                    predicted, expected
+                )
+            elif metric_name == "f1":
+                metrics[metric_name] = MetricsCalculator.calculate_f1_score(
+                    predicted, expected
+                )
+            elif metric_name == "bleu":
+                metrics[metric_name] = MetricsCalculator.calculate_bleu_score(
+                    predicted, expected, n=4
+                )
+            elif metric_name == "rouge_1":
+                metrics[metric_name] = MetricsCalculator.calculate_rouge_1(
+                    predicted, expected
+                )
+            elif metric_name == "rouge_2":
+                metrics[metric_name] = MetricsCalculator.calculate_rouge_2(
+                    predicted, expected
+                )
+            elif metric_name == "rouge_l":
+                metrics[metric_name] = MetricsCalculator.calculate_rouge_l(
+                    predicted, expected
+                )
+            elif metric_name == "semantic_similarity":
+                metrics[metric_name] = MetricsCalculator.calculate_semantic_similarity(
+                    predicted, expected
+                )
+            else:
+                logger.warning(f"Unknown metric: {metric_name}")
+
+        return metrics
+
 
 class ErrorHandler:
     """Handles retries and error classification for evaluation runs."""
