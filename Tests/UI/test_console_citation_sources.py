@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+from io import StringIO
 from threading import Event
 from types import SimpleNamespace
 
 import pytest
+from rich.console import Console as RichConsole
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Button, ListItem, ListView, Static
@@ -185,6 +188,8 @@ def _hydration_result(
     *,
     identities: dict[int, dict[str, object]] | None = None,
     omitted_snapshot_ordinals: frozenset[int] = frozenset(),
+    snapshot_texts: dict[int, str] | None = None,
+    titles: dict[int, str] | None = None,
     state: CitationHydrationState = CitationHydrationState.AUTHORIZED,
 ) -> CitationHydrationResult:
     trace = _trace()
@@ -193,17 +198,22 @@ def _hydration_result(
         2: {"source_kind": "media_db", "source_id": "media-2"},
         3: {"source_kind": "chat_history", "source_id": "conversation-3"},
     }
+    snapshot_texts = snapshot_texts or {}
+    titles = titles or {}
     snapshots = tuple(
         EvidenceSnapshotPayload(
             payload_id=f"snapshot-{ordinal}",
             storage_mode=EvidenceStorageMode.EMBEDDED,
-            snapshot_text=(
-                "[link](https://example.invalid) "
-                "[bold red]literal[/bold red] \x1b[31mANSI-looking\x1b[0m"
-                if ordinal == 2
-                else f"exact snapshot {ordinal}"
+            snapshot_text=snapshot_texts.get(
+                ordinal,
+                (
+                    "[link](https://example.invalid) "
+                    "[bold red]literal[/bold red] \x1b[31mANSI-looking\x1b[0m"
+                    if ordinal == 2
+                    else f"exact snapshot {ordinal}"
+                ),
             ),
-            title=f"[cyan]Source {ordinal}[/cyan]",
+            title=titles.get(ordinal, f"[cyan]Source {ordinal}[/cyan]"),
             source_identity=identities[ordinal],
         )
         for ordinal in range(1, 4)
@@ -1151,12 +1161,32 @@ async def test_modal_authorization_and_revalidation_are_exact_and_ordered() -> N
 
 
 @pytest.mark.asyncio
-async def test_modal_renders_titles_and_chunks_as_literal_text() -> None:
-    app, _screen, _repository, _message = _citation_harness()
-    exact_chunk = (
-        "[link](https://example.invalid) "
-        "[bold red]literal[/bold red] \x1b[31mANSI-looking\x1b[0m"
+async def test_modal_render_output_neutralizes_terminal_controls_only() -> None:
+    raw_title = (
+        "[cyan]\x1b]8;;https://example.invalid\x07Source"
+        "\x1b]8;;\x07[/cyan]\r"
     )
+    raw_chunk = (
+        "[link](https://example.invalid) [bold red]literal[/bold red] Ω\n"
+        "\tCSI=\x1b[31mred\x1b[0m OSC=\x1b]8;;https://example.invalid\x07link"
+        "\x1b]8;;\x07 BEL=\x07 CR=\r NUL=\x00 DEL=\x7f C1=\x9b31m"
+    )
+    hydration = _hydration_result(
+        snapshot_texts={2: raw_chunk},
+        titles={2: raw_title},
+    )
+    app, _screen, _repository, _message = _citation_harness(hydration=hydration)
+
+    def rich_output(renderable: object) -> str:
+        stream = StringIO()
+        console = RichConsole(
+            file=stream,
+            force_terminal=True,
+            color_system=None,
+            width=500,
+        )
+        console.print(renderable, end="")
+        return stream.getvalue()
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1167,13 +1197,35 @@ async def test_modal_renders_titles_and_chunks_as_literal_text() -> None:
         assert isinstance(modal, ConsoleCitationSourcesModal)
         detail = modal.query_one("#console-citation-source-chunk", Static)
         title = modal.query_one("#console-citation-source-title", Static)
-        assert detail.renderable.plain == exact_chunk
+        source_list = modal.query_one("#console-citation-source-list", ListView)
+        list_label = source_list.query_one(ListItem).query_one(Static)
+
+        assert modal.display_rows[0].snapshot_text == raw_chunk
+        assert modal.display_rows[0].title == raw_title
         assert detail.renderable.spans == []
-        assert title.renderable.plain == "[cyan]Source 2[/cyan]"
         assert title.renderable.spans == []
+        assert "\n\t" in detail.renderable.plain
         assert len(modal.query("Markdown")) == 0
 
-        source_list = modal.query_one("#console-citation-source-list", ListView)
+        rendered_detail = rich_output(detail.renderable)
+        rendered_title = rich_output(title.renderable)
+        rendered_list_label = rich_output(list_label.renderable)
+        aggregate = rendered_detail + rendered_title + rendered_list_label
+        for control in ("\x00", "\x07", "\x0d", "\x1b", "\x7f", "\x9b"):
+            assert control not in aggregate
+        for visible_escape in (
+            "\\x00",
+            "\\x07",
+            "\\x0d",
+            "\\x1b",
+            "\\x7f",
+            "\\x9b",
+        ):
+            assert visible_escape in aggregate
+        assert "Ω" in aggregate
+        assert "[link](https://example.invalid)" in aggregate
+        assert "[bold red]literal[/bold red]" in aggregate
+
         assert len(source_list.query(ListItem)) == 2
         source_list.index = 1
         await pilot.pause()
@@ -1291,6 +1343,66 @@ async def test_message_or_database_change_discards_late_hydration(
             ).renderable.plain == ""
     finally:
         release.set()
+
+
+@pytest.mark.asyncio
+async def test_message_change_during_real_list_extend_discards_mounted_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hydration_started = Event()
+    hydration_release = Event()
+    app, _screen, _repository, message = _citation_harness(
+        hydration_started=hydration_started,
+        hydration_release=hydration_release,
+    )
+    extend_completed = asyncio.Event()
+    extend_release = asyncio.Event()
+    original_extend = ListView.extend
+
+    def gated_extend(list_view: ListView, items):
+        real_mount = original_extend(list_view, items)
+
+        async def mount_then_pause():
+            await real_mount
+            extend_completed.set()
+            await extend_release.wait()
+
+        return mount_then_pause()
+
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.click("#console-citation-sources-assistant-1")
+            await pilot.pause(0.1)
+            assert hydration_started.is_set()
+            modal = app.screen
+            assert isinstance(modal, ConsoleCitationSourcesModal)
+            source_list = modal.query_one("#console-citation-source-list", ListView)
+            monkeypatch.setattr(ListView, "extend", gated_extend)
+
+            hydration_release.set()
+            await asyncio.wait_for(extend_completed.wait(), timeout=2)
+            message.content = "Changed while source rows were mounting [S2]."
+            extend_release.set()
+            await pilot.pause(0.1)
+
+            assert modal.display_rows == ()
+            assert len(source_list.children) == 0
+            assert (
+                modal.query_one(
+                    "#console-citation-source-title", Static
+                ).renderable.plain
+                == ""
+            )
+            assert (
+                modal.query_one(
+                    "#console-citation-source-chunk", Static
+                ).renderable.plain
+                == ""
+            )
+    finally:
+        hydration_release.set()
+        extend_release.set()
 
 
 @pytest.mark.asyncio

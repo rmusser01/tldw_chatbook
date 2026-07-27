@@ -89,6 +89,18 @@ def _safe_source_identifier(value: object) -> str | None:
     return value
 
 
+def _render_literal_text(value: str) -> str:
+    """Make terminal controls visible while preserving ordinary text layout."""
+
+    return "".join(
+        character
+        if character in "\n\t"
+        or not (ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F)
+        else f"\\x{ord(character):02x}"
+        for character in value
+    )
+
+
 def build_console_citation_source_rows(
     hydration: CitationHydrationResult,
 ) -> tuple[ConsoleCitationSourceRow, ...] | None:
@@ -308,7 +320,7 @@ class ConsoleCitationSourcesModal(ModalScreen[None]):
         if not rows:
             await self._show_unavailable()
             return
-        await self._show_rows(rows)
+        await self._show_rows(rows, generation)
 
     async def _show_unavailable(self) -> None:
         self.display_rows = ()
@@ -322,23 +334,41 @@ class ConsoleCitationSourcesModal(ModalScreen[None]):
     async def _show_rows(
         self,
         rows: tuple[ConsoleCitationSourceRow, ...],
+        generation: int,
     ) -> None:
-        self.display_rows = rows
+        self.display_rows = ()
         source_list = self.query_one("#console-citation-source-list", ListView)
         await source_list.clear()
+        if not self._request_is_current(generation):
+            await self._discard_rows(source_list)
+            return
         items: list[ListItem] = []
         for index, row in enumerate(rows):
             label = Text()
             label.append(row.display_marker)
             label.append(" ")
-            label.append(row.title)
+            label.append(_render_literal_text(row.title))
             item = ListItem(Static(label, markup=False))
             item.citation_row_index = index
             items.append(item)
         await source_list.extend(items)
+        if not self._request_is_current(generation):
+            await self._discard_rows(source_list)
+            return
+        self.display_rows = rows
         self.query_one("#console-citation-sources-state", Static).update("")
         source_list.index = 0
         self._update_detail(rows[0])
+
+    async def _discard_rows(self, source_list: ListView) -> None:
+        """Remove any governed text mounted by a request that became stale."""
+
+        self.display_rows = ()
+        if not self.is_mounted:
+            return
+        await source_list.clear()
+        if self.is_mounted:
+            self._update_detail(None)
 
     def _update_detail(self, row: ConsoleCitationSourceRow | None) -> None:
         marker = self.query_one("#console-citation-source-marker", Static)
@@ -350,8 +380,8 @@ class ConsoleCitationSourcesModal(ModalScreen[None]):
             chunk.update(Text())
             return
         marker.update(Text(row.display_marker))
-        title.update(Text(row.title))
-        chunk.update(Text(row.snapshot_text))
+        title.update(Text(_render_literal_text(row.title)))
+        chunk.update(Text(_render_literal_text(row.snapshot_text)))
 
     def _show_item(self, item: ListItem | None) -> None:
         if item is None:
