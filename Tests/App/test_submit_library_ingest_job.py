@@ -8,6 +8,7 @@ import pytest
 
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
+    IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
 )
@@ -152,8 +153,32 @@ class TestIngestJobOptions:
         )
         assert options["transcription_model"] == "nemo-parakeet-tdt-0.6b-v2"
         assert options["language"] == "en"
+        assert options["transcription_precision"] == "int8"
+        assert options["transcription_local_files_only"] is True
         assert options["timestamps"] is False
         assert options["diarization"] is True
+
+    def test_supported_non_english_parakeet_route_uses_v3(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp4",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "parakeet-onnx",
+                    "transcription_model_dir": "/models/parakeet-v3-int8",
+                    "language": " DE ",
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["transcription_provider"] == "parakeet-onnx"
+        assert options["transcription_model"] == "nemo-parakeet-tdt-0.6b-v3"
+        assert options["transcription_model_dir"] == "/models/parakeet-v3-int8"
+        assert options["language"] == "de"
+        assert options["transcription_precision"] == "int8"
+        assert options["transcription_local_files_only"] is True
 
     def test_parakeet_onnx_defaults_language_to_english(self) -> None:
         app = _minimal_app()
@@ -171,22 +196,47 @@ class TestIngestJobOptions:
         assert options["language"] == "en"
         assert options["transcription_model_dir"] is None
 
-    def test_faster_whisper_ignores_stale_parakeet_model_directory(self) -> None:
+    def test_semantic_default_stays_on_faster_whisper_and_drops_stale_directory(
+        self,
+    ) -> None:
         app = _minimal_app()
         job = _make_job(
             source_path="/tmp/test.mp3",
             ingest_options={
                 "audio_video": {
-                    "transcription_provider": "faster-whisper",
                     "transcription_model_dir": "/models/parakeet-v2-int8",
                     "transcription_model": "small",
+                    "language": " FR ",
                 },
             },
         )
 
         options = app._ingest_job_options(job)
 
+        assert options["transcription_provider"] == "faster-whisper"
+        assert options["transcription_model"] == "small"
         assert options["transcription_model_dir"] is None
+        assert options["language"] == "fr"
+        assert options["transcription_precision"] == "int8"
+        assert options["transcription_local_files_only"] is True
+
+    def test_faster_whisper_preserves_normalized_translation_target(self) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "faster-whisper",
+                    "language": " JA ",
+                    "target_language": " EN ",
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["language"] == "ja"
+        assert options["translation_target_language"] == "en"
 
     def test_ebook_group_options(self) -> None:
         app = _minimal_app()
@@ -307,3 +357,70 @@ def test_ingest_job_options_detects_type_group(
         assert "pdf_engine" not in options
         assert "transcription_model" not in options
         assert "extraction_method" not in options
+
+
+def test_invalid_parakeet_allows_next_job_to_dispatch() -> None:
+    app = object.__new__(TldwCli)
+    app.library_ingest_jobs = LibraryIngestJobRegistry()
+    app._ingest_shutdown = False
+    app._ingest_parse_worker_count = lambda: 1  # type: ignore[method-assign]
+    app._ingest_heavy_lane_max_workers = lambda: 1  # type: ignore[method-assign]
+    app._ingest_parse_pool_generation = 1
+    app._ingest_parse_jobs_by_generation = {1: set()}
+
+    invalid = app.library_ingest_jobs.submit(
+        source_path="/tmp/invalid.mp3",
+        detected_type="audio",
+        ingest_options={
+            "audio_video": {
+                "transcription_provider": "parakeet-onnx",
+                "language": "auto",
+            }
+        },
+    )
+    valid = app.library_ingest_jobs.submit(
+        source_path="/tmp/valid.mp3",
+        detected_type="audio",
+        ingest_options={
+            "audio_video": {
+                "transcription_provider": "faster-whisper",
+                "transcription_model": "small",
+                "language": "en",
+            }
+        },
+    )
+
+    class _Pool:
+        def __init__(self) -> None:
+            self.calls: list[tuple[Any, ...]] = []
+
+        def apply_async(self, function, args, callback, error_callback) -> None:
+            self.calls.append((function, args, callback, error_callback))
+
+    pool = _Pool()
+    pool_creation_calls = 0
+
+    def ensure_pool() -> _Pool:
+        nonlocal pool_creation_calls
+        pool_creation_calls += 1
+        return pool
+
+    app._ensure_ingest_parse_pool = ensure_pool  # type: ignore[method-assign]
+
+    app._top_up_ingest_parse_pool()
+
+    jobs_by_id = {job.job_id: job for job in app.library_ingest_jobs.jobs()}
+    invalid_job = jobs_by_id[invalid.job_id]
+    valid_job = jobs_by_id[valid.job_id]
+    assert invalid_job.state is IngestJobState.FAILED
+    assert invalid_job.permanent is False
+    assert invalid_job.error is not None
+    assert "Retry with faster-whisper" in invalid_job.error
+    assert "\n" not in invalid_job.error
+    assert len(invalid_job.error) <= 200
+    assert valid_job.state is IngestJobState.PARSING
+    assert pool_creation_calls == 1
+    assert len(pool.calls) == 1
+    _, (source_path, options), _, _ = pool.calls[0]
+    assert source_path == valid.source_path
+    assert options["transcription_provider"] == "faster-whisper"

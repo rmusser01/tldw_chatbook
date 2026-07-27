@@ -26,6 +26,8 @@ def test_audio_processor_passes_model_directory_to_transcription(
         transcription_model="nemo-parakeet-tdt-0.6b-v2",
         transcription_model_dir="/models/parakeet-v2-int8",
         transcription_language="en",
+        transcription_precision="int8",
+        transcription_local_files_only=True,
         perform_chunking=False,
         perform_analysis=False,
     )
@@ -41,6 +43,8 @@ def test_audio_processor_passes_model_directory_to_transcription(
             "vad_filter": False,
             "diarize": False,
             "model_dir": "/models/parakeet-v2-int8",
+            "compute_type": "int8",
+            "local_files_only": True,
             "progress_callback": None,
         }
     ]

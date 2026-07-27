@@ -1127,13 +1127,27 @@ class TranscriptionService:
             except Exception as e:
                 _handle_progress_callback_error(e)
 
-        # Get or create model instance with thread safety
-        cache_key = (model, self.config["device"], self.config["compute_type"])
+        # Get or create model instance with thread safety. Routed batch calls
+        # can narrow execution to local INT8 without changing direct callers'
+        # configured compute type or existing download behavior.
+        effective_compute_type = (
+            kwargs.get("compute_type") or self.config["compute_type"]
+        )
+        effective_local_files_only = bool(kwargs.get("local_files_only", False))
+        cache_key = (
+            model,
+            self.config["device"],
+            effective_compute_type,
+            effective_local_files_only,
+        )
 
         with self._model_cache_lock:
             if cache_key not in self._model_cache:
                 logger.info(
-                    f"Loading Whisper model: {model} (device: {self.config['device']}, compute_type: {self.config['compute_type']})"
+                    f"Loading Whisper model: {model} "
+                    f"(device: {self.config['device']}, "
+                    f"compute_type: {effective_compute_type}, "
+                    f"local_files_only: {effective_local_files_only})"
                 )
 
                 # Report model loading progress
@@ -1141,7 +1155,7 @@ class TranscriptionService:
                     try:
                         # Check if this is likely a first-time download
                         is_huggingface_model = "/" in model
-                        if is_huggingface_model:
+                        if is_huggingface_model and not effective_local_files_only:
                             progress_callback(
                                 0,
                                 f"Downloading model '{model}' from HuggingFace (this may take several minutes on first use)...",
@@ -1173,9 +1187,9 @@ class TranscriptionService:
                         self._model_cache[cache_key] = WhisperModel(
                             model,
                             device=self.config["device"],
-                            compute_type=self.config["compute_type"],
+                            compute_type=effective_compute_type,
                             download_root=None,  # Use default cache directory
-                            local_files_only=False,  # Allow downloading if needed
+                            local_files_only=effective_local_files_only,
                         )
                     model_load_time = time.time() - model_load_start
                     logger.info(
@@ -1300,7 +1314,7 @@ class TranscriptionService:
                         f"Starting transcription with {model}{device_info}...",
                         {
                             "device": self.config["device"],
-                            "compute_type": self.config["compute_type"],
+                            "compute_type": effective_compute_type,
                             "model": model,
                             "provider": "faster-whisper",
                         },

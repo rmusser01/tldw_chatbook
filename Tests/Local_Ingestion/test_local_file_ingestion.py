@@ -186,6 +186,8 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
             "transcription_model_dir": "/models/parakeet-v2-int8",
             "transcription_model": "nemo-parakeet-tdt-0.6b-v2",
             "language": "en",
+            "transcription_precision": "int8",
+            "transcription_local_files_only": True,
             "timestamps": False,
             "diarization": True,
         },
@@ -197,6 +199,8 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert call["transcription_model_dir"] == "/models/parakeet-v2-int8"
     assert call["transcription_model"] == "nemo-parakeet-tdt-0.6b-v2"
     assert call["transcription_language"] == "en"
+    assert call["transcription_precision"] == "int8"
+    assert call["transcription_local_files_only"] is True
     assert call["timestamp_option"] is False
     assert call["diarize"] is True
 
@@ -237,6 +241,9 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
             "transcription_model_dir": None,
             "transcription_model": "medium",
             "language": "fr",
+            "translation_target_language": "en",
+            "transcription_precision": "int8",
+            "transcription_local_files_only": True,
             "timestamps": True,
             "diarization": False,
         },
@@ -248,6 +255,9 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert call["transcription_model_dir"] is None
     assert call["transcription_model"] == "medium"
     assert call["transcription_language"] == "fr"
+    assert call["translation_target_language"] == "en"
+    assert call["transcription_precision"] == "int8"
+    assert call["transcription_local_files_only"] is True
     assert call["timestamp_option"] is True
     assert call["diarize"] is False
 

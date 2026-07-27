@@ -201,7 +201,7 @@ class TestFasterWhisperUnit:
         assert result["provider"] == "faster-whisper"
 
         # Verify model is cached
-        cache_key = ("base", "cpu", "int8")
+        cache_key = ("base", "cpu", "int8", False)
         assert cache_key in transcription_service._model_cache
 
     def test_model_cache_reuse(
@@ -230,7 +230,7 @@ class TestFasterWhisperUnit:
         mock_class.assert_not_called()
 
         # The cached model should be used - verify cache is populated
-        cache_key = ("base", "cpu", "int8")
+        cache_key = ("base", "cpu", "int8", False)
         assert cache_key in transcription_service._model_cache
         cached_model = transcription_service._model_cache[cache_key]
         # Both calls should use the same model instance
@@ -258,7 +258,7 @@ class TestFasterWhisperUnit:
             transcription_service.config["compute_type"] = compute_type
 
             # Clear specific cache entry if it exists
-            cache_key = (model, device, compute_type)
+            cache_key = (model, device, compute_type, False)
             if cache_key in transcription_service._model_cache:
                 del transcription_service._model_cache[cache_key]
 
@@ -273,6 +273,78 @@ class TestFasterWhisperUnit:
             # Should create new model for this configuration
             mock_class.assert_called_once()
             assert cache_key in transcription_service._model_cache
+
+    def test_batch_overrides_force_local_int8_model_loading(
+        self, transcription_service, mock_whisper_model, sample_audio_file
+    ):
+        """Routed batch settings override config at the model-loading boundary."""
+        mock_class, _ = mock_whisper_model
+        transcription_service.config["compute_type"] = "float16"
+
+        transcription_service._transcribe_with_faster_whisper(
+            audio_path=sample_audio_file,
+            model="base",
+            language="en",
+            vad_filter=True,
+            compute_type="int8",
+            local_files_only=True,
+        )
+
+        mock_class.assert_called_once_with(
+            "base",
+            device="cpu",
+            compute_type="int8",
+            download_root=None,
+            local_files_only=True,
+        )
+        assert ("base", "cpu", "int8", True) in transcription_service._model_cache
+
+    def test_direct_call_without_overrides_keeps_configured_loading_behavior(
+        self, transcription_service, mock_whisper_model, sample_audio_file
+    ):
+        """Non-batch callers retain configured compute type and downloads."""
+        mock_class, _ = mock_whisper_model
+        transcription_service.config["compute_type"] = "float16"
+
+        transcription_service._transcribe_with_faster_whisper(
+            audio_path=sample_audio_file,
+            model="base",
+            language="en",
+            vad_filter=True,
+        )
+
+        mock_class.assert_called_once_with(
+            "base",
+            device="cpu",
+            compute_type="float16",
+            download_root=None,
+            local_files_only=False,
+        )
+        assert ("base", "cpu", "float16", False) in transcription_service._model_cache
+
+    def test_local_only_state_participates_in_model_cache_identity(
+        self, transcription_service, mock_whisper_model, sample_audio_file
+    ):
+        """Local-only and download-enabled calls never share a cached model."""
+        mock_class, _ = mock_whisper_model
+
+        transcription_service._transcribe_with_faster_whisper(
+            audio_path=sample_audio_file,
+            model="base",
+            language="en",
+            vad_filter=True,
+            local_files_only=True,
+        )
+        transcription_service._transcribe_with_faster_whisper(
+            audio_path=sample_audio_file,
+            model="base",
+            language="en",
+            vad_filter=True,
+        )
+
+        assert mock_class.call_count == 2
+        assert ("base", "cpu", "int8", True) in transcription_service._model_cache
+        assert ("base", "cpu", "int8", False) in transcription_service._model_cache
 
     def test_language_detection(
         self, transcription_service, mock_whisper_model, sample_audio_file

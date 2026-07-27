@@ -593,8 +593,19 @@ def parse_local_file_for_ingest(
                     "transcription_provider", "faster-whisper"
                 ),
                 transcription_model_dir=options.get("transcription_model_dir"),
-                transcription_model=options.get('transcription_model', chunk_options.get('transcription_model', 'base')),
-                transcription_language=options.get('language', chunk_options.get('transcription_language', 'en')),
+                transcription_model=options.get(
+                    "transcription_model",
+                    chunk_options.get("transcription_model", "base"),
+                ),
+                transcription_language=options.get(
+                    "language",
+                    chunk_options.get("transcription_language", "en"),
+                ),
+                translation_target_language=options.get("translation_target_language"),
+                transcription_precision=options.get("transcription_precision"),
+                transcription_local_files_only=options.get(
+                    "transcription_local_files_only", False
+                ),
                 perform_chunking=True,
                 chunk_method=chunk_options.get('method', 'sentences'),
                 max_chunk_size=chunk_options.get('size', 500),
@@ -650,8 +661,19 @@ def parse_local_file_for_ingest(
                     "transcription_provider", "faster-whisper"
                 ),
                 transcription_model_dir=options.get("transcription_model_dir"),
-                transcription_model=options.get('transcription_model', chunk_options.get('transcription_model', 'base')),
-                transcription_language=options.get('language', chunk_options.get('transcription_language', 'en')),
+                transcription_model=options.get(
+                    "transcription_model",
+                    chunk_options.get("transcription_model", "base"),
+                ),
+                transcription_language=options.get(
+                    "language",
+                    chunk_options.get("transcription_language", "en"),
+                ),
+                translation_target_language=options.get("translation_target_language"),
+                transcription_precision=options.get("transcription_precision"),
+                transcription_local_files_only=options.get(
+                    "transcription_local_files_only", False
+                ),
                 perform_chunking=True,
                 chunk_method=chunk_options.get('method', 'sentences'),
                 max_chunk_size=chunk_options.get('size', 500),
