@@ -24,10 +24,15 @@ language, plus a few English accent/noise, silence, and long-form cases. Audio
 is supplied locally and must already be PCM signed 16-bit, 16 kHz, mono WAV.
 The script does not download, extract, convert, or publish corpus data.
 
-Each model is loaded once. Parakeet v2 runs English cases. Parakeet v3 runs the
-declared supported non-English cases. Faster-whisper runs every non-silence
-case. Silence is recorded separately because WER and CER have no non-empty
-reference denominator.
+Each model is loaded once. The required execution matrix is:
+
+- Parakeet v2 INT8 and F32 run every English case and the silence case.
+- Parakeet v3 INT8 and F32 run every declared supported non-English case and
+  the silence case.
+- faster-whisper runs every case, including silence.
+
+Silence is recorded separately because WER and CER have no non-empty reference
+denominator.
 
 ## Measurements
 
@@ -35,7 +40,7 @@ Use a small Unicode-aware normalizer implemented with the Python standard
 library: Unicode normalization, case folding, punctuation-to-space, and
 whitespace collapse.
 
-For every model/case pair, record:
+For every scheduled model/case pair, record:
 
 - normalized reference and hypothesis;
 - word and character edit counts and reference-unit counts;
