@@ -797,7 +797,12 @@ def _build_test_app(configured_default: str | None = None) -> TldwCli:
         )
         app.runtime_policy = context
         app.current_runtime_source = "local"
-        app.current_runtime_backend = "local"
+        # `current_runtime_backend` became a read-only property derived from
+        # `_runtime_policy_projection_snapshot`, so assigning it raises. Seed
+        # the backing field instead -- otherwise every test built on this
+        # harness dies at construction (15 in Tests/Watchlists alone, red on
+        # dev independently of this branch).
+        app._runtime_policy_projection_snapshot = ("local", None)
         return context
 
     def fake_cli_setting(_section, _key=None, default=None):
