@@ -404,3 +404,66 @@ async def test_grep_files_cannot_read_this_apps_own_sqlite_db_wal_sidecar(monkey
     result = await GrepFiles().execute(pattern="marker")
 
     assert result["matches"] == []
+
+
+# ---------------------------------------------------------------------------
+# Finding 4 (substrate review): a dotted `[tools] file_sandbox_root` (e.g.
+# `~/.tldw_sandbox`) inverts the hidden-file protection. `read_file`/
+# `write_file`/`list_directory` all route through `validate_path_multi` ->
+# `validate_path`, which refuses EVERY candidate once the root's own final
+# component is dotted (`path_validation.py`'s "hidden base directory"
+# check) -- an over-broad refusal, but the safe direction. `glob_files`/
+# `grep_files` instead glob `_tool_sandbox_root()` directly and never passed
+# through that check at all, so a PLAIN, non-hidden file sitting directly in
+# a dotted root was enumerated/read normally -- live-reproduced pre-fix:
+# `grep_files` returned "API_KEY=sk-live-abc123" from inside `.tldw_sandbox`
+# while `read_file` refused the identical path.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_glob_files_refuses_a_dotted_sandbox_root(tmp_path, monkeypatch):
+    dotted_root = tmp_path / ".tldw_sandbox"
+    dotted_root.mkdir()
+    (dotted_root / "secrets.txt").write_text("API_KEY=sk-live-abc123\n")
+    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(dotted_root))
+
+    result = await GlobFiles().execute(pattern="**/*")
+
+    assert "error" in result
+    assert "matches" not in result
+
+
+@pytest.mark.asyncio
+async def test_grep_files_refuses_a_dotted_sandbox_root(tmp_path, monkeypatch):
+    """The exact live finding: `grep_files('API_KEY')` against a dotted
+    sandbox root must no longer surface the secret line.
+    """
+    dotted_root = tmp_path / ".tldw_sandbox"
+    dotted_root.mkdir()
+    (dotted_root / "secrets.txt").write_text("API_KEY=sk-live-abc123\n")
+    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(dotted_root))
+
+    result = await GrepFiles().execute(pattern="API_KEY")
+
+    assert "error" in result
+    assert "matches" not in result
+    assert "sk-live-abc123" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_glob_files_consistent_with_read_file_on_a_dotted_root(tmp_path, monkeypatch):
+    """Both must refuse -- neither leaking (glob_files) nor over-refusing
+    silently different from its sibling (read_file). Pins the two tools to
+    the SAME observable behavior on the identical misconfiguration.
+    """
+    dotted_root = tmp_path / ".tldw_sandbox"
+    dotted_root.mkdir()
+    (dotted_root / "note.txt").write_text("hello\n")
+    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(dotted_root))
+
+    glob_result = await GlobFiles().execute(pattern="**/*")
+    read_result = await fot.ReadFileTool().execute(file_path="note.txt")
+
+    assert "error" in glob_result
+    assert "error" in read_result

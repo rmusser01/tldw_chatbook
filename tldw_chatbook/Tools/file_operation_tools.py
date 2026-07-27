@@ -626,6 +626,34 @@ def _is_hidden_within(resolved: Path, root_resolved: Path) -> bool:
     return any(part.startswith(".") for part in relative_parts)
 
 
+def _sandbox_root_is_hidden(root: Path) -> bool:
+    """Whether ``root``'s own final path component is dot-prefixed.
+
+    Mirrors ``Utils.path_validation.validate_path``'s "hidden base
+    directory" rejection (see that function's own comment): with
+    ``[tools] file_sandbox_root`` itself dotted (e.g. ``~/.tldw_sandbox``),
+    `read_file`/`write_file`/`list_directory` all refuse EVERY candidate,
+    because each routes through `validate_path_multi` -> `validate_path`
+    against this same root, and that check fires unconditionally once the
+    root's own name starts with `.` -- independent of the candidate.
+    `glob_files`/`grep_files` instead glob `_tool_sandbox_root()` directly
+    and never pass through `validate_path` at all, so without this
+    mirrored guard a dotted root INVERTS the hidden-file protection: the
+    three siblings refuse everything while these two enumerate/read it
+    normally (live-reproduced: `grep_files` returned a plain, non-hidden
+    file's contents from inside a dotted root while `read_file` refused
+    the identical path).
+
+    Args:
+        root: The resolved sandbox root, as returned by
+            ``_tool_sandbox_root()``.
+
+    Returns:
+        True if ``root``'s final path component starts with ``.``.
+    """
+    return root.name.startswith(".")
+
+
 class GlobFiles(Tool):
     """`glob_files` -- path-pattern search inside the sandbox root."""
 
@@ -677,50 +705,69 @@ class GlobFiles(Tool):
             return {"error": "pattern must stay inside the sandbox root"}
         try:
             root = _tool_sandbox_root()
-        except OSError as exc:
-            return {"error": f"sandbox root is not usable: {exc}"}
-        try:
-            candidates = root.glob(pattern)
-        except (ValueError, NotImplementedError) as exc:
-            return {"error": f"invalid pattern: {exc}"}
-        matches: list[str] = []
-        examined = 0
-        # Resolved ONCE for this call and reused for every candidate below,
-        # rather than letting `is_within` -> `is_sensitive_path` re-resolve
-        # the sensitive-path set (11 config accessors) per candidate -- see
-        # Utils.sensitive_paths.resolve_sensitive_context.
-        sensitive_ctx = resolve_sensitive_context()
-        root_resolved = root.resolve()
-        while True:
-            # `Path.glob()` validates lazily: a malformed pattern (e.g.
-            # "**foo/*") doesn't raise at construction above, it raises on
-            # the first `next()` here. Only the `next()` call is inside
-            # this try -- `path.is_file()`/`is_within()` below run outside
-            # it, so a ValueError from the loop body is never misreported
-            # as an invalid pattern.
+            # Mirrors validate_path's hidden-base-directory rejection, which
+            # is why read_file/write_file/list_directory refuse EVERYTHING
+            # once the sandbox root is itself dotted -- those three route
+            # through validate_path against this same root; glob()ing it
+            # directly here bypasses that check entirely without this
+            # mirrored guard. See _sandbox_root_is_hidden.
+            if _sandbox_root_is_hidden(root):
+                return {"error": "Access to hidden files/directories is not allowed"}
             try:
-                path = next(candidates)
-            except StopIteration:
-                break
+                candidates = root.glob(pattern)
             except (ValueError, NotImplementedError) as exc:
                 return {"error": f"invalid pattern: {exc}"}
-            examined += 1
-            if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
-                break
-            if not path.is_file() or not is_within(path, root, context=sensitive_ctx):
-                continue
-            # A dotfile/dotdir must be invisible here even though it passed
-            # `is_within` -- that call applies the credential/app-state
-            # denylist, not the hidden-component rule `read_file`/`write_file`
-            # enforce via `validate_path`. See `_is_hidden_within`.
-            try:
-                resolved = path.resolve()
-            except (OSError, RuntimeError):
-                continue
-            if _is_hidden_within(resolved, root_resolved):
-                continue
-            matches.append(str(path))
-        return {"matches": sorted(matches)}
+            matches: list[str] = []
+            examined = 0
+            # Resolved ONCE for this call and reused for every candidate
+            # below, rather than letting `is_within` -> `is_sensitive_path`
+            # re-resolve the sensitive-path set (11 config accessors) per
+            # candidate -- see Utils.sensitive_paths.resolve_sensitive_context.
+            sensitive_ctx = resolve_sensitive_context()
+            root_resolved = root.resolve()
+            while True:
+                # `Path.glob()` validates lazily: a malformed pattern (e.g.
+                # "**foo/*") doesn't raise at construction above, it raises
+                # on the first `next()` here. Only the `next()` call is
+                # inside this try -- `path.is_file()`/`is_within()` below
+                # run outside it, so a ValueError from the loop body is
+                # never misreported as an invalid pattern.
+                try:
+                    path = next(candidates)
+                except StopIteration:
+                    break
+                except (ValueError, NotImplementedError) as exc:
+                    return {"error": f"invalid pattern: {exc}"}
+                examined += 1
+                if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
+                    break
+                if not path.is_file() or not is_within(path, root, context=sensitive_ctx):
+                    continue
+                # A dotfile/dotdir must be invisible here even though it
+                # passed `is_within` -- that call applies the
+                # credential/app-state denylist, not the hidden-component
+                # rule `read_file`/`write_file` enforce via `validate_path`.
+                # See `_is_hidden_within`.
+                try:
+                    resolved = path.resolve()
+                except (OSError, RuntimeError):
+                    continue
+                if _is_hidden_within(resolved, root_resolved):
+                    continue
+                matches.append(str(path))
+            return {"matches": sorted(matches)}
+        except OSError as exc:
+            return {"error": f"sandbox root is not usable: {exc}"}
+        except Exception as exc:
+            # Same never-raise contract as read_file/write_file/
+            # list_directory's own outer catch-all (finding 6, substrate
+            # review): without this, an unanticipated exception -- e.g.
+            # `Path.expanduser()`'s `RuntimeError` when HOME can't be
+            # determined -- would escape `execute()` entirely, relying
+            # solely on `BuiltinToolProvider.invoke`'s own catch-all to
+            # keep the run alive.
+            logger.error(f"Error globbing pattern {pattern!r}: {exc}")
+            return {"error": f"Failed to glob files: {exc}"}
 
 
 class GrepFiles(Tool):
@@ -784,75 +831,92 @@ class GrepFiles(Tool):
 
         try:
             root = _tool_sandbox_root()
-        except OSError as exc:
-            return {"error": f"sandbox root is not usable: {exc}"}
-        glob_pattern = str(kwargs.get("glob") or "**/*")
-        if _rejects_traversal(glob_pattern):
-            return {"error": "glob must stay inside the sandbox root"}
-        try:
-            candidates = root.glob(glob_pattern)
-        except (ValueError, NotImplementedError) as exc:
-            return {"error": f"invalid glob: {exc}"}
-
-        matches: list[dict] = []
-        # Deliberately NOT sorted(candidates): materialising and sorting the
-        # generator defeats _MAX_CANDIDATES on a broad pattern.
-        examined = 0
-        # Resolved ONCE for this call and reused for every candidate below --
-        # see the matching comment in GlobFiles.execute above.
-        sensitive_ctx = resolve_sensitive_context()
-        root_resolved = root.resolve()
-        while True:
-            # As in GlobFiles: `Path.glob()` validates lazily, so a bad
-            # pattern raises here, on `next()`, not at the call above. Only
-            # `next()` is inside this try -- the body below (is_file,
-            # is_within, the streamed read, regex.search) runs outside it,
-            # so a ValueError raised there is never misreported as a bad
-            # glob.
+            # Mirrors validate_path's hidden-base-directory rejection, which
+            # is why read_file/write_file/list_directory refuse EVERYTHING
+            # once the sandbox root is itself dotted -- see the matching
+            # comment in GlobFiles.execute and _sandbox_root_is_hidden.
+            if _sandbox_root_is_hidden(root):
+                return {"error": "Access to hidden files/directories is not allowed"}
+            glob_pattern = str(kwargs.get("glob") or "**/*")
+            if _rejects_traversal(glob_pattern):
+                return {"error": "glob must stay inside the sandbox root"}
             try:
-                path = next(candidates)
-            except StopIteration:
-                break
+                candidates = root.glob(glob_pattern)
             except (ValueError, NotImplementedError) as exc:
                 return {"error": f"invalid glob: {exc}"}
-            examined += 1
-            if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
-                break
-            if not path.is_file() or not is_within(path, root, context=sensitive_ctx):
-                continue
-            # A dotfile/dotdir must be unreadable here even though it passed
-            # `is_within` -- see the matching comment in GlobFiles.execute
-            # and `_is_hidden_within`.
-            try:
-                resolved = path.resolve()
-            except (OSError, RuntimeError):
-                continue
-            if _is_hidden_within(resolved, root_resolved):
-                continue
-            try:
-                if path.stat().st_size > _MAX_GREP_FILE_BYTES:
+
+            matches: list[dict] = []
+            # Deliberately NOT sorted(candidates): materialising and sorting
+            # the generator defeats _MAX_CANDIDATES on a broad pattern.
+            examined = 0
+            # Resolved ONCE for this call and reused for every candidate
+            # below -- see the matching comment in GlobFiles.execute above.
+            sensitive_ctx = resolve_sensitive_context()
+            root_resolved = root.resolve()
+            while True:
+                # As in GlobFiles: `Path.glob()` validates lazily, so a bad
+                # pattern raises here, on `next()`, not at the call above.
+                # Only `next()` is inside this try -- the body below
+                # (is_file, is_within, the streamed read, regex.search) runs
+                # outside it, so a ValueError raised there is never
+                # misreported as a bad glob.
+                try:
+                    path = next(candidates)
+                except StopIteration:
+                    break
+                except (ValueError, NotImplementedError) as exc:
+                    return {"error": f"invalid glob: {exc}"}
+                examined += 1
+                if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
+                    break
+                if not path.is_file() or not is_within(path, root, context=sensitive_ctx):
                     continue
-            except OSError:
-                continue
-            # Streamed line-by-line rather than `read_text()` + `splitlines()`
-            # (which would materialize the whole file, and a second full
-            # copy split into lines, in memory at once): one large file in
-            # the sandbox previously forced a large peak allocation. The
-            # per-file byte cap above still bounds the worst case for a
-            # single pathological line with no newline.
-            try:
-                with path.open("r", encoding="utf-8", errors="replace") as fh:
-                    for number, line in enumerate(fh, start=1):
-                        if regex.search(line):
-                            matches.append(
-                                {
-                                    "path": str(path),
-                                    "line_number": number,
-                                    "line": line.rstrip("\n")[:500],
-                                }
-                            )
-                        if len(matches) >= _MAX_MATCHES:
-                            break
-            except OSError:
-                continue
-        return {"matches": matches}
+                # A dotfile/dotdir must be unreadable here even though it
+                # passed `is_within` -- see the matching comment in
+                # GlobFiles.execute and `_is_hidden_within`.
+                try:
+                    resolved = path.resolve()
+                except (OSError, RuntimeError):
+                    continue
+                if _is_hidden_within(resolved, root_resolved):
+                    continue
+                try:
+                    if path.stat().st_size > _MAX_GREP_FILE_BYTES:
+                        continue
+                except OSError:
+                    continue
+                # Streamed line-by-line rather than `read_text()` +
+                # `splitlines()` (which would materialize the whole file,
+                # and a second full copy split into lines, in memory at
+                # once): one large file in the sandbox previously forced a
+                # large peak allocation. The per-file byte cap above still
+                # bounds the worst case for a single pathological line with
+                # no newline.
+                try:
+                    with path.open("r", encoding="utf-8", errors="replace") as fh:
+                        for number, line in enumerate(fh, start=1):
+                            if regex.search(line):
+                                matches.append(
+                                    {
+                                        "path": str(path),
+                                        "line_number": number,
+                                        "line": line.rstrip("\n")[:500],
+                                    }
+                                )
+                            if len(matches) >= _MAX_MATCHES:
+                                break
+                except OSError:
+                    continue
+            return {"matches": matches}
+        except OSError as exc:
+            return {"error": f"sandbox root is not usable: {exc}"}
+        except Exception as exc:
+            # Same never-raise contract as read_file/write_file/
+            # list_directory's own outer catch-all (finding 6, substrate
+            # review): without this, an unanticipated exception -- e.g.
+            # `Path.expanduser()`'s `RuntimeError` when HOME can't be
+            # determined -- would escape `execute()` entirely, relying
+            # solely on `BuiltinToolProvider.invoke`'s own catch-all to
+            # keep the run alive.
+            logger.error(f"Error grepping pattern {raw_pattern!r}: {exc}")
+            return {"error": f"Failed to grep files: {exc}"}
