@@ -2004,7 +2004,9 @@ class ConsoleChatController:
         in ``_shutdown_requested`` instead -- set exactly once, only by
         ``shutdown()``, and never reset -- so a legacy no-session caller's
         "global stop denies" expectation is preserved for the one case
-        (real process teardown) where that is actually correct, without
+        this controller INSTANCE is ever torn down for (see ``shutdown()``
+        's own docstring for exactly what that covers -- NOT only real
+        process exit) where that is actually correct, without
         reintroducing cross-session poisoning for everyday per-session
         Stop/Close.
 
@@ -2018,17 +2020,38 @@ class ConsoleChatController:
         session BEFORE that session is registered there is invisible to
         the snapshot and was previously left to fail closed only via its
         own (up to ~120s) confirm/approval timeout -- promptness, not
-        correctness, but still a real gap for a signal (real process
-        teardown) that is global by definition. ``_shutdown_requested`` is
-        set exactly once, only by ``shutdown()``, and never reset (see
-        ``shutdown()``'s own docstring and its ``self._shutdown_requested
-        .set()`` call), so ORing it in here for a real ``session_id`` can
-        never wrongly deny a live round during normal operation -- it can
-        only ever fire during/after actual teardown. This does NOT widen
-        scoping for everyday per-session Stop/Close: ``_signal_stop``
-        still only touches the ONE session's own cancel event; an
-        unrelated session's Stop still leaves both this branch's checks
-        unset.
+        correctness, but still a real gap for a signal this controller
+        instance's teardown is supposed to reach every live round with,
+        unconditionally.
+
+        Correction (review, TASK-1052): an earlier revision of this
+        docstring justified ORing in ``_shutdown_requested`` here by
+        calling it "real process teardown" and treating that as
+        inherently global/safe. That premise was FALSE: ``shutdown()`` is
+        also called from ordinary Console-screen unmount
+        (``ChatScreen.on_unmount``), which fires on every navigation AWAY
+        from the Console tab, not only on app exit -- so
+        ``_shutdown_requested`` can be set on a controller instance the
+        user is still actively using the app around. The actual safety
+        argument does not rest on "global by definition"; it rests on
+        this controller's OWN lifecycle: ``ChatScreen`` only ever
+        constructs a fresh ``ConsoleChatController`` lazily
+        (``_ensure_console_chat_controller``) after ``on_unmount`` has
+        both run this instance's ``shutdown()`` and dropped the screen's
+        reference to it, so a torn-down instance -- flag permanently set
+        or not -- is never reused for a later Console visit, and no round
+        still parked on it could ever be resolved through a UI that no
+        longer exists anyway. ``_shutdown_requested`` is set exactly once,
+        only by ``shutdown()``, and never reset for THIS instance's
+        lifetime (see ``shutdown()``'s own docstring and its ``self.
+        _shutdown_requested.set()`` call), so ORing it in here for a real
+        ``session_id`` can never wrongly deny a live round while this
+        controller instance is still the one actually in use -- it can
+        only ever fire once this instance itself is being (or has been)
+        torn down. This does NOT widen scoping for everyday per-session
+        Stop/Close: ``_signal_stop`` still only touches the ONE session's
+        own cancel event; an unrelated session's Stop still leaves both
+        this branch's checks unset.
         """
         if session_id is not None:
             if self._shutdown_requested.is_set():
@@ -3123,18 +3146,27 @@ class ConsoleChatController:
         teardown.
 
         Task 3b requirement 3: unlike ``stop_active_run`` (deliberately
-        scoped to the VIEWED session only), teardown is global -- a
-        background run must never survive owner shutdown just because the
-        user was looking at a different tab when the app closed. Mirrors
-        ``stop_active_run``'s manual signal-then-cancel fallback for every
-        session with a live entry, rather than reusing ``stop_active_run``
-        itself, which by contract only ever resolves the active session.
+        scoped to the VIEWED session only), teardown is global across THIS
+        controller instance's OWN sessions -- a background run must never
+        survive this instance's shutdown just because the user was looking
+        at a different tab. Mirrors ``stop_active_run``'s manual
+        signal-then-cancel fallback for every session with a live entry,
+        rather than reusing ``stop_active_run`` itself, which by contract
+        only ever resolves the active session.
+
+        Callers: real process exit (owner app teardown) is one caller, but
+        NOT the only one -- ``ChatScreen.on_unmount`` also awaits this on
+        every ordinary navigation AWAY from the Console screen (switching
+        tabs unmounts the outgoing screen), which is far more frequent
+        than process exit. Any docstring here or in ``_is_session_
+        cancelled`` that called ``_shutdown_requested`` "real process
+        teardown" was describing only one of its two callers.
 
         F5 fix (Qodo wave): sets ``_shutdown_requested`` unconditionally
         and FIRST -- before the no-tasks early return below -- so a
         worker-thread approval/confirm bridge polling on behalf of a run
         this method doesn't (yet) see in ``_active_stream_tasks`` still
-        observes real process teardown. TASK-1052: this was true
+        observes this instance's teardown. TASK-1052: this was true
         immediately only for a legacy ``session_id=None`` caller (whose
         fallback branch in ``_is_session_cancelled`` already OR'd in this
         flag); a round armed with a REAL ``session_id`` before its session
@@ -3146,6 +3178,21 @@ class ConsoleChatController:
         real-``session_id`` branch now also ORs in ``_shutdown_requested``
         directly, closing that gap so this paragraph is accurate for
         every caller.
+
+        Correction (review, TASK-1052): setting ``_shutdown_requested``
+        unconditionally here is safe NOT because this method only ever
+        runs at real process exit (it doesn't -- see "Callers" above), but
+        because it is scoped to THIS controller instance, and
+        ``ChatScreen`` never reuses an instance after unmounting it:
+        ``_ensure_console_chat_controller`` only ever (re)builds a fresh
+        ``ConsoleChatController`` lazily, and ``on_unmount`` both awaits
+        this method AND drops the screen's reference to the instance
+        before that lazy rebuild can ever fire again. A round still armed
+        on an instance whose ``shutdown()`` already ran cannot be resolved
+        through a UI that no longer exists regardless of this flag, and a
+        LATER Console visit's rounds run against a brand-new instance with
+        its own, unset ``_shutdown_requested`` -- so the permanently-set
+        flag on the old instance can never poison it.
         """
         self._shutdown_requested.set()
         for message_id in tuple(self._original_attempts):

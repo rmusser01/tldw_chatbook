@@ -45,10 +45,31 @@ All three bridges call this one method, so the fix is a single change
 once — only inside `shutdown()` — and is never `.clear()`-ed anywhere
 (verified by grep across `console_chat_controller.py` and every test file
 that touches it: it is only ever `.set()`, never reset), ORing it into the
-real-session branch cannot spuriously deny a live round during normal
-operation. It can only ever fire during/after real process teardown, which
-is global by definition — so a real-session round observing it is always
-correct, not just "safe."
+real-session branch cannot spuriously deny a live round while the
+controller instance whose round it is remains in use.
+
+**Correction (review):** an earlier revision of this report (and of the
+docstrings it summarizes) justified this by calling `_shutdown_requested`
+"real process teardown" and treating that as global/safe "by definition."
+That framing was **false**: `shutdown()` is also called from
+`ChatScreen.on_unmount` (`tldw_chatbook/UI/Screens/chat_screen.py:10228`),
+which fires on *ordinary navigation away from the Console screen* — every
+`switch_screen` unmounts the outgoing screen — not only on real app exit.
+So `_shutdown_requested` can be set on a controller instance while the app
+itself keeps running.
+
+The behavior is still safe, but the *why* is instance-lifecycle, not
+process-lifecycle: `ChatScreen._ensure_console_chat_controller` only ever
+lazily (re)builds a **fresh** `ConsoleChatController` when
+`self._console_chat_controller is None`, and `on_unmount` both awaits this
+instance's `shutdown()` **and** sets that reference back to `None` before
+any later visit can trigger that rebuild. A permanently-set flag on a
+torn-down instance can therefore never poison a later visit's fresh
+instance (which starts with its own, unset `_shutdown_requested`) — and no
+round still parked on the old, torn-down instance could ever be resolved
+through a UI that no longer exists anyway, regardless of the flag. Both
+docstrings in `console_chat_controller.py` (`_is_session_cancelled` and
+`shutdown()`) were rewritten to state this correctly.
 
 **Invariant check requested by the brief:** confirmed `_shutdown_requested`
 is never reset anywhere in the codebase (module or tests) — no `.clear()`
