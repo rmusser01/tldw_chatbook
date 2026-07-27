@@ -114,10 +114,11 @@ def _message_body(message: ConsoleChatMessage) -> str:
         # has no content; show a visible generating state instead of an empty
         # row (local models can take 30-90s to first token).
         return CONSOLE_GENERATING_PLACEHOLDER
-    if (
-        message.role is not ConsoleMessageRole.USER
-        and message.status in {"streaming", "stopped", "failed"}
-    ):
+    if message.role is not ConsoleMessageRole.USER and message.status in {
+        "streaming",
+        "stopped",
+        "failed",
+    }:
         # streaming/stopped/failed are assistant-response states; a USER row only
         # carries "failed" via the TASK-457(a) send-blocked echo, where the
         # SYSTEM block-row already explains it — so keep the user's text clean.
@@ -287,7 +288,9 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     """
     role_label = _message_role_label(message)
     if message.sibling_count > 1:
-        role_label = f"{role_label} ({message.sibling_index + 1}/{message.sibling_count})"
+        role_label = (
+            f"{role_label} ({message.sibling_index + 1}/{message.sibling_count})"
+        )
     body = _message_body(message)
     chips = _message_attachment_chips(message)
     if chips:
@@ -553,22 +556,24 @@ class ConsoleTranscript(VerticalScroll):
         ("r", "invoke_selected_action('regenerate')", "Regenerate"),
     ]
 
-    PROTECTED_CLICK_CLASSES: frozenset[str] = frozenset({
-        "console-transcript-action-row",
-        "console-transcript-action-guide",
-        "console-transcript-empty-panel",
-        "console-transcript-empty-body",
-        "console-transcript-empty-state",
-        "console-transcript-rule",
-        "console-transcript-summary-banner",
-        "console-transcript-citation-sources",
-        # Textual scrollbars carry the generic system-widget class; ignore them
-        # defensively if a scrollbar click ever bubbles up to the transcript.
-        "-textual-system",
-        "vertical-scrollbar",
-        "horizontal-scrollbar",
-        "scrollbar",
-    })
+    PROTECTED_CLICK_CLASSES: frozenset[str] = frozenset(
+        {
+            "console-transcript-action-row",
+            "console-transcript-action-guide",
+            "console-transcript-empty-panel",
+            "console-transcript-empty-body",
+            "console-transcript-empty-state",
+            "console-transcript-rule",
+            "console-transcript-summary-banner",
+            "console-transcript-citation-sources",
+            # Textual scrollbars carry the generic system-widget class; ignore them
+            # defensively if a scrollbar click ever bubbles up to the transcript.
+            "-textual-system",
+            "vertical-scrollbar",
+            "horizontal-scrollbar",
+            "scrollbar",
+        }
+    )
     """Widget classes that must keep the current selection active when clicked."""
 
     def __init__(self, **kwargs) -> None:
@@ -993,11 +998,13 @@ class ConsoleTranscript(VerticalScroll):
         timing is the point) but the file append is deferred off the caller's
         critical section via ``call_later``."""
         import os
+
         path = os.environ.get("TLDW_TRANSCRIPT_PAINT_LOG")
         if not path:
             return
         try:
             import time
+
             rows = list(self.query(".console-transcript-action-row"))
             lines = [
                 f"{time.strftime('%H:%M:%S')} {label}: selected={self.selected_message_id!r} "
@@ -1088,8 +1095,7 @@ class ConsoleTranscript(VerticalScroll):
         """
         control = event.control
         if control is not None and any(
-            control.has_class(class_name)
-            for class_name in self.PROTECTED_CLICK_CLASSES
+            control.has_class(class_name) for class_name in self.PROTECTED_CLICK_CLASSES
         ):
             event.stop()
             return
