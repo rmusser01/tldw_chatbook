@@ -19,7 +19,11 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 
 class RecordingServerIngestService:
-    """Narrow collaborator that records cancellation and settles the real poller."""
+    """Record cancellation and settle the real production poller.
+
+    Args:
+        remote_job_id: Server job identifier returned by status polling.
+    """
 
     def __init__(self, *, remote_job_id: str) -> None:
         self.remote_job_id = remote_job_id
@@ -27,6 +31,14 @@ class RecordingServerIngestService:
         self.listed_batch_ids: list[str] = []
 
     async def cancel_media_ingest_jobs_batch(self, *, batch_id: str) -> None:
+        """Record a request made through the public batch-cancellation seam.
+
+        Args:
+            batch_id: Batch identifier submitted by the production Library screen.
+
+        Returns:
+            None.
+        """
         self.cancelled_batch_ids.append(batch_id)
 
     async def list_media_ingest_jobs(
@@ -35,6 +47,15 @@ class RecordingServerIngestService:
         *,
         offset: int = 0,
     ) -> dict[str, object]:
+        """Return a cancelled server job so the production poller can settle.
+
+        Args:
+            batch_id: Batch identifier requested by the production poller.
+            offset: Pagination offset requested by the production poller.
+
+        Returns:
+            A server response containing the cancelled job and pagination state.
+        """
         self.listed_batch_ids.append(batch_id)
         return {
             "jobs": [{"id": self.remote_job_id, "status": "cancelled"}],
