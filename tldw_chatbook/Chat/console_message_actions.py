@@ -75,6 +75,9 @@ class ConsoleMessageActionService:
     _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Try"),)
     _IMAGE_VIEW_ACTIONS: tuple[tuple[str, str], ...] = (("toggle-image-view", "View"),)
     _SAVE_IMAGE_ACTIONS: tuple[tuple[str, str], ...] = (("save-image", "Save Image"),)
+    _VIEW_ORIGINAL_ATTEMPT_ACTION: tuple[tuple[str, str], ...] = (
+        ("view-original-attempt", "View original attempt"),
+    )
 
     @staticmethod
     def _has_image(message: ConsoleChatMessage) -> bool:
@@ -116,6 +119,7 @@ class ConsoleMessageActionService:
         generation_variant_count: int = 0,
         generation_browsed_index: int = 0,
         speaking_message_id: str | None = None,
+        original_attempt_available: bool = False,
     ) -> list[ConsoleMessageAction]:
         """Return canonical selected-message actions for a transcript message.
 
@@ -138,11 +142,20 @@ class ConsoleMessageActionService:
                 speak-stop action in the same slot -- mirrors how the
                 generation card's browsed index swaps in "Keep". Defaults to
                 ``None`` so existing callers see byte-identical behavior.
+            original_attempt_available: Whether this completed assistant has
+                a current-session original-attempt preview. Defaults to false;
+                plain/export helpers intentionally never pass it.
         """
         disabled_reason = self._disabled_reason(message)
         is_generation_message = generation_variant_count > 0
         completed_actions = list(self._COMPLETED_ACTIONS)
         extra_actions: list[tuple[str, str]] = []
+        if (
+            original_attempt_available
+            and message.status == "complete"
+            and self._is_assistant_message(message)
+        ):
+            extra_actions.extend(self._VIEW_ORIGINAL_ATTEMPT_ACTION)
         if is_generation_message:
             if generation_variant_count > 1:
                 extra_actions.extend(self._VARIANT_NAV_ACTIONS)
@@ -264,6 +277,13 @@ class ConsoleMessageActionService:
                 status="completed",
                 visible_copy="Copied message to clipboard.",
                 clipboard_text=message.content,
+            )
+        if action_id == "view-original-attempt":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Toggled original attempt preview.",
+                target_message_id=message.id,
             )
         if action_id == "speak":
             return ConsoleActionResult(

@@ -440,6 +440,7 @@ CONSOLE_ACTIVE_RUN_STATUSES = (
     ConsoleRunStatus.VALIDATING,
     ConsoleRunStatus.RETRYING,
     ConsoleRunStatus.STREAMING,
+    ConsoleRunStatus.CHECKING_CITATIONS,
 )
 # Plan-B Task 7 Finding A: the conversation-browser `[N Sub-Agents]` badge
 # count previously re-queried the DB once per visible row on every 0.2s
@@ -2091,6 +2092,7 @@ class ChatScreen(BaseAppScreen):
         self._console_model_option_warnings: dict[tuple[str, str], str] = {}
         self._last_console_action: ConsoleActionResult | None = None
         self._pending_console_delete_message_id: str | None = None
+        self._console_original_attempt_previews: dict[str, str] = {}
         #: task-559 unit 2: id of the Console message currently driving TTS
         #: (from speak dispatch until an explicit speak-stop, or until a
         #: DIFFERENT message's speak overwrites it -- see
@@ -9713,6 +9715,7 @@ class ChatScreen(BaseAppScreen):
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
         self._stop_console_transcript_sync_timer()
+        self._console_original_attempt_previews.clear()
         controller = self._console_chat_controller
         if controller is not None:
             await controller.shutdown()
@@ -10697,6 +10700,7 @@ class ChatScreen(BaseAppScreen):
                     getattr(message, "turn_id", None),
                     getattr(message, "persisted_message_id", None),
                     variant_signature,
+                    getattr(message, "citation_presentation", None),
                 )
             )
         return (store.active_session_id, tuple(message_signatures))
@@ -10710,6 +10714,20 @@ class ChatScreen(BaseAppScreen):
 
         messages = self._native_console_messages()
         if transcript is not None:
+            message_ids = {message.id for message in messages}
+            controller = self._console_chat_controller
+            for message_id in tuple(self._console_original_attempt_previews):
+                original_attempt = (
+                    controller.original_attempt_for_message(message_id)
+                    if controller is not None and message_id in message_ids
+                    else None
+                )
+                if original_attempt is None:
+                    self._console_original_attempt_previews.pop(message_id, None)
+                else:
+                    self._console_original_attempt_previews[message_id] = (
+                        original_attempt
+                    )
             # task-501: transfer a sibling-swipe selection handoff onto the
             # CURRENT transcript instance right before the push — the widget
             # applies it at ingest time once the landed sibling's id is in
@@ -10720,6 +10738,9 @@ class ChatScreen(BaseAppScreen):
                 )
                 self._pending_console_swipe_selection = None
             transcript.set_messages(messages)
+            transcript.set_original_attempt_previews(
+                self._console_original_attempt_previews.copy()
+            )
             # SP2 /rewind: derive the "summarize up to here" banner boundary
             # from the active session's stored summary state. Render-derived
             # only -- the banner shows above the boundary message when it is on
@@ -10795,6 +10816,7 @@ class ChatScreen(BaseAppScreen):
                 # before-boundary) must force a refresh so the banner appears
                 # or clears even when the message set is otherwise unchanged.
                 summary_boundary_id,
+                tuple(sorted(self._console_original_attempt_previews.items())),
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
@@ -10834,6 +10856,13 @@ class ChatScreen(BaseAppScreen):
         transcript.selected_message_id = None
         self._last_native_transcript_refresh_key = None
         self._sync_console_transcript_guidance()
+
+    def _clear_console_original_attempt_preview(self, message_id: str) -> None:
+        """Clear one screen preview and its controller-owned cached body."""
+        self._console_original_attempt_previews.pop(message_id, None)
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.clear_original_attempt(message_id)
 
     def _native_run_status_copy(self) -> str:
         controller = self._console_chat_controller
@@ -13189,6 +13218,17 @@ class ChatScreen(BaseAppScreen):
 
         result = self._console_message_action_service.dispatch(action_id, message)
         self._last_console_action = result
+        if action_id == "view-original-attempt" and result.status == "completed":
+            controller = self._ensure_console_chat_controller()
+            original_attempt = controller.original_attempt_for_message(message_id)
+            if original_attempt is None:
+                self._console_original_attempt_previews.pop(message_id, None)
+            elif message_id in self._console_original_attempt_previews:
+                self._console_original_attempt_previews.pop(message_id, None)
+            else:
+                self._console_original_attempt_previews[message_id] = original_attempt
+            await self._sync_native_console_chat_ui()
+            return True
         if result.clipboard_text is not None:
             copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
             if callable(copy_to_clipboard):
@@ -13345,6 +13385,7 @@ class ChatScreen(BaseAppScreen):
                 await self._sync_native_console_chat_ui()
                 return True
             self._pending_console_delete_message_id = None
+            self._clear_console_original_attempt_preview(message_id)
             store.delete_message(message_id)
             # TASK-251: a deleted message can change what the browser row
             # shows for this conversation (title/updated_at) -- invalidate
@@ -13868,6 +13909,7 @@ class ChatScreen(BaseAppScreen):
         def _apply_edit(result: ConsoleEditResult | None) -> None:
             if result is None:
                 return
+            self._clear_console_original_attempt_preview(message_id)
             if not result.resend:
                 try:
                     store.update_message_content(message_id, result.text)
@@ -13921,6 +13963,10 @@ class ChatScreen(BaseAppScreen):
         button_id: str,
     ) -> tuple[str | None, str | None]:
         prefixes = (
+            (
+                "console-message-action-view-original-attempt-",
+                "view-original-attempt",
+            ),
             ("console-message-action-feedback-up-", "feedback-up"),
             ("console-message-action-feedback-down-", "feedback-down"),
             ("console-message-action-variant-previous-", "variant-previous"),
@@ -13981,6 +14027,7 @@ class ChatScreen(BaseAppScreen):
         controller: ConsoleChatController,
         message_id: str,
     ) -> None:
+        self._clear_console_original_attempt_preview(message_id)
         self._start_console_transcript_sync_timer()
         result = await controller.regenerate_message(message_id)
         if result.visible_copy and not result.accepted:

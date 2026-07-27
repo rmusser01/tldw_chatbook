@@ -1222,6 +1222,7 @@ async def test_citation_repair_direct_valid_initial_completes_once_without_repai
     assert assistant_writes[0]["content"] == assistant.content
     assert assistant.citation_presentation.phase is ConsoleCitationPhase.SELECTED
     assert assistant.citation_presentation.notice_code is None
+    assert controller.original_attempt_for_message(assistant.id) is None
     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
     assert ConsoleRunStatus.CHECKING_CITATIONS not in controller.run_state_history
 
@@ -1270,9 +1271,117 @@ async def test_citation_repair_direct_repairs_once_with_exact_request_and_resolu
         assistant.citation_presentation.notice_code
         is ConsoleCitationNoticeCode.REPAIRED
     )
-    assert assistant.citation_presentation.original_attempt_available is False
+    assert assistant.citation_presentation.original_attempt_available is True
+    assert controller.original_attempt_for_message(assistant.id) == initial_body
     assert ConsoleRunStatus.CHECKING_CITATIONS in controller.run_state_history
     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+def test_original_attempt_cache_is_eight_entry_access_ordered_lru():
+    store = _recording_citation_store()
+    session_id = store.active_session_id
+    assert session_id is not None
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_RecordingGateway(),
+        agent_runtime_enabled=False,
+    )
+    messages = [
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=f"Repaired answer {index} [S1]",
+        )
+        for index in range(9)
+    ]
+    for index, message in enumerate(messages[:8]):
+        store.set_citation_presentation(
+            message.id,
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            ),
+        )
+        controller._remember_original_attempt(message.id, f"original {index}")
+
+    assert controller.original_attempt_for_message(messages[0].id) == "original 0"
+    store.set_citation_presentation(
+        messages[8].id,
+        ConsoleCitationPresentation(
+            phase=ConsoleCitationPhase.SELECTED,
+            notice_code=ConsoleCitationNoticeCode.REPAIRED,
+        ),
+    )
+    controller._remember_original_attempt(messages[8].id, "original 8")
+
+    assert controller.original_attempt_for_message(messages[1].id) is None
+    assert controller.original_attempt_for_message(messages[0].id) == "original 0"
+    assert controller.original_attempt_for_message(messages[8].id) == "original 8"
+    assert (
+        store.get_message(
+            messages[1].id
+        ).citation_presentation.original_attempt_available
+        is False
+    )
+    assert len(controller._original_attempts) == 8
+
+    controller.clear_original_attempt(messages[8].id)
+    assert controller.original_attempt_for_message(messages[8].id) is None
+    assert (
+        store.get_message(
+            messages[8].id
+        ).citation_presentation.original_attempt_available
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_original_attempt_cache_cleans_up_and_is_never_reconstructed():
+    store = _recording_citation_store()
+    first_session_id = store.active_session_id
+    assert first_session_id is not None
+    first = store.append_message(
+        first_session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="First repaired [S1]",
+    )
+    second_session = store.create_session(
+        settings=ConsoleSessionSettings(provider="openai", model="repair-model")
+    )
+    second = store.append_message(
+        second_session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Second repaired [S1]",
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_RecordingGateway(),
+        agent_runtime_enabled=False,
+    )
+    for message in (first, second):
+        store.set_citation_presentation(
+            message.id,
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            ),
+        )
+        controller._remember_original_attempt(message.id, f"original {message.id}")
+
+    controller.close_session(first_session_id)
+
+    assert controller.original_attempt_for_message(first.id) is None
+    assert controller.original_attempt_for_message(second.id) == f"original {second.id}"
+
+    restarted = ConsoleChatController(
+        store=store,
+        provider_gateway=_RecordingGateway(),
+        agent_runtime_enabled=False,
+    )
+    assert restarted.original_attempt_for_message(second.id) is None
+
+    await controller.shutdown()
+    assert controller.original_attempt_for_message(second.id) is None
 
 
 @pytest.mark.parametrize(
@@ -1309,6 +1418,7 @@ async def test_citation_repair_direct_unavailable_initial_keeps_original_without
         is ConsoleCitationNoticeCode.UNAVAILABLE
     )
     assert assistant.citation_presentation.original_attempt_available is False
+    assert controller.original_attempt_for_message(assistant.id) is None
     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
 
 
@@ -1908,6 +2018,7 @@ def _assert_user_citation_repair_cancel(
         notice_code=ConsoleCitationNoticeCode.CANCELED,
         original_attempt_available=False,
     )
+    assert controller.original_attempt_for_message(assistant.id) is None
     assert store.completion_calls == [assistant.id]
     assert store.stopped_calls == []
     assert controller.run_state.status is ConsoleRunStatus.STOPPED
@@ -1948,7 +2059,7 @@ def _assert_user_citation_repair_cancel(
 def test_citation_repair_checking_run_state_is_stoppable_but_send_blocked():
     checking = ConsoleRunState(
         ConsoleRunStatus.CHECKING_CITATIONS,
-        "Checking citations.",
+        "Checking citations…",
     )
     streaming = ConsoleRunState(
         ConsoleRunStatus.STREAMING,

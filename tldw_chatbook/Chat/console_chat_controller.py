@@ -7,6 +7,7 @@ import copy
 import re
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -640,6 +641,7 @@ class ConsoleChatController:
         self._active_stream_task: asyncio.Task | None = None
         self._stop_requested = False
         self._active_citation_repair_session: ConsoleCitationRepairSession | None = None
+        self._original_attempts: OrderedDict[str, str] = OrderedDict()
         #: Per-run cancellation flag for the agent bridge's background
         #: thread (see ``_run_agent_reply``). ``threading.Event`` rather
         #: than a shared bool: ``asyncio.to_thread`` survives Task
@@ -1068,6 +1070,7 @@ class ConsoleChatController:
             The session activated after closing, or ``None`` when no sessions remain.
         """
         repair_session = self._active_citation_repair_session
+        self.clear_original_attempts_for_session(session_id)
         owns_active_stream = self._active_stream_belongs_to_session(session_id)
         if repair_session is not None and owns_active_stream:
             repair_session.cancel_reason = "session_close"
@@ -1089,6 +1092,77 @@ class ConsoleChatController:
         ):
             self._active_citation_repair_session = None
         return closed
+
+    def original_attempt_for_message(self, message_id: str) -> str | None:
+        """Return and refresh one current-session original attempt."""
+        body = self._original_attempts.get(message_id)
+        if body is None:
+            return None
+        try:
+            message = self.store.get_message(message_id)
+        except KeyError:
+            self._original_attempts.pop(message_id, None)
+            return None
+        presentation = message.citation_presentation
+        if presentation is None or not presentation.original_attempt_available:
+            self._original_attempts.pop(message_id, None)
+            return None
+        self._original_attempts.move_to_end(message_id)
+        return body
+
+    def clear_original_attempt(self, message_id: str) -> None:
+        """Forget one preview and clear its content-free availability flag."""
+        self._original_attempts.pop(message_id, None)
+        self._set_original_attempt_availability(message_id, False)
+
+    def clear_original_attempts_for_session(self, session_id: str) -> None:
+        """Forget every original attempt owned by one Console session."""
+        for message_id in tuple(self._original_attempts):
+            try:
+                owner_session_id = self.store.session_id_for_message(message_id)
+            except KeyError:
+                self._original_attempts.pop(message_id, None)
+                continue
+            if owner_session_id == session_id:
+                self.clear_original_attempt(message_id)
+
+    def _remember_original_attempt(
+        self,
+        message_id: str,
+        body: str,
+        *,
+        update_presentation: bool = True,
+    ) -> None:
+        """Insert one successful repair preview into the eight-entry LRU."""
+        self._original_attempts.pop(message_id, None)
+        self._original_attempts[message_id] = body
+        if update_presentation:
+            self._set_original_attempt_availability(message_id, True)
+        while len(self._original_attempts) > 8:
+            evicted_id, _evicted_body = self._original_attempts.popitem(last=False)
+            self._set_original_attempt_availability(evicted_id, False)
+
+    def _set_original_attempt_availability(
+        self,
+        message_id: str,
+        available: bool,
+    ) -> None:
+        """Update only the bounded presentation flag for a live message."""
+        try:
+            message = self.store.get_message(message_id)
+        except KeyError:
+            return
+        presentation = message.citation_presentation
+        if presentation is None:
+            return
+        self.store.set_citation_presentation(
+            message_id,
+            ConsoleCitationPresentation(
+                phase=presentation.phase,
+                notice_code=presentation.notice_code,
+                original_attempt_available=available,
+            ),
+        )
 
     def _signal_stop(self) -> None:
         """Set the shared UI-facing stop flag AND the active run's own
@@ -1747,6 +1821,8 @@ class ConsoleChatController:
 
     async def shutdown(self) -> None:
         """Stop and await the active stream task before owner teardown."""
+        for message_id in tuple(self._original_attempts):
+            self.clear_original_attempt(message_id)
         task = self._active_stream_task
         if task is None:
             return
@@ -2018,6 +2094,7 @@ class ConsoleChatController:
             provider_messages, session_id
         )
         prefill = self._pinned_prefill_for_session(session_id)
+        self.clear_original_attempt(message_id)
         new_message = self.store.create_sibling(
             message_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -2400,6 +2477,10 @@ class ConsoleChatController:
 
         # Every transform succeeded: now (and only now) fork the edited USER
         # sibling and append the empty ASSISTANT node to stream into.
+        active_path = self.store.active_path_message_ids(session_id)
+        anchor_index = active_path.index(message_id)
+        for replaced_message_id in active_path[anchor_index:]:
+            self.clear_original_attempt(replaced_message_id)
         self.store.create_sibling(
             message_id,
             role=ConsoleMessageRole.USER,
@@ -4080,9 +4161,15 @@ class ConsoleChatController:
                 ConsoleCitationPresentation(
                     phase=ConsoleCitationPhase.SELECTED,
                     notice_code=notice_code,
-                    original_attempt_available=False,
+                    original_attempt_available=state == "repaired",
                 ),
             )
+            if state == "repaired":
+                self._remember_original_attempt(
+                    assistant_message_id,
+                    initial_body,
+                    update_presentation=False,
+                )
             selected = self.store.get_message(assistant_message_id)
             return ConsoleCitationSelectionOutcome(selected.content, state)
 
@@ -4112,7 +4199,7 @@ class ConsoleChatController:
         self._set_run_state(
             ConsoleRunState(
                 ConsoleRunStatus.CHECKING_CITATIONS,
-                "Checking citations.",
+                "Checking citations…",
             )
         )
         repaired_chunks: list[str] = []

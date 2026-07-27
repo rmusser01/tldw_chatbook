@@ -26,6 +26,9 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
+    ConsoleCitationNoticeCode,
+    ConsoleCitationPhase,
+    ConsoleCitationPresentation,
     ConsoleMessageRole,
     ConsoleRunStatus,
     GenerationVariantMeta,
@@ -38,6 +41,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_ACTIVE_RUN_STATUSES,
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
@@ -56,6 +60,10 @@ from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryServ
 
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
+
+
+def test_checking_citations_is_an_active_console_run_status():
+    assert ConsoleRunStatus.CHECKING_CITATIONS in CONSOLE_ACTIVE_RUN_STATUSES
 
 
 def _configure_openai_missing_api_key(app) -> None:
@@ -2342,6 +2350,122 @@ async def test_console_selected_message_copy_action_uses_app_clipboard():
 
     app.copy_to_clipboard.assert_called_once_with("answer")
     assert console._last_console_action.action_id == "copy"
+
+
+def test_console_original_attempt_action_parser_prefers_full_prefix():
+    assert ChatScreen._parse_console_message_action_button_id(
+        "console-message-action-view-original-attempt-message-1"
+    ) == ("view-original-attempt", "message-1")
+
+
+def test_console_original_attempt_cleanup_precedes_mutating_callbacks():
+    delete_source = inspect.getsource(ChatScreen.handle_console_message_action)
+    confirmed_delete = delete_source.split(
+        'if action_id == "delete" and result.status == "completed":',
+        1,
+    )[1].split(
+        'if action_id == "continue"',
+        1,
+    )[0]
+    assert confirmed_delete.index(
+        "_clear_console_original_attempt_preview(message_id)"
+    ) < confirmed_delete.index("store.delete_message(message_id)")
+
+    edit_source = inspect.getsource(ChatScreen._open_console_message_edit_modal)
+    edit_callback = edit_source.split(
+        "def _apply_edit(result: ConsoleEditResult | None) -> None:",
+        1,
+    )[1]
+    assert edit_callback.index(
+        "_clear_console_original_attempt_preview(message_id)"
+    ) < edit_callback.index("if not result.resend:")
+
+    regenerate_source = inspect.getsource(ChatScreen._regenerate_console_message)
+    assert regenerate_source.index(
+        "_clear_console_original_attempt_preview(message_id)"
+    ) < regenerate_source.index("controller.regenerate_message(message_id)")
+
+
+@pytest.mark.asyncio
+async def test_console_original_attempt_preview_toggles_without_changing_selected_content():
+    app = _build_test_app()
+    app.copy_to_clipboard = Mock()
+    host = ConsoleHarness(app)
+    original = "Original unselected attempt"
+    repaired = "Selected repaired answer [S1]"
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session = store.ensure_session()
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Question",
+        )
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=repaired,
+        )
+        store.set_citation_presentation(
+            message.id,
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            ),
+        )
+        controller._remember_original_attempt(message.id, original)
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        view_selector = f"#console-message-action-view-original-attempt-{message.id}"
+        await _wait_for_selector(console, pilot, view_selector)
+
+        await pilot.click(view_selector)
+        await _wait_for_selector(
+            console,
+            pilot,
+            f"#console-original-attempt-{message.id}",
+        )
+        assert console._console_original_attempt_previews == {message.id: original}
+        assert store.get_message(message.id).content == repaired
+        assert original not in transcript.to_plain_text()
+        assert (
+            console._console_message_content(store.get_message(message.id)) == repaired
+        )
+        provider_messages = controller._provider_messages_for_session(session.id)
+        assert any(row.get("content") == repaired for row in provider_messages)
+        assert all(row.get("content") != original for row in provider_messages)
+
+        await pilot.click(f"#console-message-action-copy-{message.id}")
+        app.copy_to_clipboard.assert_called_once_with(repaired)
+
+        app.post_message = Mock()
+        await pilot.click(f"#console-message-action-speak-{message.id}")
+        spoken_event = next(
+            call.args[0]
+            for call in app.post_message.call_args_list
+            if call.args[0].__class__.__name__ == "TTSRequestEvent"
+        )
+        assert spoken_event.text == repaired
+
+        view_button = console.query_one(view_selector, Button)
+        view_button.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert console._console_original_attempt_previews == {}
+        assert len(console.query(f"#console-original-attempt-{message.id}")) == 0
+
+        controller.clear_original_attempt(message.id)
+        console._console_original_attempt_previews[message.id] = original
+        await console._sync_native_console_chat_ui()
+        assert console._console_original_attempt_previews == {}
+        assert store.get_message(message.id).content == repaired
 
 
 @pytest.mark.asyncio
