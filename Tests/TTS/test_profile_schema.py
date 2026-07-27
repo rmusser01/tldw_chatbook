@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -1883,6 +1883,98 @@ def test_full_row_validator_rejects_domain_invalid_live_store_row(
             profile_schema.validate_profile_store_rows(connection)
     finally:
         connection.close()
+
+
+def test_full_row_validator_checks_deadline_before_each_profile_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    connection = open_profile_store(path)
+    _insert_profile(connection, _profile())
+    _insert_profile(
+        connection,
+        _profile(
+            profile_id=UUID("11234567-89ab-4def-8123-456789abcdef"),
+            display_name="Second",
+            normalized_name="second",
+        ),
+    )
+    checks = 0
+    decoded = 0
+    real_decode = profile_schema.decode_profile
+
+    def check_deadline() -> None:
+        nonlocal checks
+        checks += 1
+        if checks == 3:
+            raise ProfileRepositoryError("restore_failed")
+
+    def traced_decode(row: object) -> TTSGenerationProfile:
+        nonlocal decoded
+        decoded += 1
+        return real_decode(row)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(profile_schema, "decode_profile", traced_decode)
+    try:
+        with _safe_error("restore_failed"):
+            profile_schema.validate_profile_store_rows(
+                connection,
+                check_deadline=check_deadline,
+            )
+    finally:
+        connection.close()
+
+    assert checks == 3
+    assert decoded == 1
+
+
+def test_candidate_deadline_interrupts_private_snapshot_copy_and_cleans_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    _insert_profile(connection, _profile())
+    connection.commit()
+    connection.close()
+    snapshot_paths: list[Path] = []
+    inside_copy = False
+    real_mkstemp = profile_schema.tempfile.mkstemp
+
+    def recorded_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        descriptor, name = real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+        snapshot_paths.append(Path(name))
+        return descriptor, name
+
+    def check_deadline() -> None:
+        if inside_copy:
+            raise ProfileRepositoryError("restore_failed")
+
+    def interrupted_copy(
+        _source_fd: int,
+        snapshot_fd: int,
+        *,
+        check_deadline: Callable[[], None] | None = None,
+    ) -> None:
+        nonlocal inside_copy
+        del snapshot_fd
+        assert check_deadline is not None
+        inside_copy = True
+        check_deadline()
+
+    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", recorded_mkstemp)
+    monkeypatch.setattr(
+        profile_schema,
+        "_copy_source_to_snapshot",
+        interrupted_copy,
+    )
+
+    with _safe_error("restore_failed"):
+        validate_profile_candidate(path, check_deadline=check_deadline)
+
+    assert len(snapshot_paths) == 1
+    assert not snapshot_paths[0].exists()
 
 
 def test_candidate_ordinary_error_removes_private_snapshot(

@@ -361,7 +361,12 @@ def _install_fake_store(
         recorded_leases.append(lease)
         return lease
 
-    def opener(_database_path: Path) -> Any:
+    def opener(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         events.append(("store.open", threading.get_ident()))
         return connection
 
@@ -436,9 +441,13 @@ async def test_open_uses_one_worker_for_lease_connection_sql_and_cleanup(
             events.append(("lease.release", threading.get_ident()))
             super().release()
 
-    def traced_open(path: Path) -> sqlite3.Connection:
+    def traced_open(
+        path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> sqlite3.Connection:
         events.append(("store.open", threading.get_ident()))
-        connection = open_profile_store(path)
+        connection = open_profile_store(path, must_exist=must_exist)
         connection.set_trace_callback(
             lambda statement: sql_traces.append((threading.get_ident(), statement))
         )
@@ -494,8 +503,12 @@ async def test_open_rejects_configured_symlink_drift_before_publishing_active_pa
     configured_path.symlink_to(active_path)
     real_open = module.open_profile_store
 
-    def drifting_open(path: Path) -> sqlite3.Connection:
-        connection = real_open(path)
+    def drifting_open(
+        path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> sqlite3.Connection:
+        connection = real_open(path, must_exist=must_exist)
         configured_path.unlink()
         configured_path.symlink_to(alternate_path)
         return connection
@@ -627,7 +640,12 @@ async def test_concurrent_open_calls_share_one_attempt_and_owner(
         connection,
     )
 
-    def blocked_open(_database_path: Path) -> Any:
+    def blocked_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         events.append(("store.open", threading.get_ident()))
         open_started.set()
         assert allow_open.wait(5.0)
@@ -669,7 +687,12 @@ async def test_active_open_rejects_foreign_loop_before_joining_shared_task(
     open_calls = 0
     _install_fake_store(monkeypatch, module, events, connection)
 
-    def blocked_open(_database_path: Path) -> Any:
+    def blocked_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         nonlocal open_calls
         open_calls += 1
         open_started.set()
@@ -777,7 +800,12 @@ async def test_overlapping_failed_open_calls_share_attempt_before_later_retry(
         connection,
     )
 
-    def controlled_open(_database_path: Path) -> Any:
+    def controlled_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         nonlocal attempts
         attempts += 1
         events.append(("store.open", threading.get_ident()))
@@ -845,7 +873,12 @@ async def test_cancelled_overlapping_open_waits_for_shared_attempt_settlement(
     attempts = 0
     _install_fake_store(monkeypatch, module, events, connection)
 
-    def controlled_open(_database_path: Path) -> Any:
+    def controlled_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         nonlocal attempts
         attempts += 1
         attempt_started.set()
@@ -936,7 +969,12 @@ async def test_failed_open_cleans_partial_lease_and_maps_hostile_error(
         connection,
     )
 
-    def hostile_open(_database_path: Path) -> Any:
+    def hostile_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         events.append(("store.open", threading.get_ident()))
         raise RuntimeError(secret)
 
@@ -956,7 +994,12 @@ async def test_failed_open_cleans_partial_lease_and_maps_hostile_error(
         events, "lease.release"
     )
 
-    def healthy_open(_database_path: Path) -> Any:
+    def healthy_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         events.append(("store.open", threading.get_ident()))
         return connection
 
@@ -1031,14 +1074,19 @@ async def test_failed_open_retains_real_shared_lease_until_connection_cleanup(
             raise opening_error
         return fail_after_connection_assignment
 
-    def controlled_open(_database_path: Path) -> Any:
+    def controlled_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         nonlocal open_calls, previous_worker_trace
         open_calls += 1
         if open_calls == 1:
             if sys.gettrace() is None:
                 sys.settrace(passthrough_worker_trace)
             previous_worker_trace = sys.gettrace()
-            worker_frame = sys._getframe(1)
+            worker_frame = sys._getframe(2)
             worker_frame.f_trace = fail_after_connection_assignment
             sys.settrace(fail_after_connection_assignment)
             return first_connection
@@ -1141,10 +1189,15 @@ async def test_failed_open_connection_cleanup_control_preserves_precedence(
             raise primary_error
         return fail_after_connection_assignment
 
-    def partial_open(_database_path: Path) -> Any:
+    def partial_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         nonlocal previous_worker_trace
         previous_worker_trace = sys.gettrace()
-        worker_frame = sys._getframe(1)
+        worker_frame = sys._getframe(2)
         worker_frame.f_trace = fail_after_connection_assignment
         sys.settrace(fail_after_connection_assignment)
         return connection
@@ -1207,7 +1260,12 @@ async def test_failed_open_retains_lease_until_retry_cleanup_succeeds(
         leases.append(lease)
         return lease
 
-    def controlled_open(_database_path: Path) -> Any:
+    def controlled_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         nonlocal open_calls
         open_calls += 1
         events.append((f"store.open-{open_calls}", threading.get_ident()))
@@ -1286,7 +1344,12 @@ async def test_failed_open_close_retries_retained_lease_with_error_precedence(
         assert mode is ProfileStoreLockMode.SHARED
         return lease
 
-    def failing_open(_database_path: Path) -> Any:
+    def failing_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         raise primary_error
 
     monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
@@ -1351,7 +1414,7 @@ async def test_retry_cleans_residual_connection_before_acquiring_new_lease(
         must_exist: bool = False,
     ) -> Any:
         nonlocal open_calls
-        assert must_exist is (open_calls > 0)
+        assert must_exist is True
         connection = connections[open_calls]
         open_calls += 1
         events.append((f"store.open-{open_calls}", threading.get_ident()))
@@ -1405,7 +1468,12 @@ async def test_open_recreates_structured_error_without_hostile_context(
     incoming = _tainted_repository_error("schema_corrupt", secret)
     _install_fake_store(monkeypatch, module, events, connection)
 
-    def hostile_open(_database_path: Path) -> Any:
+    def hostile_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         raise incoming
 
     monkeypatch.setattr(module, "open_profile_store", hostile_open)
@@ -1436,7 +1504,12 @@ async def test_open_rejects_missing_connection_and_releases_partial_lease(
         connection,
     )
 
-    def missing_connection(_database_path: Path) -> Any:
+    def missing_connection(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         events.append(("store.open", threading.get_ident()))
         return None
 
@@ -1469,7 +1542,12 @@ async def test_cancelled_open_settles_worker_and_publishes_consistent_state(
     allow_open = threading.Event()
     _install_fake_store(monkeypatch, module, events, connection)
 
-    def blocked_open(_database_path: Path) -> Any:
+    def blocked_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
+        del must_exist
         events.append(("store.open", threading.get_ident()))
         open_started.set()
         assert allow_open.wait(5.0)
@@ -1912,7 +1990,11 @@ async def test_close_failure_retains_real_shared_lease_and_connection_fail_close
 
     monkeypatch.setattr(module, "ThreadPoolExecutor", executor_factory)
     monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
-    monkeypatch.setattr(module, "open_profile_store", lambda _path: connection)
+    monkeypatch.setattr(
+        module,
+        "open_profile_store",
+        lambda _path, **_kwargs: connection,
+    )
     repository = module.TTSProfileRepository(database_path)
     await repository.open()
 
@@ -2053,6 +2135,142 @@ async def test_online_backup_serializes_with_write_and_publishes_valid_snapshot(
     finally:
         finish_commit.set()
         await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_backup_and_restore_path_filesystem_checks_run_only_on_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    destination = tmp_path / "backup.sqlite3"
+    loop_thread = threading.get_ident()
+    path_events: list[tuple[str, int]] = []
+    real_canonical = module._canonical_database_path
+    real_backup_destination = module._validate_backup_destination
+    real_restore_candidate = module._validate_restore_candidate_path
+
+    def traced_canonical(path: Path, failure_code: str) -> Path:
+        path_events.append(("canonical", threading.get_ident()))
+        return real_canonical(path, failure_code)
+
+    def traced_backup_destination(
+        path: object,
+        active_path: Path,
+    ) -> Any:
+        path_events.append(("backup", threading.get_ident()))
+        return real_backup_destination(path, active_path)
+
+    def traced_restore_candidate(
+        path: object,
+        active_path: Path,
+    ) -> Any:
+        path_events.append(("restore", threading.get_ident()))
+        return real_restore_candidate(path, active_path)
+
+    monkeypatch.setattr(module, "_canonical_database_path", traced_canonical)
+    monkeypatch.setattr(
+        module,
+        "_validate_backup_destination",
+        traced_backup_destination,
+    )
+    monkeypatch.setattr(
+        module,
+        "_validate_restore_candidate_path",
+        traced_restore_candidate,
+    )
+    repository = module.TTSProfileRepository(database_path)
+    await repository.open()
+    try:
+        path_events.clear()
+        await repository.backup_to(destination)
+
+        assert path_events
+        assert any(name == "backup" for name, _thread_id in path_events)
+        assert len({thread_id for _name, thread_id in path_events}) == 1
+        assert loop_thread not in {thread_id for _name, thread_id in path_events}
+
+        path_events.clear()
+        await repository.restore_from(destination)
+
+        assert path_events
+        assert any(name == "restore" for name, _thread_id in path_events)
+        assert len({thread_id for _name, thread_id in path_events}) == 1
+        assert loop_thread not in {thread_id for _name, thread_id in path_events}
+    finally:
+        await repository.close()
+
+
+def test_restore_online_backup_checks_deadline_between_page_batches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    monotonic_values = iter((0.0, 2.0))
+    backup_options: dict[str, object] = {}
+
+    class Source:
+        def backup(self, _destination: object, **options: object) -> None:
+            backup_options.update(options)
+            progress = cast(Callable[[int, int, int], None], options["progress"])
+            progress(0, 1, 2)
+
+    monkeypatch.setattr(module, "_monotonic", lambda: next(monotonic_values))
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        repository._worker_online_backup(
+            cast(sqlite3.Connection, Source()),
+            cast(sqlite3.Connection, object()),
+            deadline=1.0,
+        )
+
+    _assert_safe_error(caught.value, "restore_failed")
+    assert type(backup_options["pages"]) is int
+    assert 1 <= cast(int, backup_options["pages"]) <= 256
+    assert callable(backup_options["progress"])
+
+
+def test_restore_integrity_check_interrupts_and_clears_progress_handler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    monotonic_values = iter((0.0, 2.0))
+    progress_handlers: list[tuple[object, int]] = []
+
+    class Connection:
+        progress_handler: Callable[[], int] | None = None
+
+        def set_progress_handler(
+            self,
+            handler: Callable[[], int] | None,
+            opcode_interval: int,
+        ) -> None:
+            self.progress_handler = handler
+            progress_handlers.append((handler, opcode_interval))
+
+        def execute(self, _statement: str) -> tuple[tuple[str], ...]:
+            assert self.progress_handler is not None
+            if self.progress_handler() != 0:
+                raise sqlite3.OperationalError
+            return (("ok",),)
+
+    monkeypatch.setattr(module, "_monotonic", lambda: next(monotonic_values))
+    connection = Connection()
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        repository._worker_require_full_integrity(
+            cast(sqlite3.Connection, connection),
+            deadline=1.0,
+        )
+
+    _assert_safe_error(caught.value, "restore_failed")
+    assert callable(progress_handlers[0][0])
+    assert progress_handlers[0][1] > 0
+    assert progress_handlers[-1] == (None, 0)
 
 
 @pytest.mark.asyncio
@@ -2261,7 +2479,7 @@ async def test_restore_rejects_invalid_timeout_before_lifecycle_or_file_mutation
 
 
 @pytest.mark.asyncio
-async def test_restore_rejects_live_reserved_and_alias_candidates_before_admission(
+async def test_restore_rejects_live_reserved_and_alias_candidates_on_worker(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "profiles.sqlite3"
@@ -2297,7 +2515,7 @@ async def test_restore_rejects_live_reserved_and_alias_candidates_before_admissi
                 str(database_path),
             )
         assert repository.state is ProfileRepositoryState.OPEN
-        assert repository.generation == 1
+        assert repository.generation == 1 + len(candidates)
         assert not tuple(tmp_path.glob("*.restore-stage.sqlite3"))
         assert not tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
     finally:
@@ -2577,7 +2795,7 @@ async def test_recovery_backup_failure_cleans_stage_and_rebinds_original(
         UUID("00000000-0000-4000-8000-000000000099"),
     )
 
-    def fail_recovery(_restored_at: datetime) -> Path:
+    def fail_recovery(_restored_at: datetime, _deadline: float) -> Path:
         raise RuntimeError(secret)
 
     monkeypatch.setattr(repository, "_worker_create_recovery_backup", fail_recovery)
@@ -3089,18 +3307,22 @@ async def test_restore_live_connection_close_failure_retains_protecting_lease(
                 return cast(sqlite3.Connection, proxy)
         return connection
 
-    def injected_counts(connection: sqlite3.Connection) -> tuple[int, int]:
+    def injected_counts(
+        connection: sqlite3.Connection,
+        *,
+        deadline: float | None = None,
+    ) -> tuple[int, int]:
         if boundary in {"pre_rebind", "post_rebind"} and any(
             connection is proxy for proxy in proxies
         ):
             raise RuntimeError(secret)
-        return real_counts(connection)
+        return real_counts(connection, deadline=deadline)
 
     if boundary == "pre_rebind":
         monkeypatch.setattr(
             repository,
             "_worker_create_recovery_backup",
-            lambda _restored_at: (_ for _ in ()).throw(RuntimeError(secret)),
+            lambda _restored_at, _deadline: (_ for _ in ()).throw(RuntimeError(secret)),
         )
     monkeypatch.setattr(module, "open_profile_store", injected_open)
     monkeypatch.setattr(repository, "_worker_store_counts", injected_counts)
@@ -3510,7 +3732,12 @@ async def test_restore_full_integrity_failure_preserves_original_before_recovery
         UUID("00000000-0000-4000-8000-000000000099"),
     )
 
-    def fail_integrity(_connection: sqlite3.Connection) -> None:
+    def fail_integrity(
+        _connection: sqlite3.Connection,
+        *,
+        deadline: float | None = None,
+    ) -> None:
+        del deadline
         raise ProfileRepositoryError("schema_corrupt")
 
     monkeypatch.setattr(repository, "_worker_require_full_integrity", fail_integrity)
@@ -3801,7 +4028,7 @@ async def test_restore_rejects_configured_symlink_drift_without_mutating_either_
         assert active_path.read_bytes() == active_bytes
         assert alternate_path.read_bytes() == alternate_bytes
         assert repository.state is ProfileRepositoryState.OPEN
-        assert repository.generation == 1
+        assert repository.generation == 2
         assert not tuple(tmp_path.glob("*.restore-stage.sqlite3"))
         assert not tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
         page = await repository.list_profiles()
@@ -3905,7 +4132,7 @@ async def test_restore_expired_immediately_after_exclusive_acquire_does_not_stag
                 now = 11.0
             return result
 
-    def unexpected_stage(_candidate: object) -> Path:
+    def unexpected_stage(_candidate: object, _deadline: float) -> Path:
         nonlocal stage_called
         stage_called = True
         raise AssertionError("staging must not run after the deadline")
@@ -3956,13 +4183,19 @@ async def test_restore_stage_consuming_deadline_does_not_create_recovery_or_repl
     replace_called = False
     real_replace = module.os.replace
 
-    def expiring_stage(candidate_snapshot: object) -> Path:
+    def expiring_stage(
+        candidate_snapshot: object,
+        deadline: float,
+    ) -> Path:
         nonlocal now
-        stage = real_stage(candidate_snapshot)
+        stage = real_stage(candidate_snapshot, deadline)  # type: ignore[arg-type]
         now = 11.0
         return stage
 
-    def unexpected_recovery(_restored_at: datetime) -> Path:
+    def unexpected_recovery(
+        _restored_at: datetime,
+        _deadline: float,
+    ) -> Path:
         nonlocal recovery_called
         recovery_called = True
         raise AssertionError("recovery must not run after the deadline")

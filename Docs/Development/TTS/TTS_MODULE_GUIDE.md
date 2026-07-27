@@ -142,6 +142,15 @@ repository reports `unavailable`, retains recovery evidence, and does not
 create a blank database. Corrupt, partial, unsupported-version, or missing
 established stores likewise fail closed instead of being recreated.
 
+The restore timeout is one absolute cooperative budget. SQLite copies run in
+bounded page batches, integrity queries use SQLite VM progress interruption,
+and schema-owned rows and private candidate-copy chunks check the same
+deadline. Checks also surround staging, recovery, replacement, and durable
+flush boundaries so the exclusive lease is released promptly on expiry.
+An individual kernel call such as `fsync`, `replace`, `stat`, `read`, or
+`write` cannot be interrupted after it starts, so one such in-flight call may
+finish just beyond the requested timeout before cleanup releases ownership.
+
 Profiles persist generation selections, not connection or process
 configuration. Provider origins, credentials, API keys, custom headers, binary
 paths, `server.json` paths, health observations, message text, and raw local

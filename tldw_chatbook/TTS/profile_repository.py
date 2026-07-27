@@ -56,6 +56,7 @@ from tldw_chatbook.TTS.profile_types import (
 _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
 _CHARACTER_REF_TYPE = CharacterRef
+_TTS_PROFILE_DRAFT_TYPE = TTSProfileDraft
 _MAX_SEARCH_CHARACTERS = 128
 _MAX_NORMALIZED_SEARCH_CHARACTERS = 512
 _MAX_NORMALIZED_SEARCH_BYTES = 2_048
@@ -69,6 +70,9 @@ _SQLITE_CONSTRAINT_PRIMARYKEY = 1_555
 _SQLITE_CONSTRAINT_TRIGGER = 1_811
 _SQLITE_CONSTRAINT_UNIQUE = 2_067
 _STORE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_INITIALIZATION_LOCK_TIMEOUT_SECONDS = 0.1
+_RESTORE_BACKUP_PAGE_BATCH = 64
+_RESTORE_PROGRESS_OPCODE_INTERVAL = 1_000
 _RESTORE_REBIND_TIMEOUT_SECONDS = 5.0
 _TransactionOperation = Literal[
     "create",
@@ -183,9 +187,31 @@ def _validate_optional_profile_id(value: object) -> UUID | None:
 
 
 def _validate_draft(value: object) -> TTSProfileDraft:
-    if type(value) is not TTSProfileDraft:
+    if type(value) is not _TTS_PROFILE_DRAFT_TYPE:
         raise _repository_error("operation_failed")
-    return cast(TTSProfileDraft, value)
+    draft = cast(TTSProfileDraft, value)
+    validation_error: BaseException | None = None
+    validated: TTSProfileDraft | None = None
+    try:
+        validated = TTSProfileDraft(
+            display_name=draft.display_name,
+            provider_id=draft.provider_id,
+            model_id=draft.model_id,
+            voice_id=draft.voice_id,
+            response_format=draft.response_format,
+            speed=draft.speed,
+            options=draft.options,
+        )
+        if validated != draft:
+            raise ValueError
+    except BaseException as error:
+        validation_error = error
+    if validation_error is not None:
+        if not isinstance(validation_error, Exception):
+            raise validation_error
+        raise _repository_error("operation_failed")
+    assert validated is not None
+    return validated
 
 
 def _validate_expected_revision(value: object) -> int:
@@ -801,7 +827,7 @@ class TTSProfileRepository:
             return self._terminal
 
     def _active_path_for_operation(self, failure_code: str) -> Path:
-        """Return the open lifecycle's canonical path after a drift check."""
+        """Snapshot the open lifecycle's canonical path without filesystem I/O."""
 
         with self._state_lock:
             state_error = self._normal_state_error_locked()
@@ -810,7 +836,6 @@ class TTSProfileRepository:
             raise _repository_error(state_error)
         if active_path is None:
             raise _repository_error(failure_code)
-        self._require_configured_path_matches(active_path, failure_code)
         return active_path
 
     def _require_configured_path_matches(
@@ -969,15 +994,26 @@ class TTSProfileRepository:
                 self._database_path,
                 "operation_failed",
             )
-            lease = ProfileStoreLease(
-                active_path,
-                ProfileStoreLockMode.SHARED,
-            )
-            lease.acquire()
-            if self._store_established:
-                connection = open_profile_store(active_path, must_exist=True)
-            else:
-                connection = open_profile_store(active_path)
+            try:
+                lease, connection = self._worker_open_existing(active_path)
+            except ProfileRepositoryError as error:
+                if self._store_established or error.code not in {
+                    "missing",
+                    "schema_partial",
+                }:
+                    raise
+                try:
+                    self._worker_initialize_store(active_path)
+                except ProfileRepositoryError as initialization_error:
+                    if initialization_error.code != "lock_timeout":
+                        raise
+                    # Another fresh process may have won initialization and
+                    # downgraded to its long-lived shared lease before this
+                    # contender acquired exclusive ownership. Re-read under
+                    # shared ownership instead of failing a healthy first open.
+                    lease, connection = self._worker_open_existing(active_path)
+                else:
+                    lease, connection = self._worker_open_existing(active_path)
             if connection is None:
                 raise _repository_error("operation_failed")
             validate_profile_store_rows(connection)
@@ -1017,6 +1053,84 @@ class TTSProfileRepository:
             self._active_database_path = active_path
         else:
             self._active_database_path = None
+        _raise_with_cleanup_precedence(
+            body_error,
+            connection_error,
+            lease_error,
+        )
+
+    def _worker_open_existing(
+        self,
+        active_path: Path,
+    ) -> tuple[ProfileStoreLease, sqlite3.Connection]:
+        """Open an established store while holding cooperative shared ownership."""
+
+        lease = ProfileStoreLease(
+            active_path,
+            ProfileStoreLockMode.SHARED,
+        )
+        connection: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        release_error: BaseException | None = None
+        try:
+            lease.acquire()
+            connection = open_profile_store(active_path, must_exist=True)
+            if connection is None:
+                raise _repository_error("operation_failed")
+        except BaseException as error:
+            body_error = error
+
+        if body_error is None:
+            assert connection is not None
+            return lease, connection
+
+        try:
+            lease.release()
+        except BaseException as error:
+            release_error = error
+            self._lease = lease
+            self._active_database_path = active_path
+        _raise_with_cleanup_precedence(body_error, release_error)
+        raise AssertionError("unreachable")
+
+    def _worker_initialize_store(self, active_path: Path) -> None:
+        """Create or migrate one store only while holding exclusive ownership."""
+
+        lease = ProfileStoreLease(
+            active_path,
+            ProfileStoreLockMode.EXCLUSIVE,
+            timeout_seconds=_INITIALIZATION_LOCK_TIMEOUT_SECONDS,
+        )
+        connection: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        connection_error: BaseException | None = None
+        lease_error: BaseException | None = None
+        try:
+            lease.acquire()
+            connection = open_profile_store(active_path)
+            validate_profile_store_rows(connection)
+            self._require_configured_path_matches(
+                active_path,
+                "operation_failed",
+            )
+        except BaseException as error:
+            body_error = error
+
+        if connection is not None:
+            try:
+                connection.close()
+            except BaseException as error:
+                connection_error = error
+                self._connection = connection
+                self._lease = lease
+                self._active_database_path = active_path
+        if connection_error is None:
+            try:
+                lease.release()
+            except BaseException as error:
+                lease_error = error
+                self._lease = lease
+                self._active_database_path = active_path
         _raise_with_cleanup_precedence(
             body_error,
             connection_error,
@@ -1318,12 +1432,14 @@ class TTSProfileRepository:
                 serialized operation lane.
         """
 
+        if type(destination) is not _PATH_TYPE:
+            raise _repository_error("backup_failed")
+        exact_destination = cast(Path, destination)
         active_path = self._active_path_for_operation("backup_failed")
-        destination_snapshot = _validate_backup_destination(destination, active_path)
         return await self._submit_operation(
             lambda connection: self._worker_backup_to(
                 connection,
-                destination_snapshot,
+                exact_destination,
                 active_path,
             )
         )
@@ -1331,11 +1447,12 @@ class TTSProfileRepository:
     def _worker_backup_to(
         self,
         connection: sqlite3.Connection,
-        destination: _DestinationSnapshot,
+        destination_path: Path,
         active_path: Path,
     ) -> ProfileBackupReceipt:
         """Create and atomically publish one worker-owned online backup."""
 
+        destination = _validate_backup_destination(destination_path, active_path)
         temporary_path: Path | None = None
         destination_connection: sqlite3.Connection | None = None
         body_error: BaseException | None = None
@@ -1420,40 +1537,125 @@ class TTSProfileRepository:
         self,
         source: sqlite3.Connection,
         destination: sqlite3.Connection,
+        *,
+        deadline: float | None = None,
     ) -> None:
         """Copy one complete SQLite snapshot through the online-backup API."""
 
-        source.backup(destination)
+        if deadline is None:
+            source.backup(destination)
+            return
+
+        _require_restore_time(deadline)
+
+        def check_deadline(
+            _status: int,
+            _remaining: int,
+            _total: int,
+        ) -> None:
+            _require_restore_time(deadline)
+
+        source.backup(
+            destination,
+            pages=_RESTORE_BACKUP_PAGE_BATCH,
+            progress=check_deadline,
+            sleep=0.0,
+        )
+        _require_restore_time(deadline)
 
     def _worker_require_full_integrity(
         self,
         connection: sqlite3.Connection,
+        *,
+        deadline: float | None = None,
     ) -> None:
         """Require SQLite's full integrity check on one worker-owned handle."""
 
+        callback_error: BaseException | None = None
+        body_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
+        results: list[object] | None = None
+        progress_installed = False
+
+        def interrupt_after_deadline() -> int:
+            nonlocal callback_error
+            try:
+                assert deadline is not None
+                _require_restore_time(deadline)
+            except BaseException as error:
+                callback_error = error
+                return 1
+            return 0
+
         try:
+            if deadline is not None:
+                _require_restore_time(deadline)
+                connection.set_progress_handler(
+                    interrupt_after_deadline,
+                    _RESTORE_PROGRESS_OPCODE_INTERVAL,
+                )
+                progress_installed = True
             results = [row[0] for row in connection.execute("PRAGMA integrity_check")]
         except BaseException as error:
-            if not isinstance(error, Exception):
-                raise
-            raise _repository_error("schema_corrupt")
+            body_error = error
+        if progress_installed:
+            try:
+                connection.set_progress_handler(None, 0)
+            except BaseException as error:
+                cleanup_error = error
+
+        if callback_error is not None:
+            body_error = callback_error
+        elif body_error is None and deadline is not None:
+            try:
+                _require_restore_time(deadline)
+            except BaseException as error:
+                body_error = error
+
+        mapped_errors: list[BaseException | None] = []
+        for candidate_error in (body_error, cleanup_error):
+            if candidate_error is None or not isinstance(candidate_error, Exception):
+                mapped_errors.append(candidate_error)
+            elif isinstance(candidate_error, ProfileRepositoryError):
+                mapped_errors.append(candidate_error)
+            else:
+                mapped_errors.append(_repository_error("schema_corrupt"))
+        _raise_with_cleanup_precedence(*mapped_errors)
         if results != ["ok"]:
             raise _repository_error("schema_corrupt")
 
-    def _worker_validate_standalone_snapshot(self, path: Path) -> None:
+    def _worker_validate_standalone_snapshot(
+        self,
+        path: Path,
+        *,
+        deadline: float | None = None,
+    ) -> None:
         """Run shared schema/domain checks plus full integrity on one snapshot."""
 
-        validate_profile_candidate(path)
+        check_deadline = (
+            None if deadline is None else lambda: _require_restore_time(deadline)
+        )
+        validate_profile_candidate(
+            path,
+            check_deadline=check_deadline,
+        )
         connection: sqlite3.Connection | None = None
         body_error: BaseException | None = None
         close_error: BaseException | None = None
         try:
+            if check_deadline is not None:
+                check_deadline()
             connection = sqlite3.connect(
                 f"{path.resolve(strict=True).as_uri()}?mode=ro&immutable=1",
                 uri=True,
                 isolation_level=None,
             )
-            self._worker_require_full_integrity(connection)
+            if check_deadline is not None:
+                check_deadline()
+            self._worker_require_full_integrity(
+                connection,
+                deadline=deadline,
+            )
         except BaseException as error:
             body_error = error
         if connection is not None:
@@ -1465,7 +1667,7 @@ class TTSProfileRepository:
 
     def _worker_restore(
         self,
-        candidate: _CandidateSnapshot,
+        candidate_path: Path,
         deadline: float,
         generation: int,
         active_path: Path,
@@ -1485,14 +1687,20 @@ class TTSProfileRepository:
         try:
             if self._worker_active_path() != active_path:
                 raise _repository_error("restore_failed")
+            _require_restore_time(deadline)
             self._require_configured_path_matches(active_path, "restore_failed")
+            candidate = _validate_restore_candidate_path(
+                candidate_path,
+                active_path,
+            )
+            _require_restore_time(deadline)
             restored_at = self._clock()
             ProfileRestoreReceipt(
                 restored_at=restored_at,
                 profile_count=0,
                 assignment_count=0,
             )
-            self._worker_close_for_restore()
+            self._worker_close_for_restore(deadline)
 
             remaining = _remaining_seconds(deadline)
             if remaining <= 0:
@@ -1509,16 +1717,20 @@ class TTSProfileRepository:
             if not _candidate_is_unchanged(candidate):
                 raise _repository_error("restore_failed")
             _require_restore_time(deadline)
-            stage_path = self._worker_stage_candidate(candidate)
+            stage_path = self._worker_stage_candidate(candidate, deadline)
             _require_restore_time(deadline)
             self._require_configured_path_matches(active_path, "restore_failed")
-            recovery_path = self._worker_create_recovery_backup(restored_at)
+            recovery_path = self._worker_create_recovery_backup(
+                restored_at,
+                deadline,
+            )
             _require_restore_time(deadline)
             self._require_configured_path_matches(active_path, "restore_failed")
             self._worker_remove_live_sidecars()
             _require_restore_time(deadline)
             self._require_configured_path_matches(active_path, "restore_failed")
             _fsync_file(stage_path)
+            _require_restore_time(deadline)
             _fsync_directory(stage_path.parent)
             _require_restore_time(deadline)
             self._require_configured_path_matches(active_path, "restore_failed")
@@ -1526,14 +1738,23 @@ class TTSProfileRepository:
             replaced = True
             stage_path = None
             _fsync_directory(active_path.parent)
+            _require_restore_time(deadline)
             self._require_configured_path_matches(active_path, "restore_failed")
 
+            _require_restore_time(deadline)
             scoped = open_profile_store(active_path, must_exist=True)
             scoped_error: BaseException | None = None
             try:
-                self._worker_require_full_integrity(scoped)
-                validate_profile_store_rows(scoped)
-                self._worker_store_counts(scoped)
+                _require_restore_time(deadline)
+                self._worker_require_full_integrity(
+                    scoped,
+                    deadline=deadline,
+                )
+                validate_profile_store_rows(
+                    scoped,
+                    check_deadline=lambda: _require_restore_time(deadline),
+                )
+                self._worker_store_counts(scoped, deadline=deadline)
             except BaseException as error:
                 scoped_error = error
             close_error: BaseException | None = None
@@ -1547,24 +1768,36 @@ class TTSProfileRepository:
             _raise_with_cleanup_precedence(scoped_error, close_error)
 
             assert exclusive_lease is not None
+            _require_restore_time(deadline)
             exclusive_lease.release()
             exclusive_lease = None
+            remaining = _remaining_seconds(deadline)
+            if remaining <= 0:
+                raise _repository_error("restore_failed")
             rebound_lease = ProfileStoreLease(
                 active_path,
                 ProfileStoreLockMode.SHARED,
-                timeout_seconds=_RESTORE_REBIND_TIMEOUT_SECONDS,
+                timeout_seconds=min(_RESTORE_REBIND_TIMEOUT_SECONDS, remaining),
             )
             rebound_lease.acquire()
+            _require_restore_time(deadline)
             rebound_connection = open_profile_store(
                 active_path,
                 must_exist=True,
             )
             # Validate the authoritative long-lived handle, not only the
             # scoped pre-handoff handle.
-            self._worker_require_full_integrity(rebound_connection)
-            validate_profile_store_rows(rebound_connection)
+            self._worker_require_full_integrity(
+                rebound_connection,
+                deadline=deadline,
+            )
+            validate_profile_store_rows(
+                rebound_connection,
+                check_deadline=lambda: _require_restore_time(deadline),
+            )
             profile_count, assignment_count = self._worker_store_counts(
-                rebound_connection
+                rebound_connection,
+                deadline=deadline,
             )
             receipt = ProfileRestoreReceipt(
                 restored_at=restored_at,
@@ -1676,12 +1909,14 @@ class TTSProfileRepository:
         _ = recovery_path
         raise _repository_error("restore_failed")
 
-    def _worker_close_for_restore(self) -> None:
+    def _worker_close_for_restore(self, deadline: float) -> None:
         connection = self._connection
         lease = self._lease
         if connection is None or lease is None:
             raise _repository_error("invalid_state")
+        _require_restore_time(deadline)
         checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        _require_restore_time(deadline)
         if (
             checkpoint is None
             or len(checkpoint) != 3
@@ -1693,8 +1928,13 @@ class TTSProfileRepository:
         self._connection = None
         lease.release()
         self._lease = None
+        _require_restore_time(deadline)
 
-    def _worker_stage_candidate(self, candidate: _CandidateSnapshot) -> Path:
+    def _worker_stage_candidate(
+        self,
+        candidate: _CandidateSnapshot,
+        deadline: float,
+    ) -> Path:
         active_path = self._worker_active_path()
         source: sqlite3.Connection | None = None
         destination: sqlite3.Connection | None = None
@@ -1702,6 +1942,7 @@ class TTSProfileRepository:
         body_error: BaseException | None = None
         cleanup_errors: list[BaseException] = []
         try:
+            _require_restore_time(deadline)
             descriptor, stage_name = tempfile.mkstemp(
                 prefix=f".{active_path.name}.",
                 suffix=".restore-stage.sqlite3",
@@ -1715,14 +1956,22 @@ class TTSProfileRepository:
                 isolation_level=None,
             )
             destination = sqlite3.connect(stage_path, isolation_level=None)
-            self._worker_online_backup(source, destination)
+            self._worker_online_backup(
+                source,
+                destination,
+                deadline=deadline,
+            )
             destination.close()
             destination = None
             source.close()
             source = None
             if not _candidate_is_unchanged(candidate):
                 raise _repository_error("restore_failed")
-            self._worker_validate_standalone_snapshot(stage_path)
+            _require_restore_time(deadline)
+            self._worker_validate_standalone_snapshot(
+                stage_path,
+                deadline=deadline,
+            )
         except BaseException as error:
             body_error = error
 
@@ -1742,7 +1991,11 @@ class TTSProfileRepository:
         assert stage_path is not None
         return stage_path
 
-    def _worker_create_recovery_backup(self, restored_at: datetime) -> Path:
+    def _worker_create_recovery_backup(
+        self,
+        restored_at: datetime,
+        deadline: float,
+    ) -> Path:
         active_path = self._worker_active_path()
         source: sqlite3.Connection | None = None
         destination: sqlite3.Connection | None = None
@@ -1750,6 +2003,7 @@ class TTSProfileRepository:
         body_error: BaseException | None = None
         cleanup_errors: list[BaseException] = []
         try:
+            _require_restore_time(deadline)
             timestamp = restored_at.astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
             descriptor, recovery_name = tempfile.mkstemp(
                 prefix=f"{active_path.name}.pre-restore-{timestamp}-",
@@ -1760,7 +2014,11 @@ class TTSProfileRepository:
             os.close(descriptor)
             source = open_profile_store(active_path, must_exist=True)
             destination = sqlite3.connect(recovery_path, isolation_level=None)
-            self._worker_online_backup(source, destination)
+            self._worker_online_backup(
+                source,
+                destination,
+                deadline=deadline,
+            )
             destination.close()
             destination = None
             try:
@@ -1771,9 +2029,15 @@ class TTSProfileRepository:
                 raise
             else:
                 source = None
-            self._worker_validate_standalone_snapshot(recovery_path)
+            self._worker_validate_standalone_snapshot(
+                recovery_path,
+                deadline=deadline,
+            )
+            _require_restore_time(deadline)
             _fsync_file(recovery_path)
+            _require_restore_time(deadline)
             _fsync_directory(recovery_path.parent)
+            _require_restore_time(deadline)
         except BaseException as error:
             body_error = error
 
@@ -1830,13 +2094,19 @@ class TTSProfileRepository:
     def _worker_store_counts(
         self,
         connection: sqlite3.Connection,
+        *,
+        deadline: float | None = None,
     ) -> tuple[int, int]:
         counts: list[int] = []
         for table in ("tts_generation_profiles", "character_tts_assignments"):
+            if deadline is not None:
+                _require_restore_time(deadline)
             row = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
             if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
                 raise _repository_error("corrupt_data")
             counts.append(cast(int, row[0]))
+        if deadline is not None:
+            _require_restore_time(deadline)
         return (counts[0], counts[1])
 
     def _worker_rebind_current_store(self) -> None:
@@ -1907,6 +2177,10 @@ class TTSProfileRepository:
     ) -> ProfileStoreResult[ProfileRestoreReceipt]:
         """Atomically restore one validated standalone profile-store snapshot.
 
+        The timeout is enforced cooperatively between bounded SQLite backup
+        page batches, SQLite VM progress callbacks, row decodes, and filesystem
+        boundaries. One in-flight kernel filesystem call cannot be interrupted.
+
         Args:
             candidate: Exact standalone candidate path.
             timeout_seconds: Positive finite quiescence/exclusive-lock budget.
@@ -1922,11 +2196,10 @@ class TTSProfileRepository:
         """
 
         timeout = _validate_restore_timeout(timeout_seconds)
+        if type(candidate) is not _PATH_TYPE:
+            raise _repository_error("restore_failed")
+        exact_candidate = cast(Path, candidate)
         active_path = self._active_path_for_operation("restore_failed")
-        candidate_snapshot = _validate_restore_candidate_path(
-            candidate,
-            active_path,
-        )
         deadline = _read_monotonic() + timeout
         if not math.isfinite(deadline):
             raise _repository_error("restore_failed")
@@ -1961,7 +2234,7 @@ class TTSProfileRepository:
 
                 completion = asyncio.create_task(
                     self._finish_restore(
-                        candidate_snapshot,
+                        exact_candidate,
                         deadline,
                         generation,
                         pending,
@@ -1989,7 +2262,7 @@ class TTSProfileRepository:
 
     async def _finish_restore(
         self,
-        candidate: _CandidateSnapshot,
+        candidate: Path,
         deadline: float,
         generation: int,
         pending: tuple[Future[object], ...],
@@ -2017,9 +2290,6 @@ class TTSProfileRepository:
             remaining = _remaining_seconds(deadline)
             if remaining <= 0 or executor is None:
                 raise _repository_error("restore_failed")
-            if self._worker_active_path() != active_path:
-                raise _repository_error("restore_failed")
-            self._require_configured_path_matches(active_path, "restore_failed")
             restore_future = executor.submit(
                 self._worker_restore,
                 candidate,

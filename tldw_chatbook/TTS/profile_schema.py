@@ -774,7 +774,11 @@ def open_profile_store(
     raise _repository_error("schema_corrupt") from None
 
 
-def validate_profile_store_rows(connection: sqlite3.Connection) -> None:
+def validate_profile_store_rows(
+    connection: sqlite3.Connection,
+    *,
+    check_deadline: Callable[[], None] | None = None,
+) -> None:
     """Decode every schema-owned profile, assignment, and joined snapshot row.
 
     Args:
@@ -786,12 +790,22 @@ def validate_profile_store_rows(connection: sqlite3.Connection) -> None:
     """
 
     try:
+        if check_deadline is not None:
+            check_deadline()
         for row in connection.execute(f"SELECT * FROM {PROFILE_TABLE}"):
+            if check_deadline is not None:
+                check_deadline()
             decode_profile(row)
         for row in connection.execute(f"SELECT * FROM {ASSIGNMENT_TABLE}"):
+            if check_deadline is not None:
+                check_deadline()
             decode_assignment(row)
         for row in connection.execute(ASSIGNED_PROFILE_JOIN_SELECT):
+            if check_deadline is not None:
+                check_deadline()
             decode_assigned_snapshot(row)
+        if check_deadline is not None:
+            check_deadline()
     except ProfileRepositoryError:
         raise
     except Exception:
@@ -855,15 +869,31 @@ def _snapshot_is_unchanged(
     )
 
 
-def _copy_source_to_snapshot(source_fd: int, snapshot_fd: int) -> None:
-    while chunk := os.read(source_fd, 1024 * 1024):
+def _copy_source_to_snapshot(
+    source_fd: int,
+    snapshot_fd: int,
+    *,
+    check_deadline: Callable[[], None] | None = None,
+) -> None:
+    while True:
+        if check_deadline is not None:
+            check_deadline()
+        chunk = os.read(source_fd, 1024 * 1024)
+        if not chunk:
+            break
         offset = 0
         while offset < len(chunk):
+            if check_deadline is not None:
+                check_deadline()
             written = os.write(snapshot_fd, chunk[offset:])
             if written <= 0:
                 raise OSError
             offset += written
+    if check_deadline is not None:
+        check_deadline()
     os.fsync(snapshot_fd)
+    if check_deadline is not None:
+        check_deadline()
 
 
 def _apply_posix_snapshot_mode(snapshot_fd: int) -> bool:
@@ -883,13 +913,19 @@ def _unlink_if_present(path: str) -> None:
         pass
 
 
-def validate_profile_candidate(path: Path) -> None:
+def validate_profile_candidate(
+    path: Path,
+    *,
+    check_deadline: Callable[[], None] | None = None,
+) -> None:
     """Validate a point-in-time private snapshot of a standalone v1 backup.
 
     A later restore must validate its own repository-controlled staged snapshot;
     a successful path validation is never an authorization to trust future bytes.
     """
 
+    if check_deadline is not None:
+        check_deadline()
     if not isinstance(path, Path):
         raise _repository_error("missing")
     try:
@@ -898,6 +934,8 @@ def validate_profile_candidate(path: Path) -> None:
         raise _repository_error("missing") from None
     except Exception:
         raise _repository_error("schema_corrupt") from None
+    if check_deadline is not None:
+        check_deadline()
     if not resolved_path.is_file():
         raise _repository_error("missing")
     try:
@@ -907,6 +945,8 @@ def validate_profile_candidate(path: Path) -> None:
         raise
     except Exception:
         raise _repository_error("schema_corrupt") from None
+    if check_deadline is not None:
+        check_deadline()
 
     source_fd: int | None = None
     snapshot_fd: int | None = None
@@ -914,11 +954,15 @@ def validate_profile_candidate(path: Path) -> None:
     connection: sqlite3.Connection | None = None
     body_error: BaseException | None = None
     try:
+        if check_deadline is not None:
+            check_deadline()
         path_state = _source_identity(os.stat(resolved_path))
         if not stat.S_ISREG(path_state[2]):
             raise ValueError
 
         source_fd = os.open(resolved_path, _candidate_source_open_flags())
+        if check_deadline is not None:
+            check_deadline()
         source_state = _source_identity(os.fstat(source_fd))
         if source_state != path_state or not _source_is_unchanged(
             source_fd,
@@ -932,7 +976,11 @@ def validate_profile_candidate(path: Path) -> None:
             suffix=".sqlite3",
         )
         posix_mode_enforced = _apply_posix_snapshot_mode(snapshot_fd)
-        _copy_source_to_snapshot(source_fd, snapshot_fd)
+        _copy_source_to_snapshot(
+            source_fd,
+            snapshot_fd,
+            check_deadline=check_deadline,
+        )
         snapshot_state = _source_identity(os.fstat(snapshot_fd))
         if (
             snapshot_state[3] != source_state[3]
@@ -952,6 +1000,8 @@ def validate_profile_candidate(path: Path) -> None:
             raise ValueError
 
         snapshot_uri = f"{Path(snapshot_path).resolve().as_uri()}?mode=ro&immutable=1"
+        if check_deadline is not None:
+            check_deadline()
         connection = sqlite3.connect(snapshot_uri, uri=True, isolation_level=None)
         if not _snapshot_is_unchanged(
             snapshot_fd,
@@ -966,7 +1016,10 @@ def validate_profile_candidate(path: Path) -> None:
         if version != CURRENT_PROFILE_SCHEMA_VERSION:
             raise _repository_error("schema_unsupported")
         _validate_schema(connection)
-        validate_profile_store_rows(connection)
+        validate_profile_store_rows(
+            connection,
+            check_deadline=check_deadline,
+        )
         if not _snapshot_is_unchanged(
             snapshot_fd,
             snapshot_path,

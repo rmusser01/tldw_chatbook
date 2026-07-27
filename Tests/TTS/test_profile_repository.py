@@ -477,6 +477,52 @@ def _assert_real_delete_constraint_code(
         connection.close()
 
 
+def _spawn_first_repository_open(
+    database_path: str,
+    connection: Connection,
+    release: Any,
+    close: Any,
+) -> None:
+    async def open_after_release() -> tuple[object, ...]:
+        repository = profile_repository.TTSProfileRepository(Path(database_path))
+        opened = False
+        try:
+            connection.send(("ready", None))
+            if not release.wait(10.0):
+                raise TimeoutError("parent did not release first open")
+            try:
+                result = await repository.open()
+                opened = True
+                total = (await repository.list_profiles()).value.total
+            except ProfileRepositoryError as error:
+                return (
+                    "failure",
+                    error.code,
+                    str(error),
+                    error.__cause__ is None,
+                    error.__context__ is None,
+                )
+            return ("success", result.generation, total)
+        finally:
+            connection.send(("opened", opened))
+            if not close.wait(10.0):
+                raise TimeoutError("parent did not release first-open close")
+            if opened:
+                await repository.close()
+
+    try:
+        outcome = asyncio.run(open_after_release())
+        connection.send(("outcome", outcome))
+    except BaseException as error:
+        try:
+            connection.send(("child_error", type(error).__name__))
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+        raise
+    finally:
+        connection.close()
+
+
 def _spawn_profile_collision(
     database_path: str,
     connection: Connection,
@@ -963,6 +1009,112 @@ async def test_assignment_snapshots_character_ref_before_queued_worker_runs(
         assert admitted is not None
         assert admitted.assignment.character_ref == expected_ref
         assert (await repository.get_assigned_profile(mutated_ref)).value is None
+
+
+@pytest.mark.asyncio
+async def test_create_snapshots_draft_before_queued_worker_runs(
+    tmp_path: Path,
+) -> None:
+    profile_id = UUID("fd200000-0000-4000-8000-00000000000d")
+    draft = _draft(
+        "Admission Create",
+        model_id="admitted-model",
+        options={"voice": {"style": "admitted"}},
+    )
+    worker_entered = threading.Event()
+    worker_resume = threading.Event()
+
+    async with _opened_repository(
+        tmp_path / "queued-create-draft.sqlite3"
+    ) as repository:
+
+        def block_worker(_connection: sqlite3.Connection) -> None:
+            worker_entered.set()
+            if not worker_resume.wait(10.0):
+                raise RuntimeError("test did not resume queued worker")
+
+        blocker = repository._admit_operation(block_worker)
+        blocker_publication = asyncio.create_task(
+            repository._publish_operation(blocker)
+        )
+        assert await asyncio.to_thread(worker_entered.wait, 10.0)
+        queued = asyncio.create_task(
+            repository.create_profile(draft, profile_id=profile_id)
+        )
+        await asyncio.sleep(0)
+        object.__setattr__(draft, "display_name", "Mutated Create")
+        object.__setattr__(draft, "model_id", "mutated-model")
+        object.__setattr__(draft, "options", {"voice": {"style": "mutated"}})
+        worker_resume.set()
+
+        await blocker_publication
+        created = (await queued).value
+
+        assert created.display_name == "Admission Create"
+        assert created.model_id == "admitted-model"
+        assert (
+            canonical_json_options(created.options) == '{"voice":{"style":"admitted"}}'
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_snapshots_draft_before_queued_worker_runs(
+    tmp_path: Path,
+) -> None:
+    profile_id = UUID("fd300000-0000-4000-8000-00000000000d")
+    draft = _draft(
+        "Admission Update",
+        model_id="admitted-update-model",
+        options={"voice": {"style": "admitted-update"}},
+    )
+    worker_entered = threading.Event()
+    worker_resume = threading.Event()
+
+    async with _opened_repository(
+        tmp_path / "queued-update-draft.sqlite3"
+    ) as repository:
+        original = (
+            await repository.create_profile(
+                _draft("Before Update"),
+                profile_id=profile_id,
+            )
+        ).value
+
+        def block_worker(_connection: sqlite3.Connection) -> None:
+            worker_entered.set()
+            if not worker_resume.wait(10.0):
+                raise RuntimeError("test did not resume queued worker")
+
+        blocker = repository._admit_operation(block_worker)
+        blocker_publication = asyncio.create_task(
+            repository._publish_operation(blocker)
+        )
+        assert await asyncio.to_thread(worker_entered.wait, 10.0)
+        queued = asyncio.create_task(
+            repository.update_profile(
+                profile_id,
+                original.revision,
+                draft,
+            )
+        )
+        await asyncio.sleep(0)
+        object.__setattr__(draft, "display_name", "Mutated Update")
+        object.__setattr__(draft, "model_id", "mutated-update-model")
+        object.__setattr__(
+            draft,
+            "options",
+            {"voice": {"style": "mutated-update"}},
+        )
+        worker_resume.set()
+
+        await blocker_publication
+        updated = (await queued).value
+
+        assert updated.display_name == "Admission Update"
+        assert updated.model_id == "admitted-update-model"
+        assert canonical_json_options(updated.options) == (
+            '{"voice":{"style":"admitted-update"}}'
+        )
 
 
 @pytest.mark.asyncio
@@ -2694,6 +2846,81 @@ async def test_hostile_codec_failure_is_recreated_without_context(
         )
 
 
+@pytest.mark.parametrize("attempt", range(3))
+def test_spawned_repositories_open_one_fresh_store_concurrently(
+    tmp_path: Path,
+    attempt: int,
+) -> None:
+    database_path = tmp_path / f"first-open-{attempt}.sqlite3"
+    context = multiprocessing.get_context("spawn")
+    release = context.Event()
+    close = context.Event()
+    receivers: list[Connection] = []
+    child_connections: list[Connection] = []
+    processes: list[Any] = []
+    outcomes: list[tuple[object, ...]] = []
+    opened_states: list[bool] = []
+    exitcodes: list[int | None] = []
+
+    try:
+        for _index in range(2):
+            receiver, child_connection = context.Pipe(duplex=False)
+            process = context.Process(
+                target=_spawn_first_repository_open,
+                args=(
+                    str(database_path),
+                    child_connection,
+                    release,
+                    close,
+                ),
+            )
+            receivers.append(receiver)
+            child_connections.append(child_connection)
+            process.start()
+            processes.append(process)
+            child_connection.close()
+
+        for receiver in receivers:
+            assert receiver.poll(15.0), "spawned first open did not become ready"
+            assert receiver.recv() == ("ready", None)
+
+        release.set()
+        for receiver in receivers:
+            assert receiver.poll(15.0), "spawned first open returned no state"
+            state_message = receiver.recv()
+            assert state_message[0] == "opened", state_message
+            opened_states.append(cast(bool, state_message[1]))
+
+        close.set()
+        for receiver in receivers:
+            assert receiver.poll(15.0), "spawned first open returned no outcome"
+            outcome_message = receiver.recv()
+            assert outcome_message[0] == "outcome", outcome_message
+            outcomes.append(cast(tuple[object, ...], outcome_message[1]))
+    finally:
+        release.set()
+        close.set()
+        for child_connection in child_connections:
+            child_connection.close()
+        for process in processes:
+            process.join(10.0)
+            if process.is_alive():
+                process.terminate()
+                process.join(5.0)
+            if process.is_alive():
+                process.kill()
+                process.join(5.0)
+            exitcodes.append(process.exitcode)
+        for receiver in receivers:
+            receiver.close()
+        for process in processes:
+            process.close()
+
+    assert exitcodes == [0, 0]
+    assert opened_states == [True, True], outcomes
+    assert outcomes == [("success", 1, 0), ("success", 1, 0)]
+
+
 @pytest.mark.parametrize("attempt", range(5))
 def test_spawned_repositories_resolve_sqlite_constraint_race_safely(
     tmp_path: Path,
@@ -3612,8 +3839,12 @@ async def test_crud_sql_runs_only_on_repository_worker(
     traced_threads: list[int] = []
     real_open = profile_repository.open_profile_store
 
-    def traced_open(path: Path) -> sqlite3.Connection:
-        connection = real_open(path)
+    def traced_open(
+        path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> sqlite3.Connection:
+        connection = real_open(path, must_exist=must_exist)
         connection.set_trace_callback(
             lambda _statement: traced_threads.append(threading.get_ident())
         )
