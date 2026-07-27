@@ -14,6 +14,8 @@ from Cryptodome.Cipher import AES
 from Cryptodome.Protocol.KDF import scrypt
 from loguru import logger
 
+from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+
 
 class ConfigEncryption:
     """Handles encryption/decryption of configuration values with authenticated encryption."""
@@ -267,6 +269,13 @@ class ConfigEncryption:
         """
         Detect if there are API keys in the configuration that should be encrypted.
 
+        Uses the same sensitive-key predicate as every other
+        encryption/redaction/reporting path in the app (see
+        ``Utils/sensitive_config_keys.py``), so a config full of real
+        provider keys (``openai_api_key``, ``bing_search_api_key``,
+        ``OPENAI_API_KEY_fallback``, ...) is detected, not just configs using
+        the six bare literal names this used to match exactly.
+
         Args:
             config: Configuration dictionary to check
 
@@ -279,14 +288,7 @@ class ConfigEncryption:
                 full_key = f"{parent_key}.{key}" if parent_key else key
 
                 # Check for API key patterns
-                if key.lower() in [
-                    "api_key",
-                    "apikey",
-                    "api-key",
-                    "secret",
-                    "token",
-                    "password",
-                ]:
+                if is_sensitive_config_key(key):
                     if (
                         isinstance(value, str)
                         and value.strip()
