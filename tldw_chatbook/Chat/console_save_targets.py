@@ -20,9 +20,7 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 CONSOLE_SAVE_TITLE_MAX_CHARS = 80
 CONSOLE_SAVE_TITLE_PREFIX = "Console message"
 
-# Mirrors the bounds used by the legacy Console chatbook-artifact save flow
-# (Event_Handlers/Chat_Events/chat_events.py) so records stay interchangeable
-# for the Artifacts and Home surfaces that consume them.
+# Stable bounds for Console chatbook artifacts consumed by Artifacts and Home.
 CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS = 20_000
 CONSOLE_CHATBOOK_ARTIFACT_DESCRIPTION_MAX_CHARS = 280
 

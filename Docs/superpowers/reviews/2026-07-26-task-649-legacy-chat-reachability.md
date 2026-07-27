@@ -68,6 +68,31 @@ rg -n "chat_diagnostics|ChatDiagnostics|diagnose_chat_screen" tldw_chatbook
 | Remaining `Event_Handlers/Chat_Events` functions and root Chat registrations | `defer-root-wired-to-TASK-650` | TASK-650 removes the legacy root reactive, worker, watcher, and handler ownership in one slice. |
 | `css/features/_chat.tcss` | `prune-exclusive-branch` | Remove the `ChatWindowEnhanced` type selector and retain shared Chat message/input rules until TASK-650 resolves their remaining consumers. Rebuild the committed CSS bundle. |
 
+## TASK-650 follow-up disposition
+
+TASK-650 completed every `defer-root-wired-to-TASK-650` item above:
+
+- Deleted the root-only Chat event, sidebar, resize, tab, worldbook, streaming,
+  sidebar-initializer, and worker-handler modules after confirming that no
+  registered production route imported them.
+- Reduced `Event_Handlers/worker_events.py` to the retained synchronous
+  non-Console adapter used by CCP generation and media analysis. It rejects
+  streaming requests; native Console owns streaming and cancellation.
+- Moved the one live CCP branch-history renderer from the deleted Chat event
+  module into `conv_char_events.py`.
+- Removed the stale Chat-sidebar refresh callbacks from character and prompt
+  ingestion. Their live CCP refreshes remain.
+- Reduced `UI/Screens/chat_screen_state.py` to `TaskResumeState`; native
+  Console session, transcript, settings, and rail snapshots are serialized by
+  their actual owners in `ChatScreen`.
+- Kept compatibility session models importable from their retained state/model
+  modules. The superseded Chat widget-session and tab-container modules remain
+  deleted on current `dev`; no registered route, app handler, or snapshot path
+  constructs or drives the retired UI.
+- Regenerated the reviewed production-diagnostic inventory after confirming
+  the rebased tree contains 403 owners, 971 TASK-492 calls, 6,017 TASK-494
+  calls, and four persistent sink files.
+
 ## Test disposition
 
 The following files directly import or construct a retired composition and are
@@ -113,6 +138,16 @@ Tests that mention a local `chat_window` variable but primarily cover
 composition module. Native Console suites that assert legacy chrome is absent
 are `retain-live-shared`, but are not an authorized TASK-649 gate when they use
 a simplified application.
+
+TASK-650 deleted the deferred root-state, root-handler, sidebar, tab-container,
+worker-bridge, handoff, and rail suites that depended on mock, harness, or
+simplified applications. It also removed the obsolete root-state assertion
+from the mixed MCP approval suite. Their replacements are:
+
+- exact AST ownership and deleted-module sentinels;
+- direct retained-worker function and caller-contract tests; and
+- normal production `TldwCli.run_test()` checks for native rail/session
+  snapshots and visible Stop-button cancellation.
 
 ## Final evidence
 

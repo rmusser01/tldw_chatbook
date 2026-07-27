@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import TYPE_CHECKING, Union, Optional, Any, Dict, List, Callable, Mapping
+from typing import TYPE_CHECKING, Optional, Any, Dict, List, Callable, Mapping
 from textual.widget import Widget
 
 #
@@ -51,8 +51,6 @@ from textual.widgets import (
     ListView,
     Checkbox,
     Collapsible,
-    ListItem,
-    Label,
     Switch,
     Markdown,
 )
@@ -302,7 +300,6 @@ from .Scheduling.scheduler.handlers.watchlist_check_handler import WatchlistChec
 from .Scheduling.services.watchlist_projection import WatchlistProjection
 from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
 from .ACP_Interop.runtime_session import ACPRuntimeSessionState
-from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 from .Widgets.AppFooterStatus import AppFooterStatus
@@ -3449,13 +3446,6 @@ class TldwCli(
     splash_screen_active: reactive[bool] = reactive(False)
     _splash_screen_widget: Optional[SplashScreen] = None
 
-    # Use a lock to prevent race conditions when modifying shared chat state
-    # (task-577 PR2 T2: current_ai_message_widget, the state this lock was
-    # originally added for, retired along with its set_/get_ accessors).
-    _chat_state_lock = threading.Lock()
-    current_chat_worker: Optional[Worker] = None
-    current_chat_is_streaming: bool = False
-
     # --- REACTIVES FOR PROVIDER SELECTS ---
     # Initialize with a dummy value or fetch default from config here
     # Ensure the initial value matches what's set in compose/settings_sidebar
@@ -3481,11 +3471,6 @@ class TldwCli(
                 raise screen_error from error
             return active_screen.query_one(selector, expect_type)
 
-    # RAG expansion provider reactive
-    rag_expansion_provider_value: reactive[Optional[str]] = reactive(
-        _default_rag_expansion_provider
-    )
-
     # --- Reactives for CCP Character EDITOR (Center Pane) ---
     current_editing_character_id: reactive[Optional[str]] = reactive(None)
     current_editing_character_data: reactive[Optional[Dict[str, Any]]] = reactive(None)
@@ -3499,14 +3484,7 @@ class TldwCli(
     ui_responsiveness_monitor: UIResponsivenessMonitor | None = None
     _ui_responsiveness_heartbeat_timer: Optional[Timer] = None
 
-    # Reactives for sidebar
-    chat_sidebar_collapsed: reactive[bool] = reactive(True)
-    # chat_right_sidebar_collapsed: read live by ChatScreen.save_state()
-    # (chat_screen.py) to persist the character-sidebar collapsed flag across
-    # screen switches -- task-577 Ambiguous Gate 3, KEPT.
-    chat_right_sidebar_collapsed: reactive[bool] = reactive(
-        False
-    )  # For character sidebar
+    # Reactives for retained destination sidebars
     conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_right_collapsed: reactive[bool] = reactive(False)
     media_active_view: reactive[Optional[str]] = reactive(
@@ -3539,27 +3517,10 @@ class TldwCli(
         None
     )  # Timestamp of last save
 
-    # --- Reactives for chat sidebar prompt display ---
-    chat_sidebar_selected_prompt_id: reactive[Optional[int]] = reactive(None)
-    chat_sidebar_selected_prompt_system: reactive[Optional[str]] = reactive(None)
-    chat_sidebar_selected_prompt_user: reactive[Optional[str]] = reactive(None)
-
     # Reactive variable for current conversation loaded in the Conversations, Characters & Prompts tab
     current_conv_char_tab_conversation_id: reactive[Optional[str]] = reactive(None)
     current_ccp_character_details: reactive[Optional[Dict[str, Any]]] = reactive(None)
     current_ccp_character_image: Optional[Image.Image] = None
-    # task-577 PR2 T2: current_chat_is_ephemeral/current_chat_conversation_id/
-    # current_chat_active_character_data/active_chat_tab_id/chat_sessions
-    # retired -- zero live readers (only writers were the retired legacy
-    # chat sidebar and its tab-management subsystem, both dead since PR1).
-
-    # For Chat Sidebar Prompts section
-    chat_sidebar_loaded_prompt_id: reactive[Optional[Union[int, str]]] = reactive(None)
-    chat_sidebar_loaded_prompt_title_text: reactive[str] = reactive("")
-    chat_sidebar_loaded_prompt_system_text: reactive[str] = reactive("")
-    chat_sidebar_loaded_prompt_user_text: reactive[str] = reactive("")
-    chat_sidebar_loaded_prompt_keywords_text: reactive[str] = reactive("")
-    chat_sidebar_prompt_display_visible: reactive[bool] = reactive(False, layout=True)
 
     # Prompts
     current_prompt_id: reactive[Optional[int]] = reactive(None)
@@ -3594,9 +3555,6 @@ class TldwCli(
     # current_media_search_term: reactive[str] = reactive("") # Handled by inputs directly
     current_loaded_media_item: reactive[Optional[Dict[str, Any]]] = reactive(None)
     _media_search_timers: Dict[str, Timer] = {}  # For debouncing per media type
-    _media_sidebar_search_timer: Optional[Timer] = (
-        None  # For chat sidebar media search debouncing
-    )
     # task-283 (B4): per-type_slug staleness generation, incremented each time a
     # debounced media search starts; the DB call now runs via asyncio.to_thread,
     # which an exclusive worker/timer cannot cancel mid-flight, so this guards
@@ -3612,16 +3570,6 @@ class TldwCli(
         "media-view-video-audio"  # Default to the first sub-tab
     )
     media_db: Optional[MediaDatabase] = None
-    current_sidebar_media_item: Optional[Dict[str, Any]] = (
-        None  # For chat sidebar media review
-    )
-
-    # Settings mode for chat sidebar
-    chat_settings_mode: reactive[str] = reactive("basic")  # "basic" or "advanced"
-    chat_settings_search_query: reactive[str] = reactive(
-        ""
-    )  # Search query for settings
-
     # Search Tab's active sub-view reactives
     search_active_sub_tab: reactive[Optional[str]] = reactive(None)
     _initial_search_sub_tab_view: Optional[str] = SEARCH_VIEW_RAG_QA
@@ -3661,20 +3609,12 @@ class TldwCli(
     # work runs via asyncio.to_thread.
     _ccp_conversation_search_generation: int = 0
     _notes_search_timer: Optional[Timer] = None
-    _chat_sidebar_prompt_search_timer: Optional[Timer] = None  # New timer
-
-    # Flag to track if character filter has been populated
-    _chat_character_filter_populated: bool = False
 
     # Make API_IMPORTS_SUCCESSFUL accessible if needed by old methods or directly
     API_IMPORTS_SUCCESSFUL = API_IMPORTS_SUCCESSFUL
 
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
-
-    # For Chat Tab's Notes section
-    current_chat_note_id: Optional[str] = None
-    current_chat_note_version: Optional[int] = None
 
     # Shared state for tldw API requests
     _last_tldw_api_request_context: Dict[str, Any] = {}
@@ -3787,8 +3727,6 @@ class TldwCli(
         self._llm_server_launch_claims = {}
         self._llm_server_lifecycle_lock = threading.RLock()
         self.media_current_page = 1
-        self.media_search_current_page = 1
-        self.media_search_total_pages = 1
         self._startup_phases["attribute_init"] = time.perf_counter() - phase_start
         log_histogram(
             "app_startup_phase_duration_seconds",
@@ -5959,13 +5897,7 @@ class TldwCli(
         """Initialize the worker handler registry and register all handlers."""
         self.worker_handler_registry = WorkerHandlerRegistry(self)
 
-        # Register all worker handlers
-        # task-577 PR2 T3: ChatWorkerHandler retired -- its can_handle()
-        # claimed "API_Call_chat*"/"API_Call_ccp*"/"respond_for_me_worker",
-        # but every producer of those names lived in chat_events.py (deleted
-        # this task); "API_Call_ccp*" had zero producers anywhere in the
-        # repo (conv_char_events.py's ai_generate_* workers use different
-        # names, handled by AIGenerationHandler below).
+        # Native Console owns Chat runs; these handlers serve retained app workers.
         self.worker_handler_registry.register(AIGenerationHandler(self))
         self.worker_handler_registry.register(MiscWorkerHandler(self))
 
@@ -6463,13 +6395,6 @@ class TldwCli(
         else:
             logger.error(f"Unknown screen requested: {requested_screen}")
 
-    # task-577 PR2 T2: the ChatMessage.Action/ChatMessageEnhanced.Action arms
-    # that used to live here were dead -- both widget classes are mounted
-    # only by the retired legacy chat send/regenerate flow (chat_events.py)
-    # and the write-only CCP_BUTTON_HANDLERS map (conv_char_events.py);
-    # nothing on a live path ever mounts an instance that could post
-    # ``.Action``. The imports stay -- the live TTS complete/progress
-    # handlers below still query the DOM for these widget types.
 
     @on(TTSRequestEvent)
     async def handle_tts_request_event(self, event: TTSRequestEvent) -> None:
@@ -7040,31 +6965,10 @@ class TldwCli(
         UIHelpers.clear_prompt_editor_fields(self)
 
     # --- Thread-safe chat state helpers ---
-    # task-577 PR2 T2: set_current_ai_message_widget/get_current_ai_message_widget
-    # retired -- their only callers were chat_streaming_events.py's
-    # on_streaming_chunk/on_stream_done, reachable solely via this app's
-    # (now-removed) @on(StreamingChunk)/@on(StreamDone) arms, which nothing
-    # on a live path ever triggered.
 
-    def set_current_chat_worker(self, worker: Optional[Worker]) -> None:
-        """Thread-safely set the current chat worker."""
-        with self._chat_state_lock:
-            self.current_chat_worker = worker
 
-    def get_current_chat_worker(self) -> Optional[Worker]:
-        """Thread-safely get the current chat worker."""
-        with self._chat_state_lock:
-            return self.current_chat_worker
 
-    def set_current_chat_is_streaming(self, is_streaming: bool) -> None:
-        """Thread-safely set the legacy streaming state."""
-        with self._chat_state_lock:
-            self.current_chat_is_streaming = is_streaming
 
-    def get_current_chat_is_streaming(self) -> bool:
-        """Thread-safely get the streaming state."""
-        with self._chat_state_lock:
-            return self.current_chat_is_streaming
 
     # NOTE: Removed query_one and query overrides - screens should handle their own queries
     # This follows Textual best practices for screen-based navigation
@@ -8018,16 +7922,6 @@ class TldwCli(
         # Footer status population is scheduled after readiness so DB-size
         # polling cannot hold the first interactive frame.
 
-        # Initialize chat settings sidebar mode
-        try:
-            chat_sidebar = self.query_one("#chat-left-sidebar")
-            chat_sidebar.add_class("basic-mode")  # Start in basic mode
-            self.loguru_logger.debug("Initialized chat sidebar in basic mode")
-        except QueryError:
-            self.loguru_logger.warning(
-                "Could not find chat sidebar to set initial mode"
-            )
-
         # CRITICAL: Set UI ready state after all bindings and initializations
         self._ui_ready = True
         ui_ready_time = time.perf_counter()
@@ -8853,15 +8747,6 @@ class TldwCli(
             )
 
     # Watchers for sidebar collapsed states (keep as is)
-    def watch_chat_sidebar_collapsed(self, collapsed: bool) -> None:
-        """Watch for sidebar collapse state changes."""
-        if not self._ui_ready:
-            self.loguru_logger.debug("watch_chat_sidebar_collapsed: UI not ready.")
-            return
-        # Just log the state change - the actual UI update should happen in the screen/window
-        self.loguru_logger.debug(
-            f"Chat sidebar collapsed state changed to: {collapsed}"
-        )
 
     def watch_conv_char_sidebar_left_collapsed(self, collapsed: bool) -> None:
         """Hide or show the Conversations, Characters & Prompts left sidebar pane."""
@@ -8913,425 +8798,6 @@ class TldwCli(
         #     except Exception as e:
         #         self.loguru_logger.error(f"Error updating MediaWindow view: {e}", exc_info=True)
 
-    #######################################################################
-    # --- Notes UI Event Handlers (Chat Tab Sidebar) ---
-    #######################################################################
-    @on(Button.Pressed, "#chat-notes-create-new-button")
-    async def handle_chat_notes_create_new(self, event: Button.Pressed) -> None:
-        """Handles the 'Create New Note' button press in the chat sidebar's notes section."""
-        self.loguru_logger.info(
-            f"Attempting to create new note for user: {self.notes_user_id}"
-        )
-        default_title = "New Note"
-        default_content = ""
-
-        if not self.notes_service:
-            self.notify("Notes service is not available.", severity="error")
-            self.loguru_logger.error(
-                "Notes service not available in handle_chat_notes_create_new."
-            )
-            return
-
-        try:
-            # 1. Call self.notes_service.add_note
-            new_note_id = self.notes_service.add_note(
-                user_id=self.notes_user_id,
-                title=default_title,
-                content=default_content,
-                # keywords, parent_id, etc., can be added if needed
-            )
-
-            if new_note_id:
-                # 2. Store Note ID and Version
-                self.current_chat_note_id = new_note_id
-                self.current_chat_note_version = 1  # Assuming version starts at 1
-                self.loguru_logger.info(
-                    f"New note created with ID: {new_note_id}, Version: {self.current_chat_note_version}"
-                )
-
-                # 3. Update UI Input Fields
-                title_input = self.query_one("#chat-notes-title-input", Input)
-                content_textarea = self.query_one(
-                    "#chat-notes-content-textarea", TextArea
-                )
-                title_input.value = default_title
-                content_textarea.text = default_content
-
-                # 4. Add to ListView
-                notes_list_view = self.query_one("#chat-notes-listview", ListView)
-                new_list_item = ListItem(Label(default_title))
-                new_list_item.id = f"note-item-{new_note_id}"  # Ensure unique DOM ID for the ListItem itself
-                # We'll need a way to store the actual note_id on the ListItem for retrieval,
-                # Textual's ListItem doesn't have a direct `data` attribute.
-                # A common pattern is to use a custom ListItem subclass or manage a mapping.
-                # For now, we can set the DOM ID and parse it, or use a custom attribute if we make one.
-                # setattr(new_list_item, "_note_id", new_note_id) # Example of custom attribute
-                # Or, more simply for now, we can rely on on_chat_notes_collapsible_toggle to refresh the whole list
-                # which will then pick up the new note from the DB.
-                # For immediate feedback without full list refresh:
-                # ListView doesn't have prepend, so we'll append and let the list refresh handle ordering
-                await notes_list_view.append(new_list_item)
-
-                # 5. Set Focus
-                title_input.focus()
-
-                self.notify("New note created in sidebar.", severity="information")
-            else:
-                self.notify(
-                    "Failed to create new note (no ID returned).", severity="error"
-                )
-                self.loguru_logger.error(
-                    "notes_service.add_note did not return a new_note_id."
-                )
-
-        except CharactersRAGDBError as e:  # Specific DB error
-            self.loguru_logger.opt(exception=True).error(
-                f"Database error creating new note: {e}"
-            )
-            self.notify(f"DB error creating note: {e}", severity="error")
-        except Exception as e:  # Catch-all for other unexpected errors
-            self.loguru_logger.opt(exception=True).error(
-                f"Unexpected error creating new note: {e}"
-            )
-            self.notify(f"Error creating note: {type(e).__name__}", severity="error")
-
-    @on(Button.Pressed, "#chat-notes-search-button")
-    async def handle_chat_notes_search(self, event: Button.Pressed) -> None:
-        """Handles the 'Search' button press in the chat sidebar's notes section."""
-        self.loguru_logger.info(
-            f"Search Notes button pressed. User ID: {self.notes_user_id}"
-        )
-
-        if not self.notes_service:
-            self.notify("Notes service is not available.", severity="error")
-            self.loguru_logger.error(
-                "Notes service not available in handle_chat_notes_search."
-            )
-            return
-
-        try:
-            search_input = self.query_one("#chat-notes-search-input", Input)
-            search_term = search_input.value.strip()
-
-            notes_list_view = self.query_one("#chat-notes-listview", ListView)
-            await notes_list_view.clear()
-
-            listed_notes: List[Dict[str, Any]] = []
-            limit = 50
-
-            if not search_term:
-                self.loguru_logger.info("Empty search term, listing all notes.")
-                listed_notes = self.notes_service.list_notes(
-                    user_id=self.notes_user_id, limit=limit
-                )
-            else:
-                self.loguru_logger.info(f"Searching notes with term: '{search_term}'")
-                listed_notes = self.notes_service.search_notes(
-                    user_id=self.notes_user_id, search_term=search_term, limit=limit
-                )
-
-            if listed_notes:
-                for note in listed_notes:
-                    note_title = note.get("title", "Untitled Note")
-                    note_id = note.get("id")
-                    if not note_id:
-                        self.loguru_logger.warning(
-                            f"Note found without an ID during search: {note_title}. Skipping."
-                        )
-                        continue
-
-                    list_item_label = Label(note_title)
-                    new_list_item = ListItem(list_item_label)
-                    new_list_item.id = f"note-item-{note_id}"
-                    # setattr(new_list_item, "_note_data", note) # If needed later for load
-                    await notes_list_view.append(new_list_item)
-
-                self.notify(f"{len(listed_notes)} notes found.", severity="information")
-                self.loguru_logger.info(
-                    f"Populated notes list with {len(listed_notes)} search results."
-                )
-                self.loguru_logger.debug(
-                    f"ListView child count after search population: {len(notes_list_view.children)}"
-                )  # Fixed: use len(children) instead of child_count
-            else:
-                msg = (
-                    "No notes match your search." if search_term else "No notes found."
-                )
-                self.notify(msg, severity="information")
-                self.loguru_logger.info(msg)
-
-        except CharactersRAGDBError as e:
-            self.loguru_logger.opt(exception=True).error(
-                f"Database error searching notes: {e}"
-            )
-            self.notify(f"DB error searching notes: {e}", severity="error")
-        except QueryError as e_query:
-            self.loguru_logger.opt(exception=True).error(
-                f"UI element not found during notes search: {e_query}"
-            )
-            self.notify("UI error during notes search.", severity="error")
-        except Exception as e:
-            self.loguru_logger.opt(exception=True).error(
-                f"Unexpected error searching notes: {e}"
-            )
-            self.notify(f"Error searching notes: {type(e).__name__}", severity="error")
-
-    @on(Button.Pressed, "#chat-notes-load-button")
-    async def handle_chat_notes_load(self, event: Button.Pressed) -> None:
-        """Handles the 'Load Note' button press in the chat sidebar's notes section."""
-        self.loguru_logger.info(
-            f"Load Note button pressed. User ID: {self.notes_user_id}"
-        )
-
-        if not self.notes_service:
-            self.notify("Notes service is not available.", severity="error")
-            self.loguru_logger.error(
-                "Notes service not available in handle_chat_notes_load."
-            )
-            return
-
-        try:
-            notes_list_view = self.query_one("#chat-notes-listview", ListView)
-            selected_list_item = notes_list_view.highlighted_child
-
-            if selected_list_item is None or not selected_list_item.id:
-                self.notify("Please select a note to load.", severity="warning")
-                return
-
-            # Extract actual_note_id from the ListItem's DOM ID
-            dom_id_parts = selected_list_item.id.split("note-item-")
-            if len(dom_id_parts) < 2 or not dom_id_parts[1]:
-                self.notify("Selected item has an invalid ID format.", severity="error")
-                self.loguru_logger.error(
-                    f"Invalid ListItem ID format: {selected_list_item.id}"
-                )
-                return
-
-            actual_note_id = dom_id_parts[1]
-            self.loguru_logger.info(
-                f"Attempting to load note with ID: {actual_note_id}"
-            )
-
-            note_data = self.notes_service.get_note_by_id(
-                user_id=self.notes_user_id, note_id=actual_note_id
-            )
-
-            if note_data:
-                title_input = self.query_one("#chat-notes-title-input", Input)
-                content_textarea = self.query_one(
-                    "#chat-notes-content-textarea", TextArea
-                )
-
-                loaded_title = note_data.get("title", "")
-                loaded_content = note_data.get("content", "")
-                loaded_version = note_data.get("version")
-                loaded_id = note_data.get("id")
-
-                title_input.value = loaded_title
-                content_textarea.text = loaded_content
-
-                self.current_chat_note_id = loaded_id
-                self.current_chat_note_version = loaded_version
-
-                self.notify(f"Note '{loaded_title}' loaded.", severity="information")
-                self.loguru_logger.info(
-                    f"Note '{loaded_title}' (ID: {loaded_id}, Version: {loaded_version}) loaded into UI."
-                )
-            else:
-                self.notify(
-                    f"Could not load note (ID: {actual_note_id}). It might have been deleted.",
-                    severity="warning",
-                )
-                self.loguru_logger.warning(
-                    f"Note with ID {actual_note_id} not found by service."
-                )
-                # Clear fields if note not found
-                self.query_one("#chat-notes-title-input", Input).value = ""
-                self.query_one("#chat-notes-content-textarea", TextArea).text = ""
-                self.current_chat_note_id = None
-                self.current_chat_note_version = None
-
-        except CharactersRAGDBError as e_db:
-            self.loguru_logger.opt(exception=True).error(
-                f"Database error loading note: {e_db}"
-            )
-            self.notify(f"DB error loading note: {e_db}", severity="error")
-        except QueryError as e_query:
-            self.loguru_logger.opt(exception=True).error(
-                f"UI element not found during note load: {e_query}"
-            )
-            self.notify("UI error during note load.", severity="error")
-        except Exception as e:
-            self.loguru_logger.opt(exception=True).error(
-                f"Unexpected error loading note: {e}"
-            )
-            self.notify(f"Error loading note: {type(e).__name__}", severity="error")
-
-    @on(Button.Pressed, "#chat-notes-save-button")
-    async def handle_chat_notes_save(self, event: Button.Pressed) -> None:
-        """Handles the 'Save Note' button press in the chat sidebar's notes section."""
-        self.loguru_logger.info(
-            f"Save Note button pressed. User ID: {self.notes_user_id}"
-        )
-
-        if not self.notes_service:
-            self.notify("Notes service is not available.", severity="error")
-            self.loguru_logger.error(
-                "Notes service not available in handle_chat_notes_save."
-            )
-            return
-
-        if not self.current_chat_note_id or self.current_chat_note_version is None:
-            self.notify(
-                "No active note to save. Load or create a note first.",
-                severity="warning",
-            )
-            self.loguru_logger.warning(
-                "handle_chat_notes_save called without an active note_id or version."
-            )
-            return
-
-        try:
-            title_input = self.query_one("#chat-notes-title-input", Input)
-            content_textarea = self.query_one("#chat-notes-content-textarea", TextArea)
-
-            title = title_input.value
-            content = content_textarea.text
-
-            update_data = {"title": title, "content": content}
-
-            self.loguru_logger.info(
-                f"Attempting to save note ID: {self.current_chat_note_id}, Version: {self.current_chat_note_version}"
-            )
-
-            success = self.notes_service.update_note(
-                user_id=self.notes_user_id,
-                note_id=self.current_chat_note_id,
-                update_data=update_data,
-                expected_version=self.current_chat_note_version,
-            )
-
-            if success:  # Should be true if no exception was raised by DB layer for non-Conflict errors
-                self.current_chat_note_version += 1
-                self.notify("Note saved successfully.", severity="information")
-                self.loguru_logger.info(
-                    f"Note {self.current_chat_note_id} saved. New version: {self.current_chat_note_version}"
-                )
-
-                # Update ListView item
-                try:
-                    notes_list_view = self.query_one("#chat-notes-listview", ListView)
-                    # Find the specific ListItem to update its Label
-                    # This requires iterating or querying if the ListItem's DOM ID is known
-                    item_dom_id = f"note-item-{self.current_chat_note_id}"
-                    for item in notes_list_view.children:
-                        if isinstance(item, ListItem) and item.id == item_dom_id:
-                            # Assuming the first child of ListItem is the Label we want to update
-                            label_to_update = item.query_one(Label)
-                            label_to_update.update(title)  # Update with the new title
-                            self.loguru_logger.debug(
-                                f"Updated title in ListView for note ID {self.current_chat_note_id} to '{title}'"
-                            )
-                            break
-                        else:
-                            self.loguru_logger.debug(
-                                f"ListItem with ID {item_dom_id} not found for title update after save (iterated item ID: {item.id})."
-                            )
-                except QueryError as e_lv_update:
-                    self.loguru_logger.error(
-                        f"Error querying Label within ListView item to update title: {e_lv_update}"
-                    )
-                except (
-                    Exception
-                ) as e_item_update:  # Catch other errors during list item update
-                    self.loguru_logger.opt(exception=True).error(
-                        f"Unexpected error updating list item title: {e_item_update}"
-                    )
-            else:
-                # This case might not be hit if service raises exceptions for all failures
-                self.notify("Failed to save note. Reason unknown.", severity="error")
-                self.loguru_logger.error(
-                    f"notes_service.update_note returned False for note {self.current_chat_note_id}"
-                )
-
-        except ConflictError:
-            self.loguru_logger.warning(
-                f"Save conflict for note {self.current_chat_note_id}. Expected version: {self.current_chat_note_version}"
-            )
-            self.notify(
-                "Save conflict: Note was modified elsewhere. Please reload and reapply changes.",
-                severity="error",
-                timeout=10,
-            )
-        except CharactersRAGDBError as e_db:
-            self.loguru_logger.opt(exception=True).error(
-                f"Database error saving note {self.current_chat_note_id}: {e_db}"
-            )
-            self.notify(f"DB error saving note: {e_db}", severity="error")
-        except QueryError as e_query:
-            self.loguru_logger.opt(exception=True).error(
-                f"UI element not found during note save: {e_query}"
-            )
-            self.notify("UI error during note save.", severity="error")
-        except Exception as e:
-            self.loguru_logger.opt(exception=True).error(
-                f"Unexpected error saving note {self.current_chat_note_id}: {e}"
-            )
-            self.notify(f"Error saving note: {type(e).__name__}", severity="error")
-
-    @on(Button.Pressed, "#chat-notes-copy-button")
-    async def handle_chat_notes_copy(self, event: Button.Pressed) -> None:
-        """Handles the 'Copy Note' button press in the chat sidebar's notes section."""
-        self.loguru_logger.info("Copy Note button pressed.")
-
-        try:
-            # Get title and content from the input fields
-            title_input = self.query_one("#chat-notes-title-input", Input)
-            content_textarea = self.query_one("#chat-notes-content-textarea", TextArea)
-
-            title = title_input.value.strip()
-            content = content_textarea.text.strip()
-
-            # Check if there's anything to copy
-            if not title and not content:
-                self.notify("No note content to copy.", severity="warning")
-                return
-
-            # Format the note for clipboard
-            if title and content:
-                # Both title and content present
-                formatted_note = f"# {title}\n\n{content}"
-            elif title:
-                # Only title
-                formatted_note = f"# {title}"
-            else:
-                # Only content
-                formatted_note = content
-
-            # Copy to clipboard
-            self.copy_to_clipboard(formatted_note)
-            self.notify("Note copied to clipboard!", severity="information")
-            self.loguru_logger.info(
-                f"Note copied to clipboard. Title: '{title[:50]}...'"
-                if title
-                else "Note content copied to clipboard."
-            )
-
-        except QueryError as e:
-            self.loguru_logger.error(f"UI element not found during note copy: {e}")
-            self.notify("UI error during note copy.", severity="error")
-        except Exception as e:
-            self.loguru_logger.opt(exception=True).error(
-                f"Unexpected error copying note: {e}"
-            )
-            self.notify(f"Error copying note: {type(e).__name__}", severity="error")
-
-    # task-577 PR2 T2: the #chat-notes-collapsible /
-    # #chat-active-character-info-collapsible / #chat-conversations
-    # Collapsible.Toggled arms that used to live here were dead -- all three
-    # ids belonged to the retired legacy chat sidebar (ChatWindowEnhanced
-    # family, task-577 PR1) and are composed nowhere live. The CCP tab's
-    # own conversations collapsible below is unrelated and stays.
 
     @on(Collapsible.Toggled, "#conv-char-conversations-collapsible")
     async def on_ccp_conversations_collapsible_toggle(
@@ -9350,24 +8816,10 @@ class TldwCli(
     # --- EVENT DISPATCHERS ---
     #
     ########################################################################
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Dispatches button presses to the appropriate event handler."""
-        button_id = event.button.id
-        if not button_id:
-            return
-
-        self.loguru_logger.info(f"Button pressed: ID='{button_id}'")
-
-        # Screen-based navigation: let the screen handle its own buttons
-        # The screen should handle its own button events
-        # If it bubbles up here, it's a navigation button or unhandled
-        # Navigation buttons are already handled by NavigateToScreen messages
-        self.loguru_logger.debug(
-            f"Button event '{button_id}' reached app level in screen navigation mode"
-        )
-        return
+    # Notes editor changes are handled inside the Library screen, not dispatched here.
 
     async def on_input_changed(self, event: Input.Changed) -> None:
+        """Route retained root-level input events to their destination owners."""
         input_id = event.input.id
         current_active_tab = self.current_tab
         # --- Notes input events are handled inside the Library screen, not here ---
@@ -9390,22 +8842,6 @@ class TldwCli(
             await ccp_handlers.handle_ccp_prompt_search_input_changed(self, event)
         elif input_id == "ccp-worldbook-search-input" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_worldbook_search_input_changed(self, event)
-        # task-577 PR2 T2: the #chat-prompt-search-input /
-        # #chat-template-search-input arms that used to live here were dead
-        # -- both ids belonged to the retired legacy chat sidebar and are
-        # composed nowhere live.
-        elif input_id == "chat-llm-max-tokens" and current_active_tab == TAB_CHAT:
-            # Update token counter when max tokens value changes
-            self.call_after_refresh(self.update_token_count_display)
-        elif input_id == "chat-custom-token-limit" and current_active_tab == TAB_CHAT:
-            # Update token counter when custom token limit changes
-            self.call_after_refresh(self.update_token_count_display)
-        elif input_id == "chat-settings-search" and current_active_tab == TAB_CHAT:
-            await self.handle_settings_search(event.value)
-        # --- Chat Tab Media Search Input ---
-        # elif input_id == "chat-media-search-input" and current_active_tab == TAB_CHAT:
-        #     await handle_chat_media_search_input_changed(self, event.input)
-        # --- Media Tab Search Inputs ---
         elif (
             input_id
             and input_id.startswith("media-search-input-")
@@ -9419,7 +8855,6 @@ class TldwCli(
             and input_id.startswith("media-keyword-filter-")
             and current_active_tab == TAB_MEDIA
         ):
-            # Handle keyword filter changes with debouncing
             await media_events.handle_media_search_input_changed(
                 self,
                 input_id.replace("media-keyword-filter-", "media-search-input-"),
@@ -9428,91 +8863,31 @@ class TldwCli(
         # Add more specific input handlers if needed, e.g., for title inputs if they need live validation/reaction
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Route retained root-level list selections to destination owners."""
         list_view_id = event.list_view.id
         current_active_tab = self.current_tab
-        item_details = f"Item prompt_id: {getattr(event.item, 'prompt_id', 'N/A')}, Item prompt_uuid: {getattr(event.item, 'prompt_uuid', 'N/A')}"
-        self.loguru_logger.info(
-            f"ListView.Selected: list_view_id='{list_view_id}', current_tab='{current_active_tab}', {item_details}"
-        )
 
         if (
             list_view_id
             and list_view_id.startswith("media-list-view-")
             and current_active_tab == TAB_MEDIA
         ):
-            self.loguru_logger.debug(
-                "Dispatching to media_events.handle_media_list_item_selected"
-            )
             await media_events.handle_media_list_item_selected(self, event)
-
-        # Notes list view selection is handled inside the Library screen, not here.
-
         elif list_view_id == "ccp-prompts-listview" and current_active_tab == TAB_CCP:
-            self.loguru_logger.debug(
-                "Dispatching to ccp_handlers.handle_ccp_prompts_list_view_selected"
-            )
             await ccp_handlers.handle_ccp_prompts_list_view_selected(
                 self, list_view_id, event.item
             )
 
-        # task-577 PR2 T2: the #chat-sidebar-prompts-listview arm that used
-        # to live here was dead -- the id belonged to the retired legacy
-        # chat sidebar and is composed nowhere live.
-
-        # Note: conv-char-search-results-list selections are handled by their respective "Load Selected" buttons.
-        else:
-            self.loguru_logger.warning(
-                f"No specific handler for ListView.Selected from list_view_id='{list_view_id}' on tab='{current_active_tab}'"
-            )
-
     async def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """Route retained root-level checkbox events to destination owners."""
         checkbox_id = event.checkbox.id
-        current_active_tab = self.current_tab
-
         if (
             checkbox_id.startswith("conv-char-search-")
-            and current_active_tab == TAB_CCP
+            and self.current_tab == TAB_CCP
         ):
             await ccp_handlers.handle_ccp_search_checkbox_changed(
                 self, checkbox_id, event.value
             )
-        elif (
-            checkbox_id == "chat-show-attach-button-checkbox"
-            and current_active_tab == TAB_CHAT
-        ):
-            # Handle attach button visibility toggle
-            from .config import save_setting_to_cli_config
-
-            save_setting_to_cli_config("chat.images", "show_attach_button", event.value)
-        elif (
-            checkbox_id == "chat-show-dictation-button-checkbox"
-            and current_active_tab == TAB_CHAT
-        ):
-            # Handle dictation button visibility toggle
-            from .config import save_setting_to_cli_config
-
-            save_setting_to_cli_config("chat.voice", "show_mic_button", event.value)
-
-            # Update the UI dynamically
-            try:
-                mic_button = self.query_one("#mic-button", Button)
-                mic_button.display = event.value
-                self.notify(
-                    f"Dictation button {'shown' if event.value else 'hidden'}",
-                    timeout=2,
-                )
-            except QueryError:
-                # If button doesn't exist, we'll need to refresh the chat window
-                self.notify(
-                    "Dictation button setting saved. Restart chat to apply changes.",
-                    timeout=3,
-                )
-        elif (
-            checkbox_id == "chat-settings-mode-toggle"
-            and current_active_tab == TAB_CHAT
-        ):
-            # Handle settings mode toggle checkbox
-            await self.handle_settings_mode_toggle_checkbox(event)
         # Add handlers for checkboxes in other tabs if any
 
     async def on_switch_changed(self, event: Switch.Changed) -> None:
@@ -9524,77 +8899,12 @@ class TldwCli(
             await self.handle_notes_auto_save_toggle(event)
 
     async def on_select_changed(self, event: Select.Changed) -> None:
-        """Handles changes in Select widgets if specific actions are needed beyond watchers."""
+        """Route retained root-level select events to destination owners."""
         select_id = event.select.id
         current_active_tab = self.current_tab
-        self.loguru_logger.debug(
-            f"Select changed: {select_id} = {event.value}, current tab = {current_active_tab}"
-        )
 
         if select_id == "conv-char-character-select" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_character_select_changed(self, event.value)
-        # Notes sort select is handled inside the Library screen, not here.
-        elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
-            await self.handle_rag_preset_changed(event)
-        elif select_id == "chat-rag-search-mode" and current_active_tab == TAB_CHAT:
-            await self.handle_rag_pipeline_changed(event)
-        elif (
-            select_id == "chat-rag-expansion-method" and current_active_tab == TAB_CHAT
-        ):
-            await self.handle_query_expansion_method_changed(event)
-        elif (
-            select_id == "chat-rag-expansion-provider"
-            and current_active_tab == TAB_CHAT
-        ):
-            # Update the reactive value to trigger the watcher
-            self.rag_expansion_provider_value = event.value
-        elif select_id == "chat-api-provider" and current_active_tab == TAB_CHAT:
-            # This is now handled in ChatScreen via @on decorator
-            self.loguru_logger.debug(
-                f"chat-api-provider change event (handled in ChatScreen): {event.value}"
-            )
-
-            # Update token counter when provider changes
-            if self._ui_ready:
-                try:
-                    from .Event_Handlers.Chat_Events.chat_token_events import (
-                        update_chat_token_counter,
-                    )
-
-                    await update_chat_token_counter(self)
-                except Exception as e:
-                    self.loguru_logger.debug(
-                        f"Could not update token counter on provider change: {e}"
-                    )
-        elif select_id == "chat-api-model" and current_active_tab == TAB_CHAT:
-            # Update token counter when model changes
-            if self._ui_ready:
-                try:
-                    from .Event_Handlers.Chat_Events.chat_token_events import (
-                        update_chat_token_counter,
-                    )
-
-                    await update_chat_token_counter(self)
-                except Exception as e:
-                    self.loguru_logger.debug(
-                        f"Could not update token counter on model change: {e}"
-                    )
-        elif (
-            select_id == "chat-rag-expansion-method" and current_active_tab == TAB_CHAT
-        ):
-            # Handle query expansion method change - show/hide appropriate fields
-            await self.handle_query_expansion_method_changed(event)
-
-    ##################################################################
-    # --- Event Handlers for Streaming and Worker State Changes ---
-    ##################################################################
-    # task-577 PR2 T2: the StreamingChunk/StreamDone arms that used to live
-    # here were dead -- their only posters (worker_events.chat_wrapper_function
-    # and the chat-only claims in handle_api_call_worker_state_changed) are
-    # only reachable via a worker name ("API_Call_chat*"/"respond_for_me_worker")
-    # that nothing on a live path ever starts (the sole spawn site was inside
-    # the retired chat_events.py send flow). Removed along with the now-dead
-    # `handle_streaming_chunk`/`handle_stream_done` import.
 
     @on(media_events.MediaMetadataUpdateEvent)
     async def on_media_metadata_update(
@@ -9653,99 +8963,6 @@ class TldwCli(
         # Finish deferred startup work once the mounted screen has rendered.
         self.call_after_refresh(self._post_mount_setup)
 
-    @on(Checkbox.Changed, "#chat-strip-thinking-tags-checkbox")
-    async def handle_strip_thinking_tags_checkbox_changed(
-        self, event: Checkbox.Changed
-    ) -> None:
-        """Handles changes to the 'Strip Thinking Tags' checkbox."""
-        new_value = event.value
-        self.loguru_logger.info(
-            f"'Strip Thinking Tags' checkbox changed to: {new_value}"
-        )
-
-        if "chat_defaults" not in self.app_config:
-            self.app_config["chat_defaults"] = {}
-        self.app_config["chat_defaults"]["strip_thinking_tags"] = new_value
-
-        # Persist the change
-        try:
-            from .config import save_setting_to_cli_config
-
-            save_setting_to_cli_config(
-                "chat_defaults", "strip_thinking_tags", new_value
-            )
-            self.notify(
-                f"Thinking tag stripping {'enabled' if new_value else 'disabled'}.",
-                timeout=2,
-            )
-        except Exception as e:
-            self.loguru_logger.opt(exception=True).error(
-                f"Failed to save 'strip_thinking_tags' setting: {e}"
-            )
-            self.notify(
-                "Error saving thinking tag setting.", severity="error", timeout=4
-            )
-
-    #####################################################################
-    # --- End of Chat Event Handlers for Streaming & thinking tags ---
-    #####################################################################
-
-    async def handle_settings_mode_toggle_checkbox(
-        self, event: Checkbox.Changed
-    ) -> None:
-        """Handles the settings mode toggle checkbox between Basic and Advanced."""
-        try:
-            # Update reactive variable
-            self.chat_settings_mode = "advanced" if event.value else "basic"
-
-            # Update sidebar class for CSS styling
-            sidebar = self.query_one("#chat-left-sidebar")
-            if self.chat_settings_mode == "basic":
-                sidebar.add_class("basic-mode")
-                sidebar.remove_class("advanced-mode")
-            else:
-                sidebar.add_class("advanced-mode")
-                sidebar.remove_class("basic-mode")
-
-            # Notify user
-            mode_name = "Advanced" if event.value else "Basic"
-            self.notify(f"Switched to {mode_name} mode", timeout=2)
-
-            # Save preference to config
-            from .config import save_setting_to_cli_config
-
-            save_setting_to_cli_config("chat_defaults", "advanced_mode", event.value)
-
-        except Exception as e:
-            loguru_logger.opt(exception=True).error(
-                f"Error toggling settings mode: {e}"
-            )
-            self.notify("Error switching modes", severity="error", timeout=4)
-
-    async def handle_settings_mode_toggle(self, event: Switch.Changed) -> None:
-        """Handles the settings mode toggle between Basic and Advanced."""
-        try:
-            # Update reactive variable
-            self.chat_settings_mode = "advanced" if event.value else "basic"
-
-            # Update sidebar class for CSS styling
-            sidebar = self.query_one("#chat-left-sidebar")
-            if self.chat_settings_mode == "basic":
-                sidebar.add_class("basic-mode")
-                sidebar.remove_class("advanced-mode")
-            else:
-                sidebar.add_class("advanced-mode")
-                sidebar.remove_class("basic-mode")
-
-            self.notify(f"Settings mode: {self.chat_settings_mode.title()}")
-            self.loguru_logger.info(
-                f"Switched to {self.chat_settings_mode} settings mode"
-            )
-
-        except Exception as e:
-            self.loguru_logger.error(f"Error toggling settings mode: {e}")
-            self.notify("Error switching settings mode", severity="error")
-
     async def handle_notes_auto_save_toggle(self, event: Switch.Changed) -> None:
         """Handles the notes auto-save toggle."""
         try:
@@ -9771,126 +8988,6 @@ class TldwCli(
         except Exception as e:
             self.loguru_logger.error(f"Error toggling notes auto-save: {e}")
             self.notify("Error changing auto-save setting", severity="error")
-
-    async def handle_rag_preset_changed(self, event: Select.Changed) -> None:
-        """Handles RAG preset selection."""
-        try:
-            preset = event.value
-
-            # In screen navigation mode, these widgets don't exist at app level
-            self.loguru_logger.debug(
-                f"RAG preset change in screen mode - preset: {preset}"
-            )
-            # Store the preset for the screen to handle
-            self.rag_preset = preset
-            return
-
-        except Exception as e:
-            self.loguru_logger.error(f"Error applying RAG preset: {e}")
-            self.notify("Error applying RAG preset", severity="error")
-
-    async def handle_rag_pipeline_changed(self, event: Select.Changed) -> None:
-        """Handles RAG pipeline selection."""
-        try:
-            pipeline_id = event.value
-
-            # In screen navigation mode, these widgets don't exist at app level
-            self.loguru_logger.debug(
-                f"RAG pipeline change in screen mode - pipeline: {pipeline_id}"
-            )
-            # Store the pipeline for the screen to handle
-            self.rag_pipeline = pipeline_id
-            return
-
-            # If "none" is selected, just show manual config message
-            if pipeline_id == "none":
-                self.notify("Manual RAG configuration mode enabled")
-            else:
-                # Show what pipeline was selected
-                pipeline_name = event.select.value_to_label(pipeline_id)
-                self.notify(f"Selected pipeline: {pipeline_name}")
-
-            self.loguru_logger.info(f"RAG pipeline changed to: {pipeline_id}")
-
-        except Exception as e:
-            self.loguru_logger.error(f"Error handling RAG pipeline change: {e}")
-            self.notify("Error changing RAG pipeline", severity="error")
-
-    async def handle_query_expansion_method_changed(
-        self, event: Select.Changed
-    ) -> None:
-        """Stores the selected query expansion method string.
-
-        NOTE (task-252): UI-only stub. The RAG_Search/query_expansion.py module was
-        removed as dead code; this handler just stores the selected method string
-        and no runtime code performs query expansion with it.
-
-        Args:
-            event: The Select.Changed event carrying the chosen expansion method.
-        """
-        try:
-            method = event.value
-            # In screen navigation mode, these widgets don't exist at app level
-            self.loguru_logger.debug(
-                f"Query expansion method change in screen mode - method: {method}"
-            )
-            # Store the method for the screen to handle
-            self.query_expansion_method = method
-        except Exception as e:
-            self.loguru_logger.error(
-                f"Error handling query expansion method change: {e}"
-            )
-            self.notify("Error updating query expansion settings", severity="error")
-
-    async def handle_settings_search(self, query: str) -> None:
-        """Handles search in settings sidebar."""
-        try:
-            query = query.lower().strip()
-
-            # Get all settings elements
-            sidebar = self.query_one("#chat-left-sidebar")
-
-            if not query:
-                # Clear search - show all settings based on current mode
-                for widget in sidebar.query(
-                    ".sidebar-label, .section-header, .subsection-header"
-                ):
-                    widget.remove_class("search-highlight")
-                for collapsible in sidebar.query(Collapsible):
-                    # Respect the original collapsed state
-                    pass
-                return
-
-            # Search through all labels and highlight matches
-            matches_found = 0
-
-            for label in sidebar.query(
-                ".sidebar-label, .section-header, .subsection-header"
-            ):
-                if isinstance(label, (Static, Label)):
-                    label_text = str(label.renderable).lower()
-                    if query in label_text:
-                        label.add_class("search-highlight")
-                        matches_found += 1
-
-                        # Expand parent collapsibles to show match
-                        parent = label.parent
-                        while parent and parent != sidebar:
-                            if isinstance(parent, Collapsible):
-                                parent.collapsed = False
-                            parent = parent.parent
-                    else:
-                        label.remove_class("search-highlight")
-
-            if matches_found == 0:
-                self.notify(f"No settings found for '{query}'", severity="warning")
-            else:
-                self.notify(f"Found {matches_found} settings matching '{query}'")
-
-        except Exception as e:
-            self.loguru_logger.error(f"Error in settings search: {e}")
-            self.notify("Error searching settings", severity="error")
-
     #####################################################################
     # --- Event Handlers for Worker State Changes ---
     #####################################################################
@@ -9919,16 +9016,6 @@ class TldwCli(
                 f"No handler found for worker '{worker_name}' (Group: {worker_group})"
             )
 
-        # TODO: Fix this - new_user_prompt is not defined
-        # try:
-        #     self.query_one("#chat-prompt-user-display", TextArea).load_text(new_user_prompt or "")
-        # except QueryError:
-        #     self.loguru_logger.error("Chat sidebar user prompt display area (#chat-prompt-user-display) not found.")
-
-    def _clear_chat_sidebar_prompt_display(self) -> None:
-        """Clears the prompt display TextAreas in the chat sidebar."""
-        UIHelpers.clear_chat_sidebar_prompt_display(self)
-
     def watch_ccp_api_provider_value(
         self, new_value: Optional[str]
     ) -> None:  # Renamed from watch_character_...
@@ -9945,42 +9032,18 @@ class TldwCli(
         models = self.providers_models.get(new_value, [])
         self._update_model_select(TAB_CCP, models)
 
-    def watch_rag_expansion_provider_value(self, new_value: Optional[str]) -> None:
-        """Watch for changes in RAG expansion provider selection."""
-        if not hasattr(self, "app") or not self.app:
-            return
-        if not self._ui_ready:
-            return
-        self.loguru_logger.debug(
-            f"Watcher: rag_expansion_provider_value changed to {new_value}"
-        )
-        if new_value is None or new_value == Select.BLANK:
-            self._update_rag_expansion_model_select([])
-            return
-        models = self.providers_models.get(new_value, [])
-        self._update_rag_expansion_model_select(models)
 
     def _update_model_select(self, id_prefix: str, models: list[str]) -> None:
         if not self._ui_ready:  # Add guard
             return
         UIHelpers.update_model_select(self, id_prefix, models)
 
-    def _update_rag_expansion_model_select(self, models: list[str]) -> None:
-        """Update the RAG expansion model select options."""
-        if not self._ui_ready:
-            return
-        UIHelpers.update_rag_expansion_model_select(self, models)
 
     def chat_wrapper(self, strip_thinking_tags: bool = True, **kwargs: Any) -> Any:
-        """
-        Delegates to the actual worker target function in worker_events.py.
-        This method is called by app.run_worker.
-        """
-        # All necessary parameters (message, history, api_endpoint, model, etc.)
-        # are passed via kwargs from the calling event handler (e.g., handle_chat_send_button_pressed).
+        """Delegate retained non-streaming CCP and media calls to worker_events."""
         return worker_events.chat_wrapper_function(
             self, strip_thinking_tags=strip_thinking_tags, **kwargs
-        )  # Pass self as 'app_instance'
+        )
 
     def schedule_media_cleanup(self) -> None:
         """Schedule periodic media cleanup based on configuration."""

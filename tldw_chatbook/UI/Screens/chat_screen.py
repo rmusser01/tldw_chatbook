@@ -2,7 +2,6 @@
 
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime
 import asyncio
 import inspect
 import os
@@ -15,7 +14,6 @@ import uuid
 import toml
 from loguru import logger
 from rich.markup import escape as escape_markup
-from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -26,7 +24,7 @@ from textual.events import Click, DescendantFocus, Key, MouseUp, Paste, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
+from textual.widgets import Button, Static, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -34,7 +32,7 @@ from ..Navigation.pending_handoff_store import (
     ConsoleProviderIntent,
     HandoffChannel,
 )
-from .chat_screen_state import ChatScreenState, TabState, TaskResumeState
+from .chat_screen_state import TaskResumeState
 from .provider_model_resolution import (
     ResolvedProviderModelOption,
     resolve_effective_provider_model,
@@ -184,7 +182,6 @@ from ...Chat.local_server_discovery import (
     discover_local_servers,
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
-from ...Chat.chat_models import ChatSessionData
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_message_actions import (
     ConsoleActionResult,
@@ -2002,7 +1999,7 @@ class ChatScreen(BaseAppScreen):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "chat", **kwargs)
         self.console_session_surface: Optional[ConsoleSessionSurface] = None
-        self.chat_state = ChatScreenState()
+        self._task_resume_state = TaskResumeState()
         self._console_composer_collapsed = False
         self._console_composer_layout_revision = 0
         self._state_dirty = False
@@ -2155,15 +2152,11 @@ class ChatScreen(BaseAppScreen):
         # P1g: cached "what's in play" chat-dictionary summary for the
         # active native Console session's conversation/character scope,
         # recomputed only by `refresh_active_dictionaries_summary()`.
-        # Fix-wave (Critical, Task 4 review): the original recompute
-        # trigger hooked the legacy `app.current_chat_conversation_id`/
-        # `current_chat_active_character_data` reactives -- those are
-        # written ONLY by the *legacy* sidebar chat flow
-        # (`Event_Handlers/Chat_Events/chat_events.py`). The native
-        # Console tracks its own session in `_console_chat_store` and
-        # never touches them, so the summary was permanently stuck at
+        # Fix-wave (Critical, Task 4 review): the old recompute trigger
+        # watched root-owned conversation and character mirrors that native
+        # Console never wrote, so the summary was permanently stuck at
         # "No active chat" in the real app. `_sync_native_console_chat_ui()`
-        # now recomputes whenever the active native session's
+        # recomputes whenever the active native session's
         # (conversation_id, character_id) scope changes -- see
         # `_active_console_dictionary_scope_ids()` and
         # `_refresh_active_dictionaries_summary_if_scope_changed()`.
@@ -2350,7 +2343,7 @@ class ChatScreen(BaseAppScreen):
         return self._pending_console_launch_context
 
     def _chat_default_value(self, key: str) -> Any:
-        """Return a chat default value from app config for legacy call sites."""
+        """Return a shared Console default value from app configuration."""
         config = getattr(self.app_instance, "app_config", {}) or {}
         defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
         return defaults.get(key) if isinstance(defaults, dict) else None
@@ -3362,7 +3355,7 @@ class ChatScreen(BaseAppScreen):
 
         Returns ``None`` (no agent runtime) when there is no durable
         ChaChaNotes DB to key the sibling ``AgentRunsDB`` file off of (e.g. an
-        in-memory test harness) -- callers fall back to the legacy direct
+        in-memory test harness) -- callers use the provider-direct Console
         stream in that case regardless of the config gate.
         """
         if self._console_agent_bridge is not None:
@@ -4492,20 +4485,8 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         await self._open_console_retrieval_scope_picker()
 
-    def _current_console_conversation_id(
-        self,
-        session_data: Optional[ChatSessionData] = None,
-    ) -> Optional[str]:
+    def _current_console_conversation_id(self) -> Optional[str]:
         """Return the active conversation id for Console context highlighting."""
-        conversation_id = getattr(session_data, "conversation_id", None)
-        if conversation_id:
-            return str(conversation_id)
-
-        active_tab = self.chat_state.get_active_tab()
-        conversation_id = getattr(active_tab, "conversation_id", None)
-        if conversation_id:
-            return str(conversation_id)
-
         console_store = self._console_chat_store
         active_session_id = (
             console_store.active_session_id if console_store is not None else None
@@ -4517,7 +4498,6 @@ class ChatScreen(BaseAppScreen):
                     if conversation_id:
                         return str(conversation_id)
                     break
-
         return None
 
     def _active_native_console_session(self) -> Any | None:
@@ -5322,11 +5302,8 @@ class ChatScreen(BaseAppScreen):
                 group="console-effective-scope-refresh",
             )
 
-    def _build_console_workspace_context_state(
-        self,
-        session_data: Optional[ChatSessionData] = None,
-    ) -> ConsoleWorkspaceContextState:
-        current_conversation = self._current_console_conversation_id(session_data)
+    def _build_console_workspace_context_state(self) -> ConsoleWorkspaceContextState:
+        current_conversation = self._current_console_conversation_id()
         state = build_console_workspace_state(
             registry_service=getattr(
                 self.app_instance, "workspace_registry_service", None
@@ -7429,16 +7406,13 @@ class ChatScreen(BaseAppScreen):
         )
         self._apply_console_rail_section_open(section_id, next_open)
 
-    def _sync_console_workspace_context(
-        self,
-        session_data: Optional[ChatSessionData] = None,
-    ) -> None:
+    def _sync_console_workspace_context(self) -> None:
         try:
             workspace_context = self.query_one(
                 "#console-workspace-context",
                 ConsoleWorkspaceContextTray,
             )
-            state = self._build_console_workspace_context_state(session_data)
+            state = self._build_console_workspace_context_state()
             # TASK-251: read the widget's OWN current state before it's
             # overwritten -- this is intentionally not a screen-level cache
             # (which would go stale across a full-screen recompose); the
@@ -7584,8 +7558,7 @@ class ChatScreen(BaseAppScreen):
         if pending_approval:
             return 1
 
-        task_state = self.chat_state.task_resume_state
-        return 1 if task_state.has_pending_approval() else 0
+        return 1 if self._task_resume_state.has_pending_approval() else 0
 
     def _console_tool_count(self) -> int:
         return coerce_non_negative_int(
@@ -7823,9 +7796,9 @@ class ChatScreen(BaseAppScreen):
 
         `conversation_id` comes from `_current_console_rail_conversation_id()`
         -- the existing accessor that already resolves the active native
-        session's `persisted_conversation_id` (falling back to the legacy
-        tab-container conversation id when no native session exists, e.g. in
-        legacy-only test harnesses). `character_id` is always `None`: native
+        session's `persisted_conversation_id` (falling back to the native
+        Console conversation accessor when no active session exists).
+        `character_id` is always `None`: native
         Console sessions do not yet track a numeric character id --
         `ConsoleSessionSettings.character_label` is only a free-text display
         string, never a DB id. Character-scoped dictionary attachment for the
@@ -7877,9 +7850,8 @@ class ChatScreen(BaseAppScreen):
         UI-sync entrypoint -- which also runs on a 0.2s transcript-poll timer
         while a run is streaming (`_start_console_transcript_sync_timer`).
         Without this guard, every one of those polls would re-run the
-        DB-backed summarize call. Mirrors the change-guard the previous
-        (legacy-reactive) wiring had on the app-level watchers, relocated to
-        the actual native-session change signal.
+        DB-backed summarize call. The guard is driven by the actual
+        native-session change signal.
         """
         scope_ids = self._active_console_dictionary_scope_ids()
         if scope_ids == self._last_console_dictionary_scope_ids:
@@ -8690,22 +8662,6 @@ class ChatScreen(BaseAppScreen):
             ):
                 return True
 
-        active_tab = self.chat_state.get_active_tab()
-        if active_tab is not None and active_tab.messages:
-            return True
-
-        chat_log = self._get_active_chat_log()
-        if chat_log is not None:
-            for selector in (
-                ".message",
-                ".console-transcript-system-event",
-                "ChatMessageEnhanced",
-            ):
-                try:
-                    if list(chat_log.query(selector)):
-                        return True
-                except Exception:
-                    continue
         return False
 
     def _active_console_transcript_has_messages(self) -> bool:
@@ -10257,6 +10213,7 @@ class ChatScreen(BaseAppScreen):
         return {
             "version": NATIVE_CONSOLE_STATE_VERSION,
             "active_session_id": store.active_session_id,
+            "task_resume_state": self._task_resume_state.to_dict(),
             "sessions": [
                 {
                     "id": session.id,
@@ -10388,6 +10345,9 @@ class ChatScreen(BaseAppScreen):
         image_state, cache = self._ensure_console_image_view()
         image_state.restore(payload.get("image_view_modes"))
         cache.clear()
+        self._task_resume_state = TaskResumeState.from_dict(
+            payload.get("task_resume_state")
+        )
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
         """Refill image bytes dropped by screen-state restore (metadata-only).
@@ -10541,153 +10501,25 @@ class ChatScreen(BaseAppScreen):
             store.hydrate_generation_metadata(session_id, rows_by_message)
 
     def save_state(self) -> Dict[str, Any]:
-        """
-        Save comprehensive chat state.
-
-        Captures all tabs, messages, input text, and UI state
-        to fully restore the chat experience on return.
-        """
-        logger.debug("Saving chat screen state")
+        """Save only state owned by the native Console."""
         state = super().save_state()
-
-        try:
-            # Create fresh state object
-            self.chat_state = ChatScreenState()
-            self.chat_state.last_saved = datetime.now()
-
-            # Save UI preferences even when Console no longer mounts the legacy chat window.
-            self.chat_state.left_sidebar_collapsed = getattr(
-                self.app_instance, "chat_sidebar_collapsed", False
-            )
-            self.chat_state.right_sidebar_collapsed = getattr(
-                self.app_instance, "chat_right_sidebar_collapsed", False
-            )
-
-            # Always try to save current input text directly
-            self._save_direct_input_text()
-
-            # Save sidebar settings (system prompt, temperature, etc.) when available.
-            self._save_sidebar_settings()
-
-            # Save scroll positions
-            self._save_scroll_positions()
-
-            # Save pending attachments
-            self._save_attachments()
-
-            native_console_state = self._serialize_native_console_state()
-            if native_console_state is not None:
-                state["native_console_state"] = native_console_state
-
-            # Convert to dict for storage
-            state["chat_state"] = self.chat_state.to_dict()
-            state["state_version"] = "1.0"
-            if native_console_state is not None:
-                state["interface_type"] = "native_console"
-            else:
-                state["interface_type"] = "tabbed" if self.chat_state.tabs else "single"
-
-            logger.info(
-                f"Saved chat state: {len(self.chat_state.tabs)} tabs, interface: {state.get('interface_type')}"
-            )
-
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error saving chat state: {e}")
-
+        native_console_state = self._serialize_native_console_state()
+        if native_console_state is not None:
+            state["native_console_state"] = native_console_state
+            state["interface_type"] = "native_console"
         return state
 
     def restore_state(self, state: Dict[str, Any]) -> None:
-        """
-        Restore comprehensive chat state.
-
-        Recreates all tabs, messages, and UI state from saved data.
-        """
-        logger.debug("Restoring chat screen state")
+        """Restore only state owned by the native Console."""
         super().restore_state(state)
+        native_console_state = state.get("native_console_state")
+        if native_console_state is not None:
+            self._restore_native_console_state(native_console_state)
+        self.sync_task_resume_state()
 
-        try:
-            if "native_console_state" in state:
-                self._restore_native_console_state(state["native_console_state"])
 
-            if "chat_state" in state:
-                # Restore from saved state
-                self.chat_state = ChatScreenState.from_dict(state["chat_state"])
 
-                logger.debug(f"Restored state has {len(self.chat_state.tabs)} tabs")
-                logger.debug(f"Active tab ID: {self.chat_state.active_tab_id}")
-                logger.debug(f"Tab order: {self.chat_state.tab_order}")
 
-                if self.chat_state.validate():
-                    logger.info(f"Restoring {len(self.chat_state.tabs)} tabs")
-
-                    # Native Console does not mount legacy ChatTabContainer
-                    # widgets, so tabbed state saved by a pre-retirement
-                    # (task-577) build can never be restored onto anything --
-                    # log and move on instead of scheduling the old
-                    # `_perform_state_restoration` retry, which would have
-                    # retried forever.
-                    if self.chat_state.tabs:
-                        logger.info(
-                            "Legacy tabbed chat state found in saved state; "
-                            "the tabbed chat surface is retired (task-577) -- "
-                            "state ignored."
-                        )
-                else:
-                    logger.warning("Chat state validation failed, starting fresh")
-                    self.chat_state = ChatScreenState()
-
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error restoring chat state: {e}")
-            self.chat_state = ChatScreenState()
-
-    def _chat_query_scope(self):
-        """Return the widget scope to query for legacy chat-flavored selectors.
-
-        ``ChatWindowEnhanced`` is retired (``self.chat_window`` is
-        permanently ``None``), so this now always resolves to the native
-        Console tree (``self``).
-        """
-        return self
-
-    def _get_active_chat_input(self) -> Optional[TextArea]:
-        """Return the active session input before falling back to legacy single-chat input."""
-        try:
-            return self._chat_query_scope().query_one("#chat-input", TextArea)
-        except QueryError:
-            return None
-
-    def _get_active_chat_log(self):
-        """Return the active session chat log before falling back to legacy chat logs."""
-        return None
-
-    @staticmethod
-    def _first_query_result(containers: Any) -> Any:
-        if hasattr(containers, "first"):
-            return containers.first()
-        return containers[0]
-
-    def _find_chat_log_container(self, selectors: list[str]):
-        """Find the correct chat log, preferring the active tab over DOM order."""
-        active_log = self._get_active_chat_log()
-        if active_log is not None:
-            return active_log
-
-        try:
-            return self.app_instance.query_one("#chat-log", VerticalScroll)
-        except (LookupError, QueryError):
-            pass
-
-        for selector in selectors:
-            try:
-                containers = self._chat_query_scope().query(selector)
-            except QueryError as e:
-                logger.debug(f"Could not find chat log with {selector}: {e}")
-                continue
-            if containers:
-                logger.debug(f"Found chat log container with selector: {selector}")
-                return self._first_query_result(containers)
-
-        return None
 
     async def _start_character_console_session(self, payload: ChatHandoffPayload) -> bool:
         """Build a dedicated character conversation from a Start-Chat handoff.
@@ -10793,8 +10625,8 @@ class ChatScreen(BaseAppScreen):
                 "considered consumed."
             )
         return True
-
     async def _consume_pending_chat_handoff(self) -> None:
+        """Claim one Chat handoff and stage it directly in native Console."""
         if self._handoff_consumption_in_progress:
             return
 
@@ -10997,8 +10829,8 @@ class ChatScreen(BaseAppScreen):
             )
         return (store.active_session_id, tuple(message_signatures))
 
-    async def _sync_native_console_transcript_to_legacy_surface(self) -> None:
-        """Temporary bridge: render native Console messages in the existing surface."""
+    async def _sync_native_console_transcript(self) -> None:
+        """Render native Console messages in the native transcript."""
         try:
             transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
         except QueryError:
@@ -11116,27 +10948,6 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_transcript_guidance()
             return
 
-        chat_log = self._get_active_chat_log()
-        if chat_log is None:
-            return
-
-        chat_log.remove_children()
-        for message in messages:
-            role_label = str(
-                message.role.value if hasattr(message.role, "value") else message.role
-            )
-            content = message.content
-            if message.status in {"streaming", "stopped", "failed"}:
-                content = f"{content} [{message.status}]".strip()
-            await chat_log.mount(
-                Static(
-                    Text(f"{role_label.title()}: {content}"),
-                    classes=(
-                        "console-transcript-system-event "
-                        f"console-native-message console-native-message-{role_label}"
-                    ),
-                )
-            )
 
     def _clear_native_console_message_selection(self) -> None:
         """Dismiss contextual message actions when an action changes the transcript flow."""
@@ -11228,7 +11039,7 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_mode_bar()
             await self._sync_console_native_session_tabs()
             self._sync_console_workspace_context()
-            await self._sync_native_console_transcript_to_legacy_surface()
+            await self._sync_native_console_transcript()
             self._sync_console_rail_visibility_if_changed(
                 self._current_console_rail_state()
             )
@@ -14881,55 +14692,25 @@ class ChatScreen(BaseAppScreen):
             total=MAX_PENDING_ATTACHMENTS,
         )
 
-    def _hide_console_legacy_chat_inputs(self) -> None:
-        """Keep Console on a single native composer surface."""
-        for widget in self.query(".chat-input-area"):
-            widget.styles.display = "none"
-            widget.styles.height = 0
-            widget.styles.min_height = 0
-            widget.disabled = True
-        for widget in self.query(".chat-input"):
-            widget.styles.display = "none"
-            widget.styles.height = 0
-            widget.styles.min_height = 0
-            widget.disabled = True
-            widget.can_focus = False
 
     def _focus_console_composer_if_needed(self, *, force: bool = False) -> None:
-        """Route typing to the visible Console composer instead of hidden chat input."""
-        self._hide_console_legacy_chat_inputs()
+        """Focus the native Console composer when no other control owns focus."""
         if self._console_composer_collapsed:
             self._focus_console_workbench_target("console-native-composer")
+            return
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
             return
         focused = self.app.focused
         if (
             not force
             and focused is not None
-            and not (
-                focused.id == "chat-input"
-                or (focused.id or "").startswith("chat-input-")
-                or focused.has_class("chat-input")
-            )
+            and not self._is_descendant_or_self(focused, composer)
         ):
             return
-        try:
-            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
-            composer.focus()
-        except QueryError:
-            return
+        composer.focus()
 
-    @staticmethod
-    def _is_legacy_chat_input_focus(focused: object | None) -> bool:
-        """Return True when focus is on a hidden legacy chat input."""
-        if focused is None:
-            return False
-        focused_id = getattr(focused, "id", None) or ""
-        has_class = getattr(focused, "has_class", lambda _class_name: False)
-        return (
-            focused_id == "chat-input"
-            or focused_id.startswith("chat-input-")
-            or has_class("chat-input")
-        )
 
     @staticmethod
     def _is_descendant_or_self(widget: object | None, ancestor: object) -> bool:
@@ -14942,7 +14723,7 @@ class ChatScreen(BaseAppScreen):
         return False
 
     def _should_capture_console_input(self, composer: ConsoleComposerBar) -> bool:
-        """Return True when key/paste input should route to the Console composer."""
+        """Return True when key or paste input belongs to the Console composer."""
         if composer.collapsed:
             return False
         focused = self.app.focused
@@ -14952,12 +14733,7 @@ class ChatScreen(BaseAppScreen):
             "console-collapsed-stop-generation",
         }:
             return False
-        if focused is None:
-            return True
-        return self._is_descendant_or_self(
-            focused,
-            composer,
-        ) or self._is_legacy_chat_input_focus(focused)
+        return focused is None or self._is_descendant_or_self(focused, composer)
 
     @on(Resize)
     def _adapt_console_shell_to_height(self, event: Resize) -> None:
@@ -15324,112 +15100,6 @@ class ChatScreen(BaseAppScreen):
             logger.debug("No compact model bar available for reverse sync")
         self._sync_console_control_bar()
 
-    def sync_shell_bar_from_state(self) -> None:
-        """Push the restored active tab state into the mounted shell bar."""
-        shell_bar = self._get_shell_bar()
-        if not shell_bar:
-            logger.debug("No shell bar available for state sync")
-            return
-
-        active_tab = self.chat_state.get_active_tab()
-        if active_tab is None and self.chat_state.tabs:
-            active_tab = self.chat_state.tabs[0]
-
-        if active_tab is None:
-            logger.debug("No active tab available for shell bar sync")
-            return
-
-        try:
-            shell_bar.sync_from_tab_state(active_tab)
-            logger.debug(f"Synced shell bar from active tab {active_tab.tab_id}")
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Failed to sync shell bar from state: {e}"
-            )
-
-    def _save_scroll_positions(self) -> None:
-        """Save scroll positions for all tabs."""
-        # Implementation depends on tab structure
-        pass
-
-    def _save_sidebar_settings(self) -> None:
-        """Save sidebar settings including system prompt, temperature, etc."""
-        logger.debug(
-            "Legacy chat sidebar is not mounted; sidebar settings already live in Console controls"
-        )
-
-    def _save_attachments(self) -> None:
-        """Save pending attachment states.
-
-        No-op: the legacy sidebar's pending-image seam
-        (``ChatWindowEnhanced.pending_image``) is retired; attachments are
-        owned by the Console composer's own staging state.
-        """
-        return
-
-    def _save_direct_input_text(self) -> None:
-        """Try to save input text directly from the chat input TextArea only."""
-        try:
-            # Be specific - only look for the chat input TextArea, not system prompt or other TextAreas
-            chat_input = self._get_active_chat_input()
-            if chat_input:
-                logger.debug("Found chat input by #chat-input ID")
-
-            if not chat_input:
-                # Look for TextAreas but filter out system prompt and other non-chat inputs
-                text_areas = self._chat_query_scope().query("TextArea")
-                logger.debug(f"Found {len(text_areas)} TextArea widgets total")
-
-                for text_area in text_areas:
-                    # Skip system prompt inputs and other non-chat TextAreas
-                    if text_area.id and any(
-                        x in str(text_area.id).lower()
-                        for x in ["system", "prompt", "settings", "config"]
-                    ):
-                        logger.debug(f"Skipping non-chat TextArea: {text_area.id}")
-                        continue
-
-                    # Look for chat-related IDs
-                    if text_area.id and any(
-                        x in str(text_area.id).lower()
-                        for x in ["chat-input", "message", "input"]
-                    ):
-                        chat_input = text_area
-                        logger.debug(f"Found likely chat input: {text_area.id}")
-                        break
-
-            # Save the chat input text if found
-            if chat_input and hasattr(chat_input, "text") and chat_input.text:
-                logger.info(
-                    f"Saving chat input (id={chat_input.id}): '{chat_input.text[:50]}...'"
-                )
-
-                # If we have a tab, save to it
-                if self.chat_state.tabs:
-                    # Save to first/active tab
-                    active_tab = (
-                        self.chat_state.get_active_tab() or self.chat_state.tabs[0]
-                    )
-                    if not active_tab.input_text:  # Don't overwrite if already saved
-                        active_tab.input_text = chat_input.text
-                        logger.info(f"Saved chat input to tab {active_tab.tab_id}")
-                else:
-                    # Create a default tab if none exist
-                    default_tab = TabState(
-                        tab_id="default",
-                        title="Chat",
-                        input_text=chat_input.text,
-                        is_active=True,
-                    )
-                    self.chat_state.tabs = [default_tab]
-                    self.chat_state.active_tab_id = "default"
-                    logger.info("Created default tab with chat input content")
-            else:
-                logger.debug("No chat input text to save")
-
-        except Exception as e:
-            logger.debug(f"Error in _save_direct_input_text: {e}")
-
     # NOTE (task-247, perf): there used to be an on_screen_suspend() override
     # here that called self.save_state() again and discarded the result.
     # app.py already calls save_state() explicitly before switching screens
@@ -15468,31 +15138,23 @@ class ChatScreen(BaseAppScreen):
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:
-        """Update the persisted task resume state and sync it into the chat UI."""
-        self.chat_state.task_resume_state = task_state
+        """Update native Console task-resume state and refresh its cards."""
+        self._task_resume_state = task_state
         self.sync_task_resume_state()
 
     def sync_task_resume_state(self) -> None:
-        """Push the current task resume state into native Console task cards."""
+        """Push native Console task-resume state into its task cards."""
         try:
             task_cards = self.query_one("#console-task-surface", ChatTaskCards)
-            task_cards.sync_state(self.chat_state.task_resume_state)
+            task_cards.sync_state(self._task_resume_state)
         except QueryError:
             pass
 
     def _set_console_pending_approval(self, approval: Dict[str, Any] | None) -> None:
-        """Set/clear the pending MCP approval batch, then sync the task cards.
-
-        UI-thread bridge target for ``ConsoleChatController.
-        request_mcp_approvals``, always invoked via ``app_instance.
-        call_from_thread`` from the controller's worker-thread approval
-        round (task-5). Mutates only ``pending_approval`` on the current
-        task-resume state via ``dataclasses.replace`` so an in-flight
-        resume summary/next-action is never clobbered by an approval round
-        starting or ending mid-turn.
-        """
-        current = self.chat_state.task_resume_state
-        self.set_task_resume_state(replace(current, pending_approval=approval))
+        """Set or clear the native Console's pending MCP approval batch."""
+        self.set_task_resume_state(
+            replace(self._task_resume_state, pending_approval=approval)
+        )
 
     def _park_console_approval(self, session_id: str) -> None:
         """PA-T9 (parked background approvals): badge a NON-viewed session's
@@ -15619,7 +15281,7 @@ class ChatScreen(BaseAppScreen):
         only pending_skill_install so an in-flight approval/resume state is
         never clobbered.
         """
-        current = self.chat_state.task_resume_state
+        current = self._task_resume_state
         self.set_task_resume_state(replace(current, pending_skill_install=payload))
 
     def _set_console_pending_skill_script(
@@ -15636,7 +15298,7 @@ class ChatScreen(BaseAppScreen):
             payload: The pending confirm's dict (see
                 ``SkillScriptConfirmCard.set_script``), or None to clear it.
         """
-        current = self.chat_state.task_resume_state
+        current = self._task_resume_state
         self.set_task_resume_state(replace(current, pending_skill_script=payload))
 
     @on(ChatApprovalCard.ApprovalDecided)

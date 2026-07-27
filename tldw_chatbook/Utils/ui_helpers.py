@@ -5,7 +5,7 @@ This module provides common UI operations to reduce code duplication in app.py.
 """
 
 from typing import Optional, List, TYPE_CHECKING
-from textual.widgets import Input, TextArea, Select, ListView
+from textual.widgets import Input, TextArea, Select
 from textual.css.query import QueryError
 from loguru import logger
 
@@ -117,31 +117,6 @@ class UIHelpers:
             logger.error(f"Cannot find RAG expansion model select '{model_select_id}'")
         except Exception as e:
             logger.error(f"Error setting RAG expansion model options: {e}")
-
-    @staticmethod
-    def clear_chat_sidebar_prompt_display(app: "App") -> None:
-        """
-        Clear the prompt display areas in the chat sidebar.
-
-        Args:
-            app: The Textual app instance
-        """
-        logger.debug("Clearing chat sidebar prompt display areas.")
-
-        # Clear the reactive properties (if they exist on the app)
-        if hasattr(app, "chat_sidebar_selected_prompt_id"):
-            app.chat_sidebar_selected_prompt_id = None
-        if hasattr(app, "chat_sidebar_selected_prompt_system"):
-            app.chat_sidebar_selected_prompt_system = None
-        if hasattr(app, "chat_sidebar_selected_prompt_user"):
-            app.chat_sidebar_selected_prompt_user = None
-
-        # Clear the prompts listview
-        try:
-            listview = app.query_one("#chat-sidebar-prompts-listview", ListView)
-            listview.clear()
-        except QueryError:
-            pass  # If not found, it's fine
 
     @staticmethod
     def get_widget_safely(

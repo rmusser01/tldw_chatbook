@@ -28,7 +28,6 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
@@ -1288,25 +1287,6 @@ def mock_chat_host():
     host.run_worker = Mock()
     host.bell = Mock()
     return host
-
-
-def test_set_console_pending_approval_preserves_other_resume_fields(mock_chat_host):
-    screen = ChatScreen(mock_chat_host)
-    screen.chat_state.task_resume_state = TaskResumeState(
-        summary="Keep me", last_step="Also keep"
-    )
-
-    payload = {"calls": [{"llm_name": "mcp__a__b"}], "timeout_seconds": 30.0}
-    screen._set_console_pending_approval(payload)
-
-    state = screen.chat_state.task_resume_state
-    assert state.summary == "Keep me"
-    assert state.last_step == "Also keep"
-    assert state.pending_approval == payload
-
-    screen._set_console_pending_approval(None)
-    assert screen.chat_state.task_resume_state.pending_approval is None
-    assert screen.chat_state.task_resume_state.summary == "Keep me"
 
 
 def test_chat_screen_forwards_approval_decided_to_controller(mock_chat_host):
