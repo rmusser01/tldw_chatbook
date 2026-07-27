@@ -3,6 +3,7 @@ Unit tests for SQL validation module.
 """
 
 from tldw_chatbook.DB.sql_validation import (
+    VALID_TABLES,
     validate_identifier,
     validate_table_name,
     validate_column_name,
@@ -75,6 +76,7 @@ class TestValidateTableName:
             "messages",
             "notes",
             "keywords",
+            "keyword_collections",
             "conversation_keywords",
             "collection_keywords",
             "note_keywords",
@@ -322,3 +324,78 @@ class TestSQLValidationIntegration:
 
         for identifier in unicode_identifiers:
             assert validate_identifier(identifier) is True
+
+
+def _live_chachanotes_table_names() -> set[str]:
+    """Derive the real, substantive ChaChaNotes table set from a live DB.
+
+    Builds a real ``CharactersRAGDB(":memory:")`` -- which runs the full
+    ``_FULL_SCHEMA_SQL_V4`` script plus every ``_migrate_from_vX_to_vY``
+    step up to ``_CURRENT_SCHEMA_VERSION`` -- and reads its
+    ``sqlite_master`` directly, rather than re-typing a literal table list
+    that could just as easily go stale as ``VALID_TABLES`` itself did
+    (TASK-864). This is the "real schema" ``VALID_TABLES['chachanotes']``
+    is meant to allowlist.
+
+    Excludes:
+
+    * ``sqlite_sequence`` -- SQLite's own AUTOINCREMENT bookkeeping table,
+      never a validation target.
+    * FTS5 shadow/virtual tables (anything with ``_fts`` in its name --
+      the virtual table itself, e.g. ``notes_fts``, plus its ``_data``/
+      ``_idx``/``_docsize``/``_config`` shadow tables). These are written
+      to exclusively by SQL triggers, never through a generic CRUD helper
+      that calls ``validate_table_name``, and the omissions TASK-864 found
+      were all substantive data tables, not search-index plumbing.
+
+    Returns:
+        The set of real, substantive table names the live schema defines.
+    """
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(":memory:", client_id="sql-validation-schema-sync-test")
+    try:
+        conn = db.get_connection()
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    finally:
+        db.close_connection()
+
+    return {
+        row["name"]
+        for row in rows
+        if row["name"] != "sqlite_sequence" and "_fts" not in row["name"]
+    }
+
+
+class TestChachanotesValidTablesMatchesLiveSchema:
+    """TASK-864: catch the next allowlist/schema drift automatically.
+
+    ``VALID_TABLES['chachanotes']`` is hand-maintained (see the comment
+    above its definition in ``sql_validation.py`` for why it is not derived
+    at import time), so nothing stops a future migration from adding a
+    table without updating it -- exactly how ``keyword_collections`` was
+    missed. This test is the guard: it fails the moment the two diverge,
+    instead of waiting for a user to hit an unconditional ``ValueError``.
+    """
+
+    def test_no_missing_tables(self):
+        """Every real, substantive table in the live schema must be allowlisted."""
+        live_tables = _live_chachanotes_table_names()
+        missing = live_tables - VALID_TABLES["chachanotes"]
+        assert not missing, (
+            f"Live schema has tables not in VALID_TABLES['chachanotes']: "
+            f"{sorted(missing)}. Add them (or document a deliberate "
+            f"exclusion) in tldw_chatbook/DB/sql_validation.py."
+        )
+
+    def test_no_stale_tables(self):
+        """Every allowlisted name must correspond to a real, live table."""
+        live_tables = _live_chachanotes_table_names()
+        stale = VALID_TABLES["chachanotes"] - live_tables
+        assert not stale, (
+            f"VALID_TABLES['chachanotes'] allowlists tables that no longer "
+            f"exist in the live schema: {sorted(stale)}. Remove them from "
+            f"tldw_chatbook/DB/sql_validation.py."
+        )

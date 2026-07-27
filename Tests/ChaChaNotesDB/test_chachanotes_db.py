@@ -844,6 +844,42 @@ class TestNotesAndKeywords:
         assert db_instance.unlink_conversation_from_keyword(conv_id, kw_id) is False
 
 
+class TestKeywordCollections:
+    """TASK-864: ``keyword_collections`` was omitted from
+    ``sql_validation.VALID_TABLES['chachanotes']``, so ``update_keyword_collection``
+    (and ``soft_delete_keyword_collection``) raised ``ValueError`` for every
+    caller, unconditionally -- this feature had no test coverage at all until
+    this class, which is exactly how the omission went unnoticed.
+    """
+
+    def test_add_then_update_keyword_collection(self, db_instance: CharactersRAGDB):
+        collection_id = db_instance.add_keyword_collection("Coll A")
+        assert isinstance(collection_id, int)
+
+        updated = db_instance.update_keyword_collection(
+            collection_id, {"name": "Coll B"}, expected_version=1
+        )
+        assert updated is True
+
+        collections = db_instance.list_keyword_collections()
+        names = {c["name"] for c in collections}
+        assert "Coll B" in names
+        assert "Coll A" not in names
+
+    def test_add_then_soft_delete_keyword_collection(
+        self, db_instance: CharactersRAGDB
+    ):
+        collection_id = db_instance.add_keyword_collection("Coll To Delete")
+
+        deleted = db_instance.soft_delete_keyword_collection(
+            collection_id, expected_version=1
+        )
+        assert deleted is True
+
+        names = {c["name"] for c in db_instance.list_keyword_collections()}
+        assert "Coll To Delete" not in names
+
+
 class TestGetAllNoteIds:
     """``get_all_note_ids`` -- the truncation-proof id source for Library
     chatbook export (see ``Library/library_export_scope.py``).

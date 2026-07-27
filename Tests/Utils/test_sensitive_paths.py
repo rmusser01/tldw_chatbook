@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.Utils.sensitive_paths import (
+    find_root_binding_conflict,
     is_sensitive_path,
     refuses_new_directory_chain,
 )
@@ -523,6 +524,81 @@ def test_refuses_new_directory_chain_blocks_the_collision():
 
     assert refuses_new_directory_chain(target.parent)
     assert not (user_data_dir / "search_history.db").exists()
+
+
+# ---------------------------------------------------------------------------
+# TASK-857: the folder-binding reachability gate (``find_root_binding_conflict``).
+# ---------------------------------------------------------------------------
+
+
+def test_find_root_binding_conflict_when_root_is_a_sensitive_dir():
+    """``root`` resolving exactly to one of the fixed sensitive directories
+    (e.g. ``~/.ssh``) must be reported -- ``is_sensitive_path`` alone would
+    also catch this candidate, but the binding gate needs the conflicting
+    path back, not just a bool, so it can name it in its own message.
+    """
+    ssh_dir = Path("~/.ssh").expanduser()
+    ssh_dir.mkdir(parents=True, exist_ok=True)
+
+    conflict = find_root_binding_conflict(ssh_dir.resolve())
+
+    assert conflict == ssh_dir.resolve()
+
+
+def test_find_root_binding_conflict_when_root_is_the_user_data_dir():
+    """``root`` resolving exactly to ``get_user_data_dir()`` must be
+    reported as itself (case (1): "root IS the protected path"), not as
+    some unrelated descendant like the skill-trust subtree -- see the
+    priority-ordering note in ``find_root_binding_conflict``'s docstring.
+    """
+    from tldw_chatbook import config as app_config
+
+    user_data_dir = app_config.get_user_data_dir()
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+
+    conflict = find_root_binding_conflict(user_data_dir)
+
+    assert conflict == user_data_dir
+
+
+def test_find_root_binding_conflict_when_root_is_nested_inside_a_container():
+    """A subdirectory of ``get_user_data_dir()`` must be reported as a
+    conflict too -- it doesn't look sensitive by name, but binding it would
+    grant blanket, recursive reachability under an app-state directory.
+    """
+    from tldw_chatbook import config as app_config
+
+    user_data_dir = app_config.get_user_data_dir()
+    nested = user_data_dir / "some_subdir"
+    nested.mkdir(parents=True, exist_ok=True)
+
+    conflict = find_root_binding_conflict(nested)
+
+    assert conflict == user_data_dir
+
+
+def test_find_root_binding_conflict_when_root_contains_a_container():
+    """The reverse direction: ``root`` itself doesn't look sensitive, but
+    it is coarse enough to CONTAIN ``get_user_data_dir()`` as a descendant.
+    """
+    from tldw_chatbook import config as app_config
+
+    user_data_dir = app_config.get_user_data_dir()
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+    ancestor = user_data_dir.parent
+
+    conflict = find_root_binding_conflict(ancestor)
+
+    assert conflict == user_data_dir
+
+
+def test_find_root_binding_conflict_is_none_for_an_ordinary_folder(tmp_path):
+    """No regression on the common case: an ordinary project folder
+    unrelated to any of this app's own state has no conflict."""
+    ordinary = tmp_path / "ordinary-project"
+    ordinary.mkdir()
+
+    assert find_root_binding_conflict(ordinary) is None
 
 
 def test_refuses_new_directory_chain_allows_existing_containers():

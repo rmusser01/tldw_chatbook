@@ -10,17 +10,79 @@ from typing import Optional
 from loguru import logger
 
 # Define valid table names for each database
+#
+# NOTE (TASK-864): the "chachanotes" set below used to only allowlist 9 of the
+# ~47 real tables the live schema creates (``ChaChaNotes_DB._FULL_SCHEMA_SQL_V4``
+# plus every ``_migrate_from_vX_to_vY`` step run up to
+# ``CharactersRAGDB._CURRENT_SCHEMA_VERSION``), which made
+# ``update_keyword_collection()`` raise ``ValueError`` unconditionally --
+# ``keyword_collections`` itself was one of the omissions. This set is kept
+# hand-maintained rather than derived at import time from a live
+# ``CharactersRAGDB(":memory:")`` for two reasons: (1) building one runs the
+# full schema-creation + every migration step as a side effect of importing a
+# lightweight identifier-validation module used by three otherwise-unrelated
+# DB modules (chachanotes/media/prompts each have their own schema; deriving
+# for just one would be inconsistent), and (2) it would make this module
+# depend on ``ChaChaNotes_DB`` at runtime, which itself imports from this
+# module -- a lazy in-function import avoids a hard cycle but the
+# heavyweight, logging-generating DB construction as a side effect of
+# validating a table name is worse than the alternative below.
+# Instead, ``Tests/DB/test_sql_validation.py`` asserts this set against
+# ``sqlite_master`` of a real, fully-migrated ``CharactersRAGDB(":memory:")``
+# (excluding FTS5 shadow/virtual tables and ``sqlite_sequence`` -- see that
+# test for the exact filter) so any future migration that adds, renames, or
+# removes a table fails the test immediately instead of surfacing as a user
+# hitting an unconditional ``ValueError`` the next time they touch the new
+# table through a generic CRUD helper.
 VALID_TABLES = {
     "chachanotes": {
         "character_cards",
-        "conversations",
-        "messages",
-        "notes",
-        "keywords",
-        "conversation_keywords",
+        "character_expression_images",
+        "chat_dictionaries",
         "collection_keywords",
+        "conversation_dictionaries",
+        "conversation_keywords",
+        "conversation_local_marks",
+        "conversation_world_books",
+        "conversations",
+        "db_schema_version",
+        "decks",
+        "flashcard_assets",
+        "flashcard_templates",
+        "flashcards",
+        "keyword_collections",
+        "keywords",
+        "learning_paths",
+        "message_attachments",
+        "message_generation_metadata",
+        "messages",
+        "mindmap_nodes",
+        "mindmaps",
         "note_keywords",
+        "notes",
+        "quiz_attempts",
+        "quiz_questions",
+        "quizzes",
+        "rag_answer_attempt_payloads",
+        "rag_artifact_owner_leases",
+        "rag_artifact_owner_operations",
+        "rag_citation_traces",
+        "rag_evidence_runs",
+        "rag_evidence_snapshots",
+        "rag_identity_context",
+        "rag_legacy_migration_journal",
+        "rag_message_trace_owners",
+        "rag_payload_tombstones",
+        "rag_source_observations",
+        "rag_trace_evidence_refs",
+        "review_history",
+        "study_sessions",
+        "sync_conflicts",
         "sync_log",
+        "sync_sessions",
+        "topics",
+        "world_book_entries",
+        "world_books",
     },
     "media": {
         "Media",
@@ -124,6 +186,22 @@ VALID_COLUMNS = {
         "deleted_at",
         "client_id",
     },
+    # TASK-864: real caller is ChaChaNotes_DB.update_keyword_collection() /
+    # soft_delete_keyword_collection() via _update_generic_item /
+    # _soft_delete_generic_item, both passing pk_col_name="id". Columns
+    # verified against ``PRAGMA table_info(keyword_collections)`` on a live
+    # migrated DB -- note there is deliberately no ``uuid``/``deleted_at``
+    # here, unlike the sibling tables above.
+    "keyword_collections": {
+        "id",
+        "name",
+        "parent_id",
+        "created_at",
+        "last_modified",
+        "deleted",
+        "client_id",
+        "version",
+    },
     # Media DB
     "Media": {
         "id",
@@ -157,6 +235,76 @@ VALID_COLUMNS = {
         "deleted_at",
         "client_id",
     },
+    # TASK-864: these four are Media's soft-delete/undelete cascade child
+    # tables (Client_Media_DB_v2.py, ``child_tables`` cascade loops in
+    # ``soft_delete_media``/``undelete_media``), which always validate
+    # ``fk_col="media_id"``/``uuid_col="uuid"``. Columns verified against
+    # each table's own ``CREATE TABLE`` in Client_Media_DB_v2.py.
+    "Transcripts": {
+        "id",
+        "media_id",
+        "whisper_model",
+        "transcription",
+        "created_at",
+        "uuid",
+        "last_modified",
+        "version",
+        "client_id",
+        "deleted",
+        "prev_version",
+        "merge_parent_uuid",
+    },
+    "MediaChunks": {
+        "id",
+        "media_id",
+        "chunk_text",
+        "start_index",
+        "end_index",
+        "chunk_id",
+        "uuid",
+        "last_modified",
+        "version",
+        "client_id",
+        "deleted",
+        "prev_version",
+        "merge_parent_uuid",
+    },
+    "UnvectorizedMediaChunks": {
+        "id",
+        "media_id",
+        "chunk_text",
+        "chunk_index",
+        "start_char",
+        "end_char",
+        "chunk_type",
+        "creation_date",
+        "last_modified_orig",
+        "is_processed",
+        "metadata",
+        "uuid",
+        "last_modified",
+        "version",
+        "client_id",
+        "deleted",
+        "prev_version",
+        "merge_parent_uuid",
+    },
+    "DocumentVersions": {
+        "id",
+        "media_id",
+        "version_number",
+        "prompt",
+        "analysis_content",
+        "content",
+        "created_at",
+        "uuid",
+        "last_modified",
+        "version",
+        "client_id",
+        "deleted",
+        "prev_version",
+        "merge_parent_uuid",
+    },
     # Prompts DB
     "Prompts": {
         "id",
@@ -170,6 +318,27 @@ VALID_COLUMNS = {
         "version",
         "deleted_at",
         "client_id",
+    },
+    # TASK-864: real caller is Sync_Interop/sync_state_repository.py's
+    # ``_ensure_sync_v2_profile_columns``, immediately before an
+    # ``ALTER TABLE ... ADD COLUMN`` f-string. Columns verified against that
+    # module's own ``CREATE TABLE IF NOT EXISTS sync_profile_state`` (not a
+    # ChaChaNotes/Media/Prompts DB table, but sharing this module's
+    # allow-list is simplest -- ``validate_column_name`` takes no db_type).
+    "sync_profile_state": {
+        "source_authority",
+        "server_profile_id",
+        "authenticated_principal_id",
+        "workspace_scope",
+        "profile_mode",
+        "device_id",
+        "dataset_id",
+        "dataset_cursors",
+        "capabilities",
+        "dry_run_metadata",
+        "last_error",
+        "last_mirror_report_id",
+        "updated_at",
     },
 }
 
@@ -294,6 +463,26 @@ def validate_column_name(column_name: str, table_name: Optional[str] = None) -> 
     """
     Validates a column name, optionally against a specific table's schema.
 
+    TASK-864: when ``table_name`` is given, this fails CLOSED for a table
+    that has no entry in ``VALID_COLUMNS`` -- it used to silently no-op
+    (returning whatever ``validate_identifier`` alone decided) for any
+    table not among that dict's keys, so a caller documenting "validated
+    against this table's schema" wasn't actually getting that check for
+    ``sync_profile_state`` or the Media cascade child tables (Transcripts,
+    MediaChunks, UnvectorizedMediaChunks, DocumentVersions) -- not
+    exploitable at the time (every real caller passed in-file literals),
+    but the promised validation wasn't being delivered. Every real caller
+    that passes a concrete ``table_name`` now has a matching
+    ``VALID_COLUMNS`` entry (see the table-specific comments above), so
+    this tightening does not change behavior for any of them; a future
+    caller that introduces a new table must add its columns here first,
+    the same way ``validate_table_name`` already requires a
+    ``VALID_TABLES`` entry.
+
+    Passing ``table_name=None`` (the "no schema context" case, e.g.
+    generic identifier checks with no specific table in scope) is
+    unaffected and still skips the per-table check entirely.
+
     Args:
         column_name: The column name to validate
         table_name: Optional table name to validate against specific schema
@@ -304,10 +493,14 @@ def validate_column_name(column_name: str, table_name: Optional[str] = None) -> 
     if not validate_identifier(column_name, "column name"):
         return False
 
-    # If table name provided and we have schema info, validate against it
-    if table_name and table_name in VALID_COLUMNS:
-        valid_columns = VALID_COLUMNS[table_name]
-        if column_name not in valid_columns:
+    if table_name:
+        if table_name not in VALID_COLUMNS:
+            logger.warning(
+                f"No column allow-list registered for table '{table_name}'; "
+                f"rejecting column '{column_name}' (fail-closed)"
+            )
+            return False
+        if column_name not in VALID_COLUMNS[table_name]:
             logger.warning(
                 f"Column '{column_name}' not in schema for table '{table_name}'"
             )
