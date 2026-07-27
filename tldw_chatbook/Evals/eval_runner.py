@@ -768,18 +768,39 @@ class MetricsCalculator:
 
             # Calculate cosine similarity
             try:
-                from numpy import dot
+                from numpy import asarray, dot, float64
                 from numpy.linalg import norm
 
-                dot(pred_embedding, exp_embedding) / (
-                    norm(pred_embedding) * norm(exp_embedding)
+                # Upcast to float64: real embedding models commonly hand back
+                # float32 vectors, and computing the dot product / norms at
+                # float32 precision can make a vector's similarity with
+                # itself land a few ULPs short of 1.0 (e.g. 0.99999988
+                # instead of 1.0). Computing in double precision avoids that
+                # avoidable precision loss.
+                pred_vec = asarray(pred_embedding, dtype=float64)
+                exp_vec = asarray(exp_embedding, dtype=float64)
+                norm_product = norm(pred_vec) * norm(exp_vec)
+                similarity = (
+                    float(dot(pred_vec, exp_vec) / norm_product)
+                    if norm_product > 0
+                    else 0.0
                 )
             except ImportError:
-                # Fallback to pure Python cosine similarity
-                dot_product = sum(a * b for a, b in zip(pred_embedding, exp_embedding))
-                norm1 = sum(a * a for a in pred_embedding) ** 0.5
-                norm2 = sum(b * b for b in exp_embedding) ** 0.5
-                dot_product / ((norm1 * norm2) if norm1 * norm2 > 0 else 0.0)
+                # Fallback to pure Python cosine similarity. Cast each
+                # element to a native Python float (double precision) so
+                # this matches the numpy branch above regardless of the
+                # embedding model's native dtype.
+                dot_product = sum(
+                    float(a) * float(b) for a, b in zip(pred_embedding, exp_embedding)
+                )
+                norm1 = sum(float(a) * float(a) for a in pred_embedding) ** 0.5
+                norm2 = sum(float(b) * float(b) for b in exp_embedding) ** 0.5
+                norm_product = norm1 * norm2
+                similarity = dot_product / norm_product if norm_product > 0 else 0.0
+
+            # Cosine similarity ranges over [-1, 1]; callers/tests expect a
+            # [0, 1] score, so clamp before returning.
+            return max(0.0, min(1.0, similarity))
 
         except ImportError:
             # Fallback to token overlap if embeddings not available

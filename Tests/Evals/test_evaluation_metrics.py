@@ -6,8 +6,29 @@ Tests instruction_adherence, format_compliance, coherence_score, and dialogue_qu
 import pytest
 from unittest.mock import Mock
 
-from tldw_chatbook.Evals.eval_runner import BaseEvalRunner, EvalSample, EvalSampleResult
+from tldw_chatbook.Evals.eval_runner import (
+    BaseEvalRunner,
+    EvalSample,
+    EvalSampleResult,
+    MetricsCalculator,
+)
 from tldw_chatbook.Evals.task_loader import TaskConfig
+
+
+class _StubEmbeddingModel:
+    """Deterministic stand-in for a SentenceTransformer.
+
+    Lets tests exercise the "embedding model IS present" success path of
+    ``calculate_semantic_similarity`` without downloading or loading a real
+    model. Maps each input string to a fixed vector via ``encode()``, the
+    same method name/signature real SentenceTransformer models expose.
+    """
+
+    def __init__(self, vectors: dict):
+        self._vectors = vectors
+
+    def encode(self, texts):
+        return [self._vectors[text] for text in texts]
 
 
 class TestRunner(BaseEvalRunner):
@@ -311,3 +332,84 @@ class TestEvaluationMetrics:
         metrics = runner.calculate_metrics(dialogue, "expected", sample)
         assert "dialogue_quality" in metrics
         assert metrics["dialogue_quality"] > 0.5
+
+
+class TestSemanticSimilarityWithEmbeddingModel:
+    """Exercise the embedding-model success path of calculate_semantic_similarity.
+
+    Regression coverage for TASK-862: when an embedding model is available
+    (real SentenceTransformer or, here, a stub passed via the
+    ``embedding_model`` parameter), the function used to fall off the end
+    without returning anything, silently yielding None on every call. The
+    existing suite only ever exercised the "embeddings unavailable" fallback
+    path, so it never caught this. These tests supply a fake embedding model
+    so they are fast, deterministic, and require no network access or model
+    download.
+    """
+
+    def test_returns_float_not_none_when_embedding_model_present(self):
+        """A real float must come back, not None, when embeddings succeed."""
+        model = _StubEmbeddingModel(
+            {
+                "the cat sat": [1.0, 0.0, 0.0],
+                "the cat sat on the mat": [0.9, 0.1, 0.0],
+            }
+        )
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            "the cat sat", "the cat sat on the mat", embedding_model=model
+        )
+
+        assert score is not None
+        assert isinstance(score, float)
+        assert 0.0 < score < 1.0
+
+    def test_identical_embeddings_yield_similarity_one(self):
+        """Identical vectors -> cosine similarity 1.0 (clamped upper bound)."""
+        model = _StubEmbeddingModel({"same": [1.0, 2.0, 3.0]})
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            "same", "same", embedding_model=model
+        )
+
+        assert score == pytest.approx(1.0)
+
+    def test_opposite_embeddings_are_clamped_to_zero(self):
+        """Cosine similarity is [-1, 1], but callers expect a [0, 1] score.
+
+        Opposite vectors give raw cosine similarity -1.0; the function must
+        clamp that into range rather than returning a negative score.
+        """
+        model = _StubEmbeddingModel(
+            {
+                "positive": [1.0, 0.0],
+                "negative": [-1.0, 0.0],
+            }
+        )
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            "positive", "negative", embedding_model=model
+        )
+
+        assert score is not None
+        assert score == pytest.approx(0.0)
+        assert 0.0 <= score <= 1.0
+
+    def test_zero_norm_embedding_returns_zero_not_exception_fallback(self):
+        """A zero vector must yield 0.0, not divide-by-zero / lexical fallback.
+
+        Uses identical predicted/expected text so the lexical-overlap
+        fallback (used when embeddings error out) would score this 1.0
+        (exact string match). Zero-magnitude embedding vectors previously
+        raised ZeroDivisionError in the pure-Python branch, which the broad
+        `except Exception` silently converted into that 1.0 lexical
+        fallback score. Asserting 0.0 here fails loudly if that regression
+        returns, instead of coincidentally matching either path's output.
+        """
+        model = _StubEmbeddingModel({"identical text": [0.0, 0.0, 0.0]})
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            "identical text", "identical text", embedding_model=model
+        )
+
+        assert score == 0.0
