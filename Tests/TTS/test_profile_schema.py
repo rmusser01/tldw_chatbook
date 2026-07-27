@@ -1144,6 +1144,88 @@ def test_profile_decoder_revalidates_every_persisted_value(
         decode_profile(row)
 
 
+@pytest.mark.parametrize("validation_kind", ["candidate", "live"])
+@pytest.mark.parametrize(
+    ("column", "raw_value"),
+    [
+        ("display_name", "  Straße 音声  "),
+        ("display_name", f"{' ' * 129}Straße 音声"),
+        ("response_format", " MP3 "),
+        ("response_format", f"{' ' * 33}MP3"),
+    ],
+)
+def test_profile_row_validation_rejects_noncanonical_raw_profile_text(
+    tmp_path: Path,
+    validation_kind: str,
+    column: str,
+    raw_value: str,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    connection = open_profile_store(path)
+    _insert_profile(connection, _profile())
+    update_sql = {
+        "display_name": ("UPDATE tts_generation_profiles SET display_name = ?"),
+        "response_format": ("UPDATE tts_generation_profiles SET response_format = ?"),
+    }[column]
+    connection.execute(update_sql, (raw_value,))
+    connection.commit()
+
+    if validation_kind == "candidate":
+        connection.close()
+        with _safe_error("corrupt_data"):
+            validate_profile_candidate(path)
+    else:
+        try:
+            with _safe_error("corrupt_data"):
+                profile_schema.validate_profile_store_rows(connection)
+        finally:
+            connection.close()
+
+
+@pytest.mark.parametrize("validation_kind", ["candidate", "live"])
+def test_profile_row_validation_rejects_oversized_raw_options_before_parsing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    validation_kind: str,
+) -> None:
+    raw_options = "{" + ",".join(['"é":"声"'] * 1_500) + "}"
+    assert len(raw_options) < 16 * 1024
+    assert len(raw_options.encode("utf-8")) > 16 * 1024
+    canonical_options = canonical_json_options(profile_schema.json.loads(raw_options))
+    assert canonical_options == '{"é":"声"}'
+    assert len(canonical_options.encode("utf-8")) < 16 * 1024
+
+    path = tmp_path / "profiles.sqlite3"
+    connection = open_profile_store(path)
+    _insert_profile(connection, _profile())
+    connection.execute(
+        "UPDATE tts_generation_profiles SET options_json = ?",
+        (raw_options,),
+    )
+    connection.commit()
+
+    parsed_values: list[object] = []
+    real_json_loads = profile_schema.json.loads
+
+    def tracked_loads(*args: object, **kwargs: object) -> object:
+        parsed_values.append(args[0])
+        return real_json_loads(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(profile_schema.json, "loads", tracked_loads)
+    if validation_kind == "candidate":
+        connection.close()
+        with _safe_error("corrupt_data"):
+            validate_profile_candidate(path)
+    else:
+        try:
+            with _safe_error("corrupt_data"):
+                profile_schema.validate_profile_store_rows(connection)
+        finally:
+            connection.close()
+
+    assert parsed_values == []
+
+
 def test_hostile_row_mapping_is_mapped_to_safe_corrupt_data() -> None:
     class HostileRow(Mapping[str, object]):
         def __getitem__(self, key: str) -> object:

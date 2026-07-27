@@ -31,6 +31,9 @@ from tldw_chatbook.TTS.profile_types import (
 
 CURRENT_PROFILE_SCHEMA_VERSION = 1
 BUSY_TIMEOUT_MS = 5_000
+_MAX_PERSISTED_DISPLAY_NAME_CHARACTERS = 128
+_MAX_PERSISTED_RESPONSE_FORMAT_CHARACTERS = 32
+_MAX_PERSISTED_OPTIONS_BYTES = 16 * 1024
 PROFILE_TABLE = "tts_generation_profiles"
 ASSIGNMENT_TABLE = "character_tts_assignments"
 ASSIGNMENT_PROFILE_INDEX = "idx_character_tts_assignments_profile_id"
@@ -199,6 +202,8 @@ def decode_options(value: object) -> FrozenJsonOptions:
     try:
         if type(value) is not str:
             raise ValueError
+        if len(value.encode("utf-8")) > _MAX_PERSISTED_OPTIONS_BYTES:
+            raise ValueError
         parsed = json.loads(
             value,
             parse_constant=lambda _constant: (_ for _ in ()).throw(ValueError()),
@@ -282,20 +287,33 @@ def _decode_profile(row: RowLike, prefix: str) -> TTSGenerationProfile:
             raise ValueError
         if type(speed) is not float or type(revision) is not int:
             raise ValueError
-        return TTSGenerationProfile(
+        display_name = cast(str, display_name)
+        response_format = cast(str, response_format)
+        if (
+            len(display_name) > _MAX_PERSISTED_DISPLAY_NAME_CHARACTERS
+            or len(response_format) > _MAX_PERSISTED_RESPONSE_FORMAT_CHARACTERS
+        ):
+            raise ValueError
+        profile = TTSGenerationProfile(
             profile_id=decode_uuid(_row_value(row, f"{prefix}profile_id")),
-            display_name=cast(str, display_name),
+            display_name=display_name,
             normalized_name=cast(str, normalized_name),
             provider_id=cast(str, provider_id),
             model_id=cast(str, model_id),
             voice_id=cast(str | None, voice_id),
-            response_format=cast(str, response_format),
+            response_format=response_format,
             speed=speed,
             options=decode_options(_row_value(row, f"{prefix}options_json")),
             revision=revision,
             created_at=decode_utc_datetime(_row_value(row, f"{prefix}created_at")),
             updated_at=decode_utc_datetime(_row_value(row, f"{prefix}updated_at")),
         )
+        if (
+            profile.display_name != display_name
+            or profile.response_format != response_format
+        ):
+            raise ValueError
+        return profile
     except Exception:
         raise _repository_error("corrupt_data") from None
 
