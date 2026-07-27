@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import FrozenInstanceError, dataclass
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 import json
@@ -29,6 +29,7 @@ from tldw_chatbook.Chat.citation_trace_identity import (
     LocalCitationIdentityContext,
 )
 from tldw_chatbook.Chat.citation_trace_models import (
+    ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
     PolicyCapability,
     RetrievalScoreKind,
     RetrievalScoreScale,
@@ -42,11 +43,17 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 )
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleCitationNoticeCode,
+    ConsoleCitationPhase,
+    ConsoleCitationPresentation,
     ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -497,7 +504,7 @@ def test_capability_ready_adapter_arms_callback_and_deferral_in_append() -> None
     persistence = _ReadyCitationPersistence()
     store = ConsoleChatStore(persistence=persistence)
 
-    def finalizer(body: str) -> None:
+    def finalizer(_body: str) -> None:
         return None
 
     _, message_id = _append_eligible(store, finalizer)
@@ -1204,3 +1211,757 @@ async def test_real_rollback_deterministic_unavailable_falls_back_without_trace_
     _assert_content_free_diagnostics(log_output)
     assert "forced_deterministic_unavailable" not in log_output
     assert builder.answer_attempt_payloads[0].body_integrity_hmac not in log_output
+
+
+@pytest.mark.parametrize("persist", [False, True], ids=["memory", "durable"])
+@pytest.mark.parametrize(
+    "invalid_kwargs",
+    [
+        {"role": ConsoleMessageRole.USER},
+        {"content": "already present"},
+        {
+            "attachments": (
+                MessageAttachment(
+                    data=b"image",
+                    mime_type="image/png",
+                    display_name="image.png",
+                    position=0,
+                ),
+            ),
+        },
+        {"image_data": b"scalar-image", "image_mime_type": "image/png"},
+    ],
+    ids=["non-assistant", "non-empty", "attachments", "scalar-image"],
+)
+def test_repair_deferral_rejects_invalid_placeholder_shapes_independent_of_persist(
+    persist: bool,
+    invalid_kwargs: dict[str, Any],
+) -> None:
+    persistence = _ReadyCitationPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    append_kwargs: dict[str, Any] = {
+        "role": ConsoleMessageRole.ASSISTANT,
+        "content": "",
+        "persist": persist,
+        "defer_terminal_persistence": True,
+    }
+    append_kwargs.update(invalid_kwargs)
+
+    with pytest.raises(ValueError):
+        store.append_message(session.id, **append_kwargs)
+
+    assert store.messages_for_session(session.id) == []
+    assert persistence.create_calls == []
+
+
+@pytest.mark.parametrize(
+    ("persistence", "persist", "expects_persistence_deferral"),
+    [
+        (None, True, False),
+        (_ReadyCitationPersistence(), False, False),
+        (_NoCitationKwargPersistence(), True, True),
+        (_FalseReadinessPersistence(), True, True),
+        (_ReadyCitationPersistence(), True, True),
+    ],
+    ids=[
+        "no-backend",
+        "persist-false",
+        "citation-kwarg-absent",
+        "canonical-writes-disabled",
+        "no-finalizer",
+    ],
+)
+def test_builder_unavailable_deferral_tracks_logical_selection_independently(
+    persistence: _PersistenceBase | None,
+    persist: bool,
+    expects_persistence_deferral: bool,
+) -> None:
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=persist,
+        defer_terminal_persistence=True,
+    )
+
+    assert message.id in store._provisional_terminal_selection_ids
+    assert (
+        message.id in store._terminal_persistence_deferred_ids
+    ) is expects_persistence_deferral
+    assert message.id not in store._terminal_citation_finalizers
+    if persistence is not None:
+        assert persistence.create_calls == []
+
+
+def test_repair_deferral_ready_finalizer_uses_one_deferral_entry() -> None:
+    persistence = _ReadyCitationPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+
+    def finalizer(body: str) -> None:
+        return None
+
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        terminal_citation_finalizer=finalizer,
+        defer_terminal_persistence=True,
+    )
+
+    assert store._terminal_citation_finalizers == {message.id: finalizer}
+    assert store._terminal_persistence_deferred_ids == {message.id}
+    assert store._provisional_terminal_selection_ids == {message.id}
+    assert persistence.create_calls == []
+
+
+def test_builder_unavailable_deferral_materializes_repeatedly_without_early_write() -> None:
+    persistence = _NoCitationKwargPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+
+    store.append_stream_chunk(message.id, "first")
+    assert store.get_message(message.id).content == "first"
+    assert store.get_message(message.id).content == "first"
+    store.append_stream_chunk(message.id, " second")
+    assert store.messages_for_session(session.id)[-1].content == "first second"
+    assert store.messages_for_session(session.id)[-1].content == "first second"
+
+    assert persistence.create_calls == []
+    assert store._stream_chunks_by_message[message.id] == ["first second"]
+    assert store._stream_materialized_counts[message.id] == 1
+
+
+@pytest.mark.parametrize(
+    ("terminal_method_name", "expected_status"),
+    [
+        ("mark_message_complete", "complete"),
+        ("mark_message_failed", "failed"),
+        ("mark_message_stopped", "stopped"),
+    ],
+)
+def test_repair_deferral_terminal_paths_release_selection_and_persistence_state(
+    terminal_method_name: str,
+    expected_status: str,
+) -> None:
+    persistence = _NoCitationKwargPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+    store.append_stream_chunk(message.id, "selected body")
+
+    terminal_method = getattr(store, terminal_method_name)
+    result = terminal_method(message.id)
+
+    assert result.status == expected_status
+    assert message.id not in store._provisional_terminal_selection_ids
+    assert message.id not in store._terminal_persistence_deferred_ids
+    assert len(persistence.create_calls) == 1
+
+
+def test_repair_deferral_explicit_cleanup_releases_both_states() -> None:
+    store = ConsoleChatStore(persistence=_NoCitationKwargPersistence())
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+
+    store.clear_terminal_citation_state(message.id)
+
+    assert message.id not in store._provisional_terminal_selection_ids
+    assert message.id not in store._terminal_persistence_deferred_ids
+
+
+def test_repair_deferral_close_releases_both_states() -> None:
+    store = ConsoleChatStore(persistence=_NoCitationKwargPersistence())
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+
+    store.close_session(session.id)
+
+    assert message.id not in store._provisional_terminal_selection_ids
+    assert message.id not in store._terminal_persistence_deferred_ids
+
+
+def test_repair_deferral_subtree_delete_releases_both_states() -> None:
+    store = ConsoleChatStore(persistence=_NoCitationKwargPersistence())
+    session = store.ensure_session()
+    parent = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="complete parent",
+    )
+    child = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+
+    store.delete_message(parent.id)
+
+    assert child.id not in store._provisional_terminal_selection_ids
+    assert child.id not in store._terminal_persistence_deferred_ids
+
+
+def test_repair_deferral_restore_releases_both_states() -> None:
+    store = ConsoleChatStore(persistence=_NoCitationKwargPersistence())
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+
+    store.restore_state(sessions=[])
+
+    assert message.id not in store._provisional_terminal_selection_ids
+    assert store._provisional_terminal_selection_ids == set()
+    assert store._terminal_persistence_deferred_ids == set()
+
+
+def test_repair_deferral_append_failure_releases_both_states() -> None:
+    store = ConsoleChatStore(persistence=_FailingConversationPersistence())
+    session = store.ensure_session()
+
+    with pytest.raises(RuntimeError, match="append-setup-sentinel"):
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=True,
+            defer_terminal_persistence=True,
+        )
+
+    registered_id = next(iter(store._nodes_by_session[session.id]))
+    assert registered_id not in store._provisional_terminal_selection_ids
+    assert registered_id not in store._terminal_persistence_deferred_ids
+
+
+def test_atomic_repair_replaces_one_deferred_row_without_early_persistence() -> None:
+    persistence = _NoCitationKwargPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+    store.append_stream_chunk(message.id, "original ")
+    store.append_stream_chunk(message.id, "body")
+    observations = [store.get_message(message.id).content]
+
+    replaced = store.replace_deferred_terminal_body(message.id, "repaired body [S1]")
+    observations.append(store.get_message(message.id).content)
+
+    assert replaced.id == message.id
+    assert replaced.content == "repaired body [S1]"
+    assert replaced.status == "streaming"
+    assert replaced.persisted_message_id is None
+    assert store._stream_chunks_by_message[message.id] == ["repaired body [S1]"]
+    assert store._stream_materialized_counts[message.id] == 1
+    assert observations == ["original body", "repaired body [S1]"]
+    assert "" not in observations
+    assert persistence.create_calls == []
+    assert persistence.update_calls == []
+
+
+@pytest.mark.parametrize("persistence", [None, _ReadyCitationPersistence()])
+def test_replace_deferred_accepts_pending_with_or_without_persistence(
+    persistence: _ReadyCitationPersistence | None,
+) -> None:
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=persistence is not None,
+        defer_terminal_persistence=True,
+    )
+
+    replaced = store.replace_deferred_terminal_body(
+        message.id,
+        "x" * ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
+    )
+
+    assert replaced.status == "pending"
+    assert len(replaced.content.encode("utf-8")) == ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX
+    assert store._stream_chunks_by_message[message.id] == [replaced.content]
+    assert store._stream_materialized_counts[message.id] == 1
+    if persistence is not None:
+        assert persistence.create_calls == []
+
+
+def test_replace_deferred_no_persistence_completes_same_row_without_writes() -> None:
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=False,
+        defer_terminal_persistence=True,
+    )
+    store.append_stream_chunk(message.id, "original")
+
+    replaced = store.replace_deferred_terminal_body(message.id, "repaired [S1]")
+    completed = store.mark_message_complete(message.id)
+
+    assert replaced.id == message.id
+    assert completed.id == message.id
+    assert completed.content == "repaired [S1]"
+    assert completed.status == "complete"
+    assert completed.persisted_message_id is None
+    assert message.id not in store._provisional_terminal_selection_ids
+
+
+def test_replace_deferred_rejects_unknown_or_noneligible_messages() -> None:
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    noneligible = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+
+    with pytest.raises(KeyError):
+        store.replace_deferred_terminal_body("unknown-message", "selected")
+    with pytest.raises(ValueError):
+        store.replace_deferred_terminal_body(noneligible.id, "selected")
+
+
+@pytest.mark.parametrize(
+    "invalid_body",
+    [
+        None,
+        b"bytes",
+        "",
+        "é" * ((ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX // 2) + 1),
+        "\ud800",
+    ],
+    ids=["none", "bytes", "empty", "oversized-utf8", "not-utf8-encodable"],
+)
+def test_replace_deferred_rejects_invalid_selected_body(
+    invalid_body: object,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        defer_terminal_persistence=True,
+    )
+
+    with pytest.raises(ValueError):
+        store.replace_deferred_terminal_body(message.id, invalid_body)  # type: ignore[arg-type]
+
+    assert store.get_message(message.id).content == ""
+    assert message.id in store._provisional_terminal_selection_ids
+
+
+def test_replace_deferred_rejects_nonassistant_attached_and_terminal_messages() -> None:
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    nonassistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="user",
+    )
+    attached = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        attachments=(
+            MessageAttachment(
+                data=b"image",
+                mime_type="image/png",
+                display_name="image.png",
+                position=0,
+            ),
+        ),
+    )
+    terminal = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        defer_terminal_persistence=True,
+    )
+    store.append_stream_chunk(terminal.id, "original")
+    store.mark_message_complete(terminal.id)
+    store._provisional_terminal_selection_ids.update(
+        {nonassistant.id, attached.id, terminal.id}
+    )
+
+    for message_id in (nonassistant.id, attached.id, terminal.id):
+        with pytest.raises(ValueError):
+            store.replace_deferred_terminal_body(message_id, "selected")
+
+
+def test_citation_presentation_contract_is_frozen_and_bounded() -> None:
+    presentation = ConsoleCitationPresentation(
+        phase=ConsoleCitationPhase.REPAIRING,
+        notice_code=ConsoleCitationNoticeCode.REPAIRED,
+        original_attempt_available=True,
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        presentation.original_attempt_available = False  # type: ignore[misc]
+    with pytest.raises(ValueError):
+        ConsoleCitationPresentation(
+            phase="answer body",  # type: ignore[arg-type]
+            notice_code=None,
+            original_attempt_available=False,
+        )
+    with pytest.raises(ValueError):
+        ConsoleCitationPresentation(
+            phase=ConsoleCitationPhase.SELECTED,
+            notice_code="provider exception",  # type: ignore[arg-type]
+            original_attempt_available=False,
+        )
+    with pytest.raises(ValueError):
+        ConsoleCitationPresentation(
+            phase=ConsoleCitationPhase.CHECKING,
+            notice_code=None,
+            original_attempt_available=1,  # type: ignore[arg-type]
+        )
+
+    assert set(presentation.__dict__) == {
+        "phase",
+        "notice_code",
+        "original_attempt_available",
+    }
+
+
+def test_citation_presentation_checking_run_state_is_active() -> None:
+    state = ConsoleRunState(
+        status=ConsoleRunStatus.CHECKING_CITATIONS,
+        visible_copy="Checking citations…",
+    )
+
+    assert state.is_send_allowed is False
+    assert state.is_stop_allowed is True
+
+
+def test_citation_presentation_store_snapshots_set_and_clear_without_writes() -> None:
+    persistence = _ReadyCitationPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+    presentation = ConsoleCitationPresentation(
+        phase=ConsoleCitationPhase.CHECKING,
+        notice_code=None,
+        original_attempt_available=False,
+    )
+
+    set_result = store.set_citation_presentation(message.id, presentation)
+
+    assert set_result.citation_presentation == presentation
+    assert store.get_message(message.id).citation_presentation == presentation
+    assert (
+        store.messages_for_session(session.id)[-1].citation_presentation
+        == presentation
+    )
+    assert persistence.create_calls == []
+    assert persistence.update_calls == []
+
+    clear_result = store.set_citation_presentation(message.id, None)
+
+    assert clear_result.citation_presentation is None
+    assert store.get_message(message.id).citation_presentation is None
+    assert persistence.create_calls == []
+    assert persistence.update_calls == []
+
+
+def test_citation_presentation_never_reaches_terminal_persistence() -> None:
+    persistence = _ReadyCitationPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+    store.set_citation_presentation(
+        message.id,
+        ConsoleCitationPresentation(
+            phase=ConsoleCitationPhase.SELECTED,
+            notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            original_attempt_available=True,
+        ),
+    )
+    store.replace_deferred_terminal_body(message.id, "selected [S1]")
+
+    completed = store.mark_message_complete(message.id)
+
+    assert completed.citation_presentation is not None
+    assert len(persistence.create_calls) == 1
+    assert persistence.create_calls[0]["content"] == "selected [S1]"
+    assert "citation_presentation" not in persistence.create_calls[0]
+    assert persistence.update_calls == []
+
+
+def test_citation_presentation_restore_defaults_to_none() -> None:
+    presentation = ConsoleCitationPresentation(
+        phase=ConsoleCitationPhase.SELECTED,
+        notice_code=ConsoleCitationNoticeCode.REPAIRED,
+        original_attempt_available=True,
+    )
+    session = ConsoleChatSession()
+    restored_message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="persisted body",
+        citation_presentation=presentation,
+    )
+    store = ConsoleChatStore()
+
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: [restored_message]},
+        active_session_id=session.id,
+    )
+
+    assert store.get_message(restored_message.id).citation_presentation is None
+
+
+def test_citation_presentation_invalid_type_and_unknown_message_fail_safely() -> None:
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="message",
+    )
+
+    with pytest.raises(ValueError):
+        store.set_citation_presentation(message.id, object())  # type: ignore[arg-type]
+    with pytest.raises(KeyError):
+        store.set_citation_presentation("unknown-message", None)
+
+    assert store.get_message(message.id).citation_presentation is None
+
+
+def test_citation_presentation_rejects_subclass_with_extra_governed_field() -> None:
+    @dataclass(frozen=True)
+    class _UnsafePresentation(ConsoleCitationPresentation):
+        answer_body: str = _BODY_SENTINEL
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="message",
+    )
+    unsafe = _UnsafePresentation(
+        phase=ConsoleCitationPhase.SELECTED,
+        notice_code=ConsoleCitationNoticeCode.REPAIRED,
+        original_attempt_available=True,
+    )
+
+    with pytest.raises(ValueError):
+        store.set_citation_presentation(message.id, unsafe)
+
+    assert store.get_message(message.id).citation_presentation is None
+
+
+@pytest.mark.parametrize(
+    ("outcome", "initial_body", "selected_body", "notice_code"),
+    [
+        ("valid-initial", "valid initial [S1]", "valid initial [S1]", None),
+        (
+            "repaired",
+            "original without marker",
+            "original without marker [S1]",
+            ConsoleCitationNoticeCode.REPAIRED,
+        ),
+        (
+            "unavailable",
+            "original unavailable",
+            "original unavailable",
+            ConsoleCitationNoticeCode.UNAVAILABLE,
+        ),
+        (
+            "canceled",
+            "original canceled",
+            "original canceled",
+            ConsoleCitationNoticeCode.CANCELED,
+        ),
+    ],
+)
+def test_one_terminal_write_persists_only_selected_outcome_body(
+    outcome: str,
+    initial_body: str,
+    selected_body: str,
+    notice_code: ConsoleCitationNoticeCode | None,
+) -> None:
+    persistence = _NoCitationKwargPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+    store.append_stream_chunk(message.id, initial_body)
+    assert store.get_message(message.id).content == initial_body
+    assert store.messages_for_session(session.id)[-1].content == initial_body
+    assert persistence.create_calls == []
+
+    if outcome == "repaired":
+        replaced = store.replace_deferred_terminal_body(message.id, selected_body)
+        assert replaced.id == message.id
+    store.set_citation_presentation(
+        message.id,
+        ConsoleCitationPresentation(
+            phase=ConsoleCitationPhase.SELECTED,
+            notice_code=notice_code,
+            original_attempt_available=outcome == "repaired",
+        ),
+    )
+    assert persistence.create_calls == []
+
+    completed = store.mark_message_complete(message.id)
+
+    assert completed.id == message.id
+    assert completed.status == "complete"
+    assert completed.content == selected_body
+    assert completed.persisted_message_id == message.id
+    assert len(persistence.create_calls) == 1
+    assert persistence.create_calls[0]["sender"] == "assistant"
+    assert persistence.create_calls[0]["message_id"] == message.id
+    assert persistence.create_calls[0]["content"] == selected_body
+    assert [call["content"] for call in persistence.create_calls] == [selected_body]
+    assert "citation_presentation" not in persistence.create_calls[0]
+    assert message.id not in store._provisional_terminal_selection_ids
+    assert message.id not in store._terminal_persistence_deferred_ids
+
+
+def test_one_terminal_write_repaired_selection_without_backend_updates_same_row() -> None:
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+    store.append_stream_chunk(message.id, "original")
+
+    replaced = store.replace_deferred_terminal_body(message.id, "repaired [S1]")
+    completed = store.mark_message_complete(message.id)
+
+    assert replaced.id == completed.id == message.id
+    assert completed.content == "repaired [S1]"
+    assert completed.persisted_message_id is None
+    assert store.get_message(message.id).content == "repaired [S1]"
+
+
+@pytest.mark.parametrize(
+    "persistence",
+    [
+        _NoCitationKwargPersistence(),
+        _MissingReadinessPersistence(),
+        _FalseReadinessPersistence(),
+    ],
+    ids=["citation-kwarg-absent", "readiness-absent", "writes-disabled"],
+)
+def test_one_terminal_write_ordinary_persistence_when_finalizer_unavailable(
+    persistence: _PersistenceBase,
+) -> None:
+    finalizer_calls: list[str] = []
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        terminal_citation_finalizer=lambda body: finalizer_calls.append(body) or None,
+        defer_terminal_persistence=True,
+    )
+    store.append_stream_chunk(message.id, "selected [S1]")
+
+    completed = store.mark_message_complete(message.id)
+
+    assert completed.persisted_message_id == message.id
+    assert finalizer_calls == []
+    assert len(persistence.create_calls) == 1
+    assert persistence.create_calls[0]["message_id"] == message.id
+    assert persistence.create_calls[0]["content"] == "selected [S1]"
+    assert "citation_write" not in persistence.create_calls[0]
+
+
+def test_one_terminal_write_ready_finalizer_fails_closed_to_ordinary_message() -> None:
+    persistence = _ReadyCitationPersistence()
+    finalized_bodies: list[str] = []
+
+    def fail_closed_finalizer(body: str) -> None:
+        finalized_bodies.append(body)
+        return None
+
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        terminal_citation_finalizer=fail_closed_finalizer,
+        defer_terminal_persistence=True,
+    )
+    store.append_stream_chunk(message.id, "marker-bearing selected body [S1]")
+
+    completed = store.mark_message_complete(message.id)
+
+    assert completed.persisted_message_id == message.id
+    assert finalized_bodies == ["marker-bearing selected body [S1]"]
+    assert len(persistence.create_calls) == 1
+    assert persistence.create_calls[0]["message_id"] == message.id
+    assert persistence.create_calls[0]["content"] == completed.content
+    assert "citation_write" not in persistence.create_calls[0]

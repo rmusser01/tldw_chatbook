@@ -11,7 +11,10 @@ from uuid import uuid4
 from loguru import logger
 
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
-from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
+from tldw_chatbook.Chat.citation_trace_models import (
+    ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
+    SealedCitationWrite,
+)
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
 )
@@ -19,6 +22,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleChatMessage,
+    ConsoleCitationPresentation,
     ConsoleMessageFeedback,
     ConsoleMessageRole,
     ConsoleMessageStatus,
@@ -310,6 +314,7 @@ class ConsoleChatStore:
         self._context_summary_by_session: dict[str, tuple[str | None, str | None]] = {}
         self._pending_persistence_message_ids: set[str] = set()
         self._terminal_citation_finalizers: dict[str, TerminalCitationFinalizer] = {}
+        self._provisional_terminal_selection_ids: set[str] = set()
         self._terminal_persistence_deferred_ids: set[str] = set()
         self._stream_chunks_by_message: dict[str, list[str]] = {}
         self._stream_materialized_counts: dict[str, int] = {}
@@ -781,6 +786,7 @@ class ConsoleChatStore:
         self._message_session_index.clear()
         self._pending_persistence_message_ids.clear()
         self._terminal_citation_finalizers.clear()
+        self._provisional_terminal_selection_ids.clear()
         self._terminal_persistence_deferred_ids.clear()
         self._stream_chunks_by_message.clear()
         self._stream_materialized_counts.clear()
@@ -846,6 +852,7 @@ class ConsoleChatStore:
         image_mime_type: str | None = None,
         attachment_label: str | None = None,
         terminal_citation_finalizer: TerminalCitationFinalizer | None = None,
+        defer_terminal_persistence: bool = False,
     ) -> ConsoleChatMessage:
         """Append a message; scalar image kwargs become a one-item tuple."""
         self._session_or_raise(session_id)
@@ -867,10 +874,23 @@ class ConsoleChatStore:
                     "terminal_citation_finalizer requires an empty, "
                     "attachment-free assistant placeholder"
                 )
-        arm_terminal_citation = (
+        if defer_terminal_persistence and (
+            role is not ConsoleMessageRole.ASSISTANT or content != "" or effective
+        ):
+            raise ValueError(
+                "defer_terminal_persistence requires an empty, "
+                "attachment-free assistant placeholder"
+            )
+        arm_finalizer = (
             terminal_citation_finalizer is not None
             and persist
             and self._citation_persistence_ready()
+        )
+        arm_provisional_selection = defer_terminal_persistence
+        arm_terminal_deferral = (
+            persist
+            and self.persistence is not None
+            and (defer_terminal_persistence or arm_finalizer)
         )
         message = ConsoleChatMessage(
             role=role,
@@ -894,9 +914,12 @@ class ConsoleChatStore:
         self._register_tree_node(session_id, message, parent_native_id=old_leaf)
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
-        if arm_terminal_citation:
+        if arm_finalizer:
             assert terminal_citation_finalizer is not None
             self._terminal_citation_finalizers[message.id] = terminal_citation_finalizer
+        if arm_provisional_selection:
+            self._provisional_terminal_selection_ids.add(message.id)
+        if arm_terminal_deferral:
             self._terminal_persistence_deferred_ids.add(message.id)
         try:
             if persist:
@@ -904,7 +927,7 @@ class ConsoleChatStore:
                     session_id=session_id, message=message
                 )
         except Exception:
-            if arm_terminal_citation:
+            if arm_finalizer or arm_provisional_selection or arm_terminal_deferral:
                 self.clear_terminal_citation_state(message.id)
             raise
         return self._snapshot(message)
@@ -1245,6 +1268,60 @@ class ConsoleChatStore:
         self._materialize_stream_buffer(message)
         return self._snapshot(message)
 
+    def replace_deferred_terminal_body(
+        self,
+        message_id: str,
+        selected_body: str,
+    ) -> ConsoleChatMessage:
+        """Atomically replace one provisional assistant body's stream state."""
+        message = self._message_or_raise(message_id)
+        if message.id not in self._provisional_terminal_selection_ids:
+            raise ValueError("Message is not eligible for provisional selection.")
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages support provisional selection.")
+        if message.attachments or message.image_data is not None:
+            raise ValueError("Attached messages do not support provisional selection.")
+        if message.status not in {"pending", "streaming"}:
+            raise ValueError(
+                f"Cannot replace a {message.status} provisional message body."
+            )
+        if not isinstance(selected_body, str) or selected_body == "":
+            raise ValueError("Selected body must be a non-empty string.")
+        try:
+            selected_body_size = len(selected_body.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise ValueError("Selected body must be valid UTF-8 text.") from exc
+        if selected_body_size > ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX:
+            raise ValueError(
+                "Selected body exceeds the answer-attempt UTF-8 byte limit."
+            )
+
+        message.content = selected_body
+        buffer = self._stream_chunks_by_message.get(message.id)
+        if buffer is None:
+            self._stream_chunks_by_message[message.id] = [selected_body]
+        else:
+            buffer[:] = [selected_body]
+        self._stream_materialized_counts[message.id] = 1
+        return self._snapshot(message)
+
+    def set_citation_presentation(
+        self,
+        message_id: str,
+        presentation: ConsoleCitationPresentation | None,
+    ) -> ConsoleChatMessage:
+        """Set content-free transient citation presentation for one message."""
+        message = self._message_or_raise(message_id)
+        if (
+            presentation is not None
+            and type(presentation) is not ConsoleCitationPresentation
+        ):
+            raise ValueError(
+                "presentation must be ConsoleCitationPresentation or None"
+            )
+        message.citation_presentation = presentation
+        return self._snapshot(message)
+
     def set_message_feedback(
         self,
         message_id: str,
@@ -1534,6 +1611,7 @@ class ConsoleChatStore:
             finalizer is not None
             or message.id in self._terminal_persistence_deferred_ids
         )
+        self._provisional_terminal_selection_ids.discard(message.id)
         self._terminal_persistence_deferred_ids.discard(message.id)
         if not terminal_persistence:
             message.status = "complete"
@@ -2102,6 +2180,7 @@ class ConsoleChatStore:
     def clear_terminal_citation_state(self, message_id: str) -> None:
         """Clear transient terminal citation state without changing persistence."""
         self._terminal_citation_finalizers.pop(message_id, None)
+        self._provisional_terminal_selection_ids.discard(message_id)
         self._terminal_persistence_deferred_ids.discard(message_id)
 
     @staticmethod
@@ -2578,7 +2657,7 @@ class ConsoleChatStore:
         """
         parent_native_id: str | None = None
         for message in messages:
-            restored = replace(message)
+            restored = replace(message, citation_presentation=None)
             if restored.role is ConsoleMessageRole.TOOL:
                 self._message_session_index[restored.id] = session_id
                 continue
@@ -2616,7 +2695,7 @@ class ConsoleChatStore:
         registered: list[ConsoleChatMessage] = []
         persisted_to_native: dict[str, str] = {}
         for node in all_nodes:
-            restored = replace(node)
+            restored = replace(node, citation_presentation=None)
             if restored.role is ConsoleMessageRole.TOOL:
                 self._message_session_index[restored.id] = session_id
                 continue
