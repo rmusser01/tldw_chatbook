@@ -253,17 +253,46 @@ class ProfileStoreLease:
 
         cleanup_error: BaseException | None = None
         state_error: BaseException | None = None
+        recovery_error: BaseException | None = None
+        retry_cleanup_error: BaseException | None = None
+        forced_state_error: BaseException | None = None
         if handle is not None:
-            cleanup_error = _unlock_and_close(
-                handle,
-                may_be_locked=may_be_locked,
-            )
-            if handle.closed:
-                state_error = self._clear_handle_state(handle)
-            else:
-                state_error = self._retain_residual_handle(handle)
+            try:
+                cleanup_error = _unlock_and_close(
+                    handle,
+                    may_be_locked=may_be_locked,
+                )
+                if handle.closed:
+                    state_error = self._clear_handle_state(handle)
+                else:
+                    state_error = self._retain_residual_handle(handle)
+            except BaseException as error:
+                recovery_error = error
 
-        _raise_recovery_failure(primary_error, cleanup_error, state_error)
+            if recovery_error is None:
+                for candidate in (cleanup_error, state_error):
+                    if candidate is not None and not isinstance(candidate, Exception):
+                        recovery_error = candidate
+                        break
+
+            if recovery_error is not None:
+                # Recovery promises one control-flow interruption. After it is
+                # captured, retry cleanup and bypass hostile subclass assignment
+                # behavior while restoring identity-safe state.
+                retry_cleanup_error = _unlock_and_close(
+                    handle,
+                    may_be_locked=may_be_locked,
+                )
+                forced_state_error = self._force_recovery_state(handle)
+
+        _raise_recovery_failure(
+            primary_error,
+            recovery_error,
+            cleanup_error,
+            state_error,
+            retry_cleanup_error,
+            forced_state_error,
+        )
         raise ProfileRepositoryError("operation_failed")
 
     def _clear_handle_state(self, expected_handle: BinaryIO) -> BaseException | None:
@@ -284,6 +313,20 @@ class ProfileStoreLease:
         try:
             if self._handle is None or self._handle is handle:
                 self._handle = handle
+        except BaseException as error:
+            return error
+        return None
+
+    def _force_recovery_state(self, handle: BinaryIO) -> BaseException | None:
+        """Force identity-safe state after one interrupted recovery attempt."""
+
+        try:
+            current_handle = self._handle
+            if handle.closed:
+                if current_handle is handle:
+                    object.__setattr__(self, "_handle", None)
+            elif current_handle is None or current_handle is handle:
+                object.__setattr__(self, "_handle", handle)
         except BaseException as error:
             return error
         return None

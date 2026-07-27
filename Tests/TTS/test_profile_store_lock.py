@@ -36,13 +36,18 @@ class _TraceFunction(Protocol):
     ) -> _TraceFunction | None: ...
 
 
-def _source_line(function: Callable[..., object], fragment: str) -> int:
+def _source_line(
+    function: Callable[..., object],
+    fragment: str,
+    *,
+    occurrence: int = 0,
+) -> int:
     lines, first_line = inspect.getsourcelines(function)
     matches = [
         first_line + offset for offset, line in enumerate(lines) if fragment in line
     ]
-    assert len(matches) == 1
-    return matches[0]
+    assert len(matches) > occurrence
+    return matches[occurrence]
 
 
 def _spawned_lease_holder(database_path: str, connection: Connection) -> None:
@@ -868,6 +873,140 @@ def test_ownership_transfer_interrupt_releases_real_lock(
                 portalocker.unlock(handle)
             finally:
                 handle.close()
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(14)])
+def test_acquire_recovery_interrupt_retries_real_lock_cleanup(
+    tmp_path: Path,
+    interrupt: BaseException,
+) -> None:
+    class FailingTransferLease(ProfileStoreLease):
+        def __init__(self, database_path: Path) -> None:
+            self.fail_transfer = False
+            self.observed_handle: BinaryIO | None = None
+            super().__init__(database_path, ProfileStoreLockMode.EXCLUSIVE)
+            self.fail_transfer = True
+
+        def __setattr__(self, name: str, value: object) -> None:
+            if (
+                name == "_handle"
+                and value is not None
+                and getattr(self, "fail_transfer", False)
+            ):
+                object.__setattr__(self, "observed_handle", value)
+                raise RuntimeError("transfer-private-secret")
+            super().__setattr__(name, value)
+
+    target_line = _source_line(
+        ProfileStoreLease.acquire,
+        "_unlock_and_close(",
+        occurrence=0,
+    )
+    database_path = tmp_path / "profiles.sqlite3"
+    lease = FailingTransferLease(database_path)
+
+    def interrupt_once(
+        frame: FrameType,
+        event: str,
+        argument: Any,
+    ) -> _TraceFunction | None:
+        if (
+            getattr(frame, "f_code", None) is ProfileStoreLease.acquire.__code__
+            and event == "line"
+            and getattr(frame, "f_lineno", None) == target_line
+        ):
+            sys.settrace(None)
+            raise interrupt
+        return interrupt_once
+
+    try:
+        sys.settrace(interrupt_once)
+        with pytest.raises(type(interrupt)) as exc_info:
+            lease.acquire()
+        sys.settrace(None)
+
+        assert exc_info.value is interrupt
+        assert lease.acquired is False
+        handle = lease.observed_handle
+        assert handle is not None
+        assert handle.closed is True
+        with ProfileStoreLease(
+            database_path,
+            ProfileStoreLockMode.EXCLUSIVE,
+            timeout_seconds=0.05,
+            check_interval_seconds=0.005,
+        ) as recovered:
+            assert recovered.acquired is True
+    finally:
+        sys.settrace(None)
+        handle = lease.observed_handle
+        if handle is not None and not handle.closed:
+            try:
+                portalocker.unlock(handle)
+            finally:
+                handle.close()
+
+
+def test_acquire_recovery_interrupt_forces_nonclosed_handle_adoption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    interrupt = KeyboardInterrupt()
+    handle = _NonClosingHandle()
+
+    class FailingTransferLease(ProfileStoreLease):
+        def __init__(self, database_path: Path) -> None:
+            self.fail_transfer = False
+            super().__init__(database_path, ProfileStoreLockMode.EXCLUSIVE)
+            self.fail_transfer = True
+
+        def __setattr__(self, name: str, value: object) -> None:
+            if (
+                name == "_handle"
+                and value is handle
+                and getattr(self, "fail_transfer", False)
+            ):
+                raise RuntimeError("transfer-private-secret")
+            super().__setattr__(name, value)
+
+    _patch_open(monkeypatch, handle)
+    monkeypatch.setattr(portalocker, "lock", lambda current_handle, flags: None)
+    monkeypatch.setattr(portalocker, "unlock", lambda current_handle: None)
+    target_line = _source_line(
+        ProfileStoreLease.acquire,
+        "_unlock_and_close(",
+        occurrence=0,
+    )
+    lease = FailingTransferLease(tmp_path / "profiles.sqlite3")
+
+    def interrupt_once(
+        frame: FrameType,
+        event: str,
+        argument: Any,
+    ) -> _TraceFunction | None:
+        if (
+            getattr(frame, "f_code", None) is ProfileStoreLease.acquire.__code__
+            and event == "line"
+            and getattr(frame, "f_lineno", None) == target_line
+        ):
+            sys.settrace(None)
+            raise interrupt
+        return interrupt_once
+
+    try:
+        sys.settrace(interrupt_once)
+        with pytest.raises(KeyboardInterrupt) as exc_info:
+            lease.acquire()
+        sys.settrace(None)
+
+        assert exc_info.value is interrupt
+        assert lease._handle is handle
+        assert lease.acquired is True
+        assert handle.closed is False
+    finally:
+        sys.settrace(None)
+        handle.fail_close = False
+        lease.release()
 
 
 def test_acquire_interrupt_after_assignment_before_return_releases_real_lock(
