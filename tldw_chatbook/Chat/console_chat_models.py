@@ -41,6 +41,16 @@ DEFAULT_CONSOLE_SESSION_TITLE = "Chat 1"
 CONSOLE_AUTO_TITLE_MAX_LENGTH = 30
 _DEFAULT_CONSOLE_SESSION_TITLE_RE = re.compile(r"^Chat \d+$")
 
+# Parallel-agents spec S4 (task-5): user-adjustable global cap on
+# simultaneous Console runs. Single source of truth for the default --
+# ConsoleChatController.max_parallel_runs reads it as the get_cli_setting
+# fallback, and settings_screen.py's DEFAULT_CONSOLE_MAX_PARALLEL_RUNS
+# aliases it so the settings UI and the controller can never drift apart.
+CONSOLE_DEFAULT_MAX_PARALLEL_RUNS = 3
+# send_refusal_copy names at most this many busy sessions before folding
+# the rest into an "and N more" suffix.
+CONSOLE_CAP_REFUSAL_TITLE_LIMIT = 3
+
 
 class ConsoleCitationPhase(str, Enum):
     """Approved structural phases for transient citation presentation."""

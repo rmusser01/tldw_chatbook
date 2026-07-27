@@ -37,6 +37,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 from ...Chat.console_provider_endpoints import URL_BASED_PROVIDER_KEYS
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_provider_support import (
@@ -297,11 +298,12 @@ CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
     }
 )
 # Parallel-agents spec S4 (task-5): user-adjustable global cap on
-# simultaneous Console runs. Mirrors console_chat_controller.py's own
-# fallback -- see ConsoleChatController.max_parallel_runs, which reads
-# [console] max_parallel_runs via get_cli_setting with the same default and
-# floor. No upper bound is deliberate (user-owned trade-off).
-DEFAULT_CONSOLE_MAX_PARALLEL_RUNS = 3
+# simultaneous Console runs. Aliases console_chat_models' single source of
+# truth so the settings UI and ConsoleChatController.max_parallel_runs
+# (which reads [console] max_parallel_runs via get_cli_setting with the
+# same default and floor) can never drift apart. No upper bound is
+# deliberate (user-owned trade-off).
+DEFAULT_CONSOLE_MAX_PARALLEL_RUNS = CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 MIN_CONSOLE_MAX_PARALLEL_RUNS = 1
 CONSOLE_BACKGROUND_EFFECT_KEYS = frozenset(
     {

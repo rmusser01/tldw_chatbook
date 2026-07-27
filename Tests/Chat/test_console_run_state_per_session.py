@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
 
 
 class StreamingGateway:
@@ -514,3 +515,151 @@ async def test_stopping_one_session_does_not_truncate_a_concurrent_untouched_ses
     gateway.release["b"].set()
     result_b = await task_b
     assert result_b.accepted is True
+
+
+# -- F4 fix (Qodo wave): `submit_draft` must target the session it was  --
+# -- DISPATCHED for, not whichever session is active once its own body  --
+# -- actually starts running.                                          --
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_targets_dispatched_session_not_active_session_at_execution():
+    """F4(b) regression (Qodo wave): before this fix, ``submit_draft``
+    always resolved "the session to submit into" via ``store.
+    ensure_session()``/``store.active_session_id`` -- i.e. whichever
+    session is active AT THE MOMENT THIS COROUTINE BODY RUNS, not whatever
+    session ``chat_screen._dispatch_console_draft_send`` captured at
+    dispatch time. ``run_worker`` schedules the coroutine as a Task rather
+    than running it inline, so a tab switch racing that scheduling gap
+    (plausible: at least one event-loop iteration, often several Textual
+    message-pump ticks) used to submit the draft into whichever session
+    the user switched TO, not the one showing when Send was pressed.
+
+    This drives the exact shape the real dispatch path
+    (``ChatScreen._submit_console_native_draft``) now produces: session A
+    dispatched, active session already moved to B by the time
+    ``submit_draft`` actually runs -- passing A's id explicitly, exactly
+    as the fixed ``_submit_console_native_draft`` does. Session A must get
+    the write; session B (the one merely being *viewed*) must stay
+    untouched.
+    """
+    store = ConsoleChatStore()
+    gateway = StreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    session_a = store.ensure_session(title="A")
+    # Simulate the scheduling gap: the user switches tabs to a brand new
+    # session B AFTER Send was dispatched for A but BEFORE `submit_draft`'s
+    # body actually runs (in production this happens between `run_worker`
+    # scheduling the task and the event loop actually running it).
+    session_b = controller.new_session(title="B")
+    assert store.active_session_id == session_b.id
+
+    result = await controller.submit_draft("hello-from-a", session_id=session_a.id)
+
+    assert result.accepted is True
+    messages_a = store.messages_for_session(session_a.id)
+    assert any(m.content == "hello-from-a" for m in messages_a)
+    messages_b = store.messages_for_session(session_b.id)
+    assert messages_b == []
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_session_id_none_preserves_active_session_bootstrap():
+    """``session_id=None`` (the default) must keep resolving/creating the
+    ACTIVE session exactly as before this fix -- direct-call test idioms
+    and the very first send of a fresh app (no session yet) both rely on
+    this. Guards against a regression where threading `session_id` through
+    accidentally broke the "no session exists yet" bootstrap path (which
+    ``store.ensure_session()`` -- not a session lookup -- must still
+    handle)."""
+    store = ConsoleChatStore()
+    gateway = StreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    assert store.active_session_id is None
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is True
+    assert store.active_session_id is not None
+    messages = store.messages_for_session(store.active_session_id)
+    assert any(m.content == "hello" for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_closed_session_id_fails_closed_without_touching_active():
+    """F4(b) edge case: if the dispatched session was closed during the
+    scheduling gap (not just switched away from), there is nothing left
+    to submit into. The fix must fail closed (``_session_closed_result``)
+    rather than silently falling back to ``ensure_session()`` and
+    submitting into whatever is active now."""
+    store = ConsoleChatStore()
+    gateway = StreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    session_a = store.ensure_session(title="A")
+    closed_session_id = session_a.id
+    session_b = controller.new_session(title="B")
+    controller.close_session(closed_session_id)
+    assert store.active_session_id == session_b.id
+
+    result = await controller.submit_draft("hello", session_id=closed_session_id)
+
+    assert result.accepted is True
+    assert result.visible_copy == "Session closed."
+    messages_b = store.messages_for_session(session_b.id)
+    assert messages_b == []
+
+
+@pytest.mark.asyncio
+async def test_finalize_agent_success_citation_repair_keyerror_stamps_owning_session_not_active():
+    """F4(a) regression (Qodo wave): `_finalize_agent_success`'s two
+    citation-repair-selection ``except KeyError`` branches used to call
+    ``_session_closed_result()`` with NO session id -- even though
+    ``session_id`` is a REQUIRED parameter of this method (always known,
+    never re-derived from anything that could go stale). The bare no-arg
+    call defaulted to whichever session is ACTIVE right now, wrongly
+    stamping ITS run state STOPPED even though it has nothing to do with
+    this run.
+
+    Drives ``_finalize_agent_success`` directly (mirrors this codebase's
+    existing pattern of unit-testing controller internals directly, e.g.
+    ``_stream_assistant_response`` in test_console_chat_controller.py),
+    with a monkeypatched ``_select_post_generation_body`` that raises
+    ``KeyError`` (the message's session vanished mid-run), while a
+    DIFFERENT, untouched session B is the one currently active.
+    """
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    session_a = store.ensure_session(title="A")
+    assistant = store.append_message(
+        session_a.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="partial reply",
+        persist=False,
+    )
+
+    session_b = controller.new_session(title="B")  # also activates B
+    assert store.active_session_id == session_b.id
+
+    async def _raise_key_error(**_kwargs):
+        raise KeyError("message gone")
+
+    controller._select_post_generation_body = _raise_key_error
+
+    outcome = type("Outcome", (), {"final_text": "final text"})()
+    result = await controller._finalize_agent_success(
+        assistant.id,
+        session_a.id,
+        outcome,
+        variant_mode=False,
+        citation_repair_session=object(),
+        stream_signals=ConsoleProviderStreamSignals(),
+    )
+
+    assert result.visible_copy == "Session closed."
+    # Session A (the run's own owning session) got the STOPPED stamp...
+    assert controller.run_state_for(session_a.id).status is ConsoleRunStatus.STOPPED
+    # ...session B (merely the one being VIEWED) is untouched.
+    assert controller.run_state_for(session_b.id).status is ConsoleRunStatus.IDLE

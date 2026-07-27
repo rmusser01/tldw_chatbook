@@ -11104,7 +11104,14 @@ class ChatScreen(BaseAppScreen):
         # consumption is observable here.
         inflight_stash = self._console_inflight_send_stashes.get(session_id)
         try:
-            result = await controller.submit_draft(draft)
+            # F4 fix (Qodo wave): thread the session THIS worker was
+            # dispatched for all the way into the controller -- previously
+            # `submit_draft` re-resolved "the session to submit into" via
+            # `store.active_session_id` at execution time, so a tab switch
+            # racing the scheduling gap between `run_worker(...)` and this
+            # coroutine body actually running could submit into whichever
+            # session the user switched TO instead of the dispatching one.
+            result = await controller.submit_draft(draft, session_id=session_id)
         except Exception:
             # An unexpected submit crash must not eat the keypress-cleared
             # draft — and must not escape the worker (exit_on_error would
