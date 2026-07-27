@@ -37,6 +37,11 @@ except ImportError:
 
 # Local imports
 from ..config import get_cli_setting
+from .stt_batch_routing import (
+    BatchSTTRoutingError,
+    PARAKEET_V3_MODEL,
+    resolve_batch_stt_route,
+)
 
 # Optional imports with graceful degradation
 try:
@@ -420,10 +425,8 @@ class TranscriptionService:
         provider = provider or self.config["default_provider"]
 
         # Handle provider-specific default models
-        if not model:
-            if provider == "parakeet-onnx":
-                model = "nemo-parakeet-tdt-0.6b-v2"
-            elif provider == "parakeet-mlx":
+        if not model and provider != "parakeet-onnx":
+            if provider == "parakeet-mlx":
                 model = "mlx-community/parakeet-tdt-0.6b-v2"
             elif provider == "qwen2audio":
                 model = "Qwen2-Audio-7B-Instruct"
@@ -464,6 +467,7 @@ class TranscriptionService:
                     wav_path,
                     model,
                     source_lang,
+                    target_language=target_lang,
                     progress_callback=progress_callback,
                     **kwargs,
                 )
@@ -523,7 +527,7 @@ class TranscriptionService:
                     )
                 result = self._transcribe_with_faster_whisper(
                     wav_path,
-                    model,
+                    model or self.config["default_model"],
                     language,
                     vad_filter,
                     source_lang,
@@ -658,18 +662,22 @@ class TranscriptionService:
     def _transcribe_with_parakeet_onnx(
         self,
         audio_path: str,
-        model: str,
+        model: str | None,
         language: str,
+        target_language: str | None = None,
         progress_callback: Optional[
             Callable[[float, str, Optional[Dict]], None]
         ] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Transcribe English audio with a local Parakeet v2 INT8 model."""
-        parakeet_model = self._load_parakeet_onnx_model(
-            model=model,
-            language=language,
-            model_dir=kwargs.get("model_dir"),
+        """Transcribe audio with a compatible local Parakeet INT8 model."""
+        parakeet_model, selected_model, requested_language = (
+            self._load_parakeet_onnx_model(
+                model=model,
+                language=language,
+                target_language=target_language,
+                model_dir=kwargs.get("model_dir"),
+            )
         )
 
         if progress_callback:
@@ -682,25 +690,45 @@ class TranscriptionService:
         if progress_callback:
             progress_callback(100, "Transcription complete", None)
 
-        return self._parakeet_onnx_result(text, duration=duration, model=model)
+        return self._parakeet_onnx_result(
+            text,
+            duration=duration,
+            model=selected_model,
+            requested_language=requested_language,
+        )
 
     def _load_parakeet_onnx_model(
         self,
         *,
-        model: str,
+        model: str | None,
         language: str,
+        target_language: str | None,
         model_dir: str | Path | None,
-    ) -> Any:
-        """Validate and load the configured local Parakeet v2 INT8 model."""
+    ) -> tuple[Any, str, str]:
+        """Validate and load a compatible local Parakeet INT8 model."""
+        try:
+            route = resolve_batch_stt_route(
+                provider="parakeet-onnx",
+                language=language,
+                target_language=target_language,
+            )
+        except BatchSTTRoutingError as exc:
+            raise TranscriptionError(str(exc)) from exc
+
+        expected_model = route.model
+        assert expected_model is not None
+        selected_model = model or expected_model
+        if selected_model != expected_model:
+            raise TranscriptionError(
+                f"Parakeet model {selected_model!r} is incompatible with requested "
+                f"language {route.requested_language!r}; expected {expected_model!r}. "
+                "Retry with faster-whisper."
+            )
+
         if not ONNX_ASR_AVAILABLE:
             raise TranscriptionError(
                 "parakeet-onnx is not installed. Install with: "
                 "pip install 'onnx-asr[cpu]==0.12.0'"
-            )
-        if language != "en":
-            raise TranscriptionError(
-                "parakeet-onnx v2 supports explicit English only. "
-                "Retry with faster-whisper for automatic or non-English transcription."
             )
 
         model_dir = model_dir or self.config["parakeet_onnx_model_dir"]
@@ -727,14 +755,14 @@ class TranscriptionService:
                 + ", ".join(missing_files)
             )
 
-        cache_key = ("parakeet-onnx", model, str(model_dir), "int8")
+        cache_key = ("parakeet-onnx", selected_model, str(model_dir), "int8")
         with self._model_cache_lock:
             parakeet_model = self._model_cache.get(cache_key)
             if parakeet_model is None:
                 from onnx_asr import load_model
 
                 parakeet_model = load_model(
-                    model,
+                    selected_model,
                     path=str(model_dir),
                     quantization="int8",
                     providers=["CPUExecutionProvider"],
@@ -744,13 +772,14 @@ class TranscriptionService:
                     },
                 )
                 self._model_cache[cache_key] = parakeet_model
-        return parakeet_model
+        return parakeet_model, selected_model, route.requested_language
 
     @staticmethod
     def _parakeet_onnx_result(
-        text: str, *, duration: float, model: str
+        text: str, *, duration: float, model: str, requested_language: str
     ) -> Dict[str, Any]:
         """Build the common Parakeet ONNX transcription result."""
+        is_v3 = model == PARAKEET_V3_MODEL
         return {
             "text": text,
             "segments": [
@@ -765,7 +794,11 @@ class TranscriptionService:
             ]
             if text
             else [],
-            "language": "en",
+            "language": None if is_v3 else "en",
+            "requested_language": requested_language,
+            "effective_language": "auto" if is_v3 else "en",
+            "detected_language": None,
+            "warnings": ["requested_language_not_enforced"] if is_v3 else [],
             "provider": "parakeet-onnx",
             "model": model,
         }
@@ -776,7 +809,7 @@ class TranscriptionService:
         sample_rate: int,
         channels: int,
         sample_width: int,
-        model: str,
+        model: str | None,
         language: str,
         **kwargs,
     ) -> Dict[str, Any]:
@@ -799,17 +832,26 @@ class TranscriptionService:
         if channels > 1:
             waveform = waveform.reshape(-1, channels).mean(axis=1)
         waveform = waveform.astype(np.float32) / 32768.0
-        parakeet_model = self._load_parakeet_onnx_model(
-            model=model,
-            language=language,
-            model_dir=kwargs.get("model_dir"),
+        parakeet_model, selected_model, requested_language = (
+            self._load_parakeet_onnx_model(
+                model=model,
+                language=language,
+                target_language=kwargs.get("target_lang")
+                or kwargs.get("target_language"),
+                model_dir=kwargs.get("model_dir"),
+            )
         )
         text = parakeet_model.recognize(
             waveform,
             sample_rate=sample_rate,
         ).strip()
         duration = (len(audio_data) // frame_bytes) / sample_rate
-        return self._parakeet_onnx_result(text, duration=duration, model=model)
+        return self._parakeet_onnx_result(
+            text,
+            duration=duration,
+            model=selected_model,
+            requested_language=requested_language,
+        )
 
     def transcribe_buffer(
         self,
@@ -858,7 +900,7 @@ class TranscriptionService:
                 sample_rate,
                 channels,
                 sample_width,
-                model or "nemo-parakeet-tdt-0.6b-v2",
+                model,
                 language or "en",
                 **kwargs,
             )
