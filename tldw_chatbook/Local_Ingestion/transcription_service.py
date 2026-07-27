@@ -53,7 +53,7 @@ _VERIFICATION_RECEIPT_MAX_BYTES = 64 * 1024
 
 
 def _has_known_parakeet_v2_receipt(model_dir: Path) -> bool:
-    """Return whether a small trusted receipt identifies the curated v2 bundle."""
+    """Return whether bounded receipt metadata claims the curated v2 identity."""
     receipt_path = model_dir / VERIFICATION_RECEIPT
     try:
         if receipt_path.is_symlink() or not receipt_path.is_file():
@@ -787,7 +787,8 @@ class TranscriptionService:
             model_root
         ):
             raise TranscriptionError(
-                "Selected Parakeet v3 cannot use this verified Parakeet v2 bundle. "
+                "Selected Parakeet v3 cannot use a directory identified as "
+                "Parakeet v2 by receipt metadata. "
                 "Choose a Parakeet v3 folder or Retry with faster-whisper."
             )
         required_files = {

@@ -202,8 +202,11 @@ def test_parakeet_onnx_rejects_known_v2_bundle_when_v3_is_selected(
             model_dir=str(model_dir),
         )
 
-    assert "Choose a Parakeet v3 folder" in str(exc_info.value)
-    assert "Retry with faster-whisper" in str(exc_info.value)
+    error_text = str(exc_info.value)
+    assert "identified as Parakeet v2 by receipt metadata" in error_text
+    assert "verified" not in error_text.lower()
+    assert "Choose a Parakeet v3 folder" in error_text
+    assert "Retry with faster-whisper" in error_text
     assert load_calls == []
 
 
