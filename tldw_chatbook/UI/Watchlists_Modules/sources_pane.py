@@ -538,6 +538,32 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         event.stop()
         self.select_source_by_id(str(event.cell_key.row_key.value))
 
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Select on cursor movement, which is what a mouse click produces.
+
+        TASK-1100. `RowSelected`/`CellSelected` fire on *activation* — Enter,
+        or a second click — not when a click merely moves the cursor onto a
+        row. So clicking a source did not select it: `selected_source` stayed
+        `None`, `Preview` and `Check now` stayed disabled, and pressing
+        `Check now` returned silently because `handle_check_now_requested`
+        early-returns on `entity is None`.
+
+        That is why "Check now" appeared to do nothing at all in the
+        2026-07-28 live UAT — verified against real feeds, zero runs and zero
+        items, with the scrape backend itself working perfectly when driven
+        directly.
+        """
+        event.stop()
+        if event.row_key is not None and event.row_key.value is not None:
+            self.select_source_by_id(str(event.row_key.value))
+
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        """Same, for a table whose cursor is cell-shaped rather than row-shaped."""
+        event.stop()
+        row_key = getattr(event.cell_key, "row_key", None)
+        if row_key is not None and row_key.value is not None:
+            self.select_source_by_id(str(row_key.value))
+
     def select_source_by_id(self, source_id: str) -> None:
         """Select the source with the given id and notify listeners."""
         source = None

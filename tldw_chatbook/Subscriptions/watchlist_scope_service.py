@@ -134,11 +134,32 @@ class WatchlistScopeService:
         return value
 
     @staticmethod
-    def _source_id_from_item_id(item_id: Any) -> str:
-        item_id_text = str(item_id)
-        if ":" in item_id_text:
-            return item_id_text.rsplit(":", 1)[-1]
-        return item_id_text
+    def _source_id_from_item_id(item_id: Any) -> Any:
+        """Resolve a source id that may arrive namespaced.
+
+        `LocalWatchlistsService` returns rows carrying both
+        ``"id": "local:subscription:1"`` and ``"source_id": 1``, and the screen
+        passes the display id. `launch_run` was the one caller that did not go
+        through here, so `check_now` handed the namespaced form to
+        `local.launch_run`, which does ``int(source_id)`` -- raising
+        `ValueError` into a swallowed debug log and leaving "Check now" doing
+        nothing at all (TASK-1100).
+
+        Non-namespaced values are returned **unchanged rather than
+        stringified**, so a caller already holding the integer keeps passing an
+        integer downstream. The previous version stringified everything, which
+        `test_scope_service_routes_run_actions_with_watchlists_run_action_ids`
+        caught when `launch_run` started routing through here.
+
+        Args:
+            item_id: Either ``"local:subscription:1"`` or a bare id.
+
+        Returns:
+            The trailing id when namespaced, otherwise ``item_id`` untouched.
+        """
+        if isinstance(item_id, str) and ":" in item_id:
+            return item_id.rsplit(":", 1)[-1]
+        return item_id
 
     @staticmethod
     def _run_id_from_item_id(item_id: Any) -> str:
@@ -292,7 +313,10 @@ class WatchlistScopeService:
         self._enforce_policy(backend, "runs.launch")
         service = self._service_for_backend(backend)
         launched = await self._maybe_await(
-            service.launch_run(job_id=job_id, source_id=source_id)
+            service.launch_run(
+                job_id=job_id,
+                source_id=self._source_id_from_item_id(source_id),
+            )
         )
         if backend == WatchlistBackend.LOCAL:
             execute_run = getattr(service, "execute_run", None)
