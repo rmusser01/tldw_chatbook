@@ -3,15 +3,17 @@ id: TASK-975
 title: >-
   FileNotesReplica opens a raw sqlite connection that is neither registered nor
   documented
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-27 20:00'
+updated_date: '2026-07-27 18:43'
 labels:
   - bug
   - db
   - security
-priority: high
 dependencies: []
+priority: high
 ---
 
 ## Description
@@ -44,3 +46,16 @@ What is not an option is leaving the census red, because the next person to add 
 - [ ] #4 If excluded: the `X`-row states why this database is outside the private-path contract
 - [ ] #5 File-notes replica behaviour is unchanged — existing replica tests pass
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Confirm the raw-connection inventory failure on current dev and add a focused regression proving FileNotesReplica uses the registered private seam for both memory and file targets.
+2. Register a File Notes replica owner for private-file and memory targets, then route FileNotesReplica.__init__ through connect_private_sqlite without changing its SQLite options or schema.
+3. Add inventory row C37 and extend the stable connection-ID assertion.
+4. Run the focused private-SQLite inventory and File Notes replica tests, then self-review the diff.
+
+ADR required: no
+ADR path: backlog/decisions/029-local-private-data-boundary.md (existing) and backlog/decisions/029-file-notes-disk-authority.md (existing)
+Reason: This directly applies the accepted private-database boundary to the dedicated recovery replica; it introduces no new storage or ownership decision.
+<!-- SECTION:PLAN:END -->

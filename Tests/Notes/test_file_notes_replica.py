@@ -13,6 +13,8 @@ import pytest
 # Avoid importing the unrelated optional MLX stack during focused Notes tests.
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
 
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite  # noqa: E402
+import tldw_chatbook.Notes.file_notes_replica as file_notes_replica  # noqa: E402
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
 from tldw_chatbook.Notes.file_notes_replica import ReplicaFileInfo  # noqa: E402
 
@@ -48,6 +50,45 @@ def replica() -> FileNotesReplica:
     value = FileNotesReplica(":memory:")
     yield value
     value.close()
+
+
+def test_connections_use_registered_private_sqlite_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def recording_connect(
+        owner_id: str,
+        database: str | Path,
+        **kwargs: object,
+    ) -> sqlite3.Connection:
+        calls.append((owner_id, str(database), kwargs))
+        return connect_private_sqlite(owner_id, database, **kwargs)
+
+    monkeypatch.setattr(
+        file_notes_replica,
+        "connect_private_sqlite",
+        recording_connect,
+    )
+    file_path = tmp_path / "file_notes.sqlite"
+    memory_replica = FileNotesReplica(":memory:")
+    file_replica = FileNotesReplica(file_path)
+    memory_replica.close()
+    file_replica.close()
+
+    assert calls == [
+        (
+            "notes.file_notes_replica",
+            ":memory:",
+            {"isolation_level": None, "check_same_thread": False},
+        ),
+        (
+            "notes.file_notes_replica",
+            str(file_path),
+            {"isolation_level": None, "check_same_thread": False},
+        ),
+    ]
 
 
 def test_connection_operations_are_serialized_across_worker_threads(

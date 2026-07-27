@@ -11,6 +11,8 @@ from pathlib import Path
 from threading import RLock
 from typing import NamedTuple
 
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
 
 class ReplicaFileInfo(NamedTuple):
     """Metadata needed to reconcile one active disk file with its replica."""
@@ -37,7 +39,8 @@ class FileNotesReplica:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
         with self._lock:
-            self._connection = sqlite3.connect(
+            self._connection = connect_private_sqlite(
+                "notes.file_notes_replica",
                 path,
                 isolation_level=None,
                 check_same_thread=False,
