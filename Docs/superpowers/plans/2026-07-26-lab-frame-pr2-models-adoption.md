@@ -1146,8 +1146,6 @@ Create `Tests/UI/test_lab_frame.py`:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from textual.app import ComposeResult
 from textual.widget import Widget
@@ -1157,10 +1155,6 @@ from tldw_chatbook.UI.Lab_Modules.lab_rail_layout import LAB_RAIL_INSPECTOR
 from tldw_chatbook.UI.Screens.lab_frame import LabScreen, LabStatusChip
 from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 from Tests.UI.test_screen_navigation import _build_test_app
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
-
 
 class _ProbeBody(Static):
     """Stands in for a mode's expensive legacy window."""
@@ -1191,8 +1185,16 @@ class _ProbeLabScreen(LabScreen):
 
 
 def _mount(screen_factory):
+    """Build the test app and this probe screen.
+
+    Deliberately does NOT load the CSS bundle: every assertion in this file
+    is about behaviour and class membership, not rendered styling. Setting
+    `app.CSS_PATH` after construction would be worse than useless anyway --
+    `App.__init__` reads `css_path or self.CSS_PATH` once, at construction,
+    so a post-hoc assignment silently does nothing. Styling assertions live
+    in test_lab_workbench.py, which uses a class-level CSS_PATH.
+    """
     app = _build_test_app()
-    app.CSS_PATH = str(_BUNDLED_STYLESHEET)
     return app, screen_factory(app)
 
 
@@ -1550,17 +1552,12 @@ Create `Tests/UI/test_llm_screen_lab_adoption.py`:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from Tests.UI.test_screen_navigation import _build_test_app
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 
 
 async def _models_screen(pilot_app):
@@ -1570,9 +1567,15 @@ async def _models_screen(pilot_app):
 
 
 def _app():
-    app = _build_test_app()
-    app.CSS_PATH = str(_BUNDLED_STYLESHEET)
-    return app
+    """Build the test app.
+
+    No CSS bundle: every assertion here is behavioural (class membership,
+    reactive values, chip text), not rendered styling. Rail-row styling is
+    asserted in test_lab_workbench.py against a class-level CSS_PATH -- a
+    post-construction `app.CSS_PATH = ...` would silently do nothing, since
+    App.__init__ reads CSS_PATH once at construction.
+    """
+    return _build_test_app()
 
 
 def _rail_rows(screen):
@@ -2006,8 +2009,10 @@ async def test_the_footer_advertises_the_mode_keys():
         await pilot.pause()
         await pilot.pause()
         footer = screen.query_one(AppFooterStatus)
-        rendered = str(footer.render())
-        assert "[ / ]" in rendered
+        # `shortcut_text` is the assertable surface; AppFooterStatus has no
+        # render() of its own. Existing hint tests use the same property.
+        assert "[ / ]" in footer.shortcut_text
+        assert "Switch mode" in footer.shortcut_text
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
