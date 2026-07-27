@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
 from rich.text import Text
-from textual.containers import Grid, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
+from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch
 
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
@@ -106,6 +108,24 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     # (a one-argument `watch_selected_source` only ever sees the new one).
     _highlighted_source_key: str | None = None
 
+    #: The create form's focusable controls, in visual order (TASK-1035).
+    #: `compose()` yields them in this order and the form is a plain
+    #: `Vertical`, so DOM order, paint order and Tab order are the same list.
+    _CREATE_FORM_FIELD_IDS = (
+        "sources-create-name",
+        "sources-create-url",
+        "sources-create-type",
+        "sources-create-active",
+        "sources-create-tags",
+        "sources-create-submit",
+        "sources-create-cancel",
+    )
+
+    #: Which create-form control `recompose()` should focus once it has
+    #: remounted this pane's children. See `recompose` for why focus has to
+    #: be re-homed by hand.
+    _pending_create_focus: str | None = None
+
     _TYPE_OPTIONS = [
         ("All", "all"),
         ("RSS", "rss"),
@@ -192,31 +212,56 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 yield Button("Export OPML", id="sources-export-opml-button")
 
         if self.show_create_form:
-            with Grid(id="sources-create-form"):
+            # TASK-1035: a `Vertical`, not a `Grid`. Nothing styled
+            # `#sources-create-form`, so the `Grid` fell back to Textual's
+            # defaults -- one column, and rows that share the container's
+            # height as `1fr` each. Measured at 235x52 that spread seven
+            # controls over 23 rows with blank gaps between them, put
+            # `Create` on row 40 and `Cancel` three rows below it (the
+            # "stacked with blank rows" the UAT reported), and starved
+            # `#sources-table` down to a single row. A `Vertical` of
+            # auto-height children stacks them tight, in visual = DOM =
+            # Tab order, which is what the New-watchlist dialog does too.
+            with Vertical(id="sources-create-form"):
                 yield Input(
                     placeholder="Name", id="sources-create-name", value=self.create_draft_name
                 )
                 yield Input(
                     placeholder="URL", id="sources-create-url", value=self.create_draft_url
                 )
-                yield Select(
-                    [(label, value) for label, value in self._TYPE_OPTIONS if value != "all"],
-                    value="rss",
-                    id="sources-create-type",
-                    allow_blank=False,
-                )
+                # Type and Active share a row. The pane is only 16 rows tall
+                # at 160x42 and its toolbar takes two of them, so a form of
+                # five full-height rows would push `Create`/`Cancel` off the
+                # bottom -- unreachable, which is the same class of defect
+                # this task is fixing.
                 yield Horizontal(
-                    Static("Active"),
+                    Select(
+                        [
+                            (label, value)
+                            for label, value in self._TYPE_OPTIONS
+                            if value != "all"
+                        ],
+                        value="rss",
+                        id="sources-create-type",
+                        allow_blank=False,
+                    ),
+                    Static("Active", classes="sources-create-active-label"),
                     Switch(value=True, id="sources-create-active"),
-                    classes="sources-create-active-row",
+                    classes="sources-create-type-row",
                 )
                 yield Input(
                     placeholder="Tags (comma separated)",
                     id="sources-create-tags",
                     value=self.create_draft_tags,
                 )
-                yield Button("Create", id="sources-create-submit", variant="success")
-                yield Button("Cancel", id="sources-create-cancel", variant="default")
+                # `.dialog-buttons` is the same one-row, side-by-side pairing
+                # `WatchlistNameDialog` uses for its own Create/Cancel, so the
+                # two creation flows read the same (TASK-1035 AC#6). Only the
+                # alignment is overridden for this inline form -- see
+                # `features/_watchlists.tcss`.
+                with Horizontal(classes="dialog-buttons sources-create-buttons"):
+                    yield Button("Create", id="sources-create-submit", variant="success")
+                    yield Button("Cancel", id="sources-create-cancel", variant="default")
 
         selected_key = (
             str(self.selected_source.get("id")) if self.selected_source else None
@@ -324,11 +369,96 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         see that message's docstring for why this pane cannot just rely on
         its own reactive surviving a recompose.
 
+        Also arms the first field to take focus once the recompose this
+        assignment triggers has finished mounting it (TASK-1035) — the
+        `is_mounted` guard keeps that to a genuinely interactive open, so a
+        pane constructed pre-mount by `_build_detail_pane` (re-seeding an
+        already-open form after a workbench rebuild) does not later yank
+        focus away from wherever the user actually left it.
+
         Args:
             is_open: The form's new visibility.
         """
         if self.is_mounted:
+            if is_open:
+                self._pending_create_focus = self._CREATE_FORM_FIELD_IDS[0]
             self.post_message(CreateFormVisibilityChanged(is_open))
+
+    def _focused_create_field_id(self) -> str | None:
+        """Id of this pane's create-form control that currently has focus."""
+        if not self.show_create_form or not self.is_mounted:
+            return None
+        try:
+            focused = self.screen.focused
+        except Exception:
+            return None
+        if focused is None or focused.id not in self._CREATE_FORM_FIELD_IDS:
+            return None
+        try:
+            return focused.id if self in focused.ancestors_with_self else None
+        except Exception:
+            return None
+
+    async def recompose(self) -> None:
+        """Re-home focus into the create form after this pane rebuilds.
+
+        TASK-1035. `show_create_form` is `reactive(..., recompose=True)`, and
+        `Widget.recompose` removes and remounts *every* child of this pane.
+        Textual does not move focus when the focused widget is removed that
+        way, so pressing `New Source` — a `Button` inside this very pane —
+        destroyed the widget holding focus and left `Screen.focused` at
+        `None`. The form then opened with nothing focused anywhere on the
+        screen: typing went to the void, and `Tab` restarted at the head of
+        the screen's focus chain (the top navigation bar), 37 presses away
+        from the first form field. That is what the 2026-07-28 UAT reported
+        as "the create-source form cannot be filled in".
+
+        Two cases are handled, and only these two — focus is never taken
+        from anywhere outside this pane's own create form:
+
+        1. The form just opened: `watch_show_create_form` armed
+           `_pending_create_focus` with the first field, matching
+           `WatchlistNameDialog.on_mount`, which focuses its input.
+        2. The form was already open with one of its fields focused, and
+           something *else* rebuilt this pane underneath it — a `sources`
+           reload, a region collapse. The draft text already survives that
+           (`CreateFormDraftChanged`); this puts the caret back with it.
+        """
+        restore = self._pending_create_focus
+        self._pending_create_focus = None
+        if restore is None:
+            restore = self._focused_create_field_id()
+        await super().recompose()
+        # Guard explicitly after the await: the pane can be torn down while
+        # `super().recompose()` is in flight (a section switch, a region
+        # collapse), matching how `lab_frame.py` bails out of its own
+        # post-recompose work.
+        if not self.is_mounted or not self.is_running:
+            return
+        if not restore or not self.show_create_form:
+            return
+        try:
+            self.query_one(f"#{restore}").focus()
+        except NoMatches:
+            # The only *expected* miss: the form closed, or its fields were
+            # rebuilt under a different id, between arming `restore` and
+            # getting here. Debug is right for that -- it is not a fault.
+            logger.opt(exception=True).debug(
+                f"SourcesPane: #{restore} was gone after recompose; "
+                "nothing to focus."
+            )
+        except Exception:
+            # Anything else is a real fault in the focus path, and this pane
+            # exists in its current form *because* focus silently going
+            # missing after a recompose shipped to users once already
+            # (TASK-1035). Logging that at debug would hide the next
+            # occurrence behind "focus is randomly missing" with no signal,
+            # so it is warned. Still swallowed: a broken focus restore must
+            # not take the screen down with it.
+            logger.opt(exception=True).warning(
+                f"SourcesPane: unexpected failure focusing #{restore} after "
+                "recompose; the create form may open with nothing focused."
+            )
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "sources-type-select":

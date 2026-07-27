@@ -794,6 +794,19 @@ async def test_bracket_toggle_preserves_in_progress_create_form_draft():
         assert name_before == "Draft Name"
         assert url_before == "https://draft.example"
 
+        # TASK-1035: move focus off the text field before pressing `[`.
+        # The create form now focuses its `Name` Input when it opens (it
+        # previously opened with `Screen.focused` at `None`, which is why
+        # nothing could be typed into it at all), and a focused Textual
+        # `Input` consumes printable keys -- so `[` lands in the field as a
+        # bracket instead of reaching the screen's region-collapse binding,
+        # exactly as it already does in the Sources search box. Without this
+        # the assertion below read `"Draft Name["`, i.e. the workbench was
+        # never rebuilt and the test stopped exercising what it names.
+        # `#wl-tab-sources` is a Button, so the key bubbles to the screen.
+        screen.query_one("#wl-tab-sources", Button).focus()
+        await pilot.pause()
+
         # Toggle a rail that has nothing to do with Sources. This rebuilds
         # the whole workbench, including the SourcesPane living in ITEMS.
         await pilot.press("[")
