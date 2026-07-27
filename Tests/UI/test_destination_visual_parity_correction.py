@@ -3104,3 +3104,163 @@ async def test_watchlists_right_rail_says_inspector_exactly_once():
         assert "Inspector" in _visible_static_text(screen), (
             "dropping the duplicate must not drop the heading entirely"
         )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_sources_toolbar_does_not_starve_its_table(size):
+    """TASK-897: `#sources-toolbar` took every row its pane had.
+
+    It is a bare `Vertical` with no height rule anywhere in the stylesheet,
+    so it inherited Textual's `height: 1fr` default and claimed all the
+    space in `SourcesPane`, leaving `#sources-table` a single visible row --
+    at any terminal size, because `1fr` grows with the pane. The Sources
+    section is the screen's main list of what a user is monitoring, so it
+    showed one source at a time.
+
+    Same shape as the FEEDS clipping bug: a height that is fine in
+    isolation and wrong once the widget is nested in the real layout. Which
+    is why this runs in the full shell under the production stylesheet -- a
+    bare `App` with no CSS cannot see it, and on this screen that blind spot
+    has now shipped three separate defects.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        # The empty state is where this bites, and it is the first thing a
+        # new user sees: with no rows the table collapses to 1 and the
+        # elastic toolbar swallows the rest of the pane. Measured pre-fix at
+        # 160x42: toolbar=15, table=1 inside a 16-row pane.
+        toolbar = sources_pane.query_one("#sources-toolbar")
+        table = sources_pane.query_one("#sources-table", DataTable)
+        assert toolbar.region.height <= 6, (
+            f"the toolbar must take only what its own controls need, not "
+            f"whatever the table is not using: toolbar={toolbar.region} "
+            f"table={table.region} pane={sources_pane.region}"
+        )
+
+        sources_pane.sources = [
+            {"id": i, "name": f"feed-{i:02d}", "source_type": "rss", "active": True}
+            for i in range(1, 13)
+        ]
+        await pilot.pause()
+
+        toolbar = sources_pane.query_one("#sources-toolbar")
+        table = sources_pane.query_one("#sources-table", DataTable)
+
+        assert table.region.height > 1, (
+            f"the sources table must show more than one row; the toolbar is "
+            f"eating the pane: toolbar={toolbar.region} table={table.region} "
+            f"pane={sources_pane.region}"
+        )
+        assert table.region.height >= toolbar.region.height, (
+            f"the table is the point of this pane and must not be shorter "
+            f"than its own toolbar: toolbar={toolbar.region} "
+            f"table={table.region}"
+        )
+
+
+
+@pytest.mark.asyncio
+async def test_watchlists_tree_action_labels_fit_the_rail_intact():
+    """TASK-895: the tree's five write verbs must be readable in the real
+    28-column rail, not clipped to an ellipsis.
+
+    A bare `App` cannot see this at all. Textual's own Button CSS pins
+    `min-width: 16` and `compact=True` only drops the border, so three
+    action buttons in a `Horizontal` claim 48 columns inside a 26-column
+    interior unless `features/_watchlists.tcss` overrides it -- measured
+    pre-rule as `New Rena… Dele…`. The compositor is the instrument
+    (`render_strips()` via `_composited_rows`): `render_line()` returns each
+    button's own self-computed strip and would report the full label even
+    while the button overflowed its rail.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-tree-new")
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        rail = screen.query_one("#wl-region-left_rail")
+        for label in ("New", "Rename", "Delete", "Add source", "Remove"):
+            _assert_label_intact_on_screen(
+                rail, label, context=f"tree action {label!r}"
+            )
+
+        # And every action button sits inside the rail's own box rather than
+        # spilling past its right edge, which is what the `min-width: 16`
+        # default does when it wins.
+        for action_id in (
+            "#wl-tree-new",
+            "#wl-tree-rename",
+            "#wl-tree-delete",
+            "#wl-tree-add-source",
+            "#wl-tree-remove-source",
+        ):
+            button = screen.query_one(action_id, Button)
+            assert rail.region.contains_region(button.region), (
+                f"{action_id} escapes the left rail: rail={rail.region} "
+                f"button={button.region}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_tree_blocked_verbs_render_as_disabled_under_the_bundle():
+    """TASK-895 / AC #5's rendering half: a disabled action must not paint
+    like a live one.
+
+    "A disabled button that looks enabled" is a defect this program has
+    already fixed once, and `disabled=True` alone is a Python attribute --
+    whether it reaches the screen depends on the theme and the bundle
+    winning over `.watchlist-tree-action`'s own `border: none`. Compared
+    against a sibling in the same strip that IS live, so the assertion
+    cannot pass by both being styled identically.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-tree-new")
+
+        live = screen.query_one("#wl-tree-new", Button)
+        blocked = screen.query_one("#wl-tree-rename", Button)
+        assert not live.disabled and blocked.disabled
+
+        strips = screen._compositor.render_strips()
+
+        def _cells(button):
+            row = button.region.y
+            column = 0
+            out = []
+            for segment in strips[row]:
+                for char in segment.text:
+                    if button.region.x <= column < button.region.x + button.region.width:
+                        out.append((char, segment.style))
+                    column += 1
+            return out
+
+        live_cells = [cell for cell in _cells(live) if cell[0].strip()]
+        blocked_cells = [cell for cell in _cells(blocked) if cell[0].strip()]
+        assert live_cells and blocked_cells, (
+            "both buttons must actually be painted for this comparison to mean "
+            f"anything: live={live_cells!r} blocked={blocked_cells!r}"
+        )
+        assert {str(style) for _, style in live_cells} != {
+            str(style) for _, style in blocked_cells
+        }, (
+            "the disabled action paints identically to the live one under the "
+            "production stylesheet"
+        )

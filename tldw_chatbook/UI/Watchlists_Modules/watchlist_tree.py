@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Static
@@ -67,6 +67,54 @@ class TreeTagFilterChanged(Message):
         super().__init__()
 
 
+class CreateWatchlistRequested(Message):
+    """Posted when the user asks for a new watchlist (task-895).
+
+    Carries no id: creation has no subject yet. The owning screen prompts
+    for a name and calls ``WatchlistBundleService.create``; the tree does
+    not touch the service itself, matching how every other action on this
+    screen is routed (`CreateSourceRequested`, `SaveRuleRequested`, ...).
+    """
+
+
+class RenameWatchlistRequested(Message):
+    """Posted when the user asks to rename the watchlist in scope."""
+
+    def __init__(self, watchlist_id: int) -> None:
+        self.watchlist_id = watchlist_id
+        super().__init__()
+
+
+class DeleteWatchlistRequested(Message):
+    """Posted when the user asks to delete the watchlist in scope."""
+
+    def __init__(self, watchlist_id: int) -> None:
+        self.watchlist_id = watchlist_id
+        super().__init__()
+
+
+class AddSourceToWatchlistRequested(Message):
+    """Posted when the user asks to add a source to the watchlist in scope."""
+
+    def __init__(self, watchlist_id: int) -> None:
+        self.watchlist_id = watchlist_id
+        super().__init__()
+
+
+class RemoveSourceFromWatchlistRequested(Message):
+    """Posted when the user asks to drop the source node in scope.
+
+    Both ids are carried because membership is many-to-many: "source 10"
+    alone does not say which watchlist it is being removed from, the same
+    reason the source node's own id is watchlist-qualified.
+    """
+
+    def __init__(self, watchlist_id: int, source_id: int) -> None:
+        self.watchlist_id = watchlist_id
+        self.source_id = source_id
+        super().__init__()
+
+
 class WatchlistTree(Vertical):
     """Roots, watchlists with counts, lazily-expanded sources, tag filters."""
 
@@ -85,6 +133,14 @@ class WatchlistTree(Vertical):
     # real click or a breadcrumb promotion, since neither rebuilds this
     # widget on its own).
     active_scope: reactive["TreeScope | None"] = reactive(None, recompose=True)
+    # task-895: why the five write verbs cannot run right now, or `None`
+    # when they can. A single string because it is used verbatim in two
+    # places -- the disabled buttons' tooltips and the visible note under
+    # them -- so there is no way for the hover copy and the on-screen copy
+    # to drift apart. Screen-owned like every other reactive here (the
+    # screen derives it from `runtime_backend` and service availability),
+    # and `recompose=True` because it changes which buttons are disabled.
+    write_disabled_reason: reactive[str | None] = reactive(None, recompose=True)
 
     def __init__(
         self,
@@ -94,6 +150,7 @@ class WatchlistTree(Vertical):
         expanded: frozenset[int] | Sequence[int] = (),
         active_tag: str | None = None,
         active_scope: "TreeScope | None" = None,
+        write_disabled_reason: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -113,10 +170,12 @@ class WatchlistTree(Vertical):
         self.set_reactive(WatchlistTree.expanded, frozenset(expanded))
         self.set_reactive(WatchlistTree.active_tag, active_tag)
         self.set_reactive(WatchlistTree.active_scope, active_scope)
+        self.set_reactive(WatchlistTree.write_disabled_reason, write_disabled_reason)
 
     # --- rendering ---
 
     def compose(self) -> ComposeResult:
+        yield from self._action_bar()
         yield self._root_node("all", "All sources", ALL_SOURCES_BUCKET)
         yield self._root_node("unassigned", "Unassigned", UNASSIGNED_BUCKET)
 
@@ -146,6 +205,119 @@ class WatchlistTree(Vertical):
                 if tag == self.active_tag:
                     button.add_class("is-active")
                 yield button
+
+    # Copy for an action that *could* run but has no subject yet. Kept
+    # beside the action table rather than inlined so the two "pick
+    # something first" messages read as one vocabulary, and so a disabled
+    # button always has a reason -- a bare `disabled=True` with no tooltip
+    # is the shape of defect this program has already fixed once.
+    _NEEDS_WATCHLIST = "Select a watchlist in the tree first."
+    _NEEDS_SOURCE = "Select a source inside a watchlist first."
+
+    # Matched exactly, not by prefix: `wl-tree-remove-source` and
+    # `wl-tree-node-source-1-10` would both survive a naive
+    # `startswith("wl-tree-")` split, and the node ids are parsed positionally
+    # further down.
+    _ACTION_BUTTON_IDS = frozenset(
+        {
+            "wl-tree-new",
+            "wl-tree-rename",
+            "wl-tree-delete",
+            "wl-tree-add-source",
+            "wl-tree-remove-source",
+        }
+    )
+
+    def _action_bar(self) -> ComposeResult:
+        """The tree's five write verbs, plus why they are off when they are.
+
+        Rendered above the roots so the rail reads "here is what you can do,
+        here is what you have". Enablement is derived from `active_scope`
+        (rename/delete/add operate on the watchlist in scope; remove
+        operates on the source node in scope) and from
+        `write_disabled_reason`, which the screen sets when the backend or
+        the runtime cannot service a write at all.
+
+        Every disabled button carries the reason as its tooltip, and the
+        blocking reason is *also* rendered as a visible line when it is not
+        scope-related -- a user should not have to hover to learn that the
+        server backend has no wire path for these edits.
+        """
+        scope = self.active_scope
+        reason = self.write_disabled_reason
+        on_watchlist = (
+            scope is not None
+            and scope.kind == "watchlist"
+            and scope.watchlist_id is not None
+        )
+        on_source = (
+            scope is not None
+            and scope.kind == "source"
+            and scope.watchlist_id is not None
+            and scope.source_id is not None
+        )
+
+        def action(
+            label: str, button_id: str, *, allowed: bool, blocked_copy: str, ready_copy: str
+        ) -> Button:
+            disabled_reason = reason if reason else (None if allowed else blocked_copy)
+            button = Button(
+                label,
+                id=button_id,
+                compact=True,
+                disabled=disabled_reason is not None,
+                tooltip=disabled_reason or ready_copy,
+            )
+            button.add_class("watchlist-tree-action")
+            return button
+
+        yield Horizontal(
+            action(
+                "New",
+                "wl-tree-new",
+                allowed=True,
+                blocked_copy="",
+                ready_copy="Create a new watchlist.",
+            ),
+            action(
+                "Rename",
+                "wl-tree-rename",
+                allowed=on_watchlist,
+                blocked_copy=self._NEEDS_WATCHLIST,
+                ready_copy="Rename the selected watchlist.",
+            ),
+            action(
+                "Delete",
+                "wl-tree-delete",
+                allowed=on_watchlist,
+                blocked_copy=self._NEEDS_WATCHLIST,
+                ready_copy="Delete the selected watchlist. Its sources are kept.",
+            ),
+            classes="watchlist-tree-actions",
+        )
+        yield Horizontal(
+            action(
+                "Add source",
+                "wl-tree-add-source",
+                allowed=on_watchlist,
+                blocked_copy=self._NEEDS_WATCHLIST,
+                ready_copy="Add an existing source to the selected watchlist.",
+            ),
+            action(
+                "Remove",
+                "wl-tree-remove-source",
+                allowed=on_source,
+                blocked_copy=self._NEEDS_SOURCE,
+                ready_copy="Remove the selected source from its watchlist.",
+            ),
+            classes="watchlist-tree-actions",
+        )
+        if reason:
+            yield Static(
+                reason,
+                id="wl-tree-actions-unavailable",
+                classes="watchlist-tree-actions-note",
+            )
 
     def _root_node(self, key: str, label: str, bucket: int) -> Button:
         unread = self._counts.get(bucket, {}).get("unread", 0)
@@ -249,6 +421,11 @@ class WatchlistTree(Vertical):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
 
+        if button_id in self._ACTION_BUTTON_IDS:
+            event.stop()
+            self._post_action(button_id)
+            return
+
         if button_id.startswith("wl-tree-expand-"):
             event.stop()
             watchlist_id = int(button_id.rsplit("-", 1)[1])
@@ -285,3 +462,46 @@ class WatchlistTree(Vertical):
         if scope is not None:
             event.stop()
             self.post_message(TreeScopeChanged(scope))
+
+    def _post_action(self, button_id: str) -> None:
+        """Turn an action press into the matching request message.
+
+        Re-checks `write_disabled_reason` and the scope rather than trusting
+        the `disabled=` flag `compose()` baked in: a disabled Button never
+        emits `Pressed`, so in practice this is belt-and-braces -- but the
+        scope can also be pushed in from the screen (`watch_tree_scope`)
+        between renders, and posting a rename for a scope that names no
+        watchlist would hand the screen an id it cannot resolve.
+        """
+        if self.write_disabled_reason:
+            return
+        if button_id == "wl-tree-new":
+            self.post_message(CreateWatchlistRequested())
+            return
+
+        scope = self.active_scope
+        if scope is None:
+            return
+        if button_id == "wl-tree-remove-source":
+            if (
+                scope.kind == "source"
+                and scope.watchlist_id is not None
+                and scope.source_id is not None
+            ):
+                self.post_message(
+                    RemoveSourceFromWatchlistRequested(
+                        watchlist_id=int(scope.watchlist_id),
+                        source_id=int(scope.source_id),
+                    )
+                )
+            return
+
+        if scope.kind != "watchlist" or scope.watchlist_id is None:
+            return
+        watchlist_id = int(scope.watchlist_id)
+        if button_id == "wl-tree-rename":
+            self.post_message(RenameWatchlistRequested(watchlist_id))
+        elif button_id == "wl-tree-delete":
+            self.post_message(DeleteWatchlistRequested(watchlist_id))
+        elif button_id == "wl-tree-add-source":
+            self.post_message(AddSourceToWatchlistRequested(watchlist_id))

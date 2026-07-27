@@ -1,8 +1,14 @@
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button
+from textual.message import Message
+from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+    AddSourceToWatchlistRequested,
+    CreateWatchlistRequested,
+    DeleteWatchlistRequested,
+    RemoveSourceFromWatchlistRequested,
+    RenameWatchlistRequested,
     TreeScope,
     TreeScopeChanged,
     WatchlistTree,
@@ -28,13 +34,22 @@ def _tree_data():
 
 
 class _TreeApp(App):
-    def __init__(self, data, source_rows=None, active_scope=None, expanded=()):
+    def __init__(
+        self,
+        data,
+        source_rows=None,
+        active_scope=None,
+        expanded=(),
+        write_disabled_reason=None,
+    ):
         super().__init__()
         self._data = data
         self._source_rows = source_rows or {}
         self._active_scope = active_scope
         self._expanded = expanded
+        self._write_disabled_reason = write_disabled_reason
         self.scopes: list[TreeScope] = []
+        self.write_requests: list[Message] = []
 
     def compose(self) -> ComposeResult:
         yield WatchlistTree(
@@ -43,11 +58,27 @@ class _TreeApp(App):
             source_rows_loader=lambda wid: self._source_rows.get(wid, []),
             active_scope=self._active_scope,
             expanded=self._expanded,
+            write_disabled_reason=self._write_disabled_reason,
             id="wl-tree",
         )
 
     def on_tree_scope_changed(self, message: TreeScopeChanged) -> None:
         self.scopes.append(message.scope)
+
+    def on_create_watchlist_requested(self, message) -> None:
+        self.write_requests.append(message)
+
+    def on_rename_watchlist_requested(self, message) -> None:
+        self.write_requests.append(message)
+
+    def on_delete_watchlist_requested(self, message) -> None:
+        self.write_requests.append(message)
+
+    def on_add_source_to_watchlist_requested(self, message) -> None:
+        self.write_requests.append(message)
+
+    def on_remove_source_from_watchlist_requested(self, message) -> None:
+        self.write_requests.append(message)
 
 
 @pytest.mark.asyncio
@@ -370,3 +401,169 @@ async def test_setting_active_scope_after_mount_moves_the_highlight():
             "is-active"
         )
         assert not app.query_one("#wl-tree-node-all", Button).has_class("is-active")
+
+
+# --- TASK-895: the tree's five write verbs --------------------------------
+#
+# `create`, `rename`, `delete`, `add_source` and `remove_source` had no
+# production caller at all: the rail could be browsed but nothing in it
+# could be changed. These pin the widget half -- which action is armed for a
+# given scope, what it posts, and that a blocked action is disabled *and*
+# says why. The service calls and dialogs live on the screen and are
+# covered in Tests/Watchlists/test_watchlists_collections_screen.py.
+
+_ACTION_IDS = (
+    "#wl-tree-new",
+    "#wl-tree-rename",
+    "#wl-tree-delete",
+    "#wl-tree-add-source",
+    "#wl-tree-remove-source",
+)
+
+
+@pytest.mark.asyncio
+async def test_the_five_write_verbs_render_in_the_rail():
+    app = _TreeApp(_tree_data())
+    async with app.run_test():
+        for action_id in _ACTION_IDS:
+            assert app.query(action_id), f"{action_id} is missing from the rail"
+
+
+@pytest.mark.asyncio
+async def test_only_create_is_armed_when_nothing_is_selected():
+    """Rename/Delete/Add-source need a watchlist and Remove needs a source,
+    so with no scope in view only New can do anything -- and the other four
+    must be visibly off, with a tooltip saying what to select. A disabled
+    button that renders as though it were live is a defect this program has
+    already fixed once.
+    """
+    app = _TreeApp(_tree_data(), active_scope=None)
+    async with app.run_test():
+        assert not app.query_one("#wl-tree-new", Button).disabled
+        for action_id in _ACTION_IDS[1:]:
+            button = app.query_one(action_id, Button)
+            assert button.disabled, f"{action_id} should be disabled with no scope"
+            assert button.tooltip, f"{action_id} is disabled without saying why"
+
+
+@pytest.mark.asyncio
+async def test_a_watchlist_scope_arms_rename_delete_and_add_source():
+    app = _TreeApp(
+        _tree_data(), active_scope=TreeScope(kind="watchlist", watchlist_id=2)
+    )
+    async with app.run_test():
+        for action_id in ("#wl-tree-rename", "#wl-tree-delete", "#wl-tree-add-source"):
+            assert not app.query_one(action_id, Button).disabled
+        # Removing a source still needs a *source* selected, not a watchlist.
+        assert app.query_one("#wl-tree-remove-source", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_a_source_scope_arms_remove_only():
+    app = _TreeApp(
+        _tree_data(),
+        source_rows={1: [{"id": 10, "name": "ArXiv: AI", "type": "rss"}]},
+        active_scope=TreeScope(kind="source", watchlist_id=1, source_id=10),
+        expanded=frozenset({1}),
+    )
+    async with app.run_test():
+        assert not app.query_one("#wl-tree-remove-source", Button).disabled
+        for action_id in ("#wl-tree-rename", "#wl-tree-delete", "#wl-tree-add-source"):
+            assert app.query_one(action_id, Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_pressing_new_posts_a_create_request():
+    app = _TreeApp(_tree_data())
+    async with app.run_test() as pilot:
+        await pilot.click("#wl-tree-new")
+        await pilot.pause()
+        assert isinstance(app.write_requests[-1], CreateWatchlistRequested)
+
+
+@pytest.mark.asyncio
+async def test_rename_delete_and_add_source_carry_the_scoped_watchlist_id():
+    app = _TreeApp(
+        _tree_data(), active_scope=TreeScope(kind="watchlist", watchlist_id=2)
+    )
+    async with app.run_test() as pilot:
+        for action_id, message_type in (
+            ("#wl-tree-rename", RenameWatchlistRequested),
+            ("#wl-tree-delete", DeleteWatchlistRequested),
+            ("#wl-tree-add-source", AddSourceToWatchlistRequested),
+        ):
+            await pilot.click(action_id)
+            await pilot.pause()
+            message = app.write_requests[-1]
+            assert isinstance(message, message_type)
+            assert message.watchlist_id == 2
+
+
+@pytest.mark.asyncio
+async def test_remove_carries_both_ids_because_membership_is_many_to_many():
+    """"Source 10" alone does not say which watchlist it is leaving -- the
+    same reason the source node's own id is watchlist-qualified.
+    """
+    shared_row = {"id": 10, "name": "ArXiv: AI", "type": "rss"}
+    app = _TreeApp(
+        _tree_data(),
+        source_rows={1: [shared_row], 2: [shared_row]},
+        active_scope=TreeScope(kind="source", watchlist_id=2, source_id=10),
+        expanded=frozenset({1, 2}),
+    )
+    async with app.run_test() as pilot:
+        await pilot.click("#wl-tree-remove-source")
+        await pilot.pause()
+        message = app.write_requests[-1]
+        assert isinstance(message, RemoveSourceFromWatchlistRequested)
+        assert (message.watchlist_id, message.source_id) == (2, 10)
+
+
+@pytest.mark.asyncio
+async def test_a_write_disabled_reason_turns_every_verb_off_and_states_itself():
+    """AC #5's widget half: on the server backend there is no wire path for
+    any of these, so all five are disabled -- not hidden -- and the reason
+    is both the tooltip and a line the user can read without hovering.
+    """
+    reason = "Server backend: no wire path for watchlist membership edits."
+    app = _TreeApp(
+        _tree_data(),
+        active_scope=TreeScope(kind="watchlist", watchlist_id=2),
+        write_disabled_reason=reason,
+    )
+    async with app.run_test():
+        for action_id in _ACTION_IDS:
+            button = app.query_one(action_id, Button)
+            assert button.disabled, f"{action_id} must be disabled, not hidden"
+            assert str(button.tooltip) == reason
+
+        note = app.query_one("#wl-tree-actions-unavailable", Static)
+        assert reason in str(getattr(note.renderable, "plain", note.renderable))
+
+
+@pytest.mark.asyncio
+async def test_no_unavailable_note_when_writes_are_available():
+    app = _TreeApp(_tree_data(), write_disabled_reason=None)
+    async with app.run_test():
+        assert not app.query("#wl-tree-actions-unavailable")
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_verb_posts_nothing_even_if_it_is_pressed_directly():
+    """Belt-and-braces for the guard in `_post_action`: a disabled Button
+    never emits `Pressed`, but the screen can push a new `active_scope` into
+    a still-mounted tree between renders, so the handler re-checks rather
+    than trusting the `disabled=` flag `compose()` baked in.
+    """
+    app = _TreeApp(
+        _tree_data(),
+        active_scope=TreeScope(kind="watchlist", watchlist_id=2),
+        write_disabled_reason="Watchlists services are unavailable in this runtime.",
+    )
+    async with app.run_test() as pilot:
+        tree = app.query_one("#wl-tree", WatchlistTree)
+        tree.on_button_pressed(
+            Button.Pressed(app.query_one("#wl-tree-rename", Button))
+        )
+        await pilot.pause()
+        assert app.write_requests == []

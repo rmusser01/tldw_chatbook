@@ -32,6 +32,7 @@ from ...Constants import (
 from ...runtime_policy.types import PolicyDeniedError
 from ...Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Subscription_Modules.notifications_inbox_controller import (
@@ -61,6 +62,8 @@ from ..Watchlists_Modules.opml_dialogs import (
     ConfirmDeleteDialog,
     OpmlExportDialog,
     OpmlImportDialog,
+    WatchlistNameDialog,
+    WatchlistSourcePickerDialog,
 )
 from ..Watchlists_Modules.overview_pane import OverviewPane
 from ..Watchlists_Modules.region_layout import CENTRE_REGIONS, Region, RegionLayout
@@ -83,6 +86,11 @@ from ..Watchlists_Modules.sources_pane import (
     SourcesPane,
 )
 from ..Watchlists_Modules.watchlist_tree import (
+    AddSourceToWatchlistRequested,
+    CreateWatchlistRequested,
+    DeleteWatchlistRequested,
+    RemoveSourceFromWatchlistRequested,
+    RenameWatchlistRequested,
     TreeExpansionChanged,
     TreeScope,
     TreeScopeChanged,
@@ -101,6 +109,41 @@ WC_LOCAL_PAGE_SIZE = 5
 WC_SERVICE_ERROR_COPY = "Watchlists services unavailable; retry Watchlists later."
 WC_SERVICE_UNAVAILABLE_COPY = "Watchlists services are unavailable in this runtime."
 WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
+
+# task-895. Watchlist bundles and their membership are a LOCAL concept: the
+# server API has no wire path for them at all -- `SourceUpdateRequest`
+# carries no `group_ids`, neither group request carries members, and all of
+# them are `extra="forbid"`, so a request naming one would be rejected
+# rather than silently ignored. So the five write verbs are disabled, not
+# hidden, and they say why.
+#
+# Built through `DestinationRecoveryState` rather than as a bare string so
+# this blocker is described in the same taxonomy every other unavailable
+# action on this screen uses (`policy_denied_recovery_state` supplies
+# `#wc-service-error`'s copy and `#wc-attach-to-console`'s tooltip the same
+# way). `disabled_tooltip` is what the tree renders -- as both the tooltip
+# AND the visible note, so the hover copy and the on-screen copy cannot
+# drift apart; `visible_copy`'s full six-line form does not fit a 26-column
+# rail.
+WC_SERVER_WRITE_RECOVERY = DestinationRecoveryState(
+    status_label="Server backend",
+    unavailable_what=(
+        "Creating, renaming and deleting watchlists, and editing their membership"
+    ),
+    why=(
+        "The server Watchlists API carries no watchlist membership fields, so "
+        "there is no wire path for these edits"
+    ),
+    next_action="Switch the backend to Local to organise watchlists",
+    recovery_action="Backend selector",
+    authority_owner="server Watchlists API",
+    stable_selector="wl-tree-actions-unavailable",
+    disabled_tooltip=(
+        "Server backend: the server Watchlists API carries no watchlist "
+        "membership fields, so there is no wire path for these edits. "
+        "Switch the backend to Local to organise watchlists."
+    ),
+)
 
 
 class WatchlistsCollectionsScreen(BaseAppScreen):
@@ -227,6 +270,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # establish that shape for screen-mirrored pane state.
         self._tree_expanded: frozenset[int] = frozenset()
         self._tree_active_tag: str | None = None
+        # task-895: one tree write (each of which owns a modal dialog) at a
+        # time -- see `_start_tree_write` for why this is a guard rather
+        # than `run_worker(exclusive=True)`.
+        self._tree_write_active = False
         # Breadcrumb display names for `selected_scope` (Task 5 fix round 1):
         # resolved once in `_on_tree_scope_changed`, not on every Inspector
         # render, and held here for the same reason `selected_scope` itself
@@ -409,6 +456,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._tree_watchlists, self._tree_counts = [], {}
             if callable(notify):
                 notify("Failed to load watchlists.", severity="error")
+        # Re-resolve the Inspector's breadcrumb against what was just loaded
+        # (task-895). `_resolve_breadcrumb_labels` reads `_tree_watchlists`,
+        # and until this task nothing could change that list while a scope
+        # was in view, so resolving once in `_apply_tree_scope` was enough.
+        # The write verbs break that: creating a watchlist scopes to an id
+        # that is not in the list yet (the crumb would read "Watchlist 3"),
+        # and renaming one leaves the crumb on the old name until the user
+        # navigates away and back. The `refresh(recompose=True)` below
+        # rebuilds the Inspector, which seeds itself from this value.
+        self._breadcrumb_labels = self._resolve_breadcrumb_labels(self.selected_scope)
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -722,8 +779,34 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             expanded=self._tree_expanded,
             active_tag=self._tree_active_tag,
             active_scope=self.tree_scope,
+            write_disabled_reason=self._tree_write_disabled_reason(),
             id="wl-tree",
         )
+
+    def _tree_write_disabled_reason(self) -> str | None:
+        """Why the tree's five write verbs cannot run, or `None` (task-895).
+
+        Two blockers, in the order the user can act on them:
+
+        * The **server** backend. Not a cosmetic hide -- there is no request
+          shape that can carry a watchlist membership edit (see
+          `WC_SERVER_WRITE_RECOVERY`), so the actions are disabled and say
+          so, with the backend selector named as the way out.
+        * **No bundle service.** The same degrade-don't-crash contract every
+          other caller of `_watchlist_bundle_service()` follows; the copy is
+          the screen's existing `WC_SERVICE_UNAVAILABLE_COPY` rather than a
+          second phrasing of the same condition.
+
+        Returns:
+            The reason string, used verbatim as both the disabled buttons'
+            tooltip and the visible note beneath them, or `None` when writes
+            are available.
+        """
+        if self.runtime_backend == "server":
+            return WC_SERVER_WRITE_RECOVERY.disabled_tooltip
+        if self._watchlist_bundle_service() is None:
+            return WC_SERVICE_UNAVAILABLE_COPY
+        return None
 
     def _load_source_rows_for_tree(self, watchlist_id: int) -> list[dict[str, Any]]:
         """Fetch one watchlist's source rows for the tree, synchronously.
@@ -1429,6 +1512,346 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         event.stop()
         self._apply_tree_scope(event.scope)
 
+    # --- task-895: the tree's write verbs -------------------------------
+    #
+    # Five `WatchlistBundleService` methods (`create`, `rename`, `delete`,
+    # `add_source`, `remove_source`) had no production caller: Phase C
+    # shipped the tree's read half only, so watchlists could be browsed but
+    # not made. Each verb follows the same three-step shape the rest of this
+    # screen already uses for a user-initiated write -- a handler that only
+    # starts a worker, a worker that owns the dialog + service call, and a
+    # `_load_tree_data()` reload so the rail shows the result without the
+    # user refreshing anything.
+    #
+    # The dialogs are awaited (`push_screen_wait`) rather than driven by
+    # `push_screen(..., callback=...)`: an add-source flow needs the picked
+    # id *before* it can call the service, and the sequential form keeps
+    # "prompt, then write, then reload" readable as one function. That is
+    # only legal inside a worker, which is why every handler defers.
+
+    def _notify_watchlists(self, message: str, severity: str = "information") -> None:
+        """Notify through the app instance, degrading when it has none.
+
+        Matches the `getattr(self.app_instance, "notify", None)` idiom every
+        other action on this screen uses -- the app instance is a stub in
+        several harnesses.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity=severity)
+
+    def _watchlist_display_name(self, watchlist_id: int) -> str:
+        """A watchlist's name from data already loaded, RAW (unescaped).
+
+        Resolved from `_tree_watchlists` for the same reason
+        `_tree_scope_label` does: `_load_tree_data` has already paid for that
+        list, and a display name is not worth a second query. The result is
+        user-authored free text, so every caller must escape it before it
+        reaches a rendered label or a notification (Textual renders toast
+        messages as markup).
+        """
+        return next(
+            (
+                str(watchlist.get("name"))
+                for watchlist in self._tree_watchlists
+                if int(watchlist.get("id", -1)) == int(watchlist_id)
+            ),
+            f"Watchlist {watchlist_id}",
+        )
+
+    def _start_tree_write(self, flow_factory: Any) -> None:
+        """Run one tree write at a time, in a worker.
+
+        Args:
+            flow_factory: Zero-argument callable returning the flow
+                coroutine. A callable rather than a coroutine so the
+                already-in-flight branch does not have to discard an
+                un-awaited coroutine.
+
+        A plain guard rather than `run_worker(exclusive=True)`: exclusive
+        cancels the *previous* worker, and these workers own a modal dialog
+        -- cancelling one mid-prompt would leave its dialog on the screen
+        stack with nothing left to dismiss it.
+        """
+        if self._tree_write_active:
+            return
+        # Build and schedule BEFORE arming the guard. `_run_tree_write`'s
+        # `finally` is the only thing that lowers this flag, and it never runs
+        # if `flow_factory()` or `run_worker` raises synchronously -- which
+        # would leave the flag stuck True and silently swallow every later
+        # create/rename/delete for the life of the screen.
+        try:
+            worker_coro = self._run_tree_write(flow_factory())
+        except Exception:
+            logger.opt(exception=True).debug("Watchlist tree write could not start.")
+            self._notify_watchlists(
+                "That watchlist action could not be started.", severity="error"
+            )
+            return
+        # Arm before scheduling, and disarm if scheduling fails. Arming
+        # afterwards would be its own race: the worker's `finally` could
+        # already have lowered the flag by the time we raised it, leaving it
+        # stuck True with nothing running.
+        self._tree_write_active = True
+        try:
+            self.run_worker(worker_coro, group="wl-tree-write")
+        except Exception:
+            self._tree_write_active = False
+            worker_coro.close()
+            logger.opt(exception=True).debug("Watchlist tree write could not start.")
+            self._notify_watchlists(
+                "That watchlist action could not be started.", severity="error"
+            )
+
+    async def _run_tree_write(self, flow: Any) -> None:
+        """Await one write flow, reporting rather than raising.
+
+        The flows call the service directly, so a `sqlite3` error, a
+        `KeyError` from a watchlist deleted underneath the user, or a
+        `ValueError` from a name that slipped past the dialog all surface
+        here. Every other worker on this screen reports failures the same
+        way; a raising worker would be swallowed into a log line the user
+        never sees.
+        """
+        try:
+            await flow
+        except Exception:
+            logger.opt(exception=True).debug("Watchlist tree write failed.")
+            self._notify_watchlists(
+                "That watchlist action could not be completed.", severity="error"
+            )
+        finally:
+            self._tree_write_active = False
+
+    async def _prompt_watchlist_name(
+        self,
+        *,
+        dialog_title: str,
+        submit_label: str,
+        initial_name: str = "",
+        exclude_id: int | None = None,
+    ) -> str | None:
+        """Ask for a watchlist name, or `None` when the user cancels.
+
+        The dialog itself refuses an empty or duplicate name with a visible
+        reason and stays open, so a non-`None` return is always a name the
+        service will store as typed.
+
+        Args:
+            dialog_title: Heading for the dialog.
+            submit_label: Label for the confirming button.
+            initial_name: Value the input starts with.
+            exclude_id: Watchlist to leave out of the duplicate check --
+                the one being renamed, so re-submitting its own current
+                name is a no-op rather than a reported collision, matching
+                `WatchlistBundleService.rename`'s own `exclude_id`.
+        """
+        taken = [
+            str(watchlist.get("name") or "")
+            for watchlist in self._tree_watchlists
+            if exclude_id is None or int(watchlist.get("id", -1)) != int(exclude_id)
+        ]
+        return await self.app.push_screen_wait(
+            WatchlistNameDialog(
+                dialog_title=dialog_title,
+                submit_label=submit_label,
+                initial_name=initial_name,
+                taken_names=taken,
+            )
+        )
+
+    @on(CreateWatchlistRequested)
+    def handle_create_watchlist_requested(
+        self, event: CreateWatchlistRequested
+    ) -> None:
+        event.stop()
+        self._start_tree_write(self._create_watchlist_flow)
+
+    async def _create_watchlist_flow(self) -> None:
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        name = await self._prompt_watchlist_name(
+            dialog_title="New watchlist", submit_label="Create"
+        )
+        if name is None:
+            return
+        created = service.create(name)
+        # Scope the tree to what was just made, so the rail's Rename/Delete/
+        # Add-source verbs are armed on it immediately rather than requiring
+        # a second click to select the thing the user just created.
+        self._apply_tree_scope(
+            TreeScope(kind="watchlist", watchlist_id=int(created["id"]))
+        )
+        self._notify_watchlists(
+            f"Watchlist \"{escape_markup(str(created['name']))}\" created."
+        )
+        self._load_tree_data()
+
+    @on(RenameWatchlistRequested)
+    def handle_rename_watchlist_requested(
+        self, event: RenameWatchlistRequested
+    ) -> None:
+        event.stop()
+        watchlist_id = event.watchlist_id
+        self._start_tree_write(lambda: self._rename_watchlist_flow(watchlist_id))
+
+    async def _rename_watchlist_flow(self, watchlist_id: int) -> None:
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        current = self._watchlist_display_name(watchlist_id)
+        name = await self._prompt_watchlist_name(
+            dialog_title="Rename watchlist",
+            submit_label="Rename",
+            initial_name=current,
+            exclude_id=watchlist_id,
+        )
+        if name is None:
+            return
+        updated = service.rename(watchlist_id, name)
+        self._notify_watchlists(
+            f"Watchlist renamed to \"{escape_markup(str(updated['name']))}\"."
+        )
+        self._load_tree_data()
+
+    @on(DeleteWatchlistRequested)
+    def handle_delete_watchlist_requested(
+        self, event: DeleteWatchlistRequested
+    ) -> None:
+        event.stop()
+        watchlist_id = event.watchlist_id
+        self._start_tree_write(lambda: self._delete_watchlist_flow(watchlist_id))
+
+    async def _delete_watchlist_flow(self, watchlist_id: int) -> None:
+        """Delete a watchlist after saying, up front, what happens to its
+        sources -- and then show the user where they went.
+
+        Deleting a watchlist cascades only the membership rows; the sources
+        themselves survive and become unassigned. That is invisible unless
+        someone says so, which is exactly the "orphaned into invisibility"
+        failure the tree's permanent Unassigned root exists to prevent, so
+        the confirmation states the count and the destination before the
+        user commits, and the scope moves to Unassigned afterwards rather
+        than sitting on an id that no longer resolves.
+        """
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        name = self._watchlist_display_name(watchlist_id)
+        source_count = len(service.list_source_rows(watchlist_id))
+        noun = "source" if source_count == 1 else "sources"
+        confirmed = await self.app.push_screen_wait(
+            ConfirmationDialog(
+                title="Delete watchlist",
+                message=(
+                    f'Delete the watchlist "{escape_markup(name)}"?\n\n'
+                    f"Its {source_count} {noun} are not deleted. They stay in "
+                    "Watchlists and appear under Unassigned unless they also "
+                    "belong to another watchlist."
+                ),
+                confirm_label="Delete watchlist",
+                cancel_label="Keep it",
+            )
+        )
+        if not confirmed:
+            return
+        service.delete(watchlist_id)
+        self._apply_tree_scope(TreeScope(kind="unassigned"))
+        self._notify_watchlists(
+            f'Watchlist "{escape_markup(name)}" deleted. Its {source_count} '
+            f"{noun} moved to Unassigned."
+        )
+        self._load_tree_data()
+
+    @on(AddSourceToWatchlistRequested)
+    def handle_add_source_to_watchlist_requested(
+        self, event: AddSourceToWatchlistRequested
+    ) -> None:
+        event.stop()
+        watchlist_id = event.watchlist_id
+        self._start_tree_write(lambda: self._add_source_to_watchlist_flow(watchlist_id))
+
+    async def _add_source_to_watchlist_flow(self, watchlist_id: int) -> None:
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        # `list_sources` (ids only) is the right query here rather than
+        # `list_source_rows`: the members are needed as a membership test,
+        # not for display, and the candidate rows already come from
+        # `list_all_source_rows`.
+        members = {int(source_id) for source_id in service.list_sources(watchlist_id)}
+        candidates = [
+            row for row in service.list_all_source_rows() if int(row["id"]) not in members
+        ]
+        chosen = await self.app.push_screen_wait(
+            WatchlistSourcePickerDialog(
+                self._watchlist_display_name(watchlist_id), candidates
+            )
+        )
+        if chosen is None:
+            return
+        service.add_source(watchlist_id, int(chosen))
+        source_name = next(
+            (
+                str(row.get("name"))
+                for row in candidates
+                if int(row["id"]) == int(chosen)
+            ),
+            f"Source {chosen}",
+        )
+        self._notify_watchlists(
+            f'Added "{escape_markup(source_name)}" to '
+            f'"{escape_markup(self._watchlist_display_name(watchlist_id))}".'
+        )
+        self._load_tree_data()
+
+    @on(RemoveSourceFromWatchlistRequested)
+    def handle_remove_source_from_watchlist_requested(
+        self, event: RemoveSourceFromWatchlistRequested
+    ) -> None:
+        event.stop()
+        watchlist_id = event.watchlist_id
+        source_id = event.source_id
+        self._start_tree_write(
+            lambda: self._remove_source_from_watchlist_flow(watchlist_id, source_id)
+        )
+
+    async def _remove_source_from_watchlist_flow(
+        self, watchlist_id: int, source_id: int
+    ) -> None:
+        """Drop one membership row. No confirmation: the source itself
+        survives and the action is one Add-source press away from being
+        undone, unlike deleting a watchlist. The notification names both
+        ends so it is clear nothing was destroyed.
+        """
+        service = self._watchlist_bundle_service()
+        if service is None:
+            self._notify_watchlists(WC_SERVICE_UNAVAILABLE_COPY, severity="error")
+            return
+        source_name = next(
+            (
+                str(row.get("name"))
+                for row in service.list_source_rows(watchlist_id)
+                if int(row.get("id", -1)) == int(source_id)
+            ),
+            f"Source {source_id}",
+        )
+        watchlist_name = self._watchlist_display_name(watchlist_id)
+        service.remove_source(watchlist_id, source_id)
+        # The scope named a node that no longer exists; fall back to its
+        # parent watchlist, which does.
+        self._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=watchlist_id))
+        self._notify_watchlists(
+            f'Removed "{escape_markup(source_name)}" from '
+            f'"{escape_markup(watchlist_name)}". The source itself is kept.'
+        )
+        self._load_tree_data()
+
     def watch_selected_scope(self) -> None:
         """Push scope + resolved labels into the live Inspector.
 
@@ -1586,6 +2009,19 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 else f"Backend: {self.runtime_backend}"
             )
         except Exception:
+            pass
+        # task-895: push the new write-availability into the still-mounted
+        # tree, the same way `watch_tree_scope` pushes `active_scope`. The
+        # snapshot refresh below does eventually recompose the whole screen
+        # (and `_build_tree_pane` would then re-seed this), but that is an
+        # async round trip -- until it lands, the five action buttons would
+        # sit enabled over a backend that cannot service them, which is the
+        # exact "disabled button that looks enabled" shape in reverse.
+        try:
+            self.query_one("#wl-tree", WatchlistTree).write_disabled_reason = (
+                self._tree_write_disabled_reason()
+            )
+        except NoMatches:
             pass
         self.selected_source = None
         self.selected_run = None

@@ -25,7 +25,7 @@ import json
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
@@ -59,6 +59,40 @@ class RateLimitError(SubscriptionError):
 
 
 # --- Database Class ---
+#: The one definition of `site_configs`. Applied by
+#: `SubscriptionsDB._initialize_schema`, which owns the table, and by
+#: `ensure_site_configs_schema` for `SiteConfigManager`, which needs the table
+#: to exist but must not impose the whole subscriptions schema on a path a
+#: caller supplied. Two call sites, one DDL: duplicating it would recreate the
+#: "no class's schema describes this file" problem TASK-896 set out to fix.
+SITE_CONFIGS_DDL = """
+    CREATE TABLE IF NOT EXISTS site_configs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT UNIQUE NOT NULL,
+        config_data TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_site_configs_domain
+    ON site_configs(domain);
+"""
+
+
+def ensure_site_configs_schema(db_path) -> None:
+    """Create `site_configs` on `db_path`, and nothing else.
+
+    `SiteConfigManager` accepts a caller-supplied path. Opening a full
+    `SubscriptionsDB` there just to guarantee this one table would run the
+    entire subscriptions schema against that file -- around fifteen unrelated
+    tables plus their indices and triggers -- a side effect no caller asked
+    for. This applies only the table the manager actually needs.
+    """
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.executescript(SITE_CONFIGS_DDL)
+        conn.commit()
+
+
 class SubscriptionsDB(BaseDB):
     """Database operations for subscription management."""
 
@@ -332,6 +366,23 @@ class SubscriptionsDB(BaseDB):
                 FOREIGN KEY (job_id) REFERENCES subscriptions(id) ON DELETE CASCADE
             );
 
+            -- Per-site scraping configuration (rate limits, headers,
+            -- extraction/change-detection rules) used by SiteConfigManager.
+            -- Owned here, not by CharactersRAGDB: SiteConfigManager always
+            -- points its CharactersRAGDB connection at *this* database's
+            -- file (get_subscriptions_db_path()), so this table has always
+            -- physically lived in the subscriptions database file even
+            -- though it used to be declared -- lazily, at runtime -- by the
+            -- wrong class. Same reasoning as local_watchlist_runs and
+            -- local_watchlist_alert_rules above: a lazily-created table can
+            -- never race an additive migration that needs it to already
+            -- exist, and this is the last such table in this package.
+            -- SiteConfigManager still reads/writes it through its own
+            -- CharactersRAGDB connection (unchanged) -- it now also opens a
+            -- SubscriptionsDB against the same path first, purely so this
+            -- schema (below) is guaranteed to have run.
+            -- site_configs: see SITE_CONFIGS_DDL, applied just below.
+
             -- Create indices
             CREATE INDEX IF NOT EXISTS idx_subscriptions_priority_active ON subscriptions(priority DESC, is_active, is_paused);
             CREATE INDEX IF NOT EXISTS idx_subscriptions_tags ON subscriptions(tags);
@@ -367,6 +418,7 @@ class SubscriptionsDB(BaseDB):
                 UPDATE subscription_templates SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END;
             """)
+        conn.executescript(SITE_CONFIGS_DDL)
         self._ensure_watchlists_schema(conn)
 
     def _ensure_watchlists_schema(self, conn=None):

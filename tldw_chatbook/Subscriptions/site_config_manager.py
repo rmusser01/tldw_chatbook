@@ -24,6 +24,7 @@ from loguru import logger
 #
 # Local Imports
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
+from ..DB.Subscriptions_DB import ensure_site_configs_schema
 from ..Utils.config_encryption import ConfigEncryption
 from ..Metrics.metrics_logger import log_counter
 from ..config import CLI_APP_CLIENT_ID, get_subscriptions_db_path
@@ -247,36 +248,26 @@ class SiteConfigManager:
         # Use provided db_path or get default from config
         if db_path is None:
             db_path = str(get_subscriptions_db_path())
+
+        # `site_configs` is declared by `SubscriptionsDB`, which owns it (see
+        # that file for the ownership rationale), and is no longer created
+        # lazily here. This manager reads and writes it through its own
+        # `CharactersRAGDB` connection below -- both point at the same on-disk
+        # file -- so the table has to exist before any query runs.
+        #
+        # Applies the one table rather than opening a full `SubscriptionsDB`:
+        # `db_path` is caller-supplied, and constructing the whole database
+        # here would run the entire subscriptions schema against whatever file
+        # was passed. `ensure_site_configs_schema` shares its DDL with
+        # `_initialize_schema`, so there is still exactly one definition, and
+        # `CREATE TABLE IF NOT EXISTS` keeps it idempotent per construction.
+        ensure_site_configs_schema(db_path)
+
         self.db = CharactersRAGDB(db_path, CLI_APP_CLIENT_ID)
         self.encryption = ConfigEncryption()
         self.rate_limiter = RateLimiter()
         self._config_cache = {}
         self._cache_lock = threading.Lock()
-
-        # Create site_configs table if it doesn't exist
-        self._create_tables()
-
-    def _create_tables(self):
-        """Create site configuration tables."""
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS site_configs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    domain TEXT UNIQUE NOT NULL,
-                    config_data TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_site_configs_domain
-                ON site_configs(domain)
-            """)
-
-            conn.commit()
 
     def get_config(self, url: str) -> SiteConfig:
         """
