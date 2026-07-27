@@ -42,6 +42,7 @@ from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
     CharacterTTSAssignment,
+    FrozenJsonOptions,
     ProfileBackupReceipt,
     ProfileRepositoryState,
     ProfileRestoreReceipt,
@@ -2087,7 +2088,9 @@ class TTSProfileRepository:
                 voice_id=draft.voice_id,
                 response_format=draft.response_format,
                 speed=draft.speed,
-                options=draft.options,
+                # TTSProfileDraft.__post_init__ replaces accepted mutable JSON
+                # input with the deeply frozen representation.
+                options=cast(FrozenJsonOptions, draft.options),
                 revision=1,
                 created_at=timestamp,
                 updated_at=timestamp,
@@ -2226,7 +2229,7 @@ class TTSProfileRepository:
                 voice_id=draft.voice_id,
                 response_format=draft.response_format,
                 speed=draft.speed,
-                options=draft.options,
+                options=cast(FrozenJsonOptions, draft.options),
                 revision=stored.revision + 1,
                 created_at=stored.created_at,
                 updated_at=self._clock(),
