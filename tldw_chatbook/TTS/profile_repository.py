@@ -96,6 +96,15 @@ def _raise_cleanup_errors(*errors: BaseException | None) -> None:
         raise _repository_error("operation_failed")
 
 
+def _retrieve_future_exception(future: asyncio.Future[_T]) -> None:
+    """Mark one wrapper exception retrieved without changing await behavior."""
+
+    try:
+        future.exception()
+    except BaseException:
+        pass
+
+
 class TTSProfileRepository:
     """Own one serialized profile-store connection and its lifecycle generation.
 
@@ -122,7 +131,8 @@ class TTSProfileRepository:
         self._generation = 0
         self._terminal = False
         self._state_lock = threading.Lock()
-        self._lifecycle_lock = asyncio.Lock()
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
+        self._lifecycle_lock: asyncio.Lock | None = None
         self._executor: ThreadPoolExecutor | None = None
         self._executor_shutdown = False
         self._connection: sqlite3.Connection | None = None
@@ -164,12 +174,13 @@ class TTSProfileRepository:
                 ownership has been cleaned.
         """
 
+        lifecycle_lock = self._bind_or_check_loop()
         with self._state_lock:
             shared_completion = self._open_completion
         if shared_completion is not None:
             return await self._await_open_completion(shared_completion)
 
-        async with self._lifecycle_lock:
+        async with lifecycle_lock:
             with self._state_lock:
                 if self._terminal:
                     raise _repository_error("terminal")
@@ -227,6 +238,7 @@ class TTSProfileRepository:
     ) -> ProfileStoreResult[None]:
         """Join one open attempt and clear its marker only after settlement."""
 
+        self._bind_or_check_loop()
         try:
             return await self._await_lifecycle_completion(completion)
         finally:
@@ -251,6 +263,7 @@ class TTSProfileRepository:
         generation: int,
         open_future: Future[None],
     ) -> ProfileStoreResult[None]:
+        self._bind_or_check_loop()
         open_error: BaseException | None = None
         try:
             await asyncio.wrap_future(open_future)
@@ -272,6 +285,9 @@ class TTSProfileRepository:
 
     def _worker_open(self) -> None:
         """Acquire shared ownership and open the long-lived connection."""
+
+        if self._connection is not None or self._lease is not None:
+            self._worker_cleanup()
 
         lease: ProfileStoreLease | None = None
         connection: sqlite3.Connection | None = None
@@ -301,11 +317,13 @@ class TTSProfileRepository:
                 connection.close()
             except BaseException as error:
                 connection_error = error
+                self._connection = connection
         if lease is not None:
             try:
                 lease.release()
             except BaseException as error:
                 lease_error = error
+                self._lease = lease
         _raise_with_cleanup_precedence(
             body_error,
             connection_error,
@@ -318,6 +336,7 @@ class TTSProfileRepository:
     ) -> ProfileStoreResult[_T]:
         """Submit and publish one normal generation-bound operation."""
 
+        self._bind_or_check_loop()
         admission = self._admit_operation(operation)
         return await self._publish_operation(admission)
 
@@ -327,6 +346,7 @@ class TTSProfileRepository:
     ) -> _OperationAdmission[_T]:
         """Synchronously capture state/generation and register a worker future."""
 
+        self._bind_or_check_loop()
         if not callable(operation):
             raise _repository_error("operation_failed")
 
@@ -410,12 +430,17 @@ class TTSProfileRepository:
     ) -> ProfileStoreResult[_T]:
         """Await a shielded worker future and publish only if it remains current."""
 
+        self._bind_or_check_loop()
         wrapped_future = asyncio.wrap_future(admission.future)
+        wrapped_future.add_done_callback(_retrieve_future_exception)
         worker_cancelled = False
         worker_error: BaseException | None = None
         try:
             value = await asyncio.shield(wrapped_future)
         except asyncio.CancelledError:
+            current_task = asyncio.current_task()
+            if current_task is not None and current_task.cancelling() > 0:
+                raise
             worker_cancelled = wrapped_future.cancelled()
             if not worker_cancelled:
                 raise
@@ -441,7 +466,8 @@ class TTSProfileRepository:
     async def close(self) -> ProfileStoreResult[None]:
         """Definitively close the repository and shut down its worker once."""
 
-        async with self._lifecycle_lock:
+        lifecycle_lock = self._bind_or_check_loop()
+        async with lifecycle_lock:
             with self._state_lock:
                 if self._terminal:
                     return ProfileStoreResult(
@@ -472,6 +498,7 @@ class TTSProfileRepository:
     ) -> None:
         """Drain admitted work, clean worker ownership, and shut down off-loop."""
 
+        self._bind_or_check_loop()
         if pending:
             await asyncio.gather(
                 *(asyncio.shield(asyncio.wrap_future(future)) for future in pending),
@@ -541,6 +568,7 @@ class TTSProfileRepository:
     ) -> _T:
         """Delay caller cancellation until a lifecycle transition settles."""
 
+        self._bind_or_check_loop()
         cancellation: asyncio.CancelledError | None = None
         while not completion.done():
             try:
@@ -563,3 +591,30 @@ class TTSProfileRepository:
         if completion_error is not None:
             _raise_operation_error(completion_error)
         return cast(_T, result)
+
+    def _bind_or_check_loop(self) -> asyncio.Lock:
+        """Bind first async use and reject every later foreign-loop caller."""
+
+        running_loop: asyncio.AbstractEventLoop | None = None
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        if running_loop is None:
+            raise _repository_error("invalid_state")
+
+        wrong_loop = False
+        lifecycle_lock: asyncio.Lock | None = None
+        with self._state_lock:
+            if self._owner_loop is None:
+                lifecycle_lock = asyncio.Lock()
+                self._owner_loop = running_loop
+                self._lifecycle_lock = lifecycle_lock
+            elif self._owner_loop is not running_loop:
+                wrong_loop = True
+            else:
+                lifecycle_lock = self._lifecycle_lock
+
+        if wrong_loop or lifecycle_lock is None:
+            raise _repository_error("invalid_state")
+        return lifecycle_lock

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import importlib
 import sqlite3
 import threading
 import traceback
+from collections.abc import Awaitable, Callable
 from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
 from pathlib import Path
@@ -74,6 +76,57 @@ class _RecordingLease:
         self.acquired = False
         if self.release_error is not None:
             raise self.release_error
+
+
+class _SequencedCloseConnection:
+    def __init__(
+        self,
+        events: list[tuple[str, int]],
+        label: str,
+        close_errors: list[BaseException | None],
+    ) -> None:
+        self.events = events
+        self.label = label
+        self.close_errors = close_errors
+        self.close_calls = 0
+        self.closed = False
+
+    def close(self) -> None:
+        self.events.append((f"{self.label}.close", threading.get_ident()))
+        self.close_calls += 1
+        error = self.close_errors.pop(0) if self.close_errors else None
+        if error is not None:
+            raise error
+        self.closed = True
+
+
+class _SequencedReleaseLease:
+    def __init__(
+        self,
+        events: list[tuple[str, int]],
+        label: str,
+        release_errors: list[BaseException | None],
+    ) -> None:
+        self.events = events
+        self.label = label
+        self.release_errors = release_errors
+        self.acquire_calls = 0
+        self.release_calls = 0
+        self.acquired = False
+
+    def acquire(self) -> _SequencedReleaseLease:
+        self.events.append((f"{self.label}.acquire", threading.get_ident()))
+        self.acquire_calls += 1
+        self.acquired = True
+        return self
+
+    def release(self) -> None:
+        self.events.append((f"{self.label}.release", threading.get_ident()))
+        self.release_calls += 1
+        error = self.release_errors.pop(0) if self.release_errors else None
+        if error is not None:
+            raise error
+        self.acquired = False
 
 
 class _RecordingExecutor:
@@ -159,6 +212,28 @@ async def _wait_thread_event(event: threading.Event) -> None:
     assert await asyncio.to_thread(event.wait, 5.0)
 
 
+async def _run_in_new_loop_thread(
+    awaitable_factory: Callable[[], Awaitable[Any]],
+) -> tuple[Any | None, BaseException | None]:
+    outcomes: list[tuple[Any | None, BaseException | None]] = []
+
+    async def invoke() -> Any:
+        return await awaitable_factory()
+
+    def runner() -> None:
+        try:
+            outcomes.append((asyncio.run(invoke()), None))
+        except BaseException as error:
+            outcomes.append((None, error))
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    await asyncio.to_thread(thread.join, 5.0)
+    assert not thread.is_alive()
+    assert len(outcomes) == 1
+    return outcomes[0]
+
+
 def _install_fake_store(
     monkeypatch: pytest.MonkeyPatch,
     module: ModuleType,
@@ -219,6 +294,8 @@ def test_constructor_is_pure_and_starts_initial_closed(
     assert repository._executor is None
     assert repository._connection is None
     assert repository._lease is None
+    assert repository._owner_loop is None
+    assert repository._lifecycle_lock is None
 
 
 def test_constructor_rejects_non_path_without_exposing_value(tmp_path: Path) -> None:
@@ -433,6 +510,108 @@ async def test_concurrent_open_calls_share_one_attempt_and_owner(
 
 
 @pytest.mark.asyncio
+async def test_active_open_rejects_foreign_loop_before_joining_shared_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    events: list[tuple[str, int]] = []
+    connection = _RecordingConnection(events)
+    open_started = threading.Event()
+    allow_open = threading.Event()
+    open_calls = 0
+    _install_fake_store(monkeypatch, module, events, connection)
+
+    def blocked_open(_database_path: Path) -> Any:
+        nonlocal open_calls
+        open_calls += 1
+        open_started.set()
+        assert allow_open.wait(5.0)
+        return connection
+
+    monkeypatch.setattr(module, "open_profile_store", blocked_open)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    main_open = asyncio.create_task(repository.open())
+    await _wait_thread_event(open_started)
+
+    try:
+        result, error = await _run_in_new_loop_thread(repository.open)
+
+        assert result is None
+        assert isinstance(error, ProfileRepositoryError)
+        _assert_safe_error(error, "invalid_state", "event loop", repr(main_open))
+        assert main_open.done() is False
+        assert repository.generation == 1
+        assert open_calls == 1
+    finally:
+        allow_open.set()
+        await main_open
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_operation_caller_paths_reject_foreign_loop_without_worker_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    events: list[tuple[str, int]] = []
+    connection = _RecordingConnection(events)
+    _install_fake_store(monkeypatch, module, events, connection)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    await repository.open()
+    foreign_work_ran = threading.Event()
+    admission = repository._admit_operation(lambda _connection: "main-result")
+
+    async def admit_from_foreign_loop() -> None:
+        repository._admit_operation(lambda _connection: foreign_work_ran.set())
+
+    caller_paths: tuple[Callable[[], Awaitable[Any]], ...] = (
+        admit_from_foreign_loop,
+        lambda: repository._submit_operation(
+            lambda _connection: foreign_work_ran.set()
+        ),
+        lambda: repository._publish_operation(admission),
+    )
+
+    try:
+        for caller_path in caller_paths:
+            result, error = await _run_in_new_loop_thread(caller_path)
+            assert result is None
+            assert isinstance(error, ProfileRepositoryError)
+            _assert_safe_error(error, "invalid_state", "event loop")
+        assert foreign_work_ran.is_set() is False
+        assert await repository._publish_operation(admission) == ProfileStoreResult(
+            generation=1,
+            value="main-result",
+        )
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_close_rejects_foreign_loop_but_stays_idempotent_on_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    events: list[tuple[str, int]] = []
+    connection = _RecordingConnection(events)
+    _install_fake_store(monkeypatch, module, events, connection)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    await repository.open()
+    closed = await repository.close()
+
+    result, error = await _run_in_new_loop_thread(repository.close)
+
+    assert result is None
+    assert isinstance(error, ProfileRepositoryError)
+    _assert_safe_error(error, "invalid_state", "event loop")
+    assert await repository.close() == closed
+    assert repository.generation == 2
+
+
+@pytest.mark.asyncio
 async def test_overlapping_failed_open_calls_share_attempt_before_later_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -640,6 +819,216 @@ async def test_failed_open_cleans_partial_lease_and_maps_hostile_error(
     assert retried == ProfileStoreResult(generation=2, value=None)
     assert len(leases) == 2
     await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_open_retains_lease_until_retry_cleanup_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    secret = str(tmp_path / "residual-lease-failure")
+    events: list[tuple[str, int]] = []
+    connection = _RecordingConnection(events)
+    leases: list[_SequencedReleaseLease] = []
+    open_calls = 0
+
+    def lease_factory(
+        _database_path: Path,
+        mode: ProfileStoreLockMode,
+        **_kwargs: object,
+    ) -> _SequencedReleaseLease:
+        assert mode is ProfileStoreLockMode.SHARED
+        release_errors: list[BaseException | None]
+        if not leases:
+            release_errors = [RuntimeError(secret), RuntimeError(secret), None]
+        else:
+            release_errors = []
+        lease = _SequencedReleaseLease(
+            events,
+            f"lease-{len(leases) + 1}",
+            release_errors,
+        )
+        leases.append(lease)
+        return lease
+
+    def controlled_open(_database_path: Path) -> Any:
+        nonlocal open_calls
+        open_calls += 1
+        events.append((f"store.open-{open_calls}", threading.get_ident()))
+        if open_calls == 1:
+            raise RuntimeError(secret)
+        return connection
+
+    monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
+    monkeypatch.setattr(module, "open_profile_store", controlled_open)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as first_error:
+            await repository.open()
+        _assert_safe_error(first_error.value, "operation_failed", secret)
+        assert repository._lease is leases[0]
+        assert leases[0].acquired is True
+        assert leases[0].release_calls == 1
+
+        with pytest.raises(ProfileRepositoryError) as cleanup_error:
+            await repository.open()
+        _assert_safe_error(cleanup_error.value, "operation_failed", secret)
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert repository._lease is leases[0]
+        assert leases[0].acquired is True
+        assert leases[0].release_calls == 2
+        assert len(leases) == 1
+        assert open_calls == 1
+
+        retried = await repository.open()
+
+        assert retried == ProfileStoreResult(generation=3, value=None)
+        assert leases[0].release_calls == 3
+        assert leases[0].acquired is False
+        assert repository._lease is leases[1]
+        assert leases[1].acquired is True
+        assert open_calls == 2
+        phases = [phase for phase, _thread_id in events]
+        assert max(
+            index for index, phase in enumerate(phases) if phase == "lease-1.release"
+        ) < phases.index("lease-2.acquire")
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("primary_is_control", [True, False])
+async def test_failed_open_close_retries_retained_lease_with_error_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    primary_is_control: bool,
+) -> None:
+    module = _repository_module()
+    events: list[tuple[str, int]] = []
+    primary_signal = _ControlFlow()
+    cleanup_signal = _ControlFlow()
+    primary_error: BaseException
+    expected_signal: _ControlFlow
+    if primary_is_control:
+        primary_error = primary_signal
+        expected_signal = primary_signal
+    else:
+        primary_error = RuntimeError("ordinary-open-failure")
+        expected_signal = cleanup_signal
+    lease = _SequencedReleaseLease(
+        events,
+        "residual-lease",
+        [cleanup_signal, None],
+    )
+
+    def lease_factory(
+        _database_path: Path,
+        mode: ProfileStoreLockMode,
+        **_kwargs: object,
+    ) -> _SequencedReleaseLease:
+        assert mode is ProfileStoreLockMode.SHARED
+        return lease
+
+    def failing_open(_database_path: Path) -> Any:
+        raise primary_error
+
+    monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
+    monkeypatch.setattr(module, "open_profile_store", failing_open)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+
+    with pytest.raises(_ControlFlow) as caught:
+        await repository.open()
+
+    try:
+        assert caught.value is expected_signal
+        assert repository._lease is lease
+        assert lease.acquired is True
+        assert lease.release_calls == 1
+
+        closed = await repository.close()
+
+        assert closed == ProfileStoreResult(generation=2, value=None)
+        assert lease.release_calls == 2
+        assert lease.acquired is False
+        assert repository._lease is None
+    finally:
+        if not repository.terminal:
+            await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_cleans_residual_connection_before_acquiring_new_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    secret = str(tmp_path / "residual-connection-failure")
+    events: list[tuple[str, int]] = []
+    first_connection = _SequencedCloseConnection(
+        events,
+        "connection-1",
+        [RuntimeError(secret), None],
+    )
+    second_connection = _SequencedCloseConnection(events, "connection-2", [])
+    connections = [first_connection, second_connection]
+    leases: list[_SequencedReleaseLease] = []
+    open_calls = 0
+
+    def lease_factory(
+        _database_path: Path,
+        mode: ProfileStoreLockMode,
+        **_kwargs: object,
+    ) -> _SequencedReleaseLease:
+        assert mode is ProfileStoreLockMode.SHARED
+        lease = _SequencedReleaseLease(
+            events,
+            f"lease-{len(leases) + 1}",
+            [],
+        )
+        leases.append(lease)
+        return lease
+
+    def controlled_open(_database_path: Path) -> Any:
+        nonlocal open_calls
+        connection = connections[open_calls]
+        open_calls += 1
+        events.append((f"store.open-{open_calls}", threading.get_ident()))
+        return connection
+
+    monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
+    monkeypatch.setattr(module, "open_profile_store", controlled_open)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    await repository.open()
+    with repository._state_lock:
+        repository._state = ProfileRepositoryState.UNAVAILABLE
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as cleanup_error:
+            await repository.open()
+        _assert_safe_error(cleanup_error.value, "operation_failed", secret)
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert repository._connection is first_connection
+        assert first_connection.closed is False
+        assert first_connection.close_calls == 1
+        assert leases[0].acquired is False
+        assert len(leases) == 1
+        assert open_calls == 1
+
+        retried = await repository.open()
+
+        assert retried == ProfileStoreResult(generation=3, value=None)
+        assert first_connection.closed is True
+        assert first_connection.close_calls == 2
+        assert repository._connection is second_connection
+        assert len(leases) == 2
+        assert open_calls == 2
+        phases = [phase for phase, _thread_id in events]
+        assert phases.index("connection-1.close") < phases.index("lease-1.release")
+        assert phases.index("lease-1.release") < phases.index("lease-2.acquire")
+    finally:
+        await repository.close()
 
 
 @pytest.mark.asyncio
@@ -914,6 +1303,163 @@ async def test_cancelled_operation_remains_registered_until_worker_finishes(
     assert writes == ["committed"]
     with repository._state_lock:
         assert not repository._pending_futures
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_wins_when_close_cancels_same_queued_future(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    events: list[tuple[str, int]] = []
+    connection = _RecordingConnection(events)
+    _install_fake_store(monkeypatch, module, events, connection)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    await repository.open()
+    first_started = threading.Event()
+    finish_first = threading.Event()
+    second_ran = False
+
+    def first_operation(_connection: Any) -> None:
+        first_started.set()
+        assert finish_first.wait(5.0)
+
+    def second_operation(_connection: Any) -> None:
+        nonlocal second_ran
+        second_ran = True
+
+    repository._admit_operation(first_operation)
+    await _wait_thread_event(first_started)
+    second = repository._admit_operation(second_operation)
+    publication_started = asyncio.Event()
+
+    async def publish_second() -> asyncio.CancelledError:
+        publication_started.set()
+        try:
+            await repository._publish_operation(second)
+        except asyncio.CancelledError as error:
+            return error
+        raise AssertionError("caller cancellation was not preserved")
+
+    operation_task = asyncio.create_task(publish_second())
+    await publication_started.wait()
+    second.future.add_done_callback(
+        lambda _future: operation_task.cancel("caller-cancellation")
+    )
+    close_task = asyncio.create_task(repository.close())
+
+    try:
+        cancellation = await operation_task
+        assert type(cancellation) is asyncio.CancelledError
+        assert cancellation.args == ("caller-cancellation",)
+        assert operation_task.cancelling() == 1
+        assert second_ran is False
+    finally:
+        finish_first.set()
+        await close_task
+
+
+@pytest.mark.asyncio
+async def test_worker_future_cancellation_without_caller_cancellation_is_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    events: list[tuple[str, int]] = []
+    connection = _RecordingConnection(events)
+    _install_fake_store(monkeypatch, module, events, connection)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    await repository.open()
+    first_started = threading.Event()
+    finish_first = threading.Event()
+    second_ran = False
+
+    def first_operation(_connection: Any) -> None:
+        first_started.set()
+        assert finish_first.wait(5.0)
+
+    def second_operation(_connection: Any) -> None:
+        nonlocal second_ran
+        second_ran = True
+
+    repository._admit_operation(first_operation)
+    await _wait_thread_event(first_started)
+    second = repository._admit_operation(second_operation)
+    publication_started = asyncio.Event()
+
+    async def publish_second() -> ProfileStoreResult[None]:
+        publication_started.set()
+        return cast(
+            ProfileStoreResult[None],
+            await repository._publish_operation(second),
+        )
+
+    operation_task = asyncio.create_task(publish_second())
+    await publication_started.wait()
+    assert second.future.cancel()
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await operation_task
+        _assert_safe_error(caught.value, "stale")
+        assert second_ran is False
+    finally:
+        finish_first.set()
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_operation_late_failure_is_retrieved_without_loop_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    events: list[tuple[str, int]] = []
+    connection = _RecordingConnection(events)
+    _install_fake_store(monkeypatch, module, events, connection)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    await repository.open()
+    operation_started = threading.Event()
+    finish_operation = threading.Event()
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    unhandled_contexts: list[dict[str, Any]] = []
+
+    def capture_unhandled(
+        _loop: asyncio.AbstractEventLoop,
+        context: dict[str, Any],
+    ) -> None:
+        unhandled_contexts.append(context)
+
+    loop.set_exception_handler(capture_unhandled)
+    try:
+
+        def late_failure(_connection: Any) -> None:
+            operation_started.set()
+            assert finish_operation.wait(5.0)
+            raise RuntimeError("late-worker-failure")
+
+        operation_task = asyncio.create_task(repository._submit_operation(late_failure))
+        await _wait_thread_event(operation_started)
+        operation_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await operation_task
+
+        close_task = asyncio.create_task(repository.close())
+        finish_operation.set()
+        await close_task
+        del operation_task
+        gc.collect()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    assert not [
+        context
+        for context in unhandled_contexts
+        if context.get("message") == "Future exception was never retrieved"
+    ]
 
 
 @pytest.mark.asyncio
