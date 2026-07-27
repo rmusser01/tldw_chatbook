@@ -318,6 +318,7 @@ class _TranscriptRow:
         "rule",
         "banner",
         "message",
+        "citations",
         "original-attempt",
         "image",
         "generation-card",
@@ -560,6 +561,7 @@ class ConsoleTranscript(VerticalScroll):
         "console-transcript-empty-state",
         "console-transcript-rule",
         "console-transcript-summary-banner",
+        "console-transcript-citation-sources",
         # Textual scrollbars carry the generic system-widget class; ignore them
         # defensively if a scrollbar click ever bubbles up to the transcript.
         "-textual-system",
@@ -601,6 +603,7 @@ class ConsoleTranscript(VerticalScroll):
         self._image_specs: dict[str, ConsoleImageRowSpec] = {}
         self._generation_card_specs: dict[str, ConsoleGenerationCardSpec] = {}
         self._original_attempt_previews: dict[str, str] = {}
+        self._citation_counts: dict[str, int] = {}
         # TASK-259: per-message render-signature cache. Maps message id ->
         # (cheap change-token, expensive row signature). `_transcript_rows`
         # re-derives the render payload (Content assembly) only when the
@@ -835,6 +838,17 @@ class ConsoleTranscript(VerticalScroll):
     def set_original_attempt_previews(self, previews: Mapping[str, str]) -> None:
         """Replace screen-owned visible original-attempt preview copies."""
         self._original_attempt_previews = dict(previews)
+
+    def set_citation_counts(self, counts: Mapping[str, int]) -> None:
+        """Replace screen-owned citation counts keyed by native message ID."""
+        self._citation_counts = {
+            message_id: count
+            for message_id, count in counts.items()
+            if isinstance(message_id, str)
+            and message_id
+            and type(count) is int
+            and count > 0
+        }
 
     def sync_empty_state(
         self,
@@ -1159,6 +1173,17 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
+            citation_count = self._citation_counts.get(message.id, 0)
+            if citation_count > 0:
+                rows.append(
+                    _TranscriptRow(
+                        key=f"citations:{message.id}",
+                        kind="citations",
+                        signature=("citations", message.id, citation_count),
+                        message=message,
+                        renderable=f"Sources ({citation_count})",
+                    )
+                )
             original_attempt = self._original_attempt_previews.get(message.id)
             if original_attempt is not None:
                 rows.append(
@@ -1354,6 +1379,14 @@ class ConsoleTranscript(VerticalScroll):
             )
         if row.kind == "message" and row.message is not None:
             return ConsoleTranscriptMessage(row.message, selected=row.selected)
+        if row.kind == "citations" and row.message is not None:
+            button = Button(
+                row.renderable,
+                id=f"console-citation-sources-{row.message.id}",
+                classes="console-transcript-citation-sources",
+            )
+            button.native_message_id = row.message.id
+            return button
         if row.kind == "image" and row.image_spec is not None:
             return self._image_row_widget(row.image_spec)
         if row.kind == "generation-card" and row.generation_card_spec is not None:

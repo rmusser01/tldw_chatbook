@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App, ComposeResult
@@ -21,6 +21,8 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
@@ -78,6 +80,12 @@ from Tests.UI.test_library_content_hub import StaticLibraryCollectionsService
 from Tests.UI.test_screen_navigation import _build_test_app
 
 LIBRARY_TEST_SIZE = (170, 48)
+
+
+def _open_source_test_app() -> SimpleNamespace:
+    """Return the smallest mutable app seam needed by open-source tests."""
+
+    return SimpleNamespace(app_config={})
 
 
 # --- D1: capped, markup-escaped carries-forward line (pure logic) ----------
@@ -4279,6 +4287,202 @@ async def test_library_shell_collections_deeplink_loads_before_mount():
         canvas = screen.query_one("#library-canvas")
         assert canvas in select_button.ancestors
         assert "Launch Evidence" in str(select_button.label)
+
+
+@pytest.mark.parametrize("source_type", ["media", "notes", "conversations"])
+def test_library_open_source_context_accepts_only_supported_exact_types(
+    source_type: str,
+) -> None:
+    app = _open_source_test_app()
+    screen = LibraryScreen(app)
+
+    screen.apply_navigation_context(
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: source_type,
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact",
+        }
+    )
+
+    assert screen._pending_library_source_open == (source_type, "source-exact")
+
+
+def test_library_open_source_context_rejects_invalid_values_without_replacing_pending() -> (
+    None
+):
+    class StringSubclass(str):
+        pass
+
+    app = _open_source_test_app()
+    invalid_contexts = (
+        {},
+        {LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media"},
+        {LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact"},
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "prompt",
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact",
+        },
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: 1,
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact",
+        },
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: 1,
+        },
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: StringSubclass("media"),
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact",
+        },
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: StringSubclass("source-exact"),
+        },
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: " media ",
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "source-exact",
+        },
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: " ",
+        },
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "<source-exact>",
+        },
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "x" * 501,
+        },
+    )
+
+    for context in invalid_contexts:
+        fresh_screen = LibraryScreen(app)
+        fresh_screen.apply_navigation_context(context)
+        assert fresh_screen._pending_library_source_open is None
+
+        screen = LibraryScreen(app)
+        screen.apply_navigation_context(
+            {
+                LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "notes",
+                LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "pending-exact",
+            }
+        )
+        screen.apply_navigation_context(context)
+
+        assert screen._pending_library_source_open == ("notes", "pending-exact")
+
+
+@pytest.mark.asyncio
+async def test_library_open_source_context_calls_existing_opener_once_when_mounted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _open_source_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        opener = AsyncMock()
+        monkeypatch.setattr(screen, "_open_library_item_by_id", opener)
+
+        screen.apply_navigation_context(
+            {
+                LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+                LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "media-exact",
+            }
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: opener.await_count == 1,
+            message="Mounted open-source context never reached Library's opener.",
+        )
+        await pilot.pause()
+
+        opener.assert_awaited_once_with("media", "media-exact")
+
+
+@pytest.mark.asyncio
+async def test_library_open_source_context_defers_before_mount_and_opens_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _open_source_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+    opener = AsyncMock()
+    monkeypatch.setattr(screen, "_open_library_item_by_id", opener)
+
+    screen.apply_navigation_context(
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "conversations",
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "c-2",
+        }
+    )
+
+    assert opener.await_count == 0
+    assert screen._pending_library_source_open == ("conversations", "c-2")
+
+    host = LibraryHarness(app, screen=screen)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await _wait_for_condition(
+            pilot,
+            lambda: opener.await_count == 1,
+            message="Deferred open-source context never ran on Library mount.",
+        )
+        await pilot.pause()
+
+        opener.assert_awaited_once_with("conversations", "c-2")
+        assert screen._pending_library_source_open is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("veto", [False, True])
+async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
+    monkeypatch: pytest.MonkeyPatch,
+    veto: bool,
+) -> None:
+    app = _open_source_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        opener = AsyncMock()
+        flush = AsyncMock()
+
+        async def flush_note() -> None:
+            await flush()
+            screen._library_note_dirty = veto
+
+        monkeypatch.setattr(screen, "_open_library_item_by_id", opener)
+        monkeypatch.setattr(screen, "_flush_library_note_save", flush_note)
+        screen._library_note_dirty = True
+
+        screen.apply_navigation_context(
+            {
+                LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "notes",
+                LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "note-exact",
+            }
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: flush.await_count == 1,
+            message="Mounted dirty open-source context never flushed the note.",
+        )
+        await pilot.pause()
+
+        flush.assert_awaited_once_with()
+        if veto:
+            opener.assert_not_awaited()
+            assert screen._pending_library_source_open is None
+        else:
+            await _wait_for_condition(
+                pilot,
+                lambda: opener.await_count == 1,
+                message="Open-source context never resumed after a successful flush.",
+            )
+            opener.assert_awaited_once_with("notes", "note-exact")
 
 
 @pytest.mark.asyncio

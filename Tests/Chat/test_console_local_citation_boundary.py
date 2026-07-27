@@ -41,6 +41,7 @@ from tldw_chatbook.Chat.citation_trace_models import (
     RetrievalScoreKind,
     RetrievalScoreScale,
     SealedCitationWrite,
+    StructuralValidationState,
 )
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
@@ -945,15 +946,31 @@ async def test_direct_initial_rag_prefill_seals_exact_prefill_plus_stream_body()
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "expected_markers", "expected_evidence", "expected_states"),
     (
-        "Native marker [S1] remains ordinary.",
-        "Native markers [S1] and [S2] remain ordinary.",
+        (
+            "Native marker [S1] persists.",
+            ("[S1]",),
+            (1,),
+            (StructuralValidationState.VALID,),
+        ),
+        (
+            "Native markers [S1] and [S2] persist.",
+            ("[S1]", "[S2]"),
+            (1, None),
+            (
+                StructuralValidationState.VALID,
+                StructuralValidationState.UNKNOWN_MARKER,
+            ),
+        ),
     ),
 )
 @pytest.mark.asyncio
-async def test_direct_marker_answer_uses_ordinary_stable_persistence_and_fixed_diagnostic(
+async def test_direct_marker_answer_persists_sealed_mapped_occurrences(
     body: str,
+    expected_markers: tuple[str, ...],
+    expected_evidence: tuple[int | None, ...],
+    expected_states: tuple[StructuralValidationState, ...],
 ):
     builder, prompt_id = _citation_builder()
     persistence = _ReadyCitationPersistence()
@@ -986,11 +1003,31 @@ async def test_direct_marker_answer_uses_ordinary_stable_persistence_and_fixed_d
     assert assistant.persisted_message_id == assistant.id
     assert len(assistant_calls) == 1
     assert assistant_calls[0]["message_id"] == assistant.id
-    assert "citation_write" not in assistant_calls[0]
-    assert builder.is_sealed is False
-    assert builder.answer_attempts == ()
-    assert builder.answer_attempt_payloads == ()
-    assert "occurrence_mapping_unavailable" in output
+    write = assistant_calls[0]["citation_write"]
+    assert isinstance(write, SealedCitationWrite)
+    assert builder.is_sealed is True
+    assert write.answer_attempt_payloads[0].answer_body == body
+    attempt = write.trace.answer_attempts[0]
+    assert attempt.attempt_id == write.trace.selected_attempt_id
+    assert tuple(item.raw_marker for item in attempt.occurrences) == expected_markers
+    assert (
+        tuple(item.evidence_ordinal for item in attempt.occurrences)
+        == expected_evidence
+    )
+    assert tuple(item.structural_state for item in attempt.occurrences) == (
+        expected_states
+    )
+    expected_offsets: list[tuple[int, int]] = []
+    search_start = 0
+    for marker in expected_markers:
+        marker_start = body.index(marker, search_start)
+        marker_end = marker_start + len(marker)
+        expected_offsets.append((marker_start, marker_end))
+        search_start = marker_end
+    assert tuple(
+        (item.marker_start, item.marker_end) for item in attempt.occurrences
+    ) == tuple(expected_offsets)
+    assert "occurrence_mapping_unavailable" not in output
     for sentinel in (
         body,
         _PRIVATE_QUERY,
@@ -1028,10 +1065,9 @@ async def test_direct_markers_in_markdown_literals_still_seal(body: str):
 
     citation_calls = _citation_calls(persistence)
     assert len(citation_calls) == 1
-    assert (
-        citation_calls[0]["citation_write"].answer_attempt_payloads[0].answer_body
-        == _assistant(store).content
-    )
+    write = citation_calls[0]["citation_write"]
+    assert write.answer_attempt_payloads[0].answer_body == _assistant(store).content
+    assert write.trace.answer_attempts[0].occurrences == ()
     assert builder.is_sealed is True
     _assert_no_terminal_state(store)
 

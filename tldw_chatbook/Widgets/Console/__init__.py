@@ -3,6 +3,11 @@
 from .console_control_bar import ConsoleControlBar
 from .console_composer_bar import ConsoleComposerBar, ConsoleDraftStash
 from .console_background_effect import ConsoleBackgroundEffect, ConsoleTranscriptSurface
+from .console_citation_sources_modal import (
+    ConsoleCitationSourceRow,
+    ConsoleCitationSourcesModal,
+    build_console_citation_source_rows,
+)
 from .console_edit_message_modal import ConsoleEditMessageModal, ConsoleEditResult
 from .console_rail_handle import ConsoleRailHandle
 from .console_rename_session_modal import ConsoleRenameSessionModal
@@ -27,6 +32,8 @@ __all__ = [
     "ConsoleComposerBar",
     "ConsoleDraftStash",
     "ConsoleBackgroundEffect",
+    "ConsoleCitationSourceRow",
+    "ConsoleCitationSourcesModal",
     "ConsoleControlBar",
     "ConsoleEditMessageModal",
     "ConsoleEditResult",
@@ -45,4 +52,5 @@ __all__ = [
     "ConsoleWorkspaceContextTray",
     "ConsoleWorkspaceRenameModal",
     "ConsoleWorkspaceSwitcherModal",
+    "build_console_citation_source_rows",
 ]

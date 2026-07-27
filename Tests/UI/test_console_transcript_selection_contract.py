@@ -12,6 +12,16 @@ same.
 import re
 from pathlib import Path
 
+import pytest
+from textual.app import App, ComposeResult
+from textual.widgets import Button
+
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
 ROOT = Path(__file__).resolve().parents[2]
 AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
@@ -85,3 +95,105 @@ def test_selected_tool_and_system_messages_share_the_selected_treatment():
             assert "bold" in treatment and "underline" in treatment, (
                 f"{css_path.name}: selected {kind} message must be bold underline"
             )
+
+
+def _transcript_messages() -> list[ConsoleChatMessage]:
+    return [
+        ConsoleChatMessage(
+            id="user-native-id",
+            role=ConsoleMessageRole.USER,
+            content="Question",
+        ),
+        ConsoleChatMessage(
+            id="assistant-native-id",
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Answer [S1].",
+            persisted_message_id="persisted-assistant-id",
+        ),
+        ConsoleChatMessage(
+            id="other-native-id",
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Another answer",
+            persisted_message_id="persisted-other-id",
+        ),
+    ]
+
+
+def test_citation_row_is_focusable_and_immediately_follows_owning_message() -> None:
+    transcript = ConsoleTranscript()
+    transcript.set_messages(_transcript_messages())
+    transcript.set_citation_counts({"assistant-native-id": 2})
+
+    rows = transcript._transcript_rows()
+    message_index = next(
+        index for index, row in enumerate(rows) if row.key == "message:assistant-native-id"
+    )
+    citation_row = rows[message_index + 1]
+    button = transcript._build_row_widget(citation_row, track=False)
+
+    assert citation_row.kind == "citations"
+    assert citation_row.key == "citations:assistant-native-id"
+    assert isinstance(button, Button)
+    assert button.label.plain == "Sources (2)"
+    assert button.id == "console-citation-sources-assistant-native-id"
+    assert button.has_class("console-transcript-citation-sources")
+    assert button.native_message_id == "assistant-native-id"
+    assert button.can_focus
+
+
+@pytest.mark.parametrize("counts", [{}, {"assistant-native-id": 0}])
+def test_zero_or_absent_citation_count_adds_no_row(counts: dict[str, int]) -> None:
+    transcript = ConsoleTranscript()
+    transcript.set_messages(_transcript_messages())
+    transcript.set_citation_counts(counts)
+
+    assert all(row.kind != "citations" for row in transcript._transcript_rows())
+
+
+class _CitationTranscriptHarness(App):
+    def compose(self) -> ComposeResult:
+        transcript = ConsoleTranscript(id="console-native-transcript")
+        transcript.set_messages(_transcript_messages())
+        transcript.set_citation_counts({"assistant-native-id": 1})
+        transcript.selected_message_id = "user-native-id"
+        yield transcript
+
+
+@pytest.mark.asyncio
+async def test_citation_button_click_preserves_existing_message_selection() -> None:
+    app = _CitationTranscriptHarness()
+
+    async with app.run_test() as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        await pilot.click("#console-citation-sources-assistant-native-id")
+
+        assert transcript.selected_message_id == "user-native-id"
+        assert (
+            "console-transcript-citation-sources"
+            in transcript.PROTECTED_CLICK_CLASSES
+        )
+
+
+@pytest.mark.asyncio
+async def test_count_only_change_reconciles_footer_without_rebuilding_messages() -> None:
+    app = _CitationTranscriptHarness()
+
+    async with app.run_test() as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        before = transcript.row_build_counts()
+
+        transcript.set_citation_counts({"assistant-native-id": 3})
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        after = transcript.row_build_counts()
+        button = transcript.query_one(
+            "#console-citation-sources-assistant-native-id", Button
+        )
+
+    assert button.label.plain == "Sources (3)"
+    assert after["citations:assistant-native-id"] > before[
+        "citations:assistant-native-id"
+    ]
+    for message in _transcript_messages():
+        assert after[f"message:{message.id}"] == before[f"message:{message.id}"]

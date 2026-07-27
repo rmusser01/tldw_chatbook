@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.citation_trace_models import (
     RetrievalScoreKind,
     RetrievalScoreScale,
     SealedCitationWrite,
+    StructuralValidationState,
 )
 from tldw_chatbook.Chat.citation_trace_repository import (
     ActiveCitationTraceState,
@@ -1190,6 +1191,106 @@ async def test_real_atomic_direct_controller_persists_exact_body_and_trace_on_re
         assert active.summary is not None
         assert active.summary.trace.trace_id == trace_id
         assert restarted_repository.verify_active_trace_result(active) is True
+    finally:
+        reopened.close_connection()
+
+
+@pytest.mark.integration
+def test_terminal_selected_answer_citations_survive_restart(
+    real_citation_stack_factory,
+) -> None:
+    stack = real_citation_stack_factory("selected-citations-restart")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    terminal_finalizer = ConsoleChatController._build_terminal_citation_finalizer(
+        context=f"[S1] MEDIA — {_TITLE_SENTINEL}\n{_SNAPSHOT_SENTINEL}",
+        builder=builder,
+        prompt_evidence_set_id=prompt_id,
+    )
+    assert terminal_finalizer is not None
+    finalized_bodies: list[str] = []
+
+    def finalize_selected_body(body: str) -> SealedCitationWrite | None:
+        finalized_bodies.append(body)
+        return terminal_finalizer(body)
+
+    session = stack.store.ensure_session()
+    message = stack.store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        terminal_citation_finalizer=finalize_selected_body,
+        defer_terminal_persistence=True,
+    )
+    streamed_draft = "Streamed draft [S404]."
+    selected_body = "Selected [S1], repeated [S1], and unknown [S99]."
+    stack.store.append_stream_chunk(message.id, streamed_draft)
+    stack.store.replace_deferred_terminal_body(message.id, selected_body)
+
+    completed = stack.store.mark_message_complete(message.id)
+    persisted = stack.db.get_message_by_id(message.id)
+
+    assert finalized_bodies == [selected_body]
+    assert completed.content == selected_body
+    assert completed.content != streamed_draft
+    assert persisted is not None
+    assert persisted["content"] == selected_body
+    persisted_version = persisted["version"]
+    first_start = selected_body.index("[S1]")
+    repeated_start = selected_body.index("[S1]", first_start + 1)
+    unknown_start = selected_body.index("[S99]")
+
+    stack.close()
+    reopened = CharactersRAGDB(stack.db_path, client_id=stack.client_id)
+    try:
+        reopened_identity = load_local_citation_identity_context(reopened)
+        assert reopened_identity is not None
+        restarted_repository = CitationTraceRepository(
+            reopened,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+            identity_context=reopened_identity,
+            fingerprint_codec=stack.codec,
+        )
+
+        active = restarted_repository.get_active_trace_for_message(
+            message.id,
+            persisted_version,
+            selected_body,
+            stack.codec,
+        )
+
+        assert active.state is ActiveCitationTraceState.ACTIVE
+        assert active.summary is not None
+        assert restarted_repository.verify_active_trace_result(active) is True
+        trace = active.summary.trace
+        selected_attempt = next(
+            attempt
+            for attempt in trace.answer_attempts
+            if attempt.attempt_id == trace.selected_attempt_id
+        )
+        assert [item.raw_marker for item in selected_attempt.occurrences] == [
+            "[S1]",
+            "[S1]",
+            "[S99]",
+        ]
+        assert [
+            item.evidence_ordinal for item in selected_attempt.occurrences
+        ] == [1, 1, None]
+        assert [
+            item.structural_state for item in selected_attempt.occurrences
+        ] == [
+            StructuralValidationState.VALID,
+            StructuralValidationState.VALID,
+            StructuralValidationState.UNKNOWN_MARKER,
+        ]
+        assert [
+            (item.marker_start, item.marker_end)
+            for item in selected_attempt.occurrences
+        ] == [
+            (first_start, first_start + len("[S1]")),
+            (repeated_start, repeated_start + len("[S1]")),
+            (unknown_start, unknown_start + len("[S99]")),
+        ]
     finally:
         reopened.close_connection()
 

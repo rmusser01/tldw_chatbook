@@ -8,6 +8,7 @@ import hmac
 import json
 import sqlite3
 import traceback
+from unittest.mock import Mock
 import weakref
 
 import pytest
@@ -2238,6 +2239,107 @@ def test_active_lookup_verifies_body_and_preserves_historical_summary_on_mismatc
         )
         is not None
     )
+
+
+def test_active_trace_for_current_message_uses_persisted_revision(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    with db.transaction() as cursor:
+        assert (
+            db.update_message(
+                "message-1",
+                {"content": "Answer [S1]."},
+                expected_version=1,
+            )
+            is True
+        )
+        assert (
+            repository.transition_owner_for_message_update(
+                cursor,
+                message_id="message-1",
+                previous_revision=1,
+                new_revision=2,
+                new_body="Answer [S1].",
+            )
+            is ActiveCitationTraceState.ACTIVE
+        )
+
+    obsolete_revision = repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        TEST_FINGERPRINT_CODEC,
+    )
+    active = repository.get_active_trace_for_current_message(
+        "message-1",
+        "Answer [S1].",
+    )
+
+    assert obsolete_revision.state is ActiveCitationTraceState.UNVERIFIABLE
+    assert active.state is ActiveCitationTraceState.ACTIVE
+    assert active.summary is not None
+    assert active.summary.trace.trace_id == "trace-1"
+    assert repository.verify_active_trace_result(active) is True
+    assert not hasattr(repository, "fingerprint_codec")
+
+
+def test_active_trace_for_current_message_reads_under_db_transaction(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    transaction = Mock(wraps=db.transaction)
+    monkeypatch.setattr(db, "transaction", transaction)
+
+    active = repository.get_active_trace_for_current_message(
+        "message-1",
+        "Answer [S1].",
+    )
+
+    assert active.state is ActiveCitationTraceState.ACTIVE
+    transaction.assert_called()
+
+
+def test_active_trace_for_current_message_rejects_missing_or_mismatched_body(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+
+    missing = repository.get_active_trace_for_current_message(
+        "missing-message",
+        "Answer [S1].",
+    )
+    mismatched = repository.get_active_trace_for_current_message(
+        "message-1",
+        "Different caller body.",
+    )
+
+    assert missing.state is ActiveCitationTraceState.NOT_FOUND
+    assert missing.summary is None
+    assert mismatched.state is ActiveCitationTraceState.UNVERIFIABLE
+    assert mismatched.summary is None
+    with db.transaction() as connection:
+        owner_state = connection.execute(
+            """
+            SELECT state
+            FROM rag_message_trace_owners
+            WHERE message_id = 'message-1'
+            """
+        ).fetchone()[0]
+    assert owner_state == "active"
+
+    db.soft_delete_message("message-1", expected_version=1)
+    deleted = repository.get_active_trace_for_current_message(
+        "message-1",
+        "Answer [S1].",
+    )
+
+    assert deleted.state is ActiveCitationTraceState.NOT_FOUND
+    assert deleted.summary is None
 
 
 def test_active_lookup_with_missing_or_wrong_codec_is_unverifiable_without_mutation(
