@@ -575,10 +575,12 @@ class LibraryFileNotesWorkspace(Vertical):
             self._session_binding = binding
             return root, replica, service, warning
 
-    def _commit_root_candidate(
+    async def _commit_root_candidate(
         self,
         root: Path,
         service: FileNotesService,
+        result: ScanResult,
+        deleted: tuple[str, ...],
         generation: int,
         expected_binding: SessionBinding | None,
         *,
@@ -592,23 +594,45 @@ class LibraryFileNotesWorkspace(Vertical):
                 or service.root_key != str(root)
             ):
                 return False
+            reservation = self._session_owner.try_reserve_root(
+                root,
+                expected_binding=expected_binding,
+            )
+        if reservation is None:
+            return False
 
-            persistence_warning = ""
-
-            def prepare() -> bool:
-                nonlocal persistence_warning
-                if not persist:
-                    return True
-                persistence = apply_settings_mutation_to_cli_config(
-                    {"file_notes": {"root": str(root)}}
+        cancellation: asyncio.CancelledError | None = None
+        persistence_warning = ""
+        try:
+            if persist:
+                persistence_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        apply_settings_mutation_to_cli_config,
+                        {"file_notes": {"root": str(root)}},
+                    )
                 )
+                while not persistence_task.done():
+                    try:
+                        await asyncio.shield(persistence_task)
+                    except asyncio.CancelledError as error:
+                        if cancellation is None:
+                            cancellation = error
+                    except BaseException:
+                        break
+                try:
+                    persistence = persistence_task.result()
+                except BaseException as error:
+                    if cancellation is not None:
+                        raise cancellation from error
+                    raise
                 if not persistence.file_replaced:
+                    if cancellation is not None:
+                        raise cancellation
                     return False
                 if persistence.failure_phase == "cache_reload":
                     persistence_warning = (
                         "Root saved, but configuration cache reload failed."
                     )
-                return True
 
             def publish(binding: SessionBinding) -> None:
                 service._bind_session_owner(self._session_owner, binding)
@@ -619,14 +643,19 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._initialized = True
                 if persistence_warning:
                     self._runtime_warning = persistence_warning
+                self._apply_scan(result, deleted)
 
-            binding = self._session_owner.try_commit_root(
-                root,
-                expected_binding=expected_binding,
-                prepare=prepare,
-                publish=publish,
-            )
-            return binding is not None
+            # Atomic file replacement is the point of no return. There is
+            # deliberately no await between observing it and synchronously
+            # aligning the owner, service, workspace, and scan projection under
+            # this reservation.
+            with self._runtime_lock:
+                reservation.commit(publish)
+            if cancellation is not None:
+                raise cancellation
+            return True
+        finally:
+            reservation.release()
 
     async def _load_deleted_paths(
         self,
@@ -653,12 +682,26 @@ class LibraryFileNotesWorkspace(Vertical):
         result: ScanResult,
         deleted: tuple[str, ...],
     ) -> None:
+        self._adopt_scan_state(result, deleted)
+        self._render_scan_state()
+
+    def _adopt_scan_state(
+        self,
+        result: ScanResult,
+        deleted: tuple[str, ...],
+    ) -> None:
+        """Install a scan projection without requiring mounted widgets."""
         self._entries = {entry.relative_path: entry for entry in result.entries}
         self._deleted_paths = deleted
         self._root_offline = result.offline
         if result.replica_warning:
             self._runtime_warning = result.replica_warning
-        self._update_root_surface(offline=result.offline)
+
+    def _render_scan_state(self) -> None:
+        """Render the installed scan projection when the widget tree is live."""
+        if not self._active or not self.is_mounted or not self.children:
+            return
+        self._update_root_surface(offline=self._root_offline)
         self._rebuild_tree()
         self._refresh_active_search()
         self._refresh_session_changes()
@@ -943,15 +986,16 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             if not self._active or generation != self._root_generation:
                 return False
-            if not self._commit_root_candidate(
+            if not await self._commit_root_candidate(
                 canonical,
                 service,
+                result,
+                deleted,
                 generation,
                 expected_binding,
                 persist=persist,
             ):
                 return False
-            self._apply_scan(result, deleted)
             return True
         finally:
             if generation == self._root_generation:

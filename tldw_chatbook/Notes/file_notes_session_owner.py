@@ -96,6 +96,30 @@ class GitStatusLease:
         self._owner._release_status(self._token)
 
 
+@dataclass(frozen=True, slots=True)
+class RootCommitReservation:
+    """Fail-fast ownership of one validated root commit."""
+
+    _owner: FileNotesSessionOwner = field(repr=False, compare=False)
+    _token: object = field(repr=False, compare=False)
+    _root_key: str = field(repr=False, compare=False)
+
+    def commit(
+        self,
+        publish: Callable[[SessionBinding], None],
+    ) -> SessionBinding:
+        """Select the reserved root and synchronously publish its binding."""
+        return self._owner._commit_root_reservation(
+            self._token,
+            self._root_key,
+            publish,
+        )
+
+    def release(self) -> None:
+        """Release this reservation once."""
+        self._owner._release_root_reservation(self._token)
+
+
 class FileNotesSessionOwner:
     """Own root-scoped File Notes session state for one application process."""
 
@@ -108,6 +132,8 @@ class FileNotesSessionOwner:
         "_mutation_token",
         "_next_sequence",
         "_root_commit_lock",
+        "_root_commit_state",
+        "_root_commit_token",
         "_shutdown",
         "_shutdown_condition",
         "_shutdown_error",
@@ -119,6 +145,8 @@ class FileNotesSessionOwner:
     def __init__(self) -> None:
         self._lock = RLock()
         self._root_commit_lock = Lock()
+        self._root_commit_token: object | None = None
+        self._root_commit_state: Literal["idle", "reserved", "committed"] = "idle"
         self._binding: SessionBinding | None = None
         self._generation = 0
         self._changes: list[SequencedSessionChange] = []
@@ -142,14 +170,19 @@ class FileNotesSessionOwner:
             The current immutable root-generation binding.
 
         Raises:
-            RuntimeError: If the owner has already shut down.
+            RuntimeError: If the owner has shut down or another root commit is
+                in progress.
         """
         root_key = str(Path(root).expanduser().resolve(strict=False))
-        with self._root_commit_lock:
+        if not self._root_commit_lock.acquire(blocking=False):
+            raise RuntimeError("File Notes root commit is in progress")
+        try:
             with self._lock:
                 if self._shutdown:
                     raise RuntimeError("File Notes session owner is shut down")
                 return self._select_root_locked(root_key)
+        finally:
+            self._root_commit_lock.release()
 
     def current_binding(self) -> SessionBinding | None:
         """Return the currently selected immutable root binding, if any."""
@@ -169,7 +202,9 @@ class FileNotesSessionOwner:
         different root are rejected.
         """
         root_key = str(Path(root).expanduser().resolve(strict=False))
-        with self._root_commit_lock:
+        if not self._root_commit_lock.acquire(blocking=False):
+            return None
+        try:
             with self._lock:
                 if self._shutdown:
                     return None
@@ -179,35 +214,33 @@ class FileNotesSessionOwner:
                 ):
                     return None
                 return self._select_root_locked(root_key)
+        finally:
+            self._root_commit_lock.release()
 
-    def try_commit_root(
+    def try_reserve_root(
         self,
         root: str | Path,
         *,
         expected_binding: SessionBinding | None,
-        prepare: Callable[[], bool],
-        publish: Callable[[SessionBinding], None],
-    ) -> SessionBinding | None:
-        """Reserve, prepare, select, and synchronously publish one root change.
-
-        The separate root-commit lock prevents every other root-changing entry
-        point from interleaving with persistence or publication. The main
-        record/lease lock is held only for validation and root selection.
-        """
+    ) -> RootCommitReservation | None:
+        """Try to reserve one validated root commit without blocking."""
         root_key = str(Path(root).expanduser().resolve(strict=False))
-        with self._root_commit_lock:
+        if not self._root_commit_lock.acquire(blocking=False):
+            return None
+        token = object()
+        try:
             with self._lock:
                 if self._shutdown or not self._root_selection_matches_locked(
                     root_key,
                     expected_binding,
                 ):
                     return None
-            if not prepare():
-                return None
-            with self._lock:
-                binding = self._select_root_locked(root_key)
-            publish(binding)
-            return binding
+                self._root_commit_token = token
+                self._root_commit_state = "reserved"
+                return RootCommitReservation(self, token, root_key)
+        finally:
+            if self._root_commit_token is not token:
+                self._root_commit_lock.release()
 
     def record_change(
         self,
@@ -337,6 +370,33 @@ class FileNotesSessionOwner:
         with self._lock:
             if self._status_token is token:
                 self._status_token = None
+
+    def _commit_root_reservation(
+        self,
+        token: object,
+        root_key: str,
+        publish: Callable[[SessionBinding], None],
+    ) -> SessionBinding:
+        with self._lock:
+            if (
+                self._root_commit_token is not token
+                or self._root_commit_state != "reserved"
+            ):
+                raise RuntimeError("File Notes root reservation is not active")
+            binding = self._select_root_locked(root_key)
+            self._root_commit_state = "committed"
+        publish(binding)
+        return binding
+
+    def _release_root_reservation(self, token: object) -> None:
+        release_lock = False
+        with self._lock:
+            if self._root_commit_token is token:
+                self._root_commit_token = None
+                self._root_commit_state = "idle"
+                release_lock = True
+        if release_lock:
+            self._root_commit_lock.release()
 
     def _select_root_locked(self, root_key: str) -> SessionBinding:
         if self._binding is not None and self._binding.root_key == root_key:

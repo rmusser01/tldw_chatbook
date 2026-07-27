@@ -643,7 +643,7 @@ async def test_cache_reload_failure_adopts_persisted_root_with_warning(
 
 
 @pytest.mark.asyncio
-async def test_unmount_during_successful_root_persistence_adopts_written_root(
+async def test_cancelled_root_persistence_settles_and_adopts_written_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -651,40 +651,109 @@ async def test_unmount_during_successful_root_persistence_adopts_written_root(
         _root_transition_workspace(tmp_path)
     )
     (old_root / "open.md").write_text("old root", encoding="utf-8")
+    (old_root / "deleted.md").write_text("old tombstone", encoding="utf-8")
+    (new_root / "new.md").write_text("new root", encoding="utf-8")
+    persistence_started = threading.Event()
+    release_persistence = threading.Event()
+    persistence_finished = threading.Event()
+    heartbeat_ran = threading.Event()
+    heartbeat_checked = threading.Event()
+    heartbeat_during_persistence: list[bool] = []
+    persisted_roots: list[str] = []
+    event_loop = asyncio.get_running_loop()
 
-    def interrupt_and_persist() -> ConfigMutationResult:
-        workspace.on_unmount()
+    def persist(
+        section_values: dict[str, dict[str, str]],
+    ) -> ConfigMutationResult:
+        persistence_started.set()
+        assert release_persistence.wait(timeout=5)
+        persisted_roots.append(section_values["file_notes"]["root"])
+        persistence_finished.set()
         return ConfigMutationResult(True, True, None)
+
+    def check_heartbeat() -> None:
+        if not persistence_started.wait(timeout=5):
+            heartbeat_during_persistence.append(False)
+            heartbeat_checked.set()
+            release_persistence.set()
+            return
+        event_loop.call_soon_threadsafe(heartbeat_ran.set)
+        heartbeat_during_persistence.append(heartbeat_ran.wait(timeout=1))
+        heartbeat_checked.set()
+        if not heartbeat_during_persistence[-1]:
+            release_persistence.set()
 
     monkeypatch.setattr(
         workspace_module,
         "apply_settings_mutation_to_cli_config",
-        lambda *_args, **_kwargs: interrupt_and_persist(),
+        persist,
         raising=False,
     )
-    async with _WorkspaceHarness(workspace).run_test() as pilot:
-        await _wait_until(
-            pilot,
-            lambda: workspace.initialized,
-            "old workspace did not initialize",
-        )
-        assert await workspace.open_path("open.md")
-        assert workspace.current_document is not None
+    heartbeat_thread = threading.Thread(target=check_heartbeat, daemon=True)
+    transition: asyncio.Task[bool] | None = None
+    try:
+        async with _WorkspaceHarness(workspace).run_test() as pilot:
+            await _wait_until(
+                pilot,
+                lambda: workspace.initialized,
+                "old workspace did not initialize",
+            )
+            old_service = workspace._service
+            assert old_service is not None
+            assert old_service.delete_file("deleted.md").status == "ok"
+            assert await workspace.refresh_files()
+            assert set(workspace.entries) == {"open.md"}
+            assert workspace._deleted_paths == ("deleted.md",)
+            assert await workspace.open_path("open.md")
+            assert workspace.current_document is not None
 
-        assert await workspace.set_root(new_root)
+            heartbeat_thread.start()
+            transition = asyncio.create_task(workspace.set_root(new_root))
+            await _wait_until(
+                pilot,
+                heartbeat_checked.is_set,
+                "event-loop heartbeat was not checked",
+            )
+            assert heartbeat_during_persistence == [True]
 
-        binding = workspace._session_binding
-        assert binding is not None
-        assert workspace.root == new_root.resolve()
-        assert workspace._service is not None
-        assert workspace._service.root == new_root.resolve()
-        assert owner.current_binding() == binding
-        assert workspace.current_document is None
-        assert workspace.current_path == ""
+            transition.cancel()
+            await pilot.pause()
+            assert not transition.done()
+            assert not persistence_finished.is_set()
 
-    await workspace.shutdown()
-    owner.shutdown()
-    replica.close()
+            release_persistence.set()
+            with pytest.raises(asyncio.CancelledError):
+                await transition
+
+            binding = workspace._session_binding
+            assert persistence_finished.is_set()
+            assert persisted_roots == [str(new_root.resolve())]
+            assert binding is not None
+            assert workspace.root == new_root.resolve()
+            assert workspace._service is not None
+            assert workspace._service.root == new_root.resolve()
+            assert owner.current_binding() == binding
+            assert workspace.current_document is None
+            assert workspace.current_path == ""
+            assert set(workspace.entries) == {"new.md"}
+            assert workspace._deleted_paths == ()
+            assert workspace._root_offline is False
+            tree_labels = _tree_labels(
+                workspace.query_one("#file-notes-tree", Tree)
+            )
+            assert "new.md" in tree_labels
+            assert "open.md" not in tree_labels
+            assert "deleted.md" not in tree_labels
+    finally:
+        release_persistence.set()
+        if transition is not None and not transition.done():
+            transition.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await transition
+        heartbeat_thread.join(timeout=1)
+        await workspace.shutdown()
+        owner.shutdown()
+        replica.close()
 
 
 @pytest.mark.asyncio

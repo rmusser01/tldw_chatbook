@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Event
+from threading import Condition, Event
+from time import monotonic
 
 import pytest
 
@@ -10,6 +11,20 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
     SessionChange,
 )
+
+
+def _wait_for_condition_waiter(
+    condition: Condition,
+    *,
+    timeout: float = 1,
+) -> None:
+    deadline = monotonic() + timeout
+    while monotonic() < deadline:
+        with condition:
+            if condition._waiters:
+                return
+        Event().wait(0.005)
+    raise AssertionError("condition waiter was not registered")
 
 
 def test_same_root_keeps_session_and_different_root_resets_it(
@@ -118,51 +133,67 @@ def test_checked_root_selection_rejects_same_root_aba_binding(
     assert owner.current_binding() == current_a
 
 
-def test_root_commit_reserves_selection_through_synchronous_publication(
+def test_root_commit_reservation_is_fail_fast_through_synchronous_publication(
     tmp_path: Path,
 ) -> None:
     owner = FileNotesSessionOwner()
     original = owner.select_root(tmp_path / "old")
-    publication_started = Event()
-    release_publication = Event()
-    competing_started = Event()
-    competing_finished = Event()
+    candidate = tmp_path / "candidate"
+    competing = tmp_path / "competing"
     published_bindings = []
 
     def publish(binding) -> None:
         published_bindings.append(binding)
         assert owner.current_binding() == binding
-        publication_started.set()
-        assert release_publication.wait(timeout=5)
-
-    def select_competing_root():
-        competing_started.set()
-        try:
-            return owner.select_root(tmp_path / "competing")
-        finally:
-            competing_finished.set()
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        committed = pool.submit(
-            owner.try_commit_root,
-            tmp_path / "candidate",
-            expected_binding=original,
-            prepare=lambda: True,
-            publish=publish,
+        assert (
+            owner.try_select_root(
+                competing,
+                expected_binding=binding,
+            )
+            is None
         )
-        assert publication_started.wait(timeout=1)
-        competing = pool.submit(select_competing_root)
-        assert competing_started.wait(timeout=1)
-        selection_was_reserved = not competing_finished.wait(timeout=0.05)
-        release_publication.set()
-        committed_binding = committed.result(timeout=1)
-        competing_binding = competing.result(timeout=1)
+        with pytest.raises(RuntimeError, match="root commit is in progress"):
+            owner.select_root(competing)
 
-    assert selection_was_reserved
+    reservation = owner.try_reserve_root(
+        candidate,
+        expected_binding=original,
+    )
+    assert reservation is not None
+    try:
+        assert (
+            owner.try_reserve_root(
+                competing,
+                expected_binding=original,
+            )
+            is None
+        )
+        assert (
+            owner.try_select_root(
+                competing,
+                expected_binding=original,
+            )
+            is None
+        )
+        with pytest.raises(RuntimeError, match="root commit is in progress"):
+            owner.select_root(competing)
+
+        committed_binding = reservation.commit(publish)
+
+        assert (
+            owner.try_select_root(
+                competing,
+                expected_binding=committed_binding,
+            )
+            is None
+        )
+    finally:
+        reservation.release()
+
     assert published_bindings == [committed_binding]
-    assert committed_binding is not None
     assert committed_binding.root_key == str((tmp_path / "candidate").resolve())
-    assert competing_binding.root_key == str((tmp_path / "competing").resolve())
+    competing_binding = owner.select_root(competing)
+    assert competing_binding.root_key == str(competing.resolve())
 
 
 def test_recorder_assigns_one_monotonic_sequence_under_threads(
@@ -332,12 +363,12 @@ def test_concurrent_shutdown_waits_for_one_cleanup() -> None:
         assert cleanup_started.wait(timeout=1)
         second = pool.submit(call_second_shutdown)
         assert second_started.wait(timeout=1)
-        waited_for_cleanup = not second_finished.wait(timeout=0.05)
+        _wait_for_condition_waiter(owner._shutdown_condition)
+        assert not second_finished.is_set()
         release_cleanup.set()
         first.result(timeout=1)
         second.result(timeout=1)
 
-    assert waited_for_cleanup
     assert second_finished.is_set()
     assert service.shutdown_calls == 1
 
