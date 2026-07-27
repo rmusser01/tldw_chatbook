@@ -1,4 +1,3 @@
-import os
 from contextlib import contextmanager
 import tomllib
 
@@ -11,18 +10,19 @@ def _temporary_config(tmp_path, monkeypatch, toml_text):
     """Load settings from an isolated scratch config and restore both caches."""
     config_path = tmp_path / "provider-model-defaults.toml"
     config_path.write_text(toml_text, encoding="utf-8")
-    original_env = os.environ.get("TLDW_CONFIG_PATH")
+    original_config_cache = config_module._CONFIG_CACHE
+    original_config_cache_source = config_module._CONFIG_CACHE_SOURCE
+    original_settings_cache = config_module._SETTINGS_CACHE
+    original_settings_cache_source = config_module._SETTINGS_CACHE_SOURCE
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     try:
         yield config_module.load_settings(force_reload=True)
     finally:
-        if original_env is not None:
-            monkeypatch.setenv("TLDW_CONFIG_PATH", original_env)
-        else:
-            monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
-        config_module.load_cli_config_and_ensure_existence(force_reload=True)
-        config_module.load_settings(force_reload=True)
+        config_module._CONFIG_CACHE = original_config_cache
+        config_module._CONFIG_CACHE_SOURCE = original_config_cache_source
+        config_module._SETTINGS_CACHE = original_settings_cache
+        config_module._SETTINGS_CACHE_SOURCE = original_settings_cache_source
 
 
 def test_zai_provider_and_settings_defaults_exist():
