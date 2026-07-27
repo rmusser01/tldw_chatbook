@@ -131,7 +131,12 @@ def _repair_token_matches(
                 character in _GROUPED_CANDIDATE_CHARACTERS for character in candidate
             ):
                 for index in range(candidate_start + 2, cursor):
-                    if answer_body[index] == "S":
+                    if (
+                        answer_body[index] == "S"
+                        and answer_body[index - 1] in ", \t"
+                        and index + 1 < cursor
+                        and answer_body[index + 1] in "0123456789"
+                    ):
                         if scan_characters is None:
                             scan_characters = list(answer_body)
                         scan_characters[index] = " "

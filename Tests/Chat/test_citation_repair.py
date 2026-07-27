@@ -69,6 +69,16 @@ def test_contract_rejects_invalid_ordinal_contracts(
         _contract(ordinals=ordinals)  # type: ignore[arg-type]
 
 
+def test_contract_rejects_non_tuple_ordinal_container_directly() -> None:
+    with pytest.raises(TypeError, match="allowed_ordinals"):
+        CitationRepairContract(
+            schema_version=1,
+            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+            allowed_ordinals=[1],  # type: ignore[arg-type]
+            evidence_context="evidence",
+        )
+
+
 @pytest.mark.parametrize("context", (None, b"evidence", "", 7))
 def test_contract_rejects_non_string_or_empty_context(context: object) -> None:
     with pytest.raises((TypeError, ValueError)):
@@ -215,6 +225,19 @@ def test_markdown_even_backslash_marker_is_eligible() -> None:
 
 def test_markdown_candidate_normalization_cannot_close_an_invalid_fence() -> None:
     answer = "```\ntext\n``` S\n[S1]"
+
+    assert (
+        decide_citation_repair(answer, _contract()),
+        claim_preservation_projection(answer),
+    ) == (
+        CitationRepairDecision.REPAIR_REQUIRED_MISSING,
+        answer,
+    )
+
+
+@pytest.mark.parametrize("literal", ("[SS]", "[S1S2]"))
+def test_non_grouped_s_literals_are_not_marker_candidates(literal: str) -> None:
+    answer = f"Protocol {literal}."
 
     assert (
         decide_citation_repair(answer, _contract()),
@@ -372,6 +395,18 @@ def test_repaired_selection_result_contains_only_choice_and_safe_reason_code() -
     assert selection.reason_code == "repaired_selected"
     assert "sensitive" not in selection.reason_code
     assert not hasattr(selection, "__dict__")
+
+
+def test_repaired_selection_preserves_non_marker_s_literal_claim_text() -> None:
+    initial = "Protocol [SS]."
+
+    assert select_repaired_body(initial, "Protocol [S1].", _contract()) == (
+        CitationRepairSelection(
+            selected_body=initial,
+            repaired=False,
+            reason_code="claim_text_changed",
+        )
+    )
 
 
 def test_repair_prompt_has_fixed_two_message_shape_and_untrusted_data() -> None:
@@ -608,6 +643,18 @@ def test_repair_window_reservation_is_max_of_positive_setting_and_answer_estimat
         provider="provider",
         max_tokens=max_tokens,
         count_fn=over_count_fn,
+        window_fn=lambda _model, _provider: 2_000,
+    )
+
+
+def test_repair_window_does_not_clamp_oversized_positive_reservation() -> None:
+    assert not repair_request_fits_model_window(
+        [{"role": "user", "content": "request"}],
+        initial_answer="initial",
+        model="model",
+        provider="provider",
+        max_tokens=2_001,
+        count_fn=_fixed_token_counter(prompt_tokens=1, answer_tokens=1),
         window_fn=lambda _model, _provider: 2_000,
     )
 
