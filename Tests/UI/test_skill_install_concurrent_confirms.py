@@ -344,8 +344,12 @@ def test_bare_shutdown_flag_alone_denies_a_real_session_round_within_one_poll_in
     runs (the "shutdown-snapshot race": TASK-1052) -- a round armed for a
     session before that session is registered there was previously
     invisible to that fanout and fell back to its own confirm/approval
-    timeout (up to ~120s in production) to fail closed. Since real process
-    teardown is global by definition, `_is_session_cancelled`'s real-
+    timeout (up to ~120s in production) to fail closed. `_shutdown_requested`
+    is set only in this controller instance's `shutdown()` (which also fires
+    on ordinary navigation away from the Console screen) and never reset;
+    torn-down instances are never revisited (a fresh controller is built per
+    Console mount), so denying every round on it is safe by instance
+    lifecycle. `_is_session_cancelled`'s real-
     `session_id` branch now ALSO ORs in `_shutdown_requested` directly (in
     addition to that session's own `_active_cancel_events` entry), so every
     armed round observes teardown within one poll interval regardless of
