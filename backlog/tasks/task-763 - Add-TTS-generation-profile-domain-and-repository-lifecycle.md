@@ -1,11 +1,11 @@
 ---
 id: TASK-763
 title: Add TTS generation profile domain and repository lifecycle
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-26 21:55'
-updated_date: '2026-07-27 04:18'
+updated_date: '2026-07-27 14:50'
 labels:
   - tts
   - profiles
@@ -57,55 +57,51 @@ ADR path: backlog/decisions/028-character-tts-generation-profile-ownership.md
 Reason: Slice 2A establishes a new versioned store data ownership authority-scoped assignment and backup/restore lifecycle boundary.
 <!-- SECTION:PLAN:END -->
 
-## Definition of Done
-<!-- DOD:BEGIN -->
-- [ ] #1 All acceptance criteria are checked and concise implementation notes are recorded.
-- [ ] #2 Focused unit integration concurrency and lifecycle tests pass.
-- [ ] #3 Ruff formatting compileall focused typing and git diff checks pass.
-- [ ] #4 ADR-028 and relevant TTS backup documentation are current.
-- [ ] #5 Self-review confirms the slice adds no STTS library character assignment runtime routing portability or managed audio.cpp behavior.
-<!-- DOD:END -->
-
 ## Implementation Notes
 
-Implemented the approved Slice 2A persistence foundation: immutable and
-bounded profile-domain values, a dedicated versioned SQLite schema,
-authority-scoped assignments, one serialized generation-aware repository
-lifecycle, cooperative process locking, optimistic CRUD, and repository-owned
-online backup plus bounded atomic restore. The application now owns one lazy
-repository, the profile path is configurable, and Backup All obtains a
-consistent profile snapshot without copying an open database.
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the approved Slice 2A persistence foundation: immutable bounded
+profile-domain values, a dedicated versioned SQLite schema, authority-scoped
+assignments, one serialized generation-aware repository lifecycle,
+interprocess locking, optimistic CRUD, and repository-owned online backup plus
+bounded atomic restore. The application owns one lazy repository, its path is
+configurable, and Backup All obtains a consistent profile snapshot without
+copying an open database.
 
 ADR-028 records profile ownership, privacy, assignment authority, lifecycle,
-and rollback decisions. The developer and Speech Services guides now document
-the local store, normalized names and revisions, process-lock behavior,
-per-database backup consistency, restore recovery/fail-closed behavior, and the
-explicit deferred scope.
+and rollback decisions. The developer and Speech Services guides document the
+store, normalized names and revisions, locking, backup consistency, bounded
+restore recovery, fail-closed behavior, and deferred scope.
 
-Verification evidence before the required final rebase:
+Final delivery evidence:
 
-- The seven-file focused suite passed: 615 passed, 3 warnings.
-- The broad TTS suite passed: 1527 passed, 14 skipped, 13 warnings, adding 598
-  passing tests over the recorded 929-pass/14-skip TTS baseline.
-- Task-scoped Ruff, Ruff format, compileall, focused mypy, and
-  `git diff --check` passed. The five diagnostics from the exact broad Ruff
-  command are pre-existing `app.py` baseline findings also present on
-  `origin/dev`; the task introduces no Ruff regression.
-- Direct pytest collection aborts in the installed optional MLX dependency on
-  this host. The recorded suites used the normal fixtures with the optional
-  MLX modules made unavailable so the application's supported optional-
-  dependency path could be exercised.
-- Privacy and scope review found authority identifiers only in assignment
-  contracts/persistence and no task-added credential, provider-origin, raw
-  profile path, message-content, or managed-process behavior.
+- The branch was rebased conflict-free onto `origin/dev`
+  `20ff9928622de58f2adc96212258876e5a5d06a6`; all 57 implementation commits
+  remained patch-identical across the rebase.
+- The final eight-file profile unit/integration/concurrency/lifecycle gate
+  passed: 656 passed, 3 warnings.
+- The broad TTS gate passed on the same patch-identical implementation:
+  1552 passed, 14 expected optional skips, 13 dependency/deprecation warnings.
+- Task-scoped Ruff and Ruff format, compileall, focused mypy across the five
+  profile modules, and exact-range `git diff --check` passed.
+- Independent whole-range and post-rebase integration reviews found no
+  Critical, Important, or Minor issues. The final upstream overlap in
+  `path_validation.py` is non-conflicting: upstream Windows-path handling and
+  this slice's value-free privacy diagnostic are both retained.
+- Privacy and scope review found no task-added credential, provider endpoint,
+  message-content, managed-process, STTS-library, character-editor, runtime
+  routing, or portability behavior.
 
-Slice 2B profile-management services, Slice 3 character assignment and
-authority acquisition, Slice 4 runtime/roleplay routing, portability/sync,
-legacy-provider execution, provider connection details, and managed audio.cpp
-behavior remain deferred.
+Slice 2B profile services/STTS library, Slice 3A character identity and
+assignment, Slice 3B roleplay resolution/runtime routing, optional Slice 4
+portability, and managed audio.cpp launch/supervision remain separate work.
+<!-- SECTION:NOTES:END -->
 
-Status remains In Progress. A superseded pre-rebase repository-wide run was
-stopped at 8% (exit 143, with no failures reported); its `origin/dev` comparison
-was intentionally not started. Post-rebase repository-wide verification,
-independent review, final DoD confirmation, and the Done transition remain
-pending.
+## Definition of Done
+<!-- DOD:BEGIN -->
+- [x] #1 All acceptance criteria are checked and concise implementation notes are recorded.
+- [x] #2 Focused unit integration concurrency and lifecycle tests pass.
+- [x] #3 Ruff formatting compileall focused typing and git diff checks pass.
+- [x] #4 ADR-028 and relevant TTS backup documentation are current.
+- [x] #5 Self-review confirms the slice adds no STTS library character assignment runtime routing portability or managed audio.cpp behavior.
+<!-- DOD:END -->
