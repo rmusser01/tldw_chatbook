@@ -28,10 +28,12 @@ def _tree_data():
 
 
 class _TreeApp(App):
-    def __init__(self, data, source_rows=None):
+    def __init__(self, data, source_rows=None, active_scope=None, expanded=()):
         super().__init__()
         self._data = data
         self._source_rows = source_rows or {}
+        self._active_scope = active_scope
+        self._expanded = expanded
         self.scopes: list[TreeScope] = []
 
     def compose(self) -> ComposeResult:
@@ -39,6 +41,8 @@ class _TreeApp(App):
             watchlists=self._data["watchlists"],
             counts=self._data["counts"],
             source_rows_loader=lambda wid: self._source_rows.get(wid, []),
+            active_scope=self._active_scope,
+            expanded=self._expanded,
             id="wl-tree",
         )
 
@@ -270,3 +274,99 @@ async def test_shared_source_across_watchlists_gets_distinct_ids_and_correct_sco
         await pilot.click("#wl-tree-node-source-2-10")
         await pilot.pause()
         assert app.scopes[-1] == TreeScope(kind="source", watchlist_id=2, source_id=10)
+
+
+# --- task-876: `active_scope` marks the node the screen is scoped to -------
+#
+# `WatchlistTree` rendered every node as a plain Button and never read
+# `tree_scope` at all, so the left rail gave no sign of which node the
+# centre was scoped to -- the Feeds heading was the only feedback. These
+# pin the widget's own class-assignment logic (which node gets `is-active`
+# for a given `active_scope`); the production-stylesheet rendering check
+# for the same highlight lives in
+# Tests/UI/test_destination_visual_parity_correction.py, alongside the
+# other geometry/rendering assertions that require the real CSS bundle.
+
+
+@pytest.mark.asyncio
+async def test_active_scope_all_marks_the_all_root_active():
+    app = _TreeApp(_tree_data(), active_scope=TreeScope(kind="all"))
+    async with app.run_test():
+        assert app.query_one("#wl-tree-node-all", Button).has_class("is-active")
+        assert not app.query_one("#wl-tree-node-unassigned", Button).has_class(
+            "is-active"
+        )
+
+
+@pytest.mark.asyncio
+async def test_active_scope_unassigned_marks_the_unassigned_root_active():
+    app = _TreeApp(_tree_data(), active_scope=TreeScope(kind="unassigned"))
+    async with app.run_test():
+        assert app.query_one("#wl-tree-node-unassigned", Button).has_class(
+            "is-active"
+        )
+        assert not app.query_one("#wl-tree-node-all", Button).has_class("is-active")
+
+
+@pytest.mark.asyncio
+async def test_active_scope_watchlist_marks_only_that_watchlist_node_active():
+    app = _TreeApp(
+        _tree_data(),
+        active_scope=TreeScope(kind="watchlist", watchlist_id=2),
+    )
+    async with app.run_test():
+        assert app.query_one(
+            "#wl-tree-node-watchlist-2", Button
+        ).has_class("is-active")
+        assert not app.query_one(
+            "#wl-tree-node-watchlist-1", Button
+        ).has_class("is-active")
+        assert not app.query_one("#wl-tree-node-all", Button).has_class("is-active")
+
+
+@pytest.mark.asyncio
+async def test_active_scope_source_marks_only_that_source_node_active():
+    app = _TreeApp(
+        _tree_data(),
+        source_rows={1: [{"id": 10, "name": "ArXiv: AI", "type": "rss"}]},
+        active_scope=TreeScope(kind="source", watchlist_id=1, source_id=10),
+        expanded=frozenset({1}),
+    )
+    async with app.run_test():
+        assert app.query_one(
+            "#wl-tree-node-source-1-10", Button
+        ).has_class("is-active")
+        # The source's own parent watchlist node must NOT also read as
+        # active -- only the single node matching the scope exactly.
+        assert not app.query_one(
+            "#wl-tree-node-watchlist-1", Button
+        ).has_class("is-active")
+
+
+@pytest.mark.asyncio
+async def test_active_scope_none_marks_nothing_active():
+    app = _TreeApp(_tree_data(), active_scope=None)
+    async with app.run_test():
+        assert not any(
+            button.has_class("is-active")
+            for button in app.query(Button)
+            if button.id and button.id.startswith("wl-tree-node-")
+        )
+
+
+@pytest.mark.asyncio
+async def test_setting_active_scope_after_mount_moves_the_highlight():
+    """The screen pushes a new scope into the already-mounted tree (a real
+    click's own scope, or a breadcrumb promotion, neither of which rebuilds
+    this widget) -- see `WatchlistsCollectionsScreen.watch_tree_scope`.
+    """
+    app = _TreeApp(_tree_data(), active_scope=TreeScope(kind="all"))
+    async with app.run_test() as pilot:
+        tree = app.query_one("#wl-tree", WatchlistTree)
+        tree.active_scope = TreeScope(kind="watchlist", watchlist_id=1)
+        await pilot.pause()
+
+        assert app.query_one("#wl-tree-node-watchlist-1", Button).has_class(
+            "is-active"
+        )
+        assert not app.query_one("#wl-tree-node-all", Button).has_class("is-active")

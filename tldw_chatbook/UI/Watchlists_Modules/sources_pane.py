@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.text import Text
 from textual.containers import Grid, Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
@@ -71,6 +72,17 @@ class CreateFormVisibilityChanged(Message):
 class SourcesPane(RecomposeCaptureGuard, Vertical):
     """Source list, search/filter, and create form for watchlists."""
 
+    #: task-876: Rich's own terminal-agnostic "current item" idiom (see
+    #: `snippet_editor.py`'s `_WHITESPACE_MARKER_STYLE`), used because a
+    #: `DataTable` cell's `Text` cannot reference Textual CSS variables
+    #: ($ds-focus-bg etc.) the way a widget's own styles can. Unlike
+    #: NotificationsPane, `selected_source` below is deliberately NOT
+    #: `recompose=True` (a selection must not rebuild the table under the
+    #: user), so this style is also applied via a targeted `update_cell`
+    #: pass in `_update_selection_highlight` rather than solely in
+    #: `compose()`.
+    _SELECTED_ROW_STYLE = "reverse bold"
+
     sources = reactive[list[dict[str, Any]]]([], recompose=True)
     selected_source = reactive[dict[str, Any] | None](None)
     search_query = reactive("", recompose=True)
@@ -87,6 +99,12 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     create_draft_name = reactive("")
     create_draft_url = reactive("")
     create_draft_tags = reactive("")
+
+    # Plain attribute, not a reactive: mirrors which row `compose()` last
+    # painted as selected, so `_update_selection_highlight` knows which row
+    # to revert without re-deriving it from `selected_source`'s OLD value
+    # (a one-argument `watch_selected_source` only ever sees the new one).
+    _highlighted_source_key: str | None = None
 
     _TYPE_OPTIONS = [
         ("All", "all"),
@@ -186,19 +204,41 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 yield Button("Create", id="sources-create-submit", variant="success")
                 yield Button("Cancel", id="sources-create-cancel", variant="default")
 
+        selected_key = (
+            str(self.selected_source.get("id")) if self.selected_source else None
+        )
         table = DataTable(id="sources-table")
         table.add_columns("Name", "Type", "Status", "Last scraped", "Active")
         filtered = self._filtered_sources()
         for source in filtered:
+            row_key = str(source.get("id") or id(source))
             table.add_row(
-                str(source.get("name") or source.get("title") or "Untitled"),
-                str(source.get("source_type") or "-"),
-                str(source.get("status") or "-"),
-                str(source.get("last_scraped") or "-"),
-                "Yes" if source.get("active") else "No",
-                key=str(source.get("id") or id(source)),
+                *self._source_row_cells(source, row_key == selected_key),
+                key=row_key,
             )
+        # `compose()` just painted the highlight fresh from `selected_source`
+        # itself, so this is authoritative going forward -- see
+        # `_update_selection_highlight`'s docstring for why a later,
+        # non-recomposing selection change needs to know what to revert.
+        self._highlighted_source_key = selected_key
         yield table
+
+    @staticmethod
+    def _source_row_cells(source: dict[str, Any], highlighted: bool) -> tuple[Text, ...]:
+        """One row's cell values, styled if `highlighted` (task-876).
+
+        Shared between `compose()` (the initial/any-other-reason render) and
+        `_update_selection_highlight` (a same-instance selection change,
+        which must not rebuild the table) so both draw an identical row.
+        """
+        style = SourcesPane._SELECTED_ROW_STYLE if highlighted else ""
+        return (
+            Text(str(source.get("name") or source.get("title") or "Untitled"), style=style),
+            Text(str(source.get("source_type") or "-"), style=style),
+            Text(str(source.get("status") or "-"), style=style),
+            Text(str(source.get("last_scraped") or "-"), style=style),
+            Text("Yes" if source.get("active") else "No", style=style),
+        )
 
     def _filtered_sources(self) -> list[dict[str, Any]]:
         query = self.search_query.strip().lower()
@@ -367,6 +407,50 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         if self.is_mounted:
             self.post_message(SourceSelected(source))
         self._update_action_buttons()
+        self._update_selection_highlight(source)
+
+    def _update_selection_highlight(self, source: dict[str, Any] | None) -> None:
+        """Move the table's selected-row highlight without rebuilding it.
+
+        Mirrors `_update_action_buttons` immediately below: `selected_source`
+        is deliberately not `recompose=True` (a selection must not rebuild
+        the table under the user -- it would discard scroll position and
+        the DataTable's own cursor), so a bare reactive assignment leaves
+        `compose()`'s row styling stale. This targets exactly the two rows
+        that changed -- the previous highlight (if any, reverted) and the
+        new one (if present in the currently-filtered table) -- via
+        `DataTable.update_cell`, the same "surgical update, not a rebuild"
+        approach `_update_action_buttons` already takes for the two action
+        buttons.
+        """
+        new_key = str(source.get("id")) if source else None
+        old_key = self._highlighted_source_key
+        if new_key == old_key:
+            return
+        try:
+            table = self.query_one("#sources-table", DataTable)
+        except Exception:
+            self._highlighted_source_key = new_key
+            return
+        try:
+            column_keys = list(table.columns.keys())
+        except Exception:
+            column_keys = []
+        for row_key, highlighted in ((old_key, False), (new_key, True)):
+            if row_key is None:
+                continue
+            candidate = next(
+                (s for s in self.sources if str(s.get("id") or "") == row_key), None
+            )
+            if candidate is None:
+                continue
+            cells = self._source_row_cells(candidate, highlighted)
+            for column_key, value in zip(column_keys, cells):
+                try:
+                    table.update_cell(row_key, column_key, value, update_width=False)
+                except Exception:
+                    pass
+        self._highlighted_source_key = new_key
 
     def _update_action_buttons(self) -> None:
         """Keep Preview/Check-now in step with this pane's own selection.

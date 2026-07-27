@@ -72,6 +72,19 @@ class WatchlistTree(Vertical):
 
     expanded: reactive[frozenset[int]] = reactive(frozenset(), recompose=True)
     active_tag: reactive[str | None] = reactive(None, recompose=True)
+    # task-876: the node matching the screen's `tree_scope` -- read-only from
+    # this widget's own perspective. Unlike `expanded`/`active_tag`, this
+    # value never originates from a click inside the tree itself: a real
+    # tree click already knows which scope it just posted (the owning screen
+    # reconciles `tree_scope` in `_apply_tree_scope`, since a breadcrumb
+    # promotion moves the same reactive without touching this widget at
+    # all), so there is no watcher here mirroring it back up -- only the
+    # screen writes it, via `_build_tree_pane` (seeding a freshly constructed
+    # instance, the same way `expanded`/`active_tag` are seeded) and
+    # `watch_tree_scope` (pushing into the still-mounted instance after a
+    # real click or a breadcrumb promotion, since neither rebuilds this
+    # widget on its own).
+    active_scope: reactive["TreeScope | None"] = reactive(None, recompose=True)
 
     def __init__(
         self,
@@ -80,6 +93,7 @@ class WatchlistTree(Vertical):
         source_rows_loader: Callable[[int], Sequence[Mapping[str, Any]]],
         expanded: frozenset[int] | Sequence[int] = (),
         active_tag: str | None = None,
+        active_scope: "TreeScope | None" = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -98,6 +112,7 @@ class WatchlistTree(Vertical):
         # FIRST render because it runs after this constructor.
         self.set_reactive(WatchlistTree.expanded, frozenset(expanded))
         self.set_reactive(WatchlistTree.active_tag, active_tag)
+        self.set_reactive(WatchlistTree.active_scope, active_scope)
 
     # --- rendering ---
 
@@ -141,6 +156,10 @@ class WatchlistTree(Vertical):
             tooltip=f"Show {label.lower()}.",
         )
         button.add_class("watchlist-tree-root")
+        # `key` is always "all" or "unassigned" here (the only two callers,
+        # in `compose()`), which are also valid `TreeScope.kind` values.
+        if self.active_scope == TreeScope(kind=key):
+            button.add_class("is-active")
         return button
 
     def _watchlist_node(self, watchlist: Mapping[str, Any]) -> ComposeResult:
@@ -168,6 +187,8 @@ class WatchlistTree(Vertical):
             tooltip=f"Show sources in {watchlist_name}.",
         )
         node.add_class("watchlist-tree-watchlist")
+        if self.active_scope == TreeScope(kind="watchlist", watchlist_id=watchlist_id):
+            node.add_class("is-active")
         yield node
 
         if is_open:
@@ -177,6 +198,7 @@ class WatchlistTree(Vertical):
                 # watchlists sharing a source would mount two buttons with
                 # the same id (a MountError) and the scope would be
                 # ambiguous besides.
+                source_id = int(row["id"])
                 source_name = escape_markup(str(row["name"]))
                 source = Button(
                     f"  {source_name}",
@@ -185,6 +207,10 @@ class WatchlistTree(Vertical):
                     tooltip=f"Show items from {source_name}.",
                 )
                 source.add_class("watchlist-tree-source")
+                if self.active_scope == TreeScope(
+                    kind="source", watchlist_id=watchlist_id, source_id=source_id
+                ):
+                    source.add_class("is-active")
                 yield source
 
     # --- data ---

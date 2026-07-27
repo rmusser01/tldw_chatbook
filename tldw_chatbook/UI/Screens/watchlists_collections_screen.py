@@ -392,7 +392,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         for every bucket's total/unread counts in a single statement. Both
         are reached through `WatchlistBundleService` (Task 1) rather than a
         second accessor onto `SubscriptionsDB` directly.
+
+        Notifies on failure (task-876), matching every sibling loader on
+        this screen (`_load_sources`, `_load_runs`, `_load_notifications`,
+        ...): without this, a real database failure rendered identically to
+        "you have zero watchlists" -- two empty roots and no message, since
+        the tree is its own only error surface.
         """
+        notify = getattr(self.app_instance, "notify", None)
         try:
             service = self._watchlist_bundle_service()
             self._tree_watchlists = service.list_watchlists()
@@ -400,6 +407,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         except Exception:
             logger.opt(exception=True).debug("Failed to load watchlists tree data.")
             self._tree_watchlists, self._tree_counts = [], {}
+            if callable(notify):
+                notify("Failed to load watchlists.", severity="error")
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -700,7 +709,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         Seeds `expanded`/`active_tag` from screen state (whole-branch review,
         Finding 2) the same way `_build_detail_pane` seeds the panes' rows
         and `_build_inspector_pane` seeds scope and breadcrumbs -- otherwise
-        the rail collapses on every section switch.
+        the rail collapses on every section switch. Seeds `active_scope`
+        from `tree_scope` for the same reason (task-876): a section switch
+        or rail toggle rebuilds a brand new `WatchlistTree`, and without
+        this the selection highlight would reset to nothing every time,
+        even though the scope itself survived on the screen.
         """
         return WatchlistTree(
             watchlists=self._tree_watchlists,
@@ -708,6 +721,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             source_rows_loader=self._load_source_rows_for_tree,
             expanded=self._tree_expanded,
             active_tag=self._tree_active_tag,
+            active_scope=self.tree_scope,
             id="wl-tree",
         )
 
@@ -1451,10 +1465,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         FEEDS's own supplied content -- the one region whose display this
         task makes scope-dependent -- leaving the Tree and Inspector
         instances untouched.
+
+        Also pushes the new scope into the still-mounted `WatchlistTree`
+        (task-876): since this watcher is the single reconciliation point
+        for BOTH a real tree click and a breadcrumb promotion (the latter
+        never touches the tree widget at all -- see
+        `handle_breadcrumb_scope_selected`), and neither one rebuilds the
+        Tree instance (only FEEDS refreshes above), the tree's own
+        `active_scope` would otherwise go stale the moment the scope changes
+        by any path other than a fresh `_build_tree_pane` construction.
         """
         if not self.is_mounted:
             return
         self._refresh_feeds_region_for_scope()
+        try:
+            self.query_one("#wl-tree", WatchlistTree).active_scope = self.tree_scope
+        except NoMatches:
+            pass
 
     @work(exclusive=True, group="wc_feeds_scope_refresh")
     async def _refresh_feeds_region_for_scope(self) -> None:
