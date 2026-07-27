@@ -1,5 +1,6 @@
 import asyncio
 import builtins
+import dataclasses
 import http.server
 import json
 import threading
@@ -31,6 +32,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
+from tldw_chatbook.Chat import console_provider_gateway as gateway_module
 
 
 def test_normalize_llamacpp_base_url_strips_known_suffixes_to_root() -> None:
@@ -1096,6 +1098,186 @@ def test_normalize_generic_provider_response_shapes() -> None:
     assert list(
         ConsoleProviderGateway.normalize_provider_response(IterableSdkResponse())
     ) == [unsupported]
+
+
+def test_stream_signal_privacy_has_one_content_free_private_event_and_read_only_state() -> (
+    None
+):
+    signals = gateway_module.ConsoleProviderStreamSignals()
+
+    signal_fields = dataclasses.fields(signals)
+    assert [item.name for item in signal_fields] == ["_synthetic_fallback"]
+    assert isinstance(signals._synthetic_fallback, threading.Event)
+    assert signals.__class__.__slots__ == ("_synthetic_fallback",)
+    assert not hasattr(signals, "__dict__")
+    assert signals.synthetic_fallback_emitted is False
+    with pytest.raises(AttributeError):
+        signals.synthetic_fallback_emitted = True
+
+    rendered = repr(signals)
+    assert rendered == "ConsoleProviderStreamSignals()"
+    for governed_text in (
+        NO_PROVIDER_CONTENT_COPY,
+        UNSUPPORTED_PROVIDER_RESPONSE_COPY,
+        "provider output body",
+        "credential-secret",
+        "raw exception detail",
+        "retrieval evidence text",
+        "INITIAL_BODY_SENTINEL_TASK_553_15",
+        "REPAIRED_BODY_SENTINEL_TASK_553_15",
+        "EVIDENCE_SENTINEL_TASK_553_15",
+        "SOURCE_IDENTITY_SENTINEL_TASK_553_15",
+        "LOCATOR_SENTINEL_TASK_553_15",
+        "FULL_REPAIR_PROMPT_SENTINEL_TASK_553_15",
+        "PROVIDER_EXCEPTION_SENTINEL_TASK_553_15",
+    ):
+        assert governed_text.lower() not in rendered.lower()
+
+
+@pytest.mark.parametrize(
+    ("response_factory", "expected"),
+    [
+        (lambda: {"content": ""}, NO_PROVIDER_CONTENT_COPY),
+        (lambda: iter(()), NO_PROVIDER_CONTENT_COPY),
+        (
+            lambda: iter(({"unexpected": {"secret": "do not expose"}},)),
+            UNSUPPORTED_PROVIDER_RESPONSE_COPY,
+        ),
+        (
+            lambda: [{"content": "unsupported list body"}],
+            UNSUPPORTED_PROVIDER_RESPONSE_COPY,
+        ),
+        (lambda: "data: [DONE]", NO_PROVIDER_CONTENT_COPY),
+    ],
+)
+def test_synthetic_fallback_stream_signal_is_set_before_copy_is_observed(
+    response_factory,
+    expected,
+) -> None:
+    signals = gateway_module.ConsoleProviderStreamSignals()
+    normalized = ConsoleProviderGateway.normalize_provider_response(
+        response_factory(),
+        signals=signals,
+    )
+
+    assert signals.synthetic_fallback_emitted is False
+    assert next(normalized) == expected
+    assert signals.synthetic_fallback_emitted is True
+
+
+def test_synthetic_fallback_stream_signal_marks_only_when_iterable_reaches_junk() -> (
+    None
+):
+    signals = gateway_module.ConsoleProviderStreamSignals()
+    normalized = ConsoleProviderGateway.normalize_provider_response(
+        iter(("real answer", {"unexpected": "junk"})),
+        signals=signals,
+    )
+
+    assert next(normalized) == "real answer"
+    assert signals.synthetic_fallback_emitted is False
+    assert next(normalized) == UNSUPPORTED_PROVIDER_RESPONSE_COPY
+    assert signals.synthetic_fallback_emitted is True
+
+
+@pytest.mark.parametrize(
+    "real_answer",
+    [NO_PROVIDER_CONTENT_COPY, UNSUPPORTED_PROVIDER_RESPONSE_COPY],
+)
+def test_real_answer_equal_to_fallback_copy_does_not_mark_stream_signal(
+    real_answer,
+) -> None:
+    signals = gateway_module.ConsoleProviderStreamSignals()
+
+    chunks = list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {"choices": [{"message": {"content": real_answer}}]},
+            signals=signals,
+        )
+    )
+
+    assert chunks == [real_answer]
+    assert signals.synthetic_fallback_emitted is False
+
+
+@pytest.mark.asyncio
+async def test_stream_signal_is_set_before_async_synthetic_fallback_chunk() -> None:
+    def fake_chat_api_call(**_kwargs):
+        return {"choices": [{"message": {"content": ""}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+    signals = gateway_module.ConsoleProviderStreamSignals()
+    stream = gateway.stream_chat(
+        resolution,
+        [{"role": "user", "content": "hi"}],
+        signals=signals,
+    )
+
+    assert signals.synthetic_fallback_emitted is False
+    assert await anext(stream) == NO_PROVIDER_CONTENT_COPY
+    assert signals.synthetic_fallback_emitted is True
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_signal_omission_preserves_yielded_types_and_text() -> None:
+    def fake_chat_api_call(**_kwargs):
+        return iter(("hel", {"unexpected": "junk"}, "lo"))
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"openai": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
+    )
+
+    chunks = [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution,
+            [{"role": "user", "content": "hi"}],
+        )
+    ]
+
+    assert chunks == ["hel", UNSUPPORTED_PROVIDER_RESPONSE_COPY, "lo"]
+    assert [type(chunk) for chunk in chunks] == [str, str, str]
+
+
+@pytest.mark.asyncio
+async def test_synthetic_fallback_suppression_leaves_stream_signal_unset() -> None:
+    def fake_chat_api_call(**_kwargs):
+        return {"choices": [{"message": {}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"groq": {"api_key": "sk-test"}}},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="groq", explicit_model="llama3-groq", streaming=False
+        )
+    )
+    signals = gateway_module.ConsoleProviderStreamSignals()
+
+    with pytest.raises(ChatProviderError):
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                [{"role": "user", "content": "hi"}],
+                tools=TOOLS,
+                signals=signals,
+            )
+        ]
+
+    assert signals.synthetic_fallback_emitted is False
 
 
 def test_normalize_generic_provider_response_dict_precedence() -> None:

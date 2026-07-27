@@ -724,3 +724,83 @@ def test_speak_stop_action_dispatch_returns_completed_result():
 
     assert result.status == "completed"
     assert result.target_message_id == "m1"
+
+
+def test_original_attempt_action_is_explicit_and_precedes_regenerate():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Repaired answer [S1]",
+        id="assistant-repaired",
+    )
+
+    default_actions = service.available_actions(message)
+    explicit_false_actions = service.available_actions(
+        message,
+        original_attempt_available=False,
+    )
+    available_actions = service.available_actions(
+        message,
+        original_attempt_available=True,
+    )
+    available_ids = [action.action_id for action in available_actions]
+
+    assert all(
+        action.action_id != "view-original-attempt" for action in default_actions
+    )
+    assert explicit_false_actions == default_actions
+    assert available_ids.count("view-original-attempt") == 1
+    assert available_ids.index("view-original-attempt") < available_ids.index(
+        "regenerate"
+    )
+    assert "View original attempt" not in service.plain_action_labels(message)
+    assert "View original attempt" not in service.plain_action_row(message)
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.USER,
+            content="question",
+            id="user-message",
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.SYSTEM,
+            content="notice",
+            id="system-message",
+        ),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="failed",
+            id="failed-assistant",
+            status="failed",
+        ),
+    ),
+)
+def test_original_attempt_action_omits_ineligible_messages(message):
+    actions = ConsoleMessageActionService().available_actions(
+        message,
+        original_attempt_available=True,
+    )
+
+    assert all(action.action_id != "view-original-attempt" for action in actions)
+
+
+def test_original_attempt_dispatch_returns_only_safe_target():
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Repaired answer [S1]",
+        id="assistant-repaired",
+    )
+
+    result = ConsoleMessageActionService().dispatch(
+        "view-original-attempt",
+        message,
+    )
+
+    assert result.status == "completed"
+    assert result.target_message_id == message.id
+    assert result.target_content is None
+    assert result.clipboard_text is None
+    assert message.content not in result.visible_copy

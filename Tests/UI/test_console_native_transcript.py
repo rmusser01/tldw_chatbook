@@ -9,6 +9,9 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
+    ConsoleCitationNoticeCode,
+    ConsoleCitationPhase,
+    ConsoleCitationPresentation,
     ConsoleMessageRole,
     ConsoleVariantSet,
     GenerationVariantMeta,
@@ -1084,6 +1087,152 @@ def test_no_sibling_counter_for_single_child_message():
 
     assert "(1/1)" not in rendered.plain
     assert "(" not in rendered.plain
+
+
+@pytest.mark.parametrize(
+    ("presentation", "expected"),
+    (
+        (
+            ConsoleCitationPresentation(phase=ConsoleCitationPhase.CHECKING),
+            "Checking citations…",
+        ),
+        (
+            ConsoleCitationPresentation(phase=ConsoleCitationPhase.REPAIRING),
+            "Checking citations…",
+        ),
+        (
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.REPAIRED,
+                original_attempt_available=True,
+            ),
+            "Citations repaired · View original attempt",
+        ),
+        (
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.REPAIRED,
+                original_attempt_available=False,
+            ),
+            "Citations repaired",
+        ),
+        (
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.UNAVAILABLE,
+            ),
+            "Citation repair unavailable · Original response kept",
+        ),
+        (
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.CANCELED,
+            ),
+            "Citation repair canceled",
+        ),
+    ),
+)
+def test_citation_notice_is_exact_and_never_claims_support(presentation, expected):
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Selected answer [S1]",
+        citation_presentation=presentation,
+    )
+
+    rendered = _message_render_text(message, selected=False).plain
+
+    assert expected in rendered
+    lowered_notice = rendered.splitlines()[-1].lower()
+    for forbidden in ("grounded", "verified", "supported", "canonical"):
+        assert forbidden not in lowered_notice
+
+
+@pytest.mark.asyncio
+async def test_original_attempt_preview_is_literal_distinct_row_after_owner():
+    app = MutableTranscriptHarness()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Selected **repaired** answer [S1]",
+        id="repaired-message",
+        citation_presentation=ConsoleCitationPresentation(
+            phase=ConsoleCitationPhase.SELECTED,
+            notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            original_attempt_available=True,
+        ),
+    )
+    original = "Original **literal** attempt"
+
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages([message])
+        transcript.set_original_attempt_previews({message.id: original})
+        await transcript.refresh_messages()
+        row_keys = list(transcript.row_render_signatures())
+        preview = app.query_one(
+            f"#console-original-attempt-{message.id}",
+            Static,
+        )
+
+    assert row_keys.index(f"message:{message.id}") < row_keys.index(
+        f"original-attempt:{message.id}"
+    )
+    assert "Original attempt (not selected)" in str(preview.renderable)
+    assert original in str(preview.renderable)
+    assert message.content == "Selected **repaired** answer [S1]"
+    assert message.citation_presentation.original_attempt_available is True
+
+
+@pytest.mark.asyncio
+async def test_original_attempt_availability_updates_action_and_message_signatures():
+    app = MutableTranscriptHarness()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Selected answer [S1]",
+        id="repaired-message",
+        citation_presentation=ConsoleCitationPresentation(
+            phase=ConsoleCitationPhase.SELECTED,
+            notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            original_attempt_available=True,
+        ),
+    )
+
+    async with app.run_test(size=(160, 32)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages([message])
+        transcript.select_message(message.id)
+        await transcript.refresh_messages()
+        await _wait_for_selector(
+            app,
+            pilot,
+            f"#console-message-action-view-original-attempt-{message.id}",
+        )
+        before = transcript.row_render_signatures()
+
+        message.citation_presentation = ConsoleCitationPresentation(
+            phase=ConsoleCitationPhase.SELECTED,
+            notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            original_attempt_available=False,
+        )
+        transcript.set_messages([message])
+        await transcript.refresh_messages()
+        after = transcript.row_render_signatures()
+
+    assert (
+        len(app.query(f"#console-message-action-view-original-attempt-{message.id}"))
+        == 0
+    )
+    assert before[f"message:{message.id}"] != after[f"message:{message.id}"]
+    assert before[f"actions:{message.id}"] != after[f"actions:{message.id}"]
+
+
+def test_checking_citations_uses_active_jump_pill_copy():
+    from tldw_chatbook.Widgets.Console.console_transcript import _JUMP_PILL_TEXT
+
+    assert _JUMP_PILL_TEXT["checking_citations"] == (
+        "▼ checking citations below — jump to latest"
+    )
 
 
 def test_transcript_message_widget_shows_sibling_counter_via_row_construction():

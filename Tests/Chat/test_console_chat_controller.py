@@ -2233,7 +2233,8 @@ def test_approve_for_session_is_not_re_prompted_next_turn():
 # -----------------------------------------------------------------------------
 
 
-def test_finalize_agent_reply_empty_final_text_uses_fallback():
+@pytest.mark.asyncio
+async def test_finalize_agent_reply_empty_final_text_uses_fallback():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -2243,7 +2244,7 @@ def test_finalize_agent_reply_empty_final_text_uses_fallback():
     )
 
     outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="")
-    result = controller._finalize_agent_reply(
+    result = await controller._finalize_agent_reply(
         placeholder.id, session.id, outcome, variant_mode=False
     )
 
@@ -2255,7 +2256,8 @@ def test_finalize_agent_reply_empty_final_text_uses_fallback():
     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
 
 
-def test_finalize_agent_reply_missing_placeholder_appends_message():
+@pytest.mark.asyncio
+async def test_finalize_agent_reply_missing_placeholder_appends_message():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -2263,7 +2265,7 @@ def test_finalize_agent_reply_missing_placeholder_appends_message():
     fake_id = "nonexistent-msg-id"
 
     outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="hello back")
-    result = controller._finalize_agent_reply(
+    result = await controller._finalize_agent_reply(
         fake_id, session.id, outcome, variant_mode=False
     )
 
@@ -2276,7 +2278,8 @@ def test_finalize_agent_reply_missing_placeholder_appends_message():
     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
 
 
-def test_finalize_agent_reply_error_marks_failed():
+@pytest.mark.asyncio
+async def test_finalize_agent_reply_error_marks_failed():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -2287,7 +2290,7 @@ def test_finalize_agent_reply_error_marks_failed():
     store.append_stream_chunk(placeholder.id, "partial")
 
     outcome = RunOutcome(status=RUN_ERROR, steps=[], final_text="")
-    result = controller._finalize_agent_reply(
+    result = await controller._finalize_agent_reply(
         placeholder.id, session.id, outcome, variant_mode=False
     )
 
@@ -2299,7 +2302,8 @@ def test_finalize_agent_reply_error_marks_failed():
     assert result.accepted is True
 
 
-def test_finalize_agent_reply_cancelled_marks_failed():
+@pytest.mark.asyncio
+async def test_finalize_agent_reply_cancelled_marks_failed():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -2309,7 +2313,7 @@ def test_finalize_agent_reply_cancelled_marks_failed():
     )
 
     outcome = RunOutcome(status=RUN_CANCELLED, steps=[], final_text="")
-    result = controller._finalize_agent_reply(
+    result = await controller._finalize_agent_reply(
         placeholder.id, session.id, outcome, variant_mode=False
     )
 
@@ -2320,7 +2324,8 @@ def test_finalize_agent_reply_cancelled_marks_failed():
     assert result.accepted is True
 
 
-def test_finalize_agent_reply_unknown_status_marks_failed():
+@pytest.mark.asyncio
+async def test_finalize_agent_reply_unknown_status_marks_failed():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -2330,7 +2335,7 @@ def test_finalize_agent_reply_unknown_status_marks_failed():
     )
 
     outcome = RunOutcome(status="weird", steps=[], final_text="")
-    result = controller._finalize_agent_reply(
+    result = await controller._finalize_agent_reply(
         placeholder.id, session.id, outcome, variant_mode=False
     )
 
@@ -3210,6 +3215,69 @@ async def test_stream_assistant_response_owner_lookup_survives_closed_session():
 
     assert result.accepted is True
     assert result.visible_copy == "Session closed."
+
+
+@pytest.mark.asyncio
+async def test_agent_finalization_remains_inside_outer_active_stream_ownership():
+    class OwnershipController(ConsoleChatController):
+        active_during_finalization = None
+
+        async def _finalize_agent_reply(
+            self,
+            assistant_message_id,
+            session_id,
+            outcome,
+            **kwargs,
+        ):
+            self.active_during_finalization = (
+                self._active_assistant_message_id,
+                self._active_stream_task,
+                self._stop_requested,
+            )
+            return await super()._finalize_agent_reply(
+                assistant_message_id,
+                session_id,
+                outcome,
+                **kwargs,
+            )
+
+    class Bridge:
+        def run_reply(self, **_kwargs):
+            return "run-active-owner", RunOutcome(
+                status=RUN_DONE,
+                steps=[],
+                final_text="agent reply",
+            )
+
+        def record_run_assistant_message(self, _run_id, _message_id):
+            return None
+
+    store = ConsoleChatStore()
+    controller = OwnershipController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+        agent_bridge=Bridge(),
+        agent_runtime_enabled=True,
+    )
+    _arm_session(store)
+    current_task = asyncio.current_task()
+
+    result = await controller.submit_draft("hello")
+
+    assistant = next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert result.accepted is True
+    assert controller.active_during_finalization == (
+        assistant.id,
+        current_task,
+        False,
+    )
+    assert controller._active_assistant_message_id is None
+    assert controller._active_stream_task is None
+    assert controller._stop_requested is False
 
 
 @pytest.mark.asyncio

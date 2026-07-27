@@ -25,7 +25,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderStreamSignals,
+    ProviderToolCalls,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
@@ -138,6 +141,25 @@ class _ChunkGateway:
             yield chunk
 
 
+class _SignalChunkGateway(_ChunkGateway):
+    """Scripted gateway that records the out-of-band signal by identity."""
+
+    def __init__(self, scripts):
+        super().__init__(scripts)
+        self.signals_seen = []
+        self.signal_states_seen = []
+
+    async def stream_chat(self, resolution, messages, tools=None, signals=None):
+        self.signals_seen.append(signals)
+        self.signal_states_seen.append(signals.synthetic_fallback_emitted)
+        async for chunk in super().stream_chat(
+            resolution,
+            messages,
+            tools=tools,
+        ):
+            yield chunk
+
+
 class _NativeResolution:
     """A fake resolution whose execution_key resolves to a native-capable provider."""
 
@@ -158,6 +180,14 @@ def _native_calls(name, args, call_id="c1"):
 
 
 def _bridge(tmp_path, scripts, native_tools_enabled=None):
+    return _bridge_with_gateway(
+        tmp_path,
+        _ChunkGateway(scripts),
+        native_tools_enabled=native_tools_enabled,
+    )
+
+
+def _bridge_with_gateway(tmp_path, gateway, native_tools_enabled=None):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -168,7 +198,7 @@ def _bridge(tmp_path, scripts, native_tools_enabled=None):
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
         store=store,
-        provider_gateway=_ChunkGateway(scripts),
+        provider_gateway=gateway,
         native_tools_enabled=native_tools_enabled,
     )
     return bridge, db, store, session, assistant.id
@@ -428,6 +458,83 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     assert seen_loops[0].is_closed(), (
         "the run's shared loop must be closed once run_reply returns"
     )
+
+
+def test_provider_stream_signal_survives_primary_tool_and_final_turns(tmp_path):
+    signals = ConsoleProviderStreamSignals()
+    gateway = _SignalChunkGateway(
+        [
+            [_fence("calculator", {"expression": "6*7"})],
+            ["It is ", "42."],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert gateway.signals_seen == [signals, signals]
+    assert all(item is signals for item in gateway.signals_seen)
+
+
+def test_provider_stream_signal_survives_subagent_turns(tmp_path):
+    signals = ConsoleProviderStreamSignals()
+    gateway = _SignalChunkGateway(
+        [
+            [_fence("spawn_subagent", {"task": "compute 1+1"})],
+            ["2"],
+            ["Done: 2."],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert gateway.signals_seen == [signals, signals, signals]
+    assert all(item is signals for item in gateway.signals_seen)
+
+
+def test_provider_stream_signal_is_never_reset_by_bridge(tmp_path):
+    signals = ConsoleProviderStreamSignals()
+    signals.mark_synthetic_fallback()
+    gateway = _SignalChunkGateway([["Already marked."]])
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert gateway.signals_seen == [signals]
+    assert gateway.signal_states_seen == [True]
+    assert signals.synthetic_fallback_emitted is True
+
+
+def test_provider_stream_signal_omission_preserves_legacy_gateway_signature(tmp_path):
+    bridge, _db, store, session, aid = _bridge(tmp_path, [["Unchanged."]])
+
+    outcome = _run(bridge, store, session, aid)
+
+    assert outcome.status == "done"
+    assert bridge._gateway.calls == 1
+    assert store.get_message(aid).content == "Unchanged."
 
 
 def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):

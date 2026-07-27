@@ -51,7 +51,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderStreamSignals,
+    ProviderToolCalls,
+)
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
@@ -503,6 +506,7 @@ class _StreamingModelAdapter:
         assistant_message_id,
         should_cancel,
         loop,
+        provider_stream_signals: ConsoleProviderStreamSignals | None = None,
     ):
         self._store = store
         self._gateway = provider_gateway
@@ -510,6 +514,7 @@ class _StreamingModelAdapter:
         self._assistant_message_id = assistant_message_id
         self._should_cancel = should_cancel
         self._loop = loop
+        self._provider_stream_signals = provider_stream_signals
 
     def chat_call(
         self,
@@ -539,6 +544,8 @@ class _StreamingModelAdapter:
             # this task's own `tools=None` contract see identical behavior
             # either way, since the callee-side default is also None.
             stream_kwargs = {"tools": tools} if tools is not None else {}
+            if self._provider_stream_signals is not None:
+                stream_kwargs["signals"] = self._provider_stream_signals
             async for chunk in self._gateway.stream_chat(
                 self._resolution, messages_payload, **stream_kwargs
             ):
@@ -1109,6 +1116,7 @@ class ConsoleAgentBridge:
         session_system_prompt: str,
         agent_messages: list[dict],
         should_cancel: Callable[[], bool],
+        provider_stream_signals: ConsoleProviderStreamSignals | None = None,
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
         builtin_gate: Any | None = None,
@@ -1483,6 +1491,7 @@ class ConsoleAgentBridge:
             assistant_message_id=assistant_message_id,
             should_cancel=should_cancel,
             loop=run_loop,
+            provider_stream_signals=provider_stream_signals,
         )
 
         live_steps: list[AgentLiveStep] = []

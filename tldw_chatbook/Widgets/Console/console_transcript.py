@@ -23,6 +23,8 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
+    ConsoleCitationNoticeCode,
+    ConsoleCitationPhase,
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_image_view import (
@@ -121,6 +123,27 @@ def _message_body(message: ConsoleChatMessage) -> str:
         # SYSTEM block-row already explains it — so keep the user's text clean.
         return f"{content} [{message.status}]".strip()
     return content
+
+
+def _citation_notice(message: ConsoleChatMessage) -> str:
+    """Return exact content-free citation transition copy for one message."""
+    presentation = message.citation_presentation
+    if presentation is None:
+        return ""
+    if presentation.phase in {
+        ConsoleCitationPhase.CHECKING,
+        ConsoleCitationPhase.REPAIRING,
+    }:
+        return "Checking citations…"
+    if presentation.notice_code is ConsoleCitationNoticeCode.REPAIRED:
+        if presentation.original_attempt_available:
+            return "Citations repaired · View original attempt"
+        return "Citations repaired"
+    if presentation.notice_code is ConsoleCitationNoticeCode.UNAVAILABLE:
+        return "Citation repair unavailable · Original response kept"
+    if presentation.notice_code is ConsoleCitationNoticeCode.CANCELED:
+        return "Citation repair canceled"
+    return ""
 
 
 def _is_generating_placeholder_body(message: ConsoleChatMessage, body: str) -> bool:
@@ -281,6 +304,9 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
         body_segments = _markdown_body_spans(body)
     else:
         body_segments = [body]
+    citation_notice = _citation_notice(message)
+    if citation_notice:
+        body_segments.extend(("\n", (citation_notice, "dim")))
     separator = "  " if not selected and "\n" not in body and len(body) <= 120 else "\n"
     return Content.assemble((role_label, "dim"), separator, *body_segments)
 
@@ -289,12 +315,20 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
 class _TranscriptRow:
     key: str
     kind: Literal[
-        "rule", "banner", "message", "image", "generation-card", "actions", "action-help", "empty"
+        "rule",
+        "banner",
+        "message",
+        "original-attempt",
+        "image",
+        "generation-card",
+        "actions",
+        "action-help",
+        "empty",
     ]
     signature: tuple
     message: ConsoleChatMessage | None = None
     selected: bool = False
-    renderable: str = ""
+    renderable: str | Content = ""
     action_label: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
     action_tooltip: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
     card_state: ConsoleSetupCardState | None = None
@@ -475,6 +509,7 @@ _JUMP_PILL_TEXT: Mapping[str, str] = {
     "validating": _JUMP_PILL_STREAMING,
     "retrying": _JUMP_PILL_STREAMING,
     "streaming": _JUMP_PILL_STREAMING,
+    "checking_citations": "▼ checking citations below — jump to latest",
     "stopped": _JUMP_PILL_STOPPED,
     "failed": _JUMP_PILL_STOPPED,
     "completed": _JUMP_PILL_READY,
@@ -565,6 +600,7 @@ class ConsoleTranscript(VerticalScroll):
         self._row_build_counts: dict[str, int] = {}
         self._image_specs: dict[str, ConsoleImageRowSpec] = {}
         self._generation_card_specs: dict[str, ConsoleGenerationCardSpec] = {}
+        self._original_attempt_previews: dict[str, str] = {}
         # TASK-259: per-message render-signature cache. Maps message id ->
         # (cheap change-token, expensive row signature). `_transcript_rows`
         # re-derives the render payload (Content assembly) only when the
@@ -795,6 +831,10 @@ class ConsoleTranscript(VerticalScroll):
         ``set_image_specs``; standalone callers/tests refresh explicitly.
         """
         self.summary_boundary_message_id = message_id
+
+    def set_original_attempt_previews(self, previews: Mapping[str, str]) -> None:
+        """Replace screen-owned visible original-attempt preview copies."""
+        self._original_attempt_previews = dict(previews)
 
     def sync_empty_state(
         self,
@@ -1119,6 +1159,25 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
+            original_attempt = self._original_attempt_previews.get(message.id)
+            if original_attempt is not None:
+                rows.append(
+                    _TranscriptRow(
+                        key=f"original-attempt:{message.id}",
+                        kind="original-attempt",
+                        signature=(
+                            "original-attempt",
+                            message.id,
+                            original_attempt,
+                        ),
+                        message=message,
+                        renderable=Content.assemble(
+                            ("Original attempt (not selected)", "dim"),
+                            "\n",
+                            original_attempt,
+                        ),
+                    )
+                )
             card_spec = self._generation_card_specs.get(message.id)
             if card_spec is not None:
                 # A generation-card message renders the card row INSTEAD of
@@ -1287,6 +1346,12 @@ class ConsoleTranscript(VerticalScroll):
                 id=self._row_widget_id(row),
                 classes="console-transcript-action-guide",
             )
+        if row.kind == "original-attempt" and row.message is not None:
+            return Static(
+                row.renderable,
+                id=f"console-original-attempt-{row.message.id}",
+                classes="console-transcript-original-attempt",
+            )
         if row.kind == "message" and row.message is not None:
             return ConsoleTranscriptMessage(row.message, selected=row.selected)
         if row.kind == "image" and row.image_spec is not None:
@@ -1418,6 +1483,7 @@ class ConsoleTranscript(VerticalScroll):
             message.attachment_label,
             message.image_mime_type,
             None if message.image_data is None else len(message.image_data),
+            message.citation_presentation,
         )
 
     def _cached_message_row_signature(
@@ -1518,6 +1584,10 @@ class ConsoleTranscript(VerticalScroll):
         for action in ConsoleMessageActionService().available_actions(
             message,
             speaking_message_id=self._console_tts_speaking_message_id(),
+            original_attempt_available=bool(
+                message.citation_presentation
+                and message.citation_presentation.original_attempt_available
+            ),
             **self._generation_action_kwargs(message),
         ):
             if action.action_id == "feedback":
@@ -1539,6 +1609,10 @@ class ConsoleTranscript(VerticalScroll):
         for action in ConsoleMessageActionService().available_actions(
             message,
             speaking_message_id=self._console_tts_speaking_message_id(),
+            original_attempt_available=bool(
+                message.citation_presentation
+                and message.citation_presentation.original_attempt_available
+            ),
             **self._generation_action_kwargs(message),
         ):
             if action.action_id == "feedback":
