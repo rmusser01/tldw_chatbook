@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.citation_trace_identity import (
 )
 from tldw_chatbook.Chat.citation_trace_models import (
     ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
+    CITATION_OCCURRENCES_MAX,
     EVIDENCE_ENTRIES_PER_PROMPT_MAX,
     PROMPT_EVIDENCE_SETS_MAX,
     RETRIEVAL_CANDIDATES_PER_RUN_MAX,
@@ -33,6 +34,7 @@ from tldw_chatbook.Chat.citation_trace_models import (
     PolicyCapability,
     RetrievalScoreKind,
     RetrievalScoreScale,
+    StructuralValidationState,
     TraceLifecycle,
     TraceOrigin,
     reduce_selected_attempt_completeness,
@@ -1080,30 +1082,71 @@ def test_initial_answer_governed_payload_view_is_deep_detached() -> None:
     assert builder.answer_attempt_payloads[0].answer_body == "Marker-free exact answer."
 
 
-@pytest.mark.parametrize(
-    "answer_body",
-    (
-        "Eligible [S1] marker.",
-        "Eligible [S1] and [S2] markers.",
-    ),
-)
-def test_initial_answer_with_eligible_markers_is_unavailable_and_atomic(
-    answer_body: str,
-) -> None:
+def test_initial_answer_records_known_repeated_and_unknown_occurrences() -> None:
     builder = _builder()
     prompt_set_id = _record_prompt_set(builder)
+    answer_body = (
+        "Known [S1], escaped \\[S1], inline `[S1]`, repeated [S1].\n"
+        "```text\n[S1]\n```\n"
+        "Unknown [S99]."
+    )
+    first_start = answer_body.index("[S1]")
+    repeated_start = answer_body.index("[S1]", answer_body.index("repeated"))
+    unknown_start = answer_body.index("[S99]")
 
-    with pytest.raises(ValueError) as captured:
+    builder.record_initial_answer_attempt(
+        prompt_evidence_set_id=prompt_set_id,
+        answer_body=answer_body,
+        completed_at=NOW,
+    )
+
+    attempt = builder.answer_attempts[0]
+    assert [item.occurrence_ordinal for item in attempt.occurrences] == [1, 2, 3]
+    assert [item.raw_marker for item in attempt.occurrences] == [
+        "[S1]",
+        "[S1]",
+        "[S99]",
+    ]
+    assert [item.evidence_ordinal for item in attempt.occurrences] == [1, 1, None]
+    assert [item.structural_state for item in attempt.occurrences] == [
+        StructuralValidationState.VALID,
+        StructuralValidationState.VALID,
+        StructuralValidationState.UNKNOWN_MARKER,
+    ]
+    assert [
+        (item.marker_start, item.marker_end) for item in attempt.occurrences
+    ] == [
+        (first_start, first_start + len("[S1]")),
+        (repeated_start, repeated_start + len("[S1]")),
+        (unknown_start, unknown_start + len("[S99]")),
+    ]
+    assert [
+        answer_body[item.marker_start : item.marker_end]
+        for item in attempt.occurrences
+    ] == ["[S1]", "[S1]", "[S99]"]
+    assert all(
+        item.marker_namespace is MarkerNamespace.CHATBOOK_S_V1
+        for item in attempt.occurrences
+    )
+    assert len({item.occurrence_id for item in attempt.occurrences}) == 3
+    assert all(
+        item.occurrence_id.startswith("citation-occurrence_")
+        for item in attempt.occurrences
+    )
+
+
+def test_initial_answer_occurrence_overflow_is_atomic() -> None:
+    builder = _builder()
+    prompt_set_id = _record_prompt_set(builder)
+    answer_body = " ".join("[S1]" for _ in range(CITATION_OCCURRENCES_MAX + 1))
+
+    with pytest.raises(builder_module.CitationTraceBuildUnavailable) as captured:
         builder.record_initial_answer_attempt(
             prompt_evidence_set_id=prompt_set_id,
             answer_body=answer_body,
             completed_at=NOW,
         )
 
-    assert isinstance(
-        captured.value,
-        builder_module.CitationTraceBuildUnavailable,
-    )
     assert captured.value.reason_code == "occurrence_mapping_unavailable"
     assert builder.answer_attempts == ()
     assert builder.answer_attempt_payloads == ()

@@ -21,6 +21,7 @@ from .citation_trace_identity import (
 from .citation_trace_models import (
     ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
     ANSWER_ATTEMPTS_MAX,
+    CITATION_OCCURRENCES_MAX,
     EVIDENCE_ENTRIES_PER_PROMPT_MAX,
     GOVERNED_PAYLOAD_UTF8_BYTES_MAX,
     PROMPT_EVIDENCE_SETS_MAX,
@@ -30,6 +31,7 @@ from .citation_trace_models import (
     AnswerAttemptKind,
     AnswerAttemptPayload,
     CitationCompleteness,
+    CitationOccurrence,
     CitationTrace,
     EvidenceRun,
     EvidenceRunPayload,
@@ -44,6 +46,7 @@ from .citation_trace_models import (
     RetrievalScoreScale,
     SealedCitationWrite,
     ShortCode,
+    StructuralValidationState,
     TraceLifecycle,
     TraceOrigin,
     eligible_citation_marker_spans,
@@ -626,7 +629,7 @@ class CitationTraceBuilder:
         answer_body: str,
         completed_at: datetime,
     ) -> str:
-        """Record the single marker-free initial answer atomically."""
+        """Record the single initial answer and its citation spans atomically."""
 
         self._ensure_unsealed()
         if self._answer_attempts:
@@ -666,12 +669,31 @@ class CitationTraceBuilder:
             marker_spans = eligible_citation_marker_spans(
                 answer_body,
                 prompt_set.marker_namespace,
-                max_count=1,
+                max_count=CITATION_OCCURRENCES_MAX,
             )
         except ValueError:
             raise CitationTraceBuildUnavailable() from None
-        if marker_spans:
-            raise CitationTraceBuildUnavailable()
+        evidence_by_marker = {
+            entry.marker_ordinal: entry.evidence_ordinal
+            for entry in prompt_set.entries
+        }
+        occurrences = tuple(
+            CitationOccurrence(
+                occurrence_id=new_opaque_id("citation-occurrence"),
+                occurrence_ordinal=index,
+                raw_marker=span.raw_marker,
+                marker_namespace=prompt_set.marker_namespace,
+                evidence_ordinal=evidence_by_marker.get(span.marker_ordinal),
+                marker_start=span.marker_start,
+                marker_end=span.marker_end,
+                structural_state=(
+                    StructuralValidationState.VALID
+                    if span.marker_ordinal in evidence_by_marker
+                    else StructuralValidationState.UNKNOWN_MARKER
+                ),
+            )
+            for index, span in enumerate(marker_spans, start=1)
+        )
 
         attempt_id = new_opaque_id("answer-attempt")
         payload_id = new_opaque_id("answer-payload")
@@ -690,7 +712,7 @@ class CitationTraceBuilder:
             kind=AnswerAttemptKind.INITIAL,
             prompt_evidence_set_id=prompt_set.prompt_set_id,
             answer_payload_ref=payload.payload_id,
-            occurrences=(),
+            occurrences=occurrences,
             created_at=completed_at,
         )
         self._ensure_governed_payload_capacity((payload,))
