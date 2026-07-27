@@ -42,6 +42,7 @@ from tldw_chatbook.TTS import (
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
     TTSPreferencesSnapshot,
+    TTSProfileService,
     get_tts_service,
 )
 from tldw_chatbook.TTS.adapter_types import (
@@ -70,6 +71,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     provider_options,
     voice_id_for_request,
 )
+from tldw_chatbook.UI.stts_profile_library import STTSProfileLibrary
 from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
@@ -5820,6 +5822,8 @@ class STTSWindow(Container):
         # Add new content based on view
         if new_view == "playground":
             content_container.mount(TTSPlaygroundWidget())
+        elif new_view == "profiles":
+            content_container.mount(STTSProfileLibrary(self._load_profile_service))
         elif new_view == "settings":
             content_container.mount(TTSSettingsWidget())
         elif new_view == "audiobook":
@@ -5838,6 +5842,8 @@ class STTSWindow(Container):
         # Handle sidebar buttons
         if event.button.id == "view-playground-btn":
             self.current_view = "playground"
+        elif event.button.id == "view-profiles-btn":
+            self.current_view = "profiles"
         elif event.button.id == "view-settings-btn":
             self.current_view = "settings"
         elif event.button.id == "view-audiobook-btn":
@@ -5862,6 +5868,23 @@ class STTSWindow(Container):
                         active_widget.on_button_pressed(event)
             except Exception as e:
                 logger.debug(f"Could not delegate button event: {e}")
+
+    async def _load_profile_service(self) -> TTSProfileService | None:
+        """Resolve the app-owned profile service without affecting speech."""
+        ensure_service = getattr(
+            self.app_instance,
+            "_ensure_tts_profile_service",
+            None,
+        )
+        if not callable(ensure_service):
+            return None
+        try:
+            return await ensure_service()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("TTS profile storage is unavailable")
+            return None
 
 
 #
