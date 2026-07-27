@@ -6801,16 +6801,17 @@ def test_settings_config_path_delegates_to_shared_accessor(monkeypatch, tmp_path
     ``config._get_effective_config_path()``'s override/validate logic
     verbatim instead of calling it -- the exact re-spelled-accessor drift
     shape this whole audit is about. Monkeypatching the shared accessor
-    must change what ``_config_path()`` returns; a re-implementation
-    would not react to that patch (it would keep resolving the override
-    itself instead).
+    (``config.get_cli_config_path``, the public wrapper every other
+    effective-path call site in this app uses) must change what
+    ``_config_path()`` returns; a re-implementation would not react to
+    that patch (it would keep resolving the override itself instead).
     """
     app = _build_test_app()
     screen = SettingsScreen(app)
 
     sentinel = tmp_path / "sentinel-config.toml"
     monkeypatch.setattr(
-        settings_screen_module, "_get_effective_config_path", lambda: sentinel
+        settings_screen_module, "get_cli_config_path", lambda: sentinel
     )
 
     assert screen._config_path() == sentinel
