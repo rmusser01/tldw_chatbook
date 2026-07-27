@@ -132,3 +132,19 @@ def test_torn_record_does_not_stitch_following_record():
     assert parsed[0].number == 1
     assert parsed[1].number == 3
     assert parsed[1].content == "legitimate"
+
+
+def test_negative_bytes_field_does_not_discard_following_records():
+    # CRITICAL 2a (continued): Negative size is malformed header, must resync not return.
+    # Good record 1, record with bytes=-1, good record 2.
+    good1 = encode_record(rec(number=1, content="first"))
+    bad = b"#@# 000002 run=a3f9c1 kind=primary type=model ts=z bytes=-1\nno-parse\n"
+    good2 = encode_record(rec(number=3, content="third"))
+    blob = good1 + bad + good2
+    parsed = list(iter_records(blob))
+    # Should yield only records 1 and 3, skipping the malformed record 2.
+    assert len(parsed) == 2
+    assert parsed[0].number == 1
+    assert parsed[0].content == "first"
+    assert parsed[1].number == 3
+    assert parsed[1].content == "third"

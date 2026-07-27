@@ -154,11 +154,19 @@ def iter_records(data: bytes) -> Iterator[RunLogRecord]:
                 return
             position = nxt + 1
             continue
+        # Negative size is a malformed header: resync instead of discarding all.
+        if size < 0:
+            nxt = data.find(b"\n" + _ANCHOR_BYTES, position + 1)
+            if nxt == -1:
+                return
+            position = nxt + 1
+            continue
         start = newline + 1
         end = start + size
         # end + 1 covers the terminating newline: only fully-terminated
         # records are yielded, so a record still being written is skipped.
-        if size < 0 or end + 1 > length:
+        # This is a genuinely partial trailing record (normal for logs being appended).
+        if end + 1 > length:
             return
         # Integrity check: the byte at the slice end MUST be the terminating newline.
         # If not, this record is torn (declared byte count overran real content);
