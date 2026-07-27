@@ -122,9 +122,25 @@ _DB_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 
 
 def _resolved(path_str: str) -> Path | None:
+    """Resolve a path string, returning ``None`` on ANY resolution failure.
+
+    ``is_sensitive_path``'s fail-closed guarantee ("a path that cannot be
+    resolved is treated as sensitive") depends on this returning ``None``
+    for every way resolution can fail, not just the two most common ones.
+    ``Path.resolve()``/``expanduser()`` normally raise ``OSError`` (e.g. a
+    symlink loop) or ``RuntimeError`` (older Pythons' own loop-detection),
+    but a path containing an embedded NUL byte raises ``ValueError``
+    instead -- narrowing this catch to ``(OSError, RuntimeError)`` let that
+    case escape ``is_sensitive_path`` entirely as an uncaught exception
+    rather than the promised ``True`` (TASK-847). Broad by design: whatever
+    exception ``pathlib`` raises for a candidate this function cannot make
+    sense of, the caller must still get ``None`` back, never a propagated
+    error.
+    """
     try:
         return Path(path_str).expanduser().resolve()
-    except (OSError, RuntimeError):
+    except Exception as exc:  # noqa: BLE001 - fail-closed for ANY resolution failure
+        logger.debug(f"sensitive_paths: could not resolve {path_str!r}: {exc}")
         return None
 
 

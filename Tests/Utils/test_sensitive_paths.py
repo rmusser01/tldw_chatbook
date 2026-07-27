@@ -252,6 +252,21 @@ def test_unresolvable_path_fails_closed(monkeypatch):
     assert is_sensitive_path(Path("/does/not/matter"))
 
 
+def test_nul_byte_path_fails_closed_for_real():
+    """TASK-847: the fail-closed guarantee must hold for a resolution
+    failure of ANY kind, not just the ones ``_resolved`` used to catch.
+
+    ``Path("bad\\x00path").resolve()`` raises ``ValueError`` (an embedded
+    NUL byte), not ``OSError``/``RuntimeError`` -- narrowing ``_resolved``'s
+    except clause to those two let this case escape ``is_sensitive_path``
+    as an uncaught exception instead of the promised ``True``. Exercises
+    the real (unmocked) resolution path end to end, unlike the
+    monkeypatched test above, so a future narrowing of that except clause
+    would be caught here even if it still covered ``OSError``/``RuntimeError``.
+    """
+    assert is_sensitive_path(Path("bad\x00path"))
+
+
 def test_context_reuse_matches_fresh_resolution(tmp_path):
     """A caller-supplied ``SensitivePathContext`` must agree with the
     default (``context=None``) fresh-resolution path for the same candidate."""
