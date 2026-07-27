@@ -1199,7 +1199,7 @@ async def test_watchlists_feeds_empty_state_fits_without_scrolling(size):
     That was a ceiling below its own minimum content, not the intended
     "grows to fit, caps, then scrolls" behaviour.
 
-    `max-height` is now 13 (see `.watchlists-region-feeds` in
+    `max-height` is now 12 (see `.watchlists-region-feeds` in
     `_watchlists.tcss` for the full derivation), which clears the 11-row
     need with headroom: the pane's real content must sit entirely inside
     FEEDS -- the cap never engages, nothing is clipped -- and there must be
@@ -1446,8 +1446,11 @@ async def test_watchlists_soloed_feeds_fills_the_centre(size):
             )
 
 
+@pytest.mark.parametrize("height,budget", [(42, 34), (41, 33)])
 @pytest.mark.asyncio
-async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds():
+async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds(
+    height: int, budget: int
+):
     """Task 6 fix round 3, Finding 4: the cap's derivation, made executable.
 
     `test_watchlists_items_region_is_taller_than_feeds_region_when_expanded`
@@ -1470,7 +1473,7 @@ async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds():
     app = _build_test_app()
     host = _visual_destination_harness(app, "watchlists_collections")
 
-    async with host.run_test(size=(160, 42)) as pilot:
+    async with host.run_test(size=(160, height)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
@@ -1489,20 +1492,24 @@ async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds():
             f"no longer exercising the cap: feeds={feeds.region}"
         )
         assert feeds.region.height == 12, (
-            f"FEEDS should sit exactly at its `max-height: 12`: {feeds.region}"
+            f"FEEDS should sit exactly at its `max-height: 12` at 160x{height}: "
+            f"{feeds.region}"
         )
         assert items.region.height == 14, (
-            f"the 2fr/1fr split of the 34-row budget should leave ITEMS 14 "
-            f"rows -- two more than the cap, which is the margin that lets "
-            f"the invariant survive a 41-row terminal: "
-            f"feeds={feeds.region} items={items.region} content={content.region}"
+            f"the 2fr/1fr split of the {budget}-row budget should leave ITEMS "
+            f"14 rows -- two more than the cap. This is the whole reason the "
+            f"cap is 12 and not the 13 the 160x42 maximum would allow: 13 "
+            f"gives items=14 at budget 34 but ties at items=13 when the "
+            f"budget drops to 33. feeds={feeds.region} items={items.region} "
+            f"content={content.region}"
         )
         assert items.region.height > feeds.region.height, (
             f"ITEMS must stay the taller reading area even when FEEDS is "
             f"pinned at its cap: feeds={feeds.region} items={items.region}"
         )
         assert (
-            feeds.region.height + items.region.height + content.region.height == 34
+            feeds.region.height + items.region.height + content.region.height
+            == budget
         ), (
             f"the centre budget moved; the cap's derivation needs redoing: "
             f"feeds={feeds.region} items={items.region} content={content.region}"
