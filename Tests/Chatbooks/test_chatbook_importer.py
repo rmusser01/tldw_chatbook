@@ -670,6 +670,17 @@ class TestChatbookImporterKeyCasingMismatch:
 
     @pytest.fixture(autouse=True)
     def stub_citation_composition(self, monkeypatch):
+        """Pins the key-casing contract between ChatbookImporter and get_chatbook_database_paths().
+
+        Stubs the citation conversation service builder to keep these tests isolated
+        at the mocked database seam. This fixture exists in both TestChatbookImporter
+        and TestChatbookImporterKeyCasingMismatch: the former tests the happy path
+        where db_paths keys match the importer's literal lookups, the latter tests
+        what happens when key casing diverges (TASK-928).
+
+        Args:
+            monkeypatch: pytest monkeypatch fixture for replacing build_local_citation_conversation_service.
+        """
         from tldw_chatbook.Chat.chat_conversation_service import (
             ChatConversationService,
         )
@@ -688,6 +699,17 @@ class TestChatbookImporterKeyCasingMismatch:
 
     @pytest.fixture
     def sample_chatbook_path(self, tmp_path):
+        """Create and return a temporary chatbook ZIP file with valid structure.
+
+        Generates a minimal but complete chatbook archive with manifest and one
+        conversation, suitable for testing ChatbookImporter behavior.
+
+        Args:
+            tmp_path: pytest fixture providing a temporary directory.
+
+        Returns:
+            Path object pointing to the created sample.zip file.
+        """
         chatbook_path = tmp_path / "sample.zip"
         manifest = {
             "version": "1.0",

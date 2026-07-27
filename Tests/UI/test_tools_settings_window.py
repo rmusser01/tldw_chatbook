@@ -61,19 +61,22 @@ class _ToolsSettingsHostApp(App):
 
 @asynccontextmanager
 async def mount_settings_window(config_dict: dict, temp_config_path: Path, monkeypatch):
-    """Write config_dict to temp_config_path, patch DEFAULT_CONFIG_PATH, and yield a live-mounted ToolsSettingsWindow driven by a real pilot.
+    """Context manager that mounts a live ToolsSettingsWindow with both config-path patches applied.
 
-    Also points ``TLDW_CONFIG_PATH`` at ``temp_config_path``. Every real
-    read/write path in the app resolves the *effective* config path via
-    ``config._get_effective_config_path()``, which prefers the
-    ``TLDW_CONFIG_PATH`` environment variable over ``DEFAULT_CONFIG_PATH``
-    whenever it is set -- and ``Tests/conftest.py``'s autouse
-    ``isolate_test_environment`` fixture always sets it, per-test, to a
-    separate bootstrap file. Patching only ``DEFAULT_CONFIG_PATH`` (as this
-    helper used to) left that env var pointing elsewhere, so the window
-    loaded/saved a config the test never wrote to and never inspected. Both
-    are set for defense in depth: DEFAULT_CONFIG_PATH is still consulted by
-    any code path that runs with no TLDW_CONFIG_PATH override at all.
+    Writes config_dict to temp_config_path, patches DEFAULT_CONFIG_PATH, and sets
+    the TLDW_CONFIG_PATH environment variable. Both are required: app code resolves
+    the effective config path via config._get_effective_config_path(), which prefers
+    the TLDW_CONFIG_PATH environment variable. Tests/conftest.py autouse fixture
+    sets TLDW_CONFIG_PATH per-test to a separate bootstrap file; patching only
+    DEFAULT_CONFIG_PATH meant the widget read a config the test never wrote.
+
+    Args:
+        config_dict: Dictionary of configuration to write to the temporary config file.
+        temp_config_path: Path where the temporary config.toml file will be written.
+        monkeypatch: pytest monkeypatch fixture for patching DEFAULT_CONFIG_PATH and environment.
+
+    Yields:
+        Tuple of (ToolsSettingsWindow, pilot) where pilot is the AppTest pilot for driving the widget.
     """
     create_dummy_config(temp_config_path, config_dict)
     monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
