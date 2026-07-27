@@ -1,7 +1,7 @@
 # Minimal File Notes Design
 
-Date: 2026-07-27  
-Task: [TASK-900](../../../backlog/tasks/task-900%20-%20Add-minimal-disk-backed-File-Notes-editor.md)  
+Date: 2026-07-27
+Task: [TASK-900](../../../backlog/tasks/task-900%20-%20Add-minimal-disk-backed-File-Notes-editor.md)
 Decision: [ADR-029](../../../backlog/decisions/029-file-notes-disk-authority.md)
 
 ## Goal

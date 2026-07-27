@@ -10,8 +10,8 @@
 
 ---
 
-ADR required: yes  
-ADR path: `backlog/decisions/029-file-notes-disk-authority.md`  
+ADR required: yes
+ADR path: `backlog/decisions/029-file-notes-disk-authority.md`
 Reason: Disk authority, the independent replica, conflict policy, and Library ownership are long-lived storage/UI boundaries.
 
 ## Files
