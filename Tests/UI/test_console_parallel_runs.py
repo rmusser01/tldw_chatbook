@@ -643,6 +643,207 @@ async def test_fleet_summary_line_is_reachable_on_the_live_rendered_surface() ->
         ) == ""
 
 
+def _agent_section_open(console) -> bool:
+    """True if the Agent rail section body is currently displayed."""
+    body = console.query_one("#console-rail-section-body-agent")
+    return body.styles.display != "none"
+
+
+def _no_persisted_agent_open_true(console) -> None:
+    """Assert no stored rail preference has ``agent_open: True``.
+
+    TASK-915 AC2: the auto-open force (`_apply_fleet_agent_section_auto_
+    open`) must never write to the persisted preference store -- only the
+    RENDERED rail state it returns changes. Walking every stored key (not
+    just the active session's) catches a leak through any scope, not only
+    the one under test.
+    """
+    for stored in console._console_rail_state_config().values():
+        assert isinstance(stored, dict)
+        assert stored.get("agent_open") is not True, (
+            f"persisted rail preference was force-written open: {stored!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_manual_collapse_of_agent_section_sticks_across_busy_payload_changes() -> (
+    None
+):
+    """TASK-915 AC1: collapsing the Agent section while the fleet is busy
+    must stick across a later agent-section payload change WITHIN that same
+    busy window (e.g. a second background run starting) -- not just until
+    the next 0.2s sync tick recomputes the force.
+
+    Pre-fix, `_sync_console_agent_section`'s `section_open` came straight
+    from `_current_console_rail_state().agent_open`, which re-ran
+    `_apply_fleet_agent_section_auto_open` on every call -- so the very next
+    payload-changing event (unrelated to the section itself) silently
+    re-forced the section open again.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background_a = controller.new_session().id
+        store.switch_session(viewed)
+
+        # Fleet goes busy -- the section force-opens (round 2 behavior,
+        # unchanged by this fix).
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg-a"),
+            session_id=background_a,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert console._console_agent_fleet_summary_line()
+        assert _agent_section_open(console)
+        assert console._current_console_rail_state().agent_open is True
+        assert console._agent_section_user_dismissed_while_busy is False
+
+        # User manually collapses it while still busy.
+        console._toggle_console_rail_section("agent")
+        assert not _agent_section_open(console)
+        assert console._current_console_rail_state().agent_open is False
+        assert console._agent_section_user_dismissed_while_busy is True
+
+        # A second background run starts -- an agent-section PAYLOAD change
+        # (the fleet count text itself flips from "1 other..." to "2
+        # other...") within the same busy window. `new_session()` activates
+        # the created session, so switch back to `viewed` afterwards --
+        # otherwise the new session would be excluded from its own fleet
+        # count instead of adding to it. Pre-fix, this payload change
+        # re-forced the section open.
+        background_b = controller.new_session().id
+        store.switch_session(viewed)
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg-b"),
+            session_id=background_b,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert (
+            console._console_agent_fleet_summary_line()
+            == "2 other agents running, 0 waiting for approval."
+        )
+        assert not _agent_section_open(console)
+        assert console._current_console_rail_state().agent_open is False
+
+        _no_persisted_agent_open_true(console)
+
+
+@pytest.mark.asyncio
+async def test_agent_section_auto_opens_again_for_new_busy_window_after_quiet() -> None:
+    """TASK-915 AC2: once the fleet quiets, the sticky dismissal releases so
+    a LATER, newly-busy fleet still auto-opens the section -- the fix must
+    not turn the collapse into a permanent override.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg"),
+            session_id=background,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert _agent_section_open(console)
+
+        console._toggle_console_rail_section("agent")
+        assert not _agent_section_open(console)
+        assert console._agent_section_user_dismissed_while_busy is True
+
+        # Fleet quiets.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"),
+            session_id=background,
+        )
+        controller.mark_session_visited(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert console._console_agent_fleet_summary_line() == ""
+        assert console._agent_section_user_dismissed_while_busy is False
+        # Persisted preference (collapsed, from the manual toggle above) is
+        # honored once quiet -- unchanged behavior, not this task's AC, but
+        # asserted here so a regression that force-opens on quiet is caught.
+        assert not _agent_section_open(console)
+
+        # A NEW busy window starts. `new_session()` activates the created
+        # session, so switch back to `viewed` afterwards -- otherwise the
+        # newly-busy session would be the ACTIVE one and excluded from its
+        # own fleet count (`fleet_summary_counts` is relative to viewed).
+        background_2 = controller.new_session().id
+        store.switch_session(viewed)
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg-2"),
+            session_id=background_2,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert console._console_agent_fleet_summary_line()
+        assert _agent_section_open(console)  # auto-open fires again
+        assert console._current_console_rail_state().agent_open is True
+
+        _no_persisted_agent_open_true(console)
+
+
+@pytest.mark.asyncio
+async def test_manual_reopen_of_agent_section_clears_busy_dismissal() -> None:
+    """TASK-915: a manual reopen (not just a quiet fleet) also releases the
+    sticky dismissal -- the flag must not outlive the user's own request to
+    see the section again.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg"),
+            session_id=background,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+
+        console._toggle_console_rail_section("agent")  # collapse while busy
+        assert console._agent_section_user_dismissed_while_busy is True
+
+        console._toggle_console_rail_section("agent")  # manual reopen
+        assert _agent_section_open(console)
+        assert console._agent_section_user_dismissed_while_busy is False
+
+        # Still busy: a payload change now keeps the section open via the
+        # user's own (now True) persisted preference, not the force.
+        background_2 = controller.new_session().id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg-2"),
+            session_id=background_2,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert _agent_section_open(console)
+
+
 def _single_pending_call() -> MCPPendingCall:
     return MCPPendingCall(
         llm_name="mcp__srv__tool",

@@ -2083,6 +2083,17 @@ class ChatScreen(BaseAppScreen):
         self._console_agent_section_last: (
             tuple[str, str, str, str, bool, bool] | None
         ) = None
+        # TASK-915: transient (never persisted) "user collapsed the Agent
+        # section while the fleet was busy" flag. Set by
+        # `_toggle_console_rail_section` when the user closes the section
+        # with a non-empty fleet line; consulted by
+        # `_apply_fleet_agent_section_auto_open` to skip its force-open for
+        # the REST of this busy window; cleared the moment the fleet goes
+        # quiet (next busy window auto-opens again) or the user reopens the
+        # section manually. See `_apply_fleet_agent_section_auto_open`'s
+        # docstring for why the force itself must stay a rendered-state-only
+        # override.
+        self._agent_section_user_dismissed_while_busy = False
         self._console_rail_system_line_last: tuple[str, bool] | None = None
         self._console_rail_prune_dispatched = False
         self._console_workspace_conversation_query = ""
@@ -7536,10 +7547,28 @@ class ChatScreen(BaseAppScreen):
         summary_line()`` -- the exact same non-empty-string signal the
         fleet Static's own ``display`` toggles on -- so "must render open"
         and "has a line to show" can never disagree.
+
+        TASK-915: fix round 3 (live-smoke finding). Round 2's force was a
+        one-shot-per-rendered-state override, but the 0.2s sync tick
+        recomputes it every time the agent-section payload changes (e.g. a
+        second background run starting/finishing) -- so a manual collapse
+        while the fleet was busy held only until the NEXT such change, then
+        got silently re-forced open. `_toggle_console_rail_section` now sets
+        `_agent_section_user_dismissed_while_busy` when the user closes this
+        section with a non-empty fleet line; honoured here so the force
+        stays suppressed for the rest of THIS busy window. Still never
+        touches the persisted preference -- only the transient flag and the
+        returned dataclass change.
         """
+        fleet_line = self._console_agent_fleet_summary_line()
+        if not fleet_line:
+            # Fleet is quiet: release any sticky dismissal so the NEXT busy
+            # window auto-opens again (TASK-915 AC2).
+            self._agent_section_user_dismissed_while_busy = False
+            return rail_state
         if rail_state.agent_open:
             return rail_state
-        if not self._console_agent_fleet_summary_line():
+        if self._agent_section_user_dismissed_while_busy:
             return rail_state
         return replace(rail_state, agent_open=True)
 
@@ -7624,6 +7653,15 @@ class ChatScreen(BaseAppScreen):
             return
         rail_state = self._current_console_rail_state()
         next_open = not getattr(rail_state, f"{section_id}_open")
+        if section_id == "agent":
+            # TASK-915: track manual collapse/reopen of the Agent section
+            # relative to the fleet's own busy signal -- never the
+            # persisted preference below, which already records the user's
+            # explicit choice either way.
+            if next_open:
+                self._agent_section_user_dismissed_while_busy = False
+            elif self._console_agent_fleet_summary_line():
+                self._agent_section_user_dismissed_while_busy = True
         self._set_console_rail_preference(
             section_updates={section_id: next_open},
             notify_on_failure=False,
