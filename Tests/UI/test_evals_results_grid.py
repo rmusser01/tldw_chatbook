@@ -596,9 +596,12 @@ async def test_sort_key_registers_and_reorders_by_spread(evals_app, mixed_run_gr
 
 
 @pytest.mark.asyncio
-async def test_grid_shortcuts_register_in_the_footer_and_export_key_is_left_free(
+async def test_grid_shortcuts_register_in_the_footer_including_export(
     evals_app, mixed_run_group
 ):
+    """Task 1 deliberately left `e` unbound and unadvertised ("Task 2's
+    job" -- see this module's own docstring history); PR 3b Task 2 claims
+    it for export, so the footer must now advertise it too."""
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         await _select_run_group(pilot, mixed_run_group["group_id"])
@@ -607,10 +610,8 @@ async def test_grid_shortcuts_register_in_the_footer_and_export_key_is_left_free
         assert "l lens" in footer.shortcut_text
         assert "b baseline" in footer.shortcut_text
         assert "s sort" in footer.shortcut_text
-        # Export (`e`) is Task 2's job -- the key must stay unadvertised and
-        # unbound so a later PR can claim it without a collision.
-        assert "e export" not in footer.shortcut_text
-        assert "e" not in {b.key for b in ResultsGrid.BINDINGS}
+        assert "e export" in footer.shortcut_text
+        assert "e" in {b.key for b in ResultsGrid.BINDINGS}
 
 
 @pytest.mark.asyncio

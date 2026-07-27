@@ -22,8 +22,9 @@ never a ``Screen``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
+from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -31,6 +32,9 @@ from textual.widgets import Button, Static
 
 from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.models import PreflightResult
+from ...Evals.word_bench.models import Target as WordBenchTarget
+from ...Evals.word_bench.runner import CaptureClientLike
+from ..Evals import sample_bench
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
 from ..Evals.inspector import EvalsCellInspector, EvalsInspector
@@ -59,6 +63,19 @@ class EvalsScreen(BaseAppScreen):
         self._rail_open_sections: dict[str, bool] = {
             section_id: True for section_id in RAIL_SECTIONS
         }
+        #: DI seam for tests only -- overrides sample_bench.py's default
+        #: (real ``WordBenchCaptureClient``) with a fake, mirroring
+        #: ``WordBenchRunner``'s own client_factory parameter. ``None`` in
+        #: production.
+        self._sample_bench_client_factory: Optional[
+            Callable[[WordBenchTarget], CaptureClientLike]
+        ] = None
+
+    def _current_app_config(self) -> dict[str, Any]:
+        """The app's loaded settings, read fresh on every recompose (not
+        cached in ``__init__``) so a provider configured in Settings after
+        this screen first mounted is picked up without a restart."""
+        return dict(getattr(self.app_instance, "app_config", None) or {})
 
     @staticmethod
     def _resolve_db(app_instance: object) -> Optional[EvalsDB]:
@@ -104,14 +121,14 @@ class EvalsScreen(BaseAppScreen):
             self.refresh(recompose=True)
 
     def _register_grid_shortcuts(self) -> None:
-        """Advertises the results grid's `l`/`b`/`s` keys (see
+        """Advertises the results grid's `l`/`b`/`s`/`e` keys (see
         ``results_grid.ResultsGrid.BINDINGS``) through the shared
         ``ShortcutContext`` machinery only while a run group is selected --
         the only selection kind that mounts a ``ResultsGrid`` at all -- so
         the footer never advertises a grid shortcut with no grid on
-        screen. `e` (export) is deliberately not advertised here: it is
-        Task 2's job, and the key is left unbound in ``ResultsGrid`` so a
-        later PR can claim it without a collision.
+        screen. `e` (export) is Task 2's addition -- Task 1 deliberately
+        left it unbound and unadvertised so this task could claim it
+        without a collision.
 
         Mirrors ``library_screen.py``'s ``_register_footer_shortcuts``: a
         static hint set, re-registered on every selection change rather
@@ -122,7 +139,9 @@ class EvalsScreen(BaseAppScreen):
         if self._selection.kind == "run_group" and self._selection.id:
             self.register_footer_shortcuts(
                 source="evals-grid",
-                shortcuts=(("l", "lens"), ("b", "baseline"), ("s", "sort")),
+                shortcuts=(
+                    ("l", "lens"), ("b", "baseline"), ("s", "sort"), ("e", "export"),
+                ),
             )
         else:
             self.clear_footer_shortcuts(source="evals-grid")
@@ -133,6 +152,41 @@ class EvalsScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         self.select(kind=event.selection.kind, id=event.selection.id)
+
+    @on(LibraryRail.SampleBenchRequested)
+    def _on_sample_bench_requested(
+        self, event: LibraryRail.SampleBenchRequested
+    ) -> None:
+        """Creates and runs the one-click sample bench (see
+        ``sample_bench.py``). Real DB writes plus a real HTTP call (in
+        production) -- run as a worker, never inline in a message handler,
+        per CLAUDE.md's "Workers for operations >100ms" rule.
+        """
+        event.stop()
+        self.run_worker(
+            self._create_sample_bench_worker(),
+            exclusive=True,
+            group="evals-sample-bench",
+        )
+
+    async def _create_sample_bench_worker(self) -> None:
+        app_config = self._current_app_config()
+        try:
+            result = await sample_bench.create_and_run_sample_bench(
+                self._view_model,
+                app_config,
+                client_factory=self._sample_bench_client_factory,
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning("Sample bench creation failed.")
+            self.app_instance.notify(
+                f"Could not create the sample bench: {exc}", severity="error"
+            )
+            return
+        self.app_instance.notify(
+            "Sample bench created and run.", severity="information"
+        )
+        self.select(kind="run_group", id=result.run_group_id)
 
     @on(ResultsGrid.CellFocused)
     def _on_grid_cell_focused(self, event: ResultsGrid.CellFocused) -> None:
@@ -175,6 +229,7 @@ class EvalsScreen(BaseAppScreen):
                     self._view_model,
                     selection=self._selection,
                     open_sections=self._rail_open_sections,
+                    app_config=self._current_app_config(),
                     id="evals-library-pane",
                     classes="destination-workbench-pane",
                 )

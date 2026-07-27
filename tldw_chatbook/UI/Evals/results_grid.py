@@ -70,14 +70,22 @@ reason -- switching lens/baseline/sort mutates state and calls
 ``_render_table``/``_render_header`` directly against the mounted
 ``DataTable``/``Static``s, never a recompose.
 
-Export (`e`) is Task 2's job. The key is deliberately left unbound here so
-it stays free.
+Export (`e`, ``action_export``) writes CSV for the ACTIVE lens or JSON for
+the whole run group, chosen by the extension of the ``FileSave``-picked
+destination. Both formats are built from ``_compute_active_lens_rows``
+(CSV) and the raw ``self._grid`` snapshot/cells (JSON) -- never a second,
+parallel read of the run group -- so an export can never show numbers the
+on-screen grid itself did not.
 """
 
 from __future__ import annotations
 
+import csv
+import io
+import json
 from typing import Any, Literal, Optional
 
+from loguru import logger
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -89,6 +97,8 @@ from textual.widgets import DataTable, Select, Static
 from ...Evals.word_bench import analysis
 from ...Evals.word_bench.models import CellCapture, CellError, PreflightResult, TokenProb
 from ...Evals.word_bench.storage import load_grid
+from ...Third_Party.textual_fspicker import FileSave, Filters
+from ...Utils.path_validation import validate_path_simple
 from .evals_state import EvalsViewModel
 
 LensKey = Literal["top1", "entropy", "probe", "coverage", "delta"]
@@ -202,6 +212,7 @@ class ResultsGrid(Vertical):
         Binding("l", "cycle_lens", "lens", show=False),
         Binding("b", "cycle_baseline", "baseline", show=False),
         Binding("s", "cycle_sort", "sort", show=False),
+        Binding("e", "export", "export", show=False),
     ]
 
     can_focus = False  # the DataTable child is the focusable element
@@ -405,6 +416,164 @@ class ResultsGrid(Vertical):
         self._render_table()
         self._render_header()
 
+    # -- export ------------------------------------------------------
+
+    def action_export(self) -> None:
+        """Opens a ``FileSave`` dialog offering both formats; the CHOSEN
+        destination's extension picks which one gets written (see
+        ``_write_export_file``) -- one dialog, one key, per the design
+        spec's "Export (`e`) writes the grid as CSV for the active lens, or
+        JSON for the whole run group."
+        """
+        if self._grid is None:
+            return
+        bench_name = str(self._grid["snapshot"].get("bench_name") or "run")
+        safe_name = (
+            "".join(c for c in bench_name if c.isalnum() or c in (" ", "-", "_")).strip()
+            or "run"
+        )
+        filters = Filters(
+            ("JSON (full run group)", lambda p: p.suffix.lower() == ".json"),
+            ("CSV (active lens)", lambda p: p.suffix.lower() == ".csv"),
+            ("All files", lambda p: True),
+        )
+        self.app.push_screen(
+            FileSave(
+                title="Export results grid",
+                default_file=f"{safe_name}.json",
+                filters=filters,
+            ),
+            self._write_export_file,
+        )
+
+    def _write_export_file(self, selected_path: Optional[Any]) -> None:
+        """Writes the export chosen via ``action_export``'s ``FileSave``
+        dialog. ``.csv`` writes the active lens; anything else (``.json``
+        or an unrecognized extension) writes the full run-group JSON --
+        the more complete, reproducible form is the safer default for an
+        ambiguous filename. Public-shaped (not name-mangled) so a test can
+        call it directly with a real temp path, bypassing the modal picker
+        -- mirrors ``SnippetEditor._handle_import_file_selected``/
+        ``library_screen.py``'s own export write-helpers.
+        """
+        if not selected_path or self._grid is None:
+            return
+        try:
+            validated_path = validate_path_simple(selected_path, require_exists=False)
+        except ValueError as exc:
+            logger.warning(f"Rejected results-grid export path {selected_path!r}: {exc}")
+            self._notify(f"Rejected export path: {exc}", severity="warning")
+            return
+
+        try:
+            if validated_path.suffix.lower() == ".csv":
+                validated_path.write_text(self._export_csv_text(), encoding="utf-8")
+            else:
+                payload = self._export_json_payload()
+                validated_path.write_text(
+                    json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+        except OSError as exc:
+            logger.opt(exception=True).warning(
+                f"Could not write results-grid export to {validated_path}."
+            )
+            self._notify(f"Export failed: {exc}", severity="error")
+            return
+        self._notify(f"Exported to {validated_path}", severity="information")
+
+    def _notify(self, message: str, *, severity: str = "information") -> None:
+        """Mirrors ``snippet_editor.py``'s identical helper: routes through
+        the screen's ``app_instance`` (what a test harness's fake actually
+        observes), falling back to ``self.app.notify``."""
+        app_instance = getattr(self.screen, "app_instance", None)
+        if app_instance is not None and hasattr(app_instance, "notify"):
+            app_instance.notify(message, severity=severity)
+        else:
+            self.app.notify(message, severity=severity)
+
+    def _export_csv_text(self) -> str:
+        """CSV for the ACTIVE lens -- built from the exact same
+        ``_compute_active_lens_rows`` the on-screen ``DataTable`` renders
+        from, so this can never show a different lens/baseline/sort than
+        what is currently visible."""
+        column_labels, snippet_rows, group_mean_rows = self._compute_active_lens_rows()
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(column_labels)
+        for _row_key, cells in snippet_rows:
+            writer.writerow(cells)
+        for _row_key, cells in group_mean_rows:
+            writer.writerow(cells)
+        return buffer.getvalue()
+
+    def _export_json_payload(self) -> dict[str, Any]:
+        """The whole run group: snapshot, every cell's top-K, and the
+        resolved probe readings -- "what makes a run reproducible outside
+        the app" per the design spec. Unlike the CSV export (one lens),
+        this is lens-independent: it reads ``self._grid`` directly, the
+        same snapshot/cells ``compose()`` loaded once from ``load_grid``,
+        never re-querying the database.
+        """
+        snapshot = self._grid["snapshot"]
+        cells: dict[tuple[str, str], CellCapture | CellError] = self._grid["cells"]
+        probes = tuple(snapshot.get("probes") or ())
+        targets = snapshot.get("targets") or []
+
+        ever_observed_by_target = {
+            target["id"]: self._ever_observed_all_probes(target["id"])
+            for target in targets
+        }
+
+        cell_payloads: dict[str, dict[str, Any]] = {}
+        for (sid, tid), cap_or_err in cells.items():
+            key = f"{sid}|{tid}"
+            if isinstance(cap_or_err, CellError):
+                cell_payloads[key] = {
+                    "snippet_id": sid,
+                    "target_id": tid,
+                    "status": "failed",
+                    "reason": cap_or_err.reason,
+                    "detail": cap_or_err.detail,
+                }
+                continue
+            cap = cap_or_err
+            probe_readings: dict[str, dict[str, Any]] = {}
+            for probe in probes:
+                reading = analysis.resolve_probe(
+                    cap, probe, ever_observed=ever_observed_by_target.get(tid, {}).get(probe, False)
+                )
+                probe_readings[probe] = {
+                    "state": reading.state,
+                    "logprob": reading.logprob,
+                }
+            cell_payloads[key] = {
+                "snippet_id": sid,
+                "target_id": tid,
+                "status": "captured",
+                "prompt_mode": cap.prompt_mode,
+                "k_requested": cap.k_requested,
+                "k_returned": cap.k_returned,
+                "content_offset": cap.content_offset,
+                "canary": cap.canary,
+                "captured_at": cap.captured_at,
+                "top_k": [
+                    {
+                        "token": tok.token,
+                        "logprob": tok.logprob,
+                        "bytes": list(tok.bytes_),
+                        "token_id": tok.token_id,
+                    }
+                    for tok in cap.top_k
+                ],
+                "probes": probe_readings,
+            }
+
+        return {
+            "run_group_id": self._run_group_id,
+            "snapshot": snapshot,
+            "cells": cell_payloads,
+        }
+
     # -- header ----------------------------------------------------------
 
     def _render_header(self) -> None:
@@ -441,6 +610,40 @@ class ResultsGrid(Vertical):
         table = self.query_one("#evals-grid-table", DataTable)
         table.clear(columns=True)
 
+        targets = self._grid["snapshot"].get("targets") or []
+        column_labels, snippet_rows, group_mean_rows = self._compute_active_lens_rows()
+
+        table.add_column(_safe_cell(column_labels[0]), key="__snippet__")
+        for index, target in enumerate(targets):
+            table.add_column(_safe_cell(column_labels[1 + index]), key=target["id"])
+        if self._lens == "delta":
+            table.add_column(_safe_cell(column_labels[-1]), key="__spread__")
+
+        for row_key, cell_texts in snippet_rows:
+            table.add_row(*(_safe_cell(c) for c in cell_texts), key=row_key)
+        for row_key, cell_texts in group_mean_rows:
+            table.add_row(*(_safe_cell(c) for c in cell_texts), key=row_key)
+
+    def _compute_active_lens_rows(
+        self,
+    ) -> tuple[list[str], list[tuple[str, list[str]]], list[tuple[str, list[str]]]]:
+        """The single source of truth for "what the active lens/baseline/
+        sort renders" -- shared by the on-screen ``DataTable``
+        (``_render_table``, above) and CSV export (``_export_csv_rows``,
+        below) so the two can never disagree about what "the active lens"
+        means. Every value here is plain text (no ``rich.text.Text``
+        wrapping) -- ``_render_table`` wraps it via ``_safe_cell`` for the
+        ``DataTable``; the CSV writer uses it as-is.
+
+        Returns:
+            ``(column_labels, snippet_rows, group_mean_rows)`` --
+            ``column_labels`` is ``["Snippet", <target label>, ...]``, with
+            a trailing ``"Spread"`` only for the Δ lens. ``snippet_rows``
+            and ``group_mean_rows`` are ``[(row_key, [cell_text, ...]),
+            ...]`` in display (post-sort) order; ``group_mean_rows`` is
+            empty outside the Δ lens or when no snippet in this run carries
+            a ``group``.
+        """
         snapshot = self._grid["snapshot"]
         cells: dict[tuple[str, str], CellCapture | CellError] = self._grid["cells"]
         preflight: dict[str, PreflightResult] = self._grid.get("preflight") or {}
@@ -453,7 +656,7 @@ class ResultsGrid(Vertical):
             self._baseline_target_id() if self._baseline_mode == "column" else None
         )
 
-        table.add_column(_safe_cell("Snippet"), key="__snippet__")
+        column_labels: list[str] = ["Snippet"]
         for target in targets:
             label = target["name"]
             result = preflight.get(target["id"])
@@ -461,9 +664,9 @@ class ResultsGrid(Vertical):
                 label = f"{label} [warned]"
             if show_delta_extras and target["id"] == baseline_target_id:
                 label = f"{label} · baseline"
-            table.add_column(_safe_cell(label), key=target["id"])
+            column_labels.append(label)
         if show_delta_extras:
-            table.add_column(_safe_cell("Spread"), key="__spread__")
+            column_labels.append("Spread")
 
         caps_by_capture = {
             key: cap for key, cap in cells.items() if isinstance(cap, CellCapture)
@@ -486,6 +689,7 @@ class ResultsGrid(Vertical):
             target["id"]: [] for target in targets
         }
 
+        snippet_rows: list[tuple[str, list[str]]] = []
         for snippet in row_order:
             sid = snippet["id"]
             label = snippet["text"]
@@ -514,10 +718,13 @@ class ResultsGrid(Vertical):
                 ]
                 valid = [c for c in row_caps if c is not None]
                 row.append(f"{analysis.spread(valid):.2f}" if len(valid) >= 2 else "")
-            table.add_row(*(_safe_cell(cell) for cell in row), key=sid)
+            snippet_rows.append((sid, row))
 
+        group_mean_rows: list[tuple[str, list[str]]] = []
         if show_delta_extras:
-            self._add_group_mean_rows(table, targets, column_group_rows)
+            group_mean_rows = self._group_mean_rows(targets, column_group_rows)
+
+        return column_labels, snippet_rows, group_mean_rows
 
     def _render_cell(
         self,
@@ -632,12 +839,11 @@ class ResultsGrid(Vertical):
             text += " !"
         return text, jsd
 
-    def _add_group_mean_rows(
+    def _group_mean_rows(
         self,
-        table: DataTable,
         targets: list[dict[str, Any]],
         column_group_rows: dict[str, list[tuple[Optional[str], float]]],
-    ) -> None:
+    ) -> list[tuple[str, list[str]]]:
         groups_in_order: list[str] = []
         seen: set[str] = set()
         for rows in column_group_rows.values():
@@ -646,11 +852,12 @@ class ResultsGrid(Vertical):
                     seen.add(group)
                     groups_in_order.append(group)
         if not groups_in_order:
-            return
+            return []
 
         means_by_target = {
             tid: analysis.group_means(rows) for tid, rows in column_group_rows.items()
         }
+        result: list[tuple[str, list[str]]] = []
         for group in groups_in_order:
             row: list[str] = [f"group mean [{group}]"]
             for target in targets:
@@ -658,7 +865,8 @@ class ResultsGrid(Vertical):
                 value = means.get(group)
                 row.append(f"{value:.2f}" if value is not None else "")
             row.append("")  # Spread column: not meaningful for a summary row.
-            table.add_row(*(_safe_cell(cell) for cell in row), key=f"__group_mean__{group}")
+            result.append((f"__group_mean__{group}", row))
+        return result
 
     def _sorted_rows(
         self,
