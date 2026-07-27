@@ -4,44 +4,24 @@ This guide helps you choose the right transcription provider for your use case.
 
 ## Current Library Batch Route
 
-The Library audio/video form exposes a visible semantic `default` plus the exact
-`parakeet-onnx` and `faster-whisper` providers. While the Parakeet promotion
-gate is closed, compatible `default` requests use faster-whisper; translation
-targets other than `en` fail. `en` remains the default requested language.
+See the canonical [Library Batch Routing](TRANSCRIPTION.md#library-batch-routing)
+policy for the exact routing table, supported Parakeet ONNX v3 languages,
+installation, cache recovery, and artifact limitations.
 
-| Selected provider | Request | Model/runtime behavior |
-|---|---|---|
-| `default` | Transcription, `auto`, unsupported language, or translation to `en` | faster-whisper INT8 while the promotion gate is closed |
-| `default` | Translation to another target | Fails; faster-whisper translates only to English |
-| `parakeet-onnx` | Missing language or `en` | `nemo-parakeet-tdt-0.6b-v2` INT8 |
-| `parakeet-onnx` | `bg`, `hr`, `cs`, `da`, `nl`, `et`, `fi`, `fr`, `de`, `el`, `hu`, `it`, `lv`, `lt`, `mt`, `pl`, `pt`, `ro`, `sk`, `sl`, `es`, `sv`, `ru`, or `uk` | `nemo-parakeet-tdt-0.6b-v3` INT8 |
-| `parakeet-onnx` | `auto`, unsupported language, or translation | Fails with `Retry with faster-whisper` guidance |
-| `faster-whisper` | Translation with target `en` | Translates to English |
-| `faster-whisper` | Translation to another target | Fails; non-English targets are unsupported |
-
-For Parakeet v3, the selected language is routing-only and is not a decoder
-constraint. Results report the request, `effective_language=auto`,
-`detected_language=null`, and `requested_language_not_enforced`.
-
-All successful Library batch routes are INT8 and installed/local-only. Exact
-Parakeet uses a user-selected existing local directory and checks for the
-required config, vocabulary, encoder, and decoder filenames. The runtime may
-read at most 64 KiB from a non-symlink receipt; repository and revision
-metadata that identify v2 are rejected when v3 is selected. The receipt is not
-authenticated and does not verify file contents or v3 eligibility.
-faster-whisper requires its model to already be cached. Missing files fail
-clearly and never trigger a download in an ingestion worker.
-
-Parakeet ONNX is not the legacy NeMo `parakeet` provider or the macOS-only
-`parakeet-mlx` provider covered below. Full managed v3 artifacts and the
-interactive **Retry with faster-whisper** action remain deferred.
+The current form exposes semantic `default`, exact `parakeet-onnx`, and exact
+`faster-whisper`. Exact faster-whisper supports ordinary transcription,
+including explicit languages or `auto`, and is the only selection that enables
+the model picker. The form has no translation-target control; the
+translation-to-English contract applies only to stored or programmatic
+options. Parakeet ONNX is distinct from Parakeet-MLX and Legacy NeMo Parakeet
+(`parakeet`).
 
 ## Quick Comparison Table
 
-The comparison below covers the older general and real-time providers; the
-current Parakeet ONNX Library batch route is documented separately above.
+The comparison below covers the older general and real-time providers; use the
+canonical routing link above for the current Parakeet ONNX Library batch path.
 
-| Feature | Parakeet-MLX | Lightning-Whisper-MLX | Faster-Whisper | Qwen2Audio | Parakeet | Canary |
+| Feature | Parakeet-MLX | Lightning-Whisper-MLX | Faster-Whisper | Qwen2Audio | Legacy NeMo Parakeet | Canary |
 |---------|--------------|----------------------|----------------|------------|----------|---------|
 | **Speed** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
 | **Accuracy** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
@@ -173,7 +153,7 @@ current Parakeet ONNX Library batch route is documented separately above.
 - Research applications
 - When context understanding is critical
 
-### Parakeet (Legacy NeMo Provider)
+### Legacy NeMo Parakeet (`parakeet`)
 
 **Best for:** Real-time English transcription
 
@@ -205,6 +185,9 @@ current Parakeet ONNX Library batch route is documented separately above.
 ### Canary
 
 **Best for:** Multilingual transcription and translation
+
+This is a legacy provider capability, not a workflow exposed by the current
+Library audio/video form.
 
 **Strengths:**
 - Supports 4 languages (en, de, es, fr)
@@ -239,7 +222,7 @@ current Parakeet ONNX Library batch route is documented separately above.
 
 **Real-time/Streaming:**
 - First choice: Parakeet-MLX (macOS)
-- Alternative: Parakeet (tdt models)
+- Alternative: Legacy NeMo Parakeet (TDT models)
 - Fallback: Canary with small chunks
 
 **Multilingual Content:**
@@ -248,7 +231,7 @@ current Parakeet ONNX Library batch route is documented separately above.
 
 **Quick Drafts:**
 - Faster-Whisper (tiny or base)
-- Parakeet (0.6b models)
+- Legacy NeMo Parakeet (0.6b models)
 
 **Best Quality:**
 - Faster-Whisper (large-v3)
@@ -265,12 +248,12 @@ current Parakeet ONNX Library batch route is documented separately above.
 
 **CPU Only:**
 - Faster-Whisper with int8 compute
-- Small Parakeet models
+- Small Legacy NeMo Parakeet models
 - Avoid Qwen2Audio
 
 **Limited GPU (4-8GB):**
 - Faster-Whisper (all models)
-- Parakeet (all models)
+- Legacy NeMo Parakeet (all models)
 - Canary (may need reduced batch size)
 
 **Powerful GPU (16GB+):**
@@ -281,7 +264,7 @@ current Parakeet ONNX Library batch route is documented separately above.
 ### By Language
 
 **English Only:**
-- Parakeet for speed
+- Legacy NeMo Parakeet for speed
 - Faster-Whisper for accuracy
 
 **European Languages:**
@@ -302,7 +285,7 @@ current Parakeet ONNX Library batch route is documented separately above.
 2. Enable GPU acceleration if available
 3. Use int8 compute type for CPU
 4. Disable VAD if not needed
-5. Use Parakeet for English-only content
+5. Use Legacy NeMo Parakeet for English-only content
 
 ### for Accuracy
 1. Use larger models (large-v3, 1.1b variants)
@@ -342,7 +325,7 @@ current Parakeet ONNX Library batch route is documented separately above.
 - Settings: GPU acceleration
 
 ### "Real-time English"
-- Provider: Parakeet
+- Provider: `parakeet` (Legacy NeMo Parakeet)
 - Model: parakeet-tdt-0.6b-v2
 - Settings: GPU if available
 
@@ -356,7 +339,7 @@ current Parakeet ONNX Library batch route is documented separately above.
 ### "Transcription is too slow"
 - Switch to smaller model
 - Enable GPU acceleration
-- Use Parakeet for English
+- Use Legacy NeMo Parakeet for English
 - Check CPU/GPU usage
 
 ### "Poor accuracy"

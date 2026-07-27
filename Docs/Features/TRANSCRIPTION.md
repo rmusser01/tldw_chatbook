@@ -17,9 +17,22 @@ tldw_chatbook provides a unified transcription service that supports multiple ba
 
 ## Installation
 
-### Basic Audio Support
+### Library Audio and Video
+
+The `audio` and `video` extras each install faster-whisper:
+
 ```bash
 pip install -e ".[audio]"
+pip install -e ".[video]"
+```
+
+Add the Parakeet ONNX runtime when you want to select exact
+`parakeet-onnx`:
+
+```bash
+pip install -e ".[audio,transcription_parakeet_onnx]"
+# Or, for video:
+pip install -e ".[video,transcription_parakeet_onnx]"
 ```
 
 ### Console Microphone Dictation
@@ -27,10 +40,11 @@ pip install -e ".[audio]"
 pip install -e ".[speech_recording,transcription_parakeet_onnx]"
 ```
 
-Install the verified **Parakeet v2 INT8** bundle from **Library → Models**
-before using the Console microphone. The Mic action never downloads a model.
+In the Library audio/video options, select exact `parakeet-onnx`, keep language
+`en`, and use **Install verified Parakeet v2 INT8** before using the Console
+microphone. The Mic action never downloads a model.
 
-### NVIDIA Models (Parakeet & Canary)
+### Legacy NeMo Models (`parakeet` and `canary`)
 ```bash
 pip install -e ".[nemo]"
 ```
@@ -71,6 +85,10 @@ Parakeet promotion gate is closed, compatible requests resolve to
 faster-whisper; translation targets other than `en` fail. `en` remains the
 default requested language.
 
+The current Library audio/video form has no translation-target control. The
+translation rows below describe stored or programmatic job options, not
+controls offered by the form.
+
 | Selected provider | Request | Current batch result |
 |---|---|---|
 | `default` | Transcription, `auto`, unsupported language, or translation to `en` | faster-whisper INT8 while the promotion gate is closed |
@@ -80,6 +98,10 @@ default requested language.
 | `parakeet-onnx` | `auto`, an unsupported language, or any translation | Fails with `Retry with faster-whisper` guidance |
 | `faster-whisper` | Transcription, or translation with target `en` | faster-whisper INT8 |
 | `faster-whisper` | Translation to any target other than `en` | Fails; faster-whisper translates only to English |
+
+The Parakeet model values in this table are selected route/model labels. They
+do not attest that a user-selected directory contains that model or verified
+model contents.
 
 The exact supported non-English Parakeet v3 codes are `bg`, `hr`, `cs`, `da`,
 `nl`, `et`, `fi`, `fr`, `de`, `el`, `hu`, `it`, `lv`, `lt`, `mt`, `pl`, `pt`,
@@ -104,6 +126,30 @@ This Parakeet ONNX batch path is distinct from the legacy NeMo `parakeet`
 provider and the macOS-only `parakeet-mlx` provider described below. Full
 managed v3 artifacts and the interactive **Retry with faster-whisper** action
 remain deferred.
+
+### Prepare Models Before Starting Ingest
+
+Library ingestion workers are local-only and never download a transcription
+model.
+
+- For exact faster-whisper, select the model in the Library form and cache that
+  exact model before choosing **Start ingest**. For example, to cache `base`:
+
+  ```bash
+  python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8')"
+  ```
+
+  Replace `base` with the exact model selected in the form.
+- For exact English Parakeet, select `parakeet-onnx`, keep language `en`, and
+  use **Install verified Parakeet v2 INT8**. The installer fills the local
+  model folder with the curated v2 installation.
+- There is no supported in-app Parakeet v3 acquisition yet. Exact supported
+  non-English Parakeet requires a manually obtained existing local directory
+  with the required filenames. If you do not already have such a directory,
+  select `faster-whisper` for non-English transcription.
+
+Direct or non-batch transcription calls may retain their existing download
+behavior. That does not permit a Library ingestion worker to download.
 
 ## Available Models
 
@@ -162,29 +208,23 @@ transcription failures leave the draft unchanged and display an error.
 
 ### Basic Transcription
 
-1. Navigate to **Library**
-2. Select **Local Audio** or **Local Video**
+1. Navigate to **Library**.
+2. Select **Local Audio** or **Local Video**.
 3. Choose your transcription settings:
-   - **Provider**: Keep the semantic default or select an exact provider
-   - **Model**: Choose model size/variant
-   - **Language**: `en` by default; use `auto` only with faster-whisper
-4. Select your audio/video files
-5. Click **Process Files**
+   - **Provider**: Keep the semantic default or select an exact provider.
+   - **Model**: Available only when exact `faster-whisper` is selected.
+   - **Local Parakeet model folder** and **Install verified Parakeet v2
+     INT8**: Available only when exact `parakeet-onnx` is selected.
+   - **Language**: `en` by default; use `auto` only with faster-whisper.
+4. Select your audio/video files.
+5. Choose **Start ingest**.
 
-### Translation
+### Programmatic Translation
 
-Translation is available when using supported providers:
-
-#### Faster-Whisper (English Translation Only)
-1. Select a non-English audio file
-2. Set the translation target to `en`
-3. Process the file for transcription and translation to English
-
-#### Canary (Multilingual Translation)
-1. Select **canary** as the provider
-2. Set the **Source Language** (en, de, es, or fr)
-3. Set the **Target Language** (en, de, es, or fr)
-4. Process the file for transcription + translation
+The current Library audio/video form does not expose a translation-target
+control. Stored or programmatic faster-whisper jobs may request translation
+with target `en`; other targets fail. Canary translation remains a legacy
+provider capability and is not a current Library workflow.
 
 ## Language Codes
 
@@ -208,7 +248,7 @@ Use "auto" for automatic language detection (Faster-Whisper only).
 ## Performance Tips
 
 ### Model Selection
-- **For speed**: Use smaller models (tiny, base) or Parakeet
+- **For speed**: Use smaller faster-whisper models or Legacy NeMo `parakeet`
 - **For accuracy**: Use larger models (large-v3) or Canary
 - **For non-English**: Use Faster-Whisper or Canary
 
@@ -249,11 +289,12 @@ The Local Ingestion window supports batch processing:
 
 **"Model not found"**
 - Ensure you've installed the required dependencies
-- For Library batch transcription, install or cache the model before ingesting;
-  the worker will not download it
-- For exact Parakeet ONNX, select an existing local directory containing the
-  required filenames; this check does not validate their contents
-- For faster-whisper, confirm the selected model is already in the local cache
+- Follow [Prepare Models Before Starting Ingest](#prepare-models-before-starting-ingest);
+  the Library worker will not download a missing model
+- For exact Parakeet ONNX, remember that a manual directory is checked only for
+  required filenames; the check does not validate their contents
+- For faster-whisper, cache the exact model selected in the Library form before
+  choosing **Start ingest**
 
 **"CUDA out of memory"**
 - Use a smaller model

@@ -27,8 +27,8 @@ Extend the working batch transcription path with explicit Parakeet v3 support an
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Explicit parakeet-onnx plus en uses the local v2 INT8 bundle; explicit supported non-English uses the local v3 INT8 bundle; explicit auto, unsupported languages, and translation fail clearly with Retry with faster-whisper guidance.
-- [x] #2 Semantic provider=default resolves to faster-whisper until the Parakeet promotion gate is enabled; the approved en/v2, supported non-English/v3, and auto-or-unsupported/faster-whisper policy is implemented without silently crossing engines.
+- [x] #1 Explicit parakeet-onnx plus en selects `nemo-parakeet-tdt-0.6b-v2`; explicit supported non-English selects `nemo-parakeet-tdt-0.6b-v3`; both require a user-selected existing local directory with the required filenames; explicit auto, unsupported languages, and translation fail clearly with Retry with faster-whisper guidance.
+- [x] #2 Compatible semantic provider=default requests resolve to faster-whisper until the Parakeet promotion gate is enabled, while non-English translation targets fail; the approved en/v2, supported non-English/v3, and auto-or-unsupported/faster-whisper policy is implemented without silently crossing engines.
 - [x] #3 Parakeet v3 never receives a decoder language constraint and returns requested_language, effective_language=auto, detected_language=null, and requested_language_not_enforced.
 - [x] #4 Batch audio and video preserve the resolved provider, model, language, model directory, and INT8 precision without downloading inside transcription workers.
 - [x] #5 Focused routing, service, audio, video, and app-option tests pass; parent TASK-602 remains open for managed executor, provenance, VAD, retry-action, and platform gates.
@@ -55,7 +55,8 @@ Reason: ADR-025 already governs routing, v3 language transparency, INT8, explici
 - Added deterministic local INT8 batch routing, explicit Parakeet ONNX v2/v3
   execution, transparent v3 language metadata, and end-to-end audio/video
   option preservation. Updated the Library-facing routing documentation and
-  kept semantic `default` on faster-whisper while the promotion gate is closed.
+  kept compatible semantic `default` requests on faster-whisper while the
+  promotion gate is closed.
 - Corrected the plan's invalid faster-whisper `en` to `fr` example to a
   translation-to-English request. Runtime validation rejects all non-English
   faster-whisper targets. Also allowed a bounded, non-symlink receipt metadata
@@ -80,4 +81,9 @@ Reason: ADR-025 already governs routing, v3 language transparency, INT8, explici
   cancellation, the interactive retry action, and Windows/Linux/platform
   matrix evidence. Full managed v3 artifacts and retry UI are not part of this
   child task.
+- Current route/model values are selection labels, not attestation of a local
+  directory's identity or contents. The Library offers the verified v2
+  installer but no supported in-app v3 acquisition; manually selected
+  directories receive required-filename checks and the bounded receipt
+  metadata mismatch check only.
 <!-- SECTION:NOTES:END -->

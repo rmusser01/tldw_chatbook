@@ -22,7 +22,7 @@
 - Create: `tldw_chatbook/Local_Ingestion/stt_batch_routing.py`
 - Create: `Tests/Transcription/test_stt_batch_routing.py`
 
-- [ ] **Step 1: Write failing routing tests**
+- [x] **Step 1: Write failing routing tests**
 
 Cover these independent outcomes:
 
@@ -86,7 +86,7 @@ def test_explicit_parakeet_rejects_incompatible_requests_with_retry_guidance(
         )
 ```
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run:
 
@@ -96,7 +96,7 @@ Run:
 
 Expected: collection fails because `stt_batch_routing` does not exist.
 
-- [ ] **Step 3: Implement the minimal routing module**
+- [x] **Step 3: Implement the minimal routing module**
 
 Add immutable constants for the v2/v3 model IDs and upstream v3 language set, a frozen `BatchSTTRoute`, a `BatchSTTRoutingError`, and:
 
@@ -124,7 +124,7 @@ Rules:
 - Every batch route records `precision="int8"` and `local_files_only=True`; routing never authorizes a worker download.
 - Reject unknown providers; do not prefix-match or silently substitute.
 
-- [ ] **Step 4: Run the routing tests and verify GREEN**
+- [x] **Step 4: Run the routing tests and verify GREEN**
 
 Run:
 
@@ -134,7 +134,7 @@ Run:
 
 Expected: all routing tests pass.
 
-- [ ] **Step 5: Commit the routing policy**
+- [x] **Step 5: Commit the routing policy**
 
 ```bash
 git add tldw_chatbook/Local_Ingestion/stt_batch_routing.py Tests/Transcription/test_stt_batch_routing.py
@@ -147,7 +147,7 @@ git commit -m "feat(stt): add gated batch routing policy"
 - Modify: `tldw_chatbook/Local_Ingestion/transcription_service.py`
 - Modify: `Tests/Transcription/test_parakeet_onnx_vertical_slice.py`
 
-- [ ] **Step 1: Write failing service tests**
+- [x] **Step 1: Write failing service tests**
 
 Add tests proving:
 
@@ -168,7 +168,7 @@ Add tests proving:
 - English v2 additionally reports `requested_language=en`, `effective_language=en`, and no warning while preserving existing legacy result keys.
 - Auto, unsupported explicit languages, translation, and mismatched model/language pairs fail before `onnx_asr.load_model()` and contain “Retry with faster-whisper”.
 
-- [ ] **Step 2: Run the focused service tests and verify RED**
+- [x] **Step 2: Run the focused service tests and verify RED**
 
 Run:
 
@@ -178,7 +178,7 @@ Run:
 
 Expected: v3/result-contract assertions fail because the service is v2-only.
 
-- [ ] **Step 3: Implement minimal v2/v3 model validation and result shaping**
+- [x] **Step 3: Implement minimal v2/v3 model validation and result shaping**
 
 Use the routing constants rather than duplicating model strings. Change `_load_parakeet_onnx_model()` to validate the exact model/language pairing, keep `quantization="int8"` and `CPUExecutionProvider`, and continue requiring a user-selected existing local directory with the required filenames. Do not pass language to `onnx_asr.load_model()`.
 
@@ -195,7 +195,7 @@ Change `_parakeet_onnx_result()` to receive `requested_language` and distinguish
 
 Keep the existing text and segment keys so current ingestion callers remain compatible.
 
-- [ ] **Step 4: Run the focused service tests and verify GREEN**
+- [x] **Step 4: Run the focused service tests and verify GREEN**
 
 Run:
 
@@ -205,7 +205,7 @@ Run:
 
 Expected: all focused Parakeet ONNX tests pass.
 
-- [ ] **Step 5: Commit v3 execution support**
+- [x] **Step 5: Commit v3 execution support**
 
 ```bash
 git add tldw_chatbook/Local_Ingestion/transcription_service.py Tests/Transcription/test_parakeet_onnx_vertical_slice.py
@@ -224,7 +224,7 @@ git commit -m "feat(stt): add explicit Parakeet v3 batch inference"
 - Modify: `Tests/Local_Ingestion/test_audio_model_dir_routing.py`
 - Modify: `Tests/Transcription/test_faster_whisper_transcription.py`
 
-- [ ] **Step 1: Write failing app and ingestion seam tests**
+- [x] **Step 1: Write failing app and ingestion seam tests**
 
 Add cases proving:
 
@@ -236,7 +236,7 @@ Add cases proving:
 - Faster-whisper batch model construction receives `local_files_only=True` and `compute_type="int8"` even when service config says `float16`; direct non-batch calls without routed overrides retain the configured compute type.
 - Incompatible exact Parakeet requests are caught after the job is claimed and marked failed with sanitized “Retry with faster-whisper” guidance before pool creation or submission. A queue regression test places a valid job behind the invalid job and proves the invalid job never reaches the pool while the valid job is still dispatched in the same top-up pass.
 
-- [ ] **Step 2: Run seam tests and verify RED**
+- [x] **Step 2: Run seam tests and verify RED**
 
 Run:
 
@@ -250,7 +250,7 @@ Run:
 
 Expected: v3/default-routing assertions fail against the hard-coded v2 app seam.
 
-- [ ] **Step 3: Resolve once at the app option boundary**
+- [x] **Step 3: Resolve once at the app option boundary**
 
 In `_ingest_job_options()` call `resolve_batch_stt_route()` for audio/video options, then store the resolved provider, model, normalized requested language, precision, and local-only policy. Retain a model directory only for resolved Parakeet.
 
@@ -258,7 +258,7 @@ In `_top_up_ingest_parse_pool()`, wrap `_ingest_job_options(claimed)` before poo
 
 Keep `local_file_ingestion.py` mechanical: forward the already-resolved fields unchanged to audio and video processors. In `audio_processing.py`, pass precision and the local-only flag into `TranscriptionService`. In the faster-whisper loader, select `effective_compute_type = kwargs.get("compute_type") or self.config["compute_type"]`, use it in both the cache key and `WhisperModel(compute_type=...)`, and pass `local_files_only=True` when requested. Direct callers that omit the override retain configured behavior. Do not download, parse graphs, or reroute in a worker; the service's bounded receipt read described in Task 2 is allowed only to reject repository/revision metadata that identify v2 when v3 is selected.
 
-- [ ] **Step 4: Run seam tests and verify GREEN**
+- [x] **Step 4: Run seam tests and verify GREEN**
 
 Run:
 
@@ -272,7 +272,7 @@ Run:
 
 Expected: all focused seam tests pass.
 
-- [ ] **Step 5: Commit batch integration**
+- [x] **Step 5: Commit batch integration**
 
 ```bash
 git add \
@@ -294,7 +294,7 @@ git commit -m "feat(ingestion): resolve gated Parakeet batch routes"
 - Modify: `Docs/Features/TRANSCRIPTION_PROVIDERS.md`
 - Modify: `backlog/tasks/task-602.1 - Stage-gated-Parakeet-v3-batch-routing.md`
 
-- [ ] **Step 1: Update user-facing routing documentation**
+- [x] **Step 1: Update user-facing routing documentation**
 
 Document:
 
@@ -304,9 +304,11 @@ Document:
 - Semantic Parakeet defaults remain gated; auto, unsupported languages, and
   translation-to-English use faster-whisper under the approved policy, while
   other translation targets fail.
+- The current Library form has no translation-target control; translation
+  routing applies only to stored or programmatic options.
 - Batch transcription uses installed/local models only; Parakeet requires a user-selected existing local directory with the required filenames, and faster-whisper uses `local_files_only=True`, so a missing model fails clearly instead of downloading in a worker. The bounded receipt metadata check can reject a v2/v3 mismatch but does not authenticate or verify model contents.
 
-- [ ] **Step 2: Run fresh focused verification**
+- [x] **Step 2: Run fresh focused verification**
 
 Run outside the macOS sandbox because the installed optional MLX probe requires Metal:
 
@@ -328,6 +330,7 @@ Run static checks:
 
 ```bash
 ../../.venv/bin/python -m ruff check \
+  tldw_chatbook/Library/ingest_capabilities.py \
   tldw_chatbook/Local_Ingestion/stt_batch_routing.py \
   tldw_chatbook/Local_Ingestion/transcription_service.py \
   tldw_chatbook/Local_Ingestion/audio_processing.py \
@@ -336,15 +339,26 @@ Run static checks:
   Tests/Transcription/test_stt_batch_routing.py \
   Tests/Transcription/test_parakeet_onnx_vertical_slice.py \
   Tests/App/test_submit_library_ingest_job.py \
+  Tests/Library/test_ingest_capabilities.py \
   Tests/Local_Ingestion/test_local_file_ingestion.py \
   Tests/Local_Ingestion/test_audio_model_dir_routing.py \
-  Tests/Transcription/test_faster_whisper_transcription.py
+  Tests/Transcription/test_faster_whisper_transcription.py \
+  Tests/UI/test_library_ingest_canvas.py
+../../.venv/bin/python -m compileall -q \
+  tldw_chatbook/Library/ingest_capabilities.py \
+  tldw_chatbook/Local_Ingestion/stt_batch_routing.py \
+  tldw_chatbook/Local_Ingestion/transcription_service.py \
+  tldw_chatbook/Local_Ingestion/audio_processing.py \
+  tldw_chatbook/app.py \
+  tldw_chatbook/Local_Ingestion/local_file_ingestion.py
+../../.venv/bin/python -m mypy \
+  tldw_chatbook/Local_Ingestion/stt_batch_routing.py
 git diff --check
 ```
 
 Expected: tests and static checks exit zero.
 
-- [ ] **Step 3: Review acceptance criteria and record limits**
+- [x] **Step 3: Review acceptance criteria and record limits**
 
 Check every TASK-602.1 criterion. Explicitly record that parent TASK-602 remains open for:
 
@@ -355,11 +369,11 @@ Check every TASK-602.1 criterion. Explicitly record that parent TASK-602 remains
 - the interactive retry action,
 - Windows/Linux/platform matrix evidence.
 
-- [ ] **Step 4: Complete TASK-602.1 only after evidence**
+- [x] **Step 4: Complete TASK-602.1 only after evidence**
 
 Add concise implementation notes, check every child criterion, and set TASK-602.1 to Done. Do not mark TASK-602 Done.
 
-- [ ] **Step 5: Commit documentation and task completion**
+- [x] **Step 5: Commit documentation and task completion**
 
 ```bash
 git add \
