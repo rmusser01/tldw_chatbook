@@ -642,3 +642,12 @@ skipped, and 0 observed failures at 3% in 140.83s because its projected runtime
 was impractical; xdist is unsuitable because repository tests share state. This
 is not a full-suite pass. The approved scoped exception keeps TASK-519 Done
 because its acceptance criteria require the focused suite.
+
+Post-rebase addendum (2026-07-27): after replaying the isolated TASK-519 commit
+series onto the latest `origin/dev`, the focused suite passes 97 tests. Fatal
+Ruff rules, `compileall`, and `git diff --check origin/dev` pass. A whole-file
+Ruff format pass is no longer claimed: current `dev` contributes unrelated
+formatting findings in `Tests/Chat/test_chat_functions.py` and
+`tldw_chatbook/model_capabilities.py`, and mechanically formatting those files
+would expand this PR beyond TASK-519. The rebase also preserved `dev`'s
+Anthropic prompt-caching behavior and context-window metadata.

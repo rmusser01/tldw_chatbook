@@ -1176,6 +1176,8 @@ class TestProviderRequestPayloads:
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
         captured = {}
+        warnings = []
+        monkeypatch.setattr(LLM_API_Calls.logger, "warning", warnings.append)
         monkeypatch.setattr(
             LLM_API_Calls,
             "load_settings",
@@ -1219,6 +1221,10 @@ class TestProviderRequestPayloads:
         assert "temperature" not in payload
         assert "top_p" not in payload
         assert "top_k" not in payload
+        assert warnings == [
+            "Anthropic: omitting temperature/top_p/top_k because Claude Sonnet 5 "
+            "requires default sampling."
+        ]
 
     @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
     def test_anthropic_sonnet_5_effort_uses_output_config_without_sampling(

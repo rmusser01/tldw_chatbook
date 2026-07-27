@@ -1216,9 +1216,15 @@ def chat_with_anthropic(
         if current_top_k is not None:
             data["top_k"] = current_top_k
     elif any(value is not None for value in (temp, current_top_p, current_top_k)):
-        logger.warning(
-            "Anthropic: omitting temperature/top_p/top_k because thinking is enabled."
-        )
+        if _anthropic_is_sonnet_5(current_model):
+            logger.warning(
+                "Anthropic: omitting temperature/top_p/top_k because Claude Sonnet 5 "
+                "requires default sampling."
+            )
+        else:
+            logger.warning(
+                "Anthropic: omitting temperature/top_p/top_k because thinking is enabled."
+            )
     if stop_sequences is not None:
         data["stop_sequences"] = stop_sequences
     if tools is not None:
