@@ -1471,13 +1471,24 @@ class ConsoleChatController:
                 # than falling back to the active-session default.
                 session_id=session_id,
             )
+        previous_active_id = self.store.active_session_id
         closed = self.store.close_session(session_id)
+        new_active_id = self.store.active_session_id
         if (
             owns_active_stream
             and repair_session is not None
             and self._active_citation_repair_sessions.get(session_id) is repair_session
         ):
             self._active_citation_repair_sessions.pop(session_id, None)
+        # Parallel-agents spec §6: closing the ACTIVE session auto-activates
+        # a neighbor (`ConsoleChatStore.close_session`, console_chat_store.py
+        # ~594-604) -- that neighbor is now the VIEWED session exactly as if
+        # `switch_session` had navigated to it, so its unvisited outcome/
+        # pending-approval marker must clear the same way. Closing a
+        # BACKGROUND (non-active) session leaves `active_session_id`
+        # unchanged, so this is a no-op in that case.
+        if new_active_id is not None and new_active_id != previous_active_id:
+            self.mark_session_visited(new_active_id)
         return closed
 
     def original_attempt_for_message(self, message_id: str) -> str | None:
@@ -5932,8 +5943,10 @@ class ConsoleChatController:
         if target != (self.store.active_session_id or ""):
             if run_state.status is ConsoleRunStatus.COMPLETED:
                 self._unvisited_outcomes[target] = ConsoleRunMarker.FINISHED_OK
+                self._pending_approvals.discard(target)
             elif run_state.status is ConsoleRunStatus.FAILED:
                 self._unvisited_outcomes[target] = ConsoleRunMarker.FINISHED_FAILED
+                self._pending_approvals.discard(target)
 
     def _clear_terminal_run_state(self, session_id: str | None = None) -> None:
         """Clear stale terminal status copy for ``session_id`` (default: active).

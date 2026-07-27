@@ -63,3 +63,57 @@ def test_failed_marker_and_fleet_counts(controller_with_two_sessions):
         ConsoleRunState(ConsoleRunStatus.FAILED, "boom"), session_id=session_b
     )
     assert controller.run_marker_for(session_b) is ConsoleRunMarker.FINISHED_FAILED
+
+
+def test_closing_active_session_clears_new_active_neighbors_marker(
+    controller_with_two_sessions,
+):
+    """Fix round 1 / IMPORTANT 1: `ConsoleChatStore.close_session` auto-
+    activates a neighbor when the ACTIVE session is closed (console_chat_
+    store.py ~594-604). That neighbor is now the VIEWED session exactly as
+    if `switch_session` had navigated to it, so its stamped unvisited
+    outcome must clear -- `close_session` must call `mark_session_visited`
+    for the newly-activated neighbor, not just `switch_session`.
+    """
+    controller, session_a, session_b = controller_with_two_sessions
+    assert controller.store.active_session_id == session_b
+
+    # session_a is non-active (session_b is active), so its COMPLETED
+    # transition stamps an unvisited FINISHED_OK outcome.
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"), session_id=session_a
+    )
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.FINISHED_OK
+
+    # Closing the ACTIVE session (session_b) leaves session_a as the only
+    # remaining session, so the store auto-activates it.
+    controller.close_session(session_b)
+    assert controller.store.active_session_id == session_a
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+
+
+def test_terminal_transition_clears_leaked_pending_approval_flag(
+    controller_with_two_sessions,
+):
+    """Fix round 1 / IMPORTANT 2: a terminal COMPLETED/FAILED run has no
+    live approval left to decide, so `_set_run_state`'s terminal branch
+    must discard any leaked `_pending_approvals` entry alongside stamping
+    `_unvisited_outcomes` -- otherwise NEEDS_APPROVAL (which outranks a
+    stamped outcome in `run_marker_for`) permanently masks FINISHED_OK/
+    FINISHED_FAILED.
+    """
+    controller, session_a, session_b = controller_with_two_sessions
+    assert controller.store.active_session_id == session_b
+
+    controller.set_run_pending_approval(session_a, True)
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.FAILED, "boom"), session_id=session_a
+    )
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.FINISHED_FAILED
+
+    controller.mark_session_visited(session_a)
+    controller.set_run_pending_approval(session_a, True)
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"), session_id=session_a
+    )
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.FINISHED_OK
