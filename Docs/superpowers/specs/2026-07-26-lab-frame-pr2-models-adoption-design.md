@@ -108,6 +108,21 @@ ids rather than silently mounting new widgets on a 2-second timer.
 (`[` / `]` cycle, `Enter` commit); Models adds nothing of its own in PR2, so it does not override
 the hook.
 
+`LabScreen.__init__` keeps `BaseAppScreen`'s `(app_instance, screen_name)` signature and needs no
+extra parameter: all three Lab screens already pass their route as `screen_name` (`"llm"`, `"stts"`,
+`"evals"`), so the frame derives the mode strip's `active_route` from `self.screen_name`.
+
+### A hook hazard PR2 creates for PR3
+
+The frame depends on `on_screen_resume` for its modal-pop refresh. `STTSScreen.on_screen_resume`
+(`stts_screen.py:72`) **overrides without calling `super()`** — so when Speech adopts the frame in
+PR3, it will silently kill that refresh. This is the same defect class the parent spec records for
+`on_mount`, on a second hook, and it is recorded here because PR2 is what introduces the dependency.
+
+The frame therefore routes its own resume work through a private method that subclasses are not
+expected to override, and PR3 must fix `STTSScreen`'s two `super()`-less overrides
+(`on_screen_suspend` at `:61` and `on_screen_resume` at `:72`) as part of adoption.
+
 ### Carried constraints
 
 - `LabRailLayout` is a frozen dataclass, separate from the widget, so collapse logic is testable
@@ -256,6 +271,18 @@ A dense rail sets `height: 1`, so without an app-tier `.lab-rail-row.is-active {
 rule the rail is visibly broken the moment anything is selected. This is the third consumer of that
 global rule to need explicit neutralizing; PR0's sweep predicted it.
 
+**Why `is-active` at all, rather than dodging the global rule?** Using the legacy `-active` name
+would avoid it for free. It is still the wrong choice: `is-active` is the established rail-row
+convention — `#mcp-hub-rail Button.mcp-rail-row.is-active` (bundle `:6314`) is the same widget shape
+that needed the same neutralizing rule — and `.workbench-mode`, `.personas-mode-chip`, and
+`ListItem.personas-library-row` all follow it. Diverging would buy one avoided CSS block and cost
+the design system's only selection convention.
+
+**Do not unify the two active-class names in this screen.** The `llm-view-*` bodies are shown and
+hidden by `.llm-view.-active`, which `watch_active_view` toggles; the rail rows use `is-active`.
+They look like an inconsistency worth tidying and are not: renaming the views' class breaks
+visibility, and renaming the rail's opts out of the design system and its `is-active` styling.
+
 All colours and borders go app-tier, never in widget `DEFAULT_CSS`. The bundle is regenerated via
 `build_css.py` and never hand-edited.
 
@@ -315,6 +342,18 @@ per mode. Unit tests assert geometry; only the running app confirms it.
    shared widget — but bracket-key mode switching exists only on Models until PR3/PR4.
 4. **The 2 s timer is the only mechanism** for server-state change, so Start shows up to 2 s later.
    Accepted: the alternative reported pre-launch state as "stopped".
+
+## Known gaps, recorded not solved
+
+**Below 100 columns is unspecified.** Console carries density classes; Lab inherits none, and this
+spec's width contract only guarantees the 100-column case with the inspector collapsed. Narrower
+terminals will render *something* — the rails have `min-width` — but nothing here defines what.
+Worth a pass once three modes exist and there is a real layout to degrade.
+
+**Returning to Models always lands on Llama.cpp.** `LLMManagementWindow.on_mount` sets
+`active_view = "llama-cpp"` unconditionally (`:269`), and screens are rebuilt per navigation, so the
+last-viewed provider is never restored. The frame could persist it alongside rail collapse, but the
+reset lives in the window, and changing it is interior behaviour this PR does not touch.
 
 ## Non-goals
 
