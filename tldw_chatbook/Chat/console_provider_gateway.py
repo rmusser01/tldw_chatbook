@@ -60,6 +60,13 @@ _EMPTY_RESPONSE = object()
 
 @dataclass(slots=True)
 class ConsoleProviderStreamSignals:
+    """Expose thread-safe provenance signals for one provider stream.
+
+    The gateway marks these signals while normalizing provider output so the
+    controller can distinguish provider content from locally synthesized
+    fallback copy.
+    """
+
     _synthetic_fallback: threading.Event = field(
         default_factory=threading.Event,
         init=False,
@@ -68,9 +75,11 @@ class ConsoleProviderStreamSignals:
 
     @property
     def synthetic_fallback_emitted(self) -> bool:
+        """Return whether the stream emitted locally synthesized fallback copy."""
         return self._synthetic_fallback.is_set()
 
     def mark_synthetic_fallback(self) -> None:
+        """Record that locally synthesized fallback copy was emitted."""
         self._synthetic_fallback.set()
 
 

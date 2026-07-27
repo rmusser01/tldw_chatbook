@@ -34,6 +34,7 @@ REPAIR_REQUEST_UTF8_BYTES_MAX = (
     + REPAIR_EVIDENCE_CONTEXT_UTF8_BYTES_MAX
     + REPAIR_FIXED_OVERHEAD_UTF8_BYTES_MAX
 )
+MIN_REPAIR_SAFETY_MARGIN_TOKENS = 512
 
 _CITATION_LIKE_TOKEN = re.compile(r"\[S[0-9,\t ]+\]")
 _WELL_FORMED_TOKEN = re.compile(r"\[S([1-9][0-9]*)\]\Z")
@@ -160,7 +161,17 @@ def decide_citation_repair(
     answer_body: str,
     contract: CitationRepairContract | None,
 ) -> CitationRepairDecision:
-    """Classify citation-marker structure without parsing untrusted integers."""
+    """Classify citation-marker structure without parsing untrusted integers.
+
+    Args:
+        answer_body: Generated answer whose citation markers should be checked.
+        contract: Exact evidence ordinals allowed for the answer, or ``None``
+            when citation repair does not apply.
+
+    Returns:
+        A provider-independent classification describing whether the answer's
+        markers are valid, need repair, or cannot be checked safely.
+    """
     if contract is None:
         return CitationRepairDecision.NOT_APPLICABLE
     if type(answer_body) is not str:
@@ -189,7 +200,17 @@ def decide_citation_repair(
 
 
 def claim_preservation_projection(answer_body: str) -> str:
-    """Remove eligible citation-like tokens and one preceding ASCII space."""
+    """Remove eligible citation-like tokens and one preceding ASCII space.
+
+    Args:
+        answer_body: Answer text to project into citation-free claim text.
+
+    Returns:
+        The answer with eligible citation-like tokens removed.
+
+    Raises:
+        TypeError: If ``answer_body`` is not a string.
+    """
     if type(answer_body) is not str:
         raise TypeError("answer_body must be a string")
     matches = _repair_token_matches(answer_body)
@@ -220,7 +241,16 @@ def select_repaired_body(
     repaired_body: str,
     contract: CitationRepairContract,
 ) -> CitationRepairSelection:
-    """Select repaired output only when markers validate and claims are exact."""
+    """Select repaired output only when markers validate and claims are exact.
+
+    Args:
+        initial_body: Original generated answer before citation repair.
+        repaired_body: Candidate answer returned by the repair request.
+        contract: Exact evidence ordinals allowed for the answer.
+
+    Returns:
+        The selected answer body plus repair status and a stable reason code.
+    """
     if not _answer_fits_body_limit(initial_body, allow_empty=False):
         return CitationRepairSelection(
             selected_body=initial_body,
@@ -273,7 +303,16 @@ def build_citation_repair_messages(
     contract: CitationRepairContract,
     initial_answer: str,
 ) -> list[dict[str, str]] | None:
-    """Build the exact bounded two-message citation repair request."""
+    """Build the exact bounded two-message citation repair request.
+
+    Args:
+        contract: Exact bounded evidence and ordinal contract for the request.
+        initial_answer: Original answer whose citation markers need repair.
+
+    Returns:
+        System and user messages for the repair request, or ``None`` when the
+        inputs cannot be represented within the configured bounds.
+    """
     if type(contract) is not CitationRepairContract:
         return None
     if type(initial_answer) is not str or not initial_answer:
@@ -325,7 +364,21 @@ def repair_request_fits_model_window(
     count_fn: Callable[..., int] = count_console_messages_tokens,
     window_fn: Callable[[str, str], int] = get_model_token_limit,
 ) -> bool:
-    """Return whether the exact repair payload and response reserve fit."""
+    """Return whether the exact repair payload and response reserve fit.
+
+    Args:
+        messages: Exact repair messages that would be sent to the provider.
+        initial_answer: Original answer used to reserve enough response space.
+        model: Model identifier used for token counting and window lookup.
+        provider: Provider identifier used for model-window lookup.
+        max_tokens: Configured response reservation, if positive.
+        count_fn: Token-counting function, injectable for deterministic tests.
+        window_fn: Model-window lookup function, injectable for tests.
+
+    Returns:
+        ``True`` only when the prompt, response reserve, and safety margin fit
+        within a valid model context window.
+    """
     if type(initial_answer) is not str:
         return False
     try:
@@ -350,5 +403,5 @@ def repair_request_fits_model_window(
         else DEFAULT_RESPONSE_RESERVATION
     )
     response_reservation = max(configured_reservation, answer_tokens)
-    safety_margin = max(512, window // 50)
+    safety_margin = max(MIN_REPAIR_SAFETY_MARGIN_TOKENS, window // 50)
     return prompt_tokens + response_reservation + safety_margin <= window
