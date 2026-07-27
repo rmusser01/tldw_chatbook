@@ -660,20 +660,24 @@ class SettingsThemeEditor(Vertical):
 
     def _generate_theme_from_primary(self, primary: Color) -> dict[str, str]:
         """Generate a complete theme based on a primary color."""
-        h, s, l = primary.hsl
+        hue, saturation, lightness = primary.hsl
 
         return {
             "primary": primary.hex,
-            "secondary": self._adjust_color(h, s * 0.8, l * 0.8),
-            "accent": self._adjust_color((h + 180) % 360, s, l),
+            "secondary": self._adjust_color(
+                hue, saturation * 0.8, lightness * 0.8
+            ),
+            "accent": self._adjust_color(
+                (hue + 180) % 360, saturation, lightness
+            ),
             "background": self._adjust_color(
-                h, s * 0.1, 0.08 if self.is_dark_theme else 0.95
+                hue, saturation * 0.1, 0.08 if self.is_dark_theme else 0.95
             ),
             "surface": self._adjust_color(
-                h, s * 0.1, 0.12 if self.is_dark_theme else 0.92
+                hue, saturation * 0.1, 0.12 if self.is_dark_theme else 0.92
             ),
             "panel": self._adjust_color(
-                h, s * 0.1, 0.10 if self.is_dark_theme else 0.94
+                hue, saturation * 0.1, 0.10 if self.is_dark_theme else 0.94
             ),
             "foreground": "#FFFFFF" if self.is_dark_theme else "#000000",
             "success": self._adjust_color(120, 0.7, 0.4),
@@ -681,26 +685,28 @@ class SettingsThemeEditor(Vertical):
             "error": self._adjust_color(0, 0.8, 0.5),
         }
 
-    def _adjust_color(self, h: float, s: float, l: float) -> str:
+    def _adjust_color(
+        self, hue: float, saturation: float, lightness: float
+    ) -> str:
         """Create a color from HSL values."""
         try:
-            h = h % 360
-            s = max(0, min(1, s))
-            l = max(0, min(1, l))
+            hue = hue % 360
+            saturation = max(0, min(1, saturation))
+            lightness = max(0, min(1, lightness))
 
-            c = (1 - abs(2 * l - 1)) * s
-            x = c * (1 - abs((h / 60) % 2 - 1))
-            m = l - c / 2
+            c = (1 - abs(2 * lightness - 1)) * saturation
+            x = c * (1 - abs((hue / 60) % 2 - 1))
+            m = lightness - c / 2
 
-            if h < 60:
+            if hue < 60:
                 r, g, b = c, x, 0
-            elif h < 120:
+            elif hue < 120:
                 r, g, b = x, c, 0
-            elif h < 180:
+            elif hue < 180:
                 r, g, b = 0, c, x
-            elif h < 240:
+            elif hue < 240:
                 r, g, b = 0, x, c
-            elif h < 300:
+            elif hue < 300:
                 r, g, b = x, 0, c
             else:
                 r, g, b = c, 0, x

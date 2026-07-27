@@ -5580,7 +5580,7 @@ class SettingsScreen(BaseAppScreen):
             return "Advanced config save: blocked - validate current TOML before save"
 
         try:
-            config_path = self._config_path()
+            self._config_path()
         except ValueError as exc:
             return f"Advanced config save: failed - {redact_secret_text(str(exc))}"
         try:
@@ -5596,7 +5596,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _read_advanced_backup_preview(self) -> tuple[str, str | None]:
         try:
-            config_path = self._config_path()
+            self._config_path()
         except (OSError, RuntimeError, ValueError) as exc:
             return (
                 f"Advanced config recovery: failed - {redact_secret_text(str(exc))}",

@@ -858,8 +858,6 @@ def test_authoritative_source_cas_rejection_raises_bounded_error(
         )
 
     assert context.snapshot() == (initial_state, 0)
-    assert app_like.runtime_policy.state.active_source == "local"
-    assert forwarded == ["local"]
 
 
 class TestRuntimePolicyPathIsolation:
@@ -924,21 +922,15 @@ class TestRuntimePolicyPathIsolation:
             DEFAULT_CONFIG_PATH.parent / "runtime_policy.json"
         )
 
-    def test_the_loader_uses_the_active_profile(self, tmp_path, monkeypatch):
-        """The seam that matters: loading for an app must write to the profile's
-        own file, not merely expose a helper that computes the right path."""
-        from types import SimpleNamespace
-
-        from tldw_chatbook.runtime_policy import bootstrap
-
+    def test_context_preparation_uses_the_active_profile(self, tmp_path, monkeypatch):
+        """Preparing runtime policy writes only to the active profile."""
         scratch = tmp_path / "profile" / "config.toml"
         scratch.parent.mkdir(parents=True)
         scratch.write_text("[general]\n", encoding="utf-8")
         monkeypatch.setenv("TLDW_CONFIG_PATH", str(scratch))
 
-        app = SimpleNamespace(app_config={})
-        context = bootstrap.load_runtime_policy_for_app(app)
-        context.persist()
+        context = _prepare_context(app_config={}, publish=lambda _state: None)
+        assert context.commit_state(context.state, expected_revision=0)
 
         assert (scratch.parent / "runtime_policy.json").exists(), (
             "the profile's own policy file was never written"

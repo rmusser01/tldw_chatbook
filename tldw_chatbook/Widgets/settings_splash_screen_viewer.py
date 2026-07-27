@@ -275,7 +275,6 @@ class SettingsSplashScreenViewer(Vertical):
             )
             return
 
-        card_data = self._cards[card_name]
         try:
             preview = SplashScreen(
                 card_name=card_name,
