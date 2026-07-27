@@ -476,7 +476,7 @@ class ProfileStoreLease:
 
         try:
             handle_closed = handle.closed
-        except BaseException as error:
+        except Exception as error:
             errors.append(error)
             return
         if handle_closed:
@@ -492,7 +492,7 @@ class ProfileStoreLease:
 
         try:
             handle_closed = handle.closed
-        except BaseException as error:
+        except Exception as error:
             errors.append(error)
             return
         if handle_closed:

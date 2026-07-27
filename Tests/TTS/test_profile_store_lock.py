@@ -1560,6 +1560,95 @@ def test_release_state_transition_interrupt_releases_real_lock(
         lease.release()
 
 
+@pytest.mark.parametrize("inspection_read", [1, 2])
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(18)])
+def test_release_replays_after_closed_inspection_interrupt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inspection_read: int,
+    interrupt: BaseException,
+) -> None:
+    class ReleaseInspectionHandle:
+        def __init__(self, delegate: BinaryIO) -> None:
+            self.delegate = delegate
+            self.closed_reads = 0
+            self.close_calls = 0
+
+        @property
+        def closed(self) -> bool:
+            self.closed_reads += 1
+            if self.closed_reads == inspection_read:
+                raise interrupt
+            return self.delegate.closed
+
+        def fileno(self) -> int:
+            return self.delegate.fileno()
+
+        def close(self) -> None:
+            self.close_calls += 1
+            if inspection_read == 2 and self.close_calls == 1:
+                raise OSError("close-private-secret")
+            self.delegate.close()
+
+    database_path = tmp_path / "profiles.sqlite3"
+    original_open = Path.open
+    original_unlock = portalocker.unlock
+    opened_handles: list[ReleaseInspectionHandle] = []
+    unlock_calls = 0
+
+    def open_first_as_inspection_handle(
+        path: Path,
+        *args: Any,
+        **kwargs: Any,
+    ) -> BinaryIO:
+        delegate = cast(BinaryIO, original_open(path, *args, **kwargs))
+        if opened_handles:
+            return delegate
+        handle = ReleaseInspectionHandle(delegate)
+        opened_handles.append(handle)
+        return cast(BinaryIO, handle)
+
+    def unlock_with_one_failure(handle: BinaryIO) -> None:
+        nonlocal unlock_calls
+        unlock_calls += 1
+        if inspection_read == 2 and unlock_calls == 1:
+            raise OSError("unlock-private-secret")
+        original_unlock(handle)
+
+    lease = ProfileStoreLease(database_path, ProfileStoreLockMode.EXCLUSIVE)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "open", open_first_as_inspection_handle)
+            patch.setattr(portalocker, "unlock", unlock_with_one_failure)
+            lease.acquire()
+
+            with pytest.raises(type(interrupt)) as exc_info:
+                lease.release()
+
+            assert exc_info.value is interrupt
+            assert len(opened_handles) == 1
+            handle = opened_handles[0]
+            assert handle.closed is True
+            assert lease.acquired is False
+            assert object.__getattribute__(lease, "_handle") is None
+
+            with ProfileStoreLease(
+                database_path,
+                ProfileStoreLockMode.EXCLUSIVE,
+                timeout_seconds=0.05,
+                check_interval_seconds=0.005,
+            ) as recovered:
+                assert recovered.acquired is True
+    finally:
+        if opened_handles:
+            handle = opened_handles[0]
+            if not handle.delegate.closed:
+                try:
+                    original_unlock(cast(BinaryIO, handle))
+                finally:
+                    handle.delegate.close()
+
+
 def test_release_interrupt_at_snapshot_keeps_state_truthful_and_retryable(
     tmp_path: Path,
 ) -> None:
