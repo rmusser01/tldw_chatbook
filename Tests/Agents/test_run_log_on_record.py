@@ -91,6 +91,52 @@ def test_runtime_tool_results_are_captured_too():
     assert "find_tools" in tools
 
 
+def test_refused_tool_call_still_emits_tool_call_and_tool_result_records():
+    # Pins the placement of both _emit_record calls at the dispatch site:
+    # they must sit at the `for call in calls:` body level, OUTSIDE the
+    # `if verdict != "proceed": ... else: ...` pair, so a review_tool_calls
+    # refusal (the same seam MCP approval refusals ride) is captured too.
+    # A mutation that nests both calls one level deeper -- into the `else:`
+    # branch that only runs on a "proceed" verdict -- silently stops
+    # logging every refused call, and no other test in this suite catches
+    # that: this one must fail if that happens.
+    turns = [
+        ModelTurn(
+            text="",
+            tool_calls=(
+                ToolCall(name="calculator", args={"expr": "1+1"}, call_id="c1"),
+            ),
+            assistant_message={"role": "assistant", "content": ""},
+        ),
+        ModelTurn(text="done"),
+    ]
+    seen, hook = collect()
+    deps = make_deps(turns)
+    deps.on_record = hook
+    deps.review_tool_calls = lambda calls: {"calculator": "blocked by policy"}
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_steps=8, max_model_turns=8),
+    )
+    run_agent_loop(config, [{"role": "user", "content": "go"}], [], deps)
+
+    tool_calls = [p for kind, p in seen if kind == "tool_call"]
+    tool_results = [p for kind, p in seen if kind == "tool_result"]
+
+    assert tool_calls, "refused call must still emit a tool_call record"
+    assert tool_calls[0]["tool"] == "calculator"
+    assert tool_calls[0]["call_id"] == "c1"
+
+    assert tool_results, "refused call must still emit a tool_result record"
+    refused = tool_results[0]
+    assert refused["status"] == "refused"
+    assert refused["content"] == "blocked by policy"
+    assert refused["tool"] == "calculator"
+    assert refused["call_id"] == "c1"
+
+
 def test_failing_hook_never_aborts_the_run():
     def boom(kind, payload):
         raise RuntimeError("log is on fire")
