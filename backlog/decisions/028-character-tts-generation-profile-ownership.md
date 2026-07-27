@@ -35,6 +35,9 @@ The repository will:
   most one long-lived SQLite connection;
 - expose explicit `open`, `restoring`, `unavailable`, and `closed` lifecycle
   states plus a monotonic generation carried by queued work and results;
+- require every mutation derived from a caller-held result to supply that
+  result's expected lifecycle generation, checked under repository operation
+  admission before work is enqueued;
 - enter `restoring` and advance generation atomically at restore admission,
   before enqueueing restore I/O, then reject new work and prevent older
   queued work from writing or publishing after replacement;
@@ -104,7 +107,12 @@ fail-closed behavior for later UI and runtime slices.
 - Profile names are trimmed and compared by
   `NFKC(display_name).casefold()`. Invisible control, format-control,
   surrogate, and noncharacter code points are rejected.
-- A profile update requires the revision loaded by the editor. Conflicts
+- A profile update requires both the repository lifecycle generation and
+  profile revision loaded by the editor. Delete and duplication from a loaded
+  profile also require its lifecycle generation. Duplication intentionally
+  copies the immutable version the user opened and does not require the source
+  to remain otherwise unchanged. A replacement store is never mutated merely
+  because it contains a coincidentally matching UUID and revision. Conflicts
   preserve both the stored row and the caller's unsaved values.
 - One character has at most one assignment; a profile may serve many
   characters. Assigned profiles cannot be deleted until assignments are
@@ -115,6 +123,9 @@ fail-closed behavior for later UI and runtime slices.
   only future requests.
 - The repository, not Textual widgets or services, owns SQLite connections,
   serialization, schema transitions, backup, restore, and interprocess locking.
+- Profile pages and editors retain their repository generation. Service and UI
+  code recheck it before publishing availability or submitting mutations, so a
+  completed pre-restore result cannot repopulate state after replacement.
 - Corruption, unsupported schema versions, failed migration, and unavailable
   paths fail closed. Chatbook does not silently recreate or discard the store.
 - Restore may fail while another Chatbook process holds the shared store lock;

@@ -64,11 +64,14 @@ Invalid configuration fails locally with a safe, value-independent
 `ValueError` before a provider operation; the external adapter does not emit
 the reserved provider-neutral `configuration_invalid` code.
 
-The external native adapter has five operations: `ensure_ready()`,
-`get_catalog(refresh=False)`, `get_voices(model_id, refresh=False)`,
-`synthesize(...)`, and `close()`. Catalog and voice discovery own their
-readiness; `ensure_ready()` remains the service synthesis prerequisite.
-Callers use only service/registry APIs and never retrieve the concrete adapter.
+Before Slice 2B, the external native adapter has five operations:
+`ensure_ready()`, `get_catalog(refresh=False)`,
+`get_voices(model_id, refresh=False)`, `synthesize(...)`, and `close()`.
+Slice 2B adds the optional structured voice-observation operation described
+below; `get_voices()` remains its tuple compatibility projection. Catalog and
+voice discovery own their readiness; `ensure_ready()` remains the service
+synthesis prerequisite. Callers use only service/registry APIs and never
+retrieve the concrete adapter.
 
 The `audio_cpp_http_v1` fixtures and parsers are pinned to upstream commit
 [`d3d748179e5ace353386fbf17bcaedfacf482d75`](https://github.com/0xShug0/audio.cpp/tree/d3d748179e5ace353386fbf17bcaedfacf482d75).
@@ -109,15 +112,21 @@ recovery actions; stale discovery disables new generation without invalidating
 an existing artifact; audio.cpp never automatically falls back.
 
 The approved profile-library continuation extends this boundary in two
-specific ways. Exact Playground/profile admission issues a text-free immutable
-requested-selection snapshot inside the same gate that acquires the
-revision-matched provider lease; UI code cannot reconstruct reusable profile
-provenance from mutable selectors or actual response metadata. Profile
-capability checks use a revision-bound structured voice-discovery result that
-distinguishes a successful empty voice list and authoritative model absence
-from timeout, transport/contract failure, reconfiguration, and shutdown.
-Tuple-only voice discovery may remain as a selector compatibility projection,
-but it is not authority for profile availability or exact-voice removal.
+specific ways. Exact native audio.cpp Playground/profile admission issues a
+text-free immutable requested-selection snapshot inside the same gate that
+acquires the revision-matched provider lease; UI code cannot reconstruct
+reusable profile provenance from mutable selectors or actual response
+metadata. The artifact field remains absent for legacy bridge generation, which
+does not enter the profile path.
+
+Profile capability status originates inside optional
+`TTSStructuredVoiceAdapter.observe_voices(...)` before discovery failure can be
+collapsed or cached as an empty tuple. audio.cpp caches the structured state
+with the voices. Registry/service code adds the configuration revision from the
+matching lease and constructs a bounded profile-facing snapshot. Tuple-only
+voice discovery remains a selector compatibility projection, but it is not
+authority for profile availability or exact-voice removal. Legacy bridge
+adapters do not implement this optional profile-capability contract.
 
 Slices 4–5 remain user-provided prebuilt binary plus user-provided
 `server.json` launch/supervision and managed UI. Slices 1–3 do not launch,
@@ -170,10 +179,14 @@ policy, and a cross-module interface.
   Under one application-owned shared admission gate, each request freezes its
   complete selection and acquires a provider lease carrying the same
   configuration revision.
-- Exact Playground/profile admission produces a text-free requested-selection
-  snapshot within that boundary. The snapshot records requested provider,
-  exact model, submitted voice, format, speed, validated options, and admitted
-  configuration revision separately from actual response metadata.
+- Exact native audio.cpp Playground/profile admission produces a text-free
+  requested-selection snapshot within that boundary. The snapshot records
+  requested provider, exact model, submitted voice, format, speed, validated
+  options, and admitted configuration revision separately from actual response
+  metadata.
+- Slice 2B populates that snapshot only for admitted native audio.cpp
+  Playground artifacts. Legacy bridge artifacts retain no profile provenance
+  and their generation behavior remains unchanged.
 - Settings publication holds the exclusive side of that admission gate.
   Requests observe either the old coherent preference-and-lease pair, the new
   coherent pair, or a structured reconfiguring/unavailable state; they never
@@ -279,6 +292,13 @@ policy, and a cross-module interface.
   voices; ambiguous discovery failures remain unverified and never prove that
   an exact voice was removed. Compatibility tuple projections are not profile
   authority.
+- The structured status is produced and cached at the native adapter boundary.
+  A page snapshot holds one revision-matched lease, compares mutable catalog
+  revisions instead of assuming the lease freezes them, retries a moving
+  catalog at most once, and uses one ten-second aggregate deadline with at most
+  four voice requests in flight. Cancellation and deadline cleanup always
+  release the lease so capability display cannot indefinitely block exclusive
+  reconfiguration.
 - Chatbook logs setting names and outcomes, never values or API keys. Managed
   child output is treated as potentially sensitive, retained only in a bounded
   in-memory diagnostic ring, and never copied into general logs or persisted.
