@@ -116,6 +116,11 @@ def test_console_run_and_sync_workers_use_disjoint_groups():
         "_regenerate_console_message",
         "_continue_console_message",
         "_edit_resend_console_message",
+        # Fix wave (rider 5, final review): `/rewind`'s "summarize up to"
+        # choice dispatches on the same `group=f"console-run-{session_id}"`
+        # family (`_apply_console_rewind_choice`) -- missing from this set
+        # let it go unguarded by the disjointness assertion below.
+        "_summarize_console_up_to",
     }
     SYNC_COROUTINE = "_sync_native_console_chat_ui"
     run_groups: set[str] = set()

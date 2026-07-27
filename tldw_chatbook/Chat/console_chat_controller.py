@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import re
 import threading
 import time
@@ -29,6 +30,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunMarker,
     ConsoleRunState,
     ConsoleRunStatus,
     ConsoleStagedSource,
@@ -648,6 +650,38 @@ class ConsoleChatController:
         # OWNING session instead of whatever the user currently has open.
         self._run_states: dict[str, ConsoleRunState] = {}
         self._run_state_histories: dict[str, list[ConsoleRunStatus]] = {}
+        # Parallel-agents spec §6: run-marker state (Task 7). Both maps are
+        # keyed by session id like the run-state maps above, but track
+        # marker-only bookkeeping that ``_run_states`` doesn't capture on
+        # its own:
+        #   - `_pending_approvals`: sessions with an outstanding human
+        #     approval decision blocking their run. `set_run_pending_
+        #     approval` writes it; Task 9 wires the approval paths that
+        #     call it. Named to avoid colliding with the PRE-EXISTING
+        #     `self.set_pending_approval` INSTANCE ATTRIBUTE below (the
+        #     MCP batch-approval UI callback slot, task-5) -- a same-named
+        #     method here would be silently clobbered by that assignment.
+        #   - `_unvisited_outcomes`: sessions whose run reached a terminal
+        #     COMPLETED/FAILED status while NOT the active (viewed)
+        #     session, stamped by `_set_run_state` and cleared by
+        #     `mark_session_visited` (called from `switch_session`). The
+        #     viewed session's own terminal transition is seen live and is
+        #     deliberately never stamped here.
+        self._pending_approvals: set[str] = set()
+        self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
+        #: F2b fix (Qodo wave): guards every mutation of `_pending_
+        #: approvals`, `_parked_approval_payloads`, and `_pending_
+        #: approval_rounds` -- the three approval-marker collections a
+        #: worker thread (`request_mcp_approvals`'s own body/`finally`) can
+        #: mutate WHILE the UI thread iterates them every ~0.2s sync tick
+        #: (`fleet_summary_counts`). An unguarded set/dict mutation racing
+        #: an unguarded iteration over the SAME object can raise
+        #: `RuntimeError: Set/dictionary changed size during iteration`.
+        #: `_unvisited_outcomes`/`_run_states` are NOT covered here: both
+        #: are written only from the main thread (`_set_run_state`,
+        #: `mark_session_visited`), never from a worker thread, so they
+        #: carry no cross-thread hazard this lock needs to close.
+        self._approval_state_lock = threading.Lock()
         #: Optional owner hook invoked once a submit is accepted (user message
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
@@ -717,19 +751,68 @@ class ConsoleChatController:
         #: _set_console_pending_approval``). Always invoked through
         #: ``self.app.call_from_thread`` from ``request_mcp_approvals``.
         self.set_pending_approval: Callable[[dict[str, Any] | None], None] | None = None
+        #: Task 9 (parked background approvals): UI-thread callback invoked
+        #: (via ``self.app.call_from_thread``) when ``request_mcp_approvals``
+        #: raises a round for a NON-active session -- sets the fleet
+        #: pending-approval badge and fires the one-per-card toast, WITHOUT
+        #: touching ``set_pending_approval``'s mounted-card slot (that stays
+        #: reserved for whichever session is actually being viewed). Wired
+        #: to ``ChatScreen._park_console_approval`` by ``_ensure_console_
+        #: chat_controller``, mirroring ``set_pending_approval``'s own
+        #: wiring. ``None`` in most controller-only tests, matching every
+        #: other UI bridge slot here.
+        self.park_pending_approval: Callable[[str], None] | None = None
+        #: Task 10 (background completion toasts): UI-thread callback
+        #: invoked DIRECTLY (never via ``self.app.call_from_thread`` --
+        #: unlike the two bridges above, every terminal ``_set_run_state``
+        #: call already runs on the main event-loop thread: worker-thread
+        #: agent runs resume here only after ``await asyncio.to_thread(...)``
+        #: returns in ``_run_agent_reply``) from ``_set_run_state``'s
+        #: non-active COMPLETED/FAILED branch, once per transition INTO a
+        #: terminal state. Wired to ``ChatScreen._notify_console_run_
+        #: outcome`` by ``_ensure_console_chat_controller``, mirroring
+        #: ``park_pending_approval``'s wiring and reusing its exact
+        #: session-title/workspace-name resolution
+        #: (``ChatScreen._console_workspace_display_name``). ``None`` in
+        #: most controller-only tests, matching every other UI bridge slot
+        #: here.
+        self.notify_run_outcome: Callable[[str, ConsoleRunStatus], None] | None = None
         #: Optional override for how long ``request_mcp_approvals`` waits
         #: for a human decision before failing every undecided call to
         #: ``"timeout"``. Defaults to reading ``[mcp] approval_timeout_
         #: seconds`` (T2's ``approval_timeout_seconds``) when unset.
         self.mcp_approval_timeout_seconds: Callable[[], float] | None = None
-        #: The active batch-approval round's release signal + shared
-        #: decisions holder, set for the duration of one ``request_mcp_
-        #: approvals`` call (worker thread) and read/written from the UI
-        #: thread by ``resolve_pending_approval`` /
-        #: ``_deny_pending_approval_on_context_change``. ``None`` whenever
-        #: no approval round is in flight.
-        self._pending_approval_event: threading.Event | None = None
-        self._pending_approval_decisions: dict[str, str] | None = None
+        #: Task 9 (Fix round 1): each batch-approval round's release signal
+        #: + shared decisions holder + owning session id, keyed by a
+        #: freshly minted ROUND id (``uuid4()``, stamped into the payload
+        #: as ``"round_id"`` and round-tripped through ``ChatApprovalCard``
+        #: -> ``ApprovalDecided`` -> ``resolve_pending_approval``) --
+        #: mirrors ``_pending_skill_script_rounds``'s identical
+        #: ``request_id``-keyed design. Superseded TWO earlier, both-wrong
+        #: shapes: the pre-Task-9 single ``_pending_approval_event``/
+        #: ``_pending_approval_decisions`` pair (only ever tracked ONE
+        #: round controller-wide -- fatal once two sessions can each have
+        #: their own concurrent pending approval), and this task's own
+        #: first draft keyed by session id alone (still wrong: `Approval
+        #: Decided` travels as an async Textual message, so a
+        #: `switch_session` landing in the gap between the user's click and
+        #: the handler running could resolve session A's decision against
+        #: session B's completely different batch -- review CRITICAL
+        #: finding, fix round 1). Read/written from the UI thread by
+        #: ``resolve_pending_approval``, which resolves ONLY the round
+        #: whose id was stamped onto the card the user actually decided --
+        #: never "whichever session happens to be active right now".
+        self._pending_approval_rounds: dict[str, dict[str, Any]] = {}
+        #: Task 9: retained payload for a PARKED round (session_id !=
+        #: active_session_id at round-start), keyed by owning session id --
+        #: the exact dict ``request_mcp_approvals`` would otherwise have
+        #: pushed straight to ``set_pending_approval``. ``switch_session``
+        #: re-derives the mounted card from this map every time the user
+        #: visits (or re-visits) the session, per the spec's "card state
+        #: derives from the run's pending review state, not mounted-widget
+        #: lifetime" contract -- never mutated by mount/unmount itself, only
+        #: by the round's own start (park) and end (any resolution path).
+        self._parked_approval_payloads: dict[str, dict[str, Any]] = {}
         #: UI-thread callback that pushes/clears the pending skill-install
         #: confirm payload into the owning screen's task-resume state
         #: (ChatScreen._set_console_pending_skill_install). Invoked through
@@ -837,6 +920,132 @@ class ConsoleChatController:
             disallows a new send.
         """
         return len(self._live_busy_session_ids())
+
+    def set_run_pending_approval(self, session_id: str, pending: bool) -> None:
+        """Record whether ``session_id``'s run is waiting on a human approval decision.
+
+        Parallel-agents spec §6 (Task 7 stores/exposes the flag; Task 9
+        wires the approval paths -- MCP batch approvals, skill-install/
+        script confirms -- that call this). Deliberately NOT named
+        ``set_pending_approval``: that name is already a pre-existing
+        INSTANCE ATTRIBUTE on this controller (an MCP batch-approval UI
+        callback slot assigned by ``ChatScreen._ensure_console_chat_
+        controller``, see ``__init__``) -- reusing it as a method name
+        here would be silently clobbered by that attribute's own
+        assignment.
+
+        Args:
+            session_id: The session whose pending-approval flag to update.
+            pending: ``True`` to mark the session as awaiting a decision,
+                ``False`` to clear it.
+        """
+        # F2b fix (Qodo wave): this is reachable from the worker thread
+        # (``request_mcp_approvals``'s own body/``finally``) while the UI
+        # thread may concurrently iterate ``_pending_approvals`` via
+        # ``fleet_summary_counts`` -- guard the mutation with the shared
+        # lock so that iteration never observes a torn add/discard.
+        with self._approval_state_lock:
+            if pending:
+                self._pending_approvals.add(session_id)
+            else:
+                self._pending_approvals.discard(session_id)
+
+    def mark_session_visited(self, session_id: str) -> None:
+        """Clear ``session_id``'s unvisited terminal outcome.
+
+        Parallel-agents spec §6. Called from ``switch_session`` once the
+        store has swapped to ``session_id`` -- visiting a session is what
+        "sees" its terminal outcome, so that marker resets to steady state
+        (``run_marker_for`` then falls through to ``ConsoleRunMarker.NONE``
+        unless a fresh run starts).
+
+        Task 9 correction: this used to ALSO discard ``session_id``'s
+        pending-approval flag, which directly contradicted the parked-
+        approval design once background sessions could carry a live
+        approval round -- a plain visit (e.g. just checking on a background
+        session, or the auto-mount ``switch_session`` now performs to show
+        its parked card) would silently deny-in-spirit the outstanding
+        round's badge before the human ever made a decision. The flag now
+        clears ONLY on the round's own resolution (``request_mcp_
+        approvals``' ``finally``) or a terminal run-state transition
+        (``_set_run_state``) -- never merely from being looked at. See
+        ``switch_session`` for the (separate) mount-the-parked-card step
+        that visiting now performs instead.
+
+        Args:
+            session_id: The session just switched to (or otherwise
+                visited).
+        """
+        self._unvisited_outcomes.pop(session_id, None)
+
+    def run_marker_for(self, session_id: str) -> ConsoleRunMarker:
+        """Fleet-visible marker for ``session_id`` (parallel-agents spec §6).
+
+        Precedence, checked in order:
+
+        1. ``NEEDS_APPROVAL`` -- outranks ``RUNNING`` even though a parked
+           run is technically still in-flight: the marker must announce
+           the thing that needs a human, not just "something is
+           happening".
+        2. ``RUNNING`` -- derived from the same live/busy definition as
+           ``in_flight_run_count`` (``_live_busy_session_ids``), so this
+           never invents a second notion of "in-flight".
+        3. ``FINISHED_OK``/``FINISHED_FAILED`` -- from
+           ``_unvisited_outcomes``, stamped only for non-active sessions
+           by ``_set_run_state``'s terminal transitions and cleared by
+           ``mark_session_visited``.
+        4. ``NONE`` otherwise.
+
+        Args:
+            session_id: The session to compute the marker for.
+
+        Returns:
+            The single ``ConsoleRunMarker`` that best describes
+            ``session_id``'s current fleet-visible state, per the
+            precedence above.
+        """
+        if session_id in self._pending_approvals:
+            return ConsoleRunMarker.NEEDS_APPROVAL
+        if session_id in self._live_busy_session_ids():
+            return ConsoleRunMarker.RUNNING
+        return self._unvisited_outcomes.get(session_id, ConsoleRunMarker.NONE)
+
+    def fleet_summary_counts(self) -> tuple[int, int]:
+        """Counts of OTHER live sessions running / needing approval.
+
+        Parallel-agents spec §6. Returns ``(other running, other pending-
+        approval)`` relative to the active (viewed) session -- its own
+        status is visible directly in the transcript, not through the
+        fleet summary, so it is excluded from both counts. Sessions the
+        store no longer has (orphaned ``_pending_approvals``/`
+        `_run_states`` entries) are excluded via the same live-session
+        filter ``_live_busy_session_ids`` applies. A session that is both
+        busy and pending-approval is counted only as pending, mirroring
+        ``run_marker_for``'s NEEDS_APPROVAL-outranks-RUNNING precedence --
+        neither count double-books it.
+
+        Returns:
+            A ``(other_running, other_pending_approval)`` tuple of counts,
+            both excluding the active (viewed) session.
+        """
+        active = self.store.active_session_id or ""
+        live_ids = {session.id for session in self.store.sessions()}
+        # F2b fix (Qodo wave): snapshot under the lock rather than
+        # iterating `_pending_approvals` live -- this runs on the UI
+        # thread's ~0.2s sync tick while a worker thread can concurrently
+        # add/discard entries (`request_mcp_approvals`'s own body/
+        # `finally`), so an unguarded comprehension here risked
+        # `RuntimeError: Set changed size during iteration`. The
+        # comprehension itself runs OUTSIDE the lock, over the snapshot.
+        with self._approval_state_lock:
+            pending_snapshot = set(self._pending_approvals)
+        other_pending = {
+            sid
+            for sid in pending_snapshot
+            if sid in live_ids and sid != active
+        }
+        other_busy = {sid for sid in self._live_busy_session_ids() if sid != active}
+        return len(other_busy - other_pending), len(other_pending)
 
     @property
     def max_parallel_runs(self) -> int:
@@ -1210,6 +1419,26 @@ class ConsoleChatController:
         # state is meant to persist on the session you're leaving, not be
         # wiped just because a sibling session appeared.
         self._clear_terminal_run_state()
+        # Fix wave (IMPORTANT 2, final review): re-derive the mounted
+        # approval card for the brand-new (now active) session, exactly
+        # like `switch_session`/`close_session`'s neighbor-activation
+        # branch already do -- without this, a round mounted on the
+        # session being left behind stayed rendered over the new tab
+        # (`create_session` above activates `session`, but nothing else
+        # ever told the card to re-derive for it). A fresh session can
+        # never itself have a parked payload, so this always resolves to
+        # `None` here -- i.e. it always clears -- but going through the
+        # same `_parked_approval_payloads` lookup (rather than a bespoke
+        # unconditional clear) keeps this call site honest with the same
+        # "card state derives from the run's pending review state" rule
+        # every other activation path follows.
+        if self.set_pending_approval is not None:
+            # F2b fix (Qodo wave): guard the read for consistency with
+            # every other `_parked_approval_payloads` access, even though
+            # a single `.get()` is not itself an iteration hazard.
+            with self._approval_state_lock:
+                parked_payload = self._parked_approval_payloads.get(session.id)
+            self.set_pending_approval(parked_payload)
         return session
 
     def _maybe_auto_title_session(
@@ -1324,16 +1553,46 @@ class ConsoleChatController:
         # in-flight state it already had (parallel-agents spec §2).
         previous_session_id = self.store.active_session_id
         session = self.store.switch_session(session_id)
+        # Parallel-agents spec §6: visiting the session you just switched TO
+        # clears its unvisited outcome marker -- must run AFTER the store
+        # swap above so `session_id` really is the new active session by
+        # the time downstream reads (e.g. `run_marker_for`) observe it.
+        self.mark_session_visited(session_id)
         if previous_session_id is not None:
             self._clear_terminal_run_state(session_id=previous_session_id)
-        # Binding threading contract (task-5): a conversation switch denies
-        # any pending MCP approval round rather than leaving its worker
-        # thread blocked on a card the user just navigated away from. Only
-        # one run (and therefore one approval round) can be active
-        # controller-wide at a time (`_active_run_rejection` blocks a new
-        # send while one is running), so this is unconditional -- a no-op
-        # whenever no round is in flight.
-        self._deny_pending_approval_on_context_change()
+        # Task 9 (parked background approvals): mount `session_id`'s
+        # parked round, if any, through the SAME UI bridge
+        # `request_mcp_approvals` uses for an active session's round --
+        # `self.set_pending_approval` is always safe to call with `None`
+        # too (clears whatever the session being LEFT had shown), so this
+        # single call both mounts a newly-visited parked card AND hides a
+        # departing session's card in one step. No `call_from_thread`
+        # marshal needed: `switch_session` always runs on the UI/main
+        # thread already (same convention as `mark_session_visited`/
+        # `_clear_terminal_run_state` above). Card state is entirely
+        # derived from `_parked_approval_payloads` (the round's own
+        # retained pending-review payload) every time this runs, never
+        # from whatever the card happened to be showing before -- so
+        # switching away and back re-mounts it unchanged (spec).
+        #
+        # Supersedes the pre-Task-9 `_deny_pending_approval_on_context_
+        # change()` call that used to run here: that assumed only one
+        # approval round could ever be in flight controller-wide (true
+        # before Task 3's concurrent runs), so ANY switch force-denied it.
+        # Once a background session can carry its own live round, denying
+        # it just for being switched away from directly contradicts
+        # parking -- the round now stays alive until its own resolution
+        # (decision, cancel, or timeout).
+        if self.set_pending_approval is not None:
+            # F2b fix (Qodo wave): guard the read for consistency with
+            # every other `_parked_approval_payloads` access.
+            with self._approval_state_lock:
+                parked_payload = self._parked_approval_payloads.get(session_id)
+            self.set_pending_approval(parked_payload)
+        # Skill-install/script confirms are NOT parked by this task (out of
+        # scope -- see PA-T9 report): still single-slot, controller-wide
+        # rounds, so a context change unconditionally denies whichever one
+        # is pending, same as before Task 9.
         self._deny_pending_skill_install_on_context_change()
         self._deny_pending_skill_script_on_context_change()
         return session
@@ -1367,13 +1626,34 @@ class ConsoleChatController:
                 # than falling back to the active-session default.
                 session_id=session_id,
             )
+        previous_active_id = self.store.active_session_id
         closed = self.store.close_session(session_id)
+        new_active_id = self.store.active_session_id
         if (
             owns_active_stream
             and repair_session is not None
             and self._active_citation_repair_sessions.get(session_id) is repair_session
         ):
             self._active_citation_repair_sessions.pop(session_id, None)
+        # Parallel-agents spec §6: closing the ACTIVE session auto-activates
+        # a neighbor (`ConsoleChatStore.close_session`, console_chat_store.py
+        # ~594-604) -- that neighbor is now the VIEWED session exactly as if
+        # `switch_session` had navigated to it, so its unvisited outcome
+        # must clear the same way, AND (Task 9) its parked approval card
+        # (if any) must mount the same way too -- closing a background tab
+        # must never leave the newly-viewed session's own pending approval
+        # invisible just because it arrived here via auto-activation rather
+        # than an explicit switch. Closing a BACKGROUND (non-active) session
+        # leaves `active_session_id` unchanged, so this is a no-op in that
+        # case.
+        if new_active_id is not None and new_active_id != previous_active_id:
+            self.mark_session_visited(new_active_id)
+            if self.set_pending_approval is not None:
+                # F2b fix (Qodo wave): guard the read for consistency with
+                # every other `_parked_approval_payloads` access.
+                with self._approval_state_lock:
+                    parked_payload = self._parked_approval_payloads.get(new_active_id)
+                self.set_pending_approval(parked_payload)
         return closed
 
     def original_attempt_for_message(self, message_id: str) -> str | None:
@@ -1487,82 +1767,130 @@ class ConsoleChatController:
             cancel_event.set()
 
     def _is_active_session_cancelled(self) -> bool:
-        """Best-effort ADDITIONAL cancel-signal check for the three
-        worker-thread approval/confirm bridges below (``request_mcp_
-        approvals``, ``request_skill_install_confirm``, ``request_skill_
-        script_confirm``) -- OR'd with ``_shutdown_requested`` (F5 fix,
-        Qodo wave) at each of their own poll sites, no longer with the
-        shared, per-session-agnostic ``_stop_requested`` flag. That flag
-        also gets reset mid-run-lifecycle (``shutdown``/``_run_agent_
-        reply``/``_stream_assistant_response`` all reset it to ``False``
-        once their own run settles), which made whether a still-polling
-        bridge thread observed an earlier Stop a race, on top of any
-        session's Stop being able to deny an unrelated session's approval
-        round outright. ``_shutdown_requested`` is set exactly once, only
-        by ``shutdown()``, and never reset -- both problems solved for the
-        one case (real process teardown) where denying every round at
-        once actually is correct.
-
-        KNOWN LIMITATION (Task 3b, unchanged by F5): these bridges are
-        plain bound-method callbacks handed straight to
-        ``ConsoleAgentBridge.run_reply`` (fixed arity --
-        ``approval_callback(pending)``, ``confirm(url)``/``confirm(
-        payload)`` -- no session id threaded through), unlike
-        ``should_cancel`` inside ``_run_agent_reply`` (Fix round 1: now
-        reads ONLY its own run's ``cancel_event``, never the shared flag).
-        Falling back to the VIEWED session's cancel event here (mirroring
-        ``stop_active_run``'s own "the active session" convention) is
-        correct for the overwhelmingly common single-run case.
-
-        Post-F5 scope: a session's Stop/Close no longer denies an
-        UNRELATED session's in-flight approval/confirm round (the bug this
-        fix addresses) -- only that session's own Stop (when it happens to
-        be the VIEWED one) or real shutdown does. The residual gap is
-        narrower and specific to these three bridges: a BACKGROUND
-        session's own pending approval is still not found by this
-        VIEWED-session-only lookup, so its own Stop still isn't observed
-        here (it times out instead, same as before). Properly scoping
-        concurrent approvals/confirms to their own run is PA-T9 ("parked
-        background approvals").
+        """Best-effort cancel-signal check that falls back to the VIEWED
+        session -- the pre-Task-9 behavior of the three worker-thread
+        approval/confirm bridges below (``request_mcp_approvals``,
+        ``request_skill_install_confirm``, ``request_skill_script_
+        confirm``), preserved here as the fallback ``_is_session_
+        cancelled`` uses when a caller has no ``session_id`` of its own to
+        pass (e.g. a legacy direct call in an older test). See
+        ``_is_session_cancelled``'s own docstring for the Task 9 fix this
+        was carved out of, and for the F5 fix (Qodo wave) that replaced
+        the shared, lifecycle-reset ``_stop_requested`` flag with the
+        never-reset ``_shutdown_requested`` in that same fallback branch.
         """
         cancel_event = self._active_cancel_events.get(self.store.active_session_id or "")
         return cancel_event is not None and cancel_event.is_set()
 
+    def _is_session_cancelled(self, session_id: str | None) -> bool:
+        """Cancellation check for the three worker-thread approval/confirm
+        bridges below, scoped to ``session_id``'s OWN cancel event when
+        known (PA-T9 finding #1 fix).
+
+        Pre-Task-9, all three bridges checked ``self._stop_requested or
+        self._is_active_session_cancelled()`` -- the shared global flag
+        OR'd with the VIEWED session's cancel event, regardless of which
+        session's round was actually waiting. Once background sessions can
+        each carry their own in-flight approval round (parked or not),
+        that was a real cross-session bug: Session A's Stop
+        (``stop_active_run``/``close_session``, via ``_signal_stop``)
+        always sets the shared ``_stop_requested`` flag alongside A's own
+        cancel event, so the OR-check let A's Stop spuriously deny B's
+        completely unrelated, still-waiting approval batch.
+
+        Fix: when ``session_id`` is known, check ONLY that session's own
+        ``_active_cancel_events`` entry -- never the shared flag. This
+        still correctly resolves every INTENTIONAL global-reach case:
+        ``shutdown()`` (the one caller that must stop every session at
+        once) signals every live session's cancel event individually
+        (``_signal_stop(session_id=...)`` in its own per-session loop), so
+        a round scoped to ANY session still observes shutdown via its own
+        event -- ``_stop_requested`` was never the mechanism that made
+        shutdown reach a specific round, just a side effect of
+        ``_signal_stop`` also setting it.
+
+        ``session_id=None`` (a caller with no session context of its own --
+        e.g. an existing test calling ``request_mcp_approvals`` directly
+        with no ``session_id=`` kwarg) falls back to the exact pre-Task-9
+        behavior via ``_is_active_session_cancelled``, so those callers'
+        existing global-flag expectations are unchanged.
+
+        F5 fix (Qodo wave, folded in during the PR2 restack): that
+        ``session_id=None`` fallback used to OR in the shared
+        ``_stop_requested`` flag, which (a) any session's Stop set
+        regardless of which round was waiting, and (b) various run
+        lifecycles reset to ``False`` mid-flight, making whether a
+        still-polling bridge observed an earlier Stop a race. It now ORs
+        in ``_shutdown_requested`` instead -- set exactly once, only by
+        ``shutdown()``, and never reset -- so a legacy no-session caller's
+        "global stop denies" expectation is preserved for the one case
+        (real process teardown) where that is actually correct, without
+        reintroducing cross-session poisoning for everyday per-session
+        Stop/Close.
+        """
+        if session_id is not None:
+            cancel_event = self._active_cancel_events.get(session_id)
+            return cancel_event is not None and cancel_event.is_set()
+        return self._shutdown_requested.is_set() or self._is_active_session_cancelled()
+
     # -- MCP batch-approval bridge (task-5) ----------------------------------
 
-    def request_mcp_approvals(self, pending: list[MCPPendingCall]) -> dict[str, str]:
+    def request_mcp_approvals(
+        self, pending: list[MCPPendingCall], *, session_id: str | None = None
+    ) -> dict[str, str]:
         """Bridge one batch of pending MCP tool calls to the Console UI and back.
 
-        WORKER THREAD. Bound as ``MCPToolProvider``'s ``approval_callback``
-        (T6's closure hands ``self.request_mcp_approvals`` straight
-        through), so this runs on the agent bridge's background OS thread
-        (the ``asyncio.to_thread`` call inside ``_run_agent_reply``) --
-        it must never touch a widget directly, only through
-        ``self.app.call_from_thread``.
+        WORKER THREAD. Bound (via a ``functools.partial`` binding this
+        run's ``session_id``, Task 9) as ``MCPToolProvider``'s
+        ``approval_callback`` and ``build_tool_review_hook``'s
+        ``request_approvals``, so this runs on the agent bridge's
+        background OS thread (the ``asyncio.to_thread`` call inside
+        ``_run_agent_reply``) -- it must never touch a widget directly,
+        only through ``self.app.call_from_thread``.
 
-        Builds a fresh ``threading.Event`` + shared decisions dict, surfaces
-        the batch via ``self.set_pending_approval`` (marshaled onto the UI
-        thread), then polls ``event.wait(1.0)`` re-checking this run's
-        cancel signals and a deadline every second until one of three things
-        happens: the user submits a decision (``resolve_pending_approval``,
-        called from the UI thread, sets the Event), the run is
-        cancelled/torn down (``_shutdown_requested``/``_is_active_session_
-        cancelled()`` -- F5 fix, Qodo wave: real process teardown or the
-        VIEWED session's own cancel event, no longer any session's bare
-        ``_stop_requested`` flip; see ``_is_active_session_cancelled``'s
-        docstring for the VIEWED-session limitation that remains), or the
-        configured approval timeout elapses.
-        Whichever unique ``llm_name``
-        never received an explicit decision by then fails closed to
-        ``"deny"`` (cancellation) or ``"timeout"`` (deadline) -- see
+        Builds a fresh ``threading.Event`` + shared decisions dict (stored
+        under this round's own entry in ``_pending_approval_rounds``, keyed
+        by a freshly minted ``round_id`` -- see that map's own docstring
+        for why a single shared slot, or a slot keyed by session id alone,
+        could not survive concurrent sessions or same-session round
+        replacement). Either MOUNTS the card immediately (``session_id`` is
+        the currently ACTIVE/viewed session, or unknown -- legacy
+        no-session callers keep the pre-Task-9 always-mount behavior) or
+        PARKS it (``session_id`` is a DIFFERENT, background session --
+        Task 9: the retained ``payload`` goes into
+        ``_parked_approval_payloads`` for ``switch_session`` to mount
+        later, and ``park_pending_approval`` fires the fleet badge +
+        one-shot toast instead of touching the mounted-card slot). Either
+        way it then polls ``event.wait(1.0)`` re-checking this run's OWN
+        cancel signal (``_is_session_cancelled``) and a deadline every
+        second until one of three things happens: the user submits a
+        decision (``resolve_pending_approval``, called from the UI thread
+        once the card's own stamped ``round_id`` is delivered back, sets
+        the Event -- Fix round 1: NOT "whichever round belongs to the
+        active session", see ``resolve_pending_approval``'s own docstring
+        for why that was a real cross-session misattribution hazard), the
+        run is cancelled/torn down (``_is_session_cancelled`` -- F5 fix,
+        Qodo wave: this round's OWN cancel event, or real process teardown
+        via ``_shutdown_requested``, never any OTHER session's bare Stop --
+        see that method's own docstring), or the configured approval
+        timeout elapses. Whichever unique ``llm_name`` never received an
+        explicit decision by then fails closed to ``"deny"``
+        (cancellation) or ``"timeout"`` (deadline) -- see
         ``MCPToolProvider._apply_verdict`` for how each decision string is
-        consumed. The card is always cleared afterwards (``finally``),
-        regardless of outcome.
+        consumed. The mounted card (if any) is always cleared afterwards
+        (``finally``), regardless of outcome -- but ONLY if this round's
+        session is STILL the active one at that moment, so a background
+        round resolving (timeout/cancel) while some OTHER session's card is
+        showing never clobbers it.
 
         Args:
             pending: One turn's pending tool calls awaiting approval,
                 possibly containing repeated ``llm_name``s (T3: calls
                 sharing a name share one verdict).
+            session_id: The run's OWNING session (Task 3 threads it through
+                ``_run_agent_reply``). ``None`` preserves every pre-Task-9
+                call site's behavior (always mounts against whatever
+                session is active at ROUND-key time; no parking).
 
         Returns:
             A decision string (``approve_once``/``approve_session``/
@@ -1582,12 +1910,40 @@ class ConsoleChatController:
 
         event = threading.Event()
         decisions: dict[str, str] = {}
-        self._pending_approval_event = event
-        self._pending_approval_decisions = decisions
+        # Fix round 1 (review CRITICAL finding): keyed by a freshly minted
+        # ROUND id, not by session id (or the active session) -- a session-
+        # keyed slot is ambiguous the moment either (a) the ACTIVE session
+        # changes between this round starting and the user's decision
+        # arriving (`ApprovalDecided` travels as an async Textual message,
+        # so a `switch_session` can land in that gap), or (b) a second
+        # round starts for the SAME session before a first round's stale
+        # decision message is delivered -- either way a session-keyed slot
+        # would let a stale/misdirected decision resolve the WRONG round.
+        # `round_id` is stamped into `payload` below, round-trips through
+        # `ChatApprovalCard.set_batch` -> `ApprovalDecided` ->
+        # `resolve_pending_approval`, and is the ONLY thing that round is
+        # ever resolved by -- mirrors `_pending_skill_script_rounds`'
+        # identical `request_id`-keyed defense.
+        round_id = str(uuid4())
+        owning_session_id = session_id if session_id is not None else (
+            self.store.active_session_id or ""
+        )
+        # F2b fix (Qodo wave): guard the round registration -- the UI
+        # thread's `resolve_pending_approval`/legacy fallback and the
+        # `fleet_summary_counts` sync tick can read/iterate this map
+        # concurrently with this worker thread's own writes.
+        with self._approval_state_lock:
+            self._pending_approval_rounds[round_id] = {
+                "event": event,
+                "decisions": decisions,
+                "session_id": owning_session_id,
+            }
 
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
         deadline = time.monotonic() + timeout_seconds
         payload = {
+            "round_id": round_id,
+            "session_id": owning_session_id,
             "calls": [
                 {
                     "llm_name": call.llm_name,
@@ -1602,11 +1958,54 @@ class ConsoleChatController:
             ],
             "timeout_seconds": timeout_seconds,
         }
+        # Task 9: park rather than mount when this round's session is a
+        # DIFFERENT, background session -- `session_id is None` (a legacy
+        # caller with no session context) always mounts, matching every
+        # pre-Task-9 call site.
+        is_parked = (
+            session_id is not None
+            and session_id != (self.store.active_session_id or "")
+        )
+        if session_id is not None:
+            # Set the badge flag directly here (worker thread, plain-dict/
+            # set mutation -- same no-marshal convention as `_active_
+            # cancel_events` elsewhere in this class) so it is authoritative
+            # regardless of whether a UI bridge happens to be wired.
+            # `park_pending_approval`/`ChatScreen._park_console_approval`
+            # ALSO sets it (harmless: `set.add` is idempotent) -- that is
+            # what makes `_park_console_approval` a self-contained seam
+            # tests can call directly without a live round.
+            self.set_run_pending_approval(session_id, True)
+            # Fix wave (CRITICAL 1, final review): retain THIS round's
+            # payload for EVERY session-attributed round -- mounted or
+            # parked -- not just a parked one. `switch_session` re-derives
+            # the card EXCLUSIVELY from `_parked_approval_payloads` (never
+            # from whatever the card happened to already be showing), so a
+            # round that mounted immediately (session_id was the active
+            # session at round-start) was previously unrecoverable the
+            # moment the user switched away and back: the lookup found
+            # nothing, mounted `None`, and the round silently hung with a
+            # stale NEEDS_APPROVAL badge and no card until its 120s
+            # timeout. The `finally` below already pops this key
+            # unconditionally (whenever `session_id is not None`,
+            # regardless of `is_parked`) -- storing it unconditionally
+            # here too makes retention symmetric with that cleanup, per
+            # spec §5 ("card state survives tab switches") for every round,
+            # not only parked ones.
+            # F2b fix (Qodo wave): guard the store -- `switch_session`'s
+            # own re-derive read (`.get()`) runs on the UI thread and can
+            # race this worker-thread write.
+            with self._approval_state_lock:
+                self._parked_approval_payloads[session_id] = payload
 
         try:
-            self._marshal_pending_approval(payload)
+            if is_parked:
+                if self.app is not None and self.park_pending_approval is not None:
+                    self.app.call_from_thread(self.park_pending_approval, session_id)
+            else:
+                self._marshal_pending_approval(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._shutdown_requested.is_set() or self._is_active_session_cancelled():
+                if self._is_session_cancelled(session_id):
                     # Finding I3: a stop/unmount that resolves THIS round
                     # denies every still-undecided call, but
                     # `run_agent_loop`'s own `should_cancel()` check fires
@@ -1652,14 +2051,31 @@ class ConsoleChatController:
             # a second source of truth.
             return {name: decisions.get(name, "deny") for name in unique_names}
         finally:
-            self._pending_approval_event = None
-            self._pending_approval_decisions = None
-            try:
-                self._marshal_pending_approval(None)
-            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
-                logger.opt(exception=True).debug(
-                    "Failed to marshal approval clear during teardown"
-                )
+            # F2b fix (Qodo wave): guard both pops -- `resolve_pending_
+            # approval`'s legacy fallback and `switch_session`'s re-derive
+            # read can each observe these maps from the UI thread while
+            # this worker thread tears the round down.
+            with self._approval_state_lock:
+                self._pending_approval_rounds.pop(round_id, None)
+                if session_id is not None:
+                    self._parked_approval_payloads.pop(session_id, None)
+            if session_id is not None:
+                self.set_run_pending_approval(session_id, False)
+            # Only clear the MOUNTED card if this round's session is still
+            # the one being viewed right now -- a parked round resolving
+            # (timeout/cancel) in the background, or one that was visited-
+            # then-abandoned-again before deciding, must never blank
+            # whatever the CURRENTLY active session's own card is showing.
+            still_active = session_id is None or session_id == (
+                self.store.active_session_id or ""
+            )
+            if still_active:
+                try:
+                    self._marshal_pending_approval(None)
+                except Exception:  # noqa: BLE001 -- suppress teardown-time errors
+                    logger.opt(exception=True).debug(
+                        "Failed to marshal approval clear during teardown"
+                    )
 
     def _record_cancelled_approval_decisions(
         self,
@@ -1764,6 +2180,7 @@ class ConsoleChatController:
 
     async def _compose_mcp_provider(
         self,
+        session_id: str | None = None,
     ) -> tuple[
         MCPToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
@@ -1789,6 +2206,17 @@ class ConsoleChatController:
         this is the only production writer of ``console_mcp_tool_count``/
         ``console_mcp_not_connected_count``.
 
+        Args:
+            session_id: The run's OWNING session (Task 3/9) -- threaded
+                into the composed provider's ``approval_callback`` (via a
+                ``functools.partial`` binding, since ``MCPToolProvider``
+                calls it with a fixed ``[pending]`` single-list arg) so a
+                single-call fallback approval raised through
+                ``invoke()``'s own gate parks/mounts and scopes its cancel
+                check exactly like the batch review-hook path does.
+                ``None`` (the default -- every pre-Task-9 call site) keeps
+                ``request_mcp_approvals``' legacy no-session behavior.
+
         Returns:
             ``(provider, review_tool_calls)`` when eligible -- a composed
             ``MCPToolProvider`` ready to hand to ``ConsoleAgentBridge.
@@ -1810,10 +2238,13 @@ class ConsoleChatController:
         if kill_switch:
             self._publish_mcp_inspector_counts(None, None)
             return None, None
+        bound_request_approvals = functools.partial(
+            self.request_mcp_approvals, session_id=session_id
+        )
         provider = MCPToolProvider(
             service=service,
             main_loop=asyncio.get_running_loop(),
-            approval_callback=self.request_mcp_approvals,
+            approval_callback=bound_request_approvals,
         )
         try:
             await provider.compose_catalog()
@@ -1828,58 +2259,117 @@ class ConsoleChatController:
             self._publish_mcp_inspector_counts(None, None)
             return None, None
         self._publish_mcp_inspector_counts(len(catalog), provider.not_connected_count)
-        return provider, build_mcp_review_hook(provider, self.request_mcp_approvals)
+        return provider, build_mcp_review_hook(provider, bound_request_approvals)
 
-    def resolve_pending_approval(self, decisions: dict[str, str]) -> None:
+    def resolve_pending_approval(
+        self, decisions: dict[str, str], *, round_id: str | None = None
+    ) -> None:
         """UI THREAD: apply the user's batch decision, releasing the waiting worker thread.
 
         Called by ``ChatScreen``'s ``ChatApprovalCard.ApprovalDecided``
-        handler. A no-op when there is no active round (e.g. a stale
-        message arriving after a timeout/cancellation already resolved and
-        cleared it).
+        handler, which forwards ``event.round_id`` -- the SAME id
+        ``request_mcp_approvals`` stamped into the payload the card was
+        built from (``ChatApprovalCard.set_batch`` stashes it;
+        ``_submit_batch_decisions`` echoes it back on submit, mirroring
+        ``resolve_pending_skill_script``'s identical ``request_id``
+        round-trip).
 
-        NOTE: Snapshots ``_pending_approval_decisions`` and ``_pending_approval_event``
-        into locals to avoid TOCTOU race: the worker thread's ``finally`` block nulls
-        both attributes concurrently. Guard and act only on the snapshots.
+        Fix round 1 (review CRITICAL finding): resolves ONLY the round
+        whose id matches ``round_id`` -- never "whichever round belongs to
+        the currently active session". ``ApprovalDecided`` travels as an
+        async Textual message: a ``switch_session`` landing in the gap
+        between the user's click and this handler running would otherwise
+        let session A's decision resolve session B's completely different,
+        unreviewed batch (or, for the same session, let a STALE decision
+        from an already-ended round 1 resolve a newer round 2 that
+        happened to arm before the stale message was delivered). A
+        mismatched or stale ``round_id`` -- including one belonging to a
+        round that already resolved and was popped -- is a safe no-op: the
+        real round (if any) stays pending and its card re-derives
+        unchanged on the next visit; nothing is ever auto-approved or
+        denied-by-accident here.
+
+        ``round_id=None`` preserves the pre-fix-round-1 fallback for
+        direct/legacy callers with no token to pass (e.g. existing tests
+        that call this immediately after arming a round with no session
+        switch in between): resolves whichever round belongs to the
+        CURRENTLY ACTIVE session, matching every such caller's existing
+        expectations. Production (``ChatApprovalCard``/``ChatScreen``)
+        always passes the real ``round_id`` now.
+
+        A no-op when there is no matching round at all (e.g. a stale
+        message arriving after a timeout/cancellation already resolved and
+        cleared it, or -- with no ``round_id`` -- simply no round pending
+        for the active session).
+
+        NOTE: Snapshots the round's ``decisions``/``event`` into locals to
+        avoid TOCTOU race: the worker thread's ``finally`` block pops the
+        round entry out of ``_pending_approval_rounds`` concurrently. Guard
+        and act only on the snapshots.
+
+        Args:
+            decisions: The user's per-``llm_name`` decision strings
+                (``approve_once``/``approve_session``/``always_allow``/
+                ``deny``) to merge into the round's shared decisions dict.
+            round_id: The specific round to resolve (the id stamped onto
+                the card the user actually decided). ``None`` falls back to
+                whichever round belongs to the currently active session
+                (legacy/direct-call compatibility -- see above).
         """
-        # Snapshot both at once to prevent TOCTOU race with worker thread's finally block
-        decisions_dict = self._pending_approval_decisions
-        approval_event = self._pending_approval_event
-        if decisions_dict is None or approval_event is None:
+        # F2b/F3b fix (Qodo wave, task-913): both branches read
+        # ``_pending_approval_rounds`` under the shared lock -- the worker
+        # thread's own registration (``request_mcp_approvals``) and
+        # teardown (its ``finally``) can mutate this dict concurrently
+        # with either branch here. The legacy ``round_id=None`` fallback
+        # in particular used to iterate ``.values()`` live; snapshotting
+        # it into a list under the lock first (then iterating the
+        # snapshot, outside the lock) closes the same
+        # "dictionary changed size during iteration" hazard
+        # ``fleet_summary_counts`` had for ``_pending_approvals``.
+        if round_id is not None:
+            with self._approval_state_lock:
+                round_state = self._pending_approval_rounds.get(round_id)
+        else:
+            active = self.store.active_session_id or ""
+            with self._approval_state_lock:
+                round_states = list(self._pending_approval_rounds.values())
+            round_state = next(
+                (
+                    state
+                    for state in round_states
+                    if state.get("session_id") == active
+                ),
+                None,
+            )
+        if round_state is None:
             return
+        # Snapshot both at once to prevent TOCTOU race with worker thread's finally block
+        decisions_dict = round_state["decisions"]
+        approval_event = round_state["event"]
         decisions_dict.update(decisions or {})
         approval_event.set()
 
-    def _deny_pending_approval_on_context_change(self) -> None:
-        """Force-resolve a pending approval round as denied for undecided calls.
-
-        Sets the round's Event without pre-filling ``decisions`` --
-        ``request_mcp_approvals``'s own post-loop fill-in resolves every
-        name that still lacks an explicit entry to ``"deny"``. A no-op when
-        no round is pending.
-
-        NOTE: Snapshots ``_pending_approval_event`` into a local to avoid TOCTOU race
-        with the worker thread's ``finally`` block that nulls it concurrently.
-        """
-        # Snapshot to prevent TOCTOU race with worker thread's finally block
-        approval_event = self._pending_approval_event
-        if approval_event is not None:
-            approval_event.set()
-
     # -- Skill-install confirm bridge (task-5) -------------------------------
 
-    def request_skill_install_confirm(self, url: str) -> bool:
+    def request_skill_install_confirm(
+        self, url: str, *, session_id: str | None = None
+    ) -> bool:
         """WORKER THREAD: ask the user to confirm a skill install before any fetch.
 
         Blocks on a fresh threading.Event, surfacing an Allow/Deny card via
         set_pending_skill_install (marshaled onto the UI thread), then polls
-        re-checking this run's cancel signals and a deadline. Cancel/stop,
-        timeout, context-change, or no wired UI all resolve to DENY
-        (fail-closed). Returns True only on an explicit Allow.
+        re-checking this run's cancel signals (scoped to ``session_id``'s
+        own cancel event when known -- PA-T9 finding #1, see
+        ``_is_session_cancelled``) and a deadline. Cancel/stop, timeout,
+        context-change, or no wired UI all resolve to DENY (fail-closed).
+        Returns True only on an explicit Allow.
 
         Args:
             url: The skill source URL the model wants to install, surfaced
                 verbatim on the confirm card for the user to inspect.
+            session_id: The run's OWNING session (Task 3/9). ``None``
+                preserves the pre-Task-9 VIEWED-session/global-flag
+                fallback (see ``_is_session_cancelled``).
 
         Returns:
             True only on an explicit Allow; every other path (deny, cancel,
@@ -1906,7 +2396,7 @@ class ConsoleChatController:
         try:
             self._marshal_pending_skill_install(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._shutdown_requested.is_set() or self._is_active_session_cancelled():
+                if self._is_session_cancelled(session_id):
                     break
                 if time.monotonic() >= deadline:
                     break
@@ -1955,7 +2445,9 @@ class ConsoleChatController:
 
     # -- Skill-script confirm bridge -----------------------------------------
 
-    def request_skill_script_confirm(self, payload: dict[str, Any]) -> dict[str, bool]:
+    def request_skill_script_confirm(
+        self, payload: dict[str, Any], *, session_id: str | None = None
+    ) -> dict[str, bool]:
         """WORKER THREAD: ask the user to confirm running a skill's script.
 
         Mirrors request_skill_install_confirm, but carries a two-part decision:
@@ -1972,6 +2464,10 @@ class ConsoleChatController:
             payload: Confirm details to render ({"skill_name", "script_path",
                 "mechanism", "args", ...}); "timeout_seconds" and
                 "request_id" keys are added before marshaling to the UI.
+            session_id: The run's OWNING session (Task 3/9), scoping the
+                cancel check (``_is_session_cancelled`` -- PA-T9 finding
+                #1). ``None`` preserves the pre-Task-9 VIEWED-session/
+                global-flag fallback.
 
         Returns:
             ``{"allow": bool, "remember": bool}``. Every non-Allow path (deny,
@@ -2002,7 +2498,7 @@ class ConsoleChatController:
         try:
             self._marshal_pending_skill_script(card_payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._shutdown_requested.is_set() or self._is_active_session_cancelled():
+                if self._is_session_cancelled(session_id):
                     break
                 if time.monotonic() >= deadline:
                     break
@@ -4955,7 +5451,9 @@ class ConsoleChatController:
         # outside this task's file scope, so keeping that function
         # byte-identical and building the run-level hook separately here
         # is the lower-blast-radius choice.
-        mcp_provider, _unused_mcp_only_review_hook = await self._compose_mcp_provider()
+        mcp_provider, _unused_mcp_only_review_hook = await self._compose_mcp_provider(
+            session_id
+        )
         self._mcp_provider = mcp_provider
 
         # task-545/T6: build THIS run's built-in permission gate and hand
@@ -4977,11 +5475,16 @@ class ConsoleChatController:
         # the bridge's registry actually dispatches through (its `_tools`
         # dict is stateless data rebuilt identically by any instance).
         builtin_review_provider = BuiltinToolProvider(gate=builtin_gate)
+        # Task 9: bind THIS run's owning session id into the approval
+        # bridge so `request_mcp_approvals` can (a) scope its cancellation
+        # check to this run's own cancel event rather than falling back to
+        # whichever session is currently VIEWED (finding #1), and (b) park
+        # rather than mount when `session_id` is not the active session.
         review_hook = build_tool_review_hook(
             builtin_gate,
             builtin_review_provider,
             mcp_provider,
-            self.request_mcp_approvals,
+            functools.partial(self.request_mcp_approvals, session_id=session_id),
         )
 
         # Swap site: the agent loop runs synchronously on a worker thread via
@@ -5013,7 +5516,9 @@ class ConsoleChatController:
                 review_tool_calls=review_hook,
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,
-                request_skill_install_confirm=self.request_skill_install_confirm,
+                request_skill_install_confirm=functools.partial(
+                    self.request_skill_install_confirm, session_id=session_id
+                ),
                 # Advertised must equal usable (the #847 lesson, restated in
                 # the run_skill_script docstring below): only pass the
                 # confirm callback -- and therefore only let the bridge
@@ -5023,7 +5528,9 @@ class ConsoleChatController:
                 # auto-deny every call, offering the model a tool it can
                 # never successfully use.
                 request_skill_script_confirm=(
-                    self.request_skill_script_confirm
+                    functools.partial(
+                        self.request_skill_script_confirm, session_id=session_id
+                    )
                     if self.set_pending_skill_script is not None
                     else None
                 ),
@@ -5817,8 +6324,71 @@ class ConsoleChatController:
         target = session_id if session_id is not None else (
             self.store.active_session_id or ""
         )
+        # Task 10 (background completion toasts): captured BEFORE the
+        # overwrite below so the once-guard downstream can tell a genuine
+        # transition INTO a terminal outcome (toast) apart from a
+        # defensive re-stamp of the SAME terminal status onto an already-
+        # terminal session (no toast -- the brief's own re-set test pins
+        # this).
+        previous_status = self.run_state_for(target).status
         self._run_states[target] = run_state
         self.run_state_history_for(target).append(run_state.status)
+        # Task 9 finding #2 (deferred from Task 7 review): a terminal run
+        # has no live approval left to decide, so the pending-approval flag
+        # must be discarded for ANY terminal transition -- including the
+        # currently ACTIVE session's own. Pre-Task-9 this discard lived
+        # ONLY inside the non-active branch below (alongside the unvisited-
+        # outcome stamp), so a pending flag on the session you were actually
+        # LOOKING AT survived its own run ending, leaving a misleading
+        # NEEDS_APPROVAL badge with no round left behind it. Kept as its own
+        # unconditional block, separate from the unvisited-outcome stamp,
+        # which deliberately STAYS non-active-only (the viewed session's own
+        # COMPLETED/FAILED transition is visible live in its transcript and
+        # must never grow a stale "unvisited" fleet marker on itself).
+        if run_state.status in {
+            ConsoleRunStatus.BLOCKED,
+            ConsoleRunStatus.COMPLETED,
+            ConsoleRunStatus.FAILED,
+            ConsoleRunStatus.STOPPED,
+        }:
+            # F2b fix (Qodo wave): this call always runs on the main
+            # thread today, but guard it with the same lock as every other
+            # `_pending_approvals` mutation for consistency (and so it
+            # stays correct if a future caller ever moves this off-thread).
+            with self._approval_state_lock:
+                self._pending_approvals.discard(target)
+        # Parallel-agents spec §6: stamp an unvisited terminal outcome, but
+        # ONLY for a session other than the currently active (viewed) one --
+        # the viewed session's own COMPLETED/FAILED transition is visible
+        # live in its transcript and must never grow a stale "unvisited"
+        # fleet marker on itself. `mark_session_visited` is the sole path
+        # that clears an entry stamped here.
+        if target != (self.store.active_session_id or ""):
+            if run_state.status is ConsoleRunStatus.COMPLETED:
+                self._unvisited_outcomes[target] = ConsoleRunMarker.FINISHED_OK
+            elif run_state.status is ConsoleRunStatus.FAILED:
+                self._unvisited_outcomes[target] = ConsoleRunMarker.FINISHED_FAILED
+            # Task 10 (background completion toasts, parallel-agents spec):
+            # ONE toast on a non-active session's run finishing/failing --
+            # the viewed session's own terminal transition is visible live
+            # in its transcript and gets none (same "user is watching" rule
+            # as the unvisited-outcome stamp just above). Once-guarded on
+            # the transition INTO a terminal state: `previous_status` was
+            # NOT already one of the four terminal statuses, so re-setting
+            # the same COMPLETED/FAILED status again (e.g. a defensive
+            # re-stamp) does not re-toast.
+            if (
+                run_state.status in (ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED)
+                and previous_status
+                not in {
+                    ConsoleRunStatus.BLOCKED,
+                    ConsoleRunStatus.COMPLETED,
+                    ConsoleRunStatus.FAILED,
+                    ConsoleRunStatus.STOPPED,
+                }
+                and self.notify_run_outcome is not None
+            ):
+                self.notify_run_outcome(target, run_state.status)
 
     def _clear_terminal_run_state(self, session_id: str | None = None) -> None:
         """Clear stale terminal status copy for ``session_id`` (default: active).

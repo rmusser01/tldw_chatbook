@@ -16,44 +16,17 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
 
-
-class StreamingGateway:
-    """Minimal provider gateway stub -- copied from test_console_chat_controller.py's
-    idiom (no network I/O, `ready=True` resolution) since this file's tests never
-    actually run a send/stream, only drive run-state bookkeeping directly."""
-
-    async def resolve_for_send(self, selection):
-        return type(
-            "Resolution",
-            (),
-            {
-                "ready": True,
-                "provider": "llama_cpp",
-                "model": "test-model",
-                "base_url": "http://127.0.0.1:9099",
-                "visible_copy": "",
-            },
-        )()
-
-    async def stream_chat(self, resolution, messages):
-        for chunk in ("hel", "lo"):
-            yield chunk
+from Tests.Chat.conftest import StreamingGateway
 
 
-@pytest.fixture
-def controller_with_two_sessions():
-    store = ConsoleChatStore()
-    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
-    # `store.new_session` does not exist (verified by grep) -- the real
-    # session-creation surface is `store.ensure_session`/`store.create_session`
-    # and `controller.new_session`. `controller.new_session()` also activates
-    # the session it creates (`ConsoleChatStore.create_session` sets
-    # `active_session_id`), matching how `test_controller_creates_and_
-    # switches_sessions` in test_console_chat_controller.py builds two
-    # sessions.
-    session_a = store.ensure_session(title="Session A")
-    session_b = controller.new_session(title="Session B")
-    return controller, session_a.id, session_b.id
+# `controller_with_two_sessions` (and its `StreamingGateway` provider stub)
+# moved to `Tests/Chat/conftest.py` (Task 7 brief) so
+# `test_console_run_markers.py` can share it without a cross-module import.
+# A handful of tests below (needing a custom session-creation ORDER the
+# fixed 2-session fixture doesn't offer) still construct their own
+# controller directly and import `StreamingGateway` straight from
+# conftest -- a same-package import from the dedicated shared-fixtures
+# module, not the cross-TEST-MODULE import the move above was about.
 
 
 def test_run_states_are_isolated_per_session(controller_with_two_sessions):

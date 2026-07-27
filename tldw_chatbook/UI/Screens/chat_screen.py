@@ -118,11 +118,13 @@ from ...Chat.console_skill_resolver import (
 )
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
+    CONSOLE_RUN_MARKER_GLYPHS,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleChatMessage,
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunMarker,
     ConsoleRunStatus,
     ConsoleVariant,
     ConsoleVariantSet,
@@ -2079,7 +2081,9 @@ class ChatScreen(BaseAppScreen):
         # TASK-251: last-applied payloads for equality-guarded tick sub-syncs
         # (skip Static.update()/style work when the computed payload hasn't
         # changed since the last successful apply).
-        self._console_agent_section_last: tuple[str, str, str, bool] | None = None
+        self._console_agent_section_last: (
+            tuple[str, str, str, str, bool, bool] | None
+        ) = None
         self._console_rail_system_line_last: tuple[str, bool] | None = None
         self._console_rail_prune_dispatched = False
         self._console_workspace_conversation_query = ""
@@ -2880,6 +2884,25 @@ class ChatScreen(BaseAppScreen):
         )
         return (status, steps, subagents)
 
+    def _console_agent_fleet_summary_line(self) -> str:
+        """Return the Agent rail's fleet summary line (parallel-agents spec §6).
+
+        Sourced from ``ConsoleChatController.fleet_summary_counts`` (other
+        running / other pending-approval sessions, relative to the active
+        one). Copy is VERBATIM per spec §6 -- no singular/plural grammar
+        handling, so ``"1 other agents running, ..."`` is intentional, not a
+        bug. Returns ``""`` when both counts are zero; the caller hides the
+        fleet Static in that case (absent, not present-but-blank) so it
+        never crowds the rail with an empty line.
+        """
+        controller = getattr(self, "_console_chat_controller", None)
+        if controller is None:
+            return ""
+        running, pending = controller.fleet_summary_counts()
+        if running + pending <= 0:
+            return ""
+        return f"{running} other agents running, {pending} waiting for approval."
+
     def _sync_console_agent_section(self) -> None:
         """Refresh the mounted Agent rail Statics + Back-button visibility.
 
@@ -2887,10 +2910,44 @@ class ChatScreen(BaseAppScreen):
         payload -- the 0.2s tick called this unconditionally, forcing three
         ``Static.update()`` calls plus a style write per tick even when
         nothing agent-related had changed.
+
+        Fix round 2 (parallel-agents spec §6 live-smoke finding): also
+        tracks and applies the Agent section's own open/collapsed state
+        (header chevron + body ``display``). Compose-time already applies
+        ``_apply_fleet_agent_section_auto_open`` once at mount, but that is
+        a one-shot snapshot -- a background session's run starting or
+        ending *after* mount (the overwhelmingly common case) must reopen
+        or release the section on this same periodic sync, or the fleet
+        line would only ever be reachable for whichever fleet state
+        happened to exist at the moment the screen was first composed.
         """
         status_line, steps_text, subagents_text = self._console_agent_section_lines()
+        fleet_line = self._console_agent_fleet_summary_line()
         back_visible = bool(self._console_agent_drilldown_run_id)
-        payload = (status_line, steps_text, subagents_text, back_visible)
+        try:
+            section_open = self._current_console_rail_state().agent_open
+        except (AttributeError, NoActiveAppError):
+            # A bare/unmounted screen (several tests construct
+            # `ChatScreen(app)` directly with no active Textual app
+            # context -- e.g. `test_console_provider_selection_carries_
+            # active_session_system_prompt`) has no real rail width to
+            # derive responsive state from: `_console_rail_available_
+            # columns` reads `self.size`, which raises here rather than
+            # returning `None` (`Screen.size` needs `self.app`). Same
+            # guard idiom `_provider_readiness_app_config` already uses
+            # for this exact failure mode. Fall back to the persisted
+            # default (collapsed) -- the Statics-only updates below are
+            # still worth applying even when the section's own open state
+            # cannot be derived.
+            section_open = False
+        payload = (
+            status_line,
+            steps_text,
+            subagents_text,
+            fleet_line,
+            back_visible,
+            section_open,
+        )
         if payload == self._console_agent_section_last:
             return
         try:
@@ -2899,8 +2956,17 @@ class ChatScreen(BaseAppScreen):
             self.query_one("#console-agent-section-subagents", Static).update(
                 subagents_text
             )
+            fleet_summary = self.query_one("#console-agent-fleet-summary", Static)
+            fleet_summary.update(fleet_line)
+            fleet_summary.styles.display = "block" if fleet_line else "none"
             back_button = self.query_one("#console-agent-drilldown-back", Button)
             back_button.styles.display = "block" if back_visible else "none"
+            agent_body = self.query_one("#console-rail-section-body-agent")
+            agent_body.styles.display = "block" if section_open else "none"
+            agent_header = self.query_one(
+                "#console-rail-section-header-agent", ConsoleRailSectionHeader
+            )
+            agent_header.sync_open(section_open)
         except (NoMatches, QueryError):
             return
         self._console_agent_section_last = payload
@@ -3455,6 +3521,19 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_controller.app = self.app_instance
         self._console_chat_controller.set_pending_approval = (
             self._set_console_pending_approval
+        )
+        # Task 9 (parked background approvals): UI-thread bridge target for
+        # a NON-active session's approval round -- badge + one toast,
+        # never the mounted-card path above.
+        self._console_chat_controller.park_pending_approval = (
+            self._park_console_approval
+        )
+        # Task 10 (background completion toasts): UI-thread bridge target
+        # for a NON-active session's run finishing/failing -- the one-per-
+        # run toast, invoked directly (never via call_from_thread) from
+        # `_set_run_state`'s once-guarded non-active terminal branch.
+        self._console_chat_controller.notify_run_outcome = (
+            self._notify_console_run_outcome
         )
         self._console_chat_controller.set_pending_skill_install = (
             self._set_console_pending_skill_install
@@ -5439,6 +5518,7 @@ class ChatScreen(BaseAppScreen):
         labels = self._console_browser_workspace_labels()
         starred_ids = self._starred_console_conversation_ids()
         active_session_id = store.active_session_id
+        controller = getattr(self, "_console_chat_controller", None)
         rows: list[ConsoleConversationBrowserInputRow] = []
         for session in store.sessions():
             session_workspace_id = str(session.workspace_id or "").strip()
@@ -5455,6 +5535,18 @@ class ChatScreen(BaseAppScreen):
             )
             row_key = persisted_id or f"native:{session.id}"
             selected = session.id == active_session_id
+            # Parallel-agents spec PA-T8: resolved here (glyph string, not the
+            # raw `ConsoleRunMarker`) so `conversation_browser_state.py` and
+            # the tray widget stay free of a model-layer import -- threaded
+            # like TASK-717 threaded `openable` (input row -> normalize ->
+            # display row -> row label).
+            run_marker = (
+                CONSOLE_RUN_MARKER_GLYPHS.get(
+                    controller.run_marker_for(session.id), ""
+                )
+                if controller is not None
+                else ""
+            )
             row = ConsoleConversationBrowserInputRow(
                 row_key=row_key,
                 conversation_id=persisted_id or None,
@@ -5469,6 +5561,7 @@ class ChatScreen(BaseAppScreen):
                 selected=selected,
                 source_kind="native",
                 updated_sort=str(session.updated_at or ""),
+                run_marker=run_marker,
             )
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
@@ -7101,9 +7194,39 @@ class ChatScreen(BaseAppScreen):
             inspector_state=inspector_state,
             workspace_context_state=workspace_context_state,
         )
-        return self._apply_pending_launch_inspector_auto_open(
+        rail_state = self._apply_pending_launch_inspector_auto_open(
             rail_state, pending_launch
         )
+        return self._apply_fleet_agent_section_auto_open(rail_state)
+
+    def _apply_fleet_agent_section_auto_open(
+        self, rail_state: ConsoleRailState
+    ) -> ConsoleRailState:
+        """Force the Agent rail section open while the fleet has anything to report.
+
+        Parallel-agents spec §6, fix round 2 (live-smoke finding): the Agent
+        section's persisted preference defaults collapsed (``agent_open=
+        False``, see ``ConsoleRailPreferences``) and nothing previously
+        reopened it, so its BODY -- where the fleet summary line
+        (``#console-agent-fleet-summary``) lives -- stayed ``display: none``
+        even while another session was running or parked on an approval.
+        Scrolling the rail only ever reached the still-collapsed header; the
+        line itself was unreachable regardless of scroll position.
+
+        Mirrors ``_apply_pending_launch_inspector_auto_open``: an ephemeral
+        override applied to the RENDERED rail state only, never written back
+        to the persisted preference, so a user's own explicit collapse still
+        takes effect the moment the fleet goes quiet (``fleet_summary_
+        counts()`` returns to ``(0, 0)``). Uses ``_console_agent_fleet_
+        summary_line()`` -- the exact same non-empty-string signal the
+        fleet Static's own ``display`` toggles on -- so "must render open"
+        and "has a line to show" can never disagree.
+        """
+        if rail_state.agent_open:
+            return rail_state
+        if not self._console_agent_fleet_summary_line():
+            return rail_state
+        return replace(rail_state, agent_open=True)
 
     def _set_console_rail_preference(
         self,
@@ -9130,6 +9253,7 @@ class ChatScreen(BaseAppScreen):
             rail_state,
             pending_launch,
         )
+        rail_state = self._apply_fleet_agent_section_auto_open(rail_state)
         workbench_state = self._build_console_workbench_state(control_state)
         shell_classes = (
             f"workbench-frame console-workbench-frame density-{workbench_state.density}"
@@ -9464,6 +9588,23 @@ class ChatScreen(BaseAppScreen):
                                 classes="console-agent-section-subagents",
                                 markup=False,
                             )
+                            # Parallel-agents spec §6 (PA-T8): fleet summary
+                            # -- "N other agents running, M waiting for
+                            # approval." Present but display:none when both
+                            # counts are zero (mirrors the recovery Static
+                            # above), so `_sync_console_agent_section`'s
+                            # targeted update never needs to mount/unmount.
+                            fleet_line = self._console_agent_fleet_summary_line()
+                            fleet_summary = Static(
+                                fleet_line,
+                                id="console-agent-fleet-summary",
+                                classes="console-agent-section-fleet-summary",
+                                markup=False,
+                            )
+                            fleet_summary.styles.display = (
+                                "block" if fleet_line else "none"
+                            )
+                            yield fleet_summary
                             back_button = Button(
                                 "Back",
                                 id="console-agent-drilldown-back",
@@ -10993,10 +11134,23 @@ class ChatScreen(BaseAppScreen):
         streaming_session_id = (
             controller.streaming_session_id() if controller is not None else None
         )
+        sessions = store.sessions()
+        # Parallel-agents spec PA-T8: per-session fleet marker (RUNNING /
+        # NEEDS_APPROVAL / FINISHED_OK / FINISHED_FAILED), superseding the
+        # legacy single-session `streaming_session_id` cursor above for tabs
+        # that have a controller -- `run_marker_for` already derives RUNNING
+        # from the same live-busy definition `streaming_session_id` used, so
+        # this is a strict superset, not a second notion of "in-flight".
+        run_markers = (
+            {session.id: controller.run_marker_for(session.id) for session in sessions}
+            if controller is not None
+            else None
+        )
         await surface.sync_sessions(
-            sessions=store.sessions(),
+            sessions=sessions,
             active_session_id=store.active_session_id,
             streaming_session_id=streaming_session_id,
+            run_markers=run_markers,
         )
 
     async def _append_native_console_system_message(
@@ -11057,9 +11211,36 @@ class ChatScreen(BaseAppScreen):
         async def _poll_transcript() -> None:
             await self._sync_native_console_chat_ui()
             controller = self._console_chat_controller
+            if controller is None:
+                self._invalidate_console_persisted_rows_cache()
+                self._stop_console_transcript_sync_timer()
+                return
+            # Fix round 1 / Critical 1 (parallel-agents spec PA-T8 review):
+            # `controller.run_state` is a read-only facade for the VIEWED
+            # session ONLY (parallel-agents spec §2 -- see its docstring).
+            # The old check looked at nothing else, so it self-stopped the
+            # instant the viewed tab went idle even while a DIFFERENT
+            # session was still streaming (or parked mid-`submit_draft`
+            # awaiting an approval decision -- that session's own
+            # end-of-run resync never separately fires, since it is still
+            # inside the same await). Once stopped, `_sync_native_console_
+            # chat_ui()` above never fires again, so tab glyphs and the
+            # Agent-rail fleet line (both driven by that call) froze stale
+            # until some unrelated event forced a manual resync.
+            # `in_flight_run_count()` is the exact same live-busy
+            # definition `run_marker_for`/`fleet_summary_counts` already
+            # use for those glyphs/line, so gating the stop on it too is
+            # not a new notion of "in-flight" -- it is the one this timer
+            # exists to keep current. The persisted-rows-cache invalidate
+            # stays coupled to the SAME combined condition as the stop
+            # (not a bare "viewed session idle") so a long-running
+            # background session cannot reintroduce the per-tick DB query
+            # TASK-251's TTL cache exists to prevent; the resulting bound
+            # on staleness is `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`
+            # (2s), the documented backstop for exactly this gap.
             if (
-                controller is None
-                or controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
+                controller.run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES
+                and controller.in_flight_run_count() == 0
             ):
                 # TASK-251: the run just left an active status -- invalidate
                 # so the finalized conversation's title/timestamps appear in
@@ -12373,17 +12554,20 @@ class ChatScreen(BaseAppScreen):
 
         `None` (Escape / "Never mind") just returns focus to the composer.
         `"restore"` is pure tree navigation: gated on
-        `controller.run_state.is_send_allowed` (mirrors regenerate/resend --
-        never mutates while a run is streaming), the new active leaf is the
-        selected prompt's PARENT found by an id lookup in
-        `active_path_message_ids` (never positional -- display-only TOOL rows
-        can pad `messages_for_session`'s view without being tree nodes), with
-        `None` (empty transcript) when the selected prompt was the root. The
-        selected prompt's own text is written back into the composer via the
-        same paste-semantics seam `/prompt` uses.
+        `controller.send_refusal_copy(...)` (mirrors regenerate/resend --
+        never mutates while a run is streaming; returns non-empty refusal
+        copy exactly when a send would currently be blocked, parallel-
+        agents spec §4), the new active leaf is the selected prompt's
+        PARENT found by an id lookup in `active_path_message_ids` (never
+        positional -- display-only TOOL rows can pad
+        `messages_for_session`'s view without being tree nodes), with
+        `None` (empty transcript) when the selected prompt was the root.
+        The selected prompt's own text is written back into the composer
+        via the same paste-semantics seam `/prompt` uses.
         `"summarize-up-to"` runs the boundary-summary flow (SP2 Task 3) on an
-        exclusive `console-run-{session_id}` worker, gated on `is_send_allowed`
-        the same way restore is (never mutates while a run is streaming).
+        exclusive `console-run-{session_id}` worker, gated on
+        `send_refusal_copy` the same way restore is (never mutates while a
+        run is streaming).
 
         A `ModalScreen` blocks session switching while the rewind modal is up,
         so today this is theoretical -- but the callback still re-checks the
@@ -12412,7 +12596,11 @@ class ChatScreen(BaseAppScreen):
             # Gate BEFORE spawning: an exclusive console-run worker cancels any
             # in-flight run at creation time, before the controller's own
             # rejection can run -- refuse first, like the regenerate path.
-            target_session_id = controller.store.active_session_id
+            # Fix wave (rider 4, final review): normalize the same way
+            # `_dispatch_console_draft_send` already does (`or ""`) -- see
+            # that call site's own comment for why a stray `None` must
+            # never be allowed to key its own separate "no session" bucket.
+            target_session_id = controller.store.active_session_id or ""
             refusal = controller.send_refusal_copy(target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
@@ -15174,6 +15362,121 @@ class ChatScreen(BaseAppScreen):
         current = self.chat_state.task_resume_state
         self.set_task_resume_state(replace(current, pending_approval=approval))
 
+    def _park_console_approval(self, session_id: str) -> None:
+        """PA-T9 (parked background approvals): badge a NON-viewed session's
+        pending approval round without mounting the (singleton) approval
+        card, and fire the one-per-round toast.
+
+        UI-thread bridge target for ``ConsoleChatController.
+        request_mcp_approvals``' park branch (invoked via ``app_instance.
+        call_from_thread`` exactly once per parked round -- the round's
+        session differs from the store's active session at round-start).
+        Deliberately does NOT touch ``task_resume_state``/``set_task_
+        resume_state`` -- that slot is reserved for whichever session is
+        actually being viewed (``_set_console_pending_approval`` above);
+        parking must never steal the mounted card out from under the
+        session the user is currently looking at. The controller's own
+        ``_parked_approval_payloads`` map (populated by ``request_mcp_
+        approvals`` before this fires) is what ``ConsoleChatController.
+        switch_session`` later reads to mount the SAME payload once the
+        user actually visits ``session_id``.
+
+        Also usable directly as a test seam to drive the park path without
+        a live worker thread/round -- setting the badge flag itself here
+        (in addition to ``request_mcp_approvals`` also setting it directly)
+        is what makes that safe: this method is fully self-contained.
+
+        Args:
+            session_id: The parked round's OWNING session.
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            return
+        controller.set_run_pending_approval(session_id, True)
+        session_title, workspace_name = self._console_session_title_and_workspace_name(
+            controller, session_id
+        )
+        self.app_instance.notify(
+            f"Agent in {session_title} ({workspace_name}) needs approval."
+        )
+
+    def _console_session_title_and_workspace_name(
+        self, controller: ConsoleChatController, session_id: str
+    ) -> tuple[str, str]:
+        """Return ``(session_title, workspace_name)`` for a fleet toast.
+
+        Fix wave (rider 6, final review): shared by ``_park_console_
+        approval`` and ``_notify_console_run_outcome``, which previously
+        duplicated this exact lookup byte-for-byte. Falls back to the raw
+        ``session_id``/workspace id when the session has already closed or
+        the workspace can't be resolved -- a toast about a session that
+        vanished microseconds ago must still say SOMETHING coherent rather
+        than raise.
+        """
+        session_title = session_id
+        workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
+        for session in controller.store.sessions():
+            if session.id == session_id:
+                session_title = session.title
+                workspace_id = session.workspace_id
+                break
+        return session_title, self._console_workspace_display_name(workspace_id)
+
+    def _console_workspace_display_name(self, workspace_id: str) -> str:
+        """Return ``workspace_id``'s display name via the registry, falling
+        back to the raw id when the service is unavailable or the
+        workspace can't be resolved (PA-T9 toast copy)."""
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is not None:
+            try:
+                workspace = registry_service.get_workspace(workspace_id)
+                if workspace is not None and workspace.name:
+                    return workspace.name
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Unable to resolve Console workspace name for approval toast"
+                )
+        return str(workspace_id)
+
+    def _notify_console_run_outcome(
+        self, session_id: str, status: ConsoleRunStatus
+    ) -> None:
+        """Task 10 (background completion toasts): one toast for a
+        NON-viewed session's run finishing (COMPLETED) or failing (FAILED).
+
+        UI-thread bridge target for ``ConsoleChatController.
+        notify_run_outcome``, invoked DIRECTLY (never via ``app_instance.
+        call_from_thread``, unlike ``_park_console_approval`` above) from
+        ``_set_run_state``'s once-guarded non-active terminal branch --
+        every terminal ``_set_run_state`` call already runs on the main
+        event-loop thread (worker-thread agent runs resume here only after
+        ``await asyncio.to_thread(...)`` returns in ``_run_agent_reply``),
+        so no thread marshaling is needed. Shares ``_console_session_
+        title_and_workspace_name`` (which itself uses ``_console_
+        workspace_display_name``) with ``_park_console_approval`` above --
+        one resolver, not a byte-duplicated copy (fix wave, rider 6).
+        The viewed session's own terminal transition is visible live in its
+        transcript and never reaches this method (``_set_run_state`` only
+        calls it from the non-active branch).
+
+        Args:
+            session_id: The run's OWNING session (non-active at call time).
+            status: ``ConsoleRunStatus.COMPLETED`` or ``.FAILED`` -- the
+                only two statuses ``_set_run_state`` ever calls this with.
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            return
+        session_title, workspace_name = self._console_session_title_and_workspace_name(
+            controller, session_id
+        )
+        verb = "finished" if status is ConsoleRunStatus.COMPLETED else "failed"
+        self.app_instance.notify(
+            f"Agent in {session_title} ({workspace_name}) {verb}."
+        )
+
     def _set_console_pending_skill_install(
         self, payload: Dict[str, Any] | None
     ) -> None:
@@ -15208,11 +15511,20 @@ class ChatScreen(BaseAppScreen):
     def handle_console_approval_decided(
         self, event: ChatApprovalCard.ApprovalDecided
     ) -> None:
-        """Forward the user's batch decisions to the controller's waiting worker thread."""
+        """Forward the user's batch decisions to the controller's waiting worker thread.
+
+        Task 9 fix round 1: forwards ``event.round_id`` too -- this message
+        is delivered asynchronously (it can arrive after a `switch_session`
+        already moved the active session elsewhere), so
+        `resolve_pending_approval` must resolve the round the card was
+        actually showing, never "whichever session is active right now".
+        """
         event.stop()
         controller = self._console_chat_controller
         if controller is not None:
-            controller.resolve_pending_approval(event.decisions)
+            controller.resolve_pending_approval(
+                event.decisions, round_id=event.round_id
+            )
 
     @on(SkillInstallConfirmCard.InstallDecided)
     def handle_console_skill_install_decided(

@@ -144,6 +144,37 @@ def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def _marker_prefixed_name_lines(
+    title: str, run_marker: str, budget: int
+) -> tuple[str, ...]:
+    """Wrap ``title`` and prefix the first line with its fleet run-marker glyph.
+
+    Parallel-agents spec PA-T8: ``run_marker`` is already the resolved glyph
+    string (``ConsoleConversationBrowserRow.run_marker``, empty for the
+    steady state), so an unmarked row wraps exactly as it did before this
+    helper existed -- no stray leading space. When a marker is present, the
+    wrap budget is reduced by the glyph's cell width *before* wrapping (not
+    prefixed after) so the first rendered line still fits the row's actual
+    width, and the blank-title fallback in ``wrap_console_conversation_title``
+    still triggers off the raw (unprefixed) title.
+
+    This is the SAME helper both ``_compose_conversation_browser_row``
+    (render) and ``_conversation_browser_rows_height`` (height precompute)
+    call, so the two can never disagree about rendered line count -- the
+    same invariant ``_conversation_browser_rows_height``'s docstring already
+    documents for the un-marked case.
+    """
+    marker = str(run_marker or "").strip()
+    if not marker:
+        return wrap_console_conversation_title(title, budget)
+    prefix = f"{marker} "
+    adjusted_budget = max(_MIN_TITLE_WRAP_BUDGET, budget - cell_len(prefix))
+    lines = wrap_console_conversation_title(title, adjusted_budget)
+    if not lines:
+        return lines
+    return (f"{prefix}{lines[0]}", *lines[1:])
+
+
 # Pre-measurement fallback for the tray's usable row width. Only the first
 # frame before `_fit_height_to_content` measures the real width renders with
 # it; the guarded relabel pass corrects it immediately (see
@@ -674,7 +705,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         same wrap the labels use, so the two cannot disagree) plus margin."""
         return sum(
             _conversation_row_render_height(
-                len(wrap_console_conversation_title(row.title, budget)),
+                len(_marker_prefixed_name_lines(row.title, row.run_marker, budget)),
                 row.subagent_count,
             )
             + _ROW_BOTTOM_MARGIN
@@ -1109,11 +1140,28 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         group: ConsoleConversationBrowserGroup,
         index: int,
     ) -> ComposeResult:
-        """Render one workspace group header."""
+        """Render one workspace group header.
+
+        PA-T8 review fix round 1 (IMPORTANT 2): a collapsed group hides its
+        rows entirely, so any fleet run-marker glyph on those rows is
+        otherwise invisible -- defeating "which workspace's agents are busy
+        is visible at a glance" for exactly the user who collapsed the
+        group. When collapsed AND at least one hidden row carries a marker,
+        the single most-urgent glyph (``group.run_marker``, precomputed in
+        ``conversation_browser_state._build_workspace_groups``) is appended
+        to the header label, same plain-string threading the row label
+        prefix already uses (this Static renders with ``markup=False``, so
+        no separate escaping step applies here either). An expanded group
+        already shows every row's own marker, so its header stays
+        unchanged.
+        """
 
         with Horizontal(classes="console-conversation-browser-group-header"):
+            label = group.label
+            if group.collapsed and group.run_marker:
+                label = f"{label} {group.run_marker}"
             title = self._static(
-                group.label,
+                label,
                 id=f"console-conversation-browser-group-title-{index}",
                 classes="console-conversation-browser-group-title",
             )
@@ -1152,7 +1200,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         with Horizontal(classes="console-conversation-browser-row-line"):
             budget = self._browser_title_budget()
             title = self._conversation_title(row.title)
-            name_lines = wrap_console_conversation_title(row.title, budget)
+            name_lines = _marker_prefixed_name_lines(row.title, row.run_marker, budget)
             status = self._conversation_status(row.status)
             detail = self._conversation_detail_status(row.status)
             secondary = truncate_console_row_cells(
