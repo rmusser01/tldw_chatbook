@@ -1,0 +1,394 @@
+{
+  "schema_version": 1,
+  "v3_languages": [
+    "bg",
+    "hr",
+    "cs",
+    "da",
+    "nl",
+    "et",
+    "fi",
+    "fr",
+    "de",
+    "el",
+    "hu",
+    "it",
+    "lv",
+    "lt",
+    "mt",
+    "pl",
+    "pt",
+    "ro",
+    "sk",
+    "sl",
+    "es",
+    "sv",
+    "ru",
+    "uk"
+  ],
+  "corpus": {
+    "schema_version": 1,
+    "sources": [
+      {
+        "source_id": "fleurs-en",
+        "repository": "huggingface.co/datasets/google/fleurs",
+        "revision": "1111111111111111111111111111111111111111",
+        "source_url": "https://huggingface.co/datasets/google/fleurs",
+        "license": "CC-BY-4.0",
+        "artifact": {
+          "filename": "fleurs-en.tar",
+          "size_bytes": 4,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    ],
+    "samples": [
+      {
+        "sample_id": "en-1",
+        "source_id": "fleurs-en",
+        "upstream_sample_id": "test:en_us:1",
+        "prepared_file": {
+          "filename": "en-1.wav",
+          "size_bytes": 4,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "reference_text": "hello world",
+        "language": "en",
+        "tags": [
+          "clean"
+        ],
+        "cluster_id": "speaker-1",
+        "duration_seconds": 1.0
+      },
+      {"sample_id":"bg-1","source_id":"fleurs-en","upstream_sample_id":"test:bg:1","prepared_file":{"filename":"bg-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"bg","tags":["clean"],"cluster_id":"bg-speaker-1","duration_seconds":1.0},
+      {"sample_id":"hr-1","source_id":"fleurs-en","upstream_sample_id":"test:hr:1","prepared_file":{"filename":"hr-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"hr","tags":["clean"],"cluster_id":"hr-speaker-1","duration_seconds":1.0},
+      {"sample_id":"cs-1","source_id":"fleurs-en","upstream_sample_id":"test:cs:1","prepared_file":{"filename":"cs-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"cs","tags":["clean"],"cluster_id":"cs-speaker-1","duration_seconds":1.0},
+      {"sample_id":"da-1","source_id":"fleurs-en","upstream_sample_id":"test:da:1","prepared_file":{"filename":"da-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"da","tags":["clean"],"cluster_id":"da-speaker-1","duration_seconds":1.0},
+      {"sample_id":"nl-1","source_id":"fleurs-en","upstream_sample_id":"test:nl:1","prepared_file":{"filename":"nl-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"nl","tags":["clean"],"cluster_id":"nl-speaker-1","duration_seconds":1.0},
+      {"sample_id":"et-1","source_id":"fleurs-en","upstream_sample_id":"test:et:1","prepared_file":{"filename":"et-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"et","tags":["clean"],"cluster_id":"et-speaker-1","duration_seconds":1.0},
+      {"sample_id":"fi-1","source_id":"fleurs-en","upstream_sample_id":"test:fi:1","prepared_file":{"filename":"fi-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"fi","tags":["clean"],"cluster_id":"fi-speaker-1","duration_seconds":1.0},
+      {"sample_id":"fr-1","source_id":"fleurs-en","upstream_sample_id":"test:fr:1","prepared_file":{"filename":"fr-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"fr","tags":["clean"],"cluster_id":"fr-speaker-1","duration_seconds":1.0},
+      {"sample_id":"de-1","source_id":"fleurs-en","upstream_sample_id":"test:de:1","prepared_file":{"filename":"de-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"de","tags":["clean"],"cluster_id":"de-speaker-1","duration_seconds":1.0},
+      {"sample_id":"el-1","source_id":"fleurs-en","upstream_sample_id":"test:el:1","prepared_file":{"filename":"el-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"el","tags":["clean"],"cluster_id":"el-speaker-1","duration_seconds":1.0},
+      {"sample_id":"hu-1","source_id":"fleurs-en","upstream_sample_id":"test:hu:1","prepared_file":{"filename":"hu-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"hu","tags":["clean"],"cluster_id":"hu-speaker-1","duration_seconds":1.0},
+      {"sample_id":"it-1","source_id":"fleurs-en","upstream_sample_id":"test:it:1","prepared_file":{"filename":"it-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"it","tags":["clean"],"cluster_id":"it-speaker-1","duration_seconds":1.0},
+      {"sample_id":"lv-1","source_id":"fleurs-en","upstream_sample_id":"test:lv:1","prepared_file":{"filename":"lv-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"lv","tags":["clean"],"cluster_id":"lv-speaker-1","duration_seconds":1.0},
+      {"sample_id":"lt-1","source_id":"fleurs-en","upstream_sample_id":"test:lt:1","prepared_file":{"filename":"lt-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"lt","tags":["clean"],"cluster_id":"lt-speaker-1","duration_seconds":1.0},
+      {"sample_id":"mt-1","source_id":"fleurs-en","upstream_sample_id":"test:mt:1","prepared_file":{"filename":"mt-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"mt","tags":["clean"],"cluster_id":"mt-speaker-1","duration_seconds":1.0},
+      {"sample_id":"pl-1","source_id":"fleurs-en","upstream_sample_id":"test:pl:1","prepared_file":{"filename":"pl-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"pl","tags":["clean"],"cluster_id":"pl-speaker-1","duration_seconds":1.0},
+      {"sample_id":"pt-1","source_id":"fleurs-en","upstream_sample_id":"test:pt:1","prepared_file":{"filename":"pt-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"pt","tags":["clean"],"cluster_id":"pt-speaker-1","duration_seconds":1.0},
+      {"sample_id":"ro-1","source_id":"fleurs-en","upstream_sample_id":"test:ro:1","prepared_file":{"filename":"ro-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"ro","tags":["clean"],"cluster_id":"ro-speaker-1","duration_seconds":1.0},
+      {"sample_id":"sk-1","source_id":"fleurs-en","upstream_sample_id":"test:sk:1","prepared_file":{"filename":"sk-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"sk","tags":["clean"],"cluster_id":"sk-speaker-1","duration_seconds":1.0},
+      {"sample_id":"sl-1","source_id":"fleurs-en","upstream_sample_id":"test:sl:1","prepared_file":{"filename":"sl-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"sl","tags":["clean"],"cluster_id":"sl-speaker-1","duration_seconds":1.0},
+      {"sample_id":"es-1","source_id":"fleurs-en","upstream_sample_id":"test:es:1","prepared_file":{"filename":"es-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"es","tags":["clean"],"cluster_id":"es-speaker-1","duration_seconds":1.0},
+      {"sample_id":"sv-1","source_id":"fleurs-en","upstream_sample_id":"test:sv:1","prepared_file":{"filename":"sv-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"sv","tags":["clean"],"cluster_id":"sv-speaker-1","duration_seconds":1.0},
+      {"sample_id":"ru-1","source_id":"fleurs-en","upstream_sample_id":"test:ru:1","prepared_file":{"filename":"ru-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"ru","tags":["clean"],"cluster_id":"ru-speaker-1","duration_seconds":1.0},
+      {"sample_id":"uk-1","source_id":"fleurs-en","upstream_sample_id":"test:uk:1","prepared_file":{"filename":"uk-1.wav","size_bytes":4,"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reference_text":"test","language":"uk","tags":["clean"],"cluster_id":"uk-speaker-1","duration_seconds":1.0}
+    ],
+    "populations": [
+      {
+        "population_id": "english-clean",
+        "language": "en",
+        "sample_ids": [
+          "en-1"
+        ],
+        "tags": [
+          "quality"
+        ]
+      },
+      {"population_id":"bg-clean","language":"bg","sample_ids":["bg-1"],"tags":["quality"]},
+      {"population_id":"hr-clean","language":"hr","sample_ids":["hr-1"],"tags":["quality"]},
+      {"population_id":"cs-clean","language":"cs","sample_ids":["cs-1"],"tags":["quality"]},
+      {"population_id":"da-clean","language":"da","sample_ids":["da-1"],"tags":["quality"]},
+      {"population_id":"nl-clean","language":"nl","sample_ids":["nl-1"],"tags":["quality"]},
+      {"population_id":"et-clean","language":"et","sample_ids":["et-1"],"tags":["quality"]},
+      {"population_id":"fi-clean","language":"fi","sample_ids":["fi-1"],"tags":["quality"]},
+      {"population_id":"fr-clean","language":"fr","sample_ids":["fr-1"],"tags":["quality"]},
+      {"population_id":"de-clean","language":"de","sample_ids":["de-1"],"tags":["quality"]},
+      {"population_id":"el-clean","language":"el","sample_ids":["el-1"],"tags":["quality"]},
+      {"population_id":"hu-clean","language":"hu","sample_ids":["hu-1"],"tags":["quality"]},
+      {"population_id":"it-clean","language":"it","sample_ids":["it-1"],"tags":["quality"]},
+      {"population_id":"lv-clean","language":"lv","sample_ids":["lv-1"],"tags":["quality"]},
+      {"population_id":"lt-clean","language":"lt","sample_ids":["lt-1"],"tags":["quality"]},
+      {"population_id":"mt-clean","language":"mt","sample_ids":["mt-1"],"tags":["quality"]},
+      {"population_id":"pl-clean","language":"pl","sample_ids":["pl-1"],"tags":["quality"]},
+      {"population_id":"pt-clean","language":"pt","sample_ids":["pt-1"],"tags":["quality"]},
+      {"population_id":"ro-clean","language":"ro","sample_ids":["ro-1"],"tags":["quality"]},
+      {"population_id":"sk-clean","language":"sk","sample_ids":["sk-1"],"tags":["quality"]},
+      {"population_id":"sl-clean","language":"sl","sample_ids":["sl-1"],"tags":["quality"]},
+      {"population_id":"es-clean","language":"es","sample_ids":["es-1"],"tags":["quality"]},
+      {"population_id":"sv-clean","language":"sv","sample_ids":["sv-1"],"tags":["quality"]},
+      {"population_id":"ru-clean","language":"ru","sample_ids":["ru-1"],"tags":["quality"]},
+      {"population_id":"uk-clean","language":"uk","sample_ids":["uk-1"],"tags":["quality"]}
+    ],
+    "derived_recipe_revisions": [
+      "synthetic-v1"
+    ]
+  },
+  "models": {
+    "schema_version": 1,
+    "models": [
+      {
+        "variant_id": "parakeet-v2-int8",
+        "provider": "onnx-asr",
+        "model_id": "parakeet-tdt-0.6b-v2",
+        "precision": "int8",
+        "runtime": "onnx-asr@0.12.0",
+        "repository": "huggingface.co/nvidia/parakeet-tdt-0.6b-v2",
+        "revision": "2222222222222222222222222222222222222222",
+        "license": "CC-BY-4.0",
+        "files": [
+          {
+            "filename": "model.int8.onnx",
+            "size_bytes": 4,
+            "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ],
+        "vad_variant_id": "silero-vad"
+      },
+      {
+        "variant_id": "parakeet-v3-int8",
+        "provider": "onnx-asr",
+        "model_id": "parakeet-tdt-0.6b-v3",
+        "precision": "int8",
+        "runtime": "onnx-asr@0.12.0",
+        "repository": "huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
+        "revision": "5555555555555555555555555555555555555555",
+        "license": "CC-BY-4.0",
+        "files": [
+          {
+            "filename": "model-v3.int8.onnx",
+            "size_bytes": 4,
+            "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          }
+        ],
+        "vad_variant_id": "silero-vad"
+      },
+      {
+        "variant_id": "faster-whisper-base-int8",
+        "provider": "faster-whisper",
+        "model_id": "base",
+        "precision": "int8",
+        "runtime": "faster-whisper@1.1.1",
+        "repository": "huggingface.co/Systran/faster-whisper-base",
+        "revision": "3333333333333333333333333333333333333333",
+        "license": "MIT",
+        "files": [
+          {
+            "filename": "model.bin",
+            "size_bytes": 4,
+            "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "vad_variant_id": null
+      }
+    ],
+    "vad_variants": [
+      {
+        "variant_id": "silero-vad",
+        "precision": "f32",
+        "runtime": "onnx-asr@0.12.0",
+        "repository": "github.com/snakers4/silero-vad",
+        "revision": "4444444444444444444444444444444444444444",
+        "license": "MIT",
+        "files": [
+          {
+            "filename": "silero_vad.onnx",
+            "size_bytes": 4,
+            "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          }
+        ],
+        "settings": {
+          "batch_size": 1
+        }
+      }
+    ]
+  },
+  "requirements": [
+    {
+      "model_variant_id": "parakeet-v2-int8",
+      "baseline_variant_id": "faster-whisper-base-int8",
+      "language": "en",
+      "population_id": "english-clean",
+      "primary_metric": "wer",
+      "profiles": [
+        "quality",
+        "throughput",
+        "memory_reuse"
+      ]
+    },
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"bg","population_id":"bg-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"hr","population_id":"hr-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"cs","population_id":"cs-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"da","population_id":"da-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"nl","population_id":"nl-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"et","population_id":"et-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"fi","population_id":"fi-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"fr","population_id":"fr-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"de","population_id":"de-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"el","population_id":"el-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"hu","population_id":"hu-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"it","population_id":"it-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"lv","population_id":"lv-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"lt","population_id":"lt-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"mt","population_id":"mt-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"pl","population_id":"pl-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"pt","population_id":"pt-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"ro","population_id":"ro-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sk","population_id":"sk-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sl","population_id":"sl-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"es","population_id":"es-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sv","population_id":"sv-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"ru","population_id":"ru-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"uk","population_id":"uk-clean","primary_metric":"wer","profiles":["quality","throughput","memory_reuse"]}
+  ],
+  "matrix": [
+    {
+      "model_variant_id": "parakeet-v2-int8",
+      "baseline_variant_id": "faster-whisper-base-int8",
+      "language": "en",
+      "population_id": "english-clean",
+      "primary_metric": "wer",
+      "measurement_profile": "quality",
+      "min_sample_count": 1,
+      "min_reference_units": 2,
+      "min_audio_duration_seconds": 1.0
+    },
+    {
+      "model_variant_id": "parakeet-v2-int8",
+      "baseline_variant_id": "faster-whisper-base-int8",
+      "language": "en",
+      "population_id": "english-clean",
+      "primary_metric": "wer",
+      "measurement_profile": "throughput",
+      "min_sample_count": 1,
+      "min_reference_units": 2,
+      "min_audio_duration_seconds": 1.0
+    },
+    {
+      "model_variant_id": "parakeet-v2-int8",
+      "baseline_variant_id": "faster-whisper-base-int8",
+      "language": "en",
+      "population_id": "english-clean",
+      "primary_metric": "wer",
+      "measurement_profile": "memory_reuse",
+      "min_sample_count": 1,
+      "min_reference_units": 2,
+      "min_audio_duration_seconds": 1.0
+    },
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"bg","population_id":"bg-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"bg","population_id":"bg-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"bg","population_id":"bg-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"hr","population_id":"hr-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"hr","population_id":"hr-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"hr","population_id":"hr-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"cs","population_id":"cs-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"cs","population_id":"cs-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"cs","population_id":"cs-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"da","population_id":"da-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"da","population_id":"da-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"da","population_id":"da-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"nl","population_id":"nl-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"nl","population_id":"nl-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"nl","population_id":"nl-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"et","population_id":"et-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"et","population_id":"et-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"et","population_id":"et-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"fi","population_id":"fi-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"fi","population_id":"fi-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"fi","population_id":"fi-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"fr","population_id":"fr-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"fr","population_id":"fr-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"fr","population_id":"fr-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"de","population_id":"de-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"de","population_id":"de-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"de","population_id":"de-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"el","population_id":"el-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"el","population_id":"el-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"el","population_id":"el-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"hu","population_id":"hu-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"hu","population_id":"hu-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"hu","population_id":"hu-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"it","population_id":"it-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"it","population_id":"it-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"it","population_id":"it-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"lv","population_id":"lv-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"lv","population_id":"lv-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"lv","population_id":"lv-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"lt","population_id":"lt-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"lt","population_id":"lt-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"lt","population_id":"lt-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"mt","population_id":"mt-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"mt","population_id":"mt-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"mt","population_id":"mt-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"pl","population_id":"pl-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"pl","population_id":"pl-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"pl","population_id":"pl-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"pt","population_id":"pt-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"pt","population_id":"pt-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"pt","population_id":"pt-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"ro","population_id":"ro-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"ro","population_id":"ro-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"ro","population_id":"ro-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sk","population_id":"sk-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sk","population_id":"sk-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sk","population_id":"sk-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sl","population_id":"sl-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sl","population_id":"sl-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sl","population_id":"sl-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"es","population_id":"es-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"es","population_id":"es-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"es","population_id":"es-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sv","population_id":"sv-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sv","population_id":"sv-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"sv","population_id":"sv-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"ru","population_id":"ru-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"ru","population_id":"ru-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"ru","population_id":"ru-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"uk","population_id":"uk-clean","primary_metric":"wer","measurement_profile":"quality","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"uk","population_id":"uk-clean","primary_metric":"wer","measurement_profile":"throughput","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0},
+    {"model_variant_id":"parakeet-v3-int8","baseline_variant_id":"faster-whisper-base-int8","language":"uk","population_id":"uk-clean","primary_metric":"wer","measurement_profile":"memory_reuse","min_sample_count":1,"min_reference_units":1,"min_audio_duration_seconds":1.0}
+  ],
+  "runtime": {
+    "python_version": "3.11.9",
+    "packages": [
+      {
+        "name": "onnx-asr",
+        "version": "0.12.0"
+      },
+      {
+        "name": "onnxruntime",
+        "version": "1.22.0"
+      },
+      {
+        "name": "faster-whisper",
+        "version": "1.1.1"
+      }
+    ],
+    "operating_system": "Darwin",
+    "os_version": "25.0",
+    "hardware": "MacBookPro",
+    "cpu": "Apple M4",
+    "memory_bytes": 17179869184,
+    "execution_provider": "CPUExecutionProvider",
+    "intra_op_threads": 4,
+    "inter_op_threads": 1
+  },
+  "gates": {
+    "max_v2_baseline_wer_delta": 0.01,
+    "max_english_slice_wer_delta": 0.03,
+    "max_v3_primary_delta": 0.04,
+    "max_v3_macro_delta": 0.015,
+    "max_int8_f32_delta": 0.005,
+    "min_inverse_real_time_factor": 1.0,
+    "max_peak_rss_bytes": 3221225472,
+    "max_memory_reuse_growth": 0.15
+  },
+  "bootstrap": {
+    "seed": 593,
+    "iterations": 10000
+  },
+  "normalizer_revision": "normalizer-v1",
+  "metric_revision": "metrics-v1",
+  "harness_revision": "5938591a2"
+}
