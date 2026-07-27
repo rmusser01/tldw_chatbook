@@ -2863,3 +2863,49 @@ async def test_watchlists_feed_source_row_stays_one_row_however_long_the_name():
         assert feeds.region.contains_region(row.region), (
             f"the row should sit inside FEEDS: feeds={feeds.region} row={row.region}"
         )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_right_rail_says_inspector_exactly_once():
+    """Post-branch live-capture finding: the RIGHT_RAIL rendered "Inspector"
+    twice in one box.
+
+    `_build_inspector_pane` opens the region with
+    `Static("Inspector", classes="destination-section watchlists-column-title")`
+    -- the rail's heading, left-aligned, covering the state summaries and
+    Console actions as well as the entity inspector. `InspectorPane.compose`
+    then yielded its own `Static("Inspector", classes="pane-title")`, centred,
+    directly below the Console action buttons.
+
+    Task 6 ("one border, one title per region") did not catch this because it
+    compared each REGION's title against its content's, and both of these
+    live inside the content. The screenshot caught it in seconds -- which is
+    the whole argument for looking at the assembled app before shipping.
+
+    Asserts on the rendered text rather than on widget identity so it fails
+    for any future re-introduction, whichever widget emits the duplicate.
+    """
+    app = _build_test_app()
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        rail = screen.query_one("#wl-region-right_rail")
+        headings = [
+            str(node.renderable).strip()
+            for node in rail.query(Static)
+            if str(node.renderable).strip() == "Inspector"
+        ]
+        assert len(headings) == 1, (
+            f"the right rail must carry exactly one 'Inspector' heading, "
+            f"found {len(headings)}"
+        )
+        # The one that survives is the rail's, not the nested pane's: the
+        # region holds more than the entity inspector.
+        assert "Inspector" in _visible_static_text(screen), (
+            "dropping the duplicate must not drop the heading entirely"
+        )

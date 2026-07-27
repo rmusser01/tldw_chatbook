@@ -130,8 +130,19 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
     breadcrumb_labels = reactive[list[str]]([], recompose=True)
 
     def compose(self):
-        yield Static("Inspector", classes="pane-title")
-
+        # No "Inspector" title here. `_build_inspector_pane` already opens the
+        # RIGHT_RAIL with `Static("Inspector", classes="destination-section
+        # watchlists-column-title")`, and this widget is mounted inside that
+        # same region -- so emitting one here rendered the word twice in one
+        # box, once left-aligned as the rail's heading and once centred as
+        # this pane's. That is the doubled-heading defect task 6 exists to
+        # remove; it survived task 6 because that task compared the REGION's
+        # title against its content's, and both of these live inside the
+        # content. Caught in a live capture of the assembled branch.
+        #
+        # The outer heading is the one that stays: this region holds the state
+        # summaries and Console actions as well as the entity inspector, so
+        # the heading belongs to the rail, not to this widget.
         levels = self._resolve_levels()
         if not levels:
             yield Static(
