@@ -117,11 +117,11 @@ A restrained monospaced companion face may support technical labels, campaign an
 
 ### Fidelity levels
 
-The identity has three deliberate levels:
+The identity has three deliberate usage levels implemented through two rendering tiers:
 
-1. **Emblem:** one-color side profile for favicon, terminal icon, avatar, embroidery, stamps, and small print
-2. **Brand portrait:** detailed three-quarter Sammy for the website, splash treatment, documentation, and social channels
-3. **Campaign art:** full scenes, wardrobe variations, dual-mode lighting, and competence-led narratives
+1. **Emblem tier:** one-color side profile for favicon, terminal icon, avatar, embroidery, stamps, and small print
+2. **Detailed character tier — brand portrait:** three-quarter Sammy for the website, splash treatment, documentation, and social channels
+3. **Detailed character tier — campaign art:** full scenes, wardrobe variations, dual-mode lighting, and competence-led narratives
 
 Detail must be removed intentionally between levels. A detailed portrait should never be mechanically shrunk and treated as the small logo.
 
@@ -234,17 +234,30 @@ Chatbook's ownable anchors are Sammy's page-ribbon low knot, horizontal bookmark
 
 ## Production Requirements
 
-Before any logo is shipped:
+### Before commissioning final production artwork
+
+- Complete a preliminary name and trademark collision review for **Chatbook** and **Samira “Sammy” Vadem**.
+- If that review finds a material collision, resolve the naming decision before investing in final vectors, commissioned illustration, or merchandise.
+
+### Before the core logo is shipped
 
 - Redraw the emblem as deterministic vector geometry.
 - Refine the face profile, knot ribbons, pin, earring scale, seam, neck termination, and negative space by hand.
 - Select and license the final wordmark and companion typefaces.
 - Produce horizontal, stacked, emblem-only, light-background, dark-background, and one-color variants.
 - Define minimum size, clear space, and misuse rules.
+- Complete formal legal clearance for the public **Chatbook** identity and any use of **Samira “Sammy” Vadem** in the released logo system.
+
+The core logo may ship once these logo requirements and the logo validation tests pass. It does not depend on completing the campaign wardrobe or full character model sheet.
+
+### Before detailed character or campaign art is shipped
+
 - Create a character turnaround showing front, side, and three-quarter views.
 - Create an expression sheet that keeps quiet recognition and warmth as the neutral state.
+- Lock the canonical facial landmarks, living-index seam path, indexed skin treatment, hair sections, pin position, and earring proportions in a character model sheet.
 - Complete the two unvisualized wardrobe looks.
 - Separate source vectors from raster campaign art.
+- Complete formal legal clearance for the **Samira “Sammy” Vadem** name and character identity before public campaign release.
 
 The generated images in this specification are approved direction references, not production-ready assets.
 
@@ -323,4 +336,4 @@ The face, expression, low knot, pin, earring, and overall dark-editorial directi
 - Research-mode wardrobe design
 - Launch-formal wardrobe design
 - Product-placement and motion specification
-- Formal trademark and name clearance for Samira “Sammy” Vadem and the final Chatbook identity
+- Preliminary collision review and formal legal clearance, following the production gates above
