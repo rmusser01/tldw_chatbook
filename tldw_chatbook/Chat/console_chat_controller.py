@@ -1370,6 +1370,21 @@ class ConsoleChatController:
         # state is meant to persist on the session you're leaving, not be
         # wiped just because a sibling session appeared.
         self._clear_terminal_run_state()
+        # Fix wave (IMPORTANT 2, final review): re-derive the mounted
+        # approval card for the brand-new (now active) session, exactly
+        # like `switch_session`/`close_session`'s neighbor-activation
+        # branch already do -- without this, a round mounted on the
+        # session being left behind stayed rendered over the new tab
+        # (`create_session` above activates `session`, but nothing else
+        # ever told the card to re-derive for it). A fresh session can
+        # never itself have a parked payload, so this always resolves to
+        # `None` here -- i.e. it always clears -- but going through the
+        # same `_parked_approval_payloads` lookup (rather than a bespoke
+        # unconditional clear) keeps this call site honest with the same
+        # "card state derives from the run's pending review state" rule
+        # every other activation path follows.
+        if self.set_pending_approval is not None:
+            self.set_pending_approval(self._parked_approval_payloads.get(session.id))
         return session
 
     def _maybe_auto_title_session(
@@ -1896,10 +1911,26 @@ class ConsoleChatController:
             # what makes `_park_console_approval` a self-contained seam
             # tests can call directly without a live round.
             self.set_run_pending_approval(session_id, True)
+            # Fix wave (CRITICAL 1, final review): retain THIS round's
+            # payload for EVERY session-attributed round -- mounted or
+            # parked -- not just a parked one. `switch_session` re-derives
+            # the card EXCLUSIVELY from `_parked_approval_payloads` (never
+            # from whatever the card happened to already be showing), so a
+            # round that mounted immediately (session_id was the active
+            # session at round-start) was previously unrecoverable the
+            # moment the user switched away and back: the lookup found
+            # nothing, mounted `None`, and the round silently hung with a
+            # stale NEEDS_APPROVAL badge and no card until its 120s
+            # timeout. The `finally` below already pops this key
+            # unconditionally (whenever `session_id is not None`,
+            # regardless of `is_parked`) -- storing it unconditionally
+            # here too makes retention symmetric with that cleanup, per
+            # spec §5 ("card state survives tab switches") for every round,
+            # not only parked ones.
+            self._parked_approval_payloads[session_id] = payload
 
         try:
             if is_parked:
-                self._parked_approval_payloads[session_id] = payload
                 if self.app is not None and self.park_pending_approval is not None:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
             else:

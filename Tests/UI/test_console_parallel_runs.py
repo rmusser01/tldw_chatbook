@@ -13,6 +13,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     _visible_text,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
+from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunMarker,
@@ -640,3 +641,144 @@ async def test_fleet_summary_line_is_reachable_on_the_live_rendered_surface() ->
         assert not fleet_summary.display or str(
             getattr(fleet_summary.renderable, "plain", fleet_summary.renderable)
         ) == ""
+
+
+def _single_pending_call() -> MCPPendingCall:
+    return MCPPendingCall(
+        llm_name="mcp__srv__tool",
+        server_key="local:srv",
+        tool_name="tool",
+        server_label="Srv",
+        arguments={},
+        reason="ask",
+    )
+
+
+@pytest.mark.asyncio
+async def test_mounted_round_survives_switch_away_and_switch_back() -> None:
+    """Final review CRITICAL 1: a round that MOUNTS immediately (its
+    session was the active/viewed one when `request_mcp_approvals`
+    started -- i.e. NEVER parked) must still be recoverable after the
+    user switches away and back. Pre-fix, `_parked_approval_payloads` was
+    populated ONLY inside the parked branch, so `switch_session`'s
+    mount-from-retained-payload lookup found nothing for a round that had
+    never been parked -- the session showed a NEEDS_APPROVAL badge with no
+    card, unrecoverable short of the round's own 120s timeout. Asserted
+    through the REAL widget (`#chat-approval-card.display`) via the real
+    `switch_session` re-derive path, not a direct `resolve_pending_
+    approval` call standing in for it.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        # `_ensure_console_chat_controller` wires `controller.app =
+        # self.app_instance` -- the wrapped `TldwCli` instance, which
+        # `ConsoleHarness` never itself `run_test()`s (only `host`, this
+        # test's actual running App, is). Re-point at `host` so
+        # `call_from_thread` genuinely marshals onto the running event
+        # loop -- mounting/mutating REAL Textual widgets (as
+        # `ChatApprovalCard.set_batch` does) from a foreign OS thread
+        # without that marshal raises `RuntimeError: no running event
+        # loop` (verified empirically while writing this test).
+        controller.app = host
+        store = controller.store
+        session_a = store.active_session_id
+        session_b = controller.new_session().id
+        store.switch_session(session_a)  # A is viewed; the round mounts on it
+        controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+        # `asyncio.to_thread` (awaited via a Task, never a blocking
+        # `Thread.join()`) -- a raw `threading.Thread` + `.join()` here
+        # would deadlock: `.join()` blocks THIS coroutine, which is running
+        # ON the same event loop the worker thread's `call_from_thread`
+        # needs free to marshal its widget mutations back onto (verified
+        # empirically while writing this test -- the round never resolved,
+        # `result_holder` stayed empty until the 2s join timeout).
+        decisions_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_mcp_approvals,
+                [_single_pending_call()],
+                session_id=session_a,
+            )
+        )
+        await pilot.pause(0.3)
+
+        approval_card = console.query_one("#chat-approval-card")
+        assert approval_card.display  # mounted immediately -- A was active
+
+        controller.switch_session(session_b)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert not console.query_one("#chat-approval-card").display
+
+        controller.switch_session(session_a)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        # The fix: the card re-mounts. Pre-fix this was `False` (no
+        # retained payload to re-derive from).
+        assert console.query_one("#chat-approval-card").display
+
+        round_id = controller._parked_approval_payloads[session_a]["round_id"]
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "approve_once"}, round_id=round_id
+        )
+        decisions = await asyncio.wait_for(decisions_task, timeout=2.0)
+        assert decisions == {"mcp__srv__tool": "approve_once"}
+
+
+@pytest.mark.asyncio
+async def test_new_session_clears_a_mounted_card_from_the_session_being_left() -> None:
+    """Final review IMPORTANT 2: `new_session` activates the created
+    session but, pre-fix, never re-derived the approval card the way
+    `switch_session`/`close_session` do -- a round mounted on the session
+    being left behind stayed rendered over the brand-new tab. Asserted
+    through the REAL widget, driven by the real `new_session` call.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        # See the sibling test above for why this must be `host` (the
+        # actually-running App), not `app_instance`.
+        controller.app = host
+        controller.mcp_approval_timeout_seconds = lambda: 30.0
+        session_a = controller.store.active_session_id
+
+        # See the sibling test above for why this is `asyncio.to_thread` +
+        # an awaited Task, never a blocking `Thread.join()`.
+        decisions_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_mcp_approvals,
+                [_single_pending_call()],
+                session_id=session_a,
+            )
+        )
+        await pilot.pause(0.3)
+        assert console.query_one("#chat-approval-card").display
+
+        new_session = controller.new_session()
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        # The fix: brand-new tab shows no stale card from session A.
+        assert not console.query_one("#chat-approval-card").display
+
+        # Composes with fix 1: switching back to A re-mounts it.
+        controller.switch_session(session_a)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert console.query_one("#chat-approval-card").display
+
+        round_id = controller._parked_approval_payloads[session_a]["round_id"]
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "deny"}, round_id=round_id
+        )
+        decisions = await asyncio.wait_for(decisions_task, timeout=2.0)
+        assert decisions == {"mcp__srv__tool": "deny"}
+        assert new_session.id != session_a

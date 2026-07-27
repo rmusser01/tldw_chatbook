@@ -939,7 +939,21 @@ def test_switch_session_parks_rather_than_denies_a_pending_approval_round():
     longer holds -- switching away now PARKS the round (fleet badge, no
     denial) instead, and it only resolves once the owning session is
     revisited and a decision is actually submitted (or it independently
-    times out/cancels)."""
+    times out/cancels).
+
+    Final-review CRITICAL 1 strengthening: this test originally resolved
+    via the no-token active-session fallback
+    (`resolve_pending_approval(decisions)`, no `round_id`), which masked a
+    real bug -- `_parked_approval_payloads` was populated ONLY for a
+    PARKED round, so switching back to `owning_session` (which mounted
+    immediately and was NEVER parked) found nothing to re-derive the card
+    from. The fallback resolve "worked" anyway (it doesn't need the card
+    to be mounted), so the test passed despite the card being permanently
+    gone. Now asserts the card actually RE-MOUNTS on the switch back
+    (mirroring what a real `ChatApprovalCard` would show) and resolves via
+    the round_id THAT mount carried, exercising the real re-derive path
+    rather than a resolve call that stands in for it.
+    """
     controller, store = _build_controller()
     owning_session = store.create_session(title="Owning").id
     other_session = store.create_session(title="Other").id
@@ -966,9 +980,17 @@ def test_switch_session_parks_rather_than_denies_a_pending_approval_round():
     controller.switch_session(other_session)
     time.sleep(0.05)
     assert "decisions" not in result_holder  # not denied by the switch
+    assert mounted[-1] is None  # the departing session's card is cleared
 
     controller.switch_session(owning_session)
-    controller.resolve_pending_approval({"mcp__srv__tool": "approve_once"})
+    # CRITICAL 1 fix: switching back re-mounts the SAME round's card --
+    # pre-fix, `mounted[-1]` would still be `None` here (no retained
+    # payload for a round that was never parked).
+    assert mounted[-1] is not None
+    round_id = mounted[-1]["round_id"]
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "approve_once"}, round_id=round_id
+    )
     worker.join(timeout=2.0)
 
     assert result_holder["decisions"] == {"mcp__srv__tool": "approve_once"}

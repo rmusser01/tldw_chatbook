@@ -12554,17 +12554,20 @@ class ChatScreen(BaseAppScreen):
 
         `None` (Escape / "Never mind") just returns focus to the composer.
         `"restore"` is pure tree navigation: gated on
-        `controller.run_state.is_send_allowed` (mirrors regenerate/resend --
-        never mutates while a run is streaming), the new active leaf is the
-        selected prompt's PARENT found by an id lookup in
-        `active_path_message_ids` (never positional -- display-only TOOL rows
-        can pad `messages_for_session`'s view without being tree nodes), with
-        `None` (empty transcript) when the selected prompt was the root. The
-        selected prompt's own text is written back into the composer via the
-        same paste-semantics seam `/prompt` uses.
+        `controller.send_refusal_copy(...)` (mirrors regenerate/resend --
+        never mutates while a run is streaming; returns non-empty refusal
+        copy exactly when a send would currently be blocked, parallel-
+        agents spec §4), the new active leaf is the selected prompt's
+        PARENT found by an id lookup in `active_path_message_ids` (never
+        positional -- display-only TOOL rows can pad
+        `messages_for_session`'s view without being tree nodes), with
+        `None` (empty transcript) when the selected prompt was the root.
+        The selected prompt's own text is written back into the composer
+        via the same paste-semantics seam `/prompt` uses.
         `"summarize-up-to"` runs the boundary-summary flow (SP2 Task 3) on an
-        exclusive `console-run-{session_id}` worker, gated on `is_send_allowed`
-        the same way restore is (never mutates while a run is streaming).
+        exclusive `console-run-{session_id}` worker, gated on
+        `send_refusal_copy` the same way restore is (never mutates while a
+        run is streaming).
 
         A `ModalScreen` blocks session switching while the rewind modal is up,
         so today this is theoretical -- but the callback still re-checks the
@@ -12593,7 +12596,11 @@ class ChatScreen(BaseAppScreen):
             # Gate BEFORE spawning: an exclusive console-run worker cancels any
             # in-flight run at creation time, before the controller's own
             # rejection can run -- refuse first, like the regenerate path.
-            target_session_id = controller.store.active_session_id
+            # Fix wave (rider 4, final review): normalize the same way
+            # `_dispatch_console_draft_send` already does (`or ""`) -- see
+            # that call site's own comment for why a stray `None` must
+            # never be allowed to key its own separate "no session" bucket.
+            target_session_id = controller.store.active_session_id or ""
             refusal = controller.send_refusal_copy(target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
@@ -15386,6 +15393,26 @@ class ChatScreen(BaseAppScreen):
         if controller is None:
             return
         controller.set_run_pending_approval(session_id, True)
+        session_title, workspace_name = self._console_session_title_and_workspace_name(
+            controller, session_id
+        )
+        self.app_instance.notify(
+            f"Agent in {session_title} ({workspace_name}) needs approval."
+        )
+
+    def _console_session_title_and_workspace_name(
+        self, controller: ConsoleChatController, session_id: str
+    ) -> tuple[str, str]:
+        """Return ``(session_title, workspace_name)`` for a fleet toast.
+
+        Fix wave (rider 6, final review): shared by ``_park_console_
+        approval`` and ``_notify_console_run_outcome``, which previously
+        duplicated this exact lookup byte-for-byte. Falls back to the raw
+        ``session_id``/workspace id when the session has already closed or
+        the workspace can't be resolved -- a toast about a session that
+        vanished microseconds ago must still say SOMETHING coherent rather
+        than raise.
+        """
         session_title = session_id
         workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
         for session in controller.store.sessions():
@@ -15393,10 +15420,7 @@ class ChatScreen(BaseAppScreen):
                 session_title = session.title
                 workspace_id = session.workspace_id
                 break
-        workspace_name = self._console_workspace_display_name(workspace_id)
-        self.app_instance.notify(
-            f"Agent in {session_title} ({workspace_name}) needs approval."
-        )
+        return session_title, self._console_workspace_display_name(workspace_id)
 
     def _console_workspace_display_name(self, workspace_id: str) -> str:
         """Return ``workspace_id``'s display name via the registry, falling
@@ -15429,9 +15453,10 @@ class ChatScreen(BaseAppScreen):
         every terminal ``_set_run_state`` call already runs on the main
         event-loop thread (worker-thread agent runs resume here only after
         ``await asyncio.to_thread(...)`` returns in ``_run_agent_reply``),
-        so no thread marshaling is needed. Reuses ``_park_console_
-        approval``'s exact session-title/workspace lookup and
-        ``_console_workspace_display_name`` resolver -- no second resolver.
+        so no thread marshaling is needed. Shares ``_console_session_
+        title_and_workspace_name`` (which itself uses ``_console_
+        workspace_display_name``) with ``_park_console_approval`` above --
+        one resolver, not a byte-duplicated copy (fix wave, rider 6).
         The viewed session's own terminal transition is visible live in its
         transcript and never reaches this method (``_set_run_state`` only
         calls it from the non-active branch).
@@ -15444,14 +15469,9 @@ class ChatScreen(BaseAppScreen):
         controller = self._console_chat_controller
         if controller is None:
             return
-        session_title = session_id
-        workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
-        for session in controller.store.sessions():
-            if session.id == session_id:
-                session_title = session.title
-                workspace_id = session.workspace_id
-                break
-        workspace_name = self._console_workspace_display_name(workspace_id)
+        session_title, workspace_name = self._console_session_title_and_workspace_name(
+            controller, session_id
+        )
         verb = "finished" if status is ConsoleRunStatus.COMPLETED else "failed"
         self.app_instance.notify(
             f"Agent in {session_title} ({workspace_name}) {verb}."
