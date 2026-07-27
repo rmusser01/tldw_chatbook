@@ -66,12 +66,14 @@ Source: <https://api-docs.deepseek.com/news/news260424/>
 Anthropic describes Claude Sonnet 5 as the best combination of speed and
 intelligence. It is available through the Claude API as `claude-sonnet-5`.
 Sonnet 5 enables adaptive thinking by default and rejects non-default
-`temperature`, `top_p`, and `top_k` values.
+`temperature`, `top_p`, and `top_k` values. Anthropic's effort control is sent
+as `output_config.effort`; it is not nested inside `thinking`.
 
 Sources:
 
 - <https://platform.claude.com/docs/en/about-claude/models/overview>
 - <https://platform.claude.com/docs/en/about-claude/models/whats-new-sonnet-5>
+- <https://platform.claude.com/docs/en/build-with-claude/effort>
 
 ### OpenAI
 
@@ -99,8 +101,9 @@ stay consistent:
 The relevant leading entries become:
 
 - DeepSeek: `deepseek-v4-flash`, `deepseek-v4-pro`
-- Anthropic: `claude-sonnet-5`, followed by current supported capability and
-  efficiency alternatives
+- Anthropic: `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`,
+  `claude-haiku-4-5`, followed by the existing older entries in their current
+  order
 - OpenAI: `gpt-5.6-terra`, `gpt-5.6-sol`, `gpt-5.6-luna`, followed by supported
   existing alternatives
 
@@ -158,19 +161,29 @@ This is a compatibility migration, not adoption of new GPT-5.6 capabilities.
 
 ### Anthropic Claude Sonnet 5
 
-Add model-aware Anthropic predicates so that:
+Add model-aware Anthropic request shaping so that the three user-visible
+thinking states have exact payload contracts:
 
-1. `claude-sonnet-5` is recognized as an adaptive-thinking model.
-2. Explicit supported thinking effort maps to Anthropic adaptive thinking.
-3. Fixed thinking budgets are ignored for adaptive-thinking models, matching the
-   existing modern-Opus behavior.
-4. `temperature`, `top_p`, and `top_k` are omitted for Claude Sonnet 5 even when
+1. With no thinking setting, omit both `thinking` and `output_config`; Sonnet 5
+   then uses Anthropic's documented default adaptive thinking at high effort.
+2. With an explicit supported effort (`low`, `medium`, `high`, `xhigh`, or
+   `max`), send `output_config: {"effort": "<level>"}`. Do not nest `effort`
+   inside `thinking`.
+3. With explicit `thinking_effort: "off"`, send
+   `thinking: {"type": "disabled"}` and omit `output_config.effort`.
+4. Fixed thinking budgets are ignored for Sonnet 5 because manual extended
+   thinking is unsupported.
+5. `temperature`, `top_p`, and `top_k` are omitted for Claude Sonnet 5 even when
    generic or persisted defaults contain them.
-5. Existing sampling behavior remains unchanged for older models that support
+6. Existing sampling behavior remains unchanged for older models that support
    these fields.
 
-The default Sonnet 5 request may omit a `thinking` object because Anthropic
-enables adaptive thinking by default.
+The shared helper must return thinking-mode and output-effort data separately so
+the payload builder cannot recreate the current invalid
+`thinking: {"type": "adaptive", "effort": ...}` shape. Existing adaptive-effort
+models already recognized by the helper should use the same documented
+`output_config.effort` shape when an explicit effort is supplied; their existing
+model-specific thinking-disable constraints remain unchanged.
 
 ### DeepSeek V4 Flash
 
@@ -214,10 +227,16 @@ Add or extend focused tests for:
    `max_output_tokens`.
 6. GPT-5.6 Chat Completions tool payloads remain in the existing function-tool
    shape.
-7. Claude Sonnet 5 omits `temperature`, `top_p`, and `top_k`.
-8. Claude Sonnet 5 maps explicit thinking effort to adaptive thinking.
-9. DeepSeek V4 Flash uses the existing `/chat/completions` request contract.
-10. GPT-5.6 Terra and Claude Sonnet 5 are recognized as vision-capable.
+7. Claude Sonnet 5 with no thinking setting omits `thinking`,
+   `output_config`, `temperature`, `top_p`, and `top_k`.
+8. Claude Sonnet 5 maps explicit supported effort to
+   `output_config.effort` without nesting effort inside `thinking`.
+9. Claude Sonnet 5 maps explicit `off` to
+   `thinking: {"type": "disabled"}`.
+10. Existing recognized adaptive-effort Anthropic models use
+    `output_config.effort` rather than a nested effort field.
+11. DeepSeek V4 Flash uses the existing `/chat/completions` request contract.
+12. GPT-5.6 Terra and Claude Sonnet 5 are recognized as vision-capable.
 
 Run the smallest relevant configuration, chat-provider, catalog, and capability
 test modules, followed by lint or formatting checks for changed files. Live API
