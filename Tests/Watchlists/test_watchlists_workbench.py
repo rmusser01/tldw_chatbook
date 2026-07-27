@@ -383,3 +383,91 @@ async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
             f"scrolling must not carry the region's own bottom border away: "
             f"{rows[-1]!r}"
         )
+
+
+# --- Task 7: `refresh_region_content` ---------------------------------------
+#
+# `WatchlistsCollectionsScreen.watch_selected_scope` needs FEEDS to follow a
+# tree-scope change without recomposing the whole workbench (a full
+# recompose would also replace the Inspector, breaking its "same instance,
+# updated in place" contract -- see that method's docstring). These pin the
+# primitive it relies on, independent of the screen.
+
+
+@pytest.mark.asyncio
+async def test_refresh_region_content_rebuilds_only_the_named_region():
+    from textual.widgets import Label
+
+    calls = {"feeds": 0}
+
+    def feeds_factory():
+        calls["feeds"] += 1
+        return Label(f"feeds-{calls['feeds']}", id="feeds-content")
+
+    items_widget_ids: list[int] = []
+
+    def items_factory():
+        label = Label("items", id="items-content")
+        items_widget_ids.append(id(label))
+        return label
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(),
+                content={Region.FEEDS: feeds_factory, Region.ITEMS: items_factory},
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test() as pilot:
+        workbench = app.query_one(WatchlistsWorkbench)
+        first_feeds = app.query_one("#feeds-content", Label)
+        first_items = app.query_one("#items-content", Label)
+        assert str(first_feeds.renderable) == "feeds-1"
+
+        await workbench.refresh_region_content(Region.FEEDS)
+        await pilot.pause()
+
+        refreshed_feeds = app.query_one("#feeds-content", Label)
+        assert str(refreshed_feeds.renderable) == "feeds-2", (
+            "the factory should run again, reflecting whatever changed"
+        )
+        assert refreshed_feeds is not first_feeds, (
+            "the old content widget should be replaced, not mutated in place"
+        )
+
+        still_items = app.query_one("#items-content", Label)
+        assert still_items is first_items, (
+            "an unrelated region's content must not be touched"
+        )
+        assert calls["feeds"] == 2
+        assert len(items_widget_ids) == 1, "ITEMS's factory must not run again"
+
+
+@pytest.mark.asyncio
+async def test_refresh_region_content_is_a_noop_when_the_region_is_collapsed():
+    from textual.widgets import Label
+
+    calls = {"feeds": 0}
+
+    def feeds_factory():
+        calls["feeds"] += 1
+        return Label("feeds", id="feeds-content")
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(collapsed=frozenset({Region.FEEDS})),
+                content={Region.FEEDS: feeds_factory},
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test():
+        workbench = app.query_one(WatchlistsWorkbench)
+        assert calls["feeds"] == 0, "a collapsed region should not build its content at all"
+
+        await workbench.refresh_region_content(Region.FEEDS)
+
+        assert calls["feeds"] == 0, "refreshing a collapsed region must be a no-op"

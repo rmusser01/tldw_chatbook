@@ -14,6 +14,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -254,6 +255,44 @@ class WatchlistsWorkbench(Horizontal):
             return False
         expanded = [r for r in CENTRE_REGIONS if not self.region_layout.is_collapsed(r)]
         return expanded == [region]
+
+    async def refresh_region_content(self, region: Region) -> None:
+        """Rebuild one expanded region's supplied content in place.
+
+        Task 7: the tree scope can change what FEEDS should show without
+        `region_layout` itself changing, so nothing would otherwise call
+        FEEDS's factory again. Setting `region_layout` (`recompose=True`)
+        would work too, but at the cost of tearing down and remounting
+        *every* region, including ones whose whole design point is staying
+        the same instance across an unrelated change -- the Inspector is
+        pushed new `scope`/`selected_entity` values in place for exactly
+        that reason (see `WatchlistsCollectionsScreen.watch_selected_scope`),
+        and a full recompose would silently replace it with a fresh
+        instance instead, breaking any caller holding a reference to the
+        old one.
+
+        A no-op when `region` is collapsed (nothing mounted to replace) or
+        was not given a content factory (the placeholder stub has nothing
+        to refresh either).
+
+        Args:
+            region: The region whose supplied content should be rebuilt.
+        """
+        if self.region_layout.is_collapsed(region):
+            return
+        factory = self._content.get(region)
+        if factory is None:
+            return
+        try:
+            container = self.query_one(f"#wl-region-{region.value}")
+        except NoMatches:
+            return
+        # Remove the old content before mounting the new -- both carry the
+        # same id (e.g. `watchlists-list-pane`), so mounting first would
+        # collide with the not-yet-detached old sibling.
+        for child in list(container.children):
+            await child.remove()
+        await container.mount(factory())
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Turn a collapsed-region header click into a `RegionToggled` message.

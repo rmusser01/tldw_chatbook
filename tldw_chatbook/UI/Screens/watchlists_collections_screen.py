@@ -597,10 +597,119 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             logger.opt(exception=True).debug("Failed to load tree source rows.")
             return []
 
+    def scoped_source_rows(self) -> list[dict[str, Any]]:
+        """Source rows the current tree scope covers.
+
+        The Feeds region renders these, so selecting a node in the tree
+        actually narrows what the centre shows rather than only recording a
+        selection (Task 7). Kept on the screen (not the pane) because the
+        workbench recomposes and pane-local state does not survive it -- the
+        same reasoning already applied to `selected_scope` itself.
+
+        Each branch costs exactly one query (`list_source_rows`,
+        `list_all_source_rows`, or `list_unassigned_source_rows`); the
+        `source` scope reuses whichever of those already names the right
+        table rather than adding a second query just to filter down to one
+        row.
+
+        Returns:
+            One dict per source with ``id``, ``name`` and ``type``, or an
+            empty list if the bundle service is unavailable or lookup fails.
+        """
+        service = self._watchlist_bundle_service()
+        if service is None:
+            return []
+        scope = self.selected_scope
+        try:
+            if scope.kind == "watchlist" and scope.watchlist_id is not None:
+                return service.list_source_rows(scope.watchlist_id)
+            if scope.kind == "source" and scope.source_id is not None:
+                rows = (
+                    service.list_source_rows(scope.watchlist_id)
+                    if scope.watchlist_id is not None
+                    else service.list_all_source_rows()
+                )
+                return [r for r in rows if int(r["id"]) == int(scope.source_id)]
+            if scope.kind == "unassigned":
+                return service.list_unassigned_source_rows()
+            return service.list_all_source_rows()
+        except Exception:
+            logger.opt(exception=True).debug("Failed to resolve scoped source rows.")
+            return []
+
+    def _scoped_feeds_heading(self, rows: Sequence[Mapping[str, Any]]) -> Text:
+        """The scope-named Feeds heading, e.g. ``Feeds in Morning AI Brief (3)``.
+
+        Replaces the previous hardcoded "Sources" title (Task 7): with the
+        Sources tab active, that hardcoded word duplicated ITEMS's own
+        `_SECTION_DETAIL_TITLE["sources"]` heading in the adjacent box. This
+        also makes the heading say what Feeds is actually showing, since a
+        tree click now changes that.
+
+        Resolves the watchlist/source label from data already in memory
+        (`_tree_watchlists`, and `rows` itself for a source's own name)
+        rather than issuing another query -- `rows` is the same list
+        `scoped_source_rows()` just resolved, so this is display formatting,
+        not a second lookup.
+
+        Args:
+            rows: The current scope's rows, as returned by
+                `scoped_source_rows()` -- passed in rather than re-resolved
+                so the caller (which needs the rows anyway, to render them)
+                does not pay for the query twice.
+
+        Returns:
+            A single-line ``Text``, pre-parsed via `Text.from_markup` over
+            an escaped label -- the same "escape untrusted content, then
+            build a `Text` rather than hand a raw f-string to `Static`"
+            convention `_build_inspector_pane`'s follow-in-Console line
+            already uses, since `label` may come straight from a remote
+            feed's own title.
+        """
+        scope = self.selected_scope
+        if scope.kind == "all":
+            label = "All sources"
+        elif scope.kind == "unassigned":
+            label = "Unassigned"
+        elif scope.kind == "watchlist" and scope.watchlist_id is not None:
+            label = next(
+                (
+                    str(watchlist.get("name"))
+                    for watchlist in self._tree_watchlists
+                    if int(watchlist.get("id", -1)) == int(scope.watchlist_id)
+                ),
+                f"Watchlist {scope.watchlist_id}",
+            )
+        elif scope.kind == "source":
+            label = (
+                str(rows[0].get("name"))
+                if rows
+                else (
+                    f"Source {scope.source_id}"
+                    if scope.source_id is not None
+                    else "All sources"
+                )
+            )
+        else:
+            label = "All sources"
+        return Text.from_markup(f"Feeds in {escape_markup(label)} ({len(rows)})")
+
     def _build_list_pane(self) -> Vertical:
-        """Build the FEEDS-region content: the section tab strip, the Sources
-        title, plus the local Watchlists snapshot used for Console staging
-        (recovery-state rendering).
+        """Build the FEEDS-region content: the section tab strip, a heading
+        naming the current tree scope, that scope's source rows, plus the
+        local Watchlists snapshot used for Console staging (recovery-state
+        rendering).
+
+        The scope heading and source rows are additive (Task 7): the tab
+        strip and the loading/error/empty/populated snapshot block below
+        stay exactly as they were -- `Tests/UI/test_destination_shells.py`
+        and `Tests/UI/test_destination_visual_parity_correction.py` both
+        drive those stable selectors and neither is aware of the tree scope.
+        Only the old hardcoded ``Static("Sources", ...)`` heading is
+        replaced, by `_scoped_feeds_heading` above, since nothing in
+        `Tests/` asserts on that literal and leaving it in place would have
+        FEEDS and ITEMS render the same word in adjacent boxes whenever
+        Sources is the active tab.
 
         Byte-identical logic to the pre-rehost inline composition for the
         snapshot itself; only the `yield` calls became list appends and a
@@ -617,10 +726,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `WatchlistsWorkbench.__init__`'s docstring on why `content` holds
         factories, not instances), so it must stay side-effect-free.
         """
+        scoped_rows = self.scoped_source_rows()
         children: list[Widget] = [
             WatchlistsTabStrip(active_section=self.active_section, id="wl-tabs"),
-            Static("Sources", classes="destination-section watchlists-column-title"),
+            Static(
+                self._scoped_feeds_heading(scoped_rows),
+                classes="destination-section watchlists-column-title",
+                id="wl-feeds-scope-heading",
+            ),
         ]
+        for row in scoped_rows:
+            # Source names are untrusted (imported OPML, a remote feed's own
+            # title, ...), so they must be escaped before reaching a
+            # rendered label -- this repo has shipped that bug before.
+            name = escape_markup(str(row.get("name") or ""))
+            source_type = escape_markup(str(row.get("type") or ""))
+            children.append(
+                Static(
+                    Text.from_markup(f"{name}  ({source_type})"),
+                    id=f"wl-feeds-source-{row.get('id')}",
+                    classes="watchlist-feed-source-row",
+                )
+            )
         if not self._wc_loaded:
             children.append(
                 Static(
@@ -1083,12 +1210,27 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._apply_tree_scope(event.scope)
 
     def watch_selected_scope(self) -> None:
-        """Push scope + resolved labels into the live Inspector, if mounted.
+        """Push scope + resolved labels into the live Inspector, then rebuild
+        FEEDS in place so it actually follows the new scope (Task 7).
 
-        Mirrors `watch_selected_entity` immediately below it: this only
-        covers the "selection changed without a workbench rebuild" case --
-        `_build_inspector_pane` covers the rebuild case by seeding a
-        freshly-constructed `InspectorPane` from this same screen state.
+        The Inspector push mirrors `watch_selected_entity` immediately below
+        it: this only covers the "selection changed without a workbench
+        rebuild" case -- `_build_inspector_pane` covers the rebuild case by
+        seeding a freshly-constructed `InspectorPane` from this same screen
+        state.
+
+        Deliberately does NOT do what `watch_active_section` does
+        (`self.refresh(recompose=True)`): that rebuilds every region,
+        including the Inspector, and a fresh `InspectorPane` instance is
+        exactly what the push above exists to avoid --
+        `test_changing_scope_clears_a_stale_entity_selection` (Task 5) holds
+        a reference to the Inspector from *before* a scope change and
+        asserts against it *after*, which a full recompose would silently
+        break by handing that reference a defunct, unmounted widget.
+        `WatchlistsWorkbench.refresh_region_content` instead rebuilds only
+        FEEDS's own supplied content -- the one region whose display this
+        task makes scope-dependent -- leaving the Tree and Inspector
+        instances untouched.
         """
         if not self.is_mounted:
             return
@@ -1098,6 +1240,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             inspector.breadcrumb_labels = self._breadcrumb_labels
         except Exception:
             pass
+        self._refresh_feeds_region_for_scope()
+
+    @work(exclusive=True, group="wc_feeds_scope_refresh")
+    async def _refresh_feeds_region_for_scope(self) -> None:
+        """Worker wrapper so `watch_selected_scope` (a sync reactive watcher)
+        can await `WatchlistsWorkbench.refresh_region_content`'s remove/mount
+        pair. `exclusive=True` collapses a fast burst of tree clicks to the
+        last one requested, the same reasoning `_schedule_layout_persist`
+        documents for its own worker.
+        """
+        if not self.is_mounted:
+            return
+        try:
+            workbench = self.query_one(WatchlistsWorkbench)
+        except NoMatches:
+            return
+        try:
+            await workbench.refresh_region_content(Region.FEEDS)
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Failed to refresh the Feeds region for the new scope."
+            )
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Keep `focused_region` in step with whatever actually holds focus.

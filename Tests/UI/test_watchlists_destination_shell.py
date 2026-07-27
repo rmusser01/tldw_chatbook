@@ -1164,3 +1164,52 @@ async def test_scope_survives_a_region_toggle():
         assert screen.selected_scope.watchlist_id == 7, (
             "scope lives on the screen, so a workbench recompose must not lose it"
         )
+
+
+@pytest.mark.asyncio
+async def test_feeds_region_follows_the_tree_scope():
+    """Task 7: narrowing the tree scope must change what Feeds covers.
+
+    Uses `_build_test_app()` + `DestinationHarness`, this file's own
+    established pattern (see every other test above) rather than a
+    `watchlists_app` fixture -- no such fixture exists in this file.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.post_message(TreeScopeChanged(TreeScope(kind="all")))
+        await pilot.pause()
+        all_rows = screen.scoped_source_rows()
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1))
+        )
+        await pilot.pause()
+        scoped_rows = screen.scoped_source_rows()
+
+        assert scoped_rows != all_rows or all_rows == [], (
+            "narrowing the scope to one watchlist must change what Feeds covers"
+        )
+
+
+@pytest.mark.asyncio
+async def test_source_scope_narrows_to_exactly_one():
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="source", watchlist_id=1, source_id=10))
+        )
+        await pilot.pause()
+        rows = screen.scoped_source_rows()
+        assert len(rows) <= 1
+        assert all(int(r["id"]) == 10 for r in rows)
