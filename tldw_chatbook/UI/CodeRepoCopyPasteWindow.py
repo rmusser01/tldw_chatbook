@@ -1148,7 +1148,11 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                 )
 
             # Update tree view with new children
-            await self.app.call_from_thread(tree_view.expand_node, node_path, child_nodes)
+            # call_from_thread is a synchronous, blocking marshal that returns the
+            # callback's own result directly (already awaited internally) -- it must
+            # not be awaited here, or the callback's return value (None) gets
+            # awaited instead, raising TypeError and masking a successful expand.
+            self.app.call_from_thread(tree_view.expand_node, node_path, child_nodes)
 
         except Exception as e:
             logger.error(f"Failed to load children for {node_path}: {e}")
