@@ -166,6 +166,14 @@ from ...Library.library_shell_state import (
     LibraryShellInput,
     build_library_shell_state,
 )
+from ...Local_Ingestion.parakeet_v2_installer import (
+    PARAKEET_V2_LICENSE,
+    PARAKEET_V2_REPOSITORY,
+    PARAKEET_V2_REVISION,
+    PARAKEET_V2_TOTAL_BYTES,
+    install_verified_parakeet_v2,
+    parakeet_v2_install_dir,
+)
 from ...Library.row_selection import RowSelection
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
@@ -805,6 +813,70 @@ class IngestGuardrailModal(ModalScreen[bool]):
             self.notify("Clipboard not available", severity="warning")
 
 
+class ParakeetV2InstallModal(ModalScreen[bool]):
+    """Consent prompt for the curated Parakeet v2 INT8 download."""
+
+    DEFAULT_CSS = """
+    ParakeetV2InstallModal {
+        align: center middle;
+    }
+
+    #parakeet-v2-install-modal {
+        width: 76;
+        height: auto;
+        border: tall $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #parakeet-v2-install-actions {
+        height: 3;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss(false)", "Close")]
+
+    def __init__(self, destination: Path) -> None:
+        self.destination = destination
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        size_mib = PARAKEET_V2_TOTAL_BYTES / (1024 * 1024)
+        details = (
+            "Install the curated Parakeet v2 INT8 speech model?\n\n"
+            f"Source: {PARAKEET_V2_REPOSITORY}\n"
+            f"Revision: {PARAKEET_V2_REVISION}\n"
+            f"License: {PARAKEET_V2_LICENSE}\n"
+            f"Download: {size_mib:.1f} MiB\n"
+            f"Destination: {self.destination}\n\n"
+            "All four files are checked against pinned sizes and SHA-256 "
+            "digests before the bundle becomes usable."
+        )
+        with Vertical(id="parakeet-v2-install-modal"):
+            yield Static(details, markup=False)
+            with Horizontal(id="parakeet-v2-install-actions"):
+                yield Button(
+                    "Cancel",
+                    id="parakeet-v2-install-cancel",
+                    variant="default",
+                )
+                yield Button(
+                    "Install",
+                    id="parakeet-v2-install-confirm",
+                    variant="primary",
+                )
+
+    @on(Button.Pressed, "#parakeet-v2-install-confirm")
+    def _confirm(self) -> None:
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#parakeet-v2-install-cancel")
+    def _cancel(self) -> None:
+        self.dismiss(False)
+
+
 def _affected_counts(preflight: PreflightResult) -> dict[str, int]:
     """Map each tooling feature to the number of files that depend on it."""
     counts: dict[str, int] = {}
@@ -1215,6 +1287,9 @@ class LibraryScreen(BaseAppScreen):
         # Pre-flight analysis worker for the ingest path field. Cancelled
         # and replaced on every new trigger so rapid edits never stack.
         self._library_ingest_preflight_worker: Worker | None = None
+        # Explicit user-started curated model install. It is separate from
+        # inference: providers never acquire models on first use.
+        self._parakeet_v2_install_worker: Worker | None = None
         # Export canvas state (F4 Task 2). ``_library_export_counts`` is
         # ``None`` until the counts worker lands a result for the current
         # scope (drives ``LibraryExportFormState.counts_loading`` --
@@ -11829,6 +11904,81 @@ class LibraryScreen(BaseAppScreen):
         field = next((f for f in cap.fields if f.name == event.name), None)
         if field is not None and field.type not in ("text", "number"):
             self.refresh(recompose=True)
+
+    @on(LibraryIngestCanvas.ParakeetInstallRequested)
+    def handle_parakeet_v2_install_requested(
+        self,
+        event: LibraryIngestCanvas.ParakeetInstallRequested,
+    ) -> None:
+        """Show immutable source, license, size, and destination before install."""
+        event.stop()
+        worker = getattr(self, "_parakeet_v2_install_worker", None)
+        if worker is not None and not worker.is_finished:
+            self.app_instance.notify(
+                "Parakeet v2 installation is already running.",
+                severity="information",
+            )
+            return
+        self.app.push_screen(
+            ParakeetV2InstallModal(parakeet_v2_install_dir()),
+            self._confirm_parakeet_v2_install,
+        )
+
+    def _confirm_parakeet_v2_install(self, confirmed: bool) -> None:
+        """Start the installer worker after explicit confirmation."""
+        if not confirmed:
+            return
+        worker = getattr(self, "_parakeet_v2_install_worker", None)
+        if worker is not None and not worker.is_finished:
+            return
+        self.app_instance.notify(
+            "Installing verified Parakeet v2 INT8 in the background…",
+            severity="information",
+        )
+        self._parakeet_v2_install_worker = self._run_parakeet_v2_install()
+
+    @work(thread=True, group="library_parakeet_v2_install", exit_on_error=False)
+    def _run_parakeet_v2_install(self) -> None:
+        """Install off the Textual event loop and return one terminal result."""
+        try:
+            installed = install_verified_parakeet_v2()
+        except Exception as exc:
+            logger.opt(exception=True).error("Parakeet v2 installation failed")
+            self.app.call_from_thread(
+                self._apply_parakeet_v2_install_result,
+                None,
+                str(exc),
+            )
+            return
+        self.app.call_from_thread(
+            self._apply_parakeet_v2_install_result,
+            installed,
+            None,
+        )
+
+    def _apply_parakeet_v2_install_result(
+        self,
+        installed: Path | None,
+        error: str | None,
+    ) -> None:
+        """Populate the current batch form only after verified publication."""
+        self._parakeet_v2_install_worker = None
+        if error is not None or installed is None:
+            self.app_instance.notify(
+                f"Parakeet v2 install failed: {error or 'unknown error'}",
+                severity="error",
+            )
+            return
+        options = self._library_ingest_form.type_options.setdefault(
+            "audio_video", {}
+        )
+        options["transcription_provider"] = "parakeet-onnx"
+        options["transcription_model_dir"] = str(installed)
+        self.app_instance.notify(
+            "Parakeet v2 INT8 installed and selected for this batch.",
+            severity="information",
+        )
+        self.refresh(recompose=True)
 
     def _cancel_library_ingest_preflight(self) -> None:
         """Cancel any in-flight pre-flight worker, ignoring a finished one."""

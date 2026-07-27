@@ -67,6 +67,9 @@ class LibraryIngestCanvas(VerticalScroll):
             self.group = group
             self.expanded = expanded
 
+    class ParakeetInstallRequested(Message):
+        """The user requested the curated Parakeet v2 installer."""
+
     def __init__(self, state: LibraryIngestCanvasState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.state = state
@@ -148,6 +151,21 @@ class LibraryIngestCanvas(VerticalScroll):
                         disabled=disabled,
                     )
                 )
+
+        if group == "audio_video":
+            provider = cap_fields_by_name["transcription_provider"]
+            provider_value = values.get(
+                "transcription_provider", provider.default
+            )
+            children.append(
+                Button(
+                    "Install verified Parakeet v2 INT8 (630.6 MiB)…",
+                    id="opt-audio_video-install-parakeet-v2",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=provider_value != "parakeet-onnx",
+                )
+            )
 
         children.append(
             Button(
@@ -583,3 +601,9 @@ class LibraryIngestCanvas(VerticalScroll):
         self.post_message(
             self.OptionPanelToggled(group, expanded=isinstance(event, Collapsible.Expanded))
         )
+
+    @on(Button.Pressed, "#opt-audio_video-install-parakeet-v2")
+    def _request_parakeet_v2_install(self, event: Button.Pressed) -> None:
+        """Request explicit install confirmation from the owning screen."""
+        event.stop()
+        self.post_message(self.ParakeetInstallRequested())

@@ -43,6 +43,7 @@ class _MessageRecordingHost(App):
         self._state = state
         self.option_changes: list[LibraryIngestCanvas.OptionValueChanged] = []
         self.panel_toggles: list[LibraryIngestCanvas.OptionPanelToggled] = []
+        self.parakeet_install_requests = 0
 
     def compose(self) -> ComposeResult:
         yield LibraryIngestCanvas(self._state, id="library-ingest-canvas")
@@ -54,6 +55,12 @@ class _MessageRecordingHost(App):
     @on(LibraryIngestCanvas.OptionPanelToggled)
     def _record_panel_toggle(self, event: LibraryIngestCanvas.OptionPanelToggled) -> None:
         self.panel_toggles.append(event)
+
+    @on(LibraryIngestCanvas.ParakeetInstallRequested)
+    def _record_parakeet_install_request(
+        self, _event: LibraryIngestCanvas.ParakeetInstallRequested
+    ) -> None:
+        self.parakeet_install_requests += 1
 
 
 def _default_form() -> LibraryIngestFormState:
@@ -791,9 +798,11 @@ async def test_mounting_option_panels_posts_no_option_changes():
 
 @pytest.mark.asyncio
 async def test_audio_video_defaults_to_parakeet_onnx_without_whisper_models():
+    form = _default_form()
+    form.expanded_type_groups.add("audio_video")
     state = build_library_ingest_state(
         (),
-        form=_default_form(),
+        form=form,
         preflight=PreflightResult(
             type_groups={"audio_video": ["/tmp/a.mp3"]},
             warnings=[],
@@ -803,7 +812,7 @@ async def test_audio_video_defaults_to_parakeet_onnx_without_whisper_models():
             total_files=1,
         ),
     )
-    app = _CanvasHost(state)
+    app = _MessageRecordingHost(state)
     with patch(
         "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
         return_value=True,
@@ -822,6 +831,13 @@ async def test_audio_video_defaults_to_parakeet_onnx_without_whisper_models():
             assert model.disabled is True
             assert model_dir.disabled is False
             assert model_dir.value == ""
+            install = pilot.app.query_one(
+                "#opt-audio_video-install-parakeet-v2", Button
+            )
+            assert "Install verified Parakeet v2 INT8" in str(install.label)
+            install.press()
+            await pilot.pause()
+            assert app.parakeet_install_requests == 1
 
 
 @pytest.mark.asyncio
