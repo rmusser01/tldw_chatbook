@@ -2,13 +2,62 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from textual.widgets import Button
 
+from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
+from tldw_chatbook.LLM_Calls.huggingface_api import HuggingFaceAPI
 from tldw_chatbook.UI.Screens.lab_mode_strip import LAB_MODE_CHIP_IDS
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from Tests.UI.test_screen_navigation import _build_test_app
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_models_mount(monkeypatch):
+    """Neutralise two pre-existing, unrelated timing hazards this file's
+    press/pause sequences are long enough to occasionally hit (found during
+    Task 7 review: 3/5 runs failed before this fixture existed).
+
+    1. Splash-screen race. ``SplashScreen.on_mount`` (``splash_screen.py``
+       ~295-297) starts a REAL 1.5s wall-clock ``set_timer`` whose callback
+       mounts the app's actual default-tab screen regardless of what a test
+       has since pushed. Observed directly (via an instrumented, throwaway
+       run): it fired mid-test and pushed a brand-new ``ChatScreen`` on top
+       of this file's already-pushed ``LLMScreen``, whose own
+       ``ConsoleSetupModal`` then auto-focused its action button and stole
+       ``app.focused`` out from under an assertion. Forcing
+       ``splash_screen.enabled`` False here makes ``TldwCli.compose()``
+       (``app.py`` ~5934) skip the splash branch and mount the main UI
+       immediately, before any test below ever pushes ``LLMScreen`` -- so
+       there is no later auto-transition left to race against. Every other
+       section/key still resolves through the real ``get_cli_setting``, so
+       this does not change any other test-environment behaviour.
+    2. Live network call. ``ModelSearchWidget.on_mount`` -> ``_initial_browse``
+       -> ``perform_search()`` (``model_search_widget.py`` ~142-272) fires a
+       real ``HuggingFaceAPI.search_models`` HTTP request to huggingface.co
+       the moment ``LLMScreen``'s body mounts -- confirmed independently:
+       the search widget lives inside ``llm-view-download-models``, which
+       ``LLMManagementWindow.compose()`` builds eagerly. That request's
+       variable real-world latency was the other half of the timing budget
+       that let cause (1) surface at all. Patching it to an async no-op
+       keeps this file's timing deterministic and independent of network
+       reachability.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture; reverts both patches
+            automatically at the end of each test.
+    """
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return _real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(HuggingFaceAPI, "search_models", AsyncMock(return_value=[]))
 
 
 async def _models(app):
