@@ -27,6 +27,7 @@ from ...config import (
 
 
 _CollapseState = Literal["literal", "collapsed", "confirm", "expanded"]
+_DictationState = Literal["idle", "starting", "recording", "transcribing"]
 _DraftStyleRange = tuple[int, int, str]
 
 
@@ -124,6 +125,7 @@ class ConsoleComposerBar(Horizontal):
         self._send_blocked = False
         self._setup_blocked_reason = ""
         self._can_save_chatbook = False
+        self._dictation_state: _DictationState = "idle"
         self._pending_attachment_label: str | None = None
         self._suppress_next_draft_click = False
         self._draft_selection_all = False
@@ -441,6 +443,31 @@ class ConsoleComposerBar(Horizontal):
 
         if setup_reason_changed and not self.draft_text().strip():
             self._refresh_visible_draft()
+
+    def sync_dictation_state(self, state: _DictationState) -> None:
+        """Refresh the microphone action for the current one-shot lifecycle."""
+        self._dictation_state = state
+        try:
+            button = self.query_one("#console-dictation", Button)
+        except NoMatches:
+            return
+        labels = {
+            "idle": "Mic",
+            "starting": "Mic…",
+            "recording": "Rec ●",
+            "transcribing": "STT…",
+        }
+        tooltips = {
+            "idle": "Record one English utterance with local Parakeet v2.",
+            "starting": "Starting the default microphone…",
+            "recording": "Stop microphone recording and transcribe.",
+            "transcribing": "Transcribing locally with Parakeet v2 INT8…",
+        }
+        button.label = labels[state]
+        button.tooltip = tooltips[state]
+        button.disabled = state in {"starting", "transcribing"}
+        button.variant = "warning" if state == "recording" else "default"
+        button.set_class(state == "recording", "console-dictation-recording")
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
@@ -1905,9 +1932,9 @@ class ConsoleComposerBar(Horizontal):
             indicator.styles.width = "auto"
             indicator.styles.max_width = 28
             clear_button.styles.display = "block"
-            actions.styles.width = 42
-            actions.styles.min_width = 42
-            actions.styles.max_width = 42
+            actions.styles.width = 50
+            actions.styles.min_width = 50
+            actions.styles.max_width = 50
             # TASK-380: keep the action verb (the old "📎✓" read as a status,
             # "attached OK", not a control), and make the tooltips count-accurate
             # now that staging appends up to `total` files (task-217).
@@ -1927,9 +1954,9 @@ class ConsoleComposerBar(Horizontal):
             indicator.styles.display = "none"
             indicator.styles.width = 0
             clear_button.styles.display = "none"
-            actions.styles.width = 37
-            actions.styles.min_width = 37
-            actions.styles.max_width = 37
+            actions.styles.width = 45
+            actions.styles.min_width = 45
+            actions.styles.max_width = 45
             attach_button.label = "Attach"
             attach_button.tooltip = (
                 "Attach files or context through the active Console session."
@@ -2022,9 +2049,9 @@ class ConsoleComposerBar(Horizontal):
             actions = Horizontal(
                 id="console-composer-actions", classes="console-composer-actions"
             )
-            actions.styles.width = 37
-            actions.styles.min_width = 37
-            actions.styles.max_width = 37
+            actions.styles.width = 45
+            actions.styles.min_width = 45
+            actions.styles.max_width = 45
             actions.styles.height = 1
             actions.styles.min_height = 1
             actions.styles.max_height = 1
@@ -2046,6 +2073,13 @@ class ConsoleComposerBar(Horizontal):
                 )
                 stop_button.styles.display = "none"
                 yield stop_button
+                yield self._bounded_button(
+                    "Mic",
+                    width=8,
+                    id="console-dictation",
+                    classes="destination-action-button console-dictation-button",
+                    tooltip="Record one English utterance with local Parakeet v2.",
+                )
                 yield self._bounded_button(
                     "Attach",
                     width=10,

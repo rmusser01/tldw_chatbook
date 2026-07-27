@@ -253,6 +253,26 @@ class TestAudioRecordingService:
         assert service.audio_buffer[0] == chunk
         callback.assert_called_once_with(chunk)
 
+    def test_buffer_limit_keeps_complete_pcm_frames_and_stops_once(
+        self, mock_pyaudio
+    ):
+        """A configured memory limit must stop capture without splitting a frame."""
+        on_limit = Mock()
+        service = AudioRecordingService(
+            backend="pyaudio",
+            channels=2,
+            max_buffer_bytes=7,
+            on_buffer_limit=on_limit,
+        )
+        service.is_recording = True
+
+        service._handle_audio_chunk(b"\x01\x02\x03\x04\x05\x06\x07\x08")
+        service._handle_audio_chunk(b"\x09\x0a\x0b\x0c")
+
+        assert service.audio_buffer == [b"\x01\x02\x03\x04"]
+        assert service.is_recording is False
+        on_limit.assert_called_once_with()
+
     def test_vad_processing(self, mock_pyaudio, mock_vad):
         """Test Voice Activity Detection processing."""
         # Setup VAD

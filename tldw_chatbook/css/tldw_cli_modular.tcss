@@ -4226,9 +4226,9 @@ ConsoleSystemPromptModal {
 }
 
 #console-composer-actions {
-    width: 37;
-    min-width: 37;
-    max-width: 37;
+    width: 45;
+    min-width: 45;
+    max-width: 45;
     height: 1;
     min-height: 1;
     layout: horizontal;

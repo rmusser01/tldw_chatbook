@@ -7,6 +7,7 @@ This document describes the transcription capabilities available in tldw_chatboo
 tldw_chatbook provides a unified transcription service that supports multiple backend providers, each with their own strengths:
 
 - **Faster-Whisper**: Fast, accurate transcription with support for many languages
+- **Parakeet ONNX**: Cross-platform local Parakeet v2 INT8 for explicit English
 - **Qwen2Audio**: Advanced multimodal understanding
 - **Parakeet**: NVIDIA's optimized models for real-time transcription
 - **Canary**: NVIDIA's multilingual model with translation capabilities
@@ -17,6 +18,14 @@ tldw_chatbook provides a unified transcription service that supports multiple ba
 ```bash
 pip install -e ".[audio]"
 ```
+
+### Console Microphone Dictation
+```bash
+pip install -e ".[speech_recording,transcription_parakeet_onnx]"
+```
+
+Install the verified **Parakeet v2 INT8** bundle from **Library → Models**
+before using the Console microphone. The Mic action never downloads a model.
 
 ### NVIDIA Models (Parakeet & Canary)
 ```bash
@@ -84,6 +93,19 @@ chunk_length_seconds = 40.0         # For Canary long audio processing
 - **Best for**: Multilingual transcription and translation
 
 ## Usage in the Application
+
+### Console Dictation
+
+1. Open **Console** and expand the composer.
+2. Select **Mic** to record from the default microphone.
+3. Select **Rec ●** to stop, or wait for the 60-second limit.
+4. After the local **STT…** step, the English transcript is inserted at the
+   current caret. It is not sent automatically.
+
+Console dictation uses explicit `en`, Parakeet v2 INT8, and either
+`transcription.parakeet_onnx_model_dir` or the verified Library-installed
+bundle. Missing dependencies, model files, microphone access, empty audio, and
+transcription failures leave the draft unchanged and display an error.
 
 ### Basic Transcription
 

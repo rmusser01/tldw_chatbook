@@ -4,6 +4,7 @@ import sys
 import wave
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from tldw_chatbook.Local_Ingestion import transcription_service as service_module
@@ -113,3 +114,58 @@ def test_parakeet_onnx_rejects_incomplete_model_directory_before_loading(
             provider="parakeet-onnx",
             model_dir=str(model_dir),
         )
+
+
+def test_parakeet_onnx_transcribes_pcm_buffer_without_staging_a_file(
+    tmp_path, monkeypatch
+) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    for filename in (
+        "config.json",
+        "vocab.txt",
+        "encoder-model.int8.onnx",
+        "decoder_joint-model.int8.onnx",
+    ):
+        (model_dir / filename).touch()
+
+    recognized = []
+
+    class FakeModel:
+        def recognize(self, waveform, *, sample_rate):
+            recognized.append((waveform, sample_rate))
+            return "  Memory only.  "
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setitem(
+        sys.modules,
+        "onnx_asr",
+        SimpleNamespace(load_model=lambda *args, **kwargs: FakeModel()),
+    )
+
+    def reject_temp_file(*args, **kwargs):
+        raise AssertionError("Parakeet buffer transcription must not stage a file")
+
+    monkeypatch.setattr(service_module.tempfile, "NamedTemporaryFile", reject_temp_file)
+
+    pcm = np.array([-32768, 0, 16384, 32767], dtype=np.int16)
+    result = TranscriptionService().transcribe_buffer(
+        pcm.tobytes(),
+        sample_rate=8_000,
+        channels=1,
+        sample_width=2,
+        provider="parakeet-onnx",
+        model="nemo-parakeet-tdt-0.6b-v2",
+        language="en",
+        model_dir=str(model_dir),
+    )
+
+    assert len(recognized) == 1
+    waveform, sample_rate = recognized[0]
+    assert sample_rate == 8_000
+    np.testing.assert_allclose(
+        waveform,
+        np.array([-1.0, 0.0, 0.5, 32767 / 32768], dtype=np.float32),
+    )
+    assert result["text"] == "Memory only."
+    assert result["segments"][0]["end"] == pytest.approx(4 / 8_000)

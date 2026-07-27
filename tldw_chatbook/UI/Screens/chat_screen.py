@@ -371,6 +371,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 logger = logger.bind(module="ChatScreen")
+CONSOLE_DICTATION_MAX_SECONDS = 60.0
 CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
@@ -2103,6 +2104,12 @@ class ChatScreen(BaseAppScreen):
         self._console_conversation_browser_total: int | None = None
         self._console_conversation_browser_error = ""
         self._console_visible_draft_session_id: str | None = None
+        self._console_dictation_session: Any | None = None
+        self._console_dictation_state: Literal[
+            "idle", "starting", "recording", "transcribing"
+        ] = "idle"
+        self._console_dictation_timer: Any | None = None
+        self._console_dictation_origin_session_id: str | None = None
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_command_registry: ConsoleCommandRegistry = (
@@ -3832,6 +3839,172 @@ class ChatScreen(BaseAppScreen):
         if composers and isinstance(composers[0], ConsoleComposerBar):
             return composers[0]
         return None
+
+    def _set_console_dictation_state(
+        self,
+        state: Literal["idle", "starting", "recording", "transcribing"],
+    ) -> None:
+        """Set the one-shot dictation state and refresh its visible control."""
+        self._console_dictation_state = state
+        composer = self._console_composer_or_none()
+        if composer is not None:
+            composer.sync_dictation_state(state)
+
+    def _cancel_console_dictation_timer(self) -> None:
+        timer = self._console_dictation_timer
+        self._console_dictation_timer = None
+        if timer is not None:
+            timer.stop()
+
+    def _notify_console_dictation_error(self, exc: Exception) -> None:
+        """Return dictation to idle and show its actionable failure."""
+        self._cancel_console_dictation_timer()
+        self._console_dictation_origin_session_id = None
+        self._console_dictation_session = None
+        self._set_console_dictation_state("idle")
+        self.app_instance.notify(f"Dictation failed: {exc}", severity="error")
+
+    def _on_console_dictation_buffer_limit(self) -> None:
+        """Marshal a recorder-thread memory-limit signal onto the UI thread."""
+        try:
+            self.app.call_from_thread(self._handle_console_dictation_limit)
+        except NoActiveAppError:
+            return
+
+    def _handle_console_dictation_limit(self) -> None:
+        """Stop and transcribe when the wall-clock or memory bound is reached."""
+        if self._console_dictation_state != "recording":
+            return
+        self.app_instance.notify(
+            "Dictation limit reached; transcribing the captured audio.",
+            severity="warning",
+        )
+        self._request_console_dictation_stop()
+
+    @staticmethod
+    def _create_console_dictation_session() -> Any:
+        """Load the optional local STT stack only when the Mic action is used."""
+        from tldw_chatbook.Audio.console_dictation import ConsoleDictationSession
+
+        return ConsoleDictationSession()
+
+    async def _start_console_dictation(self) -> None:
+        session = (
+            self._console_dictation_session
+            or self._create_console_dictation_session()
+        )
+        self._console_dictation_session = session
+        try:
+            await asyncio.to_thread(
+                session.start,
+                on_buffer_limit=self._on_console_dictation_buffer_limit,
+            )
+        except Exception as exc:
+            self._notify_console_dictation_error(exc)
+            return
+        if not self.is_mounted:
+            await asyncio.to_thread(session.discard)
+            return
+        self._set_console_dictation_state("recording")
+        self._console_dictation_timer = self.set_timer(
+            CONSOLE_DICTATION_MAX_SECONDS,
+            self._handle_console_dictation_limit,
+        )
+
+    @staticmethod
+    def _dictation_insertion(
+        draft: str,
+        cursor: int,
+        transcript: str,
+    ) -> str:
+        """Return transcript text padded only where adjacent text needs spacing."""
+        cursor = max(0, min(cursor, len(draft)))
+        insertion = transcript.strip()
+        if cursor and not draft[cursor - 1].isspace():
+            insertion = " " + insertion
+        if cursor < len(draft) and not draft[cursor].isspace():
+            insertion += " "
+        return insertion
+
+    def _insert_console_dictation(
+        self,
+        *,
+        origin_session_id: str | None,
+        transcript: str,
+    ) -> None:
+        """Insert into the originating draft without sending a message."""
+        if not origin_session_id:
+            return
+        store = self._ensure_console_chat_store()
+        composer = self._console_composer_or_none()
+        if (
+            composer is not None
+            and store.active_session_id == origin_session_id
+            and self._console_visible_draft_session_id == origin_session_id
+        ):
+            insertion = self._dictation_insertion(
+                composer.draft_text(),
+                composer.cursor_index,
+                transcript,
+            )
+            composer.insert_text(insertion)
+            store.set_session_draft(origin_session_id, composer.draft_text())
+            return
+
+        try:
+            draft = store.session_draft(origin_session_id)
+            insertion = self._dictation_insertion(draft, len(draft), transcript)
+            store.set_session_draft(origin_session_id, draft + insertion)
+        except KeyError:
+            self.app_instance.notify(
+                "Dictation finished, but its original Console session is gone.",
+                severity="warning",
+            )
+
+    async def _stop_console_dictation(self) -> None:
+        session = self._console_dictation_session
+        origin_session_id = self._console_dictation_origin_session_id
+        if session is None:
+            self._notify_console_dictation_error(
+                RuntimeError("Microphone dictation is not recording.")
+            )
+            return
+        try:
+            transcript = await asyncio.to_thread(session.stop_and_transcribe)
+        except Exception as exc:
+            self._notify_console_dictation_error(exc)
+            return
+        if not self.is_mounted:
+            return
+        self._insert_console_dictation(
+            origin_session_id=origin_session_id,
+            transcript=transcript,
+        )
+        self._console_dictation_origin_session_id = None
+        self._set_console_dictation_state("idle")
+
+    def _request_console_dictation_stop(self) -> None:
+        if self._console_dictation_state != "recording":
+            return
+        self._cancel_console_dictation_timer()
+        self._set_console_dictation_state("transcribing")
+        self.run_worker(
+            self._stop_console_dictation(),
+            exclusive=True,
+            group="console-dictation-stop",
+        )
+
+    def _request_console_dictation_start(self) -> None:
+        if self._console_dictation_state != "idle":
+            return
+        store = self._ensure_console_chat_store()
+        self._console_dictation_origin_session_id = store.active_session_id
+        self._set_console_dictation_state("starting")
+        self.run_worker(
+            self._start_console_dictation(),
+            exclusive=True,
+            group="console-dictation-start",
+        )
 
     def _capture_console_draft_switch_snapshot(self) -> None:
         """Record the composer state at the moment a session switch begins.
@@ -9947,6 +10120,13 @@ class ChatScreen(BaseAppScreen):
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
         self._stop_console_transcript_sync_timer()
+        self._cancel_console_dictation_timer()
+        dictation_session = self._console_dictation_session
+        self._console_dictation_session = None
+        self._console_dictation_origin_session_id = None
+        self._console_dictation_state = "idle"
+        if dictation_session is not None:
+            await asyncio.to_thread(dictation_session.discard)
         self._console_original_attempt_previews.clear()
         controller = self._console_chat_controller
         if controller is not None:
@@ -14662,6 +14842,7 @@ class ChatScreen(BaseAppScreen):
             send_blocked=send_blocked,
             setup_blocked_reason=setup_blocked_reason or attachment_blocked_reason,
         )
+        composer.sync_dictation_state(self._console_dictation_state)
         # sync_action_state resets the attach button's tooltip to generic copy
         # (console_composer_bar.py L303); apply the pending-attachment label
         # after, not before, so "Attached: ..." wins over the generic tooltip.
@@ -15361,6 +15542,13 @@ class ChatScreen(BaseAppScreen):
 
         if button_id == "console-send-message":
             await self.handle_console_send_message(event)
+            return
+        if button_id == "console-dictation":
+            event.stop()
+            if self._console_dictation_state == "idle":
+                self._request_console_dictation_start()
+            elif self._console_dictation_state == "recording":
+                self._request_console_dictation_stop()
             return
         if button_id in {
             "console-stop-generation",
