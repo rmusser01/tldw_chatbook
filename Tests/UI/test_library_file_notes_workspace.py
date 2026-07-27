@@ -86,6 +86,18 @@ def _replace_editor_text(editor: TextArea, text: str) -> None:
     editor.replace(text, editor.selection.start, editor.selection.end)
 
 
+def _delayed_call(call):
+    started = threading.Event()
+    release = threading.Event()
+
+    def delayed(*args, **kwargs):
+        started.set()
+        release.wait(5)
+        return call(*args, **kwargs)
+
+    return delayed, started, release
+
+
 @pytest.mark.asyncio
 async def test_empty_offline_and_persisted_root_states(
     tmp_path: Path,
@@ -297,6 +309,7 @@ async def test_tree_search_open_dirty_and_autosave_keep_one_editor(
 @pytest.mark.asyncio
 async def test_create_move_delete_protect_and_restore_use_real_service(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "notes"
     root.mkdir()
@@ -312,14 +325,29 @@ async def test_create_move_delete_protect_and_restore_use_real_service(
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("start.md")
 
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        service = workspace._service
+        assert service is not None
+        delayed_create, create_started, release_create = _delayed_call(
+            service.create_file
+        )
+        monkeypatch.setattr(service, "create_file", delayed_create)
         path_input = workspace.query_one("#file-notes-path", Input)
         path_input.value = "created.md"
-        workspace.query_one("#file-notes-new", Button).press()
+        create_button = workspace.query_one("#file-notes-new", Button)
+        creating = asyncio.create_task(workspace._new_file(Button.Pressed(create_button)))
+        await _wait_until(pilot, create_started.is_set, "new file did not start")
+        editor.focus()
+        await pilot.press("x")
+        state_during_create = (editor.read_only, workspace.leave_allowed, editor.text)
+        release_create.set()
+        await creating
         await _wait_until(
             pilot,
             lambda: workspace.current_path == "created.md",
             "new file did not open",
         )
+        assert state_during_create == (True, False, "start")
         assert (root / "created.md").exists()
 
         workspace.query_one("#file-notes-protect", Button).press()
@@ -559,6 +587,7 @@ async def test_recently_deleted_survives_a_second_workspace(
 @pytest.mark.asyncio
 async def test_poll_and_narrow_navigation_retain_the_text_area(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "notes"
     root.mkdir()
@@ -596,17 +625,36 @@ async def test_poll_and_narrow_navigation_retain_the_text_area(
         assert not workspace.navigator_visible
         assert workspace.query_one("#file-notes-editor", TextArea) is editor
 
+        service = workspace._service
+        assert service is not None
+        delayed_open, reload_started, release_reload = _delayed_call(
+            service.open_file
+        )
+        monkeypatch.setattr(service, "open_file", delayed_open)
         (root / "open.md").write_text("external", encoding="utf-8")
         (root / "created.md").write_text("new", encoding="utf-8")
         (root / "delete.md").unlink()
         await _wait_until(
             pilot,
+            reload_started.is_set,
+            "external reload did not start",
+        )
+        _replace_editor_text(editor, "draft during reload")
+        await _wait_until(
+            pilot,
+            lambda: workspace.save_state == "dirty",
+            "reload-window edit did not become dirty",
+        )
+        release_reload.set()
+        await _wait_until(
+            pilot,
             lambda: (
                 set(workspace.entries) == {"created.md", "folder/nested.md", "open.md"}
-                and editor.text == "external"
+                and workspace.save_state == "conflict"
             ),
             "poll did not reconcile external create/modify/delete",
         )
+        assert editor.text == "draft during reload"
         assert workspace.query_one("#file-notes-editor", TextArea) is editor
         refreshed_folder = next(
             node
