@@ -487,6 +487,29 @@ class _NonClosingHandle(_RecordingHandle):
         self.closed = True
 
 
+class _SequencedClosedHandle:
+    def __init__(
+        self,
+        closed_reads: list[bool | BaseException],
+        *,
+        closed: bool,
+    ) -> None:
+        self.closed_reads = closed_reads
+        self.is_closed = closed
+
+    @property
+    def closed(self) -> bool:
+        if self.closed_reads:
+            result = self.closed_reads.pop(0)
+            if isinstance(result, BaseException):
+                raise result
+            return result
+        return self.is_closed
+
+    def close(self) -> None:
+        self.is_closed = True
+
+
 class _NonClosingRealHandle:
     def __init__(self, delegate: BinaryIO) -> None:
         self.delegate = delegate
@@ -1753,6 +1776,73 @@ def test_closed_residual_reports_not_acquired_and_normalizes_on_next_operation(
         check_interval_seconds=0.005,
     ) as recovered:
         assert recovered.acquired is True
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(19)])
+def test_acquire_preflight_preserves_first_inspection_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt: BaseException,
+) -> None:
+    handle = _SequencedClosedHandle([interrupt, False], closed=False)
+    lease = ProfileStoreLease(
+        tmp_path / "profiles.sqlite3",
+        ProfileStoreLockMode.EXCLUSIVE,
+    )
+    object.__setattr__(lease, "_handle", handle)
+    monkeypatch.setattr(portalocker, "unlock", lambda current_handle: None)
+
+    try:
+        with pytest.raises(type(interrupt)) as exc_info:
+            lease.acquire()
+
+        assert exc_info.value is interrupt
+        assert object.__getattribute__(lease, "_handle") is handle
+        assert lease.acquired is True
+    finally:
+        lease.release()
+
+    assert handle.closed is True
+    assert lease.acquired is False
+
+
+@pytest.mark.parametrize(
+    "inspection_error",
+    [
+        OSError("closed-read-private-secret"),
+        KeyboardInterrupt(),
+        SystemExit(20),
+    ],
+)
+def test_acquire_preflight_guards_second_closed_inspection(
+    tmp_path: Path,
+    inspection_error: BaseException,
+) -> None:
+    handle = _SequencedClosedHandle([True, inspection_error], closed=True)
+    lease = ProfileStoreLease(
+        tmp_path / "private-profiles.sqlite3",
+        ProfileStoreLockMode.EXCLUSIVE,
+    )
+    object.__setattr__(lease, "_handle", handle)
+
+    if isinstance(inspection_error, Exception):
+        with pytest.raises(ProfileRepositoryError) as exc_info:
+            lease.acquire()
+        _assert_safe_repository_error(
+            exc_info.value,
+            "operation_failed",
+            "closed-read-private-secret",
+            "private-profiles.sqlite3",
+        )
+    else:
+        with pytest.raises(type(inspection_error)) as exc_info:
+            lease.acquire()
+        assert exc_info.value is inspection_error
+
+    assert object.__getattribute__(lease, "_handle") is handle
+    assert lease.acquired is False
+    lease.release()
+    assert object.__getattribute__(lease, "_handle") is None
 
 
 def test_release_retains_nonclosed_handle_conservatively(

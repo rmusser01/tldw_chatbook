@@ -61,6 +61,20 @@ def _handle_requires_cleanup(handle: BinaryIO | None) -> bool:
         return True
 
 
+def _transition_handle_requires_cleanup(handle: BinaryIO) -> bool:
+    """Inspect transition liveness while preserving control-flow exceptions."""
+
+    inspection_failed = False
+    handle_closed = False
+    try:
+        handle_closed = handle.closed
+    except Exception:
+        inspection_failed = True
+    if inspection_failed:
+        raise ProfileRepositoryError("operation_failed")
+    return not handle_closed
+
+
 def _unlock_and_close(
     handle: BinaryIO,
     *,
@@ -199,10 +213,9 @@ class ProfileStoreLease:
             if existing_handle is None or id(existing_handle) in normalized_ids:
                 continue
             normalized_ids.add(id(existing_handle))
-            if _handle_requires_cleanup(existing_handle):
+            if _transition_handle_requires_cleanup(existing_handle):
                 raise ProfileRepositoryError("invalid_state")
             normalization_error = self._clear_handle_state(existing_handle)
-            self._force_clear_represented_handle(existing_handle)
             _raise_recovery_failure(None, normalization_error)
 
         timing_failed = False
@@ -361,9 +374,9 @@ class ProfileStoreLease:
     def _clear_handle_state(self, expected_handle: BinaryIO) -> BaseException | None:
         """Identity-normalize a matching closed handle."""
 
-        if not expected_handle.closed:
-            return None
         try:
+            if not expected_handle.closed:
+                return None
             if self._handle is expected_handle:
                 self._handle = None
             if object.__getattribute__(self, "_residual_handle") is expected_handle:
