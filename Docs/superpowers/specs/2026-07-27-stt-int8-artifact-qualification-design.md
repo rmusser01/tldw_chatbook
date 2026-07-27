@@ -357,14 +357,22 @@ language removal until the macro happens to pass.
 The v3 artifact decision is evaluated in this order:
 
 1. Any incomplete required cell produces `artifact_candidate=incomplete`.
-2. Complete per-language failures are recorded as excluded languages without
+2. If all languages fail conclusively, the empty provisional set produces
+   `artifact_candidate=fail`; macro-family gates are `not_applicable`, not
+   incomplete.
+3. Complete per-language failures are recorded as excluded languages without
    failing the artifact for the remaining languages.
-3. Global model/runtime, silence, long-form, memory, throughput, batch-reuse,
+4. Global model/runtime, silence, long-form, memory, throughput, batch-reuse,
    or surviving-set macro failure produces `artifact_candidate=fail` and blocks
    every v3 language.
-4. When all global gates pass and at least one language survives,
+5. When all global gates pass and at least one language survives,
    `artifact_candidate=pass` contains the final candidate-language set plus the
    explicitly excluded failed languages.
+
+Only non-empty primary-metric families among the surviving languages are
+bootstrapped and gated. If one family is empty while another has survivors, the
+empty family is recorded as `not_applicable`; it is neither bootstrapped nor
+treated as incomplete.
 
 The v2 artifact has no per-language subset: incomplete English/global evidence
 is incomplete, and any complete English or global failure produces
@@ -411,6 +419,8 @@ Tests cover:
   pairing, delta direction, macro-family intervals, and adverse-bound gates;
 - the complete 24-language comparison matrix, insufficient populations,
   missing cells, and mismatched experiment/run fingerprints;
+- a conclusive zero-survivor v3 result and an empty primary-metric family when
+  another family still has survivors;
 - silence and timestamp validation;
 - requested/effective VAD `batch_size=1`, including missing, ignored, and
   mismatched effective settings;
