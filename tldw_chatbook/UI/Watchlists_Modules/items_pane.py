@@ -45,16 +45,21 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
     def compose(self):
         with Horizontal(id="items-toolbar", classes="destination-filter-strip"):
             yield Button("Refresh", id="items-refresh-button", variant="primary")
+            # TASK-995: same one-row-strip/three-row-child clipping the
+            # Sources toolbar had -- `.destination-filter-strip` is
+            # `height: 1`. See `sources_pane.compose()` for the full note.
             yield Input(
                 placeholder="Search items...",
                 id="items-search-input",
                 value=self.search_query,
+                compact=True,
             )
             yield Select(
                 self._STATUS_OPTIONS,
                 value=self.status_filter,
                 id="items-status-select",
                 allow_blank=False,
+                compact=True,
             )
 
         table = DataTable(id="items-table")

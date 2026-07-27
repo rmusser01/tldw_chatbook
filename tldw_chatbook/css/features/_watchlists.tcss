@@ -557,3 +557,88 @@ WatchlistSourcePickerDialog {
 #sources-toolbar {
     height: auto;
 }
+
+/* TASK-995. The Sources toolbar rendered as one bare `▊▔▔▔` bar with no
+ * controls at all, which blocked the entire new-user path: create a
+ * watchlist, press "Create source", and there is no visible way to add one.
+ *
+ * Two independent causes compounded, and both are fixed here.
+ *
+ * 1. HEIGHT. `.destination-filter-strip` is `height: 1`
+ *    (layout/_panes.tcss) but a bordered `Input`/`Select` is three rows, so
+ *    only the top border row survived. The widgets now pass `compact=True`
+ *    (sources_pane.py / items_pane.py / watchlists_collections_screen.py),
+ *    Textual's own supported one-row form -- the same idiom this codebase
+ *    already uses ~300 times, including for `Input`/`Select` in
+ *    mcp_server_mutations.py. That is done in Python rather than by
+ *    un-pinning the strip: `.destination-filter-strip` is shared chrome
+ *    (schedules, workflows and four sibling Watchlists toolbars), and the
+ *    one-row strip is this screen's design language -- the tab strip, the
+ *    tree action row and the header bar are all one row. Growing the strip
+ *    to three rows instead would have cost the Sources table a quarter of
+ *    its rows at 160x42, re-opening TASK-897.
+ *
+ * 2. WIDTH, which the strip's height alone would not have fixed. Nothing
+ *    sized these controls, so `Input`'s Textual default (`width: 100%`) and
+ *    `_conversations.tcss`'s bare global `Select { width: 100%; }` each
+ *    claimed the FULL strip: measured at 160x42 the four of them stacked to
+ *    x=31,122,213,304 in a pane 93 columns wide, putting `New Source` at
+ *    x=395 -- 300 columns off the right edge of a 160-column terminal. The
+ *    explicit widths below are what keeps every control on screen.
+ *
+ *    These must live in the bundle, not in a widget's `DEFAULT_CSS`:
+ *    Textual always ranks a CSS_PATH rule above any `DEFAULT_CSS` rule
+ *    regardless of specificity, so that bare `Select { width: 100% }` beats
+ *    DEFAULT_CSS every time. Same lesson as `#mcp-tools-filter-server-slot
+ *    Select` and `#mcp-audit-filter-*` in components/_agentic_terminal.tcss.
+ *    `margin: 0` is part of that override too -- the same global rule adds
+ *    `margin-bottom: 1`, which would push a one-row Select to two rows.
+ *
+ * Widths are sized to their longest option label plus the dropdown arrow
+ * ("All statuses" 12, "Playlist"/"Inactive" 8), leaving the search box the
+ * remainder: 19 columns at 160x42 and 94 at 235x52.
+ */
+#sources-toolbar Input,
+#sources-toolbar Select,
+#items-toolbar Input,
+#items-toolbar Select,
+#watchlists-header-bar Select {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+#sources-search-input {
+    width: 1fr;
+    min-width: 12;
+}
+
+#sources-type-select {
+    width: 12;
+}
+
+#sources-status-filter {
+    width: 16;
+}
+
+#sources-active-filter {
+    width: 12;
+}
+
+#sources-tags-filter {
+    width: 1fr;
+    min-width: 12;
+}
+
+#items-search-input {
+    width: 1fr;
+    min-width: 12;
+}
+
+#items-status-select {
+    width: 16;
+}
+
+#watchlists-backend-select {
+    width: 12;
+}

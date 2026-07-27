@@ -3268,3 +3268,140 @@ async def test_watchlists_tree_blocked_verbs_render_as_disabled_under_the_bundle
             "the disabled action paints identically to the live one under the "
             "production stylesheet"
         )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
+    """TASK-995: the Sources toolbar drew no controls at all.
+
+    `.destination-filter-strip` is `height: 1` (`layout/_panes.tcss`), but a
+    bordered `Input`/`Select` is three rows, so the strip carrying the search
+    box, the three filters, `New Source` and `Filters` rendered as its top
+    border and nothing else. Captured live on a clean profile:
+
+        ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+            Preview        Check now      Import OPML     Export OPML
+
+    That blocked the whole new-user path: create a watchlist, click
+    "Create source", and there is no visible way to add one.
+
+    The Rules strip holds only `Button`s and rendered correctly, which is why
+    this asserts on the widgets that are three rows tall rather than on the
+    strip class.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        for selector in (
+            "#sources-search-input",
+            "#sources-type-select",
+            "#sources-status-filter",
+            "#sources-active-filter",
+            "#sources-new-button",
+            "#sources-filter-toggle",
+        ):
+            widget = pane.query_one(selector)
+            assert widget.region.height >= 1, (
+                f"{selector} is clipped to nothing: {widget.region}"
+            )
+            assert widget.region.width > 0, (
+                f"{selector} has no width: {widget.region}"
+            )
+            # Clipping was only half of it. Nothing sized these controls, so
+            # `Input`'s `width: 100%` default and the global
+            # `Select { width: 100% }` each claimed the whole strip and
+            # stacked: `New Source` measured Region(x=395, ...) inside a pane
+            # 93 columns wide on a 160-column terminal. A control that is
+            # three hundred columns off the right edge is just as unusable as
+            # one clipped to its border, and neither `height` nor
+            # `render_strips` alone catches it, so assert containment.
+            assert widget.region.right <= pane.region.right, (
+                f"{selector} overflows the Sources pane horizontally: "
+                f"{widget.region} is outside {pane.region}"
+            )
+            assert widget.region.x >= pane.region.x, (
+                f"{selector} starts left of the Sources pane: "
+                f"{widget.region} vs {pane.region}"
+            )
+
+        # Regions are not enough on their own: a three-row control inside a
+        # one-row strip still reports a region while painting only its
+        # border. Every label has to actually reach the screen.
+        strips = screen._compositor.render_strips()
+        strip_row = pane.query_one("#sources-search-input").region.y
+        painted = "".join(seg.text for seg in strips[strip_row])
+        for label in (
+            "Search sources...",  # the search Input's placeholder
+            "All statuses",  # the status Select's current value
+            "New Source",
+            "Filters",
+        ):
+            assert label in painted, (
+                f"{label!r} never reaches the screen; the Sources toolbar is "
+                f"still unusable at {size}. Row {strip_row} paints: "
+                f"{painted.strip()!r}"
+            )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_other_filter_strip_controls_are_visible(size):
+    """TASK-995 AC#3: the same defect, everywhere else it occurs.
+
+    `.destination-filter-strip` is shared chrome, so the Sources toolbar was
+    checked against every other user of it. Schedules, Workflows and the
+    Runs/Rules/Notifications toolbars put only `Static`s and `Button`s in
+    theirs and were never affected; the two that carry an `Input` or a
+    `Select`, and so had exactly the Sources defect, are the Items toolbar
+    and the screen's own backend header bar. Both are asserted here so the
+    UAT does not have to find them a second time.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+
+        items_pane = screen.query_one("#watchlists-items-pane")
+        for selector in ("#items-search-input", "#items-status-select"):
+            widget = screen.query_one(selector)
+            assert widget.region.height >= 1 and widget.region.width > 0, (
+                f"{selector} is clipped to nothing: {widget.region}"
+            )
+            assert widget.region.right <= items_pane.region.right, (
+                f"{selector} overflows the Items pane horizontally: "
+                f"{widget.region} is outside {items_pane.region}"
+            )
+
+        strips = screen._compositor.render_strips()
+        items_row = screen.query_one("#items-search-input").region.y
+        painted = "".join(seg.text for seg in strips[items_row])
+        for label in ("Search items...", "All statuses"):
+            assert label in painted, (
+                f"{label!r} never reaches the screen; the Items toolbar is "
+                f"clipped at {size}. Row {items_row} paints: {painted.strip()!r}"
+            )
+
+        backend = screen.query_one("#watchlists-backend-select")
+        assert backend.region.height >= 1 and backend.region.width > 0, (
+            f"the backend Select is clipped to nothing: {backend.region}"
+        )
+        assert backend.region.right <= screen.size.width, (
+            f"the backend Select is off the right edge: {backend.region}"
+        )
+        header_painted = "".join(seg.text for seg in strips[backend.region.y])
+        assert "Local" in header_painted, (
+            "the backend Select's current value never reaches the screen; "
+            f"row {backend.region.y} paints: {header_painted.strip()!r}"
+        )

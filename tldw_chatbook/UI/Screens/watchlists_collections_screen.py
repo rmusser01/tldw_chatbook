@@ -1248,11 +1248,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 classes="ds-destination-header",
             )
             with Horizontal(id="watchlists-header-bar", classes="destination-filter-strip"):
+                # TASK-995: `compact=True` for the same reason as the
+                # Sources/Items toolbars -- `.destination-filter-strip` is
+                # `height: 1` and a bordered Select is three rows, so this
+                # backend picker was painting its top border and nothing
+                # else. See `sources_pane.compose()`.
                 yield Select(
                     [("Local", "local"), ("Server", "server")],
                     value=self.runtime_backend,
                     id="watchlists-backend-select",
                     allow_blank=False,
+                    compact=True,
                     disabled=self.active_section == "notifications",
                     tooltip=(
                         "The notifications inbox is local to this device."
