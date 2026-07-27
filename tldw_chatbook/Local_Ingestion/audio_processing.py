@@ -711,15 +711,32 @@ class LocalAudioProcessor:
             chunk_overlap=overlap,
             method=method,
         )
-        # It returns dicts carrying 'text' plus offsets, not bare strings; the
-        # previous wrapping nested the whole dict under another "text" key.
-        return [
-            {
-                "text": chunk["text"] if isinstance(chunk, dict) else str(chunk),
+        # It returns dicts carrying 'text' plus real character offsets, not bare
+        # strings; the previous wrapping nested the whole dict under another
+        # "text" key. Carry the offsets through rather than dropping them: the
+        # storage path otherwise re-derives them by summing chunk lengths, which
+        # double-counts whenever chunks overlap and drifts whenever chunk text is
+        # trimmed -- and overlap is on by default here.
+        normalised = []
+        for index, chunk in enumerate(chunks):
+            if isinstance(chunk, dict):
+                text = chunk.get("text", "")
+                start_char = chunk.get("start_char")
+                end_char = chunk.get("end_char")
+                chunk_index = chunk.get("chunk_index", index)
+            else:
+                text, start_char, end_char, chunk_index = str(chunk), None, None, index
+            entry = {
+                "text": text,
                 "metadata": {"method": method, "language": language},
+                "chunk_index": chunk_index,
             }
-            for chunk in chunks
-        ]
+            if start_char is not None:
+                entry["start_char"] = start_char
+            if end_char is not None:
+                entry["end_char"] = end_char
+            normalised.append(entry)
+        return normalised
 
     def _analyze_content(
         self,
@@ -810,13 +827,16 @@ class LocalAudioProcessor:
                 chunks_to_add = []
                 for i, chunk in enumerate(result["chunks"]):
                     chunk_text = chunk.get("text", "")
-                    # Calculate start and end indices based on chunk position
-                    # This is approximate since we don't have exact character positions
-                    text_length = len(chunk_text)
-                    start_index = sum(
-                        len(c.get("text", "")) for c in result["chunks"][:i]
-                    )
-                    end_index = start_index + text_length
+                    # Prefer the chunker's real character offsets. Summing prior
+                    # chunk lengths only happens to be right when chunks neither
+                    # overlap nor get trimmed; with overlap on it double-counts.
+                    start_index = chunk.get("start_char")
+                    end_index = chunk.get("end_char")
+                    if start_index is None or end_index is None:
+                        start_index = sum(
+                            len(c.get("text", "")) for c in result["chunks"][:i]
+                        )
+                        end_index = start_index + len(chunk_text)
 
                     chunks_to_add.append(
                         {
