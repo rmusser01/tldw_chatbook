@@ -127,7 +127,7 @@ async def test_evals_composes_mode_strip_under_destination_header_via_real_app()
         await pilot.pause(0.1)
         screen = app.screen_stack[-1]
 
-        header = screen.query_one("#evals-destination-header", DestinationHeader)
+        header = screen.query_one("#lab-destination-header", DestinationHeader)
         strip = screen.query_one("#lab-mode-strip", LabModeStrip)
         assert strip.active_route == "evals"
         # DestinationHeader precedes the mode strip in document order --

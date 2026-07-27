@@ -27,7 +27,7 @@ LAB_COLLAPSED_RAILS_KEY = "collapsed_rails"
 LAB_FIRST_RUN_LAYOUT = LabRailLayout(collapsed=frozenset({LAB_RAIL_INSPECTOR}))
 
 
-def load_rail_layout() -> LabRailLayout:
+def load_rail_layout(first_run: LabRailLayout | None = None) -> LabRailLayout:
     """Read collapse state from config.
 
     Distinguishes "never saved" from "saved as empty": ``get_cli_setting``
@@ -36,13 +36,21 @@ def load_rail_layout() -> LabRailLayout:
     explicitly expanded everything. Collapsing that distinction would
     re-impose the first-run default on every session.
 
+    Args:
+        first_run: Layout to use when nothing is stored. Defaults to
+            :data:`LAB_FIRST_RUN_LAYOUT`. A mode whose inspector carries
+            content rather than optional detail passes its own -- Evals'
+            readiness inspector is not something to go looking for behind a
+            handle on first run.
+
     Returns:
-        The stored layout, or :data:`LAB_FIRST_RUN_LAYOUT` when unset or
-        unreadable.
+        The stored layout, or ``first_run`` when unset or unreadable. Stored
+        state is shared across Lab modes, so this only governs first run.
     """
+    fallback = LAB_FIRST_RUN_LAYOUT if first_run is None else first_run
     raw: Any = get_cli_setting(LAB_CONFIG_SECTION, LAB_COLLAPSED_RAILS_KEY, None)
     if raw is None:
-        return LAB_FIRST_RUN_LAYOUT
+        return fallback
     if not isinstance(raw, list):
         logger.warning(
             "Ignoring non-list {}.{} value {!r}; using the first-run layout.",
@@ -50,7 +58,7 @@ def load_rail_layout() -> LabRailLayout:
             LAB_COLLAPSED_RAILS_KEY,
             raw,
         )
-        return LAB_FIRST_RUN_LAYOUT
+        return fallback
     known = {value for value in raw if isinstance(value, str) and value in LAB_RAILS}
     return LabRailLayout(collapsed=frozenset(known))
 

@@ -246,7 +246,14 @@
    own -- the wrapping #evals-results-grid does not need `overflow-y: auto`
    itself. */
 #evals-results-grid {
-    height: 100%;
+    /* `1fr`, not `100%` -- which is what the comment above always claimed.
+       `100%` is the full parent height regardless of siblings, so with the
+       meta row above it the grid ran exactly one line past the bottom of
+       the detail pane. The pane's old `border: solid` happened to absorb
+       that overflow; removing the border when Evals moved onto the Lab
+       frame exposed it. `1fr` takes what is left after siblings, which is
+       what "fills its detail pane" means. */
+    height: 1fr;
     min-height: 0;
 }
 

@@ -122,7 +122,7 @@ async def test_screen_mounts_the_three_pane_workbench(evals_app):
     async with evals_app.run_test() as pilot:
         await pilot.pause()
         screen = evals_app.screen
-        assert screen.query_one("#evals-workbench")
+        assert screen.query_one("#lab-workbench")
         assert screen.query_one("#evals-library-pane")
         assert screen.query_one("#evals-detail-pane")
         assert screen.query_one("#evals-inspector-pane")
@@ -213,7 +213,7 @@ async def test_workbench_height_matches_available_body_height(evals_app):
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         screen = evals_app.screen
-        workbench = screen.query_one("#evals-workbench")
+        workbench = screen.query_one("#lab-workbench")
         available = screen.size.height - workbench.region.y
         unused = available - workbench.region.height
         assert 0 <= unused <= 2, (

@@ -94,6 +94,11 @@ class LabScreen(BaseAppScreen):
         Binding("right_square_bracket", "lab_mode_focus(1)", "Next mode", show=False),
     ]
 
+    #: Rail collapse state for a first run only -- once the user toggles
+    #: anything, the stored (mode-shared) value wins. Override in a mode
+    #: whose inspector holds content rather than optional detail.
+    LAB_FIRST_RUN_RAILS: LabRailLayout | None = None
+
     #: Footer hints registered for every Lab mode.
     #:
     #: "Move mode focus", not "Switch mode": `action_lab_mode_focus` only
@@ -115,7 +120,9 @@ class LabScreen(BaseAppScreen):
             kwargs: Forwarded to ``BaseAppScreen``.
         """
         super().__init__(app_instance, screen_name, **kwargs)
-        self.rail_layout: LabRailLayout = load_rail_layout()
+        self.rail_layout: LabRailLayout = load_rail_layout(
+            self.LAB_FIRST_RUN_RAILS
+        )
         #: Ids this screen has already warned about missing, so a 2-second
         #: refresh timer logs a stale/unknown chip or row once rather than
         #: forever.

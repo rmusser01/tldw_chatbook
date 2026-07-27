@@ -10,14 +10,17 @@ mode strip render, the body is empty) and by an isolated reproduction here
 during Task 3 (a nested ``Screen``'s own descendants report
 ``region=Region(0, 0, 0, 0)`` despite existing in the DOM).
 
-This screen replaces that architecture with the house three-pane
-workbench -- library rail, detail pane, readiness inspector -- driven by
-selection state (``EvalsSelection``, ``evals_state.py``) instead of a
-hand-rolled screen stack. **No ``Screen`` subclass is mounted inside any
-workbench container here.** Detail and inspector content is swapped by a
-screen-level ``refresh(recompose=True)`` on selection change, which tears
-down and remounts plain widgets (``Static``/``Button``/``Vertical``) --
-never a ``Screen``.
+This screen replaces that architecture with the shared Lab frame
+(``lab_frame.LabScreen``): the library rail, detail body and readiness
+inspector are the frame's three regions, driven by selection state
+(``EvalsSelection``, ``evals_state.py``) instead of a hand-rolled screen
+stack. **No ``Screen`` subclass is mounted inside any region here.** Detail
+and inspector content is swapped by a screen-level
+``refresh(recompose=True)`` on selection change, which tears down and
+remounts plain widgets (``Static``/``Button``/``Vertical``) -- never a
+``Screen``. ``LabScreen.recompose()`` repopulates the regions and
+re-schedules the deferred body afterwards, which is what makes that
+selection-driven recompose safe here.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from ...DB.Evals_DB import EvalsDB
@@ -42,22 +45,36 @@ from ..Evals.inspector import EvalsCellInspector, EvalsInspector
 from ..Evals.library_rail import RAIL_SECTIONS, LibraryRail
 from ..Evals.results_grid import ResultsGrid
 from ..Evals.snippet_editor import SnippetEditor
-from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState
-from ..Workbench.workbench_widgets import DestinationHeader
-from .lab_mode_strip import LabModeStrip
+from ..Lab_Modules.lab_rail_layout import LabRailLayout
+from .lab_frame import LabScreen
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 
-class EvalsScreen(BaseAppScreen):
-    """Evals destination seat: library rail + detail pane + readiness inspector."""
+class EvalsScreen(LabScreen):
+    """Evals mode: library rail, detail body, readiness inspector -- on the Lab frame."""
+
+    #: Both rails open on a first run. Unlike Models' server list or Speech's
+    #: dependency detail, the Evals inspector is where target readiness is
+    #: reported -- the reason to look at a bench before running it. Behind a
+    #: collapsed handle it is content the user has to know to go find.
+    LAB_FIRST_RUN_RAILS = LabRailLayout()
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "evals", **kwargs)
         self._view_model = EvalsViewModel(self._resolve_db(app_instance))
         self._selection = EvalsSelection()
+        #: Preflight resolved once per selection, not once per pane.
+        #: The frame calls compose_lab_rail/compose_lab_inspector during
+        #: _populate_regions and build_lab_body later, from the deferred
+        #: mount -- three separate calls where the old single
+        #: compose_content() resolved it once and threaded it into both
+        #: panes. Without this cache, adopting the frame would silently
+        #: reintroduce the duplicate run-group snapshot read that I2
+        #: fixed. Cleared wherever the selection changes.
+        self._preflight_cache: dict[str, PreflightResult] | None = None
         # Shared with LibraryRail by reference (see its own docstring) so
         # collapsed/expanded rail sections survive a selection-triggered
         # recompose, which constructs a brand-new LibraryRail instance.
@@ -125,7 +142,7 @@ class EvalsScreen(BaseAppScreen):
         below, but a caller may also drive selection directly.
 
         A plain (non-async) method: it only schedules the recompose
-        (``BaseAppScreen.refresh(recompose=True)``), it does not await its
+        (``refresh(recompose=True)``), it does not await its
         completion -- callers that need the panes settled should
         ``await pilot.pause()`` afterward, mirroring every other
         recompose-driven screen in this app.
@@ -139,6 +156,7 @@ class EvalsScreen(BaseAppScreen):
                 "none"``, or a caller clearing the selection).
         """
         self._selection = EvalsSelection(kind=kind, id=id)
+        self._preflight_cache = None
         self._register_grid_shortcuts()
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -319,56 +337,84 @@ class EvalsScreen(BaseAppScreen):
     # itself the dead-end-toast anti-pattern this button's own design note
     # exists to avoid -- see _primary_action_state's docstring.
 
-    def compose_content(self) -> ComposeResult:
-        with Vertical(id="evals-shell"):
-            yield DestinationHeader(
-                WorkbenchHeaderState(
-                    title="Evals",
-                    subtitle="Run and review evaluation jobs.",
-                    status="ready",
-                ),
-                id="evals-destination-header",
-                # Same one-row header as the other two Lab modes. Without it
-                # this screen keeps the stacked 5-row block and its mode
-                # strip sits four rows below Models', so the chips jump on
-                # every switch.
-                classes="lab-header-inline",
-            )
-            yield LabModeStrip(active_route="evals", id="lab-mode-strip")
-            with Horizontal(
-                id="evals-workbench", classes="ds-panel destination-workbench"
-            ):
-                yield LibraryRail(
-                    self._view_model,
-                    selection=self._selection,
-                    open_sections=self._rail_open_sections,
-                    app_config=self._current_app_config(),
-                    id="evals-library-pane",
-                    classes="destination-workbench-pane",
-                )
-                # Resolved once per selection/recompose and threaded into
-                # BOTH panes below -- BenchEditor and EvalsInspector each
-                # independently calling `EvalsViewModel.preflight_for_bench`
-                # read the bench's run-group snapshot twice on one render
-                # (see I2 in the PR 3a fix report).
-                preflight = self._preflight_for_selection()
-                with Vertical(
-                    id="evals-detail-pane", classes="destination-workbench-pane"
-                ):
-                    yield from self._compose_detail_pane(preflight)
-                with Vertical(
-                    id="evals-inspector-pane",
-                    classes="destination-workbench-pane ds-inspector",
-                ):
-                    yield from self._compose_inspector_pane(preflight)
+    def lab_header_state(self) -> WorkbenchHeaderState:
+        """Return the Evals destination header copy.
+
+        Returns:
+            Header state. The status is constant because nothing on this
+            screen is a whole-destination readiness signal -- per-target
+            readiness is the inspector's job, and a badge that never changes
+            would only be decoration wearing a status label.
+        """
+        return WorkbenchHeaderState(
+            title="Evals",
+            subtitle="Run and review evaluation jobs.",
+            status="ready",
+        )
+
+    def compose_lab_rail(self) -> ComposeResult:
+        """Yield the library rail.
+
+        A fresh ``LibraryRail`` per compose is deliberate: open/collapsed
+        section state lives in ``self._rail_open_sections`` and is shared by
+        reference, so it survives the instance being rebuilt.
+        """
+        yield LibraryRail(
+            self._view_model,
+            selection=self._selection,
+            open_sections=self._rail_open_sections,
+            app_config=self._current_app_config(),
+            id="evals-library-pane",
+        )
+
+    def build_lab_body(self) -> Vertical:
+        """Build the detail pane.
+
+        Returns:
+            A ``Vertical`` holding this selection's detail widgets. Built as
+            a factory, not composed inline, because the frame mounts the body
+            after first paint -- and a widget instance would not survive a
+            ``recompose=True`` while a factory does.
+        """
+        return Vertical(
+            *self._compose_detail_pane(self._preflight_for_selection()),
+            id="evals-detail-pane",
+        )
+
+    def compose_lab_inspector(self) -> ComposeResult:
+        """Yield the readiness inspector for the current selection.
+
+        Wrapped in ``#evals-inspector-pane`` rather than yielded flat into
+        the frame's region: that id is the inspector's stable selector and
+        keeps the ``ds-inspector`` surface styling. The old
+        ``destination-workbench-pane`` class is dropped -- sizing is the
+        frame region's job now.
+        """
+        yield Vertical(
+            *self._compose_inspector_pane(self._preflight_for_selection()),
+            id="evals-inspector-pane",
+            classes="ds-inspector",
+        )
 
     def _preflight_for_selection(self) -> dict[str, PreflightResult]:
-        """The current selection's readiness map, or ``{}`` for every
-        selection kind but ``"bench"`` (no other kind's panes read it)."""
+        """The current selection's readiness map, resolved once per selection.
+
+        ``{}`` for every selection kind but ``"bench"`` -- no other kind's
+        panes read it. Memoised because the body, rail and inspector are now
+        composed by three separate frame hooks at three different times; see
+        ``_preflight_cache``.
+
+        Returns:
+            Target id -> readiness, or an empty mapping.
+        """
+        if self._preflight_cache is not None:
+            return self._preflight_cache
         selection = self._selection
         if selection.kind != "bench" or not selection.id:
-            return {}
-        return self._view_model.preflight_for_bench(selection.id)
+            self._preflight_cache = {}
+        else:
+            self._preflight_cache = self._view_model.preflight_for_bench(selection.id)
+        return self._preflight_cache
 
     def _compose_detail_pane(
         self, preflight: dict[str, PreflightResult]
