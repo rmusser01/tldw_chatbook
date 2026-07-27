@@ -17,7 +17,11 @@ from uuid import UUID, uuid4
 
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_schema import (
+    ASSIGNED_PROFILE_JOIN_SELECT,
+    decode_assigned_snapshot,
+    decode_assignment,
     decode_profile,
+    encode_assignment,
     encode_profile,
     encode_uuid,
     open_profile_store,
@@ -27,6 +31,9 @@ from tldw_chatbook.TTS.profile_store_lock import (
     ProfileStoreLockMode,
 )
 from tldw_chatbook.TTS.profile_types import (
+    AssignedTTSProfileSnapshot,
+    CharacterRef,
+    CharacterTTSAssignment,
     ProfileRepositoryState,
     ProfileStoreResult,
     TTSGenerationProfile,
@@ -37,6 +44,7 @@ from tldw_chatbook.TTS.profile_types import (
 
 _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
+_CHARACTER_REF_TYPE = CharacterRef
 _MAX_SEARCH_CHARACTERS = 128
 _MAX_NORMALIZED_SEARCH_CHARACTERS = 512
 _MAX_NORMALIZED_SEARCH_BYTES = 2_048
@@ -48,7 +56,14 @@ _SQLITE_CONSTRAINT_FOREIGNKEY = 787
 _SQLITE_CONSTRAINT_PRIMARYKEY = 1_555
 _SQLITE_CONSTRAINT_TRIGGER = 1_811
 _SQLITE_CONSTRAINT_UNIQUE = 2_067
-_TransactionOperation = Literal["create", "read", "update", "delete"]
+_TransactionOperation = Literal[
+    "create",
+    "read",
+    "update",
+    "delete",
+    "assignment_set",
+    "assignment_remove",
+]
 _PROFILE_SELECT = """
 SELECT
     profile_id,
@@ -64,6 +79,16 @@ SELECT
     created_at,
     updated_at
 FROM tts_generation_profiles
+"""
+_ASSIGNMENT_SELECT = """
+SELECT
+    source,
+    authority_id,
+    character_id,
+    profile_id,
+    created_at,
+    updated_at
+FROM character_tts_assignments
 """
 
 
@@ -95,7 +120,21 @@ def _utc_now() -> datetime:
 def _validate_exact_profile_id(value: object) -> UUID:
     if type(value) is not UUID:
         raise _repository_error("operation_failed")
-    return cast(UUID, value)
+    profile_id = cast(UUID, value)
+    validation_error: BaseException | None = None
+    validated: UUID | None = None
+    try:
+        validated = UUID(str(profile_id))
+        if validated != profile_id:
+            raise ValueError
+    except BaseException as error:
+        validation_error = error
+    if validation_error is not None:
+        if not isinstance(validation_error, Exception):
+            raise validation_error
+        raise _repository_error("operation_failed")
+    assert validated is not None
+    return validated
 
 
 def _validate_optional_profile_id(value: object) -> UUID | None:
@@ -114,6 +153,30 @@ def _validate_expected_revision(value: object) -> int:
     if type(value) is not int or value <= 0:
         raise _repository_error("operation_failed")
     return cast(int, value)
+
+
+def _validate_character_ref(value: object) -> CharacterRef:
+    if type(value) is not _CHARACTER_REF_TYPE:
+        raise _repository_error("operation_failed")
+    character_ref = cast(CharacterRef, value)
+    validation_error: BaseException | None = None
+    validated: CharacterRef | None = None
+    try:
+        validated = CharacterRef(
+            source=character_ref.source,
+            authority_id=character_ref.authority_id,
+            character_id=character_ref.character_id,
+        )
+        if validated != character_ref:
+            raise ValueError
+    except BaseException as error:
+        validation_error = error
+    if validation_error is not None:
+        if not isinstance(validation_error, Exception):
+            raise validation_error
+        raise _repository_error("operation_failed")
+    assert validated is not None
+    return validated
 
 
 def _is_unsafe_search_character(character: str) -> bool:
@@ -811,6 +874,119 @@ class TTSProfileRepository:
             )
         )
 
+    async def assignment_count(
+        self,
+        profile_id: UUID,
+    ) -> ProfileStoreResult[int]:
+        """Count assignments to one existing profile across all authorities.
+
+        Args:
+            profile_id: Exact profile UUID.
+
+        Returns:
+            The active generation and nonnegative assignment count.
+
+        Raises:
+            ProfileRepositoryError: If the input, profile, count row, state, or
+                SQLite access fails safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        return await self._submit_operation(
+            lambda connection: self._worker_assignment_count(
+                connection,
+                validated_profile_id,
+            )
+        )
+
+    async def set_assignment(
+        self,
+        character_ref: CharacterRef,
+        profile_id: UUID,
+    ) -> ProfileStoreResult[CharacterTTSAssignment]:
+        """Create or replace one exact authority-scoped assignment.
+
+        Args:
+            character_ref: Exact validated source, authority, and character.
+            profile_id: Exact existing profile UUID.
+
+        Returns:
+            The active generation and persisted assignment.
+
+        Raises:
+            ProfileRepositoryError: If inputs, state, persistence, foreign-key
+                checks, row decoding, or SQLite access fail safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        validated_character_ref = _validate_character_ref(character_ref)
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        return await self._submit_operation(
+            lambda connection: self._worker_set_assignment(
+                connection,
+                validated_character_ref,
+                validated_profile_id,
+            )
+        )
+
+    async def remove_assignment(
+        self,
+        character_ref: CharacterRef,
+    ) -> ProfileStoreResult[None]:
+        """Remove one exact authority-scoped assignment idempotently.
+
+        Args:
+            character_ref: Exact validated source, authority, and character.
+
+        Returns:
+            The active generation paired with ``None``.
+
+        Raises:
+            ProfileRepositoryError: If the input, state, persistence, or
+                SQLite access fails safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        validated_character_ref = _validate_character_ref(character_ref)
+        return await self._submit_operation(
+            lambda connection: self._worker_remove_assignment(
+                connection,
+                validated_character_ref,
+            )
+        )
+
+    async def get_assigned_profile(
+        self,
+        character_ref: CharacterRef,
+    ) -> ProfileStoreResult[AssignedTTSProfileSnapshot | None]:
+        """Read one exact assignment and immutable profile revision by JOIN.
+
+        Args:
+            character_ref: Exact validated source, authority, and character.
+
+        Returns:
+            The active generation and joined snapshot, or ``None`` when the
+            exact character is unassigned.
+
+        Raises:
+            ProfileRepositoryError: If the input, state, joined row, or SQLite
+                access fails safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        validated_character_ref = _validate_character_ref(character_ref)
+        return await self._submit_operation(
+            lambda connection: self._worker_get_assigned_profile(
+                connection,
+                validated_character_ref,
+            )
+        )
+
     def _worker_create_profile(
         self,
         connection: sqlite3.Connection,
@@ -1052,6 +1228,163 @@ class TTSProfileRepository:
             immediate=True,
             integrity_evidence=evidence,
         )
+
+    def _worker_assignment_count(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+    ) -> int:
+        def count() -> int:
+            self._worker_get_profile(connection, profile_id)
+            row = connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM character_tts_assignments
+                WHERE profile_id = ?
+                """,
+                (encode_uuid(profile_id),),
+            ).fetchone()
+            if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
+                raise _repository_error("corrupt_data")
+            return cast(int, row[0])
+
+        return self._worker_transaction(
+            connection,
+            count,
+            operation_kind="read",
+            immediate=False,
+        )
+
+    def _worker_set_assignment(
+        self,
+        connection: sqlite3.Connection,
+        character_ref: CharacterRef,
+        profile_id: UUID,
+    ) -> CharacterTTSAssignment:
+        def set_exact() -> CharacterTTSAssignment:
+            self._worker_get_profile(connection, profile_id)
+            assignment = CharacterTTSAssignment(
+                character_ref=character_ref,
+                profile_id=profile_id,
+            )
+            timestamp = self._clock()
+            parameters = encode_assignment(
+                assignment,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            cursor = connection.execute(
+                """
+                INSERT INTO character_tts_assignments (
+                    source,
+                    authority_id,
+                    character_id,
+                    profile_id,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    :source,
+                    :authority_id,
+                    :character_id,
+                    :profile_id,
+                    :created_at,
+                    :updated_at
+                )
+                ON CONFLICT(source, authority_id, character_id)
+                DO UPDATE SET
+                    profile_id = excluded.profile_id,
+                    updated_at = excluded.updated_at
+                """,
+                parameters,
+            )
+            if cursor.rowcount != 1:
+                raise _repository_error("corrupt_data")
+            persisted = self._worker_get_assignment(connection, character_ref)
+            if persisted != assignment:
+                raise _repository_error("corrupt_data")
+            return persisted
+
+        return self._worker_transaction(
+            connection,
+            set_exact,
+            operation_kind="assignment_set",
+            immediate=True,
+        )
+
+    def _worker_remove_assignment(
+        self,
+        connection: sqlite3.Connection,
+        character_ref: CharacterRef,
+    ) -> None:
+        def remove_exact() -> None:
+            cursor = connection.execute(
+                """
+                DELETE FROM character_tts_assignments
+                WHERE source = ? AND authority_id = ? AND character_id = ?
+                """,
+                (
+                    character_ref.source,
+                    character_ref.authority_id,
+                    character_ref.character_id,
+                ),
+            )
+            if cursor.rowcount not in (0, 1):
+                raise _repository_error("corrupt_data")
+
+        self._worker_transaction(
+            connection,
+            remove_exact,
+            operation_kind="assignment_remove",
+            immediate=True,
+        )
+
+    def _worker_get_assignment(
+        self,
+        connection: sqlite3.Connection,
+        character_ref: CharacterRef,
+    ) -> CharacterTTSAssignment | None:
+        row = connection.execute(
+            (
+                f"{_ASSIGNMENT_SELECT} "
+                "WHERE source = ? AND authority_id = ? AND character_id = ?"
+            ),
+            (
+                character_ref.source,
+                character_ref.authority_id,
+                character_ref.character_id,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        assignment = decode_assignment(row)
+        if assignment.character_ref != character_ref:
+            raise _repository_error("corrupt_data")
+        return assignment
+
+    def _worker_get_assigned_profile(
+        self,
+        connection: sqlite3.Connection,
+        character_ref: CharacterRef,
+    ) -> AssignedTTSProfileSnapshot | None:
+        row = connection.execute(
+            (
+                f"{ASSIGNED_PROFILE_JOIN_SELECT} "
+                "WHERE a.source = ? "
+                "AND a.authority_id = ? "
+                "AND a.character_id = ?"
+            ),
+            (
+                character_ref.source,
+                character_ref.authority_id,
+                character_ref.character_id,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        snapshot = decode_assigned_snapshot(row)
+        if snapshot.assignment.character_ref != character_ref:
+            raise _repository_error("corrupt_data")
+        return snapshot
 
     def _worker_require_round_trip(
         self,

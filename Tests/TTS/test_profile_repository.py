@@ -9,7 +9,7 @@ import threading
 import traceback
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any, cast
@@ -21,6 +21,7 @@ import tldw_chatbook.TTS.profile_repository as profile_repository
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_schema import encode_assignment
 from tldw_chatbook.TTS.profile_types import (
+    AssignedTTSProfileSnapshot,
     CharacterRef,
     CharacterTTSAssignment,
     ProfileRepositoryState,
@@ -70,6 +71,14 @@ class _TextSubclass(str):
     """An inexact public-boundary string."""
 
 
+class _CharacterRefSubclass(CharacterRef):
+    """An inexact public-boundary character reference."""
+
+
+class _UUIDSubclass(UUID):
+    """An inexact public-boundary UUID."""
+
+
 class _FalseyCallable:
     """A private seam whose truth value must not be inspected."""
 
@@ -97,6 +106,48 @@ class _BeginIntegrityConnection:
 
     def rollback(self) -> None:
         self.rollback_attempted = True
+
+
+class _StaticCursor:
+    """Minimal cursor returning one controlled row."""
+
+    def __init__(self, row: object) -> None:
+        self._row = row
+
+    def fetchone(self) -> object:
+        return self._row
+
+
+class _CountRowConnection:
+    """Delegate SQLite except for the assignment-count result row."""
+
+    def __init__(self, connection: sqlite3.Connection, row: object) -> None:
+        self._connection = connection
+        self._row = row
+
+    @property
+    def in_transaction(self) -> bool:
+        return self._connection.in_transaction
+
+    def execute(
+        self,
+        statement: str,
+        parameters: tuple[object, ...] = (),
+    ) -> object:
+        if "SELECT COUNT(*) FROM character_tts_assignments" in " ".join(
+            statement.split()
+        ):
+            return _StaticCursor(self._row)
+        return self._connection.execute(statement, parameters)
+
+    def commit(self) -> None:
+        self._connection.commit()
+
+    def rollback(self) -> None:
+        self._connection.rollback()
+
+    def close(self) -> None:
+        self._connection.close()
 
 
 def _draft(
@@ -476,6 +527,62 @@ def _spawn_profile_collision(
         connection.close()
 
 
+def _spawn_assignment_delete_race(
+    database_path: str,
+    connection: Connection,
+    release: Any,
+    operation: str,
+    profile_id: str,
+) -> None:
+    async def race_after_release() -> tuple[object, ...]:
+        repository = profile_repository.TTSProfileRepository(Path(database_path))
+        opened = False
+        try:
+            await repository.open()
+            opened = True
+            connection.send(("ready", operation))
+            if not release.wait(10.0):
+                raise TimeoutError("parent did not release assignment race")
+            try:
+                if operation == "set":
+                    result = await repository.set_assignment(
+                        CharacterRef(
+                            source="server",
+                            authority_id="server-profile:principal",
+                            character_id="shared-character",
+                        ),
+                        UUID(profile_id),
+                    )
+                else:
+                    result = await repository.delete_profile(UUID(profile_id))
+            except ProfileRepositoryError as error:
+                return (
+                    operation,
+                    "failure",
+                    error.code,
+                    str(error),
+                    error.__cause__ is None,
+                    error.__context__ is None,
+                    tuple(str(note) for note in getattr(error, "__notes__", ())),
+                )
+            return (operation, "success", result.generation)
+        finally:
+            if opened:
+                await repository.close()
+
+    try:
+        outcome = asyncio.run(race_after_release())
+        connection.send(("outcome", outcome))
+    except BaseException as error:
+        try:
+            connection.send(("child_error", type(error).__name__))
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+        raise
+    finally:
+        connection.close()
+
+
 async def _initialize_empty_repository(database_path: Path) -> None:
     async with _opened_repository(database_path) as repository:
         assert (await repository.list_profiles()).value.total == 0
@@ -660,6 +767,58 @@ def test_private_clock_and_uuid_seams_remain_constructor_pure(
         ("update_profile", (GENERATED_ID, 1.0, _draft()), {}, ""),
         ("update_profile", (GENERATED_ID, 1, object()), {}, ""),
         ("delete_profile", ("secret-delete-id",), {}, "secret-delete-id"),
+        ("assignment_count", ("secret-count-id",), {}, "secret-count-id"),
+        (
+            "assignment_count",
+            (_UUIDSubclass(str(GENERATED_ID)),),
+            {},
+            "",
+        ),
+        (
+            "set_assignment",
+            (object(), GENERATED_ID),
+            {},
+            "",
+        ),
+        (
+            "set_assignment",
+            (
+                _CharacterRefSubclass(
+                    source="local",
+                    authority_id="secret-authority-subclass",
+                    character_id="secret-character-subclass",
+                ),
+                GENERATED_ID,
+            ),
+            {},
+            "secret-authority-subclass",
+        ),
+        (
+            "set_assignment",
+            (
+                CharacterRef(
+                    source="local",
+                    authority_id="secret-authority",
+                    character_id="secret-character",
+                ),
+                "secret-assignment-profile",
+            ),
+            {},
+            "secret-assignment-profile",
+        ),
+        ("remove_assignment", (object(),), {}, ""),
+        (
+            "get_assigned_profile",
+            (
+                _CharacterRefSubclass(
+                    source="server",
+                    authority_id="secret-server-subclass",
+                    character_id="secret-character-subclass",
+                ),
+            ),
+            {},
+            "secret-server-subclass",
+        ),
     ],
 )
 async def test_invalid_public_inputs_fail_before_worker_submission(
@@ -690,6 +849,119 @@ async def test_invalid_public_inputs_fail_before_worker_submission(
     _assert_safe_error(caught.value, "operation_failed", secret)
     assert submitted is False
     assert not tmp_path.joinpath("must-not-exist").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "include_profile_id"),
+    [
+        ("set_assignment", True),
+        ("remove_assignment", False),
+        ("get_assigned_profile", False),
+    ],
+)
+async def test_mutated_exact_character_ref_fails_before_worker_submission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    include_profile_id: bool,
+) -> None:
+    secret = " secret-mutated-exact-authority "
+    character_ref = CharacterRef(
+        source="local",
+        authority_id="valid-authority",
+        character_id="valid-character",
+    )
+    object.__setattr__(character_ref, "authority_id", secret)
+    repository = profile_repository.TTSProfileRepository(
+        tmp_path / "must-not-exist" / "profiles.sqlite3"
+    )
+    submitted = False
+
+    async def forbidden_submission(
+        _operation: Callable[[sqlite3.Connection], object],
+    ) -> ProfileStoreResult[object]:
+        nonlocal submitted
+        submitted = True
+        raise AssertionError("malformed exact CharacterRef reached worker submission")
+
+    monkeypatch.setattr(repository, "_submit_operation", forbidden_submission)
+    arguments: tuple[object, ...] = (
+        (character_ref, GENERATED_ID) if include_profile_id else (character_ref,)
+    )
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await getattr(repository, method_name)(*arguments)
+
+    _assert_safe_error(caught.value, "operation_failed", secret)
+    assert not submitted
+    assert not tmp_path.joinpath("must-not-exist").exists()
+
+
+@pytest.mark.asyncio
+async def test_assignment_snapshots_character_ref_before_queued_worker_runs(
+    tmp_path: Path,
+) -> None:
+    persisted_profile_id = UUID("fd000000-0000-4000-8000-00000000000d")
+    caller_profile_id = UUID(str(persisted_profile_id))
+    admitted_ref = CharacterRef(
+        source="local",
+        authority_id="admitted-authority",
+        character_id="admitted-character",
+    )
+    worker_entered = threading.Event()
+    worker_resume = threading.Event()
+
+    async with _opened_repository(tmp_path / "queued-snapshot.sqlite3") as repository:
+        await repository.create_profile(
+            _draft("Queued Snapshot"),
+            profile_id=persisted_profile_id,
+        )
+
+        def block_worker(_connection: sqlite3.Connection) -> None:
+            worker_entered.set()
+            if not worker_resume.wait(10.0):
+                raise RuntimeError("test did not resume queued worker")
+
+        blocker = repository._admit_operation(block_worker)
+        blocker_publication = asyncio.create_task(
+            repository._publish_operation(blocker)
+        )
+        assert await asyncio.to_thread(worker_entered.wait, 10.0)
+        queued = asyncio.create_task(
+            repository.set_assignment(admitted_ref, caller_profile_id)
+        )
+        await asyncio.sleep(0)
+        object.__setattr__(admitted_ref, "authority_id", "mutated-authority")
+        object.__setattr__(admitted_ref, "character_id", "mutated-character")
+        object.__setattr__(
+            caller_profile_id,
+            "int",
+            UUID("fd100000-0000-4000-8000-00000000000d").int,
+        )
+        worker_resume.set()
+
+        await blocker_publication
+        assigned = await queued
+
+        expected_ref = CharacterRef(
+            source="local",
+            authority_id="admitted-authority",
+            character_id="admitted-character",
+        )
+        mutated_ref = CharacterRef(
+            source="local",
+            authority_id="mutated-authority",
+            character_id="mutated-character",
+        )
+        assert assigned.value == CharacterTTSAssignment(
+            expected_ref,
+            persisted_profile_id,
+        )
+        admitted = (await repository.get_assigned_profile(expected_ref)).value
+        assert admitted is not None
+        assert admitted.assignment.character_ref == expected_ref
+        assert (await repository.get_assigned_profile(mutated_ref)).value is None
 
 
 @pytest.mark.asyncio
@@ -2498,6 +2770,650 @@ def test_spawned_repositories_resolve_sqlite_constraint_race_safely(
         )
     ]
     asyncio.run(_assert_spawned_race_store_is_usable(database_path))
+
+
+@pytest.mark.asyncio
+async def test_assignments_are_exactly_authority_scoped_and_replace_one_target(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "authority-scoped.sqlite3"
+    first_profile_id = UUID("f1000000-0000-4000-8000-000000000001")
+    second_profile_id = UUID("f2000000-0000-4000-8000-000000000002")
+    timestamps = tuple(CREATED_AT + timedelta(seconds=index) for index in range(8))
+    clock = _SequenceCallable(iter(timestamps))
+    refs = (
+        CharacterRef("local", "local-database-one", "shared-character"),
+        CharacterRef("local", "local-database-two", "shared-character"),
+        CharacterRef("server", "server-profile:principal-one", "shared-character"),
+        CharacterRef("server", "server-profile:principal-two", "shared-character"),
+    )
+
+    async with _opened_repository(
+        database_path,
+        clock=cast(Callable[[], datetime], clock),
+    ) as repository:
+        await repository.create_profile(
+            _draft("First Assignment Profile"),
+            profile_id=first_profile_id,
+        )
+        await repository.create_profile(
+            _draft("Second Assignment Profile"),
+            profile_id=second_profile_id,
+        )
+
+        for character_ref in refs:
+            assigned = await repository.set_assignment(
+                character_ref,
+                first_profile_id,
+            )
+            assert assigned == ProfileStoreResult(
+                generation=1,
+                value=CharacterTTSAssignment(character_ref, first_profile_id),
+            )
+
+        assert (await repository.assignment_count(first_profile_id)).value == 4
+        connection = sqlite3.connect(database_path)
+        try:
+            before = connection.execute(
+                """
+                SELECT created_at, updated_at
+                FROM character_tts_assignments
+                WHERE source = ? AND authority_id = ? AND character_id = ?
+                """,
+                (refs[2].source, refs[2].authority_id, refs[2].character_id),
+            ).fetchone()
+        finally:
+            connection.close()
+        assert before is not None
+
+        replaced = await repository.set_assignment(refs[2], second_profile_id)
+
+        assert replaced.value == CharacterTTSAssignment(refs[2], second_profile_id)
+        assert replaced.generation == 1
+        assert (await repository.assignment_count(first_profile_id)).value == 3
+        assert (await repository.assignment_count(second_profile_id)).value == 1
+        for character_ref in (refs[0], refs[1], refs[3]):
+            snapshot = (await repository.get_assigned_profile(character_ref)).value
+            assert snapshot is not None
+            assert snapshot.assignment == CharacterTTSAssignment(
+                character_ref,
+                first_profile_id,
+            )
+        replaced_snapshot = (await repository.get_assigned_profile(refs[2])).value
+        assert replaced_snapshot is not None
+        assert replaced_snapshot.assignment.profile_id == second_profile_id
+
+        connection = sqlite3.connect(database_path)
+        try:
+            after = connection.execute(
+                """
+                SELECT created_at, updated_at
+                FROM character_tts_assignments
+                WHERE source = ? AND authority_id = ? AND character_id = ?
+                """,
+                (refs[2].source, refs[2].authority_id, refs[2].character_id),
+            ).fetchone()
+        finally:
+            connection.close()
+        assert after is not None
+        assert after[0] == before[0]
+        assert after[1] > before[1]
+
+
+@pytest.mark.asyncio
+async def test_assignment_missing_profile_is_missing_not_zero_or_partial(
+    tmp_path: Path,
+) -> None:
+    missing_profile_id = UUID("f3000000-0000-4000-8000-000000000003")
+    character_ref = CharacterRef(
+        "server",
+        "server-profile:' OR 1=1 --",
+        "character:' OR 1=1 --",
+    )
+
+    async with _opened_repository(
+        tmp_path / "missing-assignment.sqlite3"
+    ) as repository:
+        with pytest.raises(ProfileRepositoryError) as count_missing:
+            await repository.assignment_count(missing_profile_id)
+        _assert_safe_error(count_missing.value, "missing", str(missing_profile_id))
+
+        with pytest.raises(ProfileRepositoryError) as set_missing:
+            await repository.set_assignment(character_ref, missing_profile_id)
+        _assert_safe_error(
+            set_missing.value,
+            "missing",
+            str(missing_profile_id),
+            character_ref.authority_id,
+            character_ref.character_id,
+        )
+
+        assert (await repository.get_assigned_profile(character_ref)).value is None
+        assert (await repository.remove_assignment(character_ref)).value is None
+
+
+@pytest.mark.asyncio
+async def test_remove_assignment_is_exact_idempotent_and_does_not_probe_target(
+    tmp_path: Path,
+) -> None:
+    profile_id = UUID("f4000000-0000-4000-8000-000000000004")
+    exact_ref = CharacterRef("local", "detached-database", "same-character")
+    other_ref = CharacterRef("local", "other-database", "same-character")
+
+    async with _opened_repository(tmp_path / "detach.sqlite3") as repository:
+        await repository.create_profile(_draft("Detach"), profile_id=profile_id)
+        await repository.set_assignment(exact_ref, profile_id)
+        await repository.set_assignment(other_ref, profile_id)
+
+        first = await repository.remove_assignment(exact_ref)
+        second = await repository.remove_assignment(exact_ref)
+
+        assert first == ProfileStoreResult(generation=1, value=None)
+        assert second == ProfileStoreResult(generation=1, value=None)
+        assert (await repository.get_assigned_profile(exact_ref)).value is None
+        assert (await repository.get_assigned_profile(other_ref)).value is not None
+        assert (await repository.assignment_count(profile_id)).value == 1
+
+
+@pytest.mark.asyncio
+async def test_joined_read_returns_immutable_exact_revision_snapshot(
+    tmp_path: Path,
+) -> None:
+    profile_id = UUID("f5000000-0000-4000-8000-000000000005")
+    character_ref = CharacterRef("server", "stable-server-authority", "character-5")
+    clock = _SequenceCallable(iter((CREATED_AT, UPDATED_AT, LATER_AT)))
+
+    async with _opened_repository(
+        tmp_path / "joined.sqlite3",
+        clock=cast(Callable[[], datetime], clock),
+    ) as repository:
+        created = (
+            await repository.create_profile(
+                _draft("Joined Original"),
+                profile_id=profile_id,
+            )
+        ).value
+        await repository.set_assignment(character_ref, profile_id)
+
+        joined = await repository.get_assigned_profile(character_ref)
+        assert joined == ProfileStoreResult(
+            generation=1,
+            value=AssignedTTSProfileSnapshot(
+                assignment=CharacterTTSAssignment(character_ref, profile_id),
+                profile=created,
+            ),
+        )
+
+        updated = (
+            await repository.update_profile(
+                profile_id,
+                created.revision,
+                _draft("Joined Updated", model_id="new-model"),
+            )
+        ).value
+        current = (await repository.get_assigned_profile(character_ref)).value
+
+        assert joined.value is not None
+        assert joined.value.profile == created
+        assert joined.value.profile is not created
+        assert joined.value.profile.revision == 1
+        assert joined.value.profile.display_name == "Joined Original"
+        assert current is not None
+        assert current.profile == updated
+        assert current.profile.revision == 2
+
+
+@pytest.mark.asyncio
+async def test_delete_profile_is_blocked_by_repository_assignment(
+    tmp_path: Path,
+) -> None:
+    profile_id = UUID("f6000000-0000-4000-8000-000000000006")
+    character_ref = CharacterRef("local", "delete-protection", "character-6")
+
+    async with _opened_repository(tmp_path / "protected-delete.sqlite3") as repository:
+        profile = (
+            await repository.create_profile(
+                _draft("Protected"),
+                profile_id=profile_id,
+            )
+        ).value
+        await repository.set_assignment(character_ref, profile_id)
+
+        with pytest.raises(ProfileRepositoryError) as conflict:
+            await repository.delete_profile(profile_id)
+
+        _assert_safe_error(conflict.value, "conflict")
+        assert (await repository.get_profile(profile_id)).value == profile
+        assert (await repository.get_assigned_profile(character_ref)).value is not None
+
+
+@pytest.mark.asyncio
+async def test_assignment_mutation_commit_failures_roll_back_and_recover(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "secret-assignment-commit.sqlite3"
+    profile_id = UUID("f7000000-0000-4000-8000-000000000007")
+    character_ref = CharacterRef(
+        "local",
+        "secret-assignment-authority",
+        "secret-assignment-character",
+    )
+
+    async with _opened_repository(database_path) as repository:
+        await repository.create_profile(
+            _draft("Commit Assignment"), profile_id=profile_id
+        )
+        set_secret = "secret-set-assignment-commit"
+        _fail_next_commit(
+            monkeypatch,
+            repository,
+            sqlite3.OperationalError(set_secret),
+        )
+
+        with pytest.raises(ProfileRepositoryError) as set_failed:
+            await repository.set_assignment(character_ref, profile_id)
+        _assert_safe_error(
+            set_failed.value,
+            "operation_failed",
+            set_secret,
+            character_ref.authority_id,
+            character_ref.character_id,
+            str(database_path),
+        )
+        assert (await repository.get_assigned_profile(character_ref)).value is None
+
+        await repository.set_assignment(character_ref, profile_id)
+        remove_secret = "secret-remove-assignment-commit"
+        _fail_next_commit(
+            monkeypatch,
+            repository,
+            sqlite3.OperationalError(remove_secret),
+        )
+        with pytest.raises(ProfileRepositoryError) as remove_failed:
+            await repository.remove_assignment(character_ref)
+        _assert_safe_error(
+            remove_failed.value,
+            "operation_failed",
+            remove_secret,
+            character_ref.authority_id,
+            character_ref.character_id,
+            str(database_path),
+        )
+        assert (await repository.get_assigned_profile(character_ref)).value is not None
+        assert (await repository.remove_assignment(character_ref)).value is None
+
+
+@pytest.mark.asyncio
+async def test_unrelated_assignment_foreign_key_trigger_is_not_missing(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "secret-unrelated-assignment-fk.sqlite3"
+    profile_id = UUID("f8000000-0000-4000-8000-000000000008")
+    character_ref = CharacterRef("server", "trigger-authority", "trigger-character")
+    secret = "secret-unrelated-assignment-fk"
+
+    async with _opened_repository(database_path) as repository:
+        await repository.create_profile(
+            _draft("Trigger Assignment"), profile_id=profile_id
+        )
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            """
+            CREATE TABLE assignment_constraint_parent(id INTEGER PRIMARY KEY);
+            """,
+        )
+        connection = sqlite3.connect(database_path, isolation_level=None)
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.executescript(
+                """
+                CREATE TABLE assignment_constraint_probe(
+                    parent_id INTEGER REFERENCES assignment_constraint_parent(id)
+                );
+                CREATE TRIGGER force_unrelated_assignment_fk
+                BEFORE INSERT ON character_tts_assignments
+                BEGIN
+                    INSERT INTO assignment_constraint_probe(parent_id)
+                    VALUES (1);
+                END;
+                """
+            )
+        finally:
+            connection.close()
+
+        with pytest.raises(ProfileRepositoryError) as failed:
+            await repository.set_assignment(character_ref, profile_id)
+        _assert_safe_error(
+            failed.value,
+            "operation_failed",
+            secret,
+            character_ref.authority_id,
+            character_ref.character_id,
+            str(database_path),
+        )
+        assert (await repository.get_assigned_profile(character_ref)).value is None
+
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            "DROP TRIGGER force_unrelated_assignment_fk",
+        )
+        assert (
+            await repository.set_assignment(character_ref, profile_id)
+        ).value.profile_id == profile_id
+
+
+@pytest.mark.asyncio
+async def test_missing_assignment_target_preflight_returns_missing_before_unrelated_fk_trigger(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "secret-missing-target-unrelated-fk.sqlite3"
+    missing_profile_id = UUID("f8100000-0000-4000-8000-000000000008")
+    character_ref = CharacterRef(
+        "server",
+        "secret-missing-trigger-authority",
+        "secret-missing-trigger-character",
+    )
+    secret = "secret-missing-target-unrelated-fk"
+
+    async with _opened_repository(database_path) as repository:
+        connection = sqlite3.connect(database_path, isolation_level=None)
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.executescript(
+                """
+                CREATE TABLE missing_assignment_constraint_parent(
+                    id INTEGER PRIMARY KEY
+                );
+                CREATE TABLE missing_assignment_constraint_probe(
+                    parent_id INTEGER
+                        REFERENCES missing_assignment_constraint_parent(id)
+                );
+                CREATE TRIGGER force_missing_target_unrelated_assignment_fk
+                BEFORE INSERT ON character_tts_assignments
+                BEGIN
+                    INSERT INTO missing_assignment_constraint_probe(parent_id)
+                    VALUES (1);
+                END;
+                """
+            )
+        finally:
+            connection.close()
+
+        with pytest.raises(ProfileRepositoryError) as failed:
+            await repository.set_assignment(character_ref, missing_profile_id)
+        _assert_safe_error(
+            failed.value,
+            "missing",
+            secret,
+            str(missing_profile_id),
+            character_ref.authority_id,
+            character_ref.character_id,
+            str(database_path),
+        )
+        assert (await repository.get_assigned_profile(character_ref)).value is None
+
+
+@pytest.mark.asyncio
+async def test_corrupt_assignment_and_joined_profile_rows_fail_closed(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "secret-corrupt-joined.sqlite3"
+    profile_id = UUID("f9000000-0000-4000-8000-000000000009")
+    character_ref = CharacterRef(
+        "server",
+        "secret-corrupt-authority",
+        "secret-corrupt-character",
+    )
+    assignment_secret = "secret-corrupt-assignment-timestamp"
+    profile_secret = "secret-corrupt-joined-profile"
+
+    async with _opened_repository(database_path) as repository:
+        profile = (
+            await repository.create_profile(
+                _draft("Corrupt Joined"),
+                profile_id=profile_id,
+            )
+        ).value
+        await repository.set_assignment(character_ref, profile_id)
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            """
+            UPDATE character_tts_assignments
+            SET created_at = ?
+            WHERE source = ? AND authority_id = ? AND character_id = ?
+            """,
+            (
+                assignment_secret,
+                character_ref.source,
+                character_ref.authority_id,
+                character_ref.character_id,
+            ),
+        )
+        with pytest.raises(ProfileRepositoryError) as corrupt_assignment:
+            await repository.get_assigned_profile(character_ref)
+        _assert_safe_error(
+            corrupt_assignment.value,
+            "corrupt_data",
+            assignment_secret,
+            character_ref.authority_id,
+            character_ref.character_id,
+            str(database_path),
+        )
+
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            """
+            UPDATE character_tts_assignments
+            SET created_at = ?, updated_at = ?
+            WHERE source = ? AND authority_id = ? AND character_id = ?
+            """,
+            (
+                CREATED_AT.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                CREATED_AT.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                character_ref.source,
+                character_ref.authority_id,
+                character_ref.character_id,
+            ),
+        )
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            "UPDATE tts_generation_profiles SET options_json = ? WHERE profile_id = ?",
+            (f'{{"{profile_secret}":NaN}}', str(profile_id)),
+        )
+        with pytest.raises(ProfileRepositoryError) as corrupt_profile:
+            await repository.get_assigned_profile(character_ref)
+        _assert_safe_error(
+            corrupt_profile.value,
+            "corrupt_data",
+            profile_secret,
+            character_ref.authority_id,
+            character_ref.character_id,
+            str(database_path),
+        )
+
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            "UPDATE tts_generation_profiles SET options_json = ? WHERE profile_id = ?",
+            (canonical_json_options(profile.options), str(profile_id)),
+        )
+        assert (await repository.get_assigned_profile(character_ref)).value is not None
+
+
+@pytest.mark.asyncio
+async def test_hostile_joined_codec_failure_is_bounded_without_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "secret-hostile-joined-codec.sqlite3"
+    profile_id = UUID("fa000000-0000-4000-8000-00000000000a")
+    character_ref = CharacterRef("local", "codec-authority", "codec-character")
+    secret = "secret-hostile-joined-codec"
+
+    async with _opened_repository(database_path) as repository:
+        await repository.create_profile(_draft("Codec Joined"), profile_id=profile_id)
+        await repository.set_assignment(character_ref, profile_id)
+
+        def hostile_decode(_row: object) -> AssignedTTSProfileSnapshot:
+            try:
+                raise RuntimeError(secret)
+            except RuntimeError:
+                raise ValueError(secret)
+
+        monkeypatch.setattr(
+            profile_repository,
+            "decode_assigned_snapshot",
+            hostile_decode,
+        )
+        with pytest.raises(ProfileRepositoryError) as failed:
+            await repository.get_assigned_profile(character_ref)
+        _assert_safe_error(
+            failed.value,
+            "operation_failed",
+            secret,
+            character_ref.authority_id,
+            character_ref.character_id,
+            str(database_path),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("corrupt_row", [None, (), ("1",), (-1,), (True,)])
+async def test_assignment_count_corrupt_rows_fail_closed(
+    tmp_path: Path,
+    corrupt_row: object,
+) -> None:
+    database_path = tmp_path / "secret-corrupt-count.sqlite3"
+    profile_id = UUID("fb000000-0000-4000-8000-00000000000b")
+    repository = profile_repository.TTSProfileRepository(database_path)
+    await repository.open()
+    try:
+        await repository.create_profile(_draft("Corrupt Count"), profile_id=profile_id)
+        connection = repository._connection
+        assert connection is not None
+        repository._connection = cast(
+            sqlite3.Connection,
+            cast(Any, _CountRowConnection(connection, corrupt_row)),
+        )
+
+        with pytest.raises(ProfileRepositoryError) as failed:
+            await repository.assignment_count(profile_id)
+        _assert_safe_error(
+            failed.value,
+            "corrupt_data",
+            str(profile_id),
+            str(database_path),
+        )
+    finally:
+        await repository.close()
+
+
+@pytest.mark.parametrize("attempt", range(3))
+def test_spawned_set_delete_race_is_serialized_without_partial_mutation(
+    tmp_path: Path,
+    attempt: int,
+) -> None:
+    database_path = tmp_path / f"assignment-delete-race-{attempt}.sqlite3"
+    profile_id = UUID("fc000000-0000-4000-8000-00000000000c")
+
+    async def initialize() -> None:
+        async with _opened_repository(database_path) as repository:
+            await repository.create_profile(
+                _draft("Race Assignment"),
+                profile_id=profile_id,
+            )
+
+    asyncio.run(initialize())
+    context = multiprocessing.get_context("spawn")
+    release = context.Event()
+    receivers: list[Connection] = []
+    child_connections: list[Connection] = []
+    processes: list[Any] = []
+    outcomes: list[tuple[object, ...]] = []
+    exitcodes: list[int | None] = []
+
+    try:
+        for operation in ("set", "delete"):
+            receiver, child_connection = context.Pipe(duplex=False)
+            process = context.Process(
+                target=_spawn_assignment_delete_race,
+                args=(
+                    str(database_path),
+                    child_connection,
+                    release,
+                    operation,
+                    str(profile_id),
+                ),
+            )
+            receivers.append(receiver)
+            child_connections.append(child_connection)
+            process.start()
+            processes.append(process)
+            child_connection.close()
+
+        for receiver in receivers:
+            assert receiver.poll(15.0), "spawned assignment race did not become ready"
+            assert receiver.recv()[0] == "ready"
+        release.set()
+        for receiver in receivers:
+            assert receiver.poll(15.0), "spawned assignment race returned no outcome"
+            message = receiver.recv()
+            assert message[0] == "outcome", message
+            outcomes.append(cast(tuple[object, ...], message[1]))
+    finally:
+        release.set()
+        for child_connection in child_connections:
+            child_connection.close()
+        for process in processes:
+            process.join(10.0)
+            if process.is_alive():
+                process.terminate()
+                process.join(5.0)
+            if process.is_alive():
+                process.kill()
+                process.join(5.0)
+            exitcodes.append(process.exitcode)
+        for receiver in receivers:
+            receiver.close()
+        for process in processes:
+            process.close()
+
+    assert exitcodes == [0, 0]
+    normalized = {(outcome[0], outcome[1], outcome[2]) for outcome in outcomes}
+    assert normalized in (
+        {("set", "success", 1), ("delete", "failure", "conflict")},
+        {("set", "failure", "missing"), ("delete", "success", 1)},
+    )
+    for outcome in outcomes:
+        if outcome[1] == "failure":
+            assert outcome[3] == (f"TTS profile repository failed: {outcome[2]}")
+            assert outcome[4:] == (True, True, ())
+
+    async def verify_serialized_outcome() -> None:
+        character_ref = CharacterRef(
+            "server",
+            "server-profile:principal",
+            "shared-character",
+        )
+        async with _opened_repository(database_path) as repository:
+            page = (await repository.list_profiles()).value
+            snapshot = (await repository.get_assigned_profile(character_ref)).value
+            if ("set", "success", 1) in normalized:
+                assert page.total == 1
+                assert snapshot is not None
+                assert snapshot.assignment.profile_id == profile_id
+                assert (await repository.assignment_count(profile_id)).value == 1
+            else:
+                assert page.total == 0
+                assert snapshot is None
+
+    asyncio.run(verify_serialized_outcome())
 
 
 @pytest.mark.asyncio
