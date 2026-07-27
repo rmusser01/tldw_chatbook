@@ -2,7 +2,41 @@
 
 This guide helps you choose the right transcription provider for your use case.
 
+## Current Library Batch Route
+
+The Library audio/video form exposes a visible semantic `default` plus the exact
+`parakeet-onnx` and `faster-whisper` providers. While the Parakeet promotion
+gate is closed, `default` remains faster-whisper; `en` remains the default
+requested language.
+
+| Selected provider | Request | Model/runtime behavior |
+|---|---|---|
+| `default` | Transcription, `auto`, unsupported language, or translation to `en` | faster-whisper INT8 while the promotion gate is closed |
+| `default` | Translation to another target | Fails; faster-whisper translates only to English |
+| `parakeet-onnx` | Missing language or `en` | `nemo-parakeet-tdt-0.6b-v2` INT8 |
+| `parakeet-onnx` | `bg`, `hr`, `cs`, `da`, `nl`, `et`, `fi`, `fr`, `de`, `el`, `hu`, `it`, `lv`, `lt`, `mt`, `pl`, `pt`, `ro`, `sk`, `sl`, `es`, `sv`, `ru`, or `uk` | `nemo-parakeet-tdt-0.6b-v3` INT8 |
+| `parakeet-onnx` | `auto`, unsupported language, or translation | Fails with `Retry with faster-whisper` guidance |
+| `faster-whisper` | Translation with target `en` | Translates to English |
+| `faster-whisper` | Translation to another target | Fails; non-English targets are unsupported |
+
+For Parakeet v3, the selected language is routing-only and is not a decoder
+constraint. Results report the request, `effective_language=auto`,
+`detected_language=null`, and `requested_language_not_enforced`.
+
+All successful Library batch routes are INT8 and installed/local-only. Exact
+Parakeet requires the correct existing local bundle; a known verified v2
+receipt is rejected when v3 is selected. faster-whisper requires its model to
+already be cached. Missing files fail clearly and never trigger a download in
+an ingestion worker.
+
+Parakeet ONNX is not the legacy NeMo `parakeet` provider or the macOS-only
+`parakeet-mlx` provider covered below. Full managed v3 artifacts and the
+interactive **Retry with faster-whisper** action remain deferred.
+
 ## Quick Comparison Table
+
+The comparison below covers the older general and real-time providers; the
+current Parakeet ONNX Library batch route is documented separately above.
 
 | Feature | Parakeet-MLX | Lightning-Whisper-MLX | Faster-Whisper | Qwen2Audio | Parakeet | Canary |
 |---------|--------------|----------------------|----------------|------------|----------|---------|
@@ -136,7 +170,7 @@ This guide helps you choose the right transcription provider for your use case.
 - Research applications
 - When context understanding is critical
 
-### Parakeet
+### Parakeet (Legacy NeMo Provider)
 
 **Best for:** Real-time English transcription
 

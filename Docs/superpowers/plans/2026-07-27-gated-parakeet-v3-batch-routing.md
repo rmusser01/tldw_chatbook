@@ -42,7 +42,7 @@ def test_default_stays_on_faster_whisper_while_promotion_gate_is_closed():
         ("de", None, "parakeet-onnx", PARAKEET_V3_MODEL),
         ("auto", None, "faster-whisper", None),
         ("ja", None, "faster-whisper", None),
-        ("en", "fr", "faster-whisper", None),
+        ("de", "en", "faster-whisper", None),
     ],
 )
 def test_enabled_default_policy_covers_every_routing_row(
@@ -73,7 +73,7 @@ def test_explicit_supported_non_english_selects_v3(language):
 
 @pytest.mark.parametrize(
     ("language", "target_language"),
-    [("auto", None), ("ja", None), ("en", "fr")],
+    [("auto", None), ("ja", None), ("de", "en")],
 )
 def test_explicit_parakeet_rejects_incompatible_requests_with_retry_guidance(
     language, target_language
@@ -179,6 +179,11 @@ Expected: v3/result-contract assertions fail because the service is v2-only.
 
 Use the routing constants rather than duplicating model strings. Change `_load_parakeet_onnx_model()` to validate the exact model/language pairing, keep `quantization="int8"` and `CPUExecutionProvider`, and continue requiring an existing complete local bundle. Do not pass language to `onnx_asr.load_model()`.
 
+A narrow verification-receipt identity read of at most 64 KiB is allowed only
+to reject a known v2 receipt when v3 is selected. It does not establish v3
+eligibility or inspect model contents; malformed, oversized, or otherwise
+untrusted receipts are ignored. Do not download artifacts or parse ONNX graphs.
+
 Change `_parakeet_onnx_result()` to receive `requested_language` and distinguish:
 
 - v2: effective English, no detected language, no warnings.
@@ -246,7 +251,7 @@ In `_ingest_job_options()` call `resolve_batch_stt_route()` for audio/video opti
 
 In `_top_up_ingest_parse_pool()`, wrap `_ingest_job_options(claimed)` before pool creation. On `BatchSTTRoutingError`, sanitize the message, mark the claimed job failed and retryable, decrement the local `parsing_count` and (for audio/video) `heavy_parsing_count` that were incremented for the claim, then `continue` scanning the queue. This prevents a stuck `PARSING` row without stranding valid jobs behind it.
 
-Keep `local_file_ingestion.py` mechanical: forward the already-resolved fields unchanged to audio and video processors. In `audio_processing.py`, pass precision and the local-only flag into `TranscriptionService`. In the faster-whisper loader, select `effective_compute_type = kwargs.get("compute_type") or self.config["compute_type"]`, use it in both the cache key and `WhisperModel(compute_type=...)`, and pass `local_files_only=True` when requested. Direct callers that omit the override retain configured behavior. Do not download, inspect bundles, or reroute in a worker.
+Keep `local_file_ingestion.py` mechanical: forward the already-resolved fields unchanged to audio and video processors. In `audio_processing.py`, pass precision and the local-only flag into `TranscriptionService`. In the faster-whisper loader, select `effective_compute_type = kwargs.get("compute_type") or self.config["compute_type"]`, use it in both the cache key and `WhisperModel(compute_type=...)`, and pass `local_files_only=True` when requested. Direct callers that omit the override retain configured behavior. Do not download, parse graphs, or reroute in a worker; the service's bounded receipt read described in Task 2 is allowed only to reject a known v2/v3 identity mismatch.
 
 - [ ] **Step 4: Run seam tests and verify GREEN**
 

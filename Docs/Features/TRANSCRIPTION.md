@@ -7,9 +7,12 @@ This document describes the transcription capabilities available in tldw_chatboo
 tldw_chatbook provides a unified transcription service that supports multiple backend providers, each with their own strengths:
 
 - **Faster-Whisper**: Fast, accurate transcription with support for many languages
-- **Parakeet ONNX**: Cross-platform local Parakeet v2 INT8 for explicit English
+- **Parakeet ONNX**: Installed, local-only Parakeet v2/v3 INT8 for Library batch
+  transcription
 - **Qwen2Audio**: Advanced multimodal understanding
-- **Parakeet**: NVIDIA's optimized models for real-time transcription
+- **Parakeet (legacy NeMo)**: NVIDIA's older optimized provider for real-time
+  transcription
+- **Parakeet-MLX**: The separate Apple Silicon real-time provider
 - **Canary**: NVIDIA's multilingual model with translation capabilities
 
 ## Installation
@@ -59,7 +62,53 @@ use_vad_by_default = false          # Voice Activity Detection
 chunk_length_seconds = 40.0         # For Canary long audio processing
 ```
 
+## Library Batch Routing
+
+For local audio and video ingestion, the Library's **Transcription provider**
+menu exposes `default`, `parakeet-onnx`, and `faster-whisper`. The visible
+`default` value is a semantic default, not an alias for Parakeet. While the
+Parakeet promotion gate is closed, it resolves to faster-whisper for every
+request. `en` remains the default requested language.
+
+| Selected provider | Request | Current batch result |
+|---|---|---|
+| `default` | Transcription, `auto`, unsupported language, or translation to `en` | faster-whisper INT8 while the promotion gate is closed |
+| `default` | Translation to any target other than `en` | Fails; faster-whisper translates only to English |
+| `parakeet-onnx` | Missing language or `en` | `nemo-parakeet-tdt-0.6b-v2`, INT8 |
+| `parakeet-onnx` | Supported non-English code | `nemo-parakeet-tdt-0.6b-v3`, INT8 |
+| `parakeet-onnx` | `auto`, an unsupported language, or any translation | Fails with `Retry with faster-whisper` guidance |
+| `faster-whisper` | Transcription, or translation with target `en` | faster-whisper INT8 |
+| `faster-whisper` | Translation to any target other than `en` | Fails; faster-whisper translates only to English |
+
+The exact supported non-English Parakeet v3 codes are `bg`, `hr`, `cs`, `da`,
+`nl`, `et`, `fi`, `fr`, `de`, `el`, `hu`, `it`, `lv`, `lt`, `mt`, `pl`, `pt`,
+`ro`, `sk`, `sl`, `es`, `sv`, `ru`, and `uk`.
+
+For v3, the requested language selects the route only; it is not passed to the
+decoder as a constraint. Results therefore report `requested_language` as the
+selected code, `effective_language=auto`, `detected_language=null`, and the
+`requested_language_not_enforced` warning. They do not claim that v3 detected
+or was forced to the requested language.
+
+Batch transcription never downloads a model in an ingestion worker. Exact
+Parakeet requires the matching existing local bundle. Selecting v3 with a
+known verified v2 receipt is rejected; a receipt does not verify an arbitrary
+v3 directory. faster-whisper is also loaded with `local_files_only=True`, so a
+missing cache fails clearly instead of starting a worker download.
+
+This Parakeet ONNX batch path is distinct from the legacy NeMo `parakeet`
+provider and the macOS-only `parakeet-mlx` provider described below. Full
+managed v3 artifacts and the interactive **Retry with faster-whisper** action
+remain deferred.
+
 ## Available Models
+
+### Parakeet ONNX
+- **English model**: `nemo-parakeet-tdt-0.6b-v2` (INT8)
+- **Supported non-English model**: `nemo-parakeet-tdt-0.6b-v3` (INT8)
+- **Runtime**: `onnx-asr[cpu]==0.12.0`
+- **Translation**: Not supported
+- **Best for**: Explicit, installed/local Library batch transcription
 
 ### Faster-Whisper
 - **Models**: tiny, base, small, medium, large-v1, large-v2, large-v3, distil-large-v3
@@ -73,7 +122,7 @@ chunk_length_seconds = 40.0         # For Canary long audio processing
 - **Translation**: Not supported
 - **Best for**: Advanced audio understanding and context
 
-### Parakeet
+### Parakeet (Legacy NeMo Provider)
 - **Models**: 
   - nvidia/parakeet-tdt-1.1b (Transducer)
   - nvidia/parakeet-rnnt-1.1b (RNN-Transducer)
@@ -109,12 +158,12 @@ transcription failures leave the draft unchanged and display an error.
 
 ### Basic Transcription
 
-1. Navigate to the **Ingest** tab
+1. Navigate to **Library**
 2. Select **Local Audio** or **Local Video**
 3. Choose your transcription settings:
-   - **Provider**: Select from available providers
+   - **Provider**: Keep the semantic default or select an exact provider
    - **Model**: Choose model size/variant
-   - **Language**: Set source language (or "auto" for detection)
+   - **Language**: `en` by default; use `auto` only with faster-whisper
 4. Select your audio/video files
 5. Click **Process Files**
 
@@ -124,7 +173,8 @@ Translation is available when using supported providers:
 
 #### Faster-Whisper (English Translation Only)
 1. Select a non-English audio file
-2. The system will automatically translate to English during transcription
+2. Set the translation target to `en`
+3. Process the file for transcription and translation to English
 
 #### Canary (Multilingual Translation)
 1. Select **canary** as the provider
@@ -195,8 +245,10 @@ The Local Ingestion window supports batch processing:
 
 **"Model not found"**
 - Ensure you've installed the required dependencies
-- First run may take time to download models
-- Check internet connection for model downloads
+- For Library batch transcription, install or cache the model before ingesting;
+  the worker will not download it
+- For exact Parakeet ONNX, select the local bundle for the routed v2 or v3 model
+- For faster-whisper, confirm the selected model is already in the local cache
 
 **"CUDA out of memory"**
 - Use a smaller model
