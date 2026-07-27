@@ -552,6 +552,43 @@ async def test_real_manifest_replace_and_terminal_notice_run_in_owner_task(
 
 
 @pytest.mark.asyncio
+async def test_real_manifest_stage_is_created_exclusively_in_worker_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repository = _RecordingProfileRepository()
+    app, _ = _prepare_real_backup_app(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        repository=repository,
+    )
+    owner_thread = threading.get_ident()
+    stage_open_events: list[tuple[int, asyncio.Task[Any] | None, str | None]] = []
+    real_open = Path.open
+
+    def recording_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+        if path.name == ".backup_info.json.tmp":
+            try:
+                active_task = asyncio.current_task()
+            except RuntimeError:
+                active_task = None
+            mode = args[0] if args else kwargs.get("mode")
+            stage_open_events.append((threading.get_ident(), active_task, mode))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(tools_settings_module.Path, "open", recording_open)
+
+    async with app.run_test():
+        await app.settings_window._backup_databases()
+
+    assert len(stage_open_events) == 1
+    stage_thread, active_task, mode = stage_open_events[0]
+    assert stage_thread != owner_thread
+    assert active_task is None
+    assert mode == "x"
+
+
+@pytest.mark.asyncio
 async def test_real_manifest_replace_failure_cleans_stage_and_keeps_values_private(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -644,7 +681,9 @@ def test_manifest_worker_returns_immutable_unpublished_stage(
 ) -> None:
     backup_dir = tmp_path / "backup"
     backup_dir.mkdir()
-    publication = ToolsSettingsWindow._reserve_backup_manifest_publication(backup_dir)
+    publication = ToolsSettingsWindow._build_backup_manifest_publication(backup_dir)
+    assert not publication.stage_path.exists()
+    assert not publication.final_path.exists()
 
     result = ToolsSettingsWindow._write_backup_manifest(
         "20260727_010203",
@@ -661,6 +700,71 @@ def test_manifest_worker_returns_immutable_unpublished_stage(
     publication.stage_path.unlink()
 
 
+def test_manifest_worker_exclusively_creates_stage_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+    publication = ToolsSettingsWindow._build_backup_manifest_publication(backup_dir)
+    publication.stage_path.write_text("sentinel", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="backup_manifest_write_failed"):
+        ToolsSettingsWindow._write_backup_manifest(
+            "20260727_010203",
+            (),
+            publication,
+        )
+
+    assert publication.stage_path.read_text(encoding="utf-8") == "sentinel"
+    publication.stage_path.unlink()
+
+
+def test_backup_cleanup_propagates_fresh_base_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    stage_path = tmp_path / "manifest-stage.tmp"
+    stage_path.touch()
+
+    def interrupt_cleanup(*args: Any, **kwargs: Any) -> None:
+        raise KeyboardInterrupt("fresh cleanup interruption")
+
+    monkeypatch.setattr(tools_settings_module.Path, "unlink", interrupt_cleanup)
+
+    with pytest.raises(KeyboardInterrupt, match="fresh cleanup interruption"):
+        ToolsSettingsWindow._unlink_backup_artifact(stage_path, "manifest")
+
+
+def test_manifest_cleanup_control_flow_supersedes_ordinary_primary_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+    publication = ToolsSettingsWindow._build_backup_manifest_publication(backup_dir)
+    real_unlink = Path.unlink
+
+    def fail_serialization(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("ordinary serialization failure")
+
+    def interrupt_cleanup(*args: Any, **kwargs: Any) -> None:
+        raise KeyboardInterrupt("cleanup control flow")
+
+    monkeypatch.setattr(tools_settings_module.json, "dump", fail_serialization)
+    monkeypatch.setattr(tools_settings_module.Path, "unlink", interrupt_cleanup)
+
+    try:
+        with pytest.raises(KeyboardInterrupt, match="cleanup control flow"):
+            ToolsSettingsWindow._write_backup_manifest(
+                "20260727_010203",
+                (),
+                publication,
+            )
+    finally:
+        if publication.stage_path.exists():
+            real_unlink(publication.stage_path)
+
+
 def test_manifest_mid_write_failure_preserves_previous_file_and_cleans_stage(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -670,7 +774,7 @@ def test_manifest_mid_write_failure_preserves_previous_file_and_cleans_stage(
     manifest_path = backup_dir / "backup_info.json"
     previous_manifest = {"timestamp": "previous", "databases": []}
     manifest_path.write_text(json.dumps(previous_manifest), encoding="utf-8")
-    publication = ToolsSettingsWindow._reserve_backup_manifest_publication(backup_dir)
+    publication = ToolsSettingsWindow._build_backup_manifest_publication(backup_dir)
 
     def fail_mid_dump(
         value: Any,
@@ -703,7 +807,7 @@ def test_manifest_cleanup_failure_does_not_mask_base_exception_or_expose_values(
     backup_dir = tmp_path / "private-backup-directory"
     backup_dir.mkdir()
     private_error = f"cleanup failed at {backup_dir / 'private-stage.tmp'}"
-    publication = ToolsSettingsWindow._reserve_backup_manifest_publication(backup_dir)
+    publication = ToolsSettingsWindow._build_backup_manifest_publication(backup_dir)
 
     def interrupt_mid_dump(
         value: Any,

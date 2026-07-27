@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import sqlite3
+import sys
 import tempfile
 from datetime import datetime
 from functools import partial
@@ -5847,7 +5848,7 @@ Thank you for using tldw-chatbook! 🎉
 
             manifest_publication: _BackupManifestPublication | None = None
             try:
-                manifest_publication = self._reserve_backup_manifest_publication(
+                manifest_publication = self._build_backup_manifest_publication(
                     backup_dir
                 )
                 manifest_worker = self.run_worker(
@@ -5883,6 +5884,7 @@ Thank you for using tldw-chatbook! 🎉
                     self._unlink_backup_artifact(
                         manifest_publication.stage_path,
                         "manifest",
+                        preserve_control_flow=self._has_active_control_flow(),
                     )
 
             if profile_backup_succeeded:
@@ -5933,60 +5935,60 @@ Thank you for using tldw-chatbook! 🎉
             raise asyncio.CancelledError from None
 
     @staticmethod
-    def _unlink_backup_artifact(path: Path, phase: str) -> None:
+    def _has_active_control_flow() -> bool:
+        """Return whether cleanup is unwinding a non-Exception signal."""
+
+        active_exception = sys.exception()
+        return active_exception is not None and not isinstance(
+            active_exception,
+            Exception,
+        )
+
+    @staticmethod
+    def _unlink_backup_artifact(
+        path: Path,
+        phase: str,
+        *,
+        preserve_control_flow: bool = False,
+    ) -> None:
         """Remove an unpublished artifact without masking control flow."""
 
         try:
             path.unlink(missing_ok=True)
+        except Exception:
+            logger.warning("Database backup phase={} cleanup=unlink failed", phase)
         except BaseException:
+            if not preserve_control_flow:
+                raise
             logger.warning("Database backup phase={} cleanup=unlink failed", phase)
 
     @staticmethod
-    def _remove_empty_backup_directory(path: Path) -> None:
+    def _remove_empty_backup_directory(
+        path: Path,
+        *,
+        preserve_control_flow: bool = False,
+    ) -> None:
         """Best-effort removal of a failed legacy phase's reserved directory."""
 
         try:
             path.rmdir()
+        except Exception:
+            logger.warning("Database backup phase=legacy cleanup=rmdir failed")
         except BaseException:
+            if not preserve_control_flow:
+                raise
             logger.warning("Database backup phase=legacy cleanup=rmdir failed")
 
     @staticmethod
-    def _reserve_backup_manifest_publication(
+    def _build_backup_manifest_publication(
         backup_dir: Path,
     ) -> _BackupManifestPublication:
-        """Reserve a same-directory manifest stage owned by the caller."""
+        """Build a path-only token for a same-directory manifest stage."""
 
-        stage_path: Path | None = None
-        descriptor: int | None = None
-        completed = False
-        try:
-            descriptor, temporary_name = tempfile.mkstemp(
-                dir=backup_dir,
-                prefix=".backup_info.json.",
-                suffix=".tmp",
-                text=True,
-            )
-            stage_path = Path(temporary_name)
-            os.close(descriptor)
-            descriptor = None
-            completed = True
-            return _BackupManifestPublication(
-                stage_path=stage_path,
-                final_path=backup_dir / "backup_info.json",
-            )
-        finally:
-            if descriptor is not None:
-                try:
-                    os.close(descriptor)
-                except BaseException:
-                    logger.warning(
-                        "Database backup phase=manifest cleanup=close failed"
-                    )
-            if not completed and stage_path is not None:
-                ToolsSettingsWindow._unlink_backup_artifact(
-                    stage_path,
-                    "manifest",
-                )
+        return _BackupManifestPublication(
+            stage_path=backup_dir / ".backup_info.json.tmp",
+            final_path=backup_dir / "backup_info.json",
+        )
 
     def _backup_worker(self) -> tuple[str, Path, list[tuple[str, Path]]]:
         """Copy the legacy databases and return their backup entries."""
@@ -6070,13 +6072,25 @@ Thank you for using tldw-chatbook! 🎉
         except Exception:
             raise RuntimeError("legacy_database_backup_failed") from None
         finally:
+            preserve_control_flow = self._has_active_control_flow()
             for temporary_path in staged_paths:
-                self._unlink_backup_artifact(temporary_path, "legacy")
+                self._unlink_backup_artifact(
+                    temporary_path,
+                    "legacy",
+                    preserve_control_flow=preserve_control_flow,
+                )
             if not completed:
                 for published_path in published_paths:
-                    self._unlink_backup_artifact(published_path, "legacy")
+                    self._unlink_backup_artifact(
+                        published_path,
+                        "legacy",
+                        preserve_control_flow=preserve_control_flow,
+                    )
                 if backup_dir is not None:
-                    self._remove_empty_backup_directory(backup_dir)
+                    self._remove_empty_backup_directory(
+                        backup_dir,
+                        preserve_control_flow=preserve_control_flow,
+                    )
 
     @staticmethod
     def _write_backup_manifest(
@@ -6086,6 +6100,7 @@ Thank you for using tldw-chatbook! 🎉
     ) -> _BackupManifestPublication:
         """Serialize and sync a staged manifest without publishing it."""
 
+        stage_created = False
         completed = False
         try:
             backup_info = {
@@ -6094,7 +6109,10 @@ Thank you for using tldw-chatbook! 🎉
                     {"name": name, "path": str(path)} for name, path in backed_up
                 ],
             }
-            with publication.stage_path.open("w", encoding="utf-8") as info_file:
+            ToolsSettingsWindow._raise_if_textual_worker_cancelled()
+            info_file = publication.stage_path.open("x", encoding="utf-8")
+            stage_created = True
+            with info_file:
                 json.dump(backup_info, info_file, indent=2)
                 info_file.flush()
                 os.fsync(info_file.fileno())
@@ -6104,10 +6122,11 @@ Thank you for using tldw-chatbook! 🎉
         except Exception:
             raise RuntimeError("backup_manifest_write_failed") from None
         finally:
-            if not completed:
+            if stage_created and not completed:
                 ToolsSettingsWindow._unlink_backup_artifact(
                     publication.stage_path,
                     "manifest",
+                    preserve_control_flow=ToolsSettingsWindow._has_active_control_flow(),
                 )
 
     async def _check_database_integrity(self) -> None:
