@@ -412,28 +412,41 @@ class CitationFingerprintKeyUnavailable(RuntimeError):
 
 
 class KeyringCitationFingerprintKeyProvider:
-    """Read-only production adapter for an existing base64 keyring secret."""
+    """Production adapter for loading or safely provisioning one keyring secret."""
 
     def __init__(self, keyring_backend: Any | None = None) -> None:
         self._keyring_backend = keyring_backend
+
+    def _secure_backend(self) -> Any:
+        backend = self._keyring_backend
+        if backend is None:
+            import keyring
+
+            backend = keyring.get_keyring()
+        get_keyring = getattr(backend, "get_keyring", None)
+        if callable(get_keyring):
+            backend = get_keyring()
+        if not is_secure_keyring_backend(backend):
+            raise CitationFingerprintKeyUnavailable(
+                CitationFingerprintKeyUnavailable.reason_code
+            )
+        return backend
+
+    @staticmethod
+    def _decode_key(encoded: str) -> bytes:
+        secret = base64.b64decode(encoded, validate=True)
+        if len(secret) != MINIMUM_FINGERPRINT_SECRET_BYTES:
+            raise CitationFingerprintKeyUnavailable(
+                CitationFingerprintKeyUnavailable.reason_code
+            )
+        return secret
 
     def load_key(self, fingerprint_key_id: str) -> bytes:
         """Load an existing key; never generates or replaces one."""
 
         key_id = _bounded_identifier(fingerprint_key_id)
-        backend = self._keyring_backend
         try:
-            if backend is None:
-                import keyring
-
-                backend = keyring.get_keyring()
-            get_keyring = getattr(backend, "get_keyring", None)
-            if callable(get_keyring):
-                backend = get_keyring()
-            if not is_secure_keyring_backend(backend):
-                raise CitationFingerprintKeyUnavailable(
-                    "fingerprint_key_unavailable: insecure keyring backend"
-                )
+            backend = self._secure_backend()
             encoded = backend.get_password(
                 CITATION_FINGERPRINT_KEYRING_SERVICE,
                 key_id,
@@ -442,16 +455,48 @@ class KeyringCitationFingerprintKeyProvider:
                 raise CitationFingerprintKeyUnavailable(
                     "fingerprint_key_unavailable: key is missing"
                 )
-            secret = base64.b64decode(encoded, validate=True)
+            return self._decode_key(encoded)
         except Exception:
             raise CitationFingerprintKeyUnavailable(
                 CitationFingerprintKeyUnavailable.reason_code
             ) from None
-        if len(secret) != MINIMUM_FINGERPRINT_SECRET_BYTES:
+
+    def provision_key(self, fingerprint_key_id: str) -> bytes:
+        """Create one missing key after the caller proves replacement is safe."""
+
+        key_id = _bounded_identifier(fingerprint_key_id)
+        try:
+            backend = self._secure_backend()
+            encoded = backend.get_password(
+                CITATION_FINGERPRINT_KEYRING_SERVICE,
+                key_id,
+            )
+            if encoded:
+                return self._decode_key(encoded)
+            set_password = getattr(backend, "set_password", None)
+            if not callable(set_password):
+                raise CitationFingerprintKeyUnavailable(
+                    CitationFingerprintKeyUnavailable.reason_code
+                )
+            secret = secrets.token_bytes(MINIMUM_FINGERPRINT_SECRET_BYTES)
+            set_password(
+                CITATION_FINGERPRINT_KEYRING_SERVICE,
+                key_id,
+                base64.b64encode(secret).decode("ascii"),
+            )
+            stored = backend.get_password(
+                CITATION_FINGERPRINT_KEYRING_SERVICE,
+                key_id,
+            )
+            if not stored:
+                raise CitationFingerprintKeyUnavailable(
+                    CitationFingerprintKeyUnavailable.reason_code
+                )
+            return self._decode_key(stored)
+        except Exception:
             raise CitationFingerprintKeyUnavailable(
                 CitationFingerprintKeyUnavailable.reason_code
             ) from None
-        return secret
 
     def __repr__(self) -> str:
         return "KeyringCitationFingerprintKeyProvider(keyring_backend=<redacted>)"
