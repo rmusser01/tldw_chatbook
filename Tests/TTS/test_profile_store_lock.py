@@ -4,6 +4,7 @@ import multiprocessing
 import time
 from multiprocessing.connection import Connection
 from pathlib import Path
+from typing import BinaryIO
 
 import portalocker
 import pytest
@@ -727,6 +728,60 @@ def test_acquisition_base_exception_closes_handle_and_is_preserved(
     assert lease.acquired is False
 
 
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(10)])
+def test_ownership_transfer_interrupt_releases_real_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt: BaseException,
+) -> None:
+    class InterruptingTransferLease(ProfileStoreLease):
+        def __init__(self, database_path: Path) -> None:
+            self.interrupt_transfer = False
+            self.observed_handle: BinaryIO | None = None
+            super().__init__(database_path, ProfileStoreLockMode.EXCLUSIVE)
+            self.interrupt_transfer = True
+
+        def __setattr__(self, name: str, value: object) -> None:
+            if (
+                name == "_handle"
+                and value is not None
+                and getattr(self, "interrupt_transfer", False)
+            ):
+                object.__setattr__(self, "observed_handle", value)
+                raise interrupt
+            super().__setattr__(name, value)
+
+    database_path = tmp_path / "profiles.sqlite3"
+    lease = InterruptingTransferLease(database_path)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                portalocker,
+                "unlock",
+                lambda handle: (_ for _ in ()).throw(OSError("cleanup-private-secret")),
+            )
+            with pytest.raises(type(interrupt)) as exc_info:
+                lease.acquire()
+
+        assert exc_info.value is interrupt
+        assert lease.acquired is False
+        with ProfileStoreLease(
+            database_path,
+            ProfileStoreLockMode.EXCLUSIVE,
+            timeout_seconds=0.05,
+            check_interval_seconds=0.005,
+        ) as recovered:
+            assert recovered.acquired is True
+    finally:
+        handle = lease.observed_handle
+        if handle is not None and not handle.closed:
+            try:
+                portalocker.unlock(handle)
+            finally:
+                handle.close()
+
+
 @pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(9)])
 def test_post_open_clock_base_exception_closes_handle_and_is_preserved(
     tmp_path: Path,
@@ -785,6 +840,55 @@ def test_context_manager_acquires_and_releases(tmp_path: Path) -> None:
     assert lease.acquired is False
 
 
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(11)])
+def test_release_state_transition_interrupt_releases_real_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt: BaseException,
+) -> None:
+    class InterruptingReleaseLease(ProfileStoreLease):
+        def __init__(self, database_path: Path) -> None:
+            self.interrupt_clear = False
+            super().__init__(database_path, ProfileStoreLockMode.EXCLUSIVE)
+
+        def __setattr__(self, name: str, value: object) -> None:
+            if (
+                name == "_handle"
+                and value is None
+                and getattr(self, "interrupt_clear", False)
+            ):
+                object.__setattr__(self, "interrupt_clear", False)
+                raise interrupt
+            super().__setattr__(name, value)
+
+    database_path = tmp_path / "profiles.sqlite3"
+    lease = InterruptingReleaseLease(database_path).acquire()
+    lease.interrupt_clear = True
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                portalocker,
+                "unlock",
+                lambda handle: (_ for _ in ()).throw(OSError("cleanup-private-secret")),
+            )
+            with pytest.raises(type(interrupt)) as exc_info:
+                lease.release()
+
+        assert exc_info.value is interrupt
+        assert lease.acquired is False
+        with ProfileStoreLease(
+            database_path,
+            ProfileStoreLockMode.EXCLUSIVE,
+            timeout_seconds=0.05,
+            check_interval_seconds=0.005,
+        ) as recovered:
+            assert recovered.acquired is True
+    finally:
+        lease.interrupt_clear = False
+        lease.release()
+
+
 def test_context_preserves_body_error_and_adds_only_safe_cleanup_note(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -811,6 +915,40 @@ def test_context_preserves_body_error_and_adds_only_safe_cleanup_note(
         "TTS profile store lease cleanup failed"
     ]
     assert "cleanup-private-secret" not in repr(body_error)
+    assert lease.acquired is False
+
+
+def test_context_preserves_body_when_add_note_override_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class HostileBodyError(Exception):
+        def add_note(self, note: str) -> None:
+            raise RuntimeError("hostile-add-note-secret")
+
+    lease = ProfileStoreLease(
+        tmp_path / "profiles.sqlite3",
+        ProfileStoreLockMode.SHARED,
+    )
+    body_error = HostileBodyError("body-error")
+    original_release = lease.release
+
+    def fail_after_release() -> None:
+        original_release()
+        raise RuntimeError("cleanup-private-secret")
+
+    monkeypatch.setattr(lease, "release", fail_after_release)
+
+    with pytest.raises(HostileBodyError) as exc_info:
+        with lease:
+            raise body_error
+
+    assert exc_info.value is body_error
+    assert getattr(body_error, "__notes__", ()) == [
+        "TTS profile store lease cleanup failed"
+    ]
+    assert "cleanup-private-secret" not in repr(body_error)
+    assert "hostile-add-note-secret" not in repr(body_error)
     assert lease.acquired is False
 
 

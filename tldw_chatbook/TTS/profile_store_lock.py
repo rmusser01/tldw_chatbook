@@ -39,16 +39,26 @@ def _normalize_timing(value: object) -> float | None:
     return normalized
 
 
-def _close_after_failed_acquire(handle: BinaryIO) -> BaseException | None:
-    """Close an unowned handle, returning only a control-flow exception."""
+def _unlock_and_close(
+    handle: BinaryIO,
+    *,
+    may_be_locked: bool,
+) -> BaseException | None:
+    """Best-effort clean one handle and return its first cleanup failure."""
 
+    first_error: BaseException | None = None
     try:
-        handle.close()
-    except Exception:
-        return None
+        if may_be_locked:
+            portalocker.unlock(handle)
     except BaseException as error:
-        return error
-    return None
+        first_error = error
+    finally:
+        try:
+            handle.close()
+        except BaseException as error:
+            if first_error is None:
+                first_error = error
+    return first_error
 
 
 class ProfileStoreLease:
@@ -139,100 +149,109 @@ class ProfileStoreLease:
         if timing_failed:
             raise ProfileRepositoryError("operation_failed")
 
-        open_failed = False
         handle: BinaryIO | None = None
+        may_be_locked = False
+        transferred = False
+        primary_error: BaseException | None = None
         try:
-            handle = cast(BinaryIO, self.lock_path.open("a+b"))
-        except Exception:
-            open_failed = True
-        if open_failed or handle is None:
-            raise ProfileRepositoryError("operation_failed")
+            open_failed = False
+            try:
+                handle = cast(BinaryIO, self.lock_path.open("a+b"))
+            except Exception:
+                open_failed = True
+            if open_failed or handle is None:
+                raise ProfileRepositoryError("operation_failed")
 
-        flags = portalocker.LockFlags.NON_BLOCKING
-        flags |= (
-            portalocker.LockFlags.SHARED
-            if self.mode is ProfileStoreLockMode.SHARED
-            else portalocker.LockFlags.EXCLUSIVE
-        )
-        attempted = False
-        while True:
-            deadline_failed = False
-            deadline_reached = False
-            deadline_control_error: BaseException | None = None
-            if attempted:
+            flags = portalocker.LockFlags.NON_BLOCKING
+            flags |= (
+                portalocker.LockFlags.SHARED
+                if self.mode is ProfileStoreLockMode.SHARED
+                else portalocker.LockFlags.EXCLUSIVE
+            )
+            attempted = False
+            while True:
+                if attempted:
+                    deadline_failed = False
+                    deadline_reached = False
+                    try:
+                        deadline_reached = time.monotonic() >= deadline
+                    except Exception:
+                        deadline_failed = True
+                    if deadline_failed:
+                        raise ProfileRepositoryError("operation_failed")
+                    if deadline_reached:
+                        raise ProfileRepositoryError("lock_timeout")
+
+                contended = False
+                backend_failed = False
+                may_be_locked = True
                 try:
-                    deadline_reached = time.monotonic() >= deadline
+                    portalocker.lock(handle, flags)
+                except portalocker.exceptions.AlreadyLocked:
+                    may_be_locked = False
+                    contended = True
                 except Exception:
-                    deadline_failed = True
-                except BaseException as error:
-                    deadline_control_error = error
-            if deadline_control_error is not None:
-                _close_after_failed_acquire(handle)
-                raise deadline_control_error
-            if deadline_failed:
-                self._fail_acquire(handle, "operation_failed")
-            if deadline_reached:
-                self._fail_acquire(handle, "lock_timeout")
+                    backend_failed = True
+                if backend_failed:
+                    raise ProfileRepositoryError("operation_failed")
+                if not contended:
+                    self._handle = handle
+                    transferred = True
+                    return self
 
-            contended = False
-            backend_failed = False
-            control_error: BaseException | None = None
-            try:
-                portalocker.lock(handle, flags)
-            except portalocker.exceptions.AlreadyLocked:
-                contended = True
-            except Exception:
-                backend_failed = True
-            except BaseException as error:
-                control_error = error
+                attempted = True
+                clock_failed = False
+                remaining = 0.0
+                try:
+                    remaining = deadline - time.monotonic()
+                except Exception:
+                    clock_failed = True
+                if clock_failed:
+                    raise ProfileRepositoryError("operation_failed")
+                if remaining <= 0:
+                    raise ProfileRepositoryError("lock_timeout")
 
-            if control_error is not None:
-                _close_after_failed_acquire(handle)
-                raise control_error
-            if backend_failed:
-                self._fail_acquire(handle, "operation_failed")
-            if not contended:
-                self._handle = handle
-                return self
+                sleep_failed = False
+                try:
+                    time.sleep(min(self.check_interval_seconds, remaining))
+                except Exception:
+                    sleep_failed = True
+                if sleep_failed:
+                    raise ProfileRepositoryError("operation_failed")
+        except BaseException as error:
+            primary_error = error
 
-            attempted = True
-            clock_failed = False
-            clock_control_error: BaseException | None = None
-            remaining = 0.0
-            try:
-                remaining = deadline - time.monotonic()
-            except Exception:
-                clock_failed = True
-            except BaseException as error:
-                clock_control_error = error
-            if clock_control_error is not None:
-                _close_after_failed_acquire(handle)
-                raise clock_control_error
-            if clock_failed:
-                self._fail_acquire(handle, "operation_failed")
-            if remaining <= 0:
-                self._fail_acquire(handle, "lock_timeout")
+        cleanup_error: BaseException | None = None
+        state_error: BaseException | None = None
+        if handle is not None and not transferred:
+            cleanup_error = _unlock_and_close(
+                handle,
+                may_be_locked=may_be_locked,
+            )
+            if self._handle is handle:
+                state_error = self._clear_handle_state()
 
-            sleep_failed = False
-            sleep_control_error: BaseException | None = None
-            try:
-                time.sleep(min(self.check_interval_seconds, remaining))
-            except Exception:
-                sleep_failed = True
-            except BaseException as error:
-                sleep_control_error = error
-            if sleep_control_error is not None:
-                _close_after_failed_acquire(handle)
-                raise sleep_control_error
-            if sleep_failed:
-                self._fail_acquire(handle, "operation_failed")
+        if primary_error is not None and not isinstance(primary_error, Exception):
+            raise primary_error
+        for candidate_error in (cleanup_error, state_error):
+            if candidate_error is not None and not isinstance(
+                candidate_error,
+                Exception,
+            ):
+                raise candidate_error
+        if isinstance(primary_error, ProfileRepositoryError):
+            raise primary_error
+        raise ProfileRepositoryError("operation_failed")
 
-    @staticmethod
-    def _fail_acquire(handle: BinaryIO, code: str) -> None:
-        control_error = _close_after_failed_acquire(handle)
-        if control_error is not None:
-            raise control_error
-        raise ProfileRepositoryError(code)
+    def _clear_handle_state(self) -> BaseException | None:
+        """Clear acquired state even if a subclass interrupts assignment."""
+
+        try:
+            self._handle = None
+        except BaseException as error:
+            object.__setattr__(self, "_handle", None)
+            return error
+        return None
 
     def release(self) -> None:
         """Synchronously unlock and close this lease idempotently.
@@ -243,34 +262,40 @@ class ProfileStoreLease:
                 preserved after the remaining cleanup is attempted.
         """
 
-        handle = self._handle
-        self._handle = None
-        if handle is None:
-            return
-
-        unlock_failed = False
-        unlock_control_error: BaseException | None = None
+        handle: BinaryIO | None = None
+        primary_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
+        cleanup_completed = False
         try:
-            portalocker.unlock(handle)
-        except Exception:
-            unlock_failed = True
+            handle = self._handle
+            if handle is None:
+                return
+            cleanup_error = _unlock_and_close(handle, may_be_locked=True)
+            cleanup_completed = True
         except BaseException as error:
-            unlock_control_error = error
+            primary_error = error
 
-        close_failed = False
-        close_control_error: BaseException | None = None
-        try:
-            handle.close()
-        except Exception:
-            close_failed = True
-        except BaseException as error:
-            close_control_error = error
+        retry_cleanup_error: BaseException | None = None
+        if handle is not None and not cleanup_completed:
+            retry_cleanup_error = _unlock_and_close(
+                handle,
+                may_be_locked=True,
+            )
+        state_error = self._clear_handle_state()
 
-        if unlock_control_error is not None:
-            raise unlock_control_error
-        if close_control_error is not None:
-            raise close_control_error
-        if unlock_failed or close_failed:
+        errors = (
+            primary_error,
+            cleanup_error,
+            retry_cleanup_error,
+            state_error,
+        )
+        for candidate_error in errors:
+            if candidate_error is not None and not isinstance(
+                candidate_error,
+                Exception,
+            ):
+                raise candidate_error
+        if any(candidate_error is not None for candidate_error in errors):
             raise ProfileRepositoryError("operation_failed")
 
     def __enter__(self) -> ProfileStoreLease:
@@ -291,4 +316,7 @@ class ProfileStoreLease:
         except BaseException:
             if exc is None:
                 raise
-            exc.add_note(_CLEANUP_FAILURE_NOTE)
+            try:
+                BaseException.add_note(exc, _CLEANUP_FAILURE_NOTE)
+            except BaseException:
+                pass
