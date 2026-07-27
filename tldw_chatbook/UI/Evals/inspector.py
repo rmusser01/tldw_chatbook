@@ -293,6 +293,29 @@ class EvalsCellInspector(Vertical):
                 f"canary {cell.canary}"
             )
             lines.append(f"Truncated mass: {cell.truncated_mass * 100:.1f}%")
+            if event.delta is not None:
+                lines.append("")
+                lines.append(
+                    f"Δ baseline: {event.delta.jsd:.2f}"
+                    + (" !" if event.delta.is_bounded else "")
+                )
+                if event.delta.is_bounded:
+                    # The "!" marker on the grid IS this sentence -- the
+                    # grid's entire substitute for the "≥" PR 2's review
+                    # disproved. This cell's OWN truncated mass (printed
+                    # just above) is NOT what triggered it; the COMBINED
+                    # mass across both compared cells is -- see
+                    # analysis.combined_truncation's own docstring for why
+                    # it can exceed the simple sum of the two cells' own
+                    # truncated_mass at mixed K.
+                    lines.append(
+                        f"Combined truncated mass (this cell + baseline): "
+                        f"{event.delta.combined_truncated_mass * 100:.1f}% "
+                        f"-- above the "
+                        f"{analysis.TRUNCATION_WARN_THRESHOLD * 100:.0f}% "
+                        f"warn threshold, so this reading rests on a "
+                        f"larger-than-usual amount of extrapolation."
+                    )
             lines.append("")
             lines.append("Top-K:")
             for index, tok in enumerate(cell.top_k, start=1):

@@ -37,7 +37,6 @@ from tldw_chatbook.Evals.word_bench.models import (
 from tldw_chatbook.Evals.word_bench.storage import create_run_group, save_bench, save_cell
 from tldw_chatbook.UI.Evals.results_grid import (
     FAILED_MARK,
-    NEAR_TIE_LOGPROB_GAP_NATS,
     ResultsGrid,
     render_probe_reading,
     render_token,
@@ -212,14 +211,34 @@ def clean_run_group(evals_db: EvalsDB) -> dict:
         Snippet(id="s1", text="the protestors were", group="neutral"),
         Snippet(id="s2", text="the rioters were", group="loaded"),
         Snippet(id="s3", text="the regime said", group="loaded"),
+        # Ungrouped deliberately -- keeps it out of the "loaded" group-mean
+        # aggregate other tests assert on. Its only job is a combined
+        # truncated mass (0.65) that clears TRUNCATION_WARN_THRESHOLD
+        # (0.25), which no OTHER row in this fixture does (0.04/0.20/0.25/
+        # 0.18 individually, none of the real pairs combine past 0.25
+        # either) -- see test_delta_lens_flags_high_combined_truncation_
+        # with_a_bang_marker.
+        Snippet(id="s4", text="the report concluded", group=None),
     ]
     group_id, run_ids = create_run_group(evals_db, task_id, config, targets, snippets)
 
-    # Same underlying distribution at both K=20 (base) and K=5 (poor) for
-    # s1, so entropy at the shared effective K (5) must read identically.
+    # Same underlying distribution over the first 5 ranks at both K=20
+    # (base) and K=5 (poor) for s1 -- but base's top_k has 15 MORE real
+    # tokens beyond rank 5 (a genuinely richer native K), so entropy over
+    # base's own full native top_k measurably DIFFERS from entropy at the
+    # shared effective K (5). A version of this fixture where "rich" only
+    # ever actually HAD 5 tokens (regardless of its claimed k_returned)
+    # would pass this test even with `k=effective_k` deleted from
+    # results_grid.py's entropy call -- caught in review: the engine
+    # (analysis.entropy) confirmed 1.2712 in every mode (native, shared,
+    # no-k) for that degenerate fixture, an inert assertion.
     same_dist = [(" a", 0.5), (" the", 0.3), (" an", 0.1), (" some", 0.05), (" one", 0.03)]
-    save_cell(evals_db, run_ids[base_id], snippets[0], _cap(same_dist, k_returned=20))
-    save_cell(evals_db, run_ids[poor_id], snippets[0], _cap(same_dist[:5], k_returned=5))
+    rich_tail = [(f"_extra_{i}", 0.001) for i in range(15)]  # +15 real low-prob tokens
+    save_cell(
+        evals_db, run_ids[base_id], snippets[0],
+        _cap(same_dist + rich_tail, k_returned=20),
+    )
+    save_cell(evals_db, run_ids[poor_id], snippets[0], _cap(same_dist, k_returned=5))
 
     # s2: base diverges a lot from poor; s3: base diverges a little.
     save_cell(evals_db, run_ids[base_id], snippets[1], _cap([(" a", 0.9)], k_returned=20))
@@ -227,7 +246,56 @@ def clean_run_group(evals_db: EvalsDB) -> dict:
     save_cell(evals_db, run_ids[base_id], snippets[2], _cap([(" it", 0.6), (" the", 0.3)], k_returned=20))
     save_cell(evals_db, run_ids[poor_id], snippets[2], _cap([(" it", 0.55), (" the", 0.3)], k_returned=5))
 
+    # s4: same rich/capped K convention as s1 (native 20 vs. native 5, so
+    # the grid-wide effective K stays 5) -- but each cell's mass is
+    # dominated by ONE high-but-not-total-probability token (0.7/0.65)
+    # plus small filler tokens, giving individual truncated_mass 0.281/
+    # 0.346 (own truncated_mass; the divergence()/combined_truncation()
+    # figure, at the shared k=5, is 0.642 -- neither figure alone clears
+    # TRUNCATION_WARN_THRESHOLD (0.25) by a trivial 1-token cap; both
+    # individual masses here DO already exceed it on their own, which is
+    # fine -- the point is the WIRING (grid -> combined_truncation), not
+    # reproducing test_analysis.py's "neither alone, only combined" case.
+    # Computed against the real engine: jsd=0.4716 (renders "0.47"),
+    # is_bounded=True, combined_truncation=0.642 (renders "64.2%").
+    base_pairs = [(" a", 0.7)] + [(f"_extra_{i}", 0.001) for i in range(19)]
+    poor_pairs = [(" b", 0.65)] + [(f"_fill_{i}", 0.001) for i in range(4)]
+    save_cell(evals_db, run_ids[base_id], snippets[3], _cap(base_pairs, k_returned=20))
+    save_cell(evals_db, run_ids[poor_id], snippets[3], _cap(poor_pairs, k_returned=5))
+
     return {"group_id": group_id, "base_id": base_id, "poor_id": poor_id}
+
+
+# ---------------------------------------------------------------------------
+# Fixture: a snippet whose text is itself Rich markup syntax -- the exact
+# pattern confirmed (against this project's pinned Textual version) to
+# raise textual.markup.MarkupError when passed as a plain str Select
+# option label, distinct from the DataTable label-stripping defect
+# _safe_cell already covers.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def markup_hazard_run_group(evals_db: EvalsDB) -> dict:
+    base_id = evals_db.create_model(name="base", provider="llama_cpp", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name="hazard-set", format="custom", source_path="inline:hazard-set"
+    )
+    config = BenchConfig(
+        name="hazard bench", prompt_mode="raw", top_k=5,
+        dataset_id=dataset_id, target_ids=(base_id,),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [Target(id=base_id, name="base", provider="llama_cpp", model_id="m")]
+    snippets = [
+        # The reviewer's own confirmed crash case: a bare string
+        # "row · a[/]b" raises MarkupError when handed to Select as a
+        # plain str option label.
+        Snippet(id="s1", text="a[/]b protest", group="loaded"),
+    ]
+    group_id, run_ids = create_run_group(evals_db, task_id, config, targets, snippets)
+    save_cell(evals_db, run_ids[base_id], snippets[0], _cap([(" a", 0.9)]))
+    return {"group_id": group_id, "base_id": base_id}
 
 
 async def _select_run_group(pilot, group_id: str) -> ResultsGrid:
@@ -243,12 +311,21 @@ async def _select_run_group(pilot, group_id: str) -> ResultsGrid:
 
 
 def test_near_tie_threshold_is_a_named_constant_not_a_magic_number():
-    """Pins the value itself, not just that a threshold exists -- see
-    ``results_grid.NEAR_TIE_LOGPROB_GAP_NATS``'s own docstring for the
-    observed-instability rationale (a ~0.095-0.096 nat gap already produced
-    a rank flip; this codebase's normalizer test independently drew the
-    same 0.15 nat boundary for the identical fixture)."""
-    assert NEAR_TIE_LOGPROB_GAP_NATS == 0.15
+    """The threshold and the ``near_tie()`` predicate itself live in
+    ``analysis.py`` (moved there per review: a threshold comparison on raw
+    logprobs is methodology, not view formatting, and belongs alongside
+    ``TRUNCATION_WARN_THRESHOLD``/``divergence``'s own ``is_bounded``) --
+    see its own docstring for the observed-instability rationale (a
+    ~0.095-0.096 nat gap already produced a rank flip; this codebase's
+    normalizer test independently drew the same 0.15 nat boundary for the
+    identical fixture). This only pins that ``results_grid.py`` reads the
+    value FROM the engine rather than carrying its own copy;
+    ``Tests/Evals/word_bench/test_analysis.py`` pins ``near_tie()``'s own
+    behaviour."""
+    assert analysis.NEAR_TIE_LOGPROB_GAP_NATS == 0.15
+    assert "NEAR_TIE_LOGPROB_GAP_NATS" not in dir(
+        __import__("tldw_chatbook.UI.Evals.results_grid", fromlist=["x"])
+    ), "the threshold must not also be re-defined in the view layer"
 
 
 def test_render_token_makes_whitespace_visible():
@@ -427,6 +504,36 @@ async def test_grid_content_survives_datatable_rendering_without_bracket_corrupt
 
 
 @pytest.mark.asyncio
+async def test_baseline_selector_options_survive_markup_special_characters_in_snippet_text(
+    evals_app, markup_hazard_run_group
+):
+    """Regression, one widget over from test_grid_content_survives_
+    DataTable_rendering_without_bracket_corruption: `#evals-baseline-
+    selector`'s "Row · <snippet text>" options embed raw snippet text as
+    plain str Select option labels. Confirmed (this project's pinned
+    Textual version) that ``"row · The rioters [loaded] were"`` silently
+    renders with the bracketed span stripped, and ``"row · a[/]b"`` RAISES
+    ``textual.markup.MarkupError`` outright -- selecting a run group with
+    such a snippet would have crashed the whole screen on mount, not just
+    looked wrong. This snippet is also the run group's ONLY snippet, so
+    merely mounting the grid (which builds every baseline option up
+    front, not just the selected one) already exercises the crash path.
+    """
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        # Mounting alone must not raise MarkupError.
+        grid = await _select_run_group(pilot, markup_hazard_run_group["group_id"])
+
+        select = grid.query_one("#evals-baseline-selector", Select)
+        option_texts = [str(label) for label, _value in select._options]
+        row_options = [text for text in option_texts if text.startswith("Row ·")]
+        assert any("a[/]b protest" in text for text in row_options), (
+            f"snippet text must survive the Select option label unmangled, "
+            f"got {row_options!r}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_warned_column_header_carries_the_warning_the_clean_one_does_not(
     evals_app, mixed_run_group
 ):
@@ -483,6 +590,97 @@ async def test_delta_lens_never_renders_a_leading_gte(evals_app, clean_run_group
             for col_index in range(len(table.columns)):
                 text = str(table.get_cell_at((row_index, col_index)))
                 assert "≥" not in text, f"found a leading >= at ({row_index},{col_index}): {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_delta_lens_flags_high_combined_truncation_with_a_bang_marker(
+    evals_app, clean_run_group
+):
+    """The `!` marker is the grid's ENTIRE substitute for the leading "≥"
+    PR 2's review disproved (see the module docstring). Before this test,
+    no fixture in this suite actually reached TRUNCATION_WARN_THRESHOLD
+    (0.25) -- s4's combined_truncation (0.642, computed at the shared
+    effective K=5) clears it well past. Also checks the inspector
+    explains the COMBINED mass, not just this cell's own (see
+    test_focused_delta_cell_inspector_explains_the_bang_marker for the
+    fuller inspector assertion)."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, clean_run_group["group_id"])
+        grid.query_one("#evals-lens-selector", Select).value = "delta"
+        await pilot.pause()
+
+        table = grid.query_one("#evals-grid-table", DataTable)
+        cell_text = str(table.get_cell("s4", clean_run_group["poor_id"]))
+        assert cell_text == "0.47 !", f"expected the bang marker, got {cell_text!r}"
+        assert "≥" not in cell_text
+
+        # Every OTHER real comparison in this fixture stays unmarked --
+        # proves the marker is cell-specific, not a lens-wide artifact.
+        s2_text = str(table.get_cell("s2", clean_run_group["poor_id"]))
+        s3_text = str(table.get_cell("s3", clean_run_group["poor_id"]))
+        assert not s2_text.endswith("!"), s2_text
+        assert not s3_text.endswith("!"), s3_text
+
+
+@pytest.mark.asyncio
+async def test_focused_delta_cell_inspector_explains_the_bang_marker_with_combined_mass(
+    evals_app, clean_run_group
+):
+    """Closes the gap review found: the inspector used to show only the
+    focused cell's OWN truncated mass, never the mass that actually
+    triggered the `!` -- the combined mass across both compared cells."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, clean_run_group["group_id"])
+        grid.query_one("#evals-lens-selector", Select).value = "delta"
+        await pilot.pause()
+
+        table = grid.query_one("#evals-grid-table", DataTable)
+        row = table.get_row_index("s4")
+        col = table.get_column_index(clean_run_group["poor_id"])
+        table.focus()
+        table.move_cursor(row=row, column=col)
+        await pilot.pause()
+
+        body = pilot.app.screen.query_one("#evals-cell-inspector-body")
+        text = str(body.renderable)
+        assert "Δ baseline: 0.47 !" in text
+        assert "Combined truncated mass" in text
+        assert "64.2%" in text, (
+            f"combined mass must be the pair's 64.2% (at the shared K), "
+            f"not this cell's own 34.6%: {text!r}"
+        )
+        # This cell's OWN truncated mass (34.6%, poor_pairs' native K=5
+        # truncation) must also be present but is NOT what the marker
+        # explanation cites -- both numbers coexist and are distinguishable.
+        assert "Truncated mass: 34.6%" in text
+
+
+@pytest.mark.asyncio
+async def test_focused_delta_cell_inspector_says_nothing_extra_when_not_bounded(
+    evals_app, clean_run_group
+):
+    """A Δ cell that is NOT flagged must not show a combined-mass
+    explanation at all -- absence of the caveat is itself informative."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, clean_run_group["group_id"])
+        grid.query_one("#evals-lens-selector", Select).value = "delta"
+        await pilot.pause()
+
+        table = grid.query_one("#evals-grid-table", DataTable)
+        row = table.get_row_index("s3")
+        col = table.get_column_index(clean_run_group["poor_id"])
+        table.focus()
+        table.move_cursor(row=row, column=col)
+        await pilot.pause()
+
+        body = pilot.app.screen.query_one("#evals-cell-inspector-body")
+        text = str(body.renderable)
+        assert "Δ baseline:" in text
+        assert "!" not in text.split("Δ baseline:")[1].split("\n")[0]
+        assert "Combined truncated mass" not in text
 
 
 @pytest.mark.asyncio
@@ -579,20 +777,64 @@ async def test_lens_key_cycles_the_selector_through_all_five_lenses(
 
 
 @pytest.mark.asyncio
-async def test_sort_key_registers_and_reorders_by_spread(evals_app, mixed_run_group):
+async def test_sort_key_registers_and_reorders_by_spread(evals_app, clean_run_group):
+    """Previously only asserted the header text changed and never checked
+    row order -- and COULDN'T have, against ``mixed_run_group``, where
+    only one row (s1) has >=2 captured cells at all (every other row's
+    sort key is the same -1.0 sentinel, so a stable sort leaves them in
+    their original positions regardless of desc/asc). ``clean_run_group``
+    has four rows with distinct, real spread values -- computed here
+    against the actual engine (analysis.spread) rather than hardcoded:
+    s2 (~0.624) > s4 (~0.472) > s3 (~0.003) > s1 (0.0)."""
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
-        grid = await _select_run_group(pilot, mixed_run_group["group_id"])
+        grid = await _select_run_group(pilot, clean_run_group["group_id"])
         table = grid.query_one("#evals-grid-table", DataTable)
         table.focus()
 
         state_before = str(grid.query_one("#evals-grid-state").renderable)
         assert "Sort: dataset order" in state_before
+        assert [
+            table.get_row_index(sid) for sid in ("s1", "s2", "s3", "s4")
+        ] == [0, 1, 2, 3], "unsorted must be dataset (authoring) order"
 
         await pilot.press("s")
         await pilot.pause()
         state_after = str(grid.query_one("#evals-grid-state").renderable)
         assert "Sort: spread" in state_after
+
+        order_by_index = sorted(
+            ("s1", "s2", "s3", "s4"), key=lambda sid: table.get_row_index(sid)
+        )
+        assert order_by_index == ["s2", "s4", "s3", "s1"], (
+            f"expected descending-spread row order, got {order_by_index}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_grid_autofocuses_its_table_so_shortcuts_work_without_a_manual_focus(
+    evals_app, mixed_run_group
+):
+    """The footer advertises `l`/`b`/`s`/`e` the instant a run group is
+    selected (see evals_screen.py's _register_grid_shortcuts), but every
+    OTHER test in this file calls `table.focus()` before pressing a
+    shortcut key -- which would hide a missing auto-focus, since Textual
+    key bindings only resolve against the focused widget's ancestor chain.
+    This test deliberately does NOT call `.focus()`, so it fails if
+    ResultsGrid.on_mount stops focusing its own DataTable."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, mixed_run_group["group_id"])
+        select = grid.query_one("#evals-lens-selector", Select)
+        assert select.value == "top1"
+
+        await pilot.press("l")
+        await pilot.pause()
+
+        assert select.value == "entropy", (
+            "the `l` shortcut had no effect -- the grid's DataTable was "
+            "not focused on mount"
+        )
 
 
 @pytest.mark.asyncio

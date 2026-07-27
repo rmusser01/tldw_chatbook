@@ -41,6 +41,26 @@ from .models import CellCapture
 #: the estimate rests on enough guesswork to need an explicit caveat.
 TRUNCATION_WARN_THRESHOLD: float = 0.25
 
+#: Rank 1 and rank 2 are a near-tie when their logprob GAP is below this
+#: many nats. Chosen from an observed instability, not derived: two
+#: identical requests to the same server, seconds apart, at the same
+#: neutral sampler settings, returned the top two tokens in OPPOSITE rank
+#: order while each token's own logprob held stable to ~0.002 nats
+#: (-0.698/-0.794 one call, -0.697/-0.792 the next). The committed fixture
+#: this was captured from (``Tests/Evals/fixtures/word_bench/
+#: llamacpp_raw_completions.json``) carries a ~0.095-0.096 nat gap between
+#: those two tokens, and this codebase already has one considered judgment
+#: call about where "near-tie" starts for that exact fixture:
+#: ``Tests/Evals/word_bench/test_normalizer.py::
+#: test_a_near_tie_between_the_top_two_is_visible_in_the_fixture`` asserts
+#: ``abs(gap) < 0.15`` as the boundary for calling it a near-tie. 0.15 nats
+#: is reused here for the same phenomenon: it comfortably covers the
+#: observed ~0.095-0.096 nat gap that already produced a rank flip, while
+#: sitting roughly two orders of magnitude above the ~0.002 nat run-to-run
+#: noise floor, so it will not fire on ordinary sampling jitter far from a
+#: real tie.
+NEAR_TIE_LOGPROB_GAP_NATS: float = 0.15
+
 ProbeState = Literal["observed", "bounded", "never_observed"]
 
 
@@ -152,6 +172,63 @@ def divergence(a: CellCapture, b: CellCapture) -> tuple[float, bool]:
 
     combined_truncation = pa[-1] + pb[-1]
     return max(0.0, jsd), combined_truncation > TRUNCATION_WARN_THRESHOLD
+
+
+def near_tie(cap: CellCapture) -> bool:
+    """Whether ``cap``'s top two ranked tokens are a near-tie -- see
+    ``NEAR_TIE_LOGPROB_GAP_NATS`` for the threshold and its rationale.
+
+    A caller that renders a bare Top-1 winner without checking this first
+    risks showing a spurious difference between two cells that are
+    statistically identical (the exact failure this predicate exists to
+    let a caller avoid -- see ``NEAR_TIE_LOGPROB_GAP_NATS``'s own
+    docstring for the observed evidence).
+
+    Returns:
+        ``False`` when ``cap`` has fewer than two ranked tokens (nothing to
+        compare rank 1 against).
+    """
+    if len(cap.top_k) < 2:
+        return False
+    gap = cap.top_k[0].logprob - cap.top_k[1].logprob
+    return abs(gap) < NEAR_TIE_LOGPROB_GAP_NATS
+
+
+def combined_truncation(a: CellCapture, b: CellCapture, k: Optional[int] = None) -> float:
+    """The combined truncated mass ``divergence()`` uses internally to
+    decide ``is_bounded`` -- exposed separately so a caller that already
+    has ``(jsd, is_bounded)`` can also explain WHY a comparison was
+    flagged (e.g. "combined truncated mass is 31%, above the 25% warn
+    threshold") without recomputing the token alignment itself, and
+    without risking a caller-side reimplementation silently disagreeing
+    with what ``divergence()`` actually used.
+
+    Deliberately NOT ``a.truncated_mass + b.truncated_mass``: each cell's
+    own ``truncated_mass`` property is computed over its FULL native
+    ``top_k``, but ``divergence()`` truncates both cells to a shared
+    ``min(k_returned)`` first (see its own docstring) -- when one cell's
+    native K exceeds the shared K, its truncated-at-k "other" bucket is
+    larger than its full-native ``truncated_mass``. Naively summing the
+    two cells' own properties would report a different number than the
+    one that actually decided ``is_bounded``, which is precisely the kind
+    of UI-reconstructed-number risk this module's methodology exists to
+    avoid.
+
+    Args:
+        k: Shared truncation point. ``None`` (the default) recomputes it
+            the same way ``divergence()`` does, from ``a``/``b`` alone; a
+            caller that already knows the ``k`` a run's ``divergence()``
+            call used may pass it explicitly to guarantee agreement.
+
+    Returns:
+        The combined "other" bucket mass at the shared ``k`` -- the same
+        value ``divergence()`` compares against ``TRUNCATION_WARN_
+        THRESHOLD`` to set ``is_bounded``.
+    """
+    if k is None:
+        k = min(a.k_returned, b.k_returned, len(a.top_k), len(b.top_k))
+    pa, pb = _aligned(a, b, k)
+    return pa[-1] + pb[-1]
 
 
 def resolve_probe(

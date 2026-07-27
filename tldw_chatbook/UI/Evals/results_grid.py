@@ -12,9 +12,16 @@ token-quoting so whitespace is visible) -- see the self-review note at the
 bottom of this docstring before adding anything that looks like a
 computation here.
 
-Five lenses decide what a cell renders: Top-1, Entropy, Probe, Coverage
-(``truncated_mass``), and Δ baseline. Three of them would misrepresent the
-engine if rendered naively, and each is pinned by a test in
+Five lenses decide what a cell renders: Top-1, Entropy, Probe, Truncation
+(``truncated_mass`` -- labelled "Truncation" rather than the plan's
+original "Coverage": the raw quantity is MISSING, unobserved mass, and a
+user reading a high percentage next to the word "Coverage" would
+reasonably expect "well measured", the opposite of what a high
+``truncated_mass`` means. The internal lens key/Select value stays
+``"coverage"`` for stability; only the displayed label changed, and the
+number itself is still exactly the plan's ``truncated_mass``), and Δ
+baseline. Three of them would misrepresent the engine if rendered
+naively, and each is pinned by a test in
 ``Tests/UI/test_evals_results_grid.py``:
 
 1. **A bare Top-1 winner on a near-tie.** Two identical requests to the same
@@ -24,8 +31,11 @@ engine if rendered naively, and each is pinned by a test in
    test_a_near_tie_between_the_top_two_is_visible_in_the_fixture``, which
    pins the same live-captured fixture). A grid that renders a bare winner
    there shows a spurious difference between cells that are statistically
-   identical. ``_render_top1`` marks the tie instead -- see
-   ``NEAR_TIE_LOGPROB_GAP_NATS`` below for the threshold and its rationale.
+   identical. ``_render_top1`` marks the tie instead by calling
+   ``analysis.near_tie`` -- see ``analysis.NEAR_TIE_LOGPROB_GAP_NATS`` for
+   the threshold and its rationale (moved into ``analysis.py`` so the
+   methodology -- what counts as "too close to call" -- lives with the
+   rest of the methodology, not split across the engine and the view).
 2. **A "≥" prefix on divergence.** The original design spec claimed
    divergence was a lower bound; PR 2's whole-branch review disproved that
    with a feasible counterexample (0.291 reported against 0.121 true --
@@ -83,6 +93,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 from loguru import logger
@@ -109,7 +120,17 @@ LENS_LABELS: dict[LensKey, str] = {
     "top1": "Top-1",
     "entropy": "Entropy",
     "probe": "Probe",
-    "coverage": "Coverage",
+    # Internal key stays "coverage" (stable Select value / lens-cycle
+    # identity), but the raw quantity is `truncated_mass` -- the MISSING,
+    # unobserved probability mass, not how much was captured. Labelling
+    # that "Coverage" inverts the natural reading: a user seeing a HIGH
+    # percentage next to "Coverage" would reasonably expect "well
+    # measured", when a high truncated_mass means the opposite -- exactly
+    # the misreading-by-word-choice class of defect this PR exists to
+    # prevent, even though the NUMBER itself is unchanged and matches the
+    # plan's own "Coverage (`truncated_mass`)" mapping. "Truncation" reads
+    # correctly in both directions: high = more was missed.
+    "coverage": "Truncation",
     "delta": "Δ baseline",
 }
 #: Cycle order for the `l` key -- also the ``#evals-lens-selector`` option
@@ -117,30 +138,27 @@ LENS_LABELS: dict[LensKey, str] = {
 #: "next".
 LENS_ORDER: tuple[LensKey, ...] = ("top1", "entropy", "probe", "coverage", "delta")
 
-#: Rank 1 and rank 2 are flagged as a near-tie when their logprob GAP is
-#: below this many nats. Chosen from an observed instability, not derived:
-#: two identical requests to the same server, seconds apart, at the same
-#: neutral sampler settings, returned the top two tokens in OPPOSITE rank
-#: order while each token's own logprob held stable to ~0.002 nats
-#: (-0.698/-0.794 one call, -0.697/-0.792 the next). The committed fixture
-#: this was captured from carries a ~0.095-0.096 nat gap between those two
-#: tokens, and this codebase already has one considered judgment call about
-#: where "near-tie" starts for that exact fixture:
-#: ``Tests/Evals/word_bench/test_normalizer.py::
-#: test_a_near_tie_between_the_top_two_is_visible_in_the_fixture`` asserts
-#: ``abs(gap) < 0.15`` as the boundary for calling it a near-tie. 0.15 nats
-#: is reused here for the same phenomenon: it comfortably covers the
-#: observed ~0.095-0.096 nat gap that already produced a rank flip, while
-#: sitting roughly two orders of magnitude above the ~0.002 nat run-to-run
-#: noise floor, so it will not fire on ordinary sampling jitter far from a
-#: real tie.
-NEAR_TIE_LOGPROB_GAP_NATS = 0.15
-
 #: Never "0" -- a failed or unrun cell must not read as "measured and found
 #: nothing". Unrun cells render as a plain empty string instead (see
 #: ``_render_cell``); this mark is only for a cell that was measured and
 #: came back an error.
 FAILED_MARK = "—"
+
+
+@dataclass(frozen=True)
+class _DeltaReading:
+    """One Δ-baseline cell's rendered text plus the context behind it --
+    see ``ResultsGrid._delta_reading``. ``is_real_comparison`` is ``False``
+    for a baseline position, an unrun cell, or an unavailable comparison
+    (baseline itself failed) -- exactly the cases where ``jsd`` must not
+    feed ``analysis.group_means`` (see ``_render_delta``) and where the
+    inspector has no divergence to explain."""
+
+    text: str
+    is_real_comparison: bool = False
+    jsd: Optional[float] = None
+    is_bounded: Optional[bool] = None
+    combined_truncated_mass: Optional[float] = None
 
 
 def _safe_cell(value: str) -> Text:
@@ -233,6 +251,7 @@ class ResultsGrid(Vertical):
             cell: CellCapture | CellError | None,
             probes: tuple[str, ...],
             ever_observed: dict[str, bool],
+            delta: Optional["_DeltaReading"] = None,
         ) -> None:
             self.snippet_id = snippet_id
             self.target_id = target_id
@@ -241,6 +260,19 @@ class ResultsGrid(Vertical):
             self.cell = cell
             self.probes = probes
             self.ever_observed = ever_observed
+            #: The SAME ``_DeltaReading`` ``_render_cell`` used to draw this
+            #: cell's grid text, present only when the Δ lens is active and
+            #: this is a real comparison (never the "baseline" literal, an
+            #: unrun cell, or an unavailable comparison). Carries the
+            #: divergence, whether it is flagged, and the COMBINED
+            #: truncated mass that triggered the flag -- the ``!`` marker
+            #: is the grid's entire substitute for the leading ``≥`` PR 2's
+            #: review disproved, so the inspector must be able to explain
+            #: it in the SAME units it was decided in, not recompute a
+            #: possibly-different number (see ``analysis.combined_
+            #: truncation``'s own docstring for why a naive per-cell sum
+            #: would disagree with the real figure at mixed K).
+            self.delta = delta
             super().__init__()
 
     def __init__(
@@ -287,8 +319,15 @@ class ResultsGrid(Vertical):
             )
             return
 
-        yield Static("", id="evals-grid-meta")
-        yield Static("", id="evals-grid-state")
+        # markup=False: both Statics carry user-authored text (bench name,
+        # snippet text via _baseline_description()) interpolated by
+        # _render_header() below -- see _safe_cell's docstring for the
+        # exact same defect (Rich markup parsing "[...]") on the DataTable
+        # side of this module. A Static with markup enabled runs its
+        # `.update(str)` argument through the identical `Text.from_markup`
+        # path.
+        yield Static("", id="evals-grid-meta", markup=False)
+        yield Static("", id="evals-grid-state", markup=False)
         with Horizontal(id="evals-grid-controls"):
             yield Select(
                 [(LENS_LABELS[k], k) for k in LENS_ORDER],
@@ -309,18 +348,38 @@ class ResultsGrid(Vertical):
             return
         self._render_table()
         self._render_header()
+        # `l`/`b`/`s` are advertised in the footer the instant a run group
+        # is selected (see evals_screen.py's _register_grid_shortcuts),
+        # but Textual key bindings only resolve against the FOCUSED
+        # widget's ancestor chain -- nothing focuses the grid's DataTable
+        # by default, so those keys would be dead until the user tabs or
+        # clicks in, silently contradicting what the footer just promised.
+        self.query_one("#evals-grid-table", DataTable).focus()
 
     # -- baseline option plumbing -------------------------------------
 
-    def _baseline_options(self) -> list[tuple[str, tuple[str, str]]]:
+    def _baseline_options(self) -> list[tuple[Text, tuple[str, str]]]:
+        """Option labels are ``rich.text.Text``, not plain ``str`` -- both
+        embed user-authored free text (target names, snippet text) that
+        can legally contain ``[...]``. Confirmed on this project's pinned
+        Textual version: a plain-string option label of
+        ``"row · The rioters [loaded] were"`` silently renders with the
+        bracketed span stripped, and one containing ``"a[/]b"`` raises
+        ``MarkupError`` outright -- the same ``Text.from_markup`` defect
+        ``_safe_cell`` documents for ``DataTable``, one widget over. See
+        ``test_baseline_selector_options_survive_markup_special_characters_
+        in_snippet_text`` in ``Tests/UI/test_evals_results_grid.py``.
+        """
         snapshot = self._grid["snapshot"]
-        options: list[tuple[str, tuple[str, str]]] = []
+        options: list[tuple[Text, tuple[str, str]]] = []
         for target in snapshot["targets"]:
-            options.append((f"Column · {target['name']}", ("column", target["id"])))
+            options.append(
+                (_safe_cell(f"Column · {target['name']}"), ("column", target["id"]))
+            )
         for snippet in snapshot["snippets"]:
             text = snippet["text"]
             label = text if len(text) <= 28 else f"{text[:27]}…"
-            options.append((f"Row · {label}", ("row", snippet["id"])))
+            options.append((_safe_cell(f"Row · {label}"), ("row", snippet["id"])))
         return options
 
     def _baseline_value(self) -> tuple[str, str]:
@@ -781,24 +840,35 @@ class ResultsGrid(Vertical):
         if not top:
             return FAILED_MARK
         first = top[0]
-        if len(top) > 1:
+        # The near-tie DECISION is the engine's methodology, not the
+        # view's -- ``analysis.near_tie`` owns the threshold
+        # (``analysis.NEAR_TIE_LOGPROB_GAP_NATS``) so it lives in one place
+        # alongside ``TRUNCATION_WARN_THRESHOLD`` and ``divergence``'s own
+        # ``is_bounded``, rather than this module recomputing a raw logprob
+        # gap and re-deciding "too close to call" on its own.
+        if len(top) > 1 and analysis.near_tie(cap):
             second = top[1]
-            gap = first.logprob - second.logprob
-            if abs(gap) < NEAR_TIE_LOGPROB_GAP_NATS:
-                return (
-                    f"{render_token(first.token)}≈{render_token(second.token)}  "
-                    f"{first.prob * 100:.0f}/{second.prob * 100:.0f}%"
-                )
+            return (
+                f"{render_token(first.token)}≈{render_token(second.token)}  "
+                f"{first.prob * 100:.0f}/{second.prob * 100:.0f}%"
+            )
         return f"{render_token(first.token)}  {first.prob * 100:.0f}%"
 
-    def _render_delta(
+    def _delta_reading(
         self,
         *,
         sid: str,
         tid: str,
         cap_or_err: CellCapture | CellError | None,
         cells: dict[tuple[str, str], CellCapture | CellError],
-    ) -> tuple[str, Optional[float]]:
+    ) -> "_DeltaReading":
+        """The single source of truth for one Δ-baseline cell -- both its
+        grid text AND the extra context the inspector needs to explain a
+        ``!`` marker (the *combined* truncated mass that triggered it, not
+        just this cell's own). ``_render_cell`` and ``_on_cell_highlighted``
+        both call this rather than each computing (and risking disagreeing
+        about) the comparison independently.
+        """
         if self._baseline_mode == "column":
             baseline_id = self._baseline_target_id()
             is_baseline_position = tid == baseline_id
@@ -813,10 +883,10 @@ class ResultsGrid(Vertical):
             # position as the literal word "baseline", never a number --
             # comparing a cell to itself is not a finding.
             if cap_or_err is None:
-                return "", None
+                return _DeltaReading(text="")
             if isinstance(cap_or_err, CellError):
-                return FAILED_MARK, None
-            return "baseline", None
+                return _DeltaReading(text=FAILED_MARK)
+            return _DeltaReading(text="baseline")
 
         # "When the baseline cell itself failed, the whole comparison is
         # unavailable for that row or column and renders as such, never as
@@ -824,20 +894,38 @@ class ResultsGrid(Vertical):
         # unrun/failed treatment every other cell gets, for the same
         # reason: neither reads as "measured and found nothing".
         if baseline_cell is None:
-            return "", None
+            return _DeltaReading(text="")
         if isinstance(baseline_cell, CellError):
-            return FAILED_MARK, None
+            return _DeltaReading(text=FAILED_MARK)
 
         if cap_or_err is None:
-            return "", None
+            return _DeltaReading(text="")
         if isinstance(cap_or_err, CellError):
-            return FAILED_MARK, None
+            return _DeltaReading(text=FAILED_MARK)
 
         jsd, is_bounded = analysis.divergence(cap_or_err, baseline_cell)
+        combined = analysis.combined_truncation(cap_or_err, baseline_cell)
         text = f"{jsd:.2f}"
         if is_bounded:
             text += " !"
-        return text, jsd
+        return _DeltaReading(
+            text=text,
+            is_real_comparison=True,
+            jsd=jsd,
+            is_bounded=is_bounded,
+            combined_truncated_mass=combined,
+        )
+
+    def _render_delta(
+        self,
+        *,
+        sid: str,
+        tid: str,
+        cap_or_err: CellCapture | CellError | None,
+        cells: dict[tuple[str, str], CellCapture | CellError],
+    ) -> tuple[str, Optional[float]]:
+        reading = self._delta_reading(sid=sid, tid=tid, cap_or_err=cap_or_err, cells=cells)
+        return reading.text, (reading.jsd if reading.is_real_comparison else None)
 
     def _group_mean_rows(
         self,
@@ -976,14 +1064,25 @@ class ResultsGrid(Vertical):
         if snippet is None or target is None:
             return
 
+        cells = self._grid["cells"]
+        cell = cells.get((row_key, column_key))
+        delta_reading: Optional[_DeltaReading] = None
+        if self._lens == "delta":
+            reading = self._delta_reading(
+                sid=row_key, tid=column_key, cap_or_err=cell, cells=cells
+            )
+            if reading.is_real_comparison:
+                delta_reading = reading
+
         self.post_message(
             self.CellFocused(
                 snippet_id=row_key,
                 target_id=column_key,
                 snippet_text=snippet["text"],
                 target_name=target["name"],
-                cell=self._grid["cells"].get((row_key, column_key)),
+                cell=cell,
                 probes=tuple(snapshot.get("probes") or ()),
                 ever_observed=self._ever_observed_all_probes(column_key),
+                delta=delta_reading,
             )
         )

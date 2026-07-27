@@ -8,11 +8,14 @@ import math
 import pytest
 
 from tldw_chatbook.Evals.word_bench.analysis import (
+    NEAR_TIE_LOGPROB_GAP_NATS,
     TRUNCATION_WARN_THRESHOLD,
+    combined_truncation,
     divergence,
     effective_k,
     entropy,
     group_means,
+    near_tie,
     resolve_probe,
     spread,
 )
@@ -276,6 +279,71 @@ def test_divergence_is_an_estimate_not_a_guaranteed_bound():
         "feasible completion -- proving `reported` is NOT a guaranteed "
         "lower bound of the true value"
     )
+
+
+def test_near_tie_true_when_top_two_logprobs_are_within_the_threshold():
+    """0.02 nats gap, well under NEAR_TIE_LOGPROB_GAP_NATS (0.15)."""
+    cap = _cap([("a", 0.51), ("b", 0.5), ("c", 0.01)])
+    gap = abs(cap.top_k[0].logprob - cap.top_k[1].logprob)
+    assert gap < NEAR_TIE_LOGPROB_GAP_NATS
+    assert near_tie(cap) is True
+
+
+def test_near_tie_false_for_a_clear_winner():
+    """A ~2.3 nat gap (a ~10x probability ratio) is far outside the
+    near-tie threshold."""
+    cap = _cap([("a", 0.9), ("b", 0.09), ("c", 0.01)])
+    gap = abs(cap.top_k[0].logprob - cap.top_k[1].logprob)
+    assert gap > NEAR_TIE_LOGPROB_GAP_NATS
+    assert near_tie(cap) is False
+
+
+def test_near_tie_false_when_fewer_than_two_tokens():
+    """No rank-2 token to compare against -- must not raise or claim a tie."""
+    assert near_tie(_cap([("a", 1.0)])) is False
+    assert near_tie(_cap([])) is False
+
+
+def test_combined_truncation_matches_divergences_own_is_bounded_decision():
+    """The two truncations individually clear TRUNCATION_WARN_THRESHOLD
+    (0.15 < 0.25) but their SUM (0.30) exceeds it -- mirrors
+    test_divergence_flags_bounded_when_truncated_mass_is_material, but
+    asserts the actual combined_truncation() NUMBER, not just the boolean
+    divergence() derives from it."""
+    a = _cap([("x", 0.85)])  # 0.15 unobserved
+    b = _cap([("x", 0.85)])  # 0.15 unobserved
+    combined = combined_truncation(a, b)
+    assert combined == pytest.approx(0.30, abs=1e-9)
+    _, is_bounded = divergence(a, b)
+    assert is_bounded is True
+    assert combined > TRUNCATION_WARN_THRESHOLD
+
+
+def test_combined_truncation_below_threshold_matches_divergence_not_bounded():
+    a = _cap([("x", 0.95)])  # 0.05 unobserved
+    b = _cap([("x", 0.95)])  # 0.05 unobserved
+    combined = combined_truncation(a, b)
+    assert combined == pytest.approx(0.10, abs=1e-9)
+    _, is_bounded = divergence(a, b)
+    assert is_bounded is False
+    assert combined < TRUNCATION_WARN_THRESHOLD
+
+
+def test_combined_truncation_is_not_the_sum_of_each_cells_own_truncated_mass_at_mixed_k():
+    """The property this function's docstring warns about: at a shared K
+    smaller than one cell's native K, that cell's OWN `truncated_mass`
+    (computed over its full native top_k) understates the truncation
+    combined_truncation() actually uses (computed at the shared k)."""
+    rich = _cap([("a", 0.5), ("b", 0.3), ("c", 0.1)], k_returned=3)  # own truncated_mass = 0.1
+    poor = _cap([("a", 0.5), ("b", 0.3)], k_returned=2)  # own truncated_mass = 0.2
+
+    naive_sum = rich.truncated_mass + poor.truncated_mass
+    real_combined = combined_truncation(rich, poor)
+
+    # At shared k=2, rich's "c" (0.1) becomes part of ITS OWN unobserved
+    # bucket too, so its truncation at k=2 (0.2) exceeds its full-native
+    # truncated_mass (0.1) -- naive summation understates the real figure.
+    assert real_combined > naive_sum
 
 
 def test_group_means_exclude_ungrouped_rows():
