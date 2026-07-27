@@ -869,18 +869,25 @@ class ConsoleChatStore:
         if terminal_citation_finalizer is not None:
             if not callable(terminal_citation_finalizer):
                 raise ValueError("terminal_citation_finalizer must be callable")
+            if type(content) is not str:
+                raise ValueError(
+                    "terminal_citation_finalizer requires exact string content"
+                )
             if role is not ConsoleMessageRole.ASSISTANT or content != "" or effective:
                 raise ValueError(
                     "terminal_citation_finalizer requires an empty, "
                     "attachment-free assistant placeholder"
                 )
-        if defer_terminal_persistence and (
-            role is not ConsoleMessageRole.ASSISTANT or content != "" or effective
-        ):
-            raise ValueError(
-                "defer_terminal_persistence requires an empty, "
-                "attachment-free assistant placeholder"
-            )
+        if defer_terminal_persistence:
+            if type(content) is not str:
+                raise ValueError(
+                    "defer_terminal_persistence requires exact string content"
+                )
+            if role is not ConsoleMessageRole.ASSISTANT or content != "" or effective:
+                raise ValueError(
+                    "defer_terminal_persistence requires an empty, "
+                    "attachment-free assistant placeholder"
+                )
         arm_finalizer = (
             terminal_citation_finalizer is not None
             and persist
@@ -1285,10 +1292,10 @@ class ConsoleChatStore:
             raise ValueError(
                 f"Cannot replace a {message.status} provisional message body."
             )
-        if not isinstance(selected_body, str) or selected_body == "":
+        if type(selected_body) is not str or selected_body == "":
             raise ValueError("Selected body must be a non-empty string.")
         try:
-            selected_body_size = len(selected_body.encode("utf-8"))
+            selected_body_size = len(str.encode(selected_body, "utf-8"))
         except UnicodeEncodeError as exc:
             raise ValueError("Selected body must be valid UTF-8 text.") from exc
         if selected_body_size > ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX:
@@ -1611,8 +1618,7 @@ class ConsoleChatStore:
             finalizer is not None
             or message.id in self._terminal_persistence_deferred_ids
         )
-        self._provisional_terminal_selection_ids.discard(message.id)
-        self._terminal_persistence_deferred_ids.discard(message.id)
+        self.clear_terminal_citation_state(message.id)
         if not terminal_persistence:
             message.status = "complete"
             self._persist_existing_message(message)
@@ -1669,8 +1675,8 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
-        self.clear_terminal_citation_state(message.id)
         self._materialize_stream_buffer(message)
+        self.clear_terminal_citation_state(message.id)
         base = self._variant_stream_bases.pop(message.id, None)
         if base is not None:
             message.content = base.content
@@ -1700,8 +1706,8 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
-        self.clear_terminal_citation_state(message.id)
         self._materialize_stream_buffer(message)
+        self.clear_terminal_citation_state(message.id)
         base = self._variant_stream_bases.pop(message.id, None)
         if base is not None:
             message.content = base.content
@@ -2178,10 +2184,12 @@ class ConsoleChatStore:
             return False
 
     def clear_terminal_citation_state(self, message_id: str) -> None:
-        """Clear transient terminal citation state without changing persistence."""
+        """Clear terminal selection and stream buffers without persisting."""
         self._terminal_citation_finalizers.pop(message_id, None)
         self._provisional_terminal_selection_ids.discard(message_id)
         self._terminal_persistence_deferred_ids.discard(message_id)
+        self._stream_chunks_by_message.pop(message_id, None)
+        self._stream_materialized_counts.pop(message_id, None)
 
     @staticmethod
     def _persistence_accepts_kwarg(func: Any, name: str) -> bool:
