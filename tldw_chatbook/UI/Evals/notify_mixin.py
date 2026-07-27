@@ -1,9 +1,10 @@
 """Shared ``_notify`` helper for the Evals workbench's nested widgets.
 
 ``ResultsGrid``, ``LibraryRail``, and ``SnippetEditor`` each carried a
-byte-identical copy of this method (found during the TASK-861 polish pass;
-``SnippetEditor``'s own copy already said as much in its docstring). Folded
-here rather than left duplicated a third time.
+byte-identical copy of this method's body (``ResultsGrid`` and
+``LibraryRail``'s own docstrings already said as much, each describing
+itself as mirroring ``SnippetEditor``'s -- the original, most-documented
+copy). Folded here rather than left duplicated a third time.
 
 There is no existing shared base class among the three -- each extends
 ``textual.containers.Vertical`` directly -- so this is a plain mixin, not a
