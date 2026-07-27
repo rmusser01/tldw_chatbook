@@ -183,10 +183,10 @@ class FileNotesService:
     @property
     @_serialized
     def session_changes(self) -> tuple[SessionChange, ...]:
-        """Return Chatbook-only changes made by this service instance.
+        """Return owner-wide changes for the current root session.
 
         Returns:
-            An immutable snapshot of this session's disk changes.
+            An immutable snapshot of the owner's current-root session history.
         """
         snapshot = self._session_owner.snapshot(self._session_binding)
         return tuple(item.change for item in snapshot.changes)

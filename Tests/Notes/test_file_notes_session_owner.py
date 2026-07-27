@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
+
+import pytest
 
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
@@ -67,6 +70,99 @@ def test_checked_root_selection_preserves_unexpected_or_same_root_state(
     assert second.generation == first.generation + 1
     assert owner.current_binding() == second
     assert owner.snapshot(second).changes == ()
+
+
+def test_checked_root_selection_allows_only_legitimate_same_candidate_join(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+
+    initial = owner.try_select_root(tmp_path / "a", expected_binding=None)
+    assert initial is not None
+    assert (
+        owner.try_select_root(tmp_path / "a", expected_binding=None)
+        == initial
+    )
+
+    replacement = owner.try_select_root(
+        tmp_path / "b",
+        expected_binding=initial,
+    )
+    assert replacement is not None
+    assert replacement.generation == initial.generation + 1
+    assert (
+        owner.try_select_root(
+            tmp_path / "b",
+            expected_binding=initial,
+        )
+        == replacement
+    )
+
+
+def test_checked_root_selection_rejects_same_root_aba_binding(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    first_a = owner.select_root(tmp_path / "a")
+    middle_b = owner.select_root(tmp_path / "b")
+    current_a = owner.select_root(tmp_path / "a")
+
+    assert current_a.generation == middle_b.generation + 1
+    assert (
+        owner.try_select_root(
+            tmp_path / "a",
+            expected_binding=first_a,
+        )
+        is None
+    )
+    assert owner.current_binding() == current_a
+
+
+def test_root_commit_reserves_selection_through_synchronous_publication(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    original = owner.select_root(tmp_path / "old")
+    publication_started = Event()
+    release_publication = Event()
+    competing_started = Event()
+    competing_finished = Event()
+    published_bindings = []
+
+    def publish(binding) -> None:
+        published_bindings.append(binding)
+        assert owner.current_binding() == binding
+        publication_started.set()
+        assert release_publication.wait(timeout=5)
+
+    def select_competing_root():
+        competing_started.set()
+        try:
+            return owner.select_root(tmp_path / "competing")
+        finally:
+            competing_finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        committed = pool.submit(
+            owner.try_commit_root,
+            tmp_path / "candidate",
+            expected_binding=original,
+            prepare=lambda: True,
+            publish=publish,
+        )
+        assert publication_started.wait(timeout=1)
+        competing = pool.submit(select_competing_root)
+        assert competing_started.wait(timeout=1)
+        selection_was_reserved = not competing_finished.wait(timeout=0.05)
+        release_publication.set()
+        committed_binding = committed.result(timeout=1)
+        competing_binding = competing.result(timeout=1)
+
+    assert selection_was_reserved
+    assert published_bindings == [committed_binding]
+    assert committed_binding is not None
+    assert committed_binding.root_key == str((tmp_path / "candidate").resolve())
+    assert competing_binding.root_key == str((tmp_path / "competing").resolve())
 
 
 def test_recorder_assigns_one_monotonic_sequence_under_threads(
@@ -205,3 +301,87 @@ def test_shutdown_is_idempotent_and_owner_state_is_never_persisted(
     assert owner.try_acquire_transition(binding, "source") is None
     assert owner.try_acquire_mutation(binding) is None
     assert owner.try_acquire_status(binding) is None
+
+
+def test_concurrent_shutdown_waits_for_one_cleanup() -> None:
+    cleanup_started = Event()
+    release_cleanup = Event()
+    second_started = Event()
+    second_finished = Event()
+
+    class BlockingService:
+        def __init__(self) -> None:
+            self.shutdown_calls = 0
+
+        def shutdown(self) -> None:
+            self.shutdown_calls += 1
+            cleanup_started.set()
+            assert release_cleanup.wait(timeout=5)
+
+    service = BlockingService()
+    owner = FileNotesSessionOwner()
+    owner.attach_git_service(service)
+
+    def call_second_shutdown() -> None:
+        second_started.set()
+        owner.shutdown()
+        second_finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(owner.shutdown)
+        assert cleanup_started.wait(timeout=1)
+        second = pool.submit(call_second_shutdown)
+        assert second_started.wait(timeout=1)
+        waited_for_cleanup = not second_finished.wait(timeout=0.05)
+        release_cleanup.set()
+        first.result(timeout=1)
+        second.result(timeout=1)
+
+    assert waited_for_cleanup
+    assert second_finished.is_set()
+    assert service.shutdown_calls == 1
+
+
+def test_concurrent_and_later_shutdown_callers_observe_same_cleanup_failure() -> None:
+    cleanup_started = Event()
+    release_cleanup = Event()
+    second_started = Event()
+    cleanup_error = RuntimeError("forced cleanup failure")
+
+    class RaisingService:
+        def __init__(self) -> None:
+            self.shutdown_calls = 0
+
+        def shutdown(self) -> None:
+            self.shutdown_calls += 1
+            cleanup_started.set()
+            assert release_cleanup.wait(timeout=5)
+            raise cleanup_error
+
+    service = RaisingService()
+    owner = FileNotesSessionOwner()
+    owner.attach_git_service(service)
+
+    def call_shutdown(started: Event | None = None) -> BaseException | None:
+        if started is not None:
+            started.set()
+        try:
+            owner.shutdown()
+        except BaseException as error:
+            return error
+        return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(call_shutdown)
+        assert cleanup_started.wait(timeout=1)
+        second = pool.submit(call_shutdown, second_started)
+        assert second_started.wait(timeout=1)
+        release_cleanup.set()
+        assert first.result(timeout=1) is cleanup_error
+        assert second.result(timeout=1) is cleanup_error
+
+    with pytest.raises(RuntimeError) as later:
+        owner.shutdown()
+
+    assert later.value is cleanup_error
+    assert service.shutdown_calls == 1

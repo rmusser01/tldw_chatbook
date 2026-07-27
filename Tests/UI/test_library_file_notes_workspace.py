@@ -12,12 +12,14 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.widgets import Button, Input, Static, TextArea, Tree
 
 # Avoid importing the unrelated optional MLX stack during focused UI tests.
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
 
 import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module  # noqa: E402
+from tldw_chatbook.config import ConfigMutationResult  # noqa: E402
 from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
@@ -53,6 +55,25 @@ class _WorkspaceHarness(App[None]):
 
     def compose(self) -> ComposeResult:
         yield self.workspace
+
+
+class _TwoWorkspaceHarness(App[None]):
+    """Mount two workspaces that share one process owner."""
+
+    def __init__(
+        self,
+        first: LibraryFileNotesWorkspace,
+        second: LibraryFileNotesWorkspace,
+    ) -> None:
+        super().__init__()
+        self.first = first
+        self.second = second
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="first-workspace-host"):
+            yield self.first
+        with Vertical(id="second-workspace-host"):
+            yield self.second
 
 
 async def _wait_until(
@@ -104,6 +125,22 @@ def _delayed_call(call):
     return delayed, started, release
 
 
+def _root_transition_workspace(tmp_path: Path):
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    old_root.mkdir()
+    new_root.mkdir()
+    owner = FileNotesSessionOwner()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=old_root,
+        replica=replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+    return old_root, new_root, owner, replica, workspace
+
+
 @pytest.mark.asyncio
 async def test_empty_offline_and_persisted_root_states(
     tmp_path: Path,
@@ -121,10 +158,24 @@ async def test_empty_offline_and_persisted_root_states(
         root = tmp_path / "chosen"
         root.mkdir()
         saved: list[tuple[str, str, str]] = []
+
+        def save_root_mutation(
+            section_values: dict[str, dict[str, str]],
+        ) -> ConfigMutationResult:
+            saved.append(
+                (
+                    "file_notes",
+                    "root",
+                    section_values["file_notes"]["root"],
+                )
+            )
+            return ConfigMutationResult(True, True, None)
+
         monkeypatch.setattr(
             workspace_module,
-            "save_setting_to_cli_config",
-            lambda section, key, value: saved.append((section, key, value)) or True,
+            "apply_settings_mutation_to_cli_config",
+            save_root_mutation,
+            raising=False,
         )
         assert await empty.set_root(root)
         assert saved == [("file_notes", "root", str(root.resolve()))]
@@ -353,21 +404,111 @@ async def test_delayed_old_workspace_cannot_replace_current_workspace_root(
 
 
 @pytest.mark.asyncio
+async def test_overlapping_root_persistence_only_winner_updates_config_and_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_root = (tmp_path / "old").resolve()
+    slow_root = (tmp_path / "slow").resolve()
+    winner_root = (tmp_path / "winner").resolve()
+    old_root.mkdir()
+    slow_root.mkdir()
+    winner_root.mkdir()
+    owner = FileNotesSessionOwner()
+    slow_replica = FileNotesReplica(":memory:")
+    winner_replica = FileNotesReplica(":memory:")
+    slow_workspace = LibraryFileNotesWorkspace(
+        root=old_root,
+        replica=slow_replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+    winner_workspace = LibraryFileNotesWorkspace(
+        root=old_root,
+        replica=winner_replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+    slow_scan_started = threading.Event()
+    release_slow_scan = threading.Event()
+    real_scan = FileNotesService.scan
+    persisted_roots: list[str] = []
+
+    def delayed_scan(service: FileNotesService):
+        if service.root == slow_root:
+            slow_scan_started.set()
+            assert release_slow_scan.wait(timeout=5)
+        return real_scan(service)
+
+    def persist_mutation(
+        section_values: dict[str, dict[str, str]],
+    ) -> ConfigMutationResult:
+        persisted_roots.append(section_values["file_notes"]["root"])
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(FileNotesService, "scan", delayed_scan)
+    monkeypatch.setattr(
+        workspace_module,
+        "apply_settings_mutation_to_cli_config",
+        persist_mutation,
+        raising=False,
+    )
+    slow_transition: asyncio.Task[bool] | None = None
+    try:
+        async with _TwoWorkspaceHarness(
+            slow_workspace,
+            winner_workspace,
+        ).run_test() as pilot:
+            await _wait_until(
+                pilot,
+                lambda: slow_workspace.initialized and winner_workspace.initialized,
+                "shared-root workspaces did not initialize",
+            )
+            old_service = slow_workspace._service
+            old_binding = slow_workspace._session_binding
+            assert old_service is not None
+            assert old_binding is not None
+            assert winner_workspace._session_binding == old_binding
+
+            slow_transition = asyncio.create_task(
+                slow_workspace.set_root(slow_root)
+            )
+            await _wait_until(
+                pilot,
+                slow_scan_started.is_set,
+                "slow candidate scan did not start",
+            )
+            assert await winner_workspace.set_root(winner_root)
+            winner_binding = winner_workspace._session_binding
+            assert winner_binding is not None
+
+            release_slow_scan.set()
+            assert not await slow_transition
+
+            assert persisted_roots == [str(winner_root)]
+            assert owner.current_binding() == winner_binding
+            assert winner_workspace.root == winner_root
+            assert slow_workspace.root == old_root
+            assert slow_workspace._service is old_service
+            assert slow_workspace._session_binding == old_binding
+    finally:
+        release_slow_scan.set()
+        if slow_transition is not None and not slow_transition.done():
+            await slow_transition
+        await slow_workspace.shutdown()
+        await winner_workspace.shutdown()
+        owner.shutdown()
+        slow_replica.close()
+        winner_replica.close()
+
+
+@pytest.mark.asyncio
 async def test_failed_root_persistence_keeps_old_owner_log_and_service(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    old_root = tmp_path / "old"
-    new_root = tmp_path / "new"
-    old_root.mkdir()
-    new_root.mkdir()
-    owner = FileNotesSessionOwner()
-    replica = FileNotesReplica(":memory:")
-    workspace = LibraryFileNotesWorkspace(
-        root=old_root,
-        replica=replica,
-        session_owner=owner,
-        poll_interval=10,
+    old_root, new_root, owner, replica, workspace = (
+        _root_transition_workspace(tmp_path)
     )
 
     def fail_persistence(*_args: object, **_kwargs: object) -> None:
@@ -375,8 +516,9 @@ async def test_failed_root_persistence_keeps_old_owner_log_and_service(
 
     monkeypatch.setattr(
         workspace_module,
-        "save_setting_to_cli_config",
+        "apply_settings_mutation_to_cli_config",
         fail_persistence,
+        raising=False,
     )
     async with _WorkspaceHarness(workspace).run_test() as pilot:
         await _wait_until(
@@ -408,27 +550,23 @@ async def test_failed_root_persistence_keeps_old_owner_log_and_service(
 
 
 @pytest.mark.asyncio
-async def test_false_root_persistence_keeps_old_owner_log_and_service(
+async def test_before_replace_root_failure_keeps_old_owner_log_and_service(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    old_root = tmp_path / "old"
-    new_root = tmp_path / "new"
-    old_root.mkdir()
-    new_root.mkdir()
-    owner = FileNotesSessionOwner()
-    replica = FileNotesReplica(":memory:")
-    workspace = LibraryFileNotesWorkspace(
-        root=old_root,
-        replica=replica,
-        session_owner=owner,
-        poll_interval=10,
+    old_root, new_root, owner, replica, workspace = (
+        _root_transition_workspace(tmp_path)
     )
 
     monkeypatch.setattr(
         workspace_module,
-        "save_setting_to_cli_config",
-        lambda *_args, **_kwargs: False,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: ConfigMutationResult(
+            False,
+            False,
+            "before_replace",
+        ),
+        raising=False,
     )
     async with _WorkspaceHarness(workspace).run_test() as pilot:
         await _wait_until(
@@ -452,6 +590,97 @@ async def test_false_root_persistence_keeps_old_owner_log_and_service(
             item.change.relative_path
             for item in owner.snapshot(old_binding).changes
         ] == ["before.md", "after.md"]
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_cache_reload_failure_adopts_persisted_root_with_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_root, new_root, owner, replica, workspace = (
+        _root_transition_workspace(tmp_path)
+    )
+
+    monkeypatch.setattr(
+        workspace_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: ConfigMutationResult(
+            True,
+            False,
+            "cache_reload",
+        ),
+        raising=False,
+    )
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized,
+            "old workspace did not initialize",
+        )
+        old_service = workspace._service
+        old_binding = workspace._session_binding
+        assert old_service is not None
+        assert old_binding is not None
+        assert old_service.create_file("before.md", "before").status == "ok"
+
+        assert await workspace.set_root(new_root)
+
+        new_binding = workspace._session_binding
+        assert new_binding is not None
+        assert new_binding != old_binding
+        assert workspace.root == new_root.resolve()
+        assert workspace._service is not old_service
+        assert owner.current_binding() == new_binding
+        assert "cache reload" in workspace._runtime_warning.lower()
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_unmount_during_successful_root_persistence_adopts_written_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_root, new_root, owner, replica, workspace = (
+        _root_transition_workspace(tmp_path)
+    )
+    (old_root / "open.md").write_text("old root", encoding="utf-8")
+
+    def interrupt_and_persist() -> ConfigMutationResult:
+        workspace.on_unmount()
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(
+        workspace_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: interrupt_and_persist(),
+        raising=False,
+    )
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized,
+            "old workspace did not initialize",
+        )
+        assert await workspace.open_path("open.md")
+        assert workspace.current_document is not None
+
+        assert await workspace.set_root(new_root)
+
+        binding = workspace._session_binding
+        assert binding is not None
+        assert workspace.root == new_root.resolve()
+        assert workspace._service is not None
+        assert workspace._service.root == new_root.resolve()
+        assert owner.current_binding() == binding
+        assert workspace.current_document is None
+        assert workspace.current_path == ""
 
     await workspace.shutdown()
     owner.shutdown()

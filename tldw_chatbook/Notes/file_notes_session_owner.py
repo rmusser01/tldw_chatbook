@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from threading import RLock
+from threading import Condition, Lock, RLock
 from typing import Literal, Protocol
 
 SessionChangeAction = Literal[
@@ -106,13 +107,18 @@ class FileNotesSessionOwner:
         "_lock",
         "_mutation_token",
         "_next_sequence",
+        "_root_commit_lock",
         "_shutdown",
+        "_shutdown_condition",
+        "_shutdown_error",
+        "_shutdown_state",
         "_status_token",
         "_transition_tokens",
     )
 
     def __init__(self) -> None:
         self._lock = RLock()
+        self._root_commit_lock = Lock()
         self._binding: SessionBinding | None = None
         self._generation = 0
         self._changes: list[SequencedSessionChange] = []
@@ -121,6 +127,9 @@ class FileNotesSessionOwner:
         self._mutation_token: object | None = None
         self._status_token: object | None = None
         self._shutdown = False
+        self._shutdown_condition = Condition(self._lock)
+        self._shutdown_error: BaseException | None = None
+        self._shutdown_state: Literal["open", "closing", "closed", "failed"] = "open"
         self._git_service: FileNotesGitServiceLifecycle | None = None
 
     def select_root(self, root: str | Path) -> SessionBinding:
@@ -136,10 +145,11 @@ class FileNotesSessionOwner:
             RuntimeError: If the owner has already shut down.
         """
         root_key = str(Path(root).expanduser().resolve(strict=False))
-        with self._lock:
-            if self._shutdown:
-                raise RuntimeError("File Notes session owner is shut down")
-            return self._select_root_locked(root_key)
+        with self._root_commit_lock:
+            with self._lock:
+                if self._shutdown:
+                    raise RuntimeError("File Notes session owner is shut down")
+                return self._select_root_locked(root_key)
 
     def current_binding(self) -> SessionBinding | None:
         """Return the currently selected immutable root binding, if any."""
@@ -154,18 +164,50 @@ class FileNotesSessionOwner:
     ) -> SessionBinding | None:
         """Select a root only if shared owner state still matches expectation.
 
-        A concurrently selected identical root is safe to share and returns its
-        existing binding. A different unexpected root is never replaced.
+        A caller may join an identical root selected directly from the same
+        expected generation. Older same-root ABA bindings and every unexpected
+        different root are rejected.
         """
         root_key = str(Path(root).expanduser().resolve(strict=False))
-        with self._lock:
-            if self._shutdown:
+        with self._root_commit_lock:
+            with self._lock:
+                if self._shutdown:
+                    return None
+                if not self._root_selection_matches_locked(
+                    root_key,
+                    expected_binding,
+                ):
+                    return None
+                return self._select_root_locked(root_key)
+
+    def try_commit_root(
+        self,
+        root: str | Path,
+        *,
+        expected_binding: SessionBinding | None,
+        prepare: Callable[[], bool],
+        publish: Callable[[SessionBinding], None],
+    ) -> SessionBinding | None:
+        """Reserve, prepare, select, and synchronously publish one root change.
+
+        The separate root-commit lock prevents every other root-changing entry
+        point from interleaving with persistence or publication. The main
+        record/lease lock is held only for validation and root selection.
+        """
+        root_key = str(Path(root).expanduser().resolve(strict=False))
+        with self._root_commit_lock:
+            with self._lock:
+                if self._shutdown or not self._root_selection_matches_locked(
+                    root_key,
+                    expected_binding,
+                ):
+                    return None
+            if not prepare():
                 return None
-            if self._binding is not None and self._binding.root_key == root_key:
-                return self._binding
-            if self._binding != expected_binding:
-                return None
-            return self._select_root_locked(root_key)
+            with self._lock:
+                binding = self._select_root_locked(root_key)
+            publish(binding)
+            return binding
 
     def record_change(
         self,
@@ -255,14 +297,32 @@ class FileNotesSessionOwner:
 
     def shutdown(self) -> None:
         """Seal admission and shut down the attached service exactly once."""
-        with self._lock:
-            if self._shutdown:
+        with self._shutdown_condition:
+            while self._shutdown_state == "closing":
+                self._shutdown_condition.wait()
+            if self._shutdown_state == "closed":
                 return
+            if self._shutdown_state == "failed":
+                assert self._shutdown_error is not None
+                raise self._shutdown_error
             self._shutdown = True
-            service = self._git_service
+            self._shutdown_state = "closing"
+        with self._root_commit_lock:
+            with self._lock:
+                service = self._git_service
+        try:
+            if service is not None:
+                service.shutdown()
+        except BaseException as error:
+            with self._shutdown_condition:
+                self._shutdown_error = error
+                self._shutdown_state = "failed"
+                self._shutdown_condition.notify_all()
+            raise
+        with self._shutdown_condition:
             self._git_service = None
-        if service is not None:
-            service.shutdown()
+            self._shutdown_state = "closed"
+            self._shutdown_condition.notify_all()
 
     def _release_transition(self, token: object) -> None:
         with self._lock:
@@ -286,3 +346,17 @@ class FileNotesSessionOwner:
         self._changes.clear()
         self._next_sequence = 1
         return self._binding
+
+    def _root_selection_matches_locked(
+        self,
+        root_key: str,
+        expected_binding: SessionBinding | None,
+    ) -> bool:
+        current = self._binding
+        if current == expected_binding:
+            return True
+        if current is None or current.root_key != root_key:
+            return False
+        if expected_binding is None:
+            return current.generation == 1
+        return current.generation == expected_binding.generation + 1
