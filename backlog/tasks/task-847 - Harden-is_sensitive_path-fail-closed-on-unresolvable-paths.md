@@ -1,5 +1,5 @@
 ---
-id: TASK-839
+id: TASK-847
 title: Harden is_sensitive_path fail-closed on unresolvable paths
 status: To Do
 assignee: []

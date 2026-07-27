@@ -1,5 +1,5 @@
 ---
-id: TASK-842
+id: TASK-850
 title: Scope glob_files and grep_files to workspace folder roots
 status: To Do
 assignee: []

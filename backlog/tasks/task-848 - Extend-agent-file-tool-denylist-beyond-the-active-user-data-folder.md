@@ -1,5 +1,5 @@
 ---
-id: TASK-840
+id: TASK-848
 title: Extend agent file-tool denylist beyond the active user data folder
 status: To Do
 assignee: []
