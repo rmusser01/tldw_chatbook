@@ -916,6 +916,32 @@ def test_tldw_cli_constructor_invokes_runtime_loader_as_standalone_expression() 
     assert assigned_calls == []
 
 
+def test_retained_note_ingest_state_is_initialized_per_app_instance() -> None:
+    app_class = _class_definition(APP_PATH, "TldwCli")
+    constructor = _method_definition(app_class, "__init__")
+    class_annotations = {
+        statement.target.id: statement
+        for statement in app_class.body
+        if isinstance(statement, ast.AnnAssign)
+        and isinstance(statement.target, ast.Name)
+    }
+    constructor_assignments = [
+        target.attr
+        for statement in ast.walk(constructor)
+        if isinstance(statement, ast.Assign)
+        for target in statement.targets
+        if isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "self"
+    ]
+
+    assert class_annotations["selected_note_files_for_import"].value is None
+    assert constructor_assignments.count("selected_note_files_for_import") == 1
+    assert constructor_assignments.count("last_note_import_dir") == 1
+    assert "selected_notes_files_for_import" not in constructor_assignments
+    assert "last_notes_import_dir" not in constructor_assignments
+
+
 def test_runtime_policy_loader_has_exact_production_reference_allowlist() -> None:
     relative_app = str(APP_PATH.relative_to(PROJECT_ROOT))
     relative_bootstrap = str(BOOTSTRAP_PATH.relative_to(PROJECT_ROOT))

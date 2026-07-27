@@ -3531,7 +3531,7 @@ class TldwCli(
     # Ingest Tab
     ingest_active_view: reactive[Optional[str]] = reactive("ingest-view-prompts")
     _initial_ingest_view: Optional[str] = "ingest-view-prompts"
-    selected_note_files_for_import: List[Path] = []
+    selected_note_files_for_import: List[Path]
     parsed_notes_for_preview: List[Dict[str, Any]] = []
     last_note_import_dir: Optional[Path] = None
     # Add attributes to hold the handlers (optional, but can be useful)
@@ -3649,9 +3649,9 @@ class TldwCli(
         # Initialize screen navigation flag early to prevent AttributeError
         self._use_screen_navigation = True  # ALWAYS use screen-based navigation now
         # Initialize retained Notes ingest attributes.
-        self.selected_notes_files_for_import = []
+        self.selected_note_files_for_import = []
         self.parsed_notes_for_preview = []  # <<< INITIALIZATION for notes
-        self.last_notes_import_dir = None
+        self.last_note_import_dir = None
         # Llama.cpp server process
         self.llamacpp_server_process = None
         # LlamaFile server process

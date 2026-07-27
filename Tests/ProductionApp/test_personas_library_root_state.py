@@ -1,40 +1,24 @@
-# ruff: noqa: E402
-
 from __future__ import annotations
 
 import asyncio
 import io
 import json
 import logging
-import sys
 import threading
 
 import pytest
 from loguru import logger
 
-# Exercise the full production app in its supported "optional transcription
-# backend absent" configuration. The installed parakeet-mlx wheel aborts the
-# interpreter while importing MLX in this test runner, before Textual can mount.
-_MISSING_MODULE = object()
-_previous_parakeet_mlx = sys.modules.get("parakeet_mlx", _MISSING_MODULE)
-sys.modules["parakeet_mlx"] = None
-
-try:
-    import tldw_chatbook.app as app_module
-    from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.Constants import TAB_LIBRARY, TAB_PERSONAS
-    from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
-    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-    from tldw_chatbook.UI.Screens.library_screen import (
-        LIBRARY_ROW_BROWSE_PROMPTS,
-        LibraryScreen,
-    )
-    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
-finally:
-    if _previous_parakeet_mlx is _MISSING_MODULE:
-        sys.modules.pop("parakeet_mlx", None)
-    else:
-        sys.modules["parakeet_mlx"] = _previous_parakeet_mlx
+import tldw_chatbook.app as app_module
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Constants import TAB_LIBRARY, TAB_PERSONAS
+from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Screens.library_screen import (
+    LIBRARY_ROW_BROWSE_PROMPTS,
+    LibraryScreen,
+)
+from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 
 
 REMOVED_ROOT_NAMES = (
@@ -113,6 +97,7 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
     prompt_name = "TASK-651 imported prompt"
     private_system_body = "TASK_651_PRIVATE_SYSTEM_BODY"
     private_user_body = "TASK_651_PRIVATE_USER_BODY"
+    private_character_error = "TASK_651_PRIVATE_CHARACTER_IMPORT_ERROR"
     character_path = tmp_path / "task-651-character.json"
     prompt_path = tmp_path / "task-651-prompt.json"
     stale_character_name = "TASK-651 stale completion character"
@@ -192,6 +177,22 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
             await pilot.pause()
             assert personas.state.selected_entity_kind == "character"
             assert personas.state.selected_entity_name == character_name
+
+            with monkeypatch.context() as character_failure:
+
+                def fail_character_import(_path: str):
+                    raise RuntimeError(private_character_error)
+
+                character_failure.setattr(
+                    ccp_character_handler,
+                    "import_character_card",
+                    fail_character_import,
+                )
+                failed_character_worker = personas._start_character_import(
+                    str(character_path)
+                )
+                assert failed_character_worker.node is app
+                await failed_character_worker.wait()
 
             app.post_message(NavigateToScreen("prompts"))
             library = await _wait_for_screen(app, pilot, LibraryScreen, TAB_LIBRARY)
@@ -287,7 +288,12 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
 
         rendered_logs = diagnostic_output.getvalue()
         assert "Library prompt save failed" in rendered_logs
+        assert (
+            "Character import failed (file_type=.json, category=RuntimeError)."
+            in rendered_logs
+        )
         assert "RuntimeError" in rendered_logs
+        assert private_character_error not in rendered_logs
         assert private_system_body not in rendered_logs
         assert private_user_body not in rendered_logs
     finally:

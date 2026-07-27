@@ -6093,8 +6093,12 @@ class PersonasScreen(BaseAppScreen):
                 ccp_character_handler.import_character_card, path
             )
         except Exception as exc:
+            file_type = Path(path).suffix.lower()
+            if file_type not in {".json", ".png", ".webp", ".md", ".markdown"}:
+                file_type = "other"
             logger.error(
-                "Character import failed (category={}).",
+                "Character import failed (file_type={}, category={}).",
+                file_type,
                 type(exc).__name__,
             )
             self._notify(
