@@ -23,7 +23,10 @@ from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
     LIBRARY_ROW_BROWSE_NOTES,
 )
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
-from tldw_chatbook.Notes.file_notes_service import FileNotesService  # noqa: E402
+from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
+    FileNotesService,
+    OperationResult,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
     LibraryFileNotesWorkspace,
@@ -415,6 +418,85 @@ async def test_create_move_delete_protect_and_restore_use_real_service(
         assert all(
             action in changes for action in ("created", "moved", "deleted", "restored")
         )
+    replica.close()
+
+
+@pytest.mark.parametrize(
+    ("button_id", "handler_name", "service_method", "action"),
+    (
+        ("#file-notes-new", "_new_file", "create_file", "Create"),
+        ("#file-notes-move", "_move_file", "move_file", "Move"),
+        ("#file-notes-restore", "_restore_file", "restore_file", "Restore"),
+        ("#file-notes-save-copy", "_save_copy", "save_copy", "Save Copy"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_raw_path_actions_validate_input_before_service_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    button_id: str,
+    handler_name: str,
+    service_method: str,
+    action: str,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "start.md").write_text("start", encoding="utf-8")
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("start.md")
+        service = workspace._service
+        assert service is not None
+        validation_calls: list[tuple[str, int, bool]] = []
+        calls: list[tuple[object, ...]] = []
+        raw_path = (" " * 4097) + r"nested/double..dots\<script>note.md"
+        destination = raw_path.strip()
+        real_validate_text_input = workspace_module.validate_text_input
+
+        def capture_path_validation(
+            text: str,
+            max_length: int = 10000,
+            allow_html: bool = False,
+        ) -> bool:
+            validation_calls.append((text, max_length, allow_html))
+            return real_validate_text_input(
+                text,
+                max_length=max_length,
+                allow_html=allow_html,
+            )
+
+        def capture_call(*args: object) -> OperationResult:
+            calls.append(args)
+            return OperationResult(
+                status="error",
+                relative_path=destination,
+                message="service should not receive invalid input",
+            )
+
+        monkeypatch.setattr(
+            workspace_module,
+            "validate_text_input",
+            capture_path_validation,
+        )
+        monkeypatch.setattr(service, service_method, capture_call)
+        workspace.query_one("#file-notes-path", Input).value = raw_path
+        button = workspace.query_one(button_id, Button)
+        await getattr(workspace, handler_name)(Button.Pressed(button))
+
+        assert validation_calls == [(raw_path, 4096, True)]
+        assert calls == []
+        assert _static_text(
+            workspace,
+            "#file-notes-action-status",
+        ) == f"{action} failed: unsupported path text."
+        assert workspace.current_path == "start.md"
     replica.close()
 
 

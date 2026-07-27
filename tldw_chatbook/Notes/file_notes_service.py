@@ -14,7 +14,10 @@ from pathlib import Path
 from threading import RLock
 from typing import Literal, TypeVar, cast
 
+from loguru import logger
+
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica, ReplicaFileInfo
+from tldw_chatbook.Utils.path_validation import get_safe_relative_path
 
 MAX_FILE_BYTES = 8_000_000
 MAX_FILE_CHARS = 2_000_000
@@ -164,7 +167,11 @@ class FileNotesService:
     @property
     @_serialized
     def session_changes(self) -> tuple[SessionChange, ...]:
-        """Return Chatbook-only changes made by this service instance."""
+        """Return Chatbook-only changes made by this service instance.
+
+        Returns:
+            An immutable snapshot of this session's disk changes.
+        """
         return tuple(self._session_changes)
 
     @_serialized
@@ -177,7 +184,11 @@ class FileNotesService:
 
     @_serialized
     def scan(self) -> ScanResult:
-        """Scan supported regular files without following symlinks."""
+        """Scan supported regular files without following symlinks.
+
+        Returns:
+            Current file entries and any replica warning.
+        """
         if not self._root_is_online():
             return ScanResult(status="offline", offline=True)
 
@@ -217,7 +228,19 @@ class FileNotesService:
 
     @_serialized
     def open_file(self, relative_path: str) -> OpenedFileNote:
-        """Read a supported file from disk and record its exact-byte replica."""
+        """Read a supported file from disk and record its exact-byte replica.
+
+        Args:
+            relative_path: File path relative to the configured notes root.
+
+        Returns:
+            The decoded note body and exact on-disk metadata.
+
+        Raises:
+            FileNotFoundError: If the notes root or file is unavailable.
+            ValueError: If the path or file content is unsafe or unsupported.
+            OSError: If the file cannot be read.
+        """
         if not self._root_is_online():
             raise FileNotFoundError(f"File Notes root is offline: {self.root}")
         opened = self._load_file(relative_path)
@@ -246,7 +269,16 @@ class FileNotesService:
         *,
         session_key: str,
     ) -> OperationResult:
-        """Atomically save an editable body after exact hash checks."""
+        """Atomically save an editable body after exact hash checks.
+
+        Args:
+            opened: Snapshot returned by :meth:`open_file`.
+            body: Replacement note body.
+            session_key: Editing-session identifier for protected checkpoints.
+
+        Returns:
+            Save status, resulting hash, and any replica warning.
+        """
         relative_path = opened.relative_path
         if opened.root != self.root_key:
             return _result("unsafe", relative_path, "Opened note belongs to another root")
@@ -328,7 +360,12 @@ class FileNotesService:
             with os.fdopen(descriptor, "wb") as temporary:
                 temporary.write(new_bytes)
                 temporary.flush()
-                os.fchmod(temporary.fileno(), stat.S_IMODE(current_stat.st_mode))
+                file_mode = stat.S_IMODE(current_stat.st_mode)
+                fchmod = getattr(os, "fchmod", None)
+                if fchmod is not None:
+                    fchmod(temporary.fileno(), file_mode)
+            if fchmod is None:
+                os.chmod(temporary_path, file_mode)
 
             rechecked_bytes, _ = _read_regular_file(path)
             if _digest(rechecked_bytes) != opened.content_hash:
@@ -343,8 +380,12 @@ class FileNotesService:
             if temporary_path is not None:
                 try:
                     os.unlink(temporary_path)
-                except OSError:
-                    pass
+                except OSError as error:
+                    logger.warning(
+                        "Could not remove File Notes temporary file '{}': {}",
+                        temporary_path,
+                        error,
+                    )
 
         new_hash = _digest(new_bytes)
         return self._finish_published_file(
@@ -363,7 +404,16 @@ class FileNotesService:
         body: str,
         destination_path: str,
     ) -> OperationResult:
-        """Save an opened note's exact format to a new path without clobbering."""
+        """Save an opened note's exact format to a new path without clobbering.
+
+        Args:
+            opened: Snapshot whose encoding and frontmatter are preserved.
+            body: Note body to write.
+            destination_path: New path relative to the notes root.
+
+        Returns:
+            Copy status, resulting hash, and any replica warning.
+        """
         if opened.root != self.root_key:
             return _result(
                 "unsafe",
@@ -416,7 +466,15 @@ class FileNotesService:
 
     @_serialized
     def create_file(self, relative_path: str, body: str = "") -> OperationResult:
-        """Create one supported UTF-8 file with an exclusive filesystem open."""
+        """Create one supported UTF-8 file with an exclusive filesystem open.
+
+        Args:
+            relative_path: New file path relative to the notes root.
+            body: Initial UTF-8 note content.
+
+        Returns:
+            Creation status, resulting hash, and any replica warning.
+        """
         if not self._root_is_online():
             return _result("offline", relative_path)
         try:
@@ -464,7 +522,15 @@ class FileNotesService:
         relative_path: str,
         destination_path: str,
     ) -> OperationResult:
-        """Move a file without clobbering by linking then unlinking the source."""
+        """Move a file without clobbering by linking then unlinking the source.
+
+        Args:
+            relative_path: Existing file path relative to the notes root.
+            destination_path: New path relative to the notes root.
+
+        Returns:
+            Move status and any replica warning.
+        """
         if not self._root_is_online():
             return _result("offline", relative_path, destination=destination_path)
         try:
@@ -559,7 +625,15 @@ class FileNotesService:
         *,
         expected_hash: str | None = None,
     ) -> OperationResult:
-        """Commit a recovery tombstone, recheck bytes, and only then unlink."""
+        """Commit a recovery tombstone, recheck bytes, and only then unlink.
+
+        Args:
+            relative_path: File path relative to the notes root.
+            expected_hash: Optional digest required to match current disk bytes.
+
+        Returns:
+            Deletion status, deleted-content hash, and any replica warning.
+        """
         if not self._root_is_online():
             return _result("offline", relative_path)
         try:
@@ -650,7 +724,14 @@ class FileNotesService:
 
     @_serialized
     def restore_file(self, relative_path: str) -> OperationResult:
-        """Restore exact tombstoned bytes with an exclusive filesystem create."""
+        """Restore exact tombstoned bytes with an exclusive filesystem create.
+
+        Args:
+            relative_path: Tombstoned file path relative to the notes root.
+
+        Returns:
+            Restore status, resulting hash, and any replica warning.
+        """
         if not self._root_is_online():
             return _result("offline", relative_path)
         if self._replica is None:
@@ -711,7 +792,11 @@ class FileNotesService:
 
     @_serialized
     def reconcile(self) -> ReconcileResult:
-        """Project external create/modify/delete changes into the replica."""
+        """Project external create/modify/delete changes into the replica.
+
+        Returns:
+            Reconciled entries, external change sets, and any replica warning.
+        """
         if not self._root_is_online():
             return ReconcileResult(status="offline", offline=True)
 
@@ -826,7 +911,15 @@ class FileNotesService:
         *,
         is_prefix: bool = False,
     ) -> OperationResult:
-        """Enable future pre-edit checkpoints for a file or folder prefix."""
+        """Enable future pre-edit checkpoints for a file or folder prefix.
+
+        Args:
+            relative_path: Exact file path or folder prefix.
+            is_prefix: Whether ``relative_path`` identifies a folder prefix.
+
+        Returns:
+            Protection status and any replica warning.
+        """
         if self._replica is None:
             return _result("replica-error", relative_path)
         try:
@@ -854,7 +947,15 @@ class FileNotesService:
         *,
         is_prefix: bool = False,
     ) -> OperationResult:
-        """Stop future checkpoints without removing existing revisions."""
+        """Stop future checkpoints without removing existing revisions.
+
+        Args:
+            relative_path: Exact file path or folder prefix.
+            is_prefix: Whether ``relative_path`` identifies a folder prefix.
+
+        Returns:
+            Unprotection status and any replica warning.
+        """
         if self._replica is None:
             return _result("replica-error", relative_path)
         try:
@@ -958,6 +1059,8 @@ class FileNotesService:
                 raise ValueError(f"symlink traversal is not allowed: {relative_path}")
 
         resolved = current.resolve(strict=False)
+        if get_safe_relative_path(current, self.root) is None:
+            raise ValueError(f"unsafe path outside root: {relative_path}")
         try:
             resolved.relative_to(self.root)
         except ValueError as error:

@@ -33,7 +33,8 @@ class FileNotesReplica:
         """
         path = os.fspath(db_path)
         if path != ":memory:":
-            Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+            path = os.fspath(Path(path).expanduser())
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
         with self._lock:
             self._connection = sqlite3.connect(
@@ -60,7 +61,17 @@ class FileNotesReplica:
         size: int,
         mtime_ns: int,
     ) -> None:
-        """Replace one root-namespaced current-byte replica and its FTS row."""
+        """Replace one root-namespaced current-byte replica and its FTS row.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+            raw_bytes: Exact bytes read from disk.
+            content_hash: Digest of ``raw_bytes``.
+            decoded_text: Searchable text, or ``None`` for non-text content.
+            size: File size in bytes.
+            mtime_ns: File modification time in nanoseconds.
+        """
         with self._transaction() as cursor:
             cursor.execute(
                 """
@@ -96,7 +107,15 @@ class FileNotesReplica:
             self._replace_fts(cursor, root, relative_path, decoded_text)
 
     def get_bytes(self, root: str, relative_path: str) -> bytes | None:
-        """Return exact current or tombstoned bytes for a path."""
+        """Return exact current or tombstoned bytes for a path.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+
+        Returns:
+            Stored bytes, or ``None`` when the path is not replicated.
+        """
         with self._lock:
             row = self._connection.execute(
                 """
@@ -109,7 +128,14 @@ class FileNotesReplica:
         return None if row is None else bytes(row["raw_bytes"])
 
     def list_active_files(self, root: str) -> list[ReplicaFileInfo]:
-        """Return active replica metadata for one canonical root."""
+        """Return active replica metadata for one canonical root.
+
+        Args:
+            root: Canonical notes-root identifier.
+
+        Returns:
+            Active files ordered by relative path.
+        """
         with self._lock:
             rows = self._connection.execute(
                 """
@@ -131,7 +157,16 @@ class FileNotesReplica:
         ]
 
     def search(self, root: str, query: str, *, limit: int = 50) -> list[str]:
-        """Return active paths whose decoded current content matches user text."""
+        """Return active paths whose decoded current content matches user text.
+
+        Args:
+            root: Canonical notes-root identifier.
+            query: Literal text to find in replicated file content.
+            limit: Maximum number of paths to return.
+
+        Returns:
+            Matching relative paths ordered by relevance.
+        """
         query = query.strip()
         if not query or limit <= 0 or "\x00" in query:
             return []
@@ -165,7 +200,16 @@ class FileNotesReplica:
         *,
         deleted_at: str | None = None,
     ) -> bool:
-        """Tombstone a missing file while retaining its last observed bytes."""
+        """Tombstone a missing file while retaining its last observed bytes.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+            deleted_at: Optional UTC deletion timestamp.
+
+        Returns:
+            ``True`` when an existing replica row was tombstoned.
+        """
         with self._transaction() as cursor:
             cursor.execute(
                 """
@@ -181,7 +225,15 @@ class FileNotesReplica:
         return True
 
     def clear_tombstone(self, root: str, relative_path: str) -> bool:
-        """Clear a deletion marker and restore searchable current content."""
+        """Clear a deletion marker and restore searchable current content.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+
+        Returns:
+            ``True`` when a tombstone was cleared.
+        """
         with self._transaction() as cursor:
             row = cursor.execute(
                 """
@@ -212,7 +264,14 @@ class FileNotesReplica:
         return True
 
     def list_deleted(self, root: str) -> list[str]:
-        """List tombstoned paths for one canonical root."""
+        """List tombstoned paths for one canonical root.
+
+        Args:
+            root: Canonical notes-root identifier.
+
+        Returns:
+            Tombstoned relative paths, newest deletion first.
+        """
         with self._lock:
             rows = self._connection.execute(
                 """
@@ -226,7 +285,15 @@ class FileNotesReplica:
         return [str(row["relative_path"]) for row in rows]
 
     def get_restore_bytes(self, root: str, relative_path: str) -> bytes | None:
-        """Return exact bytes only when a path has a deletion tombstone."""
+        """Return exact bytes only when a path has a deletion tombstone.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+
+        Returns:
+            Restorable bytes, or ``None`` when no tombstone exists.
+        """
         with self._lock:
             row = self._connection.execute(
                 """
@@ -247,7 +314,13 @@ class FileNotesReplica:
         *,
         is_prefix: bool = False,
     ) -> None:
-        """Protect one exact path or a path-component-bounded folder prefix."""
+        """Protect one exact path or a path-component-bounded folder prefix.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: Exact file path or folder prefix.
+            is_prefix: Whether ``relative_path`` identifies a folder prefix.
+        """
         with self._transaction() as cursor:
             cursor.execute(
                 """
@@ -268,7 +341,16 @@ class FileNotesReplica:
         *,
         is_prefix: bool = False,
     ) -> bool:
-        """Remove one exact protection entry."""
+        """Remove one exact protection entry.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: Exact file path or folder prefix.
+            is_prefix: Whether ``relative_path`` identifies a folder prefix.
+
+        Returns:
+            ``True`` when a protection entry was removed.
+        """
         with self._transaction() as cursor:
             cursor.execute(
                 """
@@ -283,7 +365,15 @@ class FileNotesReplica:
         return removed
 
     def is_protected(self, root: str, relative_path: str) -> bool:
-        """Return whether an exact or component-bounded prefix protects a path."""
+        """Return whether an exact or component-bounded prefix protects a path.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+
+        Returns:
+            ``True`` when an exact entry or folder prefix protects the path.
+        """
         with self._lock:
             row = self._connection.execute(
                 """
@@ -318,7 +408,19 @@ class FileNotesReplica:
         session_key: str,
         created_at: str | None = None,
     ) -> bool:
-        """Record exact pre-edit bytes once for a supplied editing session."""
+        """Record exact pre-edit bytes once for a supplied editing session.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+            raw_bytes: Exact bytes captured before editing.
+            content_hash: Digest of ``raw_bytes``.
+            session_key: Identifier used to coalesce session checkpoints.
+            created_at: Optional UTC checkpoint timestamp.
+
+        Returns:
+            ``True`` when a new checkpoint was inserted.
+        """
         with self._transaction() as cursor:
             cursor.execute(
                 """
@@ -357,6 +459,15 @@ class FileNotesReplica:
         created_at: str | None = None,
     ) -> None:
         """Atomically store a deletion snapshot and tombstone its current row.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+            raw_bytes: Exact bytes captured before deletion.
+            content_hash: Digest of ``raw_bytes``.
+            decoded_text: Searchable text, or ``None`` for non-text content.
+            deleted_at: Optional UTC deletion timestamp.
+            created_at: Optional UTC revision timestamp.
 
         Raises:
             KeyError: If the path has no current replica row to tombstone.

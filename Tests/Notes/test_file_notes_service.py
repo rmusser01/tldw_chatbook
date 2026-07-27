@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import sqlite3
 import stat
@@ -11,6 +12,7 @@ from pathlib import Path
 from threading import Event
 
 import pytest
+from loguru import logger
 
 # Avoid importing the unrelated optional MLX stack during focused Notes tests.
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
@@ -71,6 +73,61 @@ def test_scan_excludes_git_and_symlinks_and_rejects_unsafe_paths(
     assert (root / "ignored.rst").exists()
 
 
+def test_service_uses_shared_path_confinement(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    service = FileNotesService(root, replica)
+    calls: list[tuple[Path, Path]] = []
+
+    def reject_path(candidate: Path, base: Path) -> None:
+        calls.append((candidate, base))
+        return None
+
+    monkeypatch.setattr(
+        service_module,
+        "get_safe_relative_path",
+        reject_path,
+        raising=False,
+    )
+
+    result = service.create_file("blocked.md", "blocked")
+
+    assert result.status == "unsafe"
+    assert calls == [(root / "blocked.md", root.resolve())]
+    assert not (root / "blocked.md").exists()
+
+
+def test_root_replacement_cannot_move_confinement_boundary(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    service = FileNotesService(root, replica)
+
+    def replace_root_with_symlink() -> bool:
+        root.rmdir()
+        try:
+            root.symlink_to(outside, target_is_directory=True)
+        except OSError as error:
+            pytest.skip(f"directory symlinks unavailable: {error}")
+        return True
+
+    monkeypatch.setattr(service, "_root_is_online", replace_root_with_symlink)
+
+    result = service.create_file("escaped.md", "blocked")
+
+    assert result.status == "unsafe"
+    assert not (outside / "escaped.md").exists()
+
+
 def test_open_and_save_preserve_bom_frontmatter_crlf_final_newline_and_mode(
     tmp_path: Path,
     replica: FileNotesReplica,
@@ -101,11 +158,34 @@ def test_open_and_save_preserve_bom_frontmatter_crlf_final_newline_and_mode(
     assert path.read_bytes() == (
         b"\xef\xbb\xbf---\r\ntitle: Exact\r\n...\r\nnew\r\nbody\r\n"
     )
-    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o640
     assert replica.get_bytes(str(root.resolve()), "note.md") == path.read_bytes()
     assert [(change.action, change.relative_path) for change in service.session_changes] == [
         ("modified", "note.md")
     ]
+
+
+def test_save_preserves_mode_when_fchmod_is_unavailable(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    path = root / "note.md"
+    path.write_text("old\n", encoding="utf-8")
+    path.chmod(0o640)
+    service = FileNotesService(root, replica)
+    opened = service.open_file("note.md")
+    monkeypatch.delattr(service_module.os, "fchmod", raising=False)
+
+    result = service.save_file(opened, "new\n", session_key="open-1")
+
+    assert result.status == "ok"
+    assert path.read_text(encoding="utf-8") == "new\n"
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o640
 
 
 def test_save_copy_preserves_exact_format_and_never_clobbers(
@@ -353,6 +433,49 @@ def test_save_rechecks_hash_immediately_before_replace_and_cleans_temp(
     assert result.status == "conflict"
     assert path.read_text(encoding="utf-8") == "external race\n"
     assert list(root.glob("*.tmp")) == []
+
+
+def test_save_logs_temp_cleanup_failure(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    path = root / "race.md"
+    path.write_text("baseline\n", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    opened = service.open_file("race.md")
+    real_mkstemp = service_module.tempfile.mkstemp
+    real_unlink = service_module.os.unlink
+
+    def change_after_temp(*args: object, **kwargs: object) -> tuple[int, str]:
+        fd, temp_path = real_mkstemp(*args, **kwargs)
+        path.write_text("external race\n", encoding="utf-8")
+        return fd, temp_path
+
+    def fail_temp_cleanup(
+        target: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        if os.fspath(target).endswith(".tmp"):
+            raise PermissionError("cleanup denied")
+        real_unlink(target, *args, **kwargs)
+
+    messages = io.StringIO()
+    sink_id = logger.add(messages, format="{message}")
+    try:
+        monkeypatch.setattr(service_module.tempfile, "mkstemp", change_after_temp)
+        monkeypatch.setattr(service_module.os, "unlink", fail_temp_cleanup)
+        result = service.save_file(opened, "draft\n", session_key="open-race")
+    finally:
+        logger.remove(sink_id)
+
+    assert result.status == "conflict"
+    assert path.read_text(encoding="utf-8") == "external race\n"
+    assert "Could not remove File Notes temporary file" in messages.getvalue()
+    assert "cleanup denied" in messages.getvalue()
 
 
 def test_create_is_exclusive_and_move_is_no_clobber_with_rollback(

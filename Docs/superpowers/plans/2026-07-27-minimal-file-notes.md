@@ -23,7 +23,7 @@ Reason: Disk authority, the independent replica, conflict policy, and Library ow
 - Create `Tests/Notes/test_file_notes_replica.py`.
 - Create `Tests/Notes/test_file_notes_service.py`.
 - Create `Tests/UI/test_library_file_notes_workspace.py`.
-- Modify `backlog/tasks/task-900 - Add-minimal-disk-backed-File-Notes-editor.md` only for final AC/notes/status.
+- Modify `backlog/tasks/task-969 - Add-minimal-disk-backed-File-Notes-editor.md` only for final AC/notes/status.
 
 ## Task 1: SQLite replica
 
@@ -107,7 +107,7 @@ Reason: Disk authority, the independent replica, conflict policy, and Library ow
 - [ ] Run only:
   `../../.venv/bin/python -m pytest -q Tests/Notes/test_file_notes_replica.py Tests/Notes/test_file_notes_service.py Tests/UI/test_library_file_notes_workspace.py --tb=short`
 - [ ] Run `git diff --check`.
-- [ ] Check all TASK-900 acceptance criteria only when proven by those tests, add concise Implementation Notes, and set TASK-900 to Done through the Backlog CLI.
+- [ ] Check all TASK-969 acceptance criteria only when proven by those tests, add concise Implementation Notes, and set TASK-969 to Done through the Backlog CLI.
 - [ ] Commit task closeout:
   `docs(notes): complete minimal file notes task`.
 

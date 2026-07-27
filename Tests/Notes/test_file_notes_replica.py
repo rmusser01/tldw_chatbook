@@ -457,3 +457,27 @@ def test_prepared_deletion_persists_and_returns_exact_restore_bytes(
         assert second.get_restore_bytes(root, relative_path) == restore_bytes
     finally:
         second.close()
+
+
+def test_database_path_expands_user_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.chdir(tmp_path)
+    expected_path = home / "state" / "file_notes.sqlite"
+
+    replica = FileNotesReplica("~/state/file_notes.sqlite")
+    try:
+        database_path = replica._connection.execute(
+            "SELECT file FROM pragma_database_list WHERE name = 'main'"
+        ).fetchone()["file"]
+    finally:
+        replica.close()
+
+    assert Path(database_path) == expected_path
+    assert expected_path.is_file()
+    assert not (tmp_path / "~").exists()

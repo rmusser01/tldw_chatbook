@@ -35,6 +35,7 @@ from tldw_chatbook.Notes.file_notes_service import (
     ScanResult,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+from tldw_chatbook.Utils.input_validation import validate_text_input
 
 SaveState = Literal["idle", "dirty", "saving", "saved", "conflict", "error"]
 _UNSET = object()
@@ -979,6 +980,8 @@ class LibraryFileNotesWorkspace(Vertical):
         async with self._refresh_lock:
             if (
                 not self._active
+                or not self.is_mounted
+                or not self.children
                 or self._path_transitioning
                 or generation != self._root_generation
                 or service is not self._service
@@ -995,6 +998,8 @@ class LibraryFileNotesWorkspace(Vertical):
                 return False
             if (
                 not self._active
+                or not self.is_mounted
+                or not self.children
                 or self._path_transitioning
                 or generation != self._root_generation
                 or service is not self._service
@@ -1186,6 +1191,19 @@ class LibraryFileNotesWorkspace(Vertical):
         elif self._save_state in {"dirty", "saving"}:
             self._set_save_state("error", detail)
 
+    def _validated_path_input(self, action: str) -> str | None:
+        raw_path = self.query_one("#file-notes-path", Input).value
+        relative_path = raw_path.strip()
+        valid_text = validate_text_input(
+            raw_path,
+            max_length=4096,
+            allow_html=True,
+        )
+        if not relative_path or not valid_text:
+            self._set_action_status(f"{action} failed: unsupported path text.")
+            return None
+        return relative_path
+
     async def _complete_path_action(
         self,
         action: str,
@@ -1325,7 +1343,9 @@ class LibraryFileNotesWorkspace(Vertical):
         service = self._service
         if service is None:
             return
-        destination = self.query_one("#file-notes-path", Input).value.strip()
+        destination = self._validated_path_input("Create")
+        if destination is None:
+            return
         await self._complete_path_action(
             "Create",
             destination,
@@ -1342,7 +1362,9 @@ class LibraryFileNotesWorkspace(Vertical):
         service = self._service
         if service is None:
             return
-        destination = self.query_one("#file-notes-path", Input).value.strip()
+        destination = self._validated_path_input("Move")
+        if destination is None:
+            return
         await self._complete_path_action(
             "Move",
             destination,
@@ -1402,10 +1424,11 @@ class LibraryFileNotesWorkspace(Vertical):
         service = self._service
         if service is None:
             return
-        relative_path = (
-            self._selected_deleted_path
-            or self.query_one("#file-notes-path", Input).value.strip()
-        )
+        relative_path = self._selected_deleted_path
+        if not relative_path:
+            relative_path = self._validated_path_input("Restore")
+            if relative_path is None:
+                return
         await self._complete_path_action(
             "Restore",
             relative_path,
@@ -1477,7 +1500,9 @@ class LibraryFileNotesWorkspace(Vertical):
         service = self._service
         if service is None or opened is None:
             return
-        destination = self.query_one("#file-notes-path", Input).value.strip()
+        destination = self._validated_path_input("Save Copy")
+        if destination is None:
+            return
         body = self.query_one("#file-notes-editor", TextArea).text
         await self._complete_path_action(
             "Save Copy",

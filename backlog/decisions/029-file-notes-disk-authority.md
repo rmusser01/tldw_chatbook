@@ -2,7 +2,7 @@
 
 Date: 2026-07-27
 Status: accepted
-Related task: [TASK-900](../tasks/task-900%20-%20Add-minimal-disk-backed-File-Notes-editor.md)
+Related task: [TASK-969](../tasks/task-969%20-%20Add-minimal-disk-backed-File-Notes-editor.md)
 
 ## Context
 

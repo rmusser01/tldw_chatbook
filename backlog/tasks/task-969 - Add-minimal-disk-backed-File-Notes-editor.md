@@ -1,11 +1,11 @@
 ---
-id: TASK-900
+id: TASK-969
 title: Add minimal disk-backed File Notes editor
 status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-27 14:32'
-updated_date: '2026-07-27 17:29'
+updated_date: '2026-07-27 18:00'
 labels:
   - notes
   - library
@@ -61,5 +61,7 @@ Implemented the accepted disk-authoritative File Notes design from ADR-029.
 - Added path-safe exact-byte filesystem operations for scanning, opening, hash-checked atomic saving, no-clobber create/move, delete, restore, polling reconciliation, and Chatbook-only session changes.
 - Added a retained Library Database | Files workspace with folder tree/search replacement, body-only editing, autosave/conflict actions, protection and recovery controls, narrow navigation, and leave guards.
 - Hardened async transitions, remount autosave reconciliation, stale-result rejection, and owned replica shutdown without adding Git controls, watchers, or new dependencies.
-- Focused verification: 42 tests passed; targeted Ruff passed. Full-suite/CI was intentionally outside the approved plan.
+- Addressed PR review with portable save permissions, consistent SQLite home expansion, visible temporary-file cleanup failures, shared path/input validation boundaries, stable polling teardown, and complete public API docstrings.
+- Rebased onto current `dev` and renumbered the task from TASK-900 to TASK-969 after `dev` independently claimed the intervening IDs.
+- Focused verification: 51 tests passed; targeted Ruff, module compilation, the duplicate-task guard, and `git diff --check` passed. Full-suite execution remains outside this focused task.
 <!-- SECTION:NOTES:END -->
