@@ -185,3 +185,92 @@ async def test_a_region_with_supplied_content_does_not_double_title():
         assert "Feeds" not in titles, (
             "a region whose content supplies its own heading should not add a second one"
         )
+
+
+@pytest.mark.asyncio
+async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
+    """Fix round 1 (human-ruled): removing FEEDS's duplicate title (the test
+    above) exposed a pre-existing bug where FEEDS's `height: auto` grew
+    without any limit. That is fine for the empty state, but Task 7 gives
+    FEEDS the real, scope-driven feeds list -- potentially dozens of
+    sources -- which would push ITEMS/CONTENT clean off the bottom of the
+    viewport. `_watchlists.tcss` now caps `.watchlists-region-feeds` at
+    `max-height: 10` with `overflow-y: auto`: it grows to fit small lists,
+    stops at the cap, and scrolls past it rather than either clipping
+    silently or displacing its neighbours.
+
+    Unlike this file's other tests, this one loads the REAL production
+    stylesheet (`CSS_PATH`) -- a bare `App` with no CSS at all would never
+    exercise `max-height`/`overflow-y`, so the assertions below would be
+    vacuous against the pre-fix code as much as the post-fix code.
+    """
+    from pathlib import Path
+
+    from textual.containers import Vertical
+    from textual.widgets import Static
+
+    css_path = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+    def overflowing_feeds() -> Vertical:
+        # 40 rows: far more than any reasonable cap, standing in for
+        # Task 7's real feeds list once a watchlist has dozens of sources.
+        body = Vertical(
+            *[Static(f"source-{i:02d}") for i in range(40)],
+            id="feeds-overflow-probe",
+        )
+        # Mirrors the production companion fix on `#watchlists-list-pane`
+        # in `_watchlists.tcss`: a bare `Vertical` defaults to
+        # `height: 1fr`, which is circular inside FEEDS's `height: auto`
+        # region -- it must size to its own content instead.
+        body.styles.height = "auto"
+        return body
+
+    class _App(App):
+        CSS_PATH = css_path
+
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(),
+                content={Region.FEEDS: overflowing_feeds},
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test(size=(100, 40)) as pilot:
+        feeds = app.query_one("#wl-region-feeds")
+        items = app.query_one("#wl-region-items")
+
+        assert feeds.region.height <= 10, (
+            f"FEEDS should stop growing at the cap once its content "
+            f"overflows it: {feeds.region}"
+        )
+        assert items.region.height > feeds.region.height, (
+            f"ITEMS must stay the taller reading area even when FEEDS's "
+            f"content would otherwise dwarf it: items={items.region} "
+            f"feeds={feeds.region}"
+        )
+
+        # Confirm it SCROLLS rather than clips: all 40 supplied rows must
+        # be reachable, not silently cut off past the cap.
+        strips = feeds.screen._compositor.render_strips()
+        top_row_text = "".join(segment.text for segment in strips[feeds.region.y])
+        assert "source-00" in top_row_text, (
+            f"expected the first supplied row on screen initially: {top_row_text!r}"
+        )
+
+        feeds.scroll_end(animate=False)
+        await pilot.pause()
+        await pilot.pause()
+
+        strips = feeds.screen._compositor.render_strips()
+        bottom_y = feeds.region.y + feeds.region.height - 1
+        bottom_row_text = "".join(segment.text for segment in strips[bottom_y])
+        assert "source-39" in bottom_row_text, (
+            f"the last supplied row should be reachable by scrolling, not "
+            f"lost past the cap: {bottom_row_text!r}"
+        )

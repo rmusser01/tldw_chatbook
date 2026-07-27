@@ -95,12 +95,41 @@
     min-height: 0;
 }
 
-/* FEEDS only ever hosts a short (<=5-line) source-count summary, but before
- * this rebalance it shared an equal `1fr` with ITEMS -- which hosts all six
- * section panes and their DataTables -- and CONTENT. At 160x42 that handed
- * FEEDS 11 rows for a handful of Static lines while ITEMS, doing all the
- * work, got the same 11 (Finding 5). `height: auto` lets FEEDS take only
- * what its content needs so ITEMS/CONTENT split what is left.
+/* FEEDS shared an equal `1fr` with ITEMS -- which hosts all six section
+ * panes and their DataTables -- and CONTENT (Finding 5). At 160x42 that
+ * handed FEEDS 11 rows for a handful of Static lines while ITEMS, doing all
+ * the work, got the same 11. `height: auto` lets FEEDS take only what its
+ * content needs so ITEMS/CONTENT split what is left.
+ *
+ * Task 5's premise that FEEDS "only ever hosts a short (<=5-line)
+ * source-count summary" died in Task 3 when the section tab strip moved
+ * into `_build_list_pane`: Task 7 gives FEEDS the real, scope-driven feeds
+ * list, which can run to dozens of sources. Unbounded `height: auto` would
+ * let that list grow without limit and push ITEMS/CONTENT clean out of the
+ * viewport -- the opposite failure from the one this rebalance fixed.
+ *
+ * `max-height: 10` + `overflow-y: auto` (Task 6, fix round 1) caps it
+ * instead: FEEDS grows to fit small lists, stops at the cap, and scrolls
+ * internally past it -- verified scrollable, not clipped, with 40
+ * synthetic rows (Tests/Watchlists/test_watchlists_workbench.py).
+ *
+ * Why 10, not the true empty-state need (measured at 11 rows: the tab
+ * strip, the "Sources" title, "No sources yet.", and the Create/Import
+ * button row, inside the pane's own border): at the guard suite's 160x42
+ * viewport, FEEDS and ITEMS/CONTENT are drawing from one fixed vertical
+ * budget (measured 34 rows total for the three centre regions combined).
+ * FEEDS=11 (uncapped, i.e. what `height: auto` alone produces) leaves 23
+ * rows for ITEMS+CONTENT's `1fr`/`1fr` split -- 11/12 -- which TIES ITEMS
+ * against FEEDS instead of leaving it taller
+ * (`test_watchlists_items_region_is_taller_than_feeds_region_when_expanded`).
+ * 10 is the smallest integer reduction off that measured 11 that breaks the
+ * tie (confirmed empirically: feeds=10, items=12 at 160x42; feeds=10,
+ * items=17 at the app's real 235x52, where the uncapped split already gives
+ * ITEMS much more headroom). The cost is one row of the true empty state's
+ * content (11 rows of real content into a 10-row cap) reachable only by
+ * scrolling rather than fully in view -- accepted per the ruling: the
+ * ITEMS-stays-the-reading-area invariant holds at ANY dataset size,
+ * including the empty one, not just larger ones.
  *
  * No `border` here (Task 6): `_build_list_pane`'s content is a
  * `.destination-workbench-pane` (the shared box every destination screen's
@@ -111,6 +140,8 @@
     width: 100%;
     height: auto;
     min-height: 0;
+    max-height: 10;
+    overflow-y: auto;
 }
 
 /* Companion fix for the region title's removal above: `#watchlists-list-pane`
