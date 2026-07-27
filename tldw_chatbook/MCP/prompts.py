@@ -10,7 +10,7 @@ from loguru import logger
 
 # Import tldw_chatbook components
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
-from ..DB.Client_Media_DB_v2 import MediaDatabase
+from ..DB.Client_Media_DB_v2 import MediaDatabase, get_media_transcripts
 
 # `get_character_by_id` was never a standalone function in
 # Character_Chat_Lib.py; `CharactersRAGDB.get_character_card_by_id()` is
@@ -50,8 +50,15 @@ class MCPPrompts:
                     }
                 ]
 
-            # Get messages
-            messages = self.chachanotes_db.get_conversation_messages(conversation_id)
+            # Get messages. `get_conversation_messages` never existed on
+            # CharactersRAGDB; the real method is
+            # `get_messages_for_conversation`, which takes a string
+            # conversation id and already excludes soft-deleted
+            # messages/conversations (same fix already applied to the
+            # identical call shape in tools.py/resources.py).
+            messages = self.chachanotes_db.get_messages_for_conversation(
+                str(conversation_id)
+            )
 
             # Build conversation text
             conversation_text = f"Title: {conv['title']}\n\n"
@@ -114,8 +121,11 @@ class MCPPrompts:
                     }
                 ]
 
-            # Get messages
-            messages = self.chachanotes_db.get_conversation_messages(conversation_id)
+            # Get messages (see summarize_conversation_prompt for why this
+            # is get_messages_for_conversation, not get_conversation_messages).
+            messages = self.chachanotes_db.get_messages_for_conversation(
+                str(conversation_id)
+            )
 
             # Build conversation text
             conversation_text = ""
@@ -170,13 +180,22 @@ class MCPPrompts:
                     {"role": "user", "content": f"Error: Media {media_id} not found"}
                 ]
 
-            # Get transcript or content
-            content = self.media_db.get_media_transcript(media_id) or media.get(
-                "content", ""
-            )
+            # Get transcript or content. `get_media_transcript` (singular)
+            # never existed as an instance method on MediaDatabase; the real
+            # accessor is the module-level `get_media_transcripts` (plural),
+            # returning every active transcript ordered newest first --
+            # take the most recent, matching this call site's original
+            # single-value assumption (see MCPResources.get_media_resource
+            # for the identical fix).
+            transcripts = get_media_transcripts(self.media_db, media_id)
+            content = (
+                transcripts[0]["transcription"] if transcripts else None
+            ) or media.get("content", "")
 
-            # Build prompt based on analysis type
-            prompt = f"Please analyze the following {media['media_type']} content"
+            # Build prompt based on analysis type. The Media table's own
+            # column is `type`, not `media_type` -- `media['media_type']`
+            # raised KeyError on every real row.
+            prompt = f"Please analyze the following {media['type']} content"
 
             if analysis_type == "summary":
                 prompt += " and provide a summary"

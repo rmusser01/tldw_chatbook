@@ -15,14 +15,18 @@ not a CWD-relative file.
 that does not exist anywhere in the codebase at all -- that dead reference
 was removed by TASK-968 (it was never consumed by anything else in the MCP
 package either; character-related tools already read ``chachanotes_db``
-directly). ``NotesInteropService`` is still constructed with a call
-signature that doesn't match the real class -- an unrelated, pre-existing
-defect out of this task's scope (see TASK-968's Implementation Notes) --
-so the tests below still stub it (a permissive fake swapped in at its
-*source* module, so ``_init_databases``'s own local import picks it up)
-to drive the real, unmodified method far enough to construct
-``self.media_db`` -- proving the fix through the actual code path rather
-than by re-implementing its logic in the test.
+directly). At the time this test was written, ``NotesInteropService`` was
+still constructed with a call signature that didn't match the real class --
+an unrelated, pre-existing defect out of this task's scope (see TASK-968's
+Implementation Notes) -- so the tests below stub it (a permissive fake
+swapped in at its *source* module, so ``_init_databases``'s own local
+import picks it up) to drive the real, unmodified method far enough to
+construct ``self.media_db`` -- proving the fix through the actual code
+path rather than by re-implementing its logic in the test. TASK-983 has
+since fixed that construction for real (see
+``test_server_notes_service.py``); the stub is kept here anyway so this
+file's scope stays the media-DB-path fix alone, not a second dependency on
+notes-service construction succeeding.
 """
 
 from __future__ import annotations
