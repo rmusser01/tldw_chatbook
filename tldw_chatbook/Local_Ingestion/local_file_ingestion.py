@@ -589,6 +589,9 @@ def parse_local_file_for_ingest(
             # Process single audio file
             results = audio_processor.process_audio_files(
                 inputs=[str(file_path)],
+                transcription_provider=options.get(
+                    "transcription_provider", "faster-whisper"
+                ),
                 transcription_model=options.get('transcription_model', chunk_options.get('transcription_model', 'base')),
                 transcription_language=options.get('language', chunk_options.get('transcription_language', 'en')),
                 perform_chunking=True,
@@ -642,6 +645,9 @@ def parse_local_file_for_ingest(
             results = video_processor.process_videos(
                 inputs=[str(file_path)],
                 download_video_flag=False,  # Extract audio only for transcription
+                transcription_provider=options.get(
+                    "transcription_provider", "faster-whisper"
+                ),
                 transcription_model=options.get('transcription_model', chunk_options.get('transcription_model', 'base')),
                 transcription_language=options.get('language', chunk_options.get('transcription_language', 'en')),
                 perform_chunking=True,

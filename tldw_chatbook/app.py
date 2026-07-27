@@ -2284,11 +2284,17 @@ class LibraryIngestQueueMixin:
             )
             options["extract_images"] = flat_opts.get("extract_images", False)
         elif group == "audio_video":
+            transcription_provider = (
+                flat_opts.get("transcription_provider") or "parakeet-onnx"
+            )
+            options["transcription_provider"] = transcription_provider
             options["transcription_model"] = (
-                flat_opts.get("model")
+                "nemo-parakeet-tdt-0.6b-v2"
+                if transcription_provider == "parakeet-onnx"
+                else flat_opts.get("model")
                 or flat_opts.get("transcription_model")
             )
-            options["language"] = flat_opts.get("language", "auto")
+            options["language"] = flat_opts.get("language", "en")
             options["timestamps"] = flat_opts.get("timestamps", True)
             options["diarization"] = flat_opts.get("diarization", False)
         elif group == "ebook":
