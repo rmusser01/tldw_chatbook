@@ -2150,6 +2150,9 @@ class ChatScreen(BaseAppScreen):
         self._console_sync_in_progress = False
         self._console_sync_requested = False
         self._console_citation_counts: dict[str, int] = {}
+        self._console_citation_resolved_signatures: dict[
+            str, tuple[str, str, str, str]
+        ] = {}
         self._console_citation_input_signature: (
             tuple[str | None, tuple[tuple[str, str, str, str], ...]] | None
         ) = None
@@ -11046,21 +11049,58 @@ class ChatScreen(BaseAppScreen):
     def _sync_console_citation_count_discovery(self, messages: list[Any]) -> None:
         """Dispatch one count lookup worker when eligible inputs change."""
         signature = self._console_citation_signature(messages)
+        repository = self._console_citation_repository()
+        if repository is None:
+            if signature != self._console_citation_input_signature:
+                self._console_citation_input_signature = signature
+                self._console_citation_request_generation += 1
+            self._console_citation_counts = {}
+            self._console_citation_resolved_signatures = {}
+            return
         if signature == self._console_citation_input_signature:
             return
+
+        previous_signature = self._console_citation_input_signature
+        same_session = (
+            previous_signature is not None
+            and previous_signature[0] == signature[0]
+        )
+        current_entries = {item[0]: item for item in signature[1]}
+        if not same_session:
+            self._console_citation_counts = {}
+            self._console_citation_resolved_signatures = {}
+        else:
+            cached_ids = set(self._console_citation_counts) | set(
+                self._console_citation_resolved_signatures
+            )
+            for native_message_id in cached_ids:
+                if (
+                    self._console_citation_resolved_signatures.get(native_message_id)
+                    != current_entries.get(native_message_id)
+                ):
+                    self._console_citation_counts.pop(native_message_id, None)
+                    self._console_citation_resolved_signatures.pop(
+                        native_message_id,
+                        None,
+                    )
 
         self._console_citation_input_signature = signature
         self._console_citation_request_generation += 1
         generation = self._console_citation_request_generation
-        self._console_citation_counts = {}
-        repository = self._console_citation_repository()
-        if repository is None or not signature[1]:
+        unresolved = tuple(
+            item
+            for item in signature[1]
+            if self._console_citation_resolved_signatures.get(item[0]) != item
+            or item[0] not in self._console_citation_counts
+        )
+        if not unresolved:
             return
         self.run_worker(
             self._discover_console_citation_counts(
                 repository,
                 signature,
                 generation,
+                unresolved,
             ),
             exclusive=True,
             group="console-citation-counts",
@@ -11074,6 +11114,7 @@ class ChatScreen(BaseAppScreen):
         """Read verified non-governed trace metadata into integer counts."""
         counts: dict[str, int] = {}
         for native_message_id, persisted_message_id, current_body, _status in eligible:
+            counts[native_message_id] = 0
             try:
                 result = repository.get_active_trace_for_current_message(
                     persisted_message_id,
@@ -11088,7 +11129,7 @@ class ChatScreen(BaseAppScreen):
                 ):
                     continue
                 evidence_ordinals = selected_valid_evidence_ordinals(summary.trace)
-            except (AttributeError, TypeError, ValueError):
+            except Exception:
                 continue
             if evidence_ordinals:
                 counts[native_message_id] = len(evidence_ordinals)
@@ -11099,6 +11140,7 @@ class ChatScreen(BaseAppScreen):
         signature: tuple[str | None, tuple[tuple[str, str, str, str], ...]],
         generation: int,
         counts: Mapping[str, int],
+        eligible: tuple[tuple[str, str, str, str], ...] | None = None,
     ) -> bool:
         """Apply count-only results when their full captured input is current."""
         if (
@@ -11108,12 +11150,16 @@ class ChatScreen(BaseAppScreen):
             != self._console_citation_signature(self._native_console_messages())
         ):
             return False
-        eligible_ids = {item[0] for item in signature[1]}
-        self._console_citation_counts = {
-            message_id: count
-            for message_id, count in counts.items()
-            if message_id in eligible_ids and type(count) is int and count > 0
-        }
+        current_entries = {item[0]: item for item in signature[1]}
+        for item in signature[1] if eligible is None else eligible:
+            native_message_id = item[0]
+            if current_entries.get(native_message_id) != item:
+                continue
+            count = counts.get(native_message_id, 0)
+            self._console_citation_counts[native_message_id] = (
+                count if type(count) is int and count >= 0 else 0
+            )
+            self._console_citation_resolved_signatures[native_message_id] = item
         return True
 
     async def _discover_console_citation_counts(
@@ -11121,14 +11167,21 @@ class ChatScreen(BaseAppScreen):
         repository: Any,
         signature: tuple[str | None, tuple[tuple[str, str, str, str], ...]],
         generation: int,
+        eligible: tuple[tuple[str, str, str, str], ...] | None = None,
     ) -> None:
         """Discover citation footer counts off-loop and refresh current rows."""
+        queried = signature[1] if eligible is None else eligible
         counts = await asyncio.to_thread(
             self._read_console_citation_counts,
             repository,
-            signature[1],
+            queried,
         )
-        if not self._apply_console_citation_counts(signature, generation, counts):
+        if not self._apply_console_citation_counts(
+            signature,
+            generation,
+            counts,
+            queried,
+        ):
             return
         await self._sync_native_console_chat_ui()
 
