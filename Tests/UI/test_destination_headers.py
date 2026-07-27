@@ -131,15 +131,15 @@ async def test_evals_screen_composes_destination_header_in_the_workbench_shell()
         await pilot.pause(0.1)
         screen = app.screen_stack[-1]
 
-        header = screen.query_one("#evals-destination-header", DestinationHeader)
+        header = screen.query_one("#lab-destination-header", DestinationHeader)
         assert header.has_class("workbench-header")
         assert header.has_class("ds-destination-header")
         title = screen.query_one(
-            "#evals-destination-header #workbench-header-title", Static
+            "#lab-destination-header #workbench-header-title", Static
         )
         assert str(title.renderable) == "Evals"
         subtitle = screen.query_one(
-            "#evals-destination-header #workbench-header-subtitle", Static
+            "#lab-destination-header #workbench-header-subtitle", Static
         )
         subtitle_text = str(subtitle.renderable)
         # Plain purpose copy, kept short, with no em dashes.
@@ -149,7 +149,7 @@ async def test_evals_screen_composes_destination_header_in_the_workbench_shell()
         assert "--" not in subtitle_text
         # States are text-labeled, never color-only.
         status = screen.query_one(
-            "#evals-destination-header #workbench-header-status", Static
+            "#lab-destination-header #workbench-header-status", Static
         )
         assert str(status.renderable) == "Ready"
 

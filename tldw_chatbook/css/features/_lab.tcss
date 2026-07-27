@@ -281,3 +281,50 @@
     min-width: 28;
     max-width: 34;
 }
+
+/* Evals' rail is a library, not a menu: section headings carry counts and
+ * their empty states put two buttons side by side ("+ New dataset" /
+ * "Import…"). At the shared floor those wrapped instead. */
+.lab-mode-evals #lab-rail {
+    min-width: 30;
+    max-width: 38;
+}
+
+/* --- Evals panes inside the frame's regions -----------------------------
+ *
+ * `#evals-library-pane, #evals-detail-pane, #evals-inspector-pane` carry
+ * `border: solid $ds-grid-line` + a panel background from the hand-rolled
+ * three-pane workbench they used to live in
+ * (components/_agentic_terminal.tcss). Inside the frame those borders are
+ * doubled -- `#lab-rail` already draws the column rule -- and each one costs
+ * two columns of content width, which truncated the rail's own
+ * "Create sample bench" button.
+ *
+ * Two ids each, so these beat that grouped one-id rule, and features/ is
+ * emitted after components/ regardless. The panes keep their ids: those are
+ * their stable selectors and several tests query them.
+ */
+#lab-rail #evals-library-pane,
+#lab-body #evals-detail-pane,
+#lab-inspector #evals-inspector-pane {
+    border: none;
+    background: transparent;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+}
+
+/* "No datasets" offers authoring and import together. In the old three-pane
+ * workbench that pane was ~53 columns and the two buttons sat side by side;
+ * in the frame's rail they need 34 and get 28, so "Import…" was clipped off
+ * the right edge -- present in the DOM, unreachable on screen. Stacking
+ * keeps both offered, which is what the design spec's empty-state table
+ * actually asks for; only the axis changes. */
+#lab-rail .evals-rail-empty-actions {
+    layout: vertical;
+    height: auto;
+}
+
+#lab-rail .evals-rail-empty-actions Button {
+    width: 100%;
+}

@@ -5703,12 +5703,6 @@ class STTSWindow(Container):
         height: 100%;
     }
     
-    .stts-sidebar {
-        width: 30;
-        border-right: solid $primary;
-        padding: 1;
-    }
-    
     .stts-content {
         width: 1fr;
     }

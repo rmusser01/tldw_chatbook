@@ -803,7 +803,15 @@ async def test_sample_bench_offer_is_hidden_with_no_provider_configured(no_provi
 
 
 @pytest.mark.asyncio
-async def test_no_datasets_offers_new_dataset_and_import_side_by_side(configured_app):
+async def test_no_datasets_offers_new_dataset_and_import_both_reachable(configured_app):
+    """Both actions are offered and neither is clipped out of the rail.
+
+    They stacked when Evals moved onto the Lab frame: side by side needs 34
+    columns and the rail gives 28, which pushed "Import…" past the right
+    edge -- in the DOM, off the screen. The design spec's empty-state table
+    asks for both actions present, not for a particular axis, so this
+    asserts containment and that they do not overlap.
+    """
     async with configured_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         screen = pilot.app.screen
@@ -812,6 +820,7 @@ async def test_no_datasets_offers_new_dataset_and_import_side_by_side(configured
         import_button = screen.query_one("#evals-rail-import-dataset")
         assert rail.region.contains_region(new_button.region)
         assert rail.region.contains_region(import_button.region)
+        assert not new_button.region.overlaps(import_button.region)
 
 
 @pytest.mark.asyncio
