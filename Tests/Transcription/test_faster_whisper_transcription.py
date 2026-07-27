@@ -392,6 +392,24 @@ class TestFasterWhisperUnit:
         assert result["target_language"] == "en"
         assert "translation" in result
 
+    def test_non_english_translation_target_rejected_before_model_construction(
+        self, transcription_service, mock_whisper_model, sample_audio_file
+    ):
+        """Reject unsupported translation targets before loading a model."""
+        mock_class, _ = mock_whisper_model
+
+        with pytest.raises(TranscriptionError, match="target en"):
+            transcription_service._transcribe_with_faster_whisper(
+                audio_path=sample_audio_file,
+                model="base",
+                language="es",
+                vad_filter=True,
+                source_lang="es",
+                target_lang="fr",
+            )
+
+        mock_class.assert_not_called()
+
     def test_vad_filter_options(
         self, transcription_service, mock_whisper_model, sample_audio_file
     ):

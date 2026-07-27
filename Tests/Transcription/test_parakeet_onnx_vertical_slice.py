@@ -1,5 +1,6 @@
 """Focused coverage for the runnable Parakeet ONNX batch path."""
 
+import json
 import sys
 import wave
 from types import SimpleNamespace
@@ -8,6 +9,11 @@ import numpy as np
 import pytest
 
 from tldw_chatbook.Local_Ingestion import transcription_service as service_module
+from tldw_chatbook.Local_Ingestion.parakeet_v2_installer import (
+    PARAKEET_V2_REPOSITORY,
+    PARAKEET_V2_REVISION,
+    VERIFICATION_RECEIPT,
+)
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     PARAKEET_V2_MODEL,
     PARAKEET_V3_MODEL,
@@ -35,6 +41,14 @@ def _write_model_bundle(path) -> None:
         "decoder_joint-model.int8.onnx",
     ):
         (path / filename).touch()
+
+
+def _known_v2_receipt() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "repository": PARAKEET_V2_REPOSITORY,
+        "revision": PARAKEET_V2_REVISION,
+    }
 
 
 def test_parakeet_onnx_transcribes_with_local_v2_int8_model(
@@ -155,6 +169,86 @@ def test_parakeet_onnx_non_english_selects_v3_without_decoder_language(
     assert result["effective_language"] == "auto"
     assert result["detected_language"] is None
     assert result["warnings"] == ["requested_language_not_enforced"]
+    assert result["model"] == PARAKEET_V3_MODEL
+
+
+def test_parakeet_onnx_rejects_known_v2_bundle_when_v3_is_selected(
+    tmp_path, monkeypatch
+) -> None:
+    audio_path = tmp_path / "speech.wav"
+    model_dir = tmp_path / "model"
+    _write_model_bundle(model_dir)
+    _write_silent_wav(audio_path)
+    (model_dir / VERIFICATION_RECEIPT).write_text(
+        json.dumps(_known_v2_receipt()),
+        encoding="utf-8",
+    )
+    load_calls = []
+
+    def unexpected_load(*args, **kwargs):
+        load_calls.append((args, kwargs))
+        raise AssertionError("load_model must not run for a known v2/v3 mismatch")
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setitem(
+        sys.modules, "onnx_asr", SimpleNamespace(load_model=unexpected_load)
+    )
+
+    with pytest.raises(TranscriptionError) as exc_info:
+        TranscriptionService().transcribe(
+            str(audio_path),
+            provider="parakeet-onnx",
+            language="de",
+            model_dir=str(model_dir),
+        )
+
+    assert "Choose a Parakeet v3 folder" in str(exc_info.value)
+    assert "Retry with faster-whisper" in str(exc_info.value)
+    assert load_calls == []
+
+
+@pytest.mark.parametrize(
+    "receipt_text",
+    [
+        pytest.param("{", id="malformed"),
+        pytest.param(("[" * 30_000) + ("]" * 30_000), id="excessively-nested"),
+        pytest.param(
+            json.dumps(_known_v2_receipt()) + (" " * (1024 * 1024)),
+            id="oversized-valid-known-v2",
+        ),
+    ],
+)
+def test_parakeet_onnx_manual_v3_directory_ignores_untrusted_receipts(
+    tmp_path, monkeypatch, receipt_text
+) -> None:
+    audio_path = tmp_path / "speech.wav"
+    model_dir = tmp_path / "model"
+    _write_model_bundle(model_dir)
+    _write_silent_wav(audio_path)
+    (model_dir / VERIFICATION_RECEIPT).write_text(receipt_text, encoding="utf-8")
+    load_calls = []
+
+    class FakeModel:
+        def recognize(self, path):
+            return "Eine lokale Transkription."
+
+    def fake_load_model(name, **kwargs):
+        load_calls.append((name, kwargs))
+        return FakeModel()
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setitem(
+        sys.modules, "onnx_asr", SimpleNamespace(load_model=fake_load_model)
+    )
+
+    result = TranscriptionService().transcribe(
+        str(audio_path),
+        provider="parakeet-onnx",
+        language="de",
+        model_dir=str(model_dir),
+    )
+
+    assert load_calls[0][0] == PARAKEET_V3_MODEL
     assert result["model"] == PARAKEET_V3_MODEL
 
 

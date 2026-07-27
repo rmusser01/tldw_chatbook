@@ -28,7 +28,7 @@ def test_default_english_uses_faster_whisper_while_promotion_gate_is_closed() ->
         ("de", None, "parakeet-onnx", PARAKEET_V3_MODEL),
         ("auto", None, "faster-whisper", None),
         ("ja", None, "faster-whisper", None),
-        ("en", "fr", "faster-whisper", None),
+        ("en", "en", "faster-whisper", None),
     ],
 )
 def test_enabled_default_routes_by_language_and_task(
@@ -67,7 +67,7 @@ def test_exact_parakeet_routes_supported_non_english_to_v3(language: str) -> Non
 
 @pytest.mark.parametrize(
     ("language", "target_language"),
-    [("auto", None), ("ja", None), ("en", "fr")],
+    [("auto", None), ("ja", None)],
 )
 def test_exact_parakeet_rejects_unsupported_or_translation_requests(
     language: str,
@@ -81,6 +81,18 @@ def test_exact_parakeet_rejects_unsupported_or_translation_requests(
         )
 
 
+def test_exact_parakeet_non_english_translation_error_explains_retry_limit() -> None:
+    with pytest.raises(BatchSTTRoutingError) as exc_info:
+        resolve_batch_stt_route(
+            provider="parakeet-onnx",
+            language="en",
+            target_language="fr",
+        )
+
+    assert "Retry with faster-whisper" in str(exc_info.value)
+    assert "target en" in str(exc_info.value)
+
+
 def test_exact_faster_whisper_retains_requested_language_and_task() -> None:
     route = resolve_batch_stt_route(
         provider="faster-whisper",
@@ -91,6 +103,50 @@ def test_exact_faster_whisper_retains_requested_language_and_task() -> None:
     assert route.provider == "faster-whisper"
     assert route.requested_language == "ja"
     assert route.target_language == "en"
+
+
+@pytest.mark.parametrize(
+    ("provider", "parakeet_defaults_enabled"),
+    [
+        ("default", False),
+        ("default", True),
+        ("faster-whisper", False),
+    ],
+)
+def test_faster_whisper_routes_reject_non_english_translation_targets(
+    provider: str,
+    parakeet_defaults_enabled: bool,
+) -> None:
+    with pytest.raises(BatchSTTRoutingError, match="target en"):
+        resolve_batch_stt_route(
+            provider=provider,
+            language="de",
+            target_language="fr",
+            parakeet_defaults_enabled=parakeet_defaults_enabled,
+        )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "field"),
+    [
+        ({"provider": 7, "language": "en"}, "provider"),
+        ({"provider": "default", "language": ["en"]}, "language"),
+        (
+            {
+                "provider": "faster-whisper",
+                "language": "en",
+                "target_language": {"code": "en"},
+            },
+            "target_language",
+        ),
+    ],
+)
+def test_malformed_persisted_route_fields_raise_routing_error(
+    arguments: dict[str, object],
+    field: str,
+) -> None:
+    with pytest.raises(BatchSTTRoutingError, match=field):
+        resolve_batch_stt_route(**arguments)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -109,7 +165,9 @@ def test_unknown_providers_are_rejected_without_prefix_matching(provider: str) -
         resolve_batch_stt_route(provider=provider, language="en")
 
 
-def test_language_codes_are_normalized_and_missing_language_defaults_to_english() -> None:
+def test_language_codes_are_normalized_and_missing_language_defaults_to_english() -> (
+    None
+):
     route = resolve_batch_stt_route(
         provider="parakeet-onnx",
         language=" DE ",
@@ -127,7 +185,7 @@ def test_language_codes_are_normalized_and_missing_language_defaults_to_english(
         ("default", "en", None, True),
         ("default", "de", None, True),
         ("default", "auto", None, True),
-        ("default", "en", "fr", True),
+        ("default", "en", "en", True),
         ("parakeet-onnx", "en", None, False),
         ("parakeet-onnx", "de", None, False),
         ("faster-whisper", "ja", "en", False),

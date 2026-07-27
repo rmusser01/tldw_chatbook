@@ -151,9 +151,7 @@ class TestIngestJobOptions:
         options = app._ingest_job_options(job)
 
         assert options["transcription_provider"] == "parakeet-onnx"
-        assert (
-            options["transcription_model_dir"] == "/models/parakeet-v2-int8"
-        )
+        assert options["transcription_model_dir"] == "/models/parakeet-v2-int8"
         assert options["transcription_model"] == "nemo-parakeet-tdt-0.6b-v2"
         assert options["language"] == "en"
         assert options["transcription_precision"] == "int8"
@@ -332,7 +330,10 @@ class TestSubmitLibraryIngestJob:
 
     def test_submit_passes_ingest_options_to_registry(self) -> None:
         app = _minimal_app(media_db="present")
-        ingest_options = {"generic": {"analyze": True}, "pdf": {"pdf_engine": "docling"}}
+        ingest_options = {
+            "generic": {"analyze": True},
+            "pdf": {"pdf_engine": "docling"},
+        }
         job = app.submit_library_ingest_job(
             source_path="/tmp/test.pdf",
             ingest_options=ingest_options,
@@ -393,7 +394,29 @@ def test_ingest_job_options_detects_type_group(
         assert "extraction_method" not in options
 
 
-def test_invalid_parakeet_allows_next_job_to_dispatch() -> None:
+@pytest.mark.parametrize(
+    ("invalid_audio_options", "error_fragment"),
+    [
+        (
+            {
+                "transcription_provider": "parakeet-onnx",
+                "language": "auto",
+            },
+            "Retry with faster-whisper",
+        ),
+        (
+            {
+                "transcription_provider": "parakeet-onnx",
+                "language": 7,
+            },
+            "language",
+        ),
+    ],
+)
+def test_invalid_audio_request_allows_next_job_to_dispatch(
+    invalid_audio_options: dict[str, Any],
+    error_fragment: str,
+) -> None:
     app = object.__new__(TldwCli)
     app.library_ingest_jobs = LibraryIngestJobRegistry()
     app._ingest_shutdown = False
@@ -405,12 +428,7 @@ def test_invalid_parakeet_allows_next_job_to_dispatch() -> None:
     invalid = app.library_ingest_jobs.submit(
         source_path="/tmp/invalid.mp3",
         detected_type="audio",
-        ingest_options={
-            "audio_video": {
-                "transcription_provider": "parakeet-onnx",
-                "language": "auto",
-            }
-        },
+        ingest_options={"audio_video": invalid_audio_options},
     )
     valid = app.library_ingest_jobs.submit(
         source_path="/tmp/valid.mp3",
@@ -449,7 +467,7 @@ def test_invalid_parakeet_allows_next_job_to_dispatch() -> None:
     assert invalid_job.state is IngestJobState.FAILED
     assert invalid_job.permanent is False
     assert invalid_job.error is not None
-    assert "Retry with faster-whisper" in invalid_job.error
+    assert error_fragment in invalid_job.error
     assert "\n" not in invalid_job.error
     assert len(invalid_job.error) <= 200
     assert valid_job.state is IngestJobState.PARSING

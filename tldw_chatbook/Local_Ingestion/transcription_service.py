@@ -5,6 +5,7 @@ Supports multiple transcription backends including faster-whisper, Qwen2Audio, e
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -37,11 +38,47 @@ except ImportError:
 
 # Local imports
 from ..config import get_cli_setting
+from .parakeet_v2_installer import (
+    PARAKEET_V2_REPOSITORY,
+    PARAKEET_V2_REVISION,
+    VERIFICATION_RECEIPT,
+)
 from .stt_batch_routing import (
     BatchSTTRoutingError,
     PARAKEET_V3_MODEL,
     resolve_batch_stt_route,
 )
+
+_VERIFICATION_RECEIPT_MAX_BYTES = 64 * 1024
+
+
+def _has_known_parakeet_v2_receipt(model_dir: Path) -> bool:
+    """Return whether a small trusted receipt identifies the curated v2 bundle."""
+    receipt_path = model_dir / VERIFICATION_RECEIPT
+    try:
+        if receipt_path.is_symlink() or not receipt_path.is_file():
+            return False
+        if receipt_path.stat().st_size > _VERIFICATION_RECEIPT_MAX_BYTES:
+            return False
+        with receipt_path.open("rb") as receipt_file:
+            payload = receipt_file.read(_VERIFICATION_RECEIPT_MAX_BYTES + 1)
+        if len(payload) > _VERIFICATION_RECEIPT_MAX_BYTES:
+            return False
+        receipt = json.loads(payload.decode("utf-8"))
+    except (
+        OSError,
+        RecursionError,
+        TypeError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ):
+        return False
+    return (
+        isinstance(receipt, dict)
+        and receipt.get("repository") == PARAKEET_V2_REPOSITORY
+        and receipt.get("revision") == PARAKEET_V2_REVISION
+    )
+
 
 # Optional imports with graceful degradation
 try:
@@ -745,6 +782,14 @@ class TranscriptionService:
                 "via model_dir or transcription.parakeet_onnx_model_dir; "
                 "no model will be downloaded automatically."
             )
+        model_root = Path(model_dir)
+        if selected_model == PARAKEET_V3_MODEL and _has_known_parakeet_v2_receipt(
+            model_root
+        ):
+            raise TranscriptionError(
+                "Selected Parakeet v3 cannot use this verified Parakeet v2 bundle. "
+                "Choose a Parakeet v3 folder or Retry with faster-whisper."
+            )
         required_files = {
             "config.json",
             "vocab.txt",
@@ -754,7 +799,7 @@ class TranscriptionService:
         missing_files = sorted(
             filename
             for filename in required_files
-            if not (Path(model_dir) / filename).is_file()
+            if not (model_root / filename).is_file()
         )
         if missing_files:
             raise TranscriptionError(
@@ -1089,6 +1134,18 @@ class TranscriptionService:
         **kwargs,
     ) -> Dict[str, Any]:
         """Transcribe using faster-whisper."""
+
+        if target_lang is not None:
+            if not isinstance(target_lang, str):
+                raise TranscriptionError(
+                    "faster-whisper translation target must be target en."
+                )
+            normalized_target = target_lang.strip().lower()
+            if normalized_target and normalized_target != "en":
+                raise TranscriptionError(
+                    "faster-whisper translation only supports target en."
+                )
+            target_lang = normalized_target or None
 
         if not FASTER_WHISPER_AVAILABLE:
             logger.error("faster-whisper is not installed")

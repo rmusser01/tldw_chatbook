@@ -61,9 +61,9 @@ class BatchSTTRoute:
 
 def resolve_batch_stt_route(
     *,
-    provider: str | None,
-    language: str | None,
-    target_language: str | None = None,
+    provider: object | None,
+    language: object | None,
+    target_language: object | None = None,
     parakeet_defaults_enabled: bool = False,
 ) -> BatchSTTRoute:
     """Resolve a batch STT request to its permitted local implementation.
@@ -101,7 +101,9 @@ def resolve_batch_stt_route(
         )
 
     if requested_provider != _DEFAULT_PROVIDER:
-        raise BatchSTTRoutingError(f"Unsupported batch STT provider: {requested_provider}")
+        raise BatchSTTRoutingError(
+            f"Unsupported batch STT provider: {requested_provider}"
+        )
 
     if not parakeet_defaults_enabled:
         return _faster_whisper_route(
@@ -118,7 +120,10 @@ def resolve_batch_stt_route(
             normalized_target,
             "translation_requires_faster_whisper",
         )
-    if requested_language == _AUTO_LANGUAGE or requested_language not in _PARAKEET_V3_LANGUAGES:
+    if (
+        requested_language == _AUTO_LANGUAGE
+        or requested_language not in _PARAKEET_V3_LANGUAGES
+    ):
         return _faster_whisper_route(
             requested_provider,
             requested_language,
@@ -128,22 +133,31 @@ def resolve_batch_stt_route(
     return _parakeet_route(requested_provider, requested_language, normalized_target)
 
 
-def _normalize_provider(provider: str | None) -> str:
-    return _DEFAULT_PROVIDER if provider is None else provider
+def _normalize_provider(provider: object | None) -> str:
+    if provider is None:
+        return _DEFAULT_PROVIDER
+    if not isinstance(provider, str):
+        raise BatchSTTRoutingError("Batch STT provider must be a string.")
+    return provider
 
 
-def _normalize_source_language(language: str | None) -> str:
+def _normalize_source_language(language: object | None) -> str:
     """Normalize a source language, defaulting omitted values to English."""
-    if language is None or not language.strip():
+    if language is None:
         return "en"
-    return language.strip().lower()
+    if not isinstance(language, str):
+        raise BatchSTTRoutingError("Batch STT language must be a string.")
+    normalized = language.strip().lower()
+    return normalized or "en"
 
 
-def _normalize_target_language(language: str | None) -> str | None:
+def _normalize_target_language(language: object | None) -> str | None:
     """Normalize an optional target language."""
-    if language is None or not language.strip():
+    if language is None:
         return None
-    return language.strip().lower()
+    if not isinstance(language, str):
+        raise BatchSTTRoutingError("Batch STT target_language must be a string.")
+    return language.strip().lower() or None
 
 
 def _parakeet_route(
@@ -153,9 +167,13 @@ def _parakeet_route(
 ) -> BatchSTTRoute:
     if target_language is not None:
         raise BatchSTTRoutingError(
-            "Parakeet does not support translation. Retry with faster-whisper."
+            "Parakeet does not support translation. Retry with faster-whisper "
+            "only for target en."
         )
-    if requested_language == _AUTO_LANGUAGE or requested_language not in _PARAKEET_V3_LANGUAGES:
+    if (
+        requested_language == _AUTO_LANGUAGE
+        or requested_language not in _PARAKEET_V3_LANGUAGES
+    ):
         raise BatchSTTRoutingError(
             "Parakeet does not support this language. Retry with faster-whisper."
         )
@@ -169,7 +187,9 @@ def _parakeet_route(
         target_language=target_language,
         precision="int8",
         local_files_only=True,
-        reason="parakeet_v2_english" if model == PARAKEET_V2_MODEL else "parakeet_v3_language",
+        reason="parakeet_v2_english"
+        if model == PARAKEET_V2_MODEL
+        else "parakeet_v3_language",
     )
 
 
@@ -179,6 +199,10 @@ def _faster_whisper_route(
     target_language: str | None,
     reason: str,
 ) -> BatchSTTRoute:
+    if target_language is not None and target_language != "en":
+        raise BatchSTTRoutingError(
+            "faster-whisper translation only supports target en."
+        )
     return BatchSTTRoute(
         requested_provider=requested_provider,
         provider=_FASTER_WHISPER_PROVIDER,
