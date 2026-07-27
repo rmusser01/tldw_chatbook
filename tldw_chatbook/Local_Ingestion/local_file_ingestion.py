@@ -606,6 +606,9 @@ def parse_local_file_for_ingest(
                 transcription_local_files_only=options.get(
                     "transcription_local_files_only", False
                 ),
+                transcription_batch_route_resolved=options.get(
+                    "transcription_batch_route_resolved", False
+                ),
                 perform_chunking=True,
                 chunk_method=chunk_options.get('method', 'sentences'),
                 max_chunk_size=chunk_options.get('size', 500),
@@ -673,6 +676,9 @@ def parse_local_file_for_ingest(
                 transcription_precision=options.get("transcription_precision"),
                 transcription_local_files_only=options.get(
                     "transcription_local_files_only", False
+                ),
+                transcription_batch_route_resolved=options.get(
+                    "transcription_batch_route_resolved", False
                 ),
                 perform_chunking=True,
                 chunk_method=chunk_options.get('method', 'sentences'),

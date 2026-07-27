@@ -514,6 +514,43 @@ def test_parakeet_onnx_transcribes_pcm_buffer_without_staging_a_file(
     assert result["segments"][0]["end"] == pytest.approx(4 / 8_000)
 
 
+def test_parakeet_onnx_buffer_target_lang_wins_over_alias(
+    tmp_path, monkeypatch
+) -> None:
+    model_dir = tmp_path / "model"
+    _write_model_bundle(model_dir)
+    load_calls = []
+
+    class FakeModel:
+        def recognize(self, waveform, *, sample_rate):
+            return "Memory only."
+
+    def fake_load_model(name, **kwargs):
+        load_calls.append((name, kwargs))
+        return FakeModel()
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setitem(
+        sys.modules, "onnx_asr", SimpleNamespace(load_model=fake_load_model)
+    )
+
+    result = TranscriptionService().transcribe_buffer(
+        np.array([0, 16384], dtype=np.int16).tobytes(),
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        provider="parakeet-onnx",
+        model=PARAKEET_V2_MODEL,
+        language="en",
+        target_lang="",
+        target_language="fr",
+        model_dir=str(model_dir),
+    )
+
+    assert load_calls[0][0] == PARAKEET_V2_MODEL
+    assert result["requested_language"] == "en"
+
+
 def test_parakeet_onnx_v3_transcribes_pcm_buffer_with_transparent_language_result(
     tmp_path, monkeypatch
 ) -> None:

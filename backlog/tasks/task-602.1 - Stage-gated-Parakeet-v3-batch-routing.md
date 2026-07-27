@@ -1,11 +1,11 @@
 ---
 id: TASK-602.1
 title: Stage gated Parakeet v3 batch routing
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-27 17:47'
-updated_date: '2026-07-27 19:14'
+updated_date: '2026-07-27 19:54'
 labels:
   - stt
   - onnx

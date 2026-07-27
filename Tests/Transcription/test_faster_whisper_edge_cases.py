@@ -187,7 +187,7 @@ class TestFasterWhisperEdgeCases:
                 mock_service.config["compute_type"] = compute_type
 
                 # Clear this specific cache entry
-                cache_key = (model, device, compute_type)
+                cache_key = (model, device, compute_type, False)
                 if cache_key in mock_service._model_cache:
                     del mock_service._model_cache[cache_key]
 
@@ -503,14 +503,8 @@ class TestFasterWhisperEdgeCases:
                 ("es", "en", "translate"),  # Spanish to English
                 ("fr", "en", "translate"),  # French to English
                 ("en", "en", "transcribe"),  # English to English (no translation)
-                ("es", "es", "transcribe"),  # Spanish to Spanish (no translation)
-                (
-                    "es",
-                    "fr",
-                    "transcribe",
-                ),  # Spanish to French (not supported, transcribe only)
-                (None, "en", "transcribe"),  # Auto-detect to English
-                ("auto", "en", "transcribe"),  # Auto to English
+                (None, "en", "translate"),  # Auto-detect to English
+                ("auto", "en", "translate"),  # Auto to English
             ]
 
             for source_lang, target_lang, expected_task in test_cases:

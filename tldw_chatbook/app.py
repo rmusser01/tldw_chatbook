@@ -2326,11 +2326,14 @@ class LibraryIngestQueueMixin:
                 selected_model = flat_opts.get("model") or flat_opts.get(
                     "transcription_model"
                 )
+                if route.requested_provider == "faster-whisper" and not selected_model:
+                    selected_model = "base"
             options["transcription_model"] = selected_model
             options["language"] = route.requested_language
             options["translation_target_language"] = route.target_language
             options["transcription_precision"] = route.precision
             options["transcription_local_files_only"] = route.local_files_only
+            options["transcription_batch_route_resolved"] = True
             options["timestamps"] = flat_opts.get("timestamps", True)
             options["diarization"] = flat_opts.get("diarization", False)
         elif group == "ebook":

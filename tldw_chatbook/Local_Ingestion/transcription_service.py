@@ -440,6 +440,7 @@ class TranscriptionService:
         progress_callback: Optional[
             Callable[[float, str, Optional[Dict]], None]
         ] = None,
+        batch_route_resolved: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -452,6 +453,8 @@ class TranscriptionService:
             language: Language code (for backward compatibility)
             source_lang: Explicit source language for transcription
             target_lang: Target language for translation (if supported)
+            batch_route_resolved: Preserve the already-normalized batch language
+                and target instead of applying configured language defaults.
             vad_filter: Apply voice activity detection
             diarize: Perform speaker diarization to identify different speakers
             progress_callback: Optional callback for progress updates (progress: 0-100, status: str, data: dict)
@@ -475,6 +478,8 @@ class TranscriptionService:
             target_lang = (
                 target_lang if target_lang is not None else target_language_alias
             )
+        elif batch_route_resolved:
+            source_lang = source_lang or language or "en"
         else:
             # Handle source language - prefer explicit source_lang over language param
             source_lang = (
@@ -889,8 +894,11 @@ class TranscriptionService:
             self._load_parakeet_onnx_model(
                 model=model,
                 language=language,
-                target_language=kwargs.get("target_lang")
-                or kwargs.get("target_language"),
+                target_language=(
+                    kwargs.get("target_lang")
+                    if "target_lang" in kwargs
+                    else kwargs.get("target_language")
+                ),
                 model_dir=kwargs.get("model_dir"),
             )
         )
@@ -1336,16 +1344,12 @@ class TranscriptionService:
         # Use source_lang if provided, otherwise fall back to language
         transcribe_language = source_lang or language
 
-        # Determine task - translate if target language is English and source is non-English
-        # For auto-detection cases (None or 'auto'), we need to detect language first
-        if target_lang and target_lang == "en":
-            if transcribe_language and transcribe_language not in ["en", "auto", None]:
-                task = "translate"
-            else:
-                # For auto-detection, we'll decide after language detection
-                task = "transcribe"
-        else:
-            task = "transcribe"
+        # faster-whisper can translate to English while auto-detecting the source.
+        task = (
+            "translate"
+            if target_lang == "en" and transcribe_language != "en"
+            else "transcribe"
+        )
 
         logger.info(f"Transcription task: {task}, language: {transcribe_language}")
 
@@ -1559,7 +1563,11 @@ class TranscriptionService:
             # Add translation info if applicable
             if task == "translate":
                 result["task"] = "translation"
-                result["source_language"] = transcribe_language or info.language
+                result["source_language"] = (
+                    info.language
+                    if transcribe_language in (None, "auto")
+                    else transcribe_language
+                )
                 result["target_language"] = "en"
                 result["translation"] = result["text"]
 

@@ -392,6 +392,84 @@ class TestFasterWhisperUnit:
         assert result["target_language"] == "en"
         assert "translation" in result
 
+    def test_auto_translation_to_english_uses_translate_task(
+        self, transcription_service, mock_whisper_model, sample_audio_file
+    ):
+        """Automatic language detection still requests faster-whisper translation."""
+        _, mock_instance = mock_whisper_model
+        info = MockTranscriptionInfo(
+            language="es", language_probability=0.99, duration=7.5
+        )
+        mock_instance.transcribe.side_effect = lambda *args, **kwargs: (
+            iter([MockSegment(0.0, 1.0, "Translated.")]),
+            info,
+        )
+
+        result = transcription_service._transcribe_with_faster_whisper(
+            audio_path=sample_audio_file,
+            model="base",
+            language="auto",
+            vad_filter=True,
+            source_lang="auto",
+            target_lang="en",
+        )
+
+        call_args = mock_instance.transcribe.call_args
+        assert call_args.kwargs["task"] == "translate"
+        assert call_args.kwargs["language"] is None
+        assert result["task"] == "translation"
+        assert result["source_language"] == "es"
+        assert result["target_language"] == "en"
+
+    def test_resolved_batch_route_ignores_global_language_defaults(
+        self, transcription_service, monkeypatch, sample_audio_file
+    ):
+        """Resolved batch source/target values must survive service configuration."""
+        transcription_service.config["default_source_language"] = "en"
+        transcription_service.config["default_target_language"] = "en"
+        captured = {}
+
+        def fake_transcribe(
+            audio_path,
+            model,
+            language,
+            vad_filter,
+            source_lang,
+            target_lang,
+            **kwargs,
+        ):
+            captured.update(
+                {
+                    "audio_path": audio_path,
+                    "model": model,
+                    "language": language,
+                    "vad_filter": vad_filter,
+                    "source_lang": source_lang,
+                    "target_lang": target_lang,
+                    **kwargs,
+                }
+            )
+            return {"text": "Bonjour", "segments": []}
+
+        monkeypatch.setattr(
+            transcription_service,
+            "_transcribe_with_faster_whisper",
+            fake_transcribe,
+        )
+
+        transcription_service.transcribe(
+            sample_audio_file,
+            provider="faster-whisper",
+            model="base",
+            language="fr",
+            target_lang=None,
+            batch_route_resolved=True,
+        )
+
+        assert captured["language"] == "fr"
+        assert captured["source_lang"] == "fr"
+        assert captured["target_lang"] is None
+
     def test_non_english_translation_target_rejected_before_model_construction(
         self, transcription_service, mock_whisper_model, sample_audio_file
     ):

@@ -188,6 +188,7 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
             "language": "en",
             "transcription_precision": "int8",
             "transcription_local_files_only": True,
+            "transcription_batch_route_resolved": True,
             "timestamps": False,
             "diarization": True,
         },
@@ -201,6 +202,7 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert call["transcription_language"] == "en"
     assert call["transcription_precision"] == "int8"
     assert call["transcription_local_files_only"] is True
+    assert call["transcription_batch_route_resolved"] is True
     assert call["timestamp_option"] is False
     assert call["diarize"] is True
 
@@ -244,6 +246,7 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
             "translation_target_language": "en",
             "transcription_precision": "int8",
             "transcription_local_files_only": True,
+            "transcription_batch_route_resolved": True,
             "timestamps": True,
             "diarization": False,
         },
@@ -258,6 +261,7 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert call["translation_target_language"] == "en"
     assert call["transcription_precision"] == "int8"
     assert call["transcription_local_files_only"] is True
+    assert call["transcription_batch_route_resolved"] is True
     assert call["timestamp_option"] is True
     assert call["diarize"] is False
 

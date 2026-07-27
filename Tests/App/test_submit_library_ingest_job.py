@@ -156,6 +156,7 @@ class TestIngestJobOptions:
         assert options["language"] == "en"
         assert options["transcription_precision"] == "int8"
         assert options["transcription_local_files_only"] is True
+        assert options["transcription_batch_route_resolved"] is True
         assert options["timestamps"] is False
         assert options["diarization"] is True
 
@@ -180,6 +181,7 @@ class TestIngestJobOptions:
         assert options["language"] == "de"
         assert options["transcription_precision"] == "int8"
         assert options["transcription_local_files_only"] is True
+        assert options["transcription_batch_route_resolved"] is True
 
     def test_parakeet_onnx_defaults_language_to_english(self) -> None:
         app = _minimal_app()
@@ -246,6 +248,27 @@ class TestIngestJobOptions:
         assert options["transcription_model"] == "small"
         assert options["language"] == "ja"
         assert options["translation_target_language"] == "en"
+
+    def test_untouched_exact_faster_whisper_model_uses_visible_base_default(
+        self,
+    ) -> None:
+        screen = object.__new__(LibraryScreen)
+        screen._library_ingest_form = LibraryIngestFormState()
+        screen._library_ingest_form.type_options["audio_video"] = {
+            "transcription_provider": "faster-whisper",
+        }
+        snapshot = screen._build_ingest_options_snapshot()
+
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options=snapshot,
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["transcription_provider"] == "faster-whisper"
+        assert options["transcription_model"] == "base"
 
     def test_explicit_empty_translation_target_does_not_fall_back_to_alias(
         self,
