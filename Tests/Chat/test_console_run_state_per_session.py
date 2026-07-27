@@ -202,6 +202,54 @@ def test_orphaned_closed_session_does_not_consume_cap_slot(
     assert controller.send_refusal_copy(session_b) is None
 
 
+def test_cap_refusal_truncates_and_k_more_suffix():
+    """Test that send_refusal_copy shows exactly first N titles + 'and K more'.
+
+    With CONSOLE_CAP_REFUSAL_TITLE_LIMIT=3 and max_parallel_runs=3, when 4+
+    sessions are busy, the refusal message names the first 3 busy sessions
+    and includes the literal "and K more" suffix where K = total_busy - 3.
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
+    )
+    from Tests.Chat.conftest import StreamingGateway
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    # Create 5 sessions: 4 to make busy, 1 to test from
+    # Note: use controller.new_session() to create new sessions each time
+    # (store.ensure_session deduplicates by title, which interferes with this test)
+    session_1_id = controller.new_session(title="Alpha").id
+    session_2_id = controller.new_session(title="Bravo").id
+    session_3_id = controller.new_session(title="Charlie").id
+    session_4_id = controller.new_session(title="Delta").id
+    session_5_id = controller.new_session(title="Echo").id
+
+    # Mark first 4 sessions as busy (STREAMING status = not send_allowed)
+    for session_id in [session_1_id, session_2_id, session_3_id, session_4_id]:
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, f"run"),
+            session_id=session_id,
+        )
+
+    # With default max_parallel_runs=3 and 4 busy sessions, send from session_5 is refused
+    refusal = controller.send_refusal_copy(session_5_id)
+    assert refusal is not None, "Should refuse send when 4 sessions are busy"
+
+    # Extract the busy count and verify the titles and suffix
+    assert "4 agents already running" in refusal
+
+    # Verify first 3 titles are present in order (they should be Alpha, Bravo, Charlie)
+    titles_section = refusal[refusal.index("(") + 1 : refusal.index(")")]
+    assert "Alpha, Bravo, Charlie" in titles_section, f"Expected first 3 titles in '{titles_section}'"
+
+    # Verify the "and K more" suffix is exact where K = 4 - 3
+    expected_suffix = f" and {4 - CONSOLE_CAP_REFUSAL_TITLE_LIMIT} more"
+    assert expected_suffix in refusal, f"Should contain exact suffix '{expected_suffix}', got: {refusal}"
+    assert " and 1 more" in refusal
+
+
 # -- Task 3b: per-session stream/cancel state + scoped Stop/shutdown --------
 
 
