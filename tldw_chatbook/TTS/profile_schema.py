@@ -721,15 +721,6 @@ def _source_identity(value: os.stat_result) -> tuple[int, ...]:
     )
 
 
-def _directory_identity(value: os.stat_result) -> tuple[int, ...]:
-    return (
-        value.st_dev,
-        value.st_ino,
-        value.st_mtime_ns,
-        value.st_ctime_ns,
-    )
-
-
 def _candidate_sidecars(resolved_path: Path) -> tuple[Path, ...]:
     return tuple(
         resolved_path.with_name(f"{resolved_path.name}{suffix}")
@@ -747,12 +738,10 @@ def _source_is_unchanged(
     source_fd: int,
     resolved_path: Path,
     source_identity: tuple[int, ...],
-    directory_identity: tuple[int, ...],
 ) -> bool:
     return (
         _source_identity(os.fstat(source_fd)) == source_identity
         and _source_identity(os.stat(resolved_path)) == source_identity
-        and _directory_identity(os.stat(resolved_path.parent)) == directory_identity
         and _sidecars_absent(resolved_path)
     )
 
@@ -777,6 +766,16 @@ def _copy_source_to_snapshot(source_fd: int, snapshot_fd: int) -> None:
                 raise OSError
             offset += written
     os.fsync(snapshot_fd)
+
+
+def _apply_posix_snapshot_mode(snapshot_fd: int) -> bool:
+    if os.name != "posix":
+        return False
+    fchmod = getattr(os, "fchmod", None)
+    if not callable(fchmod):
+        return False
+    fchmod(snapshot_fd, 0o600)
+    return True
 
 
 def _unlink_if_present(path: str) -> None:
@@ -804,7 +803,6 @@ def validate_profile_candidate(path: Path) -> None:
     if not resolved_path.is_file():
         raise _repository_error("missing")
     try:
-        directory_state = _directory_identity(os.stat(resolved_path.parent))
         if not _sidecars_absent(resolved_path):
             raise _repository_error("schema_corrupt")
     except ProfileRepositoryError:
@@ -832,7 +830,6 @@ def validate_profile_candidate(path: Path) -> None:
             source_fd,
             resolved_path,
             source_state,
-            directory_state,
         ):
             raise ValueError
 
@@ -840,13 +837,13 @@ def validate_profile_candidate(path: Path) -> None:
             prefix="tldw-tts-profile-candidate-",
             suffix=".sqlite3",
         )
-        os.fchmod(snapshot_fd, 0o600)
+        posix_mode_enforced = _apply_posix_snapshot_mode(snapshot_fd)
         _copy_source_to_snapshot(source_fd, snapshot_fd)
         snapshot_state = _source_identity(os.fstat(snapshot_fd))
         if (
             snapshot_state[3] != source_state[3]
             or not stat.S_ISREG(snapshot_state[2])
-            or stat.S_IMODE(snapshot_state[2]) != 0o600
+            or (posix_mode_enforced and stat.S_IMODE(snapshot_state[2]) != 0o600)
             or not _snapshot_is_unchanged(
                 snapshot_fd,
                 snapshot_path,
@@ -856,7 +853,6 @@ def validate_profile_candidate(path: Path) -> None:
                 source_fd,
                 resolved_path,
                 source_state,
-                directory_state,
             )
         ):
             raise ValueError
@@ -885,7 +881,6 @@ def validate_profile_candidate(path: Path) -> None:
             source_fd,
             resolved_path,
             source_state,
-            directory_state,
         ):
             raise ValueError
     except BaseException as error:

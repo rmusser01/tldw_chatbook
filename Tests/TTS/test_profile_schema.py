@@ -1069,11 +1069,44 @@ def test_candidate_private_snapshot_is_restrictive_and_removed_on_success(
 
     def checked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
         assert len(snapshot_paths) == 1
-        assert profile_schema.stat.S_IMODE(snapshot_paths[0].stat().st_mode) == 0o600
+        assert snapshot_paths[0].is_file()
+        if profile_schema.os.name == "posix" and callable(
+            getattr(profile_schema.os, "fchmod", None)
+        ):
+            assert (
+                profile_schema.stat.S_IMODE(snapshot_paths[0].stat().st_mode) == 0o600
+            )
         return real_connect(*args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
     monkeypatch.setattr(sqlite3, "connect", checked_connect)
+
+    validate_profile_candidate(path)
+
+    assert len(snapshot_paths) == 1
+    assert not snapshot_paths[0].exists()
+    assert list(private_directory.iterdir()) == []
+
+
+def test_candidate_without_posix_fchmod_still_validates_and_cleans_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    connection.close()
+    private_directory = tmp_path / "private-snapshots"
+    private_directory.mkdir()
+    real_mkstemp = profile_schema.tempfile.mkstemp
+    snapshot_paths: list[Path] = []
+
+    def tracked_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        kwargs["dir"] = private_directory
+        fd, name = real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+        snapshot_paths.append(Path(name))
+        return fd, name
+
+    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(profile_schema.os, "fchmod", None, raising=False)
 
     validate_profile_candidate(path)
 
@@ -1253,6 +1286,28 @@ def test_candidate_rejects_sidecar_created_after_preflight(
     assert path.read_bytes() == original
     assert sidecar.read_bytes() == b"late WAL state"
     assert set(_directory_snapshot(tmp_path)) == original_entries | {sidecar.name}
+
+
+def test_candidate_ignores_unrelated_sibling_created_during_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    connection.close()
+    original = path.read_bytes()
+    unrelated = tmp_path / "unrelated.txt"
+    real_connect = sqlite3.connect
+
+    def racing_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        unrelated.write_text("unrelated directory churn", encoding="utf-8")
+        return real_connect(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(sqlite3, "connect", racing_connect)
+
+    validate_profile_candidate(path)
+
+    assert path.read_bytes() == original
+    assert unrelated.read_text(encoding="utf-8") == "unrelated directory churn"
 
 
 def test_candidate_rejects_source_modified_during_validation(
