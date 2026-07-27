@@ -26,7 +26,6 @@ TTSOperationCode = Literal[
     "generation_timeout",
 ]
 VoiceDiscoveryState = Literal["complete", "model_missing", "unverified"]
-_MAX_VOICE_DISCOVERY_IDENTIFIER_CHARACTERS = 256
 _VOICE_DISCOVERY_PROVIDER_ID_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 
 
@@ -237,11 +236,7 @@ class TTSVoiceDiscoveryResult:
 
 
 def _validate_voice_discovery_identifier(value: object, label: str) -> None:
-    if (
-        type(value) is not str
-        or not value
-        or len(value) > _MAX_VOICE_DISCOVERY_IDENTIFIER_CHARACTERS
-    ):
+    if type(value) is not str or not value:
         raise ValueError(f"Voice discovery {label} is invalid")
     try:
         value.encode("utf-8", errors="strict")

@@ -858,6 +858,62 @@ async def test_known_model_voices_are_lazy_query_encoded_cached_and_refreshable(
 
 
 @pytest.mark.asyncio
+async def test_voice_discovery_accepts_identifiers_allowed_by_adapter_config() -> None:
+    model_id = "m" * 257
+    voice_id = "v" * 257
+    voice_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal voice_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model(model_id)))
+        voice_requests += 1
+        return _streaming_response(_voices_body(voice_id))
+
+    async with _adapter(
+        respond,
+        max_identifier_characters=300,
+    ) as adapter:
+        result = await adapter.observe_voices(model_id)
+        projected = await adapter.get_voices(model_id)
+
+    assert result.state == "complete"
+    assert result.model_id == model_id
+    assert result.voices == (voice_id,)
+    assert projected == (voice_id,)
+    assert voice_requests == 1
+
+
+@pytest.mark.asyncio
+async def test_voice_discovery_rejects_identifiers_above_adapter_config_limit() -> None:
+    model_id = "m" * 301
+    voice_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal voice_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model(model_id)))
+        voice_requests += 1
+        return _streaming_response(_voices_body("unexpected"))
+
+    async with _adapter(
+        respond,
+        max_identifier_characters=300,
+    ) as adapter:
+        catalog = await adapter.get_catalog()
+        result = await adapter.observe_voices(model_id)
+
+    assert catalog.health == CONTRACT_HEALTH
+    assert result.state == "unverified"
+    assert result.voices == ()
+    assert voice_requests == 0
+
+
+@pytest.mark.asyncio
 async def test_observe_voices_caches_an_authoritative_empty_result() -> None:
     voice_requests = 0
 
@@ -1450,8 +1506,11 @@ async def test_voice_cancellation_is_not_cached_and_closes_response() -> None:
             await first
 
         retried = await waiter
+        cached = await adapter.observe_voices("model")
         assert adapter._voice_shared_results == {}
         assert adapter._voice_cache[(1, "model")].result == retried
+        assert cached == retried
+        assert voice_requests == 2
 
     assert voice_requests == 2
     assert blocked_stream.close_count == 1

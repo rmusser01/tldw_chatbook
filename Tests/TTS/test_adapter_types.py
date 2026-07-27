@@ -4,12 +4,8 @@ from typing import get_args
 
 import pytest
 
-from tldw_chatbook.TTS import (
-    TTSStructuredVoiceAdapter as PublicTTSStructuredVoiceAdapter,
-    TTSVoiceDiscoveryResult as PublicTTSVoiceDiscoveryResult,
-    VoiceDiscoveryState,
-    adapter_types,
-)
+import tldw_chatbook.TTS as tts
+from tldw_chatbook.TTS import VoiceDiscoveryState, adapter_types
 from tldw_chatbook.TTS.adapter_types import (
     TTSAudioResponse,
     TTSRequest,
@@ -178,15 +174,11 @@ def test_voice_discovery_result_rejects_identifier_subclasses_and_boundaries() -
         Identifier("audio_cpp"),
         Identifier("model"),
         Identifier("voice"),
-        "m" * 257,
-        "v" * 257,
         "\ud800",
         "\ud800",
     )
     invalid_fields = (
         "provider_id",
-        "model_id",
-        "voices",
         "model_id",
         "voices",
         "model_id",
@@ -204,6 +196,19 @@ def test_voice_discovery_result_rejects_identifier_subclasses_and_boundaries() -
         values[field_name] = (value,) if field_name == "voices" else value
         with pytest.raises((TypeError, ValueError)):
             TTSVoiceDiscoveryResult(**values)  # type: ignore[arg-type]
+
+
+def test_voice_discovery_result_accepts_adapter_sized_identifiers() -> None:
+    result = TTSVoiceDiscoveryResult(
+        provider_id="audio_cpp",
+        model_id="m" * 257,
+        catalog_revision=0,
+        voices=("v" * 257,),
+        state="complete",
+    )
+
+    assert result.model_id == "m" * 257
+    assert result.voices == ("v" * 257,)
 
 
 def test_voice_discovery_result_rejects_nonempty_missing_model_voices() -> None:
@@ -264,8 +269,8 @@ def test_voice_discovery_state_is_exported_from_the_tts_package() -> None:
         "model_missing",
         "unverified",
     )
-    assert PublicTTSVoiceDiscoveryResult is TTSVoiceDiscoveryResult
-    assert PublicTTSStructuredVoiceAdapter is TTSStructuredVoiceAdapter
+    assert tts.TTSVoiceDiscoveryResult is TTSVoiceDiscoveryResult
+    assert tts.TTSStructuredVoiceAdapter is TTSStructuredVoiceAdapter
 
 
 def test_audio_response_copies_metadata_at_the_boundary() -> None:
