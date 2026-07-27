@@ -3430,6 +3430,8 @@ class ConsoleChatController:
         repair_contract = (
             captured_repair_contract
             if isinstance(captured_repair_contract, CitationRepairContract)
+            and context is not None
+            and captured_repair_contract.evidence_context == context
             else None
         )
         return context, builder, prompt_evidence_set_id, repair_contract

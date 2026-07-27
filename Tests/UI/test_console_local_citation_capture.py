@@ -41,11 +41,8 @@ def _repair_contract(context: str) -> CitationRepairContract:
     )
 
 
-@pytest.mark.asyncio
-async def test_controller_returns_same_repair_contract_object_at_capture_boundary():
-    context = "[S1] MEDIA — Source\nexact body"
-    contract = _repair_contract(context)
-    builder = CitationTraceBuilder.local(
+def _controller_builder() -> CitationTraceBuilder:
+    return CitationTraceBuilder.local(
         request_id="request-controller-boundary",
         generation_id="generation-controller-boundary",
         identity_context=LocalCitationIdentityContext(
@@ -57,6 +54,13 @@ async def test_controller_returns_same_repair_contract_object_at_capture_boundar
         policy_version="controller-boundary-v1",
         policy_capabilities=(PolicyCapability.VIEW_SNAPSHOT,),
     )
+
+
+@pytest.mark.asyncio
+async def test_controller_returns_same_repair_contract_object_at_capture_boundary():
+    context = "[S1] MEDIA — Source\nexact body"
+    contract = _repair_contract(context)
+    builder = _controller_builder()
     capture = AsyncMock(
         return_value=LocalRagContextResult(
             context=context,
@@ -76,6 +80,82 @@ async def test_controller_returns_same_repair_contract_object_at_capture_boundar
     assert captured == (context, builder, "prompt-set-independent", contract)
     assert captured[1] is builder
     assert captured[3] is contract
+
+
+@pytest.mark.asyncio
+async def test_controller_rejects_repair_contract_with_different_exact_context():
+    context = "[S1] MEDIA — Source\nprovider evidence"
+    contract = _repair_contract("[S1] MEDIA — Source\nother evidence")
+    builder = _controller_builder()
+    capture = AsyncMock(
+        return_value=LocalRagContextResult(
+            context=context,
+            citation_builder=builder,
+            prompt_evidence_set_id="prompt-set-mismatch",
+            citation_repair_contract=contract,
+        )
+    )
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=_CapturingGateway(),
+        rag_capture_provider=capture,
+    )
+
+    captured = await controller._capture_rag_context("question")
+
+    assert captured == (context, builder, "prompt-set-mismatch", None)
+    assert captured[0] is context
+    assert captured[1] is builder
+
+
+@pytest.mark.asyncio
+async def test_controller_rejects_repair_contract_when_context_is_missing():
+    contract = _repair_contract("[S1] MEDIA — Source\nexact body")
+    builder = _controller_builder()
+    capture = AsyncMock(
+        return_value=SimpleNamespace(
+            citation_builder=builder,
+            prompt_evidence_set_id="prompt-set-missing-context",
+            citation_repair_contract=contract,
+        )
+    )
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=_CapturingGateway(),
+        rag_capture_provider=capture,
+    )
+
+    captured = await controller._capture_rag_context("question")
+
+    assert captured == (None, builder, "prompt-set-missing-context", None)
+    assert captured[1] is builder
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank_context", ["", " \t\n"])
+async def test_controller_rejects_repair_contract_when_context_is_blank(
+    blank_context,
+):
+    contract = _repair_contract("[S1] MEDIA — Source\nexact body")
+    builder = _controller_builder()
+    capture = AsyncMock(
+        return_value=LocalRagContextResult(
+            context=blank_context,
+            citation_builder=builder,
+            prompt_evidence_set_id="prompt-set-blank-context",
+            citation_repair_contract=contract,
+        )
+    )
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=_CapturingGateway(),
+        rag_capture_provider=capture,
+    )
+
+    captured = await controller._capture_rag_context("question")
+
+    assert captured == (None, builder, "prompt-set-blank-context", None)
+    assert captured[1] is builder
 
 
 @pytest.mark.asyncio
