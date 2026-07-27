@@ -40,6 +40,10 @@ class STTSScreen(BaseAppScreen):
                 status="ready",
             ),
             id="stts-destination-header",
+            # Same one-row header as the other two Lab modes. Without it this
+            # screen keeps the stacked 5-row block and its mode strip sits
+            # four rows below Models', so the chips jump on every switch.
+            classes="lab-header-inline",
         )
         yield LabModeStrip(active_route="stts", id="lab-mode-strip")
         self.stts_window = STTSWindow(self.app_instance, classes="window")

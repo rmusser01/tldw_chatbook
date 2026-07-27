@@ -76,11 +76,23 @@ class LLMScreen(LabScreen):
         self._status_poll_started = False
 
     def lab_header_state(self) -> WorkbenchHeaderState:
-        """Return the Models destination header copy."""
+        """Return the Models destination header copy and live readiness.
+
+        The status is derived, not constant: it reads ``running`` while any
+        local server tracked by :data:`LAB_SERVER_SOURCES` is alive and
+        ``ready`` otherwise. It was hardcoded to ``"ready"``, which made the
+        badge decoration wearing a status label -- it could never change, so
+        it never told the user anything. ``refresh_lab_status`` re-syncs the
+        header on the same poll as the chip, so the two never disagree.
+
+        Returns:
+            Header state whose ``status`` reflects current server liveness.
+        """
+        rows = read_server_rows(self.app_instance)
         return WorkbenchHeaderState(
             title="Models",
             subtitle="Manage providers, models, and endpoints.",
-            status="ready",
+            status="running" if any(row.running for row in rows) else "ready",
         )
 
     def lab_status_chips(self) -> tuple[LabStatusChip, ...]:

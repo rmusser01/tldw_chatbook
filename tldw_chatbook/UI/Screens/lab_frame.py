@@ -1,8 +1,15 @@
 """The shared frame behind the Lab destination's three screens.
 
-Renders a destination header, an optional status row, the mode strip, and a
-three-region workbench. Modes supply content through the hooks below; the
-frame owns collapse state, the deferred body mount, and status refresh.
+Renders a one-row destination header (title, subtitle, this mode's status
+chips, readiness badge), the mode strip, and a three-region workbench. Modes
+supply content through the hooks below; the frame owns collapse state, the
+deferred body mount, and status refresh.
+
+The header and its chips share a single row on purpose. They were two stacked
+rows until the chips moved inline: the chip row was composed only when a mode
+supplied chips, so the mode strip sat at y=9 on Models but y=8 on Speech and
+Evals, and the chips visibly jumped a row on every mode switch. One
+unconditional row costs less and holds still.
 """
 
 from __future__ import annotations
@@ -88,8 +95,13 @@ class LabScreen(BaseAppScreen):
     ]
 
     #: Footer hints registered for every Lab mode.
+    #:
+    #: "Move mode focus", not "Switch mode": `action_lab_mode_focus` only
+    #: moves focus along the strip -- the adjacent `Enter  Go` hint is the
+    #: half that actually navigates. The old "Switch mode" copy promised a
+    #: keypress that never switched anything.
     LAB_FOOTER_SHORTCUTS: tuple[tuple[str, str], ...] = (
-        ("[ / ]", "Switch mode"),
+        ("[ / ]", "Move mode focus"),
         ("Enter", "Go"),
     )
 
@@ -203,19 +215,20 @@ class LabScreen(BaseAppScreen):
     # -- composition -----------------------------------------------------
 
     def compose_content(self) -> ComposeResult:
-        """Compose the frame: header, optional status row, mode strip, workbench."""
-        yield DestinationHeader(self.lab_header_state(), id="lab-destination-header")
-
-        chips = self.lab_status_chips()
-        if chips:
-            with Horizontal(id="lab-status-row"):
-                for chip in chips:
-                    yield Static(
-                        chip.text,
-                        id=f"lab-status-chip-{chip.chip_id}",
-                        classes="lab-status-chip",
-                        markup=False,
-                    )
+        """Compose the frame: header row, mode strip, workbench."""
+        with Horizontal(id="lab-header-row"):
+            yield DestinationHeader(
+                self.lab_header_state(),
+                id="lab-destination-header",
+                classes="lab-header-inline",
+            )
+            for chip in self.lab_status_chips():
+                yield Static(
+                    chip.text,
+                    id=f"lab-status-chip-{chip.chip_id}",
+                    classes="lab-status-chip",
+                    markup=False,
+                )
 
         yield LabModeStrip(active_route=self.screen_name, id="lab-mode-strip")
 
@@ -367,16 +380,29 @@ class LabScreen(BaseAppScreen):
     # -- status ----------------------------------------------------------
 
     def refresh_lab_status(self) -> None:
-        """Re-read this mode's chips and inspector rows and update in place.
+        """Re-read this mode's header, chips, and inspector rows in place.
 
         Mutates the existing ``Static`` for each chip and inspector row id
         rather than recomposing: recomposing on a timer churns widgets and
         can steal focus. The inspector is refreshed on the same cadence as
-        the status row -- a mode with live chips (e.g. Models' server count)
-        needs its per-server inspector rows to agree, not lag a poll behind.
-        A chip or row whose id was not composed is logged once and ignored,
-        since mounting new widgets from a timer is never intended.
+        the chips -- a mode with live chips (e.g. Models' server count) needs
+        its per-server inspector rows to agree, not lag a poll behind. A chip
+        or row whose id was not composed is logged once and ignored, since
+        mounting new widgets from a timer is never intended.
+
+        The header is re-synced too, so a mode whose readiness is derived
+        rather than constant (Models reports ``running`` while any local
+        server is alive) keeps its badge honest between polls.
         """
+        try:
+            self.query_one(
+                "#lab-destination-header", DestinationHeader
+            ).sync_state(self.lab_header_state())
+        except QueryError:
+            self._warn_once(
+                "header",
+                "Lab destination header missing; readiness badge not refreshed.",
+            )
         for chip in self.lab_status_chips():
             try:
                 self.query_one(f"#lab-status-chip-{chip.chip_id}", Static).update(
