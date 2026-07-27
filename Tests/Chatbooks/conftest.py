@@ -331,32 +331,3 @@ This is a test note for the chatbook."""
         )
 
     return chatbook_path
-
-
-@pytest.fixture
-def mock_app_config():
-    """Create a mock app configuration."""
-    return {
-        "database": {
-            "chachanotes_db_path": "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-            "prompts_db_path": "~/.local/share/tldw_cli/tldw_prompts.db",
-            "media_db_path": "~/.local/share/tldw_cli/media_db_v2.db",
-        },
-        "chatbooks": {
-            "export_directory": "~/Documents/Chatbooks",
-            "auto_include_dependencies": True,
-            "default_media_quality": "thumbnail",
-        },
-    }
-
-
-class MockWizardApp:
-    """Mock wizard app for UI testing."""
-
-    def __init__(self, config_data):
-        self.config_data = config_data
-        self.notifications = []
-
-    def notify(self, message, severity="info"):
-        """Mock notify method."""
-        self.notifications.append({"message": message, "severity": severity})

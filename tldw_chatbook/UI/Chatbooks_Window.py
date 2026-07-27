@@ -24,6 +24,8 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from loguru import logger
 
+from ..Chatbooks.database_paths import secure_chatbook_directory
+
 if TYPE_CHECKING:
     from ..app import TldwCli
 
@@ -65,10 +67,10 @@ class ChatbooksWindow(Widget):
 
         # Get export path from config or use default
         config = self.app_instance.app_config.get("chatbooks", {})
-        self._export_path = Path(
+        configured_export_path = Path(
             config.get("export_directory", "~/Documents/Chatbooks")
         ).expanduser()
-        self._export_path.mkdir(parents=True, exist_ok=True)
+        self._export_path = secure_chatbook_directory(configured_export_path)
 
         logger.info("ChatbooksWindow.__init__: Created")
 
@@ -222,8 +224,7 @@ class ChatbooksWindow(Widget):
         """Load chatbooks from export directory."""
         logger.info(f"_refresh_chatbooks: Starting, export_path={self._export_path}")
         try:
-            if not self._export_path.exists():
-                self._export_path.mkdir(parents=True, exist_ok=True)
+            self._export_path = secure_chatbook_directory(self._export_path)
 
             chatbooks = []
 
