@@ -237,6 +237,13 @@ Critical files for common tasks:
 - Every implementation decision starts with reading the corresponding Markdown task file.
 - Project documentation is in **`backlog/docs/`**.
 - Project decisions are in **`backlog/decisions/`**.
+- Hard-won working knowledge is in **`backlog/docs/lessons-*.md`** -- traps that have
+  actually cost time in this repo, each recorded with the incident that produced it.
+  **Read the one covering your area before starting**; they are short, and they exist
+  because these mistakes recur:
+  - `lessons-testing-evidence.md` -- what actually counts as evidence a change works
+  - `lessons-live-verification.md` -- running the app and talking to a real server
+  - `lessons-backlog-hygiene.md` -- task IDs, CLI quirks, git plumbing
 - Canonical Architecture Decision Records (ADRs) live in **`backlog/decisions/`**. Historical ADR-like material elsewhere is reference-only unless a canonical ADR imports or supersedes it.
 - Before implementation planning, read relevant ADRs and decide whether the task requires a new ADR.
 
@@ -422,6 +429,12 @@ A task is **Done** only when **ALL** of the following are complete:
 6. **Review**: self review code.
 7. **Task hygiene**: status set to **Done** via CLI (`backlog task edit <id> -s Done`).
 8. **No regressions**: performance, security and licence checks green.
+9. **Lessons learned**: if the task surfaced knowledge that generalises beyond it — a
+   trap, a wrong assumption that cost time, a verification that only worked one way —
+   add or update an entry in `backlog/docs/lessons-*.md`. **State the incident, not
+   just the rule**: a lesson without the evidence that produced it decays into folklore
+   and gets ignored. Most tasks produce nothing here, and that is fine; do not invent
+   one to fill the slot.
 9. **ADR hygiene**: ADR check completed; any new or superseded ADRs are linked from the task Implementation Plan and Implementation Notes.
 
 ⚠️ **IMPORTANT**: Never mark a task as Done without completing ALL items above.
