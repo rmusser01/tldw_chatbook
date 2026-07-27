@@ -2271,6 +2271,13 @@ writing_db_path = "~/.local/share/tldw_cli/tldw_chatbook_writing.db"
 library_collections_db_path = "~/.local/share/tldw_cli/tldw_chatbook_library_collections.db"
 # Path to the local Workspaces database.
 workspaces_db_path = "~/.local/share/tldw_cli/tldw_chatbook_workspaces.db"
+# Path to the Evals database.
+evals_db_path = "~/.local/share/tldw_cli/evals.db"
+# Path to the RAG indexing-state database (rag_indexing.db; tracks
+# incremental RAG indexing state -- it is not a vector store).
+rag_indexing_db_path = "~/.local/share/tldw_cli/rag_indexing.db"
+# Path to the Subscriptions database.
+subscriptions_db_path = "~/.local/share/tldw_cli/tldw_chatbook_subscriptions.db"
 USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
 
 # Database integrity checking
