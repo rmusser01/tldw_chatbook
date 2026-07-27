@@ -4,7 +4,12 @@ from typing import get_args
 
 import pytest
 
-from tldw_chatbook.TTS import VoiceDiscoveryState, adapter_types
+from tldw_chatbook.TTS import (
+    TTSStructuredVoiceAdapter as PublicTTSStructuredVoiceAdapter,
+    TTSVoiceDiscoveryResult as PublicTTSVoiceDiscoveryResult,
+    VoiceDiscoveryState,
+    adapter_types,
+)
 from tldw_chatbook.TTS.adapter_types import (
     TTSAudioResponse,
     TTSRequest,
@@ -142,6 +147,88 @@ def test_voice_discovery_result_rejects_a_string_subclass_state() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "provider_id",
+    (
+        "Audio_cpp",
+        "audio-cpp",
+        "audio cpp",
+        "audio_cpp ",
+        "a" * 65,
+    ),
+)
+def test_voice_discovery_result_rejects_noncanonical_provider_ids(
+    provider_id: str,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        TTSVoiceDiscoveryResult(
+            provider_id=provider_id,
+            model_id="model",
+            catalog_revision=0,
+            voices=(),
+            state="complete",
+        )
+
+
+def test_voice_discovery_result_rejects_identifier_subclasses_and_boundaries() -> None:
+    class Identifier(str):
+        pass
+
+    invalid_values = (
+        Identifier("audio_cpp"),
+        Identifier("model"),
+        Identifier("voice"),
+        "m" * 257,
+        "v" * 257,
+        "\ud800",
+        "\ud800",
+    )
+    invalid_fields = (
+        "provider_id",
+        "model_id",
+        "voices",
+        "model_id",
+        "voices",
+        "model_id",
+        "voices",
+    )
+
+    for field_name, value in zip(invalid_fields, invalid_values, strict=True):
+        values: dict[str, object] = {
+            "provider_id": "audio_cpp",
+            "model_id": "model",
+            "catalog_revision": 0,
+            "voices": ("voice",),
+            "state": "complete",
+        }
+        values[field_name] = (value,) if field_name == "voices" else value
+        with pytest.raises((TypeError, ValueError)):
+            TTSVoiceDiscoveryResult(**values)  # type: ignore[arg-type]
+
+
+def test_voice_discovery_result_rejects_nonempty_missing_model_voices() -> None:
+    with pytest.raises(ValueError):
+        TTSVoiceDiscoveryResult(
+            provider_id="audio_cpp",
+            model_id="model",
+            catalog_revision=0,
+            voices=("voice",),
+            state="model_missing",
+        )
+
+
+def test_voice_discovery_result_permits_partial_unverified_voices() -> None:
+    result = TTSVoiceDiscoveryResult(
+        provider_id="audio_cpp",
+        model_id="model",
+        catalog_revision=0,
+        voices=("partial",),
+        state="unverified",
+    )
+
+    assert result.voices == ("partial",)
+
+
 def test_structured_voice_adapter_runtime_protocol_detects_observe_voices() -> None:
     class StructuredAdapter:
         async def observe_voices(
@@ -177,6 +264,8 @@ def test_voice_discovery_state_is_exported_from_the_tts_package() -> None:
         "model_missing",
         "unverified",
     )
+    assert PublicTTSVoiceDiscoveryResult is TTSVoiceDiscoveryResult
+    assert PublicTTSStructuredVoiceAdapter is TTSStructuredVoiceAdapter
 
 
 def test_audio_response_copies_metadata_at_the_boundary() -> None:

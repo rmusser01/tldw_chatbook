@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -25,6 +26,8 @@ TTSOperationCode = Literal[
     "generation_timeout",
 ]
 VoiceDiscoveryState = Literal["complete", "model_missing", "unverified"]
+_MAX_VOICE_DISCOVERY_IDENTIFIER_CHARACTERS = 256
+_VOICE_DISCOVERY_PROVIDER_ID_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 
 
 class UnknownTTSProviderError(LookupError):
@@ -198,7 +201,12 @@ class TTSProviderCatalog:
 
 @dataclass(frozen=True, slots=True)
 class TTSVoiceDiscoveryResult:
-    """An immutable, status-aware observation of one model's voices."""
+    """An immutable, status-aware observation of one model's voices.
+
+    ``complete`` may authoritatively contain no voices. ``model_missing`` is
+    authoritative only when empty. ``unverified`` may retain validated partial
+    voices for diagnostics, but compatibility callers must not project them.
+    """
 
     provider_id: str
     model_id: str
@@ -207,22 +215,38 @@ class TTSVoiceDiscoveryResult:
     state: VoiceDiscoveryState
 
     def __post_init__(self) -> None:
-        if type(self.provider_id) is not str or not self.provider_id:
-            raise ValueError("Voice discovery provider ID must be a non-empty string")
-        if type(self.model_id) is not str or not self.model_id:
-            raise ValueError("Voice discovery model ID must be a non-empty string")
+        if type(self.provider_id) is not str or not (
+            _VOICE_DISCOVERY_PROVIDER_ID_PATTERN.fullmatch(self.provider_id)
+        ):
+            raise ValueError("Voice discovery provider ID is invalid")
+        _validate_voice_discovery_identifier(self.model_id, "model ID")
         if type(self.catalog_revision) is not int:
             raise TypeError("Voice discovery catalog revision must be an integer")
         if self.catalog_revision < 0:
             raise ValueError("Voice discovery catalog revision must be nonnegative")
-        if type(self.voices) is not tuple or any(
-            type(voice) is not str or not voice for voice in self.voices
-        ):
-            raise TypeError("Voice discovery voices must be a tuple of non-empty strings")
+        if type(self.voices) is not tuple:
+            raise TypeError("Voice discovery voices must be a tuple")
+        for voice in self.voices:
+            _validate_voice_discovery_identifier(voice, "voice")
         if type(self.state) is not str:
             raise TypeError("Voice discovery state must be a string")
         if self.state not in ("complete", "model_missing", "unverified"):
             raise ValueError("Voice discovery state is invalid")
+        if self.state == "model_missing" and self.voices:
+            raise ValueError("Missing-model voice discovery must be empty")
+
+
+def _validate_voice_discovery_identifier(value: object, label: str) -> None:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > _MAX_VOICE_DISCOVERY_IDENTIFIER_CHARACTERS
+    ):
+        raise ValueError(f"Voice discovery {label} is invalid")
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeError:
+        raise ValueError(f"Voice discovery {label} is invalid") from None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1088,13 +1088,16 @@ async def test_get_voices_projects_only_complete_observations(
                 provider_id="audio_cpp",
                 model_id="model",
                 catalog_revision=1,
-                voices=("not-present",),
+                voices=(),
                 state="model_missing",
             ),
         )
     )
 
-    async with _adapter(lambda _request: _streaming_response(_health_body())) as adapter:
+    async with _adapter(
+        lambda _request: _streaming_response(_health_body())
+    ) as adapter:
+
         async def observe_voices(
             model_id: str,
             refresh: bool = False,
@@ -1360,7 +1363,7 @@ async def test_concurrent_voice_fetches_for_one_model_revision_are_coalesced() -
         ("timeout", 2),
     ],
 )
-async def test_optional_voice_failures_cache_empty_without_health_mutation(
+async def test_optional_voice_failures_cache_unverified_and_project_empty(
     case: str,
     expected_requests: int,
 ) -> None:
@@ -1406,13 +1409,16 @@ async def test_optional_voice_failures_cache_empty_without_health_mutation(
 
     async with _adapter(respond) as adapter:
         before = await adapter.get_catalog()
-        assert await adapter.get_voices("model") == ()
+        first = await adapter.observe_voices("model")
+        cached = await adapter.observe_voices("model")
         assert await adapter.get_voices("model") == ()
         after = await adapter.get_catalog()
 
     assert after is before
     assert after.health == AVAILABLE_HEALTH
     assert after.revision == 1
+    assert first.state == cached.state == "unverified"
+    assert first.voices == cached.voices == ()
     assert voice_requests == expected_requests
     assert all(stream.close_count == 1 for stream in streams)
 
@@ -1436,11 +1442,16 @@ async def test_voice_cancellation_is_not_cached_and_closes_response() -> None:
     async with _adapter(respond) as adapter:
         first = asyncio.create_task(adapter.observe_voices("model"))
         await blocked_stream.started.wait()
+        waiter = asyncio.create_task(adapter.observe_voices("model"))
+        await asyncio.sleep(0)
+        assert adapter._voice_lock_users == {(1, "model"): 2}
         first.cancel()
         with pytest.raises(asyncio.CancelledError):
             await first
 
-        retried = await adapter.observe_voices("model")
+        retried = await waiter
+        assert adapter._voice_shared_results == {}
+        assert adapter._voice_cache[(1, "model")].result == retried
 
     assert voice_requests == 2
     assert blocked_stream.close_count == 1
