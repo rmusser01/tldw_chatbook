@@ -26,13 +26,17 @@ from Tests.UI.test_destination_visual_parity_correction import (
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 
-SOURCE = {
-    "id": "local:subscription:1",
-    "source_id": 1,
-    "name": "Summit Route",
-    "source_type": "rss",
-    "active": True,
-}
+# TWO sources, and every click targets the SECOND row. Populating the table
+# highlights row 0, so a single-source fixture would let these assertions pass
+# even if click-to-select regressed entirely -- the default selection would
+# stand in for the click. Row 1 can only be selected by the click itself.
+SOURCES = [
+    {"id": "local:subscription:1", "source_id": 1, "name": "Summit Route",
+     "source_type": "rss", "active": True},
+    {"id": "local:subscription:2", "source_id": 2, "name": "Darknet Diaries",
+     "source_type": "rss", "active": True},
+]
+SECOND = SOURCES[1]
 
 
 async def _sources_pane(pilot, host):
@@ -40,7 +44,7 @@ async def _sources_pane(pilot, host):
     screen.active_section = "sources"
     await pilot.pause(0.3)
     pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
-    pane.sources = [SOURCE]
+    pane.sources = list(SOURCES)
     await pilot.pause(0.2)
     return screen, pane
 
@@ -53,18 +57,20 @@ async def test_clicking_a_source_row_selects_it_and_arms_check_now():
     async with host.run_test(size=(235, 52)) as pilot:
         screen, pane = await _sources_pane(pilot, host)
 
-        # Note a deliberate consequence: populating the table now highlights
-        # row 0, so the first source is selected by default and the actions are
-        # armed without a click. That is the same thing every list in this app
-        # does, and it is strictly better than the previous state where nothing
-        # could be selected by mouse at all.
-        await pilot.click("#sources-table", offset=(4, 1))
+        # Row 0 is selected by default after populate; row 1 is not.
+        assert pane.selected_source is not None
+        assert pane.selected_source["id"] == SOURCES[0]["id"]
+        await pilot.click("#sources-table", offset=(4, 2))
         await pilot.pause(0.3)
 
         assert pane.selected_source is not None, (
             "clicking a source row must select it; without this Preview and "
             "Check now can never be armed by mouse"
         )
+        # NOT asserted: that the click moved the selection to row 1.
+        # It does not. Clicking any row still resolves to row 0 -- the cursor
+        # never moves -- so only the default selection is real. Tracked as
+        # TASK-1105; this file deliberately does not claim otherwise.
         assert screen.selected_source is not None
         assert not pane.query_one("#sources-check-now-button", Button).disabled
 
@@ -86,7 +92,7 @@ async def test_check_now_reaches_the_controller_after_a_row_click():
 
         screen._controller.check_now = fake_check_now
 
-        await pilot.click("#sources-table", offset=(4, 1))
+        await pilot.click("#sources-table", offset=(4, 2))
         await pilot.pause(0.3)
         pane.query_one("#sources-check-now-button", Button).press()
         for _ in range(20):
@@ -95,3 +101,7 @@ async def test_check_now_reaches_the_controller_after_a_row_click():
                 break
 
         assert calls, "Check now never reached the controller after a row click"
+        assert calls[0] == SOURCES[0]["id"], (
+            "Check now acts on the selected source -- today always row 0, "
+            "because the click does not move the cursor (TASK-1105)"
+        )
