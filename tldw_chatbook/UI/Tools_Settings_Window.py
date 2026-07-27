@@ -1718,24 +1718,20 @@ class ToolsSettingsWindow(Container):
         yield Container(
             Label("ChaChaNotes Database Path:", classes="form-label"),
             Input(
-                value=db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                ),
+                # Resolved through _DB_PATH_RESOLVERS -- the same
+                # profile-aware resolver the vacuum/backup/check workers
+                # use -- not a hardcoded literal (TASK-927).
+                value=self._resolved_db_path_display("chachanotes"),
                 id="config-db-chachanotes-path",
             ),
             Label("Prompts Database Path:", classes="form-label"),
             Input(
-                value=db_config.get(
-                    "prompts_db_path", "~/.local/share/tldw_cli/tldw_cli_prompts.db"
-                ),
+                value=self._resolved_db_path_display("prompts"),
                 id="config-db-prompts-path",
             ),
             Label("Media Database Path:", classes="form-label"),
             Input(
-                value=db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                ),
+                value=self._resolved_db_path_display("media"),
                 id="config-db-media-path",
             ),
             Label("User Database Base Directory:", classes="form-label"),
@@ -6067,18 +6063,31 @@ Thank you for using tldw-chatbook! 🎉
                 )
             )
 
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
+            # Resolved through the same _DB_PATH_RESOLVERS mechanism the
+            # vacuum/integrity workers use, not hardcoded literals
+            # (TASK-927 follow-up).
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
             prompts_path = get_prompts_db_path()
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
+            media_path = self._get_database_path("media", db_config)
+
+            # Unlike vacuum/integrity (which silently skip a database that
+            # can't be resolved), a *backup* must never start copying a
+            # partial set while claiming success -- an unresolvable
+            # database here fails the whole legacy backup phase loudly
+            # instead (falls through to the generic "Database backup
+            # failed." notification in _backup_databases()).
+            unresolved = [
+                name
+                for name, path in (
+                    ("ChaChaNotes", chachanotes_path),
+                    ("Media", media_path),
                 )
-            ).expanduser()
+                if path is None
+            ]
+            if unresolved:
+                raise RuntimeError(
+                    f"unresolvable database paths: {', '.join(unresolved)}"
+                )
 
             candidates = (
                 (

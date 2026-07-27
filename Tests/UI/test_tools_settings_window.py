@@ -1569,7 +1569,21 @@ async def test_backup_all_fails_loudly_for_an_unresolvable_database(
 ):
     """'Backup All Databases' must refuse and report loudly -- never start
     copying a partial set and claim success -- when one of the triad can't
-    be resolved (TASK-927)."""
+    be resolved (TASK-927).
+
+    Dev-reconciliation note: originally patched "prompts", but dev's
+    ``_backup_worker`` resolves Prompts via a direct ``get_prompts_db_path()``
+    call (never a hardcoded literal there, so TASK-927 never touched it),
+    not through ``_DB_PATH_RESOLVERS`` -- patching "prompts" would no
+    longer exercise anything. ChaChaNotes/Media are the two the
+    reconciliation actually routed through ``_get_database_path``, so this
+    now patches "media". Also: dev's ``_backup_databases()`` orchestrator
+    reports a generic "Database backup failed." on any legacy-phase
+    exception rather than naming the specific database (a deliberate
+    simplification from dev's independent rework), so this no longer
+    asserts the database name appears in the notification -- only that an
+    error is reported and success/partial-backup never happen.
+    """
     async with mount_settings_window({}, temp_config_path, monkeypatch) as (
         window,
         pilot,
@@ -1579,14 +1593,13 @@ async def test_backup_all_fails_loudly_for_an_unresolvable_database(
         def _boom():
             raise RuntimeError("simulated resolver failure")
 
-        window._DB_PATH_RESOLVERS["prompts"] = _boom
+        window._DB_PATH_RESOLVERS["media"] = _boom
 
         await window._backup_databases()
 
         calls = window.app_instance.notify.call_args_list
         error_calls = _notify_calls_with_severity(window.app_instance.notify, "error")
-        assert error_calls, f"unresolvable Prompts database was not reported: {calls}"
-        assert any("Prompts" in str(c) for c in error_calls), error_calls
+        assert error_calls, f"unresolvable Media database was not reported: {calls}"
         assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
             f"backup falsely reported success despite an unresolvable database: {calls}"
         )
@@ -1821,7 +1834,17 @@ async def test_reset_discards_a_configured_custom_override_while_compose_reflect
     ):
         monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
 
-        expected_override = str(Path(custom_override).expanduser().resolve())
+        # NOTE: previously computed as
+        # ``str(Path(custom_override).expanduser().resolve())``. The
+        # private-storage-boundary rework (dev, ADR-029) made custom-path
+        # resolution deliberately lexical -- it preserves the user's
+        # spelling (e.g. an unresolved ``/tmp`` symlink) instead of
+        # following symlinks, so a later no-follow boundary owns link
+        # validation. Delegating to the real resolver (as
+        # ``expected_default`` below already does) keeps this test honest
+        # against that single source of truth instead of re-deriving a
+        # now-stale expectation.
+        expected_override = str(config_module.get_chachanotes_db_path())
         expected_default = str(
             config_module.get_chachanotes_db_path(ignore_override=True)
         )
