@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import threading
+import weakref
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from types import GeneratorType
@@ -13,6 +14,7 @@ from typing import Any, AsyncIterator, Callable
 from urllib.parse import urlparse, urlunparse
 
 import httpx
+from loguru import logger
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
@@ -489,28 +491,113 @@ class ConsoleProviderGateway:
     ) -> None:
         self._owns_http_client = http_client is None
         self.http_client = http_client or self._new_owned_http_client()
+        # Mirrors whichever entry in `_loop_clients` was most recently
+        # resolved by `_active_http_client` -- kept for the "unclaimed
+        # client" escape hatch below and for callers/tests that read
+        # `http_client`/`_client_loop` directly before any loop has touched
+        # the gateway.
         self._client_loop: asyncio.AbstractEventLoop | None = None
-        # Guards the check-and-swap in `_active_http_client` as a single
-        # atomic critical section (PR #629 Fix 1(a)): concurrent callers on
-        # different loops/threads -- e.g. the app loop's readiness probe
-        # racing the agent worker thread's per-turn loop -- must never
-        # interleave the read-then-write, which could otherwise desync
-        # `http_client` from `_client_loop` (a client bound to one loop
-        # while the recorded loop is a different one).
+        # Whether the client built above (or injected) has ever been
+        # resolved through `_active_http_client`/`aclose`'s "unclaimed
+        # client" escape hatches. `_client_loop is None` is NOT a safe proxy
+        # for "never claimed": `aclose()` resets it to `None` on every
+        # teardown, including after a real loop already claimed and
+        # released a client, so re-deriving "unclaimed" from it would let a
+        # SECOND loop adopt a client a FIRST loop already bound internally
+        # (httpx/httpcore lazily bind connection-pool locks to whichever
+        # loop first touches them) -- silently reintroducing the very
+        # cross-loop binding failure this per-loop cache exists to
+        # eliminate. This flag is set exactly once, on the first-ever
+        # resolution, and `aclose()` never restores it.
+        self._client_ever_claimed = False
+        # Guards every read-check-create of `_loop_clients` (and the mirror
+        # fields above) as a single atomic critical section (PR #629 Fix
+        # 1(a), preserved across the move to a per-loop cache below):
+        # concurrent callers on different loops/threads -- e.g. the app
+        # loop's readiness probe racing the agent worker thread's per-turn
+        # loop -- must never interleave a read with another caller's write,
+        # which could otherwise desync `http_client`/`_client_loop` from
+        # `_loop_clients`, or race two callers into each building their own
+        # client for what should be the same cache slot.
         self._client_lock = threading.Lock()
+        # Per-loop client cache (TASK-1064 item 1, same shape as the fix
+        # applied to `GitHubAPIClient` under TASK-981 / PR #1009): every
+        # event loop that is *currently alive* and has touched
+        # `_active_http_client()` gets its own owned `httpx.AsyncClient`, so
+        # two loops alive at the same time -- the app's own event loop
+        # awaiting a readiness probe while an agent-runtime generation call
+        # is bridged in from a worker thread's fresh per-turn
+        # ``asyncio.run()`` -- never fight over, or close, each other's
+        # client. A single-slot cache (the previous design) discarded and
+        # scheduled `aclose()` of whatever the *other*, still-live loop was
+        # using on every cross-loop touch -- closing a client mid-flight.
+        # Keyed by the loop object itself via a `WeakKeyDictionary` so an
+        # entry can be reclaimed as soon as nothing else references that
+        # loop; pruned proactively in `_prune_closed_loops` so a long-running
+        # process that bridges many short-lived per-turn loops over time
+        # doesn't accumulate dead entries waiting on GC alone.
+        self._loop_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = (
+            weakref.WeakKeyDictionary()
+        )
         self._config_provider = config_provider or (lambda: {})
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
         self._safe_error_copy = safe_error_copy or safe_provider_error_copy
 
     async def aclose(self) -> None:
-        """Close the owned HTTP client.
+        """Close the HTTP client(s) owned by this instance.
+
+        The client bound to the caller's current running loop (if any) is
+        closed directly -- safe, since we are already running on that loop.
+        Every other cached per-loop client -- e.g. one built earlier by the
+        app's long-lived loop, still alive while a shorter-lived per-turn
+        loop is the one calling ``aclose()`` -- is closed best-effort via
+        ``_schedule_stale_client_close`` on its own loop; this never awaits,
+        and never closes, a client bound to a loop it is not currently
+        running on.
 
         Returns:
             ``None``. Injected HTTP clients are left open for their owner.
         """
-        if self._owns_http_client:
-            await self.http_client.aclose()
+        if not self._owns_http_client:
+            return
+        try:
+            loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        with self._client_lock:
+            self._prune_closed_loops()
+            current_client: httpx.AsyncClient | None = None
+            if loop is not None:
+                current_client = self._loop_clients.pop(loop, None)
+                if current_client is None and not self._client_ever_claimed:
+                    # Never claimed by any loop yet -- e.g. `aclose()` is
+                    # called right after construction, before
+                    # `_active_http_client()` was ever touched. Treat the
+                    # client built in `__init__` as belonging to the loop
+                    # calling `aclose()` now (mirrors the escape hatch in
+                    # `_active_http_client`). `_client_ever_claimed` -- not
+                    # `_client_loop is None` -- is the correct test here: it
+                    # is set exactly once, on first-ever resolution, and is
+                    # never restored by a prior teardown, so a client a
+                    # loop already bound and released can never be
+                    # re-treated as "unclaimed" by this branch.
+                    current_client = self.http_client
+                    self._client_ever_claimed = True
+            others = [
+                (other_loop, other_client)
+                for other_loop, other_client in self._loop_clients.items()
+                if other_client is not current_client
+            ]
+            self._loop_clients.clear()
+            self._client_loop = None
+
+        for other_loop, other_client in others:
+            self._schedule_stale_client_close(other_client, other_loop)
+
+        if current_client is not None:
+            await current_client.aclose()
 
     @staticmethod
     def _new_owned_http_client() -> httpx.AsyncClient:
@@ -522,6 +609,23 @@ class ConsoleProviderGateway:
                 pool=GENERATION_READ_TIMEOUT_SECONDS,
             )
         )
+
+    def _prune_closed_loops(self) -> None:
+        """Drop ``_loop_clients`` entries whose owning loop has closed.
+
+        Must be called with ``_client_lock`` held. A ``WeakKeyDictionary``
+        alone would eventually reclaim these once the loop object itself is
+        garbage collected, but asyncio loops can take a while to be
+        collected (reference cycles via internal callbacks), and there is
+        nothing left to gracefully close on an already-closed loop -- its
+        client's own finalizer releases the underlying sockets. Pruning
+        proactively on every cache access bounds ``_loop_clients``'s size
+        even under many short-lived per-turn loops (see
+        ``console_agent_bridge``, which builds a fresh ``asyncio.run()``
+        loop per agent turn).
+        """
+        for stale_loop in [lp for lp in self._loop_clients if lp.is_closed()]:
+            del self._loop_clients[stale_loop]
 
     def _active_http_client(self) -> httpx.AsyncClient:
         """Return an HTTP client bound to the CURRENTLY running event loop.
@@ -537,22 +641,22 @@ class ConsoleProviderGateway:
         the first loop has since closed, ``RuntimeError: Event loop is
         closed``) on every request -- observed live as every agent send
         failing with "Agent run failed: ... is bound to a different event
-        loop." Recreate the owned client whenever the running loop changes
-        so each loop gets its own client; injected clients (tests) are
-        trusted to manage their own loop lifecycle and are left untouched.
+        loop." Give each running loop its own owned client via a per-loop
+        cache (``_loop_clients``) so no live loop ever has its client
+        replaced -- let alone closed -- by another loop's touch; injected
+        clients (tests) are trusted to manage their own loop lifecycle and
+        are left untouched.
 
-        The read-check-swap below is guarded by ``_client_lock`` (PR #629
-        Fix 1(a)): without it, two concurrent callers on different
+        The whole check-and-maybe-create below is guarded by
+        ``_client_lock`` (PR #629 Fix 1(a), preserved from the single-slot
+        design): without it, two concurrent callers on different
         loops/threads (the app loop's readiness probe racing the agent
-        worker thread's per-turn loop) can each read the same stale
-        ``(http_client, _client_loop)`` pair before either writes, then
-        both swap -- whichever writer's ``self.http_client`` assignment
-        loses the race ends up paired with the *other* writer's
-        ``self._client_loop`` assignment, leaving the recorded loop and the
-        actual client bound to different loops. The very next probe on the
-        recorded loop then reuses a client bound elsewhere and crashes.
-        Holding the lock across the whole check, creation, and both
-        assignments makes the swap a single atomic step.
+        worker thread's per-turn loop) could race each other while building
+        a client for the SAME not-yet-cached loop, or interleave with
+        ``aclose()``'s cache teardown. Holding the lock across the prune,
+        lookup, and any creation makes the whole operation a single atomic
+        step; unlike the old single-slot swap, nothing here ever discards or
+        schedules a close of another loop's still-cached client.
         """
         if not self._owns_http_client:
             return self.http_client
@@ -561,40 +665,79 @@ class ConsoleProviderGateway:
         except RuntimeError:
             return self.http_client
         with self._client_lock:
-            if self._client_loop is loop:
+            self._prune_closed_loops()
+            cached = self._loop_clients.get(loop)
+            if cached is not None:
+                self.http_client, self._client_loop = cached, loop
+                return cached
+            if (
+                not self._client_ever_claimed
+                and self.http_client is not None
+                and not self.http_client.is_closed
+            ):
+                # Unclaimed-client escape hatch: the client built in
+                # `__init__` hasn't been adopted by ANY loop yet -- claim it
+                # for the loop touching it now instead of discarding +
+                # scheduling a close of a client nothing has even used,
+                # exactly mirroring `GitHubAPIClient.client`'s unknown-loop
+                # escape hatch. Gated on `_client_ever_claimed`, not
+                # `self._client_loop is None`: `aclose()` resets
+                # `_client_loop` to `None` on every teardown, including
+                # after a real loop already claimed and released a client,
+                # so re-deriving "unclaimed" from it would let a later loop
+                # adopt a client a prior loop already bound -- httpx/httpcore
+                # lazily bind connection-pool locks to whichever loop first
+                # touches them, so reusing that client from a second loop
+                # reintroduces the cross-loop binding failure this per-loop
+                # cache exists to eliminate. `_client_ever_claimed` is set
+                # exactly once, on the first-ever resolution, and is never
+                # restored by a subsequent `aclose()`.
+                self._loop_clients[loop] = self.http_client
+                self._client_loop = loop
+                self._client_ever_claimed = True
                 return self.http_client
-            stale_client, stale_loop = self.http_client, self._client_loop
-            self.http_client = self._new_owned_http_client()
-            self._client_loop = loop
-            active_client = self.http_client
-        # Best-effort close of whatever this swap replaced -- including the
-        # very first swap, where `stale_loop` is still `None` (there is no
-        # previous loop to close it on). A dropped owned client must never
-        # simply leak (PR #629 Fix 1(b)): fall back to closing it on the
-        # loop that just replaced it, which is safe since we are executing
-        # inside that running loop right now. Scheduling the close outside
-        # the lock keeps the critical section itself minimal.
-        self._schedule_stale_client_close(
-            stale_client, stale_loop if stale_loop is not None else loop
-        )
-        return active_client
+            new_client = self._new_owned_http_client()
+            self._loop_clients[loop] = new_client
+            self.http_client, self._client_loop = new_client, loop
+            self._client_ever_claimed = True
+            return new_client
 
     @staticmethod
     def _schedule_stale_client_close(
         client: httpx.AsyncClient, loop: asyncio.AbstractEventLoop
     ) -> None:
-        """Best-effort close of a client left behind by a loop swap.
+        """Best-effort close of a client left behind on another loop.
 
-        The previous loop may already be closed (a completed per-turn
-        ``asyncio.run()``) or may still be running elsewhere (the app's
-        main loop) -- either way this must never raise into the caller
-        that triggered the swap.
+        Used by ``aclose()`` to hand off a still-cached OTHER loop's client
+        for closing on its own loop, never on the caller's. That loop may
+        already be closed (a completed per-turn ``asyncio.run()``) or may
+        still be running elsewhere (the app's main loop) -- either way this
+        must never raise into the caller. The returned ``Future`` is
+        retained with a done-callback so a failed close on another loop is
+        logged rather than silently swallowed.
         """
+        if loop.is_closed():
+            return
         try:
             future = asyncio.run_coroutine_threadsafe(client.aclose(), loop)
         except RuntimeError:
             return
-        future.add_done_callback(lambda f: f.exception())
+
+        def _log_close_failure(fut: "asyncio.Future") -> None:
+            try:
+                exc = fut.exception()
+            except Exception:
+                # Cancelled, or otherwise unable to retrieve the exception --
+                # nothing more we can do here.
+                return
+            if exc is not None:
+                logger.opt(exception=exc).warning(
+                    "Failed to close a stale Console provider HTTP client on "
+                    "its owning loop: {}",
+                    exc,
+                )
+
+        future.add_done_callback(_log_close_failure)
 
     async def resolve_llamacpp(
         self, config: LlamaCppProviderConfig

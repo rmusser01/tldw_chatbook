@@ -1602,6 +1602,63 @@ async def test_gateway_does_not_close_injected_http_client():
     await client.aclose()
 
 
+def test_aclose_does_not_let_a_later_loop_adopt_a_previously_claimed_client():
+    """Review finding: `aclose()` clears `_loop_clients` and resets
+    `_client_loop` to `None`, but never touched `self.http_client` itself,
+    so the "unclaimed init client" escape hatch in `_active_http_client()`
+    -- which used to key off `self._client_loop is None` -- could not tell
+    "never claimed by any loop" apart from "was claimed and released by a
+    loop that is now gone". Force the reliable version of the hazard: loop
+    A claims a client via a plain ``asyncio.run()`` call, which closes loop
+    A the instant it returns (mirrors a `console_agent_bridge` per-turn
+    loop that finished on its own, with `aclose()` never having run on it).
+    When `aclose()` later runs on an unrelated loop B, A's client can't even
+    be scheduled for closing (its owning loop is already gone), so it is
+    left with `is_closed is False`. A subsequent loop C must never adopt
+    that leftover client -- doing so reuses a client whose httpx/httpcore
+    connection-pool primitives are already bound to loop A, reintroducing
+    the cross-loop binding failure this per-loop cache exists to eliminate.
+
+    Uses three separate ``asyncio.run()`` calls (each spins up and tears
+    down its own loop) rather than ``@pytest.mark.asyncio`` -- a loop
+    cannot run another loop nested inside it, and the whole point here is
+    three DISTINCT loops, the first already closed before the second ever
+    starts.
+    """
+    gateway = ConsoleProviderGateway()
+
+    async def claim() -> tuple[httpx.AsyncClient, asyncio.AbstractEventLoop]:
+        return gateway._active_http_client(), asyncio.get_running_loop()
+
+    client_a, loop_a = asyncio.run(claim())
+
+    # Sanity: loop A really did claim the client, and `asyncio.run()` has
+    # already closed loop A by the time control returns here.
+    assert gateway._client_loop is loop_a
+    assert gateway.http_client is client_a
+    assert loop_a.is_closed()
+
+    # `aclose()` now runs on loop B -- unrelated to loop A, and gone by the
+    # time it returns too. It cannot schedule a close of A's client (A is
+    # already closed), so A's client is left open; that alone is fine (its
+    # own finalizer reclaims the sockets). What must NOT happen is a later
+    # loop adopting it.
+    asyncio.run(gateway.aclose())
+    assert client_a.is_closed is False
+
+    async def reclaim() -> httpx.AsyncClient:
+        return gateway._active_http_client()
+
+    new_client = asyncio.run(reclaim())
+
+    assert new_client is not client_a, (
+        "a client already bound to loop A's (now-closed) httpx/httpcore "
+        "internals must never be adopted for a different loop"
+    )
+
+    asyncio.run(gateway.aclose())
+
+
 @pytest.mark.asyncio
 async def test_owned_http_client_uses_generous_generation_read_timeout():
     """The owned client must not cap slow local generations at the old 30s."""
@@ -1795,19 +1852,74 @@ def test_injected_http_client_is_never_swapped_across_loops():
     asyncio.run(client.aclose())
 
 
-def test_active_http_client_swap_is_mutually_exclusive_across_threads():
-    """PR #629 Fix 1(a) (Gemini HIGH x2 + Qodo-8): the check-and-swap of
-    ``http_client``/``_client_loop`` must be a single atomic critical
-    section guarded by one lock, not two independently-racy reads/writes --
-    otherwise a concurrent caller from another thread/loop can interleave
-    with an in-flight swap and desync the client/loop pair (see the
-    interleaving hammer test below for the crash this produces in
-    practice). Proven deterministically here (no reliance on GIL
-    scheduling luck): thread A is parked *inside* the swap via a
-    monkeypatched, blocking ``_new_owned_http_client``, and thread B's
-    concurrent call must provably fail to complete while A is still in
-    flight -- only completing once A releases and the lock is free."""
+def test_active_http_client_first_touch_adopts_the_unclaimed_init_client(monkeypatch):
+    """TASK-1064 item 1: the client built in ``__init__`` is not yet bound to
+    (has not made a request on) any event loop, so the FIRST loop to call
+    ``_active_http_client()`` adopts it directly into the per-loop cache
+    instead of discarding it and building a fresh one -- construction should
+    not waste a connection, and there is nothing to close since no loop has
+    touched it yet. Directly supersedes the old single-slot design's
+    behavior (PR #629 Fix 1(b)), where the first touch unconditionally
+    swapped in a brand-new client and scheduled a close of the original."""
     gateway = ConsoleProviderGateway()
+    original_client = gateway.http_client
+    scheduled: list[tuple[int, object]] = []
+
+    def fake_schedule(client, loop):
+        scheduled.append((id(client), loop))
+
+    monkeypatch.setattr(
+        ConsoleProviderGateway,
+        "_schedule_stale_client_close",
+        staticmethod(fake_schedule),
+    )
+
+    async def touch() -> httpx.AsyncClient:
+        return gateway._active_http_client()
+
+    adopted = asyncio.run(touch())
+
+    assert adopted is original_client, (
+        "the first loop to touch the gateway must adopt the unclaimed "
+        "init-time client rather than discarding it for a fresh one"
+    )
+    assert scheduled == [], (
+        "adopting an unclaimed client must not schedule a close of it -- "
+        "nothing was ever using it"
+    )
+
+
+def test_active_http_client_creation_is_mutually_exclusive_across_threads():
+    """PR #629 Fix 1(a) (Gemini HIGH x2 + Qodo-8), preserved across the move
+    to a per-loop cache (TASK-1064 item 1): building a NEW per-loop cache
+    entry must be a single atomic critical section guarded by one lock, not
+    two independently-racy reads/writes -- otherwise two concurrent callers
+    on different not-yet-cached loops could each decide the cache is empty
+    and both build+insert, or interleave with the cache's other bookkeeping.
+    Proven deterministically here (no reliance on GIL scheduling luck):
+    thread A is parked *inside* client construction via a monkeypatched,
+    blocking ``_new_owned_http_client``, and thread B's concurrent call for
+    a DIFFERENT loop must provably fail to complete while A is still in
+    flight -- only completing once A releases and the lock is free.
+
+    The gateway is primed with one throwaway touch first so that both
+    threads' loops are genuinely new to the cache and both take the
+    ``_new_owned_http_client`` creation path -- the very first touch ever is
+    now an adopt-in-place of the unclaimed ``__init__`` client (see
+    ``test_active_http_client_first_touch_adopts_the_unclaimed_init_client``)
+    and would not exercise this path.
+    """
+    gateway = ConsoleProviderGateway()
+    priming_loop = asyncio.new_event_loop()
+    try:
+
+        async def prime() -> None:
+            gateway._active_http_client()
+
+        priming_loop.run_until_complete(prime())
+    finally:
+        priming_loop.close()
+
     original_new_client = ConsoleProviderGateway._new_owned_http_client
     entered = threading.Event()
     release = threading.Event()
@@ -1816,7 +1928,7 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
         # Only the FIRST call (thread A's) blocks -- a concurrent second
         # call (thread B's) that is *not* actually serialized by a lock
         # would sail straight through this on its own turn and finish its
-        # swap well before thread A ever releases, which is exactly the
+        # creation well before thread A ever releases, which is exactly the
         # unlocked-race behavior this test must catch.
         if not entered.is_set():
             entered.set()
@@ -1839,7 +1951,7 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
 
         thread_a = threading.Thread(target=call_a)
         thread_a.start()
-        assert entered.wait(timeout=5), "thread A must have entered the swap"
+        assert entered.wait(timeout=5), "thread A must have entered creation"
 
         def call_b() -> None:
             async def go() -> None:
@@ -1851,13 +1963,14 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
         thread_b = threading.Thread(target=call_b)
         thread_b.start()
 
-        # Thread A is still parked inside its swap -- give thread B ample
-        # opportunity to race ahead if the swap were not actually
+        # Thread A is still parked inside its creation -- give thread B
+        # ample opportunity to race ahead if creation were not actually
         # serialized by a lock.
         premature = second_done.wait(timeout=0.5)
         assert premature is False, (
-            "a concurrent swap completed while another thread's swap was "
-            "still in flight -- the check-and-swap is not atomic"
+            "a concurrent cache-entry creation completed while another "
+            "thread's creation was still in flight -- the critical section "
+            "is not atomic"
         )
         assert second_done.wait(timeout=5)
     finally:
@@ -1882,35 +1995,51 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
         loop_b.close()
 
 
-def test_first_swap_still_schedules_close_of_the_original_owned_client(monkeypatch):
-    """PR #629 Fix 1(b) (Gemini HIGH + Qodo-8): the very first swap has
-    ``_client_loop`` still ``None`` (there is no previous loop to close the
-    replaced client on), and the old code's ``if stale_loop is not None:``
-    guard skipped scheduling a close entirely in that case -- silently
-    leaking the client created in ``__init__``. The replaced client must
-    always be closed best-effort, even on the first swap."""
+def test_aclose_closes_current_loop_client_and_schedules_others(monkeypatch):
+    """The per-loop cache can hold multiple live clients at once (one per
+    loop that has touched the gateway); ``aclose()`` must close the calling
+    loop's own client directly and hand off every OTHER cached loop's client
+    to ``_schedule_stale_client_close`` -- never await, and never directly
+    close, a client bound to a loop it is not currently running on. This is
+    the non-leaking-close guarantee (PR #629 Fix 1(b)) restated for a cache
+    that can hold more than one entry."""
     gateway = ConsoleProviderGateway()
-    original_client = gateway.http_client
-    scheduled: list[tuple[int, object]] = []
+    other_loop = asyncio.new_event_loop()
+    try:
 
-    def fake_schedule(client, loop):
-        scheduled.append((id(client), loop))
+        async def touch() -> None:
+            gateway._active_http_client()
 
-    monkeypatch.setattr(
-        ConsoleProviderGateway,
-        "_schedule_stale_client_close",
-        staticmethod(fake_schedule),
-    )
+        other_loop.run_until_complete(touch())
+        other_client = gateway._loop_clients[other_loop]
+        assert other_client.is_closed is False
 
-    async def touch() -> None:
-        gateway._active_http_client()
+        scheduled: list[tuple[int, object]] = []
 
-    asyncio.run(touch())
+        def fake_schedule(client, loop):
+            scheduled.append((id(client), loop))
 
-    assert scheduled, (
-        "the original owned client must be scheduled for close on the first swap too"
-    )
-    assert scheduled[0][0] == id(original_client)
+        monkeypatch.setattr(
+            ConsoleProviderGateway,
+            "_schedule_stale_client_close",
+            staticmethod(fake_schedule),
+        )
+
+        async def close_from_new_loop() -> None:
+            await gateway.aclose()
+
+        asyncio.run(close_from_new_loop())
+
+        assert scheduled == [(id(other_client), other_loop)], (
+            "aclose() must hand off every other cached loop's client to "
+            "_schedule_stale_client_close, keyed to its own loop"
+        )
+        # `fake_schedule` never actually closed it -- confirms aclose() did
+        # not itself await/close a client bound to a different loop.
+        assert other_client.is_closed is False
+    finally:
+        other_loop.run_until_complete(other_client.aclose())
+        other_loop.close()
 
 
 def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_loop(
@@ -2008,6 +2137,73 @@ def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_l
         thread.join(timeout=2)
 
     assert errors == []
+
+
+def test_concurrent_live_loops_never_close_each_others_client():
+    """TASK-1064 item 1 -- genuine concurrency, NOT sequential ``asyncio.run()``
+    calls. A sequential two-loop probe does not discriminate: the first loop
+    is already closed by the time the second one runs, so both the fixed and
+    the unfixed single-slot code pass it. Two real OS threads each run their
+    own ``asyncio.run()`` loop and are barrier-synchronized so both loops are
+    genuinely alive at the same wall-clock moment while each resolves
+    ``_active_http_client()`` on the SAME shared gateway instance -- exactly
+    the overlap the gateway's own docstrings describe: a readiness probe
+    awaited on the app's own event loop racing an agent-runtime generation
+    call bridged from a worker thread's fresh ``asyncio.run()``. Under the
+    old single-slot ``http_client``/``_client_loop`` cache, the second
+    thread's touch treats the first thread's still-in-flight client as
+    "stale" and schedules ``aclose()`` of it on the first thread's own
+    (still-running) loop -- which actually executes it, closing a client the
+    first thread is still using.
+    """
+    gateway = ConsoleProviderGateway()
+    barrier = threading.Barrier(2)
+    obtained: dict[str, httpx.AsyncClient] = {}
+    errors: list[BaseException] = []
+    errors_lock = threading.Lock()
+
+    def run(name: str) -> None:
+        async def go() -> None:
+            client = gateway._active_http_client()
+            obtained[name] = client
+            barrier.wait(timeout=5)
+            # Keep this loop alive and pumping so a cross-loop `aclose()`
+            # scheduled onto it via `run_coroutine_threadsafe` (the bug)
+            # actually gets a chance to execute, exactly like a real
+            # in-flight request would still be holding the client open.
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if client.is_closed:
+                    break
+
+        try:
+            asyncio.run(go())
+        except BaseException as exc:  # noqa: BLE001 -- collected, asserted below
+            with errors_lock:
+                errors.append(exc)
+
+    thread_a = threading.Thread(target=run, args=("a",))
+    thread_b = threading.Thread(target=run, args=("b",))
+    thread_a.start()
+    thread_b.start()
+    thread_a.join(timeout=10)
+    thread_b.join(timeout=10)
+
+    assert errors == [], f"unexpected errors from worker threads: {errors!r}"
+    assert "a" in obtained and "b" in obtained, "both loops must obtain a client"
+    assert obtained["a"] is not obtained["b"], (
+        "two live loops must never share the same owned http client"
+    )
+    assert obtained["a"].is_closed is False, (
+        "loop A's client was closed while loop B was concurrently alive and "
+        "touching the shared gateway -- a live loop must never close "
+        "another live loop's client"
+    )
+    assert obtained["b"].is_closed is False, (
+        "loop B's client was closed while loop A was concurrently alive and "
+        "touching the shared gateway -- a live loop must never close "
+        "another live loop's client"
+    )
 
 
 def _sse(payload):
