@@ -350,7 +350,6 @@ class WatchlistTree(Vertical):
             ),
         )
         expander.add_class("watchlist-tree-expander")
-        yield expander
 
         node = Button(
             f"{watchlist_name}  {unread}",
@@ -361,7 +360,15 @@ class WatchlistTree(Vertical):
         node.add_class("watchlist-tree-watchlist")
         if self.active_scope == TreeScope(kind="watchlist", watchlist_id=watchlist_id):
             node.add_class("is-active")
-        yield node
+
+        # TASK-997: one row, not two. These were yielded as two separate
+        # children of the tree's `Vertical`, so the chevron stacked ABOVE the
+        # name -- and, inheriting Textual's `min-width: 16`, painted seven
+        # columns in from the left of a 26-column rail rather than beside
+        # anything. Every watchlist cost two rows of the screen's primary
+        # navigation. The row is a container, so both buttons keep their own
+        # ids and `Button.Pressed` still bubbles to `on_button_pressed` here.
+        yield Horizontal(expander, node, classes="watchlist-tree-row")
 
         if is_open:
             for row in self._source_rows(watchlist_id):

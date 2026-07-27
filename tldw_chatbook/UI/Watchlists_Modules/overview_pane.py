@@ -13,6 +13,11 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
     """Dashboard cards and recent failed runs for watchlists."""
 
     data = reactive({}, recompose=True)
+    #: TASK-998. How many watchlists exist, so the first-run panel can tell a
+    #: user who has already made one that their remaining step is a source.
+    #: Screen-seeded like every other reactive on these panes -- the pane has
+    #: no service of its own and `data` only counts sources, items and runs.
+    watchlist_count = reactive(0, recompose=True)
 
     _CARD_IDS = {
         "total_sources": "overview-total-sources",
@@ -28,7 +33,102 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
         value = self.data.get(key, "-")
         return f"{label}\n{value}"
 
+    @staticmethod
+    def profile_is_empty(data: dict) -> bool:
+        """Whether `data` says this profile has nothing in Watchlists yet.
+
+        The single definition of that question (Qodo #3 on PR #1017). It lived
+        here and, copied, on `WatchlistsCollectionsScreen`; two copies of a
+        predicate that decides what the Overview region and the Inspector each
+        say is a drift waiting to happen, and the two disagreeing is exactly
+        the confusing state TASK-998 set out to remove.
+
+        Guarded on `total_sources` being PRESENT, not merely falsy: `data`
+        starts as `{}` and is filled by a worker, so a plain zero-check would
+        show first-run copy for the tick before the numbers land and then swap
+        it -- a flash on every visit for users who do have sources. An absent
+        key means "not loaded yet", which is not the same answer as "loaded,
+        and empty".
+
+        Args:
+            data: The overview payload, as published to `overview_data`.
+
+        Returns:
+            True only when the payload has loaded and reports nothing.
+        """
+        if "total_sources" not in data:
+            return False
+        return not any(
+            (
+                data.get("total_sources"),
+                data.get("total_items"),
+                data.get("active_alert_rules"),
+                data.get("failed_runs"),
+            )
+        )
+
+    def _is_first_run(self) -> bool:
+        """Whether this profile has nothing for the cards to report.
+
+        Guarded on `total_sources` being PRESENT, not merely falsy: `data`
+        starts as `{}` and is filled by a worker, so a plain zero-check would
+        show the first-run panel for the tick before the numbers land and then
+        swap it for the grid -- a flash on every visit for users who do have
+        sources. An absent key means "not loaded yet", which is not the same
+        answer as "loaded, and empty".
+        """
+        return self.profile_is_empty(self.data)
+
+    def _first_run_body(self) -> str:
+        """What to do next, phrased for what the user has actually done.
+
+        Two variants because the UAT's journey ended exactly between them: the
+        user created a watchlist and then had nowhere to go. Telling someone
+        who already has one to "create a watchlist" is the same dead end this
+        task exists to remove, one step further along.
+        """
+        if self.watchlist_count:
+            return (
+                "Your watchlists have no sources yet. Open Sources above and "
+                "press New Source to add a feed, or Import OPML to bring a set "
+                "of feeds over from another reader.\n\n"
+                "Runs, items, rules and notifications fill in once a source "
+                "has been checked."
+            )
+        return (
+            "A watchlist is a folder of feeds. Watchlists checks them on a "
+            "schedule and collects whatever is new.\n\n"
+            "1. Press New in the rail on the left to create a watchlist.\n"
+            "2. Open Sources above and press New Source to add a feed to it, "
+            "or Import OPML to bring a set of feeds over from another reader."
+            "\n\n"
+            "Runs, items, rules and notifications fill in once a source has "
+            "been checked."
+        )
+
     def compose(self):
+        # TASK-998. Seven bordered cards reading "-" and an empty failed-runs
+        # table were the largest region on a new user's first screen, and the
+        # first thing they saw. Chrome around data that does not exist is not
+        # a neutral placeholder: it is the screen's whole first impression
+        # spent saying nothing. On an empty profile the cards and the table
+        # are replaced -- not merely blanked -- by copy that names the two
+        # controls that actually do something (`New` in the rail,
+        # `New Source` under Sources). Every populated state is untouched.
+        if self._is_first_run():
+            with Vertical(id="overview-first-run"):
+                yield Static(
+                    "Nothing is being watched yet.",
+                    id="overview-first-run-title",
+                    classes="watchlists-first-run-title",
+                )
+                yield Static(
+                    self._first_run_body(),
+                    id="overview-first-run-body",
+                    classes="watchlists-first-run-body",
+                )
+            return
+
         with Grid(id="watchlists-overview-grid"):
             yield Static(
                 self._card_value("total_sources", "Total sources"),

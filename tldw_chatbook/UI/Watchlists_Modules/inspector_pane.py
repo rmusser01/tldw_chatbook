@@ -128,6 +128,11 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
     selected_entity = reactive[dict[str, Any] | None](None, recompose=True)
     scope = reactive[TreeScope | None](None, recompose=True)
     breadcrumb_labels = reactive[list[str]]([], recompose=True)
+    #: TASK-998. Whether this profile has nothing to select at all. Screen-
+    #: seeded like the three reactives above, for the same reason: the pane
+    #: has no service of its own, and "nothing is selected" and "nothing
+    #: exists to select" are different states that need different copy.
+    first_run = reactive(False, recompose=True)
 
     def compose(self):
         # No "Inspector" title here. `_build_inspector_pane` already opens the
@@ -145,6 +150,26 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         # the heading belongs to the rail, not to this widget.
         levels = self._resolve_levels()
         if not levels:
+            # TASK-998. "Select a source, run, item, rule, or notification"
+            # is correct guidance once those things can exist, and a dead end
+            # before then: on first run it names five things the user cannot
+            # do, in a rail that is a third of the screen. Split on whether
+            # there is anything to select rather than softening one string to
+            # cover both -- the populated copy is right and stays exactly as
+            # it was. The id is shared so callers testing for "the Inspector
+            # has nothing selected" keep working across both.
+            if self.first_run:
+                yield Static(
+                    "Nothing to inspect yet.",
+                    id="inspector-empty-state",
+                )
+                yield Static(
+                    "Sources, runs, items and rules show their actions here "
+                    "once they exist. Start with New in the rail, then "
+                    "New Source under Sources.",
+                    id="inspector-first-run-hint",
+                )
+                return
             yield Static(
                 "Select a source, run, item, rule, or notification to see actions.",
                 id="inspector-empty-state",

@@ -130,29 +130,42 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
     def compose(self):
         with Vertical(id="sources-toolbar"):
+            # TASK-995: `compact=True` on every Input/Select in a
+            # `.destination-filter-strip` row. That class pins `height: 1`
+            # (layout/_panes.tcss) while a bordered Input/Select is three
+            # rows, so without this the whole strip painted as its own top
+            # border and nothing else -- no search box, no filters, no
+            # `New Source` -- and a new user had no way to add a source at
+            # all. Widths are pinned alongside it in features/_watchlists.tcss
+            # (they have to be in the bundle to beat the global
+            # `Select { width: 100% }` in features/_conversations.tcss).
             with Horizontal(classes="destination-filter-strip"):
                 yield Input(
                     placeholder="Search sources...",
                     id="sources-search-input",
                     value=self.search_query,
+                    compact=True,
                 )
                 yield Select(
                     self._TYPE_OPTIONS,
                     value=self.source_type_filter,
                     id="sources-type-select",
                     allow_blank=False,
+                    compact=True,
                 )
                 yield Select(
                     self._STATUS_OPTIONS,
                     value=self.status_filter,
                     id="sources-status-filter",
                     allow_blank=False,
+                    compact=True,
                 )
                 yield Select(
                     self._ACTIVE_OPTIONS,
                     value=self.active_filter,
                     id="sources-active-filter",
                     allow_blank=False,
+                    compact=True,
                 )
                 yield Button("New Source", id="sources-new-button", variant="primary")
                 yield Button("Filters", id="sources-filter-toggle", variant="default")
@@ -162,6 +175,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                         placeholder="Tags (comma separated)...",
                         id="sources-tags-filter",
                         value=self.tags_filter,
+                        compact=True,
                     )
             with Horizontal(classes="destination-filter-strip"):
                 yield Button(

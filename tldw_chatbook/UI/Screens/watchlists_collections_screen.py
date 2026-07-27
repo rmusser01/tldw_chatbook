@@ -1078,6 +1078,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if self.active_section == "overview":
             overview = OverviewPane(id="watchlists-overview-pane")
             overview.data = self.overview_data
+            # TASK-998: lets the first-run panel distinguish "no watchlists at
+            # all" from "a watchlist with no sources in it" -- `overview_data`
+            # counts sources, items and runs, never watchlists.
+            overview.watchlist_count = len(self._tree_watchlists)
             children.append(overview)
         elif self.active_section == "sources":
             sources_pane = SourcesPane(id="watchlists-sources-pane")
@@ -1133,6 +1137,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             id="watchlists-detail-pane",
             classes="destination-workbench-pane",
         )
+
+    def _watchlists_are_empty(self) -> bool:
+        """Whether this profile has nothing in Watchlists yet (TASK-998).
+
+        Delegates to `OverviewPane.profile_is_empty`, which is the one
+        definition of this question (Qodo #3 on PR #1017). It used to be
+        copied here, and two copies deciding what the Overview region and the
+        Inspector each say is a drift waiting to happen -- the two disagreeing
+        is precisely the confusing first-run state TASK-998 removed.
+
+        Returns:
+            True only once `overview_data` has loaded and reports nothing.
+        """
+        return OverviewPane.profile_is_empty(self.overview_data)
 
     def _build_inspector_pane(
         self,
@@ -1232,6 +1250,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         inspector.selected_entity = self.selected_entity
         inspector.scope = self.selected_scope
         inspector.breadcrumb_labels = self._breadcrumb_labels
+        # TASK-998: same seeding rationale as the three lines above -- and the
+        # Inspector cannot work this out for itself, since it is handed a
+        # selection rather than the data behind it.
+        inspector.first_run = self._watchlists_are_empty()
         children.append(inspector)
         return Vertical(
             *children,
@@ -1248,11 +1270,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 classes="ds-destination-header",
             )
             with Horizontal(id="watchlists-header-bar", classes="destination-filter-strip"):
+                # TASK-995: `compact=True` for the same reason as the
+                # Sources/Items toolbars -- `.destination-filter-strip` is
+                # `height: 1` and a bordered Select is three rows, so this
+                # backend picker was painting its top border and nothing
+                # else. See `sources_pane.compose()`.
                 yield Select(
                     [("Local", "local"), ("Server", "server")],
                     value=self.runtime_backend,
                     id="watchlists-backend-select",
                     allow_blank=False,
+                    compact=True,
                     disabled=self.active_section == "notifications",
                     tooltip=(
                         "The notifications inbox is local to this device."

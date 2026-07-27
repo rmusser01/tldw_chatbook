@@ -113,6 +113,41 @@ confirm `git diff | grep -c "<key-fragment>"` is `0`. Advise rotation afterwards
 
 ---
 
+## SGR click columns from `awk index()` are byte offsets, not terminal columns
+
+**What happened.** A Watchlists UAT drove the TUI with injected SGR mouse clicks,
+computing each target column with `awk '{print index($0, "Items")}'` over
+`tmux capture-pane` output. Clicking "Items" activated "Runs"; clicking
+"New Source" toggled "Filters"; a modal's "Create" button ignored clicks that
+`Enter` accepted. All three were filed or half-filed as hit-region defects.
+
+None of them were real. `awk`'s `index()` counts **bytes**. Every line of this
+app contains box-drawing and arrow glyphs — `▊`, `▔`, `▼`, `╭` — which are three
+bytes each in UTF-8, so the byte offset runs ahead of the true column by three
+per glyph already on the line. On one measured row:
+
+```
+New Source   char-col=169   byte-offset=181
+Filters      char-col=186   byte-offset=198
+```
+
+A click computed at 185 "inside New Source" actually lands on Filters. The
+error grows left-to-right, so the further right a control sits, the more
+confidently you will click the wrong one.
+
+**What to do.** Compute the column by **character** position, not bytes:
+
+```python
+line = capture.splitlines()[row - 1]
+col = line.find(label) + 1          # 1-based, character-accurate
+```
+
+Then verify the click did what you expected before concluding anything about
+the app. A click that activates the *neighbouring* control is the signature of
+this bug, not of a broken hit region — the app was fine every time.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md` — why the green suite was not evidence
