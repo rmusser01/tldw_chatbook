@@ -412,10 +412,12 @@ from tldw_chatbook.MCP.permission_store import BUILTIN_HIGH_RISK_TAGS
 
 
 def test_builtin_risk_set_is_a_strict_superset_of_the_mcp_set():
-    """Built-ins floor on everything MCP does, plus reads."""
+    """Built-ins floor on everything MCP does, plus reads and network."""
     assert HIGH_RISK_TAGS < BUILTIN_HIGH_RISK_TAGS
     assert "reads" in BUILTIN_HIGH_RISK_TAGS
     assert "reads" not in HIGH_RISK_TAGS
+    assert "network" in BUILTIN_HIGH_RISK_TAGS
+    assert "network" not in HIGH_RISK_TAGS
 
 
 def test_mcp_high_risk_set_is_unchanged():

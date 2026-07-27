@@ -80,6 +80,12 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "write_file",
         "create_note",
         "update_note",
+        # The sensitive-path-hardening glob_files/grep_files tools. Same
+        # rationale as the file tools above: CONFIG-GATED, so the drift
+        # guard (which builds a BuiltinToolProvider with default config)
+        # cannot see them.
+        "glob_files",
+        "grep_files",
     )
 )
 

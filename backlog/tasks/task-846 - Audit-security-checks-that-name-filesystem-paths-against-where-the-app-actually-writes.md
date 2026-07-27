@@ -1,0 +1,25 @@
+---
+id: TASK-846
+title: >-
+  Audit security checks that name filesystem paths against where the app
+  actually writes
+status: To Do
+assignee: []
+created_date: '2026-07-27 03:46'
+labels:
+  - security
+  - tools
+  - audit
+dependencies: []
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+The agent file-tool denylist shipped broken on two branches: it hardcoded the permission store as ~/.config/tldw_cli/mcp_permissions.json while the app builds that file under get_user_data_dir(). The literal path never existed, so the check never matched once, and write_file was demonstrated overwriting the real permission store with global_default allow -- the exact gate bypass the denylist existed to prevent. Fifteen review passes confirmed 'credential and app-state paths are refused' without anyone checking that the paths named in the list were the paths the application uses. The fix derives the path from the app's own accessor and the regression test re-derives it the same way, so it cannot drift back to matching nothing. Other security checks in the codebase that name paths, config keys or database locations by literal may carry the same defect.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Every security-relevant check that names a filesystem path is inventoried,Each one is confirmed against the accessor the app really uses or corrected to derive from it,Tests for those checks derive their paths the way the app does rather than asserting literals,Any check found broken is recorded with what it failed to protect
+<!-- AC:END -->

@@ -58,7 +58,7 @@ def test_runtime_tool_names():
         INSTALL_SKILL_TOOL_NAME,
         RUN_SKILL_SCRIPT_TOOL_NAME,
     }
-    assert DIRECT_DISCLOSE_THRESHOLD == 8 and LOOP_DETECTION_N == 3
+    assert DIRECT_DISCLOSE_THRESHOLD == 16 and LOOP_DETECTION_N == 3
 
 
 def test_budget_defaults():
@@ -69,7 +69,7 @@ def test_budget_defaults():
         b.max_subagents,
         b.max_active_tools,
         b.max_subagent_result_chars,
-    ) == (8, 240.0, 2, 8, 4000)
+    ) == (8, 240.0, 2, 24, 4000)
 
 
 def test_run_budget_default_model_turns_unreachable_and_child_clamp_carries():
@@ -83,10 +83,10 @@ def test_run_budget_default_model_turns_unreachable_and_child_clamp_carries():
     # Unreachability invariant: each model turn appends >=1 step, so with
     # max_model_turns >= max_steps the step check always fires first (or
     # ties) at defaults -> engine-default behavior unchanged. The cap was
-    # raised to 20 for callers that raise max_steps to match (the Console
+    # raised to 30 for callers that raise max_steps to match (the Console
     # bridge); it must never drop below max_steps here.
     assert b.max_model_turns >= b.max_steps
-    assert (b.max_model_turns, b.max_steps) == (20, 8)
+    assert (b.max_model_turns, b.max_steps) == (30, 8)
     child = clamp_child_budget(
         RunBudget(max_model_turns=3), parent_remaining_seconds=30.0
     )
@@ -154,6 +154,12 @@ def test_clamp_child_budget_preserves_max_total_tokens():
     assert clamp_child_budget(child, 10.0).max_total_tokens == 7000
 
 
+def test_clamp_child_budget_preserves_max_tool_result_chars():
+    from tldw_chatbook.Agents.agent_models import RunBudget, clamp_child_budget
+    child = RunBudget(max_tool_result_chars=0)
+    assert clamp_child_budget(child, 10.0).max_tool_result_chars == 0
+
+
 def test_clamp_child_budget_propagates_tool_call_seconds():
     parent = RunBudget(max_tool_call_seconds=45.0)
     child = clamp_child_budget(parent, 30.0)
@@ -174,3 +180,29 @@ def test_pure_module_has_no_forbidden_imports():
         "requests",
     ):
         assert forbidden not in src
+
+
+def test_direct_disclose_threshold_admits_a_three_pack_catalog():
+    """A files+corpus+authoring set is 14 tools; it must disclose directly.
+
+    Below the threshold `initial_disclosure` skips find_tools/load_tools
+    entirely, which is the point: those two round trips are pure overhead
+    repeated on every user message.
+    """
+    from tldw_chatbook.Agents.agent_models import DIRECT_DISCLOSE_THRESHOLD
+
+    assert DIRECT_DISCLOSE_THRESHOLD >= 14
+
+
+def test_max_active_tools_clears_the_disclosure_threshold():
+    """Everything directly disclosed must fit in the active set.
+
+    `initial_disclosure` truncates to `max_active_tools`, so a ceiling below
+    the threshold would silently drop tools it just decided to disclose.
+    """
+    from tldw_chatbook.Agents.agent_models import (
+        DIRECT_DISCLOSE_THRESHOLD,
+        RunBudget,
+    )
+
+    assert RunBudget().max_active_tools >= DIRECT_DISCLOSE_THRESHOLD

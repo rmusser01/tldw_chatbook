@@ -45,13 +45,25 @@ RUNTIME_TOOL_NAMES = frozenset(
     }
 )
 
-DIRECT_DISCLOSE_THRESHOLD = 8
+#: Above this, `initial_disclosure` defers everything to find_tools/
+#: load_tools instead of direct-disclosing the whole catalog. Raised
+#: alongside `RunBudget.max_active_tools` (8 -> 24) because the two are
+#: coupled: `max_active_tools` is a one-way ratchet on the active set --
+#: `load_tools` refuses a call that would exceed it with "no room", and
+#: nothing ever unloads a tool once active -- so a catalog that clears the
+#: raised ceiling but not this threshold would still pay for progressive
+#: disclosure it can never actually use. The threshold has to rise with
+#: the ceiling for the opposite reason too: `initial_disclosure` runs once
+#: per RUN (every user message, not once per session), so a catalog sized
+#: just above the OLD threshold paid a find_tools + load_tools round trip
+#: before any real work, on every single message.
+DIRECT_DISCLOSE_THRESHOLD = 16
 LOOP_DETECTION_N = 3
 #: Default ceiling on provider turns (STEP_MODEL steps) in one run. Stays
 #: >= the default max_steps so it is provably unreachable at engine
 #: defaults; it only becomes the operative limiter for a caller that raises
 #: max_steps to match (see console_agent_bridge.CONSOLE_MAX_MODEL_TURNS).
-DEFAULT_MAX_MODEL_TURNS = 20
+DEFAULT_MAX_MODEL_TURNS = 30
 # Longest tool-call cycle period the runtime detects (A->B->A->B is period 2).
 MAX_LOOP_PERIOD = 4
 
@@ -140,11 +152,24 @@ class RunBudget:
     max_steps: int = 8
     max_wall_seconds: float = 240.0
     max_subagents: int = 2
-    max_active_tools: int = 8
+    # Raised 8 -> 24 alongside DIRECT_DISCLOSE_THRESHOLD (8 -> 16); see that
+    # constant's comment for why the two move together. This ceiling is
+    # itself a one-way ratchet within a run: load_tools() refuses a call
+    # that would exceed it ("no room") and nothing ever unloads an active
+    # tool, so raising it only ever widens what a run can reach, never
+    # narrows it back down mid-run.
+    max_active_tools: int = 24
     max_subagent_result_chars: int = 4000
+    # Ceiling on how much of ONE tool result enters conversation history.
+    # Enforced at the history-append seam (agent_runtime), NOT per tool, so
+    # built-in, MCP, and skill results are all bounded by the same rule.
+    # Derived from max_subagent_result_chars (4000): four times a whole
+    # sub-agent result is generous for a single call while keeping a
+    # 30-turn run tractable. 0 = unlimited, restoring pre-cap behaviour.
+    max_tool_result_chars: int = 16000
     # Primary provider-call limiter (task-244): counts STEP_MODEL turns.
-    # Raised 8 -> 20 so an agent gets ~20 tool-calling rounds per user
-    # message rather than ~8. It stays >= max_steps at engine defaults, so
+    # Raised 8 -> 20, then 20 -> 30, so an agent gets ~30 tool-calling
+    # rounds per user message. It stays >= max_steps at engine defaults, so
     # it remains provably unreachable here (every model turn appends >=1
     # step, so the step check fires first) — engine-default behavior is
     # unchanged. It bites only where max_steps is raised to match; the
@@ -213,14 +238,23 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
     """Clamp a sub-agent's budget so it cannot outlive its parent.
 
     Sub-agents deliberately INHERIT ``max_model_turns`` and ``max_steps``
-    rather than being clamped down (operator decision, 2026-07-25, when the
-    Console cap was raised 8 -> 20). A child therefore gets the same
-    round budget as its parent, so one Console message can reach
+    rather than being clamped down (operator decision, 2026-07-25, first
+    taken when the Console cap was raised 8 -> 20 and re-confirmed when it
+    went 20 -> 30). A child therefore gets the same round budget as its
+    parent, so one Console message can reach
     ``max_model_turns * (1 + max_subagents)`` provider turns in the worst
-    case — 60 at the Console's current 20/2. That worst case is bounded in
+    case — 90 at the Console's current 30/2. That worst case is bounded in
     TIME by the wall-clock clamp below (a child can never outlive its
-    parent's remaining budget), not in spend. Do not "fix" this by
-    clamping turns without checking that decision.
+    parent's remaining budget). ``max_total_tokens`` is passed through
+    UNCHANGED below, not divided among children, so it bounds each run's
+    OWN spend independently, not the aggregate: the parent and each of up
+    to ``max_subagents`` children can each spend up to that ceiling, for a
+    real worst-case aggregate of roughly ``(1 + max_subagents)x`` it — not
+    a value it bounds directly (the Console sets it non-zero for exactly
+    this containment reason regardless — see
+    ``console_agent_bridge.CONSOLE_MAX_TOTAL_TOKENS`` for its concrete
+    numbers). Do not "fix" this by clamping turns without checking the
+    inherit-turns decision above.
 
     Wall-clock is clamped to the parent's remainder (floored at 1s);
     ``max_subagents`` is zeroed — depth-1 sub-agents never spawn.
@@ -234,6 +268,7 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
         max_subagents=0,
         max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,
+        max_tool_result_chars=child.max_tool_result_chars,
         max_model_turns=child.max_model_turns,
         max_total_tokens=child.max_total_tokens,
         max_tool_call_seconds=child.max_tool_call_seconds,

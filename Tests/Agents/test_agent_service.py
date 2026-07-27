@@ -1297,3 +1297,36 @@ def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.ok is False
     assert "timed out" in result.error and "calculator" in result.error
+
+
+def test_registry_timeout_for_reports_a_tools_own_ceiling():
+    from tldw_chatbook.Tools.tool_executor import Tool
+
+    class _Slow(Tool):
+        @property
+        def name(self) -> str:
+            return "slow_thing"
+
+        @property
+        def description(self) -> str:
+            return "d"
+
+        @property
+        def parameters(self) -> dict:
+            return {"type": "object", "properties": {}}
+
+        @property
+        def timeout_seconds(self) -> float:
+            return 42.0
+
+        async def execute(self, **kwargs):
+            return {}
+
+    provider = BuiltinToolProvider()
+    provider._tools["slow_thing"] = _Slow()
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+
+    assert registry.timeout_for("slow_thing") == 42.0
+    assert registry.timeout_for("calculator") is None
+    assert registry.timeout_for("no_such_tool") is None

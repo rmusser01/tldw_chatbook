@@ -71,10 +71,12 @@ HIGH_RISK_TAGS = frozenset({"mutates", "process"})
 #: built-ins. A superset of ``HIGH_RISK_TAGS``: built-ins additionally
 #: treat filesystem reads as prompt-worthy, because an agent reading
 #: arbitrary sandbox files is a disclosure risk even though it mutates
-#: nothing. MCP deliberately keeps ``HIGH_RISK_TAGS`` -- widening the
-#: shared set would make remote tools carrying ``"reads"`` start
-#: prompting, which is not this phase's call to make.
-BUILTIN_HIGH_RISK_TAGS = HIGH_RISK_TAGS | frozenset({"reads"})
+#: nothing, and treat network egress as prompt-worthy too, because egress
+#: is the exfiltration leg of a prompt-injection chain. MCP deliberately
+#: keeps ``HIGH_RISK_TAGS`` -- widening the shared set would make remote
+#: tools carrying ``"reads"`` or ``"network"`` start prompting, which is
+#: not this phase's call to make.
+BUILTIN_HIGH_RISK_TAGS = HIGH_RISK_TAGS | frozenset({"reads", "network"})
 
 _DEFAULT_PROFILE_ID = "default"
 
@@ -699,7 +701,7 @@ def resolve_builtin_state(
     override) whose tags intersect ``BUILTIN_HIGH_RISK_TAGS`` is
     downgraded to ``ask`` with ``risk_floored=True``. That set is a
     superset of MCP's ``HIGH_RISK_TAGS`` -- built-ins additionally floor
-    on ``"reads"``.
+    on ``"reads"`` and ``"network"``.
 
     Args:
         payload: A loaded permission-store payload (``{}`` is valid and

@@ -223,3 +223,52 @@ def test_a_disabled_gate_is_not_logged_as_a_failure(tools_config):
 
     assert names == {"calculator", "get_current_datetime"}
     assert messages == [], f"disabled gates must not warn; got: {messages}"
+
+
+# -- glob_files/grep_files -----------------------------------------------
+
+
+def test_glob_and_grep_absent_by_default(tools_config):
+    """Default posture is unchanged: both new gates default to disabled."""
+    names = _names(BuiltinToolProvider())
+    assert "glob_files" not in names
+    assert "grep_files" not in names
+
+
+@pytest.mark.parametrize(
+    "gate_key,tool_name",
+    [
+        ("glob_files_enabled", "glob_files"),
+        ("grep_files_enabled", "grep_files"),
+    ],
+)
+def test_glob_or_grep_appears_when_its_gate_is_enabled(tools_config, gate_key, tool_name):
+    tools_config[gate_key] = True
+    assert tool_name in _names(BuiltinToolProvider())
+
+
+def test_glob_and_grep_gates_are_independent(tools_config):
+    tools_config["glob_files_enabled"] = True
+    names = _names(BuiltinToolProvider())
+    assert "glob_files" in names
+    assert "grep_files" not in names
+
+
+def test_glob_and_grep_carry_the_reads_risk_tag(tools_config):
+    tools_config["glob_files_enabled"] = True
+    tools_config["grep_files_enabled"] = True
+    provider = BuiltinToolProvider()
+    for name in ("glob_files", "grep_files"):
+        assert provider.tool_for(name).risk_tags == ("reads",)
+
+
+def test_glob_and_grep_names_are_covered_by_the_shadow_guard(tools_config):
+    """Extends the task-584/545 guard to the two newest gated names."""
+    from tldw_chatbook.Library.library_skills_state import _SHADOWED_BUILTIN_NAMES
+
+    tools_config["glob_files_enabled"] = True
+    tools_config["grep_files_enabled"] = True
+    gated = _names(BuiltinToolProvider())
+    assert gated <= _SHADOWED_BUILTIN_NAMES, (
+        f"gated builtin tool names not covered: {gated - _SHADOWED_BUILTIN_NAMES}"
+    )

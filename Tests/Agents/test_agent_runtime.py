@@ -750,3 +750,130 @@ def test_load_tools_same_batch_duplicate_names_admit_one_into_active():
         if s.kind == STEP_TOOL_RESULT and s.tool_name == "load_tools"
     ][0]
     assert load_result.result == "loaded: calculator"  # once, not twice
+
+
+def test_truncate_tool_result_bounds_content_and_names_a_continuation():
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    out = _truncate_tool_result("x" * 5000, 100, "grep_files")
+
+    assert len(out) < 5000
+    assert out.startswith("x" * 100)
+    assert "grep_files" in out
+    assert "5000" in out
+
+
+def test_truncate_tool_result_is_a_noop_under_the_cap():
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    assert _truncate_tool_result("small", 100, "t") == "small"
+
+
+def test_truncate_tool_result_zero_means_unlimited():
+    """0 restores today's behaviour exactly, for an operator who wants it."""
+    from tldw_chatbook.Agents.agent_runtime import _truncate_tool_result
+
+    assert _truncate_tool_result("x" * 5000, 0, "t") == "x" * 5000
+
+
+# --- integration: the truncation cap is actually wired at the append seam
+# (not just exercised as a pure helper). These drive run_agent_loop end to
+# end with a real RunBudget so deleting the `_truncate_tool_result(...)`
+# call site in the loop -- while leaving the helper itself intact -- fails
+# these tests even though the unit tests above would stay green.
+
+
+def test_run_agent_loop_truncates_oversized_tool_result_in_history():
+    """A tool that ignores pagination and returns far more than the cap
+    must still land in conversation history bounded, carrying the
+    continuation trailer, proving the call site (not just the helper) is
+    wired in."""
+    huge = "y" * 5000
+    seen_messages = []
+
+    def call_model(messages, active_schemas):
+        seen_messages.append(list(messages))
+        return (
+            ModelTurn(text=fence("calculator", {"expression": "1"}))
+            if len(seen_messages) == 1
+            else ModelTurn(text="done")
+        )
+
+    cfg = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_result_chars=100),
+    )
+    deps = make_deps([], invoke=lambda c: ToolResult(ok=True, content=huge))
+    deps.call_model = call_model
+    out = run_agent_loop(cfg, [{"role": "user", "content": "hi"}], [CALC], deps)
+
+    assert out.status == RUN_DONE and out.final_text == "done"
+    assert len(seen_messages) == 2
+    tool_result_message = seen_messages[1][-1]
+    assert tool_result_message["role"] == "user"
+    content = tool_result_message["content"]
+    assert content.startswith("Tool result for calculator: " + "y" * 100)
+    assert len(content) < len(huge)
+    assert "truncated" in content and "calculator" in content
+
+    result_steps = [s for s in out.steps if s.kind == STEP_TOOL_RESULT]
+    assert result_steps and "truncated" in result_steps[0].result
+
+
+def test_run_agent_loop_truncates_review_hook_refusal_in_history():
+    """The review-hook refusal path (verdict != "proceed") sets `content`
+    from the verdict string BEFORE the dispatch if/else, so it must pass
+    through the same cap as a dispatched tool result -- this was the
+    branch Finding 1 found silently uncapped."""
+    long_refusal = "Blocked: " + "z" * 5000
+    seen_messages = []
+    invoked = []
+
+    def call_model(messages, active_schemas):
+        seen_messages.append(list(messages))
+        return (
+            ModelTurn(text=fence("calculator", {"expression": "1"}))
+            if len(seen_messages) == 1
+            else ModelTurn(text="done")
+        )
+
+    cfg = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_result_chars=100),
+    )
+    deps = make_deps(
+        [],
+        invoke=lambda c: invoked.append(c.name) or ToolResult(ok=True, content="42"),
+    )
+    deps.call_model = call_model
+    deps.review_tool_calls = lambda batch: {"calculator": long_refusal}
+    out = run_agent_loop(cfg, [{"role": "user", "content": "hi"}], [CALC], deps)
+
+    assert out.status == RUN_DONE and out.final_text == "done"
+    assert (
+        invoked == []
+    )  # dispatch was skipped -- the refusal never reaches invoke_tool
+    tool_result_message = seen_messages[1][-1]
+    content = tool_result_message["content"]
+    assert content.startswith(
+        "Tool result for calculator: Blocked: " + "z" * (100 - len("Blocked: "))
+    )
+    assert len(content) < len(long_refusal)
+    assert "truncated" in content and "calculator" in content
+
+
+def test_console_budget_bounds_spend_not_only_time():
+    """Sub-agents inherit the turn budget by an explicit operator decision.
+
+    Worst case is max_model_turns * (1 + max_subagents) provider turns for
+    one message -- 90 at 30/2. The wall clock bounds that in TIME but not
+    in SPEND, so the Console budget carries a token ceiling.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    assert CONSOLE_RUN_BUDGET.max_model_turns == 30
+    assert CONSOLE_RUN_BUDGET.max_total_tokens > 0
