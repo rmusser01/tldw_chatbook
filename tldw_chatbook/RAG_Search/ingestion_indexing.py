@@ -846,7 +846,13 @@ class IngestionIndexer:
     def set_guidance_notifier(
         self, notifier: Optional[Callable[[str], None]]
     ) -> None:
-        """Set the sink for setup-gap messages, which are not failures."""
+        """Set the sink for setup-gap messages, which are not failures.
+
+        Args:
+            notifier: Callable invoked with a single guidance message, or
+                ``None`` to clear it. When unset, guidance falls back to the
+                failure notifier so the message is not lost.
+        """
         self._guidance_notifier = notifier
 
     def set_failure_notifier(self, notifier: Optional[Callable[[str], None]]) -> None:
@@ -1000,8 +1006,16 @@ class IngestionIndexer:
         with self._state_lock:
             ever_indexed = self._stats["indexed"] > 0
         # This batch counts too: if anything in it embedded successfully then
-        # embeddings work, whatever the process history says.
+        # embeddings work, whatever the history says.
         ever_indexed = ever_indexed or int(summary.get("indexed") or 0) > 0
+        # ...and so does anything indexed in a PREVIOUS run. ``_stats`` is
+        # in-memory and resets to 0 on every start, so relying on it alone would
+        # downgrade a genuine failure in the FIRST batch after any restart --
+        # the same error text is produced by embeddings init errors and circuit
+        # breakers, not only by a missing model. The indexing DB is the durable
+        # record of embeddings having ever worked on this install.
+        if not ever_indexed:
+            ever_indexed = self._any_previously_indexed()
 
         embeddings_never_worked = not ever_indexed and all(
             self._EMBEDDINGS_UNAVAILABLE_ERROR in str(error) for error in errors
@@ -1017,6 +1031,26 @@ class IngestionIndexer:
         self._notify_failure(
             f"RAG indexing failed for {summary['failed']} item(s): {errors[-1]}"
         )
+
+
+    def _any_previously_indexed(self) -> bool:
+        """Report whether anything has ever been indexed on this install.
+
+        Read from the indexing DB rather than in-process counters, because the
+        counters start at zero every run and "first batch of this process" is
+        not the same question as "embeddings have never worked here".
+
+        Returns:
+            ``True`` when the indexing DB records at least one indexed item.
+            A DB that cannot be read returns ``True`` -- the safe direction,
+            since it keeps reporting failures as failures.
+        """
+        try:
+            stats = self._get_indexing_db().get_indexing_stats()
+            return int(stats.get("total_indexed") or 0) > 0
+        except Exception as e:
+            logger.debug(f"Could not read indexing history: {e}")
+            return True
 
     def _notify_guidance(self, message: str) -> None:
         """Surface a setup gap. Falls back to the failure channel only if no

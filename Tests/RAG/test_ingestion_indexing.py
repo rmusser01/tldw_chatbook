@@ -1260,3 +1260,39 @@ class TestFirstRunIndexingIsNotReportedAsFailure:
         )
 
         assert notes and notes[-1][0] == "failure", notes
+
+    def test_a_failure_in_the_first_batch_after_a_restart_still_surfaces(
+        self, tmp_path
+    ):
+        """The in-process counter resets every run; indexing history does not.
+
+        On a configured install the first batch after any restart has
+        ``_stats["indexed"] == 0``, so relying on that alone downgraded a
+        genuine failure to guidance -- and the same error text is produced by
+        embeddings init errors and circuit breakers, not only by a missing
+        model. The indexing DB is the durable record that embeddings have worked
+        here before (task-685 review).
+        """
+        notes: list[tuple[str, str]] = []
+        indexing_db = RAGIndexingDB(tmp_path / "rag_indexing.db")
+        # A previous run indexed something on this install.
+        indexing_db.mark_item_indexed(
+            item_id="1", item_type="media", last_modified=datetime.now(), chunk_count=3
+        )
+
+        idx = IngestionIndexer(rag_service=None, indexing_db=indexing_db)
+        idx.set_failure_notifier(lambda m: notes.append(("failure", m)))
+        idx.set_guidance_notifier(lambda m: notes.append(("guidance", m)))
+
+        idx._report_index_summary(
+            {
+                "indexed": 0,
+                "skipped": 0,
+                "failed": 1,
+                "errors": ["All chunks failed embedding generation"],
+            }
+        )
+
+        assert notes and notes[-1][0] == "failure", (
+            f"a real failure was downgraded on a configured install: {notes}"
+        )
