@@ -746,7 +746,9 @@ async def test_request_mcp_approvals_round_trip_resolves_from_ui_thread():
         assert received and received[0] is not None
         assert received[0]["calls"][0]["llm_name"] == "mcp__srv__tool"
         assert received[0]["timeout_seconds"] == 30.0
-        controller.resolve_pending_approval({"mcp__srv__tool": "approve_session"})
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "approve_session"}, round_id=received[0]["round_id"]
+        )
 
     decisions_task = asyncio.create_task(
         asyncio.to_thread(controller.request_mcp_approvals, pending)
@@ -770,7 +772,10 @@ def test_request_mcp_approvals_collapses_duplicate_llm_names_in_payload():
 
     def _resolve_soon() -> None:
         time.sleep(0.05)
-        controller.resolve_pending_approval({"mcp__srv__tool": "always_allow"})
+        assert received and received[-1] is not None
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "always_allow"}, round_id=received[-1]["round_id"]
+        )
 
     threading.Thread(target=_resolve_soon).start()
     decisions = controller.request_mcp_approvals(pending)
@@ -875,7 +880,10 @@ def test_request_mcp_approvals_unrelated_session_stop_does_not_cross_cancel():
 
     def _resolve_soon() -> None:
         time.sleep(0.2)
-        controller.resolve_pending_approval({"mcp__srv__tool": "approve_once"})
+        assert received and received[-1] is not None
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "approve_once"}, round_id=received[-1]["round_id"]
+        )
 
     stopper = threading.Thread(target=_stop_unrelated_session_soon)
     resolver = threading.Thread(target=_resolve_soon)
@@ -1067,7 +1075,11 @@ def test_request_mcp_approvals_parks_for_a_non_active_session():
 
     # Visiting + deciding resolves it.
     controller.switch_session(background)
-    controller.resolve_pending_approval({"mcp__srv__tool": "approve_once"})
+    assert mounted and mounted[-1] is not None
+    round_id = mounted[-1]["round_id"]
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "approve_once"}, round_id=round_id
+    )
     worker.join(timeout=2.0)
 
     assert result_holder["decisions"] == {"mcp__srv__tool": "approve_once"}
@@ -1258,6 +1270,47 @@ def test_resolve_pending_approval_without_active_round_is_a_noop():
     controller.resolve_pending_approval({"mcp__srv__tool": "deny"})  # must not raise
 
 
+def test_resolve_pending_approval_without_round_id_fails_closed_and_leaves_round_pending():
+    """TASK-913 AC#2: `round_id=None` no longer falls back to "whichever
+    round belongs to the active session" -- it fails closed immediately,
+    mirroring `resolve_pending_skill_script`'s/
+    `resolve_pending_skill_install`'s identical `if request_id is None:
+    return` contract. Even with a round genuinely armed for the (only)
+    active session, a resolve carrying no round_id must be a pure no-op:
+    the round stays pending, undecided, and its waiting worker thread
+    stays blocked -- exactly like an unknown/stale round_id already does
+    (see test_resolve_pending_approval_ignores_a_stale_or_unknown_round_id).
+    Pre-fix, this used to resolve via the active-session fallback."""
+    controller, _ = _build_controller()
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    result_holder: dict[str, dict[str, str]] = {}
+
+    def _run_round() -> None:
+        result_holder["decisions"] = controller.request_mcp_approvals([_pending()])
+
+    worker = threading.Thread(target=_run_round)
+    worker.start()
+    time.sleep(0.1)
+    assert mounted and mounted[-1] is not None
+    round_id = mounted[-1]["round_id"]
+
+    # A None round_id (the default) must NOT resolve the armed round.
+    controller.resolve_pending_approval({"mcp__srv__tool": "deny"})
+    time.sleep(0.1)
+    assert "decisions" not in result_holder  # still pending, undecided
+
+    # Clean up via the real round_id so the worker thread actually ends.
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "approve_once"}, round_id=round_id
+    )
+    worker.join(timeout=2.0)
+    assert result_holder["decisions"] == {"mcp__srv__tool": "approve_once"}
+
+
 def test_request_mcp_approvals_with_no_pending_calls_returns_empty_and_never_surfaces_card():
     controller, _ = _build_controller()
     received: list[dict | None] = []
@@ -1277,7 +1330,8 @@ def test_request_mcp_approvals_snapshot_covers_exactly_the_unique_names():
     before the snapshot)."""
     controller, _ = _build_controller()
     controller.app = _FakeApp()
-    controller.set_pending_approval = lambda payload: None
+    received: list[dict | None] = []
+    controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
     pending = [
@@ -1287,13 +1341,15 @@ def test_request_mcp_approvals_snapshot_covers_exactly_the_unique_names():
 
     def _resolve_soon() -> None:
         time.sleep(0.05)
+        assert received and received[-1] is not None
         # Only decides "a" explicitly, includes an unrelated stray key,
         # and leaves "b" undecided (backstopped to "deny" pre-snapshot).
         controller.resolve_pending_approval(
             {
                 "mcp__srv__a": "approve_once",
                 "mcp__unrelated__c": "deny",
-            }
+            },
+            round_id=received[-1]["round_id"],
         )
 
     threading.Thread(target=_resolve_soon).start()
@@ -1374,7 +1430,10 @@ def test_request_mcp_approvals_survives_marshal_failure_during_teardown():
 
     def _resolve_soon() -> None:
         time.sleep(0.05)
-        controller.resolve_pending_approval({"mcp__srv__tool": "approve_once"})
+        assert calls and calls[-1] is not None
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "approve_once"}, round_id=calls[-1]["round_id"]
+        )
 
     resolver = threading.Thread(target=_resolve_soon)
     resolver.start()

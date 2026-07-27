@@ -1395,7 +1395,8 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(
     assert received and received[-1] is not None, "approval card was never surfaced"
     llm_name = received[-1]["calls"][0]["llm_name"]
     assert llm_name == "mcp__srv__run"
-    controller.resolve_pending_approval({llm_name: "approve_once"})
+    round_id = received[-1]["round_id"]
+    controller.resolve_pending_approval({llm_name: "approve_once"}, round_id=round_id)
 
     result = await send_task
 
@@ -1441,7 +1442,8 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
     assert received and received[-1] is not None, "approval card was never surfaced"
     llm_name = received[-1]["calls"][0]["llm_name"]
     assert llm_name == "mcp__srv__run"
-    controller.resolve_pending_approval({llm_name: "approve_session"})
+    round_id = received[-1]["round_id"]
+    controller.resolve_pending_approval({llm_name: "approve_session"}, round_id=round_id)
     result1 = await send_task
     assert result1.accepted is True
     cards_pushed_after_turn1 = len(received)
