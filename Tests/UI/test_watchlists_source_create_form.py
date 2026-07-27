@@ -295,3 +295,63 @@ async def test_clicking_any_row_of_the_name_input_focuses_it(size):
             )
             pane.query_one("#sources-create-name", Input).value = ""
             await pilot.pause(0.05)
+
+
+@pytest.mark.asyncio
+async def test_creating_a_source_refreshes_the_table_and_the_tree_counts():
+    """TASK-1040: creation only refreshed the view that read the data directly.
+
+    `_create_source` called `_refresh_local_wc_snapshot` and
+    `_refresh_overview_data` but never `_load_sources` or `_load_tree_data`,
+    so `#sources-table` kept the list from before and the rail's counts stayed
+    behind. Measured live: the rail read `All sources  0` while the centre read
+    `Feeds in All sources (1)` -- the same thing, disagreeing on one screen.
+
+    A first-time user is told nothing happened, and reasonably tries again.
+    """
+    host = _watchlists_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        screen, _pane = await _open_sources_create_form(pilot, host)
+
+        created: list[dict] = []
+
+        async def fake_create(*, runtime_backend, payload):
+            created.append(payload)
+
+        async def fake_list(*, runtime_backend, limit=100):
+            return [
+                {"id": 1, "name": "AI News RSS", "source_type": "rss", "active": True}
+            ] if created else []
+
+        screen._controller.create_source = fake_create
+        screen._controller.list_sources = fake_list
+
+        reloaded: list[str] = []
+        real_sources = screen._load_sources
+        real_tree = screen._load_tree_data
+
+        async def watch_sources():
+            reloaded.append("sources")
+            await real_sources()
+
+        def watch_tree():
+            reloaded.append("tree")
+            return real_tree()
+
+        screen._load_sources = watch_sources
+        screen._load_tree_data = watch_tree
+
+        await screen._create_source({"name": "AI News RSS", "url": "https://x/f"})
+        for _ in range(20):
+            await pilot.pause()
+            if {"sources", "tree"} <= set(reloaded):
+                break
+
+        assert "sources" in reloaded, (
+            "creating a source must reload the sources table; without it the "
+            "table keeps the old list until the user leaves and comes back"
+        )
+        assert "tree" in reloaded, (
+            "creating a source must reload the tree counts; without it the "
+            "rail says 0 while the centre says 1"
+        )

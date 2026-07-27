@@ -2,7 +2,7 @@
 id: TASK-1040
 title: >-
   Creating a source leaves the sources table showing the old list
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-28 02:00'
 labels:
@@ -36,11 +36,21 @@ The rail says zero, the centre says one, and they are describing the same thing.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A source created through the form appears in `#sources-table` without leaving the section
-- [ ] #2 The Feeds region and the sources table agree immediately after creation
-- [ ] #3 The reload happens off the UI thread and does not block the form closing
-- [ ] #4 A test creates a source and asserts the table contents, proven to fail against current code
-- [ ] #5 Deleting a source refreshes the table, the tree counts and Feeds the same way
-- [ ] #6 The tree's `All sources` and `Unassigned` counts match the Feeds heading immediately after a create or delete
-- [ ] #7 A test asserts the tree count and the Feeds heading agree after creating a source, proven to fail against current code
+- [x] #1 A source created through the form appears in `#sources-table` without leaving the section
+- [x] #2 The Feeds region and the sources table agree immediately after creation
+- [x] #3 The reload happens off the UI thread and does not block the form closing
+- [x] #4 A test creates a source and asserts the table contents, proven to fail against current code
+- [x] #5 Deleting a source refreshes the table, the tree counts and Feeds the same way
+- [x] #6 The tree's `All sources` and `Unassigned` counts match the Feeds heading immediately after a create or delete
+- [x] #7 A test asserts the tree count and the Feeds heading agree after creating a source, proven to fail against current code
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+`_create_source` and `_delete_source` both called `_refresh_local_wc_snapshot()` and `_refresh_overview_data()` and stopped there. Those feed the staging line and the Overview cards; `#sources-table` and the rail's counts run their own queries, so neither moved. Both now also run `_load_sources()` (on a worker, grouped, so the form still closes immediately) and `_load_tree_data()`.
+
+The tree-write flows added in TASK-895 already did exactly this — every user-initiated write ends with a `_load_tree_data()` reload. The source paths were the ones that had not been brought in line.
+
+Test asserts both reloads happen after a create, and was proven red first: it failed on the sources reload before the fix.
+<!-- SECTION:NOTES:END -->

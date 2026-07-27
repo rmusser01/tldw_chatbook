@@ -2197,8 +2197,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to create source.", severity="error")
+        # Reload every view derived from the source list, not just the two
+        # that happened to be here (TASK-1040). `_refresh_local_wc_snapshot`
+        # feeds the staging line and `_refresh_overview_data` the cards, but
+        # `#sources-table` and the rail's counts read their own queries — so
+        # without these the table kept the previous list and the rail said
+        # `All sources  0` while the centre said `Feeds in All sources (1)`,
+        # describing the same thing on one screen.
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
+        self.run_worker(self._load_sources(), exclusive=True, group="wc_sources")
+        self._load_tree_data()
 
     @on(CancelRunRequested)
     def handle_cancel_run_requested(self, event: CancelRunRequested) -> None:
@@ -2775,8 +2784,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Failed to delete source.", severity="error")
+        # Reload every view derived from the source list, not just the two
+        # that happened to be here (TASK-1040). `_refresh_local_wc_snapshot`
+        # feeds the staging line and `_refresh_overview_data` the cards, but
+        # `#sources-table` and the rail's counts read their own queries — so
+        # without these the table kept the previous list and the rail said
+        # `All sources  0` while the centre said `Feeds in All sources (1)`,
+        # describing the same thing on one screen.
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
+        self.run_worker(self._load_sources(), exclusive=True, group="wc_sources")
+        self._load_tree_data()
 
     async def _delete_run(self, run_id: Any) -> None:
         try:

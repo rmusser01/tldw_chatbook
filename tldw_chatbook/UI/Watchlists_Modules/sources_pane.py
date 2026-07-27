@@ -9,6 +9,7 @@ from rich.text import Text
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
+from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch
 
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
@@ -428,15 +429,35 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         if restore is None:
             restore = self._focused_create_field_id()
         await super().recompose()
-        if not restore or not self.show_create_form or not self.is_running:
+        # Guard explicitly after the await: the pane can be torn down while
+        # `super().recompose()` is in flight (a section switch, a region
+        # collapse), matching how `lab_frame.py` bails out of its own
+        # post-recompose work.
+        if not self.is_mounted or not self.is_running:
+            return
+        if not restore or not self.show_create_form:
             return
         try:
             self.query_one(f"#{restore}").focus()
-        except Exception:
-            # Loguru drops stdlib's `exc_info=True`; `opt(exception=True)` is
-            # its own mechanism (same note as `recompose_capture_guard.py`).
+        except NoMatches:
+            # The only *expected* miss: the form closed, or its fields were
+            # rebuilt under a different id, between arming `restore` and
+            # getting here. Debug is right for that -- it is not a fault.
             logger.opt(exception=True).debug(
-                f"SourcesPane: could not focus #{restore} after recompose."
+                f"SourcesPane: #{restore} was gone after recompose; "
+                "nothing to focus."
+            )
+        except Exception:
+            # Anything else is a real fault in the focus path, and this pane
+            # exists in its current form *because* focus silently going
+            # missing after a recompose shipped to users once already
+            # (TASK-1035). Logging that at debug would hide the next
+            # occurrence behind "focus is randomly missing" with no signal,
+            # so it is warned. Still swallowed: a broken focus restore must
+            # not take the screen down with it.
+            logger.opt(exception=True).warning(
+                f"SourcesPane: unexpected failure focusing #{restore} after "
+                "recompose; the create form may open with nothing focused."
             )
 
     def on_select_changed(self, event: Select.Changed) -> None:
