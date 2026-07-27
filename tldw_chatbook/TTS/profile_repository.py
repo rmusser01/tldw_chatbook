@@ -5,14 +5,23 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
+import unicodedata
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Generic, TypeVar, cast
+from unicodedata import normalize as _unicode_normalize
+from uuid import UUID, uuid4
 
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
-from tldw_chatbook.TTS.profile_schema import open_profile_store
+from tldw_chatbook.TTS.profile_schema import (
+    decode_profile,
+    encode_profile,
+    encode_uuid,
+    open_profile_store,
+)
 from tldw_chatbook.TTS.profile_store_lock import (
     ProfileStoreLease,
     ProfileStoreLockMode,
@@ -20,11 +29,34 @@ from tldw_chatbook.TTS.profile_store_lock import (
 from tldw_chatbook.TTS.profile_types import (
     ProfileRepositoryState,
     ProfileStoreResult,
+    TTSGenerationProfile,
+    TTSProfileDraft,
+    TTSProfilePage,
 )
 
 
 _T = TypeVar("_T")
 _PATH_TYPE = type(Path())
+_MAX_SEARCH_CHARACTERS = 128
+_MAX_NORMALIZED_SEARCH_CHARACTERS = 512
+_MAX_NORMALIZED_SEARCH_BYTES = 2_048
+_UNSAFE_SEARCH_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_PROFILE_SELECT = """
+SELECT
+    profile_id,
+    display_name,
+    normalized_name,
+    provider_id,
+    model_id,
+    voice_id,
+    response_format,
+    speed,
+    options_json,
+    revision,
+    created_at,
+    updated_at
+FROM tts_generation_profiles
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +69,94 @@ class _OperationAdmission(Generic[_T]):
 
 def _repository_error(code: str) -> ProfileRepositoryError:
     return ProfileRepositoryError(code)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _validate_exact_profile_id(value: object) -> UUID:
+    if type(value) is not UUID:
+        raise _repository_error("operation_failed")
+    return cast(UUID, value)
+
+
+def _validate_optional_profile_id(value: object) -> UUID | None:
+    if value is None:
+        return None
+    return _validate_exact_profile_id(value)
+
+
+def _validate_draft(value: object) -> TTSProfileDraft:
+    if type(value) is not TTSProfileDraft:
+        raise _repository_error("operation_failed")
+    return cast(TTSProfileDraft, value)
+
+
+def _validate_expected_revision(value: object) -> int:
+    if type(value) is not int or value <= 0:
+        raise _repository_error("operation_failed")
+    return cast(int, value)
+
+
+def _is_unsafe_search_character(character: str) -> bool:
+    code_point = ord(character)
+    return (
+        unicodedata.category(character) in _UNSAFE_SEARCH_CATEGORIES
+        or 0xFDD0 <= code_point <= 0xFDEF
+        or code_point & 0xFFFF in (0xFFFE, 0xFFFF)
+    )
+
+
+def _normalize_search(value: object) -> str | None:
+    if value is None:
+        return None
+    if type(value) is not str or len(value) > _MAX_SEARCH_CHARACTERS:
+        raise _repository_error("operation_failed")
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    if any(_is_unsafe_search_character(character) for character in trimmed):
+        raise _repository_error("operation_failed")
+
+    normalization_error: BaseException | None = None
+    normalized: str | None = None
+    normalized_byte_count: int | None = None
+    try:
+        normalized = _unicode_normalize("NFKC", trimmed).casefold()
+        normalized_byte_count = len(normalized.encode("utf-8"))
+    except BaseException as error:
+        normalization_error = error
+
+    if normalization_error is not None:
+        if not isinstance(normalization_error, Exception):
+            raise normalization_error
+        raise _repository_error("operation_failed")
+    assert normalized is not None
+    assert normalized_byte_count is not None
+    if (
+        any(_is_unsafe_search_character(character) for character in normalized)
+        or len(normalized) > _MAX_NORMALIZED_SEARCH_CHARACTERS
+        or normalized_byte_count > _MAX_NORMALIZED_SEARCH_BYTES
+    ):
+        raise _repository_error("operation_failed")
+    return normalized
+
+
+def _validate_page_limit(value: object) -> int:
+    if type(value) is not int or not 1 <= value <= 100:
+        raise _repository_error("operation_failed")
+    return cast(int, value)
+
+
+def _validate_page_offset(value: object) -> int:
+    if type(value) is not int or value < 0:
+        raise _repository_error("operation_failed")
+    return cast(int, value)
+
+
+def _escape_like_literal(value: str) -> str:
+    return value.replace("!", "!!").replace("%", "!%").replace("_", "!_")
 
 
 def _fresh_repository_error(
@@ -112,21 +232,34 @@ class TTSProfileRepository:
     lease, filesystem, and SQLite connection are first touched by :meth:`open`.
     """
 
-    def __init__(self, database_path: Path) -> None:
+    def __init__(
+        self,
+        database_path: Path,
+        *,
+        _clock: Callable[[], datetime] | None = None,
+        _uuid_factory: Callable[[], UUID] | None = None,
+    ) -> None:
         """Create an initially closed, reopenable repository.
 
         Args:
             database_path: Exact local profile-store path.
+            _clock: Private deterministic UTC-clock seam.
+            _uuid_factory: Private deterministic UUID4 seam.
 
         Raises:
-            ProfileRepositoryError: If ``database_path`` is not an exact
-                platform ``Path`` value.
+            ProfileRepositoryError: If a constructor input is invalid.
         """
 
-        if type(database_path) is not _PATH_TYPE:
+        if (
+            type(database_path) is not _PATH_TYPE
+            or (_clock is not None and not callable(_clock))
+            or (_uuid_factory is not None and not callable(_uuid_factory))
+        ):
             raise _repository_error("operation_failed")
 
         self._database_path = database_path
+        self._clock = _utc_now if _clock is None else _clock
+        self._uuid_factory = uuid4 if _uuid_factory is None else _uuid_factory
         self._state = ProfileRepositoryState.CLOSED
         self._generation = 0
         self._terminal = False
@@ -331,6 +464,460 @@ class TTSProfileRepository:
             connection_error,
             lease_error,
         )
+
+    async def create_profile(
+        self,
+        draft: TTSProfileDraft,
+        profile_id: UUID | None = None,
+    ) -> ProfileStoreResult[TTSGenerationProfile]:
+        """Create one immutable profile at revision 1.
+
+        Args:
+            draft: Exact validated profile draft.
+            profile_id: Optional exact caller-selected UUID. When omitted, the
+                repository generates a UUID4 on its serialized worker.
+
+        Returns:
+            The active generation and exact persisted profile.
+
+        Raises:
+            ProfileRepositoryError: If inputs, state, persistence, or
+                uniqueness checks fail safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        validated_draft = _validate_draft(draft)
+        validated_profile_id = _validate_optional_profile_id(profile_id)
+        return await self._submit_operation(
+            lambda connection: self._worker_create_profile(
+                connection,
+                validated_draft,
+                validated_profile_id,
+            )
+        )
+
+    async def get_profile(
+        self,
+        profile_id: UUID,
+    ) -> ProfileStoreResult[TTSGenerationProfile]:
+        """Load and fully decode one profile by exact UUID.
+
+        Args:
+            profile_id: Exact profile UUID.
+
+        Returns:
+            The active generation and immutable decoded profile.
+
+        Raises:
+            ProfileRepositoryError: If the input, state, row, or SQLite access
+                fails safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        return await self._submit_operation(
+            lambda connection: self._worker_get_profile(
+                connection,
+                validated_profile_id,
+            )
+        )
+
+    async def list_profiles(
+        self,
+        search: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> ProfileStoreResult[TTSProfilePage]:
+        """List one stable bounded page and the full filtered result count.
+
+        Search is trimmed, normalized with Unicode NFKC, and case-folded like
+        persisted profile names. Empty or whitespace-only search lists all
+        profiles. SQL LIKE metacharacters and the explicit escape character
+        are always treated literally.
+
+        Args:
+            search: Optional exact string of at most 128 characters whose
+                normalized form remains within the repository's bounded
+                search policy.
+            limit: Exact integer page size from 1 through 100.
+            offset: Exact nonnegative integer result offset.
+
+        Returns:
+            The active generation and an immutable profile page.
+
+        Raises:
+            ProfileRepositoryError: If inputs, state, decoding, or SQLite
+                access fail safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        normalized_search = _normalize_search(search)
+        validated_limit = _validate_page_limit(limit)
+        validated_offset = _validate_page_offset(offset)
+        return await self._submit_operation(
+            lambda connection: self._worker_list_profiles(
+                connection,
+                normalized_search,
+                validated_limit,
+                validated_offset,
+            )
+        )
+
+    async def update_profile(
+        self,
+        profile_id: UUID,
+        expected_revision: int,
+        draft: TTSProfileDraft,
+    ) -> ProfileStoreResult[TTSGenerationProfile]:
+        """Replace one profile only at the exact editor revision.
+
+        Args:
+            profile_id: Exact profile UUID.
+            expected_revision: Exact positive revision loaded by the editor.
+            draft: Exact replacement profile draft.
+
+        Returns:
+            The active generation and immutable updated profile.
+
+        Raises:
+            ProfileRepositoryError: If inputs, state, optimistic revision,
+                uniqueness, row decoding, or SQLite access fails safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_revision = _validate_expected_revision(expected_revision)
+        validated_draft = _validate_draft(draft)
+        return await self._submit_operation(
+            lambda connection: self._worker_update_profile(
+                connection,
+                validated_profile_id,
+                validated_revision,
+                validated_draft,
+            )
+        )
+
+    async def delete_profile(
+        self,
+        profile_id: UUID,
+    ) -> ProfileStoreResult[None]:
+        """Delete exactly one unreferenced profile by UUID.
+
+        Args:
+            profile_id: Exact profile UUID.
+
+        Returns:
+            The active generation paired with ``None``.
+
+        Raises:
+            ProfileRepositoryError: If the input or state is invalid, the row
+                is missing or referenced, or SQLite access fails safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        validated_profile_id = _validate_exact_profile_id(profile_id)
+        return await self._submit_operation(
+            lambda connection: self._worker_delete_profile(
+                connection,
+                validated_profile_id,
+            )
+        )
+
+    def _worker_create_profile(
+        self,
+        connection: sqlite3.Connection,
+        draft: TTSProfileDraft,
+        profile_id: UUID | None,
+    ) -> TTSGenerationProfile:
+        def create() -> TTSGenerationProfile:
+            persisted_id = (
+                profile_id if profile_id is not None else self._worker_new_uuid()
+            )
+            timestamp = self._clock()
+            profile = TTSGenerationProfile(
+                profile_id=persisted_id,
+                display_name=draft.display_name,
+                normalized_name=draft.normalized_name,
+                provider_id=draft.provider_id,
+                model_id=draft.model_id,
+                voice_id=draft.voice_id,
+                response_format=draft.response_format,
+                speed=draft.speed,
+                options=draft.options,
+                revision=1,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            connection.execute(
+                """
+                INSERT INTO tts_generation_profiles (
+                    profile_id,
+                    display_name,
+                    normalized_name,
+                    provider_id,
+                    model_id,
+                    voice_id,
+                    response_format,
+                    speed,
+                    options_json,
+                    revision,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    :profile_id,
+                    :display_name,
+                    :normalized_name,
+                    :provider_id,
+                    :model_id,
+                    :voice_id,
+                    :response_format,
+                    :speed,
+                    :options_json,
+                    :revision,
+                    :created_at,
+                    :updated_at
+                )
+                """,
+                encode_profile(profile),
+            )
+            return self._worker_require_round_trip(
+                connection,
+                persisted_id,
+                profile,
+            )
+
+        return self._worker_transaction(
+            connection,
+            create,
+            immediate=True,
+            constraint_code="conflict",
+        )
+
+    def _worker_get_profile(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+    ) -> TTSGenerationProfile:
+        row = connection.execute(
+            f"{_PROFILE_SELECT} WHERE profile_id = ?",
+            (encode_uuid(profile_id),),
+        ).fetchone()
+        if row is None:
+            raise _repository_error("missing")
+        return decode_profile(row)
+
+    def _worker_list_profiles(
+        self,
+        connection: sqlite3.Connection,
+        normalized_search: str | None,
+        limit: int,
+        offset: int,
+    ) -> TTSProfilePage:
+        def read_page() -> TTSProfilePage:
+            if normalized_search is None:
+                where_clause = ""
+                filter_parameters: tuple[object, ...] = ()
+            else:
+                where_clause = " WHERE normalized_name LIKE ? ESCAPE '!'"
+                filter_parameters = (f"%{_escape_like_literal(normalized_search)}%",)
+
+            count_row = connection.execute(
+                f"SELECT COUNT(*) FROM tts_generation_profiles{where_clause}",
+                filter_parameters,
+            ).fetchone()
+            if (
+                count_row is None
+                or len(count_row) != 1
+                or type(count_row[0]) is not int
+                or count_row[0] < 0
+            ):
+                raise _repository_error("corrupt_data")
+            total = cast(int, count_row[0])
+            rows = connection.execute(
+                (
+                    f"{_PROFILE_SELECT}{where_clause} "
+                    "ORDER BY normalized_name ASC, profile_id ASC "
+                    "LIMIT ? OFFSET ?"
+                ),
+                (*filter_parameters, limit, offset),
+            ).fetchall()
+            profiles = tuple(decode_profile(row) for row in rows)
+            return TTSProfilePage(profiles=profiles, total=total)
+
+        return self._worker_transaction(
+            connection,
+            read_page,
+            immediate=False,
+        )
+
+    def _worker_update_profile(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        expected_revision: int,
+        draft: TTSProfileDraft,
+    ) -> TTSGenerationProfile:
+        def update() -> TTSGenerationProfile:
+            stored = self._worker_get_profile(connection, profile_id)
+            if stored.revision != expected_revision:
+                raise _repository_error("conflict")
+            updated = TTSGenerationProfile(
+                profile_id=profile_id,
+                display_name=draft.display_name,
+                normalized_name=draft.normalized_name,
+                provider_id=draft.provider_id,
+                model_id=draft.model_id,
+                voice_id=draft.voice_id,
+                response_format=draft.response_format,
+                speed=draft.speed,
+                options=draft.options,
+                revision=stored.revision + 1,
+                created_at=stored.created_at,
+                updated_at=self._clock(),
+            )
+            parameters = encode_profile(updated)
+            parameters["expected_revision"] = expected_revision
+            cursor = connection.execute(
+                """
+                UPDATE tts_generation_profiles
+                SET
+                    display_name = :display_name,
+                    normalized_name = :normalized_name,
+                    provider_id = :provider_id,
+                    model_id = :model_id,
+                    voice_id = :voice_id,
+                    response_format = :response_format,
+                    speed = :speed,
+                    options_json = :options_json,
+                    revision = :revision,
+                    updated_at = :updated_at
+                WHERE profile_id = :profile_id
+                    AND revision = :expected_revision
+                """,
+                parameters,
+            )
+            if cursor.rowcount != 1:
+                raise _repository_error("conflict")
+            return self._worker_require_round_trip(
+                connection,
+                profile_id,
+                updated,
+            )
+
+        return self._worker_transaction(
+            connection,
+            update,
+            immediate=True,
+            constraint_code="conflict",
+        )
+
+    def _worker_delete_profile(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+    ) -> None:
+        def delete() -> None:
+            self._worker_get_profile(connection, profile_id)
+            cursor = connection.execute(
+                "DELETE FROM tts_generation_profiles WHERE profile_id = ?",
+                (encode_uuid(profile_id),),
+            )
+            if cursor.rowcount == 0:
+                raise _repository_error("missing")
+            if cursor.rowcount != 1:
+                raise _repository_error("corrupt_data")
+
+        self._worker_transaction(
+            connection,
+            delete,
+            immediate=True,
+            constraint_code="conflict",
+        )
+
+    def _worker_require_round_trip(
+        self,
+        connection: sqlite3.Connection,
+        profile_id: UUID,
+        expected: TTSGenerationProfile,
+    ) -> TTSGenerationProfile:
+        decoded = self._worker_get_profile(connection, profile_id)
+        if decoded != expected:
+            raise _repository_error("corrupt_data")
+        return decoded
+
+    def _worker_new_uuid(self) -> UUID:
+        generated = self._uuid_factory()
+        if type(generated) is not UUID or generated.version != 4:
+            raise _repository_error("operation_failed")
+        return generated
+
+    def _worker_transaction(
+        self,
+        connection: sqlite3.Connection,
+        operation: Callable[[], _T],
+        *,
+        immediate: bool,
+        constraint_code: str | None = None,
+    ) -> _T:
+        body_error: BaseException | None = None
+        value: _T | None = None
+        try:
+            connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            value = operation()
+            self._commit_transaction(connection)
+        except BaseException as error:
+            body_error = error
+
+        if body_error is None:
+            return cast(_T, value)
+
+        rollback_error: BaseException | None = None
+        try:
+            self._rollback_transaction(connection)
+            if connection.in_transaction:
+                raise _repository_error("operation_failed")
+        except BaseException as error:
+            rollback_error = error
+
+        cleanup_error: BaseException | None = None
+        if rollback_error is not None:
+            with self._state_lock:
+                if not self._terminal and self._state is ProfileRepositoryState.OPEN:
+                    self._state = ProfileRepositoryState.UNAVAILABLE
+            try:
+                self._worker_cleanup()
+            except BaseException as error:
+                cleanup_error = error
+
+        if constraint_code is not None and isinstance(
+            body_error, sqlite3.IntegrityError
+        ):
+            body_error = _repository_error(constraint_code)
+        _raise_with_cleanup_precedence(
+            body_error,
+            rollback_error,
+            cleanup_error,
+        )
+        raise AssertionError("unreachable")
+
+    def _commit_transaction(self, connection: sqlite3.Connection) -> None:
+        """Commit one worker-owned transaction.
+
+        This small boundary also permits deterministic fault injection without
+        exposing a public repository test hook.
+        """
+
+        connection.commit()
+
+    def _rollback_transaction(self, connection: sqlite3.Connection) -> None:
+        """Roll back one worker-owned transaction."""
+
+        connection.rollback()
 
     async def _submit_operation(
         self,
