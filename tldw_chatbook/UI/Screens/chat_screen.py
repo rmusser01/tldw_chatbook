@@ -276,6 +276,7 @@ from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfi
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
+    ConsoleCitationSourcesModal,
     ConsoleComposerBar,
     ConsoleDraftStash,
     ConsoleControlBar,
@@ -10986,6 +10987,85 @@ class ChatScreen(BaseAppScreen):
         if store.active_session_id is None:
             return []
         return store.messages_for_session(store.active_session_id)
+
+    def _console_citation_modal_request_is_current(
+        self,
+        *,
+        native_message_id: str,
+        persisted_message_id: str,
+        current_body: str,
+        repository: Any,
+        repository_token: tuple[str, int, int, int],
+    ) -> bool:
+        """Return whether one open modal still targets the active message."""
+
+        current_token, current_repository = (
+            self._console_citation_repository_readiness()
+        )
+        if current_repository is not repository or current_token != repository_token:
+            return False
+        matching_messages = [
+            message
+            for message in self._native_console_messages()
+            if getattr(message, "id", None) == native_message_id
+        ]
+        if len(matching_messages) != 1:
+            return False
+        message = matching_messages[0]
+        return (
+            getattr(message, "role", None) is ConsoleMessageRole.ASSISTANT
+            and getattr(message, "status", None) == "complete"
+            and getattr(message, "persisted_message_id", None)
+            == persisted_message_id
+            and self._console_citation_message_body(message) == current_body
+        )
+
+    @on(Button.Pressed, ".console-transcript-citation-sources")
+    def handle_console_citation_sources(self, event: Button.Pressed) -> None:
+        """Open one lazy Sources modal for a current persisted assistant."""
+
+        event.stop()
+        native_message_id = getattr(event.button, "native_message_id", None)
+        if type(native_message_id) is not str or not native_message_id:
+            return
+        matching_messages = [
+            message
+            for message in self._native_console_messages()
+            if getattr(message, "id", None) == native_message_id
+        ]
+        if len(matching_messages) != 1:
+            return
+        message = matching_messages[0]
+        persisted_message_id = getattr(message, "persisted_message_id", None)
+        if (
+            getattr(message, "role", None) is not ConsoleMessageRole.ASSISTANT
+            or getattr(message, "status", None) != "complete"
+            or type(persisted_message_id) is not str
+            or not persisted_message_id
+        ):
+            return
+        current_body = self._console_citation_message_body(message)
+        repository_token, repository = (
+            self._console_citation_repository_readiness()
+        )
+        if repository is None:
+            return
+        modal = ConsoleCitationSourcesModal(
+            native_message_id=native_message_id,
+            persisted_message_id=persisted_message_id,
+            current_body=current_body,
+            repository=repository,
+            request_is_current=lambda: (
+                self._console_citation_modal_request_is_current(
+                    native_message_id=native_message_id,
+                    persisted_message_id=persisted_message_id,
+                    current_body=current_body,
+                    repository=repository,
+                    repository_token=repository_token,
+                )
+            ),
+        )
+        self.app.push_screen(modal)
 
     @staticmethod
     def _console_citation_message_body(message: Any) -> str:

@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.screen import Screen
+from textual.widgets import Button, ListItem, ListView, Static
 
+from tldw_chatbook.Chat.citation_source_locators import (
+    AuthorityScope,
+    CitationReadAuthorization,
+)
+from tldw_chatbook.Chat.citation_trace_identity import (
+    LocalCitationIdentityContext,
+    local_trace_namespace,
+)
 from tldw_chatbook.Chat.citation_trace_models import (
     AnswerAttempt,
     AnswerAttemptKind,
@@ -13,6 +24,7 @@ from tldw_chatbook.Chat.citation_trace_models import (
     CitationOccurrence,
     CitationTrace,
     ClaimSupport,
+    EvidenceSnapshotPayload,
     EvidenceRun,
     EvidenceStorageMode,
     MarkerNamespace,
@@ -22,13 +34,22 @@ from tldw_chatbook.Chat.citation_trace_models import (
     TraceLifecycle,
     TraceOrigin,
 )
-from tldw_chatbook.Chat.citation_trace_repository import ActiveCitationTraceState
+from tldw_chatbook.Chat.citation_trace_repository import (
+    ActiveCitationTraceState,
+    CitationHydrationResult,
+    CitationHydrationState,
+    CitationTraceSummary,
+    GovernedCitationPayloads,
+)
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
+    ConsoleCitationSourceRow,
+    ConsoleCitationSourcesModal,
+    build_console_citation_source_rows,
     selected_valid_evidence_ordinals,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
@@ -151,6 +172,139 @@ def test_selected_valid_evidence_ordinals_ignore_legacy_empty_attempt() -> None:
     trace = _trace(selected_occurrences=())
 
     assert selected_valid_evidence_ordinals(trace) == ()
+
+
+IDENTITY = LocalCitationIdentityContext(
+    profile_id="profile-local",
+    local_authority_id="authority-local",
+    fingerprint_key_id="fingerprint-key",
+)
+
+
+def _hydration_result(
+    *,
+    identities: dict[int, dict[str, object]] | None = None,
+    omitted_snapshot_ordinals: frozenset[int] = frozenset(),
+    state: CitationHydrationState = CitationHydrationState.AUTHORIZED,
+) -> CitationHydrationResult:
+    trace = _trace()
+    identities = identities or {
+        1: {"source_kind": "notes", "source_id": "note-1"},
+        2: {"source_kind": "media_db", "source_id": "media-2"},
+        3: {"source_kind": "chat_history", "source_id": "conversation-3"},
+    }
+    snapshots = tuple(
+        EvidenceSnapshotPayload(
+            payload_id=f"snapshot-{ordinal}",
+            storage_mode=EvidenceStorageMode.EMBEDDED,
+            snapshot_text=(
+                "[link](https://example.invalid) "
+                "[bold red]literal[/bold red] \x1b[31mANSI-looking\x1b[0m"
+                if ordinal == 2
+                else f"exact snapshot {ordinal}"
+            ),
+            title=f"[cyan]Source {ordinal}[/cyan]",
+            source_identity=identities[ordinal],
+        )
+        for ordinal in range(1, 4)
+        if ordinal not in omitted_snapshot_ordinals
+    )
+    summary = CitationTraceSummary(
+        namespace=local_trace_namespace(IDENTITY, trace_id=trace.trace_id),
+        trace=trace,
+        visibility_state="active",
+    )
+    return CitationHydrationResult(
+        state=state,
+        summary=summary,
+        governed_payloads=(
+            GovernedCitationPayloads(
+                evidence_run_payloads=(),
+                evidence_snapshot_payloads=snapshots,
+                answer_attempt_payloads=(),
+            )
+            if state is CitationHydrationState.AUTHORIZED
+            else None
+        ),
+    )
+
+
+def test_hydrated_rows_join_selected_prompt_entries_in_first_citation_order() -> None:
+    result = _hydration_result()
+
+    rows = build_console_citation_source_rows(result)
+
+    assert rows == (
+        ConsoleCitationSourceRow(
+            display_marker="[S2]",
+            evidence_ordinal=2,
+            title="[cyan]Source 2[/cyan]",
+            snapshot_text=(
+                "[link](https://example.invalid) "
+                "[bold red]literal[/bold red] \x1b[31mANSI-looking\x1b[0m"
+            ),
+            source_kind="media_db",
+            source_id="media-2",
+            open_source_type="media",
+        ),
+        ConsoleCitationSourceRow(
+            display_marker="[S1]",
+            evidence_ordinal=1,
+            title="[cyan]Source 1[/cyan]",
+            snapshot_text="exact snapshot 1",
+            source_kind="notes",
+            source_id="note-1",
+            open_source_type="notes",
+        ),
+    )
+
+
+def test_hydrated_rows_return_unavailable_instead_of_partial_graph() -> None:
+    result = _hydration_result(omitted_snapshot_ordinals=frozenset({1}))
+
+    assert build_console_citation_source_rows(result) is None
+
+
+@pytest.mark.parametrize(
+    ("identity", "expected_kind", "expected_id"),
+    [
+        (
+            {"source_kind": "web_content", "source_id": "web-1"},
+            "web_content",
+            "web-1",
+        ),
+        ({"source_kind": 7, "source_id": "media-2"}, None, "media-2"),
+        ({"source_kind": "media_db", "source_id": ""}, "media_db", None),
+        ({"source_kind": "media_db", "source_id": "x" * 257}, "media_db", None),
+        (
+            {"source_kind": "media_db", "source_id": "https://example.invalid/2"},
+            "media_db",
+            None,
+        ),
+        ({"source_kind": "media_db", "source_id": "../private/2"}, "media_db", None),
+        ({"source_kind": "media_db", "source_id": "media-\n2"}, "media_db", None),
+    ],
+)
+def test_unsupported_or_malformed_identity_stays_visible_but_is_not_openable(
+    identity: dict[str, object],
+    expected_kind: str | None,
+    expected_id: str | None,
+) -> None:
+    result = _hydration_result(
+        identities={
+            1: {"source_kind": "notes", "source_id": "note-1"},
+            2: identity,
+            3: {"source_kind": "chat_history", "source_id": "conversation-3"},
+        }
+    )
+
+    rows = build_console_citation_source_rows(result)
+
+    assert rows is not None
+    assert rows[0].snapshot_text.startswith("[link]")
+    assert rows[0].source_kind == expected_kind
+    assert rows[0].source_id == expected_id
+    assert rows[0].open_source_type is None
 
 
 class _FakeStore:
@@ -790,3 +944,353 @@ async def test_valid_repository_replacement_invalidates_and_requeries_same_trans
     await dispatched[0]
     assert replacement.calls == [("persisted", "Answer [S1].")]
     assert screen._console_citation_counts == {"assistant": 2}
+
+
+class _HydrationRepository:
+    def __init__(
+        self,
+        hydration: CitationHydrationResult,
+        *,
+        db: object,
+        hydrate_error: bool = False,
+        hydration_started: Event | None = None,
+        hydration_release: Event | None = None,
+    ) -> None:
+        self.db = db
+        self.identity_context = IDENTITY
+        self.hydration = hydration
+        self.hydrate_error = hydrate_error
+        self.hydration_started = hydration_started
+        self.hydration_release = hydration_release
+        self.active = SimpleNamespace(
+            state=ActiveCitationTraceState.ACTIVE,
+            summary=hydration.summary,
+        )
+        self.events: list[str] = []
+        self.lookup_calls: list[tuple[str, str]] = []
+        self.hydrate_calls: list[tuple[object, CitationReadAuthorization]] = []
+        self.verified_results: list[object] = []
+
+    def get_active_trace_for_current_message(
+        self,
+        persisted_message_id: str,
+        current_body: str,
+    ) -> object:
+        self.events.append("lookup")
+        self.lookup_calls.append((persisted_message_id, current_body))
+        return self.active
+
+    def verify_active_trace_result(self, result: object) -> bool:
+        self.events.append("verify")
+        self.verified_results.append(result)
+        return result is self.active
+
+    def hydrate_trace(
+        self,
+        namespace: object,
+        *,
+        authorization: CitationReadAuthorization,
+    ) -> CitationHydrationResult:
+        self.events.append("hydrate")
+        self.hydrate_calls.append((namespace, authorization))
+        if self.hydration_started is not None:
+            self.hydration_started.set()
+        if self.hydration_release is not None:
+            self.hydration_release.wait(timeout=5)
+        if self.hydrate_error:
+            raise RuntimeError("private chunk text and source identity")
+        return self.hydration
+
+
+class _CitationHarnessApp(App):
+    def __init__(
+        self,
+        screen: ChatScreen,
+        repository: _HydrationRepository,
+        db: object,
+        messages: list[ConsoleChatMessage],
+        citation_counts: dict[str, int],
+    ) -> None:
+        super().__init__()
+        self.test_screen = screen
+        self.citation_trace_repository = repository
+        self.chachanotes_db = db
+        self.transcript = ConsoleTranscript(id="console-native-transcript")
+        self.transcript.set_messages(messages)
+        self.transcript.set_citation_counts(citation_counts)
+        screen.app_instance = self
+
+    def compose(self) -> ComposeResult:
+        yield self.transcript
+
+    async def on_mount(self) -> None:
+        await self.transcript.refresh_messages()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.has_class("console-transcript-citation-sources"):
+            ChatScreen.handle_console_citation_sources(self.test_screen, event)
+
+
+def _citation_harness(
+    *,
+    hydration: CitationHydrationResult | None = None,
+    hydrate_error: bool = False,
+    hydration_started: Event | None = None,
+    hydration_release: Event | None = None,
+) -> tuple[
+    _CitationHarnessApp,
+    ChatScreen,
+    _HydrationRepository,
+    ConsoleChatMessage,
+]:
+    db = object()
+    message = _message(
+        "assistant-1",
+        persisted_message_id="persisted-1",
+        body="Answer [S2] and [S1].",
+    )
+    repository = _HydrationRepository(
+        hydration or _hydration_result(),
+        db=db,
+        hydrate_error=hydrate_error,
+        hydration_started=hydration_started,
+        hydration_release=hydration_release,
+    )
+    screen = ChatScreen.__new__(ChatScreen)
+    Screen.__init__(screen)
+    screen._console_chat_store = _FakeStore([message])
+    screen._console_citation_counts = {"assistant-1": 2}
+    screen._console_citation_request_generation = 1
+    app = _CitationHarnessApp(
+        screen,
+        repository,
+        db,
+        [message],
+        {"assistant-1": 2},
+    )
+    return app, screen, repository, message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(60, 24), (140, 50)])
+async def test_footer_activation_opens_same_lazy_modal_at_narrow_and_wide_sizes(
+    size: tuple[int, int],
+) -> None:
+    app, _screen, repository, _message = _citation_harness()
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        assert repository.hydrate_calls == []
+
+        await pilot.click("#console-citation-sources-assistant-1")
+        await pilot.pause(0.1)
+
+        assert isinstance(app.screen, ConsoleCitationSourcesModal)
+        assert len(repository.hydrate_calls) == 1
+        assert len(app.screen.query("#console-citation-source-list")) == 1
+        assert len(app.screen.query("#console-citation-source-detail")) == 1
+
+
+@pytest.mark.asyncio
+async def test_modal_authorization_and_revalidation_are_exact_and_ordered() -> None:
+    app, _screen, repository, _message = _citation_harness()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#console-citation-sources-assistant-1")
+        await pilot.pause(0.1)
+
+        assert repository.events == ["lookup", "verify", "hydrate", "verify"]
+        assert repository.verified_results == [repository.active, repository.active]
+        assert all(item is repository.active for item in repository.verified_results)
+        namespace, authorization = repository.hydrate_calls[0]
+        assert namespace is repository.active.summary.namespace
+        assert authorization.model_dump() == {
+            "schema_version": 1,
+            "authority_scope": AuthorityScope.LOCAL_PROFILE,
+            "profile_id": "profile-local",
+            "authenticated_tenant_id": None,
+            "governance_scope_id": "profile-local",
+            "allowlisted_authority_ids": ("authority-local",),
+            "view_snapshot": True,
+            "view_source_identity": True,
+            "resolve_current": False,
+            "open_native": False,
+            "open_external": False,
+            "compare": False,
+            "refresh_observation": False,
+            "export": False,
+        }
+
+
+@pytest.mark.asyncio
+async def test_modal_renders_titles_and_chunks_as_literal_text() -> None:
+    app, _screen, _repository, _message = _citation_harness()
+    exact_chunk = (
+        "[link](https://example.invalid) "
+        "[bold red]literal[/bold red] \x1b[31mANSI-looking\x1b[0m"
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#console-citation-sources-assistant-1")
+        await pilot.pause(0.1)
+
+        modal = app.screen
+        assert isinstance(modal, ConsoleCitationSourcesModal)
+        detail = modal.query_one("#console-citation-source-chunk", Static)
+        title = modal.query_one("#console-citation-source-title", Static)
+        assert detail.renderable.plain == exact_chunk
+        assert detail.renderable.spans == []
+        assert title.renderable.plain == "[cyan]Source 2[/cyan]"
+        assert title.renderable.spans == []
+        assert len(modal.query("Markdown")) == 0
+
+        source_list = modal.query_one("#console-citation-source-list", ListView)
+        assert len(source_list.query(ListItem)) == 2
+        source_list.index = 1
+        await pilot.pause()
+        assert detail.renderable.plain == "exact snapshot 1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "hydration",
+    [
+        _hydration_result(state=CitationHydrationState.PROFILE_DENIED),
+        _hydration_result(omitted_snapshot_ordinals=frozenset({1})),
+    ],
+)
+async def test_denied_or_incomplete_hydration_shows_one_unavailable_state(
+    hydration: CitationHydrationResult,
+) -> None:
+    app, _screen, _repository, _message = _citation_harness(hydration=hydration)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#console-citation-sources-assistant-1")
+        await pilot.pause(0.1)
+
+        modal = app.screen
+        assert isinstance(modal, ConsoleCitationSourcesModal)
+        states = [
+            widget
+            for widget in modal.query(".console-citation-sources-state")
+            if isinstance(widget, Static) and widget.renderable == "Sources unavailable"
+        ]
+        assert len(states) == 1
+        assert len(modal.query_one("#console-citation-source-list", ListView).children) == 0
+
+
+@pytest.mark.asyncio
+async def test_hydration_exception_shows_content_free_unavailable_state() -> None:
+    app, _screen, _repository, _message = _citation_harness(hydrate_error=True)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#console-citation-sources-assistant-1")
+        await pilot.pause(0.1)
+
+        modal = app.screen
+        assert isinstance(modal, ConsoleCitationSourcesModal)
+        state = modal.query_one("#console-citation-sources-state", Static)
+        assert state.renderable == "Sources unavailable"
+        assert "private" not in str(state.renderable).lower()
+
+
+@pytest.mark.asyncio
+async def test_dismissed_modal_discards_late_hydration() -> None:
+    started = Event()
+    release = Event()
+    app, _screen, repository, _message = _citation_harness(
+        hydration_started=started,
+        hydration_release=release,
+    )
+    modal: ConsoleCitationSourcesModal | None = None
+
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            initial_screen = app.screen
+            await pilot.click("#console-citation-sources-assistant-1")
+            await pilot.pause(0.1)
+            assert started.is_set()
+            assert isinstance(app.screen, ConsoleCitationSourcesModal)
+            modal = app.screen
+
+            await pilot.press("escape")
+            await pilot.pause()
+            release.set()
+            await pilot.pause(0.1)
+
+            assert app.screen is initial_screen
+            assert modal.display_rows == ()
+            assert len(repository.hydrate_calls) == 1
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale_change", ["body", "database"])
+async def test_message_or_database_change_discards_late_hydration(
+    stale_change: str,
+) -> None:
+    started = Event()
+    release = Event()
+    app, _screen, _repository, message = _citation_harness(
+        hydration_started=started,
+        hydration_release=release,
+    )
+
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.click("#console-citation-sources-assistant-1")
+            await pilot.pause(0.1)
+            assert started.is_set()
+            modal = app.screen
+            assert isinstance(modal, ConsoleCitationSourcesModal)
+
+            if stale_change == "body":
+                message.content = "Changed body [S2]."
+            else:
+                app.chachanotes_db = object()
+            release.set()
+            await pilot.pause(0.1)
+
+            assert modal.display_rows == ()
+            assert modal.query_one(
+                "#console-citation-source-chunk", Static
+            ).renderable.plain == ""
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_screen_and_transcript_do_not_cache_governed_payloads_or_chunk_body() -> None:
+    app, screen, _repository, _message = _citation_harness()
+    exact_chunk = _hydration_result().governed_payloads.evidence_snapshot_payloads[
+        1
+    ].snapshot_text
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#console-citation-sources-assistant-1")
+        await pilot.pause(0.1)
+
+        assert exact_chunk not in {
+            value for value in vars(screen).values() if isinstance(value, str)
+        }
+        assert exact_chunk not in {
+            value
+            for value in vars(app.transcript).values()
+            if isinstance(value, str)
+        }
+        assert not any(
+            isinstance(value, (CitationHydrationResult, GovernedCitationPayloads))
+            for value in vars(screen).values()
+        )
+        assert not any(
+            isinstance(value, (CitationHydrationResult, GovernedCitationPayloads))
+            for value in vars(app.transcript).values()
+        )
