@@ -1902,3 +1902,188 @@ def test_compose_and_reset_database_config_form_reuse_the_resolver_helper():
         "_compose_database_config_form must keep reflecting the "
         "currently-effective (override-aware) value, not the pure default"
     )
+
+
+def _read_raw_effective_database_section() -> dict:
+    """Read the ``[database]`` table straight off the on-disk effective
+    config file, bypassing ``load_cli_config_and_ensure_existence``'s
+    deep-merge with ``DEFAULT_CONFIG_FROM_TOML``.
+
+    That merge means ``get_cli_setting("database", "prompts_db_path", None)``
+    can NEVER observe "key absent from the file" for a *_db_path key --
+    DEFAULT_CONFIG_FROM_TOML always defines a literal for it, so the merged
+    view always has a value. Reading the raw file is the only way to prove
+    Save genuinely did or did not write/remove a key on disk (TASK-927
+    follow-up)."""
+    import tomllib
+
+    effective_path = tldw_chatbook.config._get_effective_config_path()
+    if not effective_path.exists():
+        return {}
+    with open(effective_path, "rb") as f:
+        return tomllib.load(f).get("database", {})
+
+
+@pytest.mark.asyncio
+async def test_save_database_config_form_without_editing_does_not_pin_an_override(
+    monkeypatch, temp_config_path
+):
+    """_compose_database_config_form shows the fully resolved, profile-aware
+    path (TASK-927), so an untouched Input already looks like a custom
+    path. If Save always wrote it verbatim, merely opening Settings and
+    pressing Save -- without editing anything -- would permanently pin the
+    current profile's resolved path as an explicit override, silently
+    reintroducing the profile-isolation failure TASK-860 fixed, from the
+    opposite direction (TASK-927 follow-up)."""
+    from tldw_chatbook.config import (
+        get_chachanotes_db_path,
+        get_prompts_db_path,
+        get_media_db_path,
+    )
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        await window._save_database_config_form()
+
+        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
+            window.app_instance.notify.call_args_list
+        )
+
+        raw_database_section = _read_raw_effective_database_section()
+        for key in ("chachanotes_db_path", "prompts_db_path", "media_db_path"):
+            assert key not in raw_database_section, (
+                f"no-edit Save must not write a {key} override to the config "
+                f"file (raw section: {raw_database_section})"
+            )
+
+        # The resolver landing on the profile-aware default is what
+        # actually matters -- not merely "no key was written".
+        assert get_chachanotes_db_path() == get_chachanotes_db_path(
+            ignore_override=True
+        )
+        assert get_prompts_db_path() == get_prompts_db_path(ignore_override=True)
+        assert get_media_db_path() == get_media_db_path(ignore_override=True)
+
+
+@pytest.mark.asyncio
+async def test_reset_then_save_discards_a_previously_configured_override(
+    monkeypatch, temp_config_path, tmp_path
+):
+    """Pressing Reset then Save must actually discard a previously
+    configured custom override, not silently re-pin the resolved default
+    as a brand-new override (TASK-927 follow-up). Uses the real
+    save_setting_to_cli_config/get_cli_setting round trip (not a
+    _DB_PATH_RESOLVERS shadow) because both the write under test and the
+    read-back here go through the same TLDW_CONFIG_PATH-controlled
+    effective config path -- unlike the compose-time config_dict seeding
+    in mount_settings_window, this is not shadowed by that env var."""
+    from tldw_chatbook.config import (
+        save_setting_to_cli_config,
+        get_chachanotes_db_path,
+    )
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        custom_override = str(tmp_path / "genuinely-custom-chachanotes-927.db")
+        assert save_setting_to_cli_config(
+            "database", "chachanotes_db_path", custom_override
+        )
+        assert get_chachanotes_db_path() == Path(custom_override).expanduser().resolve()
+        assert (
+            _read_raw_effective_database_section().get("chachanotes_db_path")
+            == custom_override
+        ), "test setup bug: override was not actually written to disk"
+
+        await window._reset_database_config_form()
+        await window._save_database_config_form()
+
+        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
+            window.app_instance.notify.call_args_list
+        )
+        assert (
+            "chachanotes_db_path" not in _read_raw_effective_database_section()
+        ), (
+            "Reset then Save must clear the previously configured override, "
+            "not reinstate it"
+        )
+        assert get_chachanotes_db_path() == get_chachanotes_db_path(
+            ignore_override=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_save_database_config_form_persists_a_genuine_custom_path(
+    monkeypatch, temp_config_path, tmp_path
+):
+    """A real, deliberately different path entered by the user must still
+    be persisted as an explicit override -- the no-edit-Save fix must not
+    become over-eager and swallow legitimate customization (TASK-927
+    follow-up)."""
+    from tldw_chatbook.config import get_prompts_db_path
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        custom_path = tmp_path / "a-genuinely-custom-prompts-927.db"
+        prompts_input = window.query_one("#config-db-prompts-path", Input)
+        prompts_input.value = str(custom_path)
+
+        await window._save_database_config_form()
+
+        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
+            window.app_instance.notify.call_args_list
+        )
+        stored = _read_raw_effective_database_section().get("prompts_db_path")
+        assert stored == str(custom_path), (
+            "a genuine custom path must be persisted verbatim on disk, got "
+            f"{stored!r}"
+        )
+        assert get_prompts_db_path() == custom_path.expanduser().resolve()
+
+
+@pytest.mark.asyncio
+async def test_save_without_editing_then_switching_profile_still_moves_resolved_path(
+    monkeypatch, temp_config_path
+):
+    """The assertion that actually captures why the bug matters. A fix that
+    merely avoids writing an override-shaped key, but still writes
+    *something* that happens to pin the current profile's resolved path,
+    would pass a narrower 'no key written' check yet still break profile
+    switching. Prove the resolved prompts path genuinely moves when the
+    profile changes, after a no-edit Save (TASK-927 follow-up)."""
+    from tldw_chatbook.config import (
+        save_setting_to_cli_config,
+        get_prompts_db_path,
+        get_user_folder_name,
+    )
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        original_profile = get_user_folder_name()
+        original_path = get_prompts_db_path()
+        assert original_path.parent.name == original_profile
+
+        await window._save_database_config_form()
+        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
+            window.app_instance.notify.call_args_list
+        )
+
+        assert save_setting_to_cli_config(
+            "general", "users_name", "second_profile_927"
+        )
+        assert get_user_folder_name() == "second_profile_927"
+        assert get_user_folder_name() != original_profile
+
+        new_path = get_prompts_db_path()
+        assert new_path != original_path, (
+            "switching profile after a no-edit Save must still move the "
+            "resolved prompts db path -- an override was left pinned"
+        )
+        assert new_path.parent.name == "second_profile_927"

@@ -44,6 +44,7 @@ from textual import on
 from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence,
     save_setting_to_cli_config,
+    delete_settings_from_cli_config,
     replace_cli_config,
     export_cli_config_snapshot,
     API_MODELS_BY_PROVIDER,
@@ -4746,23 +4747,72 @@ Thank you for using tldw-chatbook! 🎉
                 f"Error resetting API config: {e}", severity="error"
             )
 
+    @staticmethod
+    def _db_paths_equivalent(a: str, b: str) -> bool:
+        """True when two path strings resolve to the same location.
+
+        Compares raw strings first, then falls back to an
+        expanduser+resolve-normalised comparison so a ``~``-form or a
+        non-normalised-but-equivalent path is still recognised as
+        "unchanged" (TASK-927 follow-up: see ``_save_db_path_field``).
+        """
+        if a == b:
+            return True
+        try:
+            return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
+        except Exception:
+            return False
+
+    def _save_db_path_field(self, *, input_id: str, db_name: str, key: str) -> None:
+        """Persist one database-path Input as an override only if it truly is one.
+
+        ``_compose_database_config_form`` deliberately displays the fully
+        resolved, profile-aware path (TASK-927) so the form always shows
+        what the app will actually use. But that means an *untouched*
+        Input already contains a value that looks like a custom path --
+        if Save always wrote it verbatim, merely opening Settings and
+        pressing Save (or pressing Reset then Save) would silently pin the
+        current profile's resolved path as a permanent override, breaking
+        profile switching the same way TASK-860 did, just from the
+        opposite direction (TASK-927 follow-up). So Save must recognise
+        "the Input still matches the profile-aware default" and clear any
+        stored override instead of writing one.
+        """
+        value = self.query_one(f"#{input_id}", Input).value
+        default_value = self._resolved_db_path_display(db_name, ignore_override=True)
+
+        if self._db_paths_equivalent(value, default_value):
+            # Unmodified (or Reset-then-Save): discard any previously
+            # configured override rather than pinning the currently
+            # resolved path. delete_settings_from_cli_config is a no-op
+            # (returns True) when the key was never present.
+            if not delete_settings_from_cli_config("database", [key]):
+                logger.error(
+                    "Failed to clear stale {} override while saving database config",
+                    key,
+                )
+            return
+
+        # A genuine custom path -- persist it as an explicit override.
+        save_setting_to_cli_config("database", key, value)
+
     async def _save_database_config_form(self) -> None:
         """Save database configuration form."""
         try:
-            save_setting_to_cli_config(
-                "database",
-                "chachanotes_db_path",
-                self.query_one("#config-db-chachanotes-path", Input).value,
+            self._save_db_path_field(
+                input_id="config-db-chachanotes-path",
+                db_name="chachanotes",
+                key="chachanotes_db_path",
             )
-            save_setting_to_cli_config(
-                "database",
-                "prompts_db_path",
-                self.query_one("#config-db-prompts-path", Input).value,
+            self._save_db_path_field(
+                input_id="config-db-prompts-path",
+                db_name="prompts",
+                key="prompts_db_path",
             )
-            save_setting_to_cli_config(
-                "database",
-                "media_db_path",
-                self.query_one("#config-db-media-path", Input).value,
+            self._save_db_path_field(
+                input_id="config-db-media-path",
+                db_name="media",
+                key="media_db_path",
             )
             save_setting_to_cli_config(
                 "database",
