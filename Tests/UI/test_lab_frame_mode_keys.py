@@ -9,6 +9,7 @@ from textual.widgets import Button
 
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.LLM_Calls.huggingface_api import HuggingFaceAPI
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.lab_mode_strip import LAB_MODE_CHIP_IDS
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
@@ -66,12 +67,38 @@ async def _models(app):
     return screen
 
 
+class _NavigationProbeLLMScreen(LLMScreen):
+    """An ``LLMScreen`` that records ``NavigateToScreen`` instead of letting
+    it reach the app's real handler.
+
+    Used only by the test below: it needs a way to prove focus movement
+    posts no navigation, and ``event.stop()`` here keeps that a self-
+    contained check rather than triggering the app's actual navigation.
+    """
+
+    def __init__(self, app_instance):
+        super().__init__(app_instance)
+        self.navigated: list[str] = []
+
+    def on_navigate_to_screen(self, message: NavigateToScreen) -> None:
+        self.navigated.append(message.screen_name)
+        message.stop()
+
+
 @pytest.mark.asyncio
 async def test_bracket_moves_focus_along_the_strip_without_navigating():
+    """`[`/`]` must move focus only -- Enter on the focused chip is what
+    navigates (see ``LabScreen.action_lab_mode_focus``'s docstring).
+
+    ``navigated`` used to be a local list nothing ever appended to, so
+    ``assert navigated == []`` passed vacuously regardless of whether
+    bracket-key focus movement posted ``NavigateToScreen`` or not. This
+    intercepts the message for real via ``_NavigationProbeLLMScreen``.
+    """
     app = _build_test_app()
-    navigated: list[str] = []
     async with app.run_test(size=(120, 40)) as pilot:
-        screen = await _models(app)
+        screen = _NavigationProbeLLMScreen(app)
+        await app.push_screen(screen)
         await pilot.pause()
         await pilot.pause()
         screen.query_one(f"#{LAB_MODE_CHIP_IDS[0]}", Button).focus()
@@ -82,7 +109,7 @@ async def test_bracket_moves_focus_along_the_strip_without_navigating():
 
         assert app.focused is not None
         assert app.focused.id == LAB_MODE_CHIP_IDS[1]
-        assert navigated == [], "moving focus must not navigate"
+        assert screen.navigated == [], "moving focus must not navigate"
 
 
 @pytest.mark.asyncio

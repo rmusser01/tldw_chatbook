@@ -16,7 +16,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from ...Widgets.destination_rail import DestinationRailHandle
 from .lab_rail_layout import LAB_RAIL_INSPECTOR, LAB_RAIL_LEFT, LabRailLayout
@@ -62,9 +62,20 @@ class LabWorkbench(Horizontal):
         ``LabWorkbench`` instance starts with empty regions and nothing
         re-populates them outside ``LabScreen.on_mount``.
 
+        Each region also carries a small header with a collapse button --
+        the ``DestinationRailHandle`` is only the *expand* affordance, so
+        without this there would be no way back to collapsed once opened.
+        The header is composed here, by the workbench itself, rather than
+        by mode content (``compose_lab_rail``/``compose_lab_inspector``):
+        collapse is frame-owned, not a per-mode concern. It reuses Console's
+        and Personas' ``console-rail-header``/``console-rail-title``/
+        ``console-rail-collapse-button`` classes rather than inventing a
+        new look.
+
         Returns:
             A ``ComposeResult`` yielding, in order: the rail handle, the
-            rail, the body, the inspector, and the inspector handle.
+            rail (with its collapse header first), the body, the inspector
+            (with its collapse header first), and the inspector handle.
             Visibility is applied afterwards, in ``on_mount``.
         """
         yield DestinationRailHandle(
@@ -75,11 +86,23 @@ class LabWorkbench(Horizontal):
             id="lab-rail-handle",
         )
 
-        yield VerticalScroll(id="lab-rail", classes="lab-region lab-rail")
+        with VerticalScroll(id="lab-rail", classes="lab-region lab-rail"):
+            yield from self._region_collapse_header(
+                title="Catalog",
+                button_id="lab-rail-collapse",
+                glyph="<",
+                tooltip="Collapse Catalog rail",
+            )
 
         yield Vertical(id="lab-body", classes="lab-region lab-body")
 
-        yield VerticalScroll(id="lab-inspector", classes="lab-region lab-inspector")
+        with VerticalScroll(id="lab-inspector", classes="lab-region lab-inspector"):
+            yield from self._region_collapse_header(
+                title="Inspector",
+                button_id="lab-inspector-collapse",
+                glyph=">",
+                tooltip="Collapse Inspector rail",
+            )
 
         yield DestinationRailHandle(
             label="Inspector",
@@ -88,6 +111,38 @@ class LabWorkbench(Horizontal):
             side="right",
             id="lab-inspector-handle",
         )
+
+    @staticmethod
+    def _region_collapse_header(
+        *, title: str, button_id: str, glyph: str, tooltip: str
+    ) -> ComposeResult:
+        """Yield one region's title row and collapse button.
+
+        Mounted as the first child of the region's ``VerticalScroll``, ahead
+        of whatever mode content ``LabScreen._populate_regions`` mounts
+        afterwards via ``mount_all`` (which appends).
+
+        Args:
+            title: Region name shown beside the collapse button.
+            button_id: DOM id for the collapse button, e.g. ``lab-rail-collapse``.
+            glyph: Button glyph -- ``"<"`` for the left rail, ``">"`` for the
+                inspector, matching Personas' literal-glyph convention.
+            tooltip: Tooltip text for the collapse button.
+
+        Returns:
+            A ``ComposeResult`` yielding the header ``Horizontal``.
+        """
+        with Horizontal(classes="console-rail-header"):
+            title_widget = Static(title, classes="console-rail-title")
+            yield title_widget
+            collapse_button = Button(
+                glyph,
+                id=button_id,
+                classes="console-rail-collapse-button",
+                compact=True,
+            )
+            collapse_button.tooltip = tooltip
+            yield collapse_button
 
     def on_mount(self) -> None:
         """Apply the rail layout's initial visibility once children exist."""

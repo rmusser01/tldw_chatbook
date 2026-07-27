@@ -1,4 +1,8 @@
-"""Pure reader over the app's six local-server process handles."""
+"""Pure reader over the app's five local-server process handles.
+
+Ollama is deliberately excluded -- see the docstring on
+``lab_server_status.LAB_SERVER_SOURCES`` -- so it is not exercised here.
+"""
 
 from __future__ import annotations
 
@@ -28,9 +32,9 @@ class _FakeApp:
             setattr(self, attribute, proc)
 
 
-def test_all_six_servers_are_reported_even_when_none_run():
+def test_all_five_servers_are_reported_even_when_none_run():
     rows = read_server_rows(_FakeApp())
-    assert len(rows) == len(LAB_SERVER_SOURCES) == 6
+    assert len(rows) == len(LAB_SERVER_SOURCES) == 5
     assert all(row.running is False for row in rows)
 
 
@@ -38,7 +42,7 @@ def test_a_live_process_reads_as_running():
     rows = read_server_rows(_FakeApp(llamacpp_server_process=_FakeProc(True)))
     by_name = {row.name: row.running for row in rows}
     assert by_name["llama.cpp"] is True
-    assert by_name["Ollama"] is False
+    assert by_name["vLLM"] is False
 
 
 def test_an_exited_process_reads_as_stopped():
@@ -54,7 +58,7 @@ def test_a_missing_attribute_reads_as_stopped():
         pass
 
     rows = read_server_rows(_Bare())
-    assert len(rows) == 6
+    assert len(rows) == 5
     assert all(row.running is False for row in rows)
 
 

@@ -30,51 +30,17 @@ class LLMManagementWindow(Container):
     """
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
-    $ds-surface-raised: $surface;
-    $ds-text-primary: $text;
-
     LLMManagementWindow {
         layout: horizontal;
         height: 100%;
         width: 100%;
     }
-    
-    #llm-sidebar {
-        width: 20;
-        min-width: 20;
-        max-width: 30;
-        height: 100%;
-        border-right: solid $primary;
-        background: $panel;
-        padding: 1 1;
-    }
-    
+
     #llm-main-content {
         width: 1fr;
         height: 100%;
         background: $background;
         padding: 1 2;
-    }
-    
-    .llm-nav-button {
-        width: 100%;
-        margin: 0 0 1 0;
-        text-align: left;
-        padding: 0 1;
-    }
-    
-    .llm-nav-button:hover {
-        background: $ds-surface-raised;
-        color: $ds-text-primary;
-    }
-    
-    .llm-nav-button.-active {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
     }
 
     .llm-view {
@@ -228,8 +194,15 @@ class LLMManagementWindow(Container):
     }
     """
 
-    # Reactive property to track active view
-    active_view = reactive("llama-cpp", recompose=False)
+    # Reactive property to track active view. Starts at "" with init=False
+    # rather than "llama-cpp": Textual's reactive default-value watcher
+    # otherwise fires once at mount, before the Lab frame's deferred body
+    # mount means this window's own child views exist -- ten QueryErrors,
+    # every arrival. Starting at "" (never a real view key, and init=False
+    # skips even that empty-value fire) means the FIRST real assignment,
+    # in _initialize_view, is the one and only trigger, made after the
+    # children exist.
+    active_view = reactive("", recompose=False, init=False)
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
@@ -259,16 +232,14 @@ class LLMManagementWindow(Container):
     def _initialize_view(self) -> None:
         """Activate the initial view now that the child views exist.
 
-        This does NOT assign ``self.active_view`` to its own default value.
-        Textual's reactive system skips the watcher when a value is set to
-        one that's already equal to the current value, so that assignment
-        would be a silent no-op whenever ``active_view`` still holds its
-        default -- which it does here, since nothing has changed it yet.
-        Call the activation logic directly instead, so the initial view is
-        actually marked ``-active`` regardless of whether the reactive
-        watcher would fire.
+        Assigns ``"llama-cpp"`` rather than hand-invoking ``watch_active_view``:
+        with the reactive's default now ``""`` (see ``active_view`` above),
+        this is a genuine value change, so it fires the normal reactive
+        path -- ``watch_active_view`` plus any external watchers registered
+        via ``self.watch(...)`` (e.g. the Lab rail highlighter) -- with the
+        child views already mounted.
         """
-        self.watch_active_view(self.active_view, self.active_view)
+        self.active_view = "llama-cpp"
 
     def compose(self) -> ComposeResult:
         """Compose the LLM Management UI with sidebar navigation and content area."""

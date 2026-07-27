@@ -14,7 +14,6 @@ from tldw_chatbook.UI.Lab_Modules.lab_rail_layout import (
     LabRailLayout,
 )
 from tldw_chatbook.UI.Lab_Modules.lab_workbench import (
-    LAB_INSPECTOR_WIDTH,
     LAB_RAIL_ROW_CLASS,
     LAB_RAIL_WIDTH,
     LabWorkbench,

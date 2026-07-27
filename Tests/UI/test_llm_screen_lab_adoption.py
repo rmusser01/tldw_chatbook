@@ -150,6 +150,39 @@ async def test_the_status_row_reports_running_servers():
 
 
 @pytest.mark.asyncio
+async def test_the_inspector_rows_refresh_alongside_the_status_chip():
+    """Regression test: `refresh_lab_status` used to update only the chip.
+
+    Live evidence: the chip read "Servers: 1 running" while the inspector
+    row beside it still read "stopped" -- `refresh_lab_status` mutated only
+    `#lab-status-chip-*`, never the per-server rows `compose_lab_inspector`
+    composed. Both must agree after the same refresh, on the same poll.
+    """
+    app = _app()
+    app.llamacpp_server_process = None
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        await pilot.pause()
+        await pilot.pause()
+        chip = screen.query_one("#lab-status-chip-servers", Static)
+        row = screen.query_one("#lab-inspector-server-llama-cpp", Static)
+        assert "Servers: none running" in str(chip.renderable)
+        assert "stopped" in str(row.renderable)
+
+        class _Alive:
+            def poll(self):
+                return None
+
+        app.llamacpp_server_process = _Alive()
+        screen.refresh_lab_status()
+        await pilot.pause()
+
+        assert "Servers: 1 running" in str(chip.renderable)
+        assert "running" in str(row.renderable)
+        assert "stopped" not in str(row.renderable)
+
+
+@pytest.mark.asyncio
 async def test_the_initial_view_is_marked_active_on_arrival_with_no_press():
     """Regression test for the blank-body-on-arrival bug.
 

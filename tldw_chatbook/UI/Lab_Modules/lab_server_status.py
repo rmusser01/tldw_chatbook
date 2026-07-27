@@ -1,12 +1,33 @@
 """Read the app's local-server process handles into displayable rows.
 
-Deliberately pure: it takes any object carrying the six process attributes,
+Deliberately pure: it takes any object carrying the five process attributes,
 so the Lab status chip and inspector are testable against a fake without
 spawning subprocesses or mounting widgets.
 
 The handles live on the app rather than on LLMManagementWindow (see
 ``app.py``'s ``*_server_process`` attributes), and liveness uses the same
 ``proc and proc.poll() is None`` idiom as the LLM management event handlers.
+
+Ollama is deliberately absent from :data:`LAB_SERVER_SOURCES`. Its sibling
+servers (llama.cpp, Llamafile, vLLM, ONNX, MLX-LM) all assign their process
+handle from a dedicated worker via ``app_instance.call_from_thread``. Ollama
+has no such assignment anywhere in the codebase -- ``app.ollama_server_process``
+is only declared and reset to ``None`` -- so a row for it would always read
+"stopped" even while a user-started ``ollama serve`` process is alive: a
+wrong row, not a missing one. Worse, ``handle_ollama_start_service_button_pressed``
+(``Event_Handlers/LLM_Management_Events/llm_management_events_ollama.py``)
+cannot currently start that process at all: it calls
+``stream_worker_output_to_log(app, "ollama-log-output")`` with one positional
+argument short of that coroutine's three, and separately passes ``cmd`` and
+that (broken) call's result as positional args to ``App.run_worker`` --
+whose second positional parameter is also named ``name``, which the same
+call supplies again by keyword, so Python raises
+``TypeError: got multiple values for argument 'name'`` before any subprocess
+is created. This is pre-existing and unrelated to the Lab frame (verified
+identical on ``origin/dev``; the file has no diff on this branch) -- wiring
+Ollama up correctly needs that start handler fixed first, which is a
+separate, untested legacy code path and out of this fix's scope. Tracked
+for a follow-up task rather than guessed at here.
 """
 
 from __future__ import annotations
@@ -16,10 +37,10 @@ from dataclasses import dataclass
 from typing import Any
 
 #: (app attribute, display name), in the order the inspector lists them.
+#: Ollama is intentionally not one of these -- see the module docstring.
 LAB_SERVER_SOURCES: tuple[tuple[str, str], ...] = (
     ("llamacpp_server_process", "llama.cpp"),
     ("llamafile_server_process", "Llamafile"),
-    ("ollama_server_process", "Ollama"),
     ("vllm_server_process", "vLLM"),
     ("onnx_server_process", "ONNX"),
     ("mlx_server_process", "MLX-LM"),
@@ -87,3 +108,34 @@ def servers_chip_text(rows: Sequence[LabServerRow]) -> str:
     if running == 0:
         return "Servers: none running"
     return f"Servers: {running} running"
+
+
+def server_row_id(name: str) -> str:
+    """Return the stable widget id for one server's inspector row.
+
+    Shared by ``compose_lab_inspector`` (which mounts the row) and
+    ``lab_inspector_rows`` (which refreshes it in place), so the two never
+    drift out of sync on id formatting.
+
+    Args:
+        name: The server's display name (``LabServerRow.name``).
+
+    Returns:
+        ``"lab-inspector-server-<name>"``, with dots turned to hyphens since
+        Textual ids may not contain them (e.g. ``"llama.cpp"``).
+    """
+    return f"lab-inspector-server-{name.replace('.', '-')}"
+
+
+def server_row_text(row: LabServerRow) -> str:
+    """Render one server's inspector row text.
+
+    Args:
+        row: The server's current state.
+
+    Returns:
+        e.g. ``"● llama.cpp — running"`` or ``"○ llama.cpp — stopped"``.
+    """
+    marker = "●" if row.running else "○"
+    state = "running" if row.running else "stopped"
+    return f"{marker} {row.name} — {state}"

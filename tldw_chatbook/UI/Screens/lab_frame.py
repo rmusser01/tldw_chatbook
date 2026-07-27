@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
@@ -44,6 +45,25 @@ class LabStatusChip:
     """
 
     chip_id: str
+    text: str
+
+
+@dataclass(frozen=True)
+class LabInspectorRow:
+    """One row in the Lab inspector that refreshes in place.
+
+    Mirrors :class:`LabStatusChip`: the id must match a widget the mode
+    already composed via ``compose_lab_inspector`` -- ``refresh_lab_status``
+    mutates it rather than recomposing the inspector.
+
+    Attributes:
+        row_id: The widget's full DOM id (not just a suffix, unlike
+            ``LabStatusChip.chip_id``: inspector rows do not share a common
+            id prefix across modes).
+        text: Rendered copy, e.g. ``"● llama.cpp — running"``.
+    """
+
+    row_id: str
     text: str
 
 
@@ -84,6 +104,25 @@ class LabScreen(BaseAppScreen):
         """
         super().__init__(app_instance, screen_name, **kwargs)
         self.rail_layout: LabRailLayout = load_rail_layout()
+        #: Ids this screen has already warned about missing, so a 2-second
+        #: refresh timer logs a stale/unknown chip or row once rather than
+        #: forever.
+        self._warned_ids: set[str] = set()
+
+    def _warn_once(self, key: str, message: str, *args: Any) -> None:
+        """Log a warning the first time ``key`` is seen this screen instance.
+
+        Args:
+            key: Stable identifier for the condition being warned about,
+                e.g. ``"chip:servers"``. Namespaced by caller so chip and
+                inspector-row warnings never collide on a shared id.
+            message: Loguru-style message template.
+            args: Values to interpolate into ``message``.
+        """
+        if key in self._warned_ids:
+            return
+        self._warned_ids.add(key)
+        logger.warning(message, *args)
 
     # -- hooks -----------------------------------------------------------
 
@@ -106,6 +145,22 @@ class LabScreen(BaseAppScreen):
 
         Returns:
             The chips, or an empty tuple to render no status row at all.
+        """
+        return ()
+
+    def lab_inspector_rows(self) -> tuple[LabInspectorRow, ...]:
+        """Return this mode's inspector rows to refresh in place.
+
+        Called on every refresh alongside the status chips, so it must be
+        cheap and safe to call repeatedly. Rows are declared here purely for
+        refresh; the widgets themselves are composed by
+        ``compose_lab_inspector`` with matching ids -- the two must stay in
+        sync, since ``refresh_lab_status`` mutates the composed widget by id
+        rather than recomposing the inspector.
+
+        Returns:
+            The rows, or an empty tuple for a mode with no refreshable
+            inspector content.
         """
         return ()
 
@@ -232,25 +287,51 @@ class LabScreen(BaseAppScreen):
                 logger.warning("Lab region {} missing; skipped.", region_id)
 
     def _mount_lab_body(self) -> None:
-        """Mount the deferred body and notify the mode."""
+        """Mount the deferred body and notify the mode.
+
+        Two very different situations both used to reach the same
+        `except QueryError: logger.warning(...)`, and only one of them is
+        harmless:
+
+        - The screen was torn down before this ``call_after_refresh``
+          callback ran (e.g. the user navigated away during the deferral
+          window). Normal; return silently.
+        - `#lab-body` is missing while the screen is still mounted. That
+          means the frame's own composition is broken -- ``compose_content``
+          never yielded the region ``LabWorkbench`` provides -- and yields a
+          permanently blank screen. A warning here is exactly how that shipped
+          undetected through 78 unit tests; it must surface loudly instead.
+
+        Raises:
+            QueryError: If ``#lab-body`` is missing while the screen is
+                still mounted.
+        """
+        if not self.is_mounted:
+            return
         body = self.build_lab_body()
         if body is not None:
             try:
                 self.query_one("#lab-body").mount(body)
             except QueryError:
-                logger.warning("Lab body region missing; body not mounted.")
-                return
+                logger.error(
+                    "Lab body region #lab-body missing on a mounted screen; "
+                    "this is a composition bug, not a normal teardown race."
+                )
+                raise
         self.on_lab_body_ready()
 
     # -- status ----------------------------------------------------------
 
     def refresh_lab_status(self) -> None:
-        """Re-read this mode's chips and update the row in place.
+        """Re-read this mode's chips and inspector rows and update in place.
 
-        Mutates the existing ``Static`` for each ``chip_id`` rather than
-        recomposing: recomposing on a timer churns widgets and can steal
-        focus. A chip whose id was not composed is logged and ignored, since
-        mounting new widgets from a timer is never intended.
+        Mutates the existing ``Static`` for each chip and inspector row id
+        rather than recomposing: recomposing on a timer churns widgets and
+        can steal focus. The inspector is refreshed on the same cadence as
+        the status row -- a mode with live chips (e.g. Models' server count)
+        needs its per-server inspector rows to agree, not lag a poll behind.
+        A chip or row whose id was not composed is logged once and ignored,
+        since mounting new widgets from a timer is never intended.
         """
         for chip in self.lab_status_chips():
             try:
@@ -258,11 +339,46 @@ class LabScreen(BaseAppScreen):
                     chip.text
                 )
             except QueryError:
-                logger.warning(
-                    "Unknown Lab status chip id {!r}; ignoring.", chip.chip_id
+                self._warn_once(
+                    f"chip:{chip.chip_id}",
+                    "Unknown Lab status chip id {!r}; ignoring.",
+                    chip.chip_id,
+                )
+        for row in self.lab_inspector_rows():
+            try:
+                self.query_one(f"#{row.row_id}", Static).update(row.text)
+            except QueryError:
+                self._warn_once(
+                    f"row:{row.row_id}",
+                    "Unknown Lab inspector row id {!r}; ignoring.",
+                    row.row_id,
                 )
 
     # -- collapse --------------------------------------------------------
+
+    @on(Button.Pressed, "#lab-rail-open")
+    def _handle_lab_rail_open(self, event: Button.Pressed) -> None:
+        """Expand the catalog rail from its collapsed handle."""
+        event.stop()
+        self.toggle_lab_rail(LAB_RAIL_LEFT)
+
+    @on(Button.Pressed, "#lab-rail-collapse")
+    def _handle_lab_rail_collapse(self, event: Button.Pressed) -> None:
+        """Collapse the catalog rail from its header button."""
+        event.stop()
+        self.toggle_lab_rail(LAB_RAIL_LEFT)
+
+    @on(Button.Pressed, "#lab-inspector-open")
+    def _handle_lab_inspector_open(self, event: Button.Pressed) -> None:
+        """Expand the inspector from its collapsed handle."""
+        event.stop()
+        self.toggle_lab_rail(LAB_RAIL_INSPECTOR)
+
+    @on(Button.Pressed, "#lab-inspector-collapse")
+    def _handle_lab_inspector_collapse(self, event: Button.Pressed) -> None:
+        """Collapse the inspector from its header button."""
+        event.stop()
+        self.toggle_lab_rail(LAB_RAIL_INSPECTOR)
 
     def toggle_lab_rail(self, rail: str) -> None:
         """Collapse or expand one rail and persist the new state.

@@ -9,11 +9,16 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from ..Lab_Modules.lab_server_status import read_server_rows, servers_chip_text
+from ..Lab_Modules.lab_server_status import (
+    read_server_rows,
+    server_row_id,
+    server_row_text,
+    servers_chip_text,
+)
 from ..Lab_Modules.lab_workbench import LAB_RAIL_ROW_CLASS
 from ..LLM_Management_Window import LLMManagementWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
-from .lab_frame import LabScreen, LabStatusChip
+from .lab_frame import LabInspectorRow, LabScreen, LabStatusChip
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -98,13 +103,23 @@ class LLMScreen(LabScreen):
         """Yield the running-server list."""
         yield Static("Running servers", classes="lab-rail-section")
         for row in read_server_rows(self.app_instance):
-            marker = "●" if row.running else "○"
-            state = "running" if row.running else "stopped"
             yield Static(
-                f"{marker} {row.name} — {state}",
-                id=f"lab-inspector-server-{row.name.replace('.', '-')}",
+                server_row_text(row),
+                id=server_row_id(row.name),
                 markup=False,
             )
+
+    def lab_inspector_rows(self) -> tuple[LabInspectorRow, ...]:
+        """Return the running-server rows to refresh in place.
+
+        Read on the same 2-second poll as the status chip
+        (``on_lab_body_ready``'s ``set_interval``), so the inspector never
+        lags the chip the way it did when only the chip refreshed.
+        """
+        return tuple(
+            LabInspectorRow(row_id=server_row_id(row.name), text=server_row_text(row))
+            for row in read_server_rows(self.app_instance)
+        )
 
     def build_lab_body(self) -> Widget:
         """Build the legacy management window.
