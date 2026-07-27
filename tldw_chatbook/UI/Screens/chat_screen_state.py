@@ -75,8 +75,8 @@ class TaskResumeState:
         holding the dict this method receives) is explicitly "memory-only
         ownership for cross-visit screen snapshots" (its own module
         docstring); it never touches disk. That still doesn't make a
-        restored round resumable: ``ChatScreen._create_navigation_screen``'s
-        docstring is explicit that screens are "never cached and
+        restored round resumable: ``TldwCli._create_navigation_screen``'s
+        (app.py) docstring is explicit that screens are "never cached and
         re-mounted" -- every navigation builds a brand-new ``ChatScreen``
         whose ``_console_chat_controller`` starts life as ``None`` and is
         lazily rebuilt from scratch (``_ensure_console_chat_controller``).
