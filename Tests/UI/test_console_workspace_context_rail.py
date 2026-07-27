@@ -27,6 +27,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
 from tldw_chatbook.Workspaces import (
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     ConsoleWorkspaceACPHandoffState,
     ConsoleConversationBrowserInputRow,
     DEFAULT_WORKSPACE_ID,
@@ -201,7 +202,10 @@ def _grouped_browser_state(
     marks_available: bool = True,
     query: str = "",
     rows: tuple[ConsoleConversationBrowserInputRow, ...] | None = None,
+    group_collapse_preferences: dict[str, bool] | None = None,
 ):
+    preferences = {"section:chats": False}
+    preferences.update(group_collapse_preferences or {})
     return build_console_conversation_browser_state(
         rows=rows
         or (
@@ -230,7 +234,7 @@ def _grouped_browser_state(
             ),
         ),
         active_workspace_id="ws-a",
-        group_collapse_preferences={"section:chats": False},
+        group_collapse_preferences=preferences,
         query=query,
         marks_available=marks_available,
     )
@@ -242,6 +246,7 @@ def _base_grouped_workspace_state(
     query: str = "",
     rows: tuple[ConsoleConversationBrowserInputRow, ...] | None = None,
     configured_server: bool = False,
+    group_collapse_preferences: dict[str, bool] | None = None,
 ) -> ConsoleWorkspaceContextState:
     """Build grouped-browser state; ``configured_server`` renders the full
     Sync/Server/ACP rows instead of the TASK-715 collapsed line."""
@@ -260,6 +265,7 @@ def _base_grouped_workspace_state(
             marks_available=marks_available,
             query=query,
             rows=rows,
+            group_collapse_preferences=group_collapse_preferences,
         ),
         change_workspace_enabled=state.change_workspace_enabled,
         change_workspace_recovery=state.change_workspace_recovery,
@@ -523,6 +529,138 @@ async def test_expanded_workspace_group_header_has_no_marker_suffix() -> None:
             == "Workspace A"
         )
         assert len(console.query(".console-workspace-conversation-row")) == 1
+
+
+def _workspace_rows_with_marker_at(index: int, marker: str, *, count: int):
+    """``count`` rows in the active workspace ``ws-a``, newest-first by
+    construction (descending ``updated_sort``) so display order matches
+    ``range(count)`` exactly -- the row at ``index`` carries ``marker``."""
+    return tuple(
+        _browser_row(
+            f"ws-a-{i}",
+            f"Chat {i}",
+            workspace_id="ws-a",
+            workspace_label="Workspace A",
+            updated_sort=f"2026-07-{31 - i:02d}T00:00:00",
+            run_marker=marker if i == index else "",
+        )
+        for i in range(count)
+    )
+
+
+@pytest.mark.asyncio
+async def test_collapsed_section_header_shows_aggregate_from_busy_group_beneath() -> None:
+    """TASK-912 AC#1: collapsing the whole Workspaces section hides every
+    group (and every row) beneath it, so the busy group's marker was
+    otherwise invisible. The section header borrows the single most-urgent
+    glyph across all of its groups' full pre-cap rows."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                        run_marker="●",
+                    ),
+                ),
+                group_collapse_preferences={"section:workspaces": True},
+            )
+        )
+        await pilot.pause()
+
+        assert (
+            _static_plain(console, "#console-conversation-browser-workspaces-title")
+            == "Workspaces ●"
+        )
+        # The section really is collapsed -- no group header/row mounted.
+        assert len(console.query(".console-conversation-browser-group-header")) == 0
+        assert len(console.query(".console-workspace-conversation-row")) == 0
+
+
+@pytest.mark.asyncio
+async def test_expanded_group_capped_row_marker_surfaces_on_header() -> None:
+    """TASK-912 AC#2: an expanded group with more rows than
+    `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT` surfaces the marker on a
+    row pushed past the cap -- otherwise it renders nowhere at all."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    marked_index = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 1
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=_workspace_rows_with_marker_at(
+                    marked_index,
+                    "●",
+                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                ),
+            )
+        )
+        await pilot.pause()
+
+        group = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert group.group_id == "workspace:ws-a"
+        assert (
+            _static_plain(console, "#console-conversation-browser-group-title-0")
+            == "Workspace A ●"
+        )
+        # The marked row itself stays unmounted -- it really is past the cap.
+        assert (
+            len(console.query(".console-workspace-conversation-row"))
+            == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+        )
+
+
+@pytest.mark.asyncio
+async def test_expanded_group_visible_row_marker_has_no_header_echo() -> None:
+    """A marked row still within the visible cap already shows its own
+    glyph -- the header must not also echo it (no double marker)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=_workspace_rows_with_marker_at(
+                    2,  # well within the cap
+                    "●",
+                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                ),
+            )
+        )
+        await pilot.pause()
+
+        group = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert group.group_id == "workspace:ws-a"
+        assert (
+            _static_plain(console, "#console-conversation-browser-group-title-0")
+            == "Workspace A"
+        )
 
 
 @pytest.mark.asyncio

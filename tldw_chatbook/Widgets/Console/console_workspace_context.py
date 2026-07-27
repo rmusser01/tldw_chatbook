@@ -1110,11 +1110,25 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self,
         section: ConsoleConversationBrowserSection,
     ) -> ComposeResult:
-        """Render one grouped browser section header."""
+        """Render one grouped browser section header.
 
+        TASK-912 AC#1: collapsing a top-level section (Starred/Workspaces/
+        Chats) hides every row -- and every workspace group -- beneath it,
+        so any fleet run-marker glyph among them is otherwise invisible.
+        When collapsed AND `section.run_marker` is non-empty (the
+        most-urgent glyph across the section's full pre-cap contents,
+        computed in `conversation_browser_state`), it is appended to the
+        header label -- same plain-string threading and `markup=False`
+        Static the group-header marker already uses. An expanded section
+        shows its own rows'/groups' markers, so its header stays unchanged.
+        """
+
+        label = section.label
+        if section.collapsed and section.run_marker:
+            label = f"{label} {section.run_marker}"
         with Horizontal(classes="console-conversation-browser-section-header"):
             title = self._static(
-                section.label,
+                label,
                 id=f"console-conversation-browser-{section.section_id}-title",
                 classes="console-conversation-browser-section-title",
             )
@@ -1153,13 +1167,21 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         prefix already uses (this Static renders with ``markup=False``, so
         no separate escaping step applies here either). An expanded group
         already shows every row's own marker, so its header stays
-        unchanged.
+        unchanged -- UNLESS the group's row count exceeds
+        `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT`: a marked row pushed
+        past that cap is hidden despite the group being expanded, so
+        `group.capped_run_marker` (the most-urgent glyph among only the
+        hidden overflow rows, TASK-912 AC#2) is borrowed onto the header in
+        that case instead. A visible marked row within the cap needs no
+        header echo, which is exactly what `capped_run_marker` excludes.
         """
 
         with Horizontal(classes="console-conversation-browser-group-header"):
             label = group.label
             if group.collapsed and group.run_marker:
                 label = f"{label} {group.run_marker}"
+            elif not group.collapsed and group.capped_run_marker:
+                label = f"{label} {group.capped_run_marker}"
             title = self._static(
                 label,
                 id=f"console-conversation-browser-group-title-{index}",
