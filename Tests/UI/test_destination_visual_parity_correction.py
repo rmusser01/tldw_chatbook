@@ -1452,18 +1452,20 @@ async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds():
 
     `test_watchlists_items_region_is_taller_than_feeds_region_when_expanded`
     (above) runs the EMPTY state, where FEEDS's natural 11 rows never reach
-    the 13-row cap -- so the constraint that actually chose 13 has never been
-    exercised by a test. This forces FEEDS past its cap inside the real
+    the 12-row cap -- so the constraint that actually chose the cap has never
+    been exercised by a test. This forces FEEDS past its cap inside the real
     chrome-wrapped screen and pins the resulting split.
 
     The numbers, measured at 160x42 (the tightest viewport this app ships):
     the three centre regions share a fixed 34-row budget, so with
     ITEMS/CONTENT at `2fr`/`1fr` a capped FEEDS leaves `items ~= (34 - cap) *
-    2/3`. Swept: cap=12 -> items=14, cap=13 -> items=14 (margin 1), cap=14 ->
-    items=13, which inverts the invariant. The margin is one row, and it is
-    one row at height 42 only: at 160x41 the budget drops to 33 and cap=13
-    ties at items=13. Anything that consumes another row above the workbench
-    trips this test -- which is the point of pinning it.
+    2/3`. Swept: cap=12 -> items=14, cap=13 -> items=14, cap=14 -> items=13,
+    which inverts the invariant. 13 is the maximum that holds here, but it
+    holds ONLY at height >= 42 -- at 160x41 the budget drops to 33 and 13
+    ties at items=13. The shipped cap is 12, which gives items=14 at both
+    budgets, so the invariant survives a 41-row terminal and one more row
+    of chrome above the workbench. Anything beyond that trips this test --
+    which is the point of pinning it.
     """
     app = _build_test_app()
     host = _visual_destination_harness(app, "watchlists_collections")
@@ -1486,12 +1488,13 @@ async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds():
             "40 sources should overflow FEEDS -- if they do not, this test is "
             f"no longer exercising the cap: feeds={feeds.region}"
         )
-        assert feeds.region.height == 13, (
-            f"FEEDS should sit exactly at its `max-height: 13`: {feeds.region}"
+        assert feeds.region.height == 12, (
+            f"FEEDS should sit exactly at its `max-height: 12`: {feeds.region}"
         )
         assert items.region.height == 14, (
             f"the 2fr/1fr split of the 34-row budget should leave ITEMS 14 "
-            f"rows -- one more than the cap, the whole margin there is: "
+            f"rows -- two more than the cap, which is the margin that lets "
+            f"the invariant survive a 41-row terminal: "
             f"feeds={feeds.region} items={items.region} content={content.region}"
         )
         assert items.region.height > feeds.region.height, (
