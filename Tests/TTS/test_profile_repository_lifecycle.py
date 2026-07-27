@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import sqlite3
 import threading
+import traceback
 from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
 from pathlib import Path
@@ -133,11 +134,25 @@ def _assert_safe_error(
         (
             str(error),
             repr(error),
+            "".join(traceback.format_exception(error)),
             *(str(note) for note in getattr(error, "__notes__", ())),
         )
     )
     for secret in secrets:
         assert secret not in visible
+
+
+def _tainted_repository_error(
+    code: str,
+    secret: str,
+) -> ProfileRepositoryError:
+    try:
+        raise RuntimeError(secret)
+    except RuntimeError:
+        try:
+            raise ProfileRepositoryError(code)
+        except ProfileRepositoryError as error:
+            return error
 
 
 async def _wait_thread_event(event: threading.Event) -> None:
@@ -418,6 +433,136 @@ async def test_concurrent_open_calls_share_one_attempt_and_owner(
 
 
 @pytest.mark.asyncio
+async def test_overlapping_failed_open_calls_share_attempt_before_later_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    events: list[tuple[str, int]] = []
+    connection = _RecordingConnection(events)
+    first_attempt_started = threading.Event()
+    release_first_failure = threading.Event()
+    attempts = 0
+    failures_enabled = True
+    leases = _install_fake_store(
+        monkeypatch,
+        module,
+        events,
+        connection,
+    )
+
+    def controlled_open(_database_path: Path) -> Any:
+        nonlocal attempts
+        attempts += 1
+        events.append(("store.open", threading.get_ident()))
+        if failures_enabled:
+            if attempts == 1:
+                first_attempt_started.set()
+                assert release_first_failure.wait(5.0)
+            raise ProfileRepositoryError("schema_corrupt")
+        return connection
+
+    monkeypatch.setattr(module, "open_profile_store", controlled_open)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+
+    async def capture_open_error() -> ProfileRepositoryError:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.open()
+        return caught.value
+
+    first_task = asyncio.create_task(capture_open_error())
+    await _wait_thread_event(first_attempt_started)
+    second_invoked = asyncio.Event()
+
+    async def overlapping_open() -> ProfileRepositoryError:
+        second_invoked.set()
+        return await capture_open_error()
+
+    second_task = asyncio.create_task(overlapping_open())
+    await second_invoked.wait()
+    release_first_failure.set()
+    first_error, second_error = await asyncio.gather(first_task, second_task)
+
+    assert first_error is not second_error
+    _assert_safe_error(first_error, "schema_corrupt")
+    _assert_safe_error(second_error, "schema_corrupt")
+    assert attempts == 1
+    assert len(leases) == 1
+    assert len(_phase_threads(events, "lease.acquire")) == 1
+    assert len(_phase_threads(events, "store.open")) == 1
+    assert len(set(_phase_threads(events, "store.open"))) == 1
+    assert leases[0].acquired is False
+    assert repository.state is ProfileRepositoryState.UNAVAILABLE
+    assert repository.generation == 1
+
+    failures_enabled = False
+    retried = await repository.open()
+
+    assert retried == ProfileStoreResult(generation=2, value=None)
+    assert attempts == 2
+    assert len(leases) == 2
+    assert repository.state is ProfileRepositoryState.OPEN
+    assert repository.generation == 2
+    await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_overlapping_open_waits_for_shared_attempt_settlement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    events: list[tuple[str, int]] = []
+    connection = _RecordingConnection(events)
+    attempt_started = threading.Event()
+    release_failure = threading.Event()
+    attempts = 0
+    _install_fake_store(monkeypatch, module, events, connection)
+
+    def controlled_open(_database_path: Path) -> Any:
+        nonlocal attempts
+        attempts += 1
+        attempt_started.set()
+        assert release_failure.wait(5.0)
+        raise ProfileRepositoryError("schema_corrupt")
+
+    monkeypatch.setattr(module, "open_profile_store", controlled_open)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    first_task = asyncio.create_task(repository.open())
+    await _wait_thread_event(attempt_started)
+    second_invoked = asyncio.Event()
+
+    async def overlapping_open() -> ProfileStoreResult[None]:
+        second_invoked.set()
+        return cast(ProfileStoreResult[None], await repository.open())
+
+    second_task = asyncio.create_task(overlapping_open())
+    await second_invoked.wait()
+    second_task.cancel()
+    loop = asyncio.get_running_loop()
+    cancellation_checkpoint: asyncio.Future[bool] = loop.create_future()
+
+    def observe_after_cancellation_delivery() -> None:
+        loop.call_soon(cancellation_checkpoint.set_result, second_task.done())
+
+    loop.call_soon(observe_after_cancellation_delivery)
+
+    cancelled_before_settlement = await cancellation_checkpoint
+    release_failure.set()
+    assert cancelled_before_settlement is False
+    with pytest.raises(ProfileRepositoryError) as first_error:
+        await first_task
+    with pytest.raises(asyncio.CancelledError):
+        await second_task
+
+    _assert_safe_error(first_error.value, "schema_corrupt")
+    assert attempts == 1
+    assert repository.state is ProfileRepositoryState.UNAVAILABLE
+    assert repository.generation == 1
+    await repository.close()
+
+
+@pytest.mark.asyncio
 async def test_invalid_existing_store_fails_closed_and_retry_can_recover(
     tmp_path: Path,
 ) -> None:
@@ -494,6 +639,34 @@ async def test_failed_open_cleans_partial_lease_and_maps_hostile_error(
 
     assert retried == ProfileStoreResult(generation=2, value=None)
     assert len(leases) == 2
+    await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_open_recreates_structured_error_without_hostile_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    secret = str(tmp_path / "secret-open-context.sqlite3")
+    events: list[tuple[str, int]] = []
+    connection = _RecordingConnection(events)
+    incoming = _tainted_repository_error("schema_corrupt", secret)
+    _install_fake_store(monkeypatch, module, events, connection)
+
+    def hostile_open(_database_path: Path) -> Any:
+        raise incoming
+
+    monkeypatch.setattr(module, "open_profile_store", hostile_open)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await repository.open()
+
+    assert caught.value is not incoming
+    _assert_safe_error(caught.value, "schema_corrupt", secret)
+    assert repository.state is ProfileRepositoryState.UNAVAILABLE
+    assert repository.generation == 1
     await repository.close()
 
 
@@ -603,6 +776,41 @@ async def test_normal_submission_rejects_every_non_open_state(
     with pytest.raises(ProfileRepositoryError) as caught:
         await repository._submit_operation(lambda _connection: "terminal")
     _assert_safe_error(caught.value, "terminal")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("incoming_code", "expected_code"),
+    [
+        ("missing", "missing"),
+        ("hostile-invalid-code", "operation_failed"),
+    ],
+)
+async def test_operation_publication_recreates_structured_error_without_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    incoming_code: str,
+    expected_code: str,
+) -> None:
+    module = _repository_module()
+    secret = str(tmp_path / "secret-operation-context.sqlite3")
+    events: list[tuple[str, int]] = []
+    connection = _RecordingConnection(events)
+    incoming = _tainted_repository_error("missing", secret)
+    incoming.code = incoming_code
+    _install_fake_store(monkeypatch, module, events, connection)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    await repository.open()
+
+    def hostile_operation(_connection: Any) -> None:
+        raise incoming
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await repository._submit_operation(hostile_operation)
+
+    assert caught.value is not incoming
+    _assert_safe_error(caught.value, expected_code, secret)
+    await repository.close()
 
 
 @pytest.mark.asyncio

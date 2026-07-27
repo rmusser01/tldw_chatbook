@@ -39,13 +39,31 @@ def _repository_error(code: str) -> ProfileRepositoryError:
     return ProfileRepositoryError(code)
 
 
+def _fresh_repository_error(
+    error: ProfileRepositoryError,
+) -> ProfileRepositoryError:
+    """Recreate one structured error without its traceback, chain, or notes."""
+
+    code: object = "operation_failed"
+    code_error: BaseException | None = None
+    try:
+        code = error.code
+    except BaseException as caught:
+        code_error = caught
+    if code_error is not None and not isinstance(code_error, Exception):
+        raise code_error
+    if code_error is not None or type(code) is not str:
+        code = "operation_failed"
+    return ProfileRepositoryError(cast(str, code))
+
+
 def _raise_operation_error(error: BaseException) -> None:
     """Preserve safe repository/control-flow errors and bound every other error."""
 
     if not isinstance(error, Exception):
         raise error
     if isinstance(error, ProfileRepositoryError):
-        raise error
+        raise _fresh_repository_error(error)
     raise _repository_error("operation_failed")
 
 
@@ -63,7 +81,7 @@ def _raise_with_cleanup_precedence(
     if any(cleanup_error is not None for cleanup_error in cleanup_errors):
         raise _repository_error("operation_failed")
     if isinstance(primary_error, ProfileRepositoryError):
-        raise primary_error
+        raise _fresh_repository_error(primary_error)
     if primary_error is not None:
         raise _repository_error("operation_failed")
 
@@ -110,6 +128,7 @@ class TTSProfileRepository:
         self._connection: sqlite3.Connection | None = None
         self._lease: ProfileStoreLease | None = None
         self._pending_futures: set[Future[object]] = set()
+        self._open_completion: asyncio.Task[ProfileStoreResult[None]] | None = None
 
     @property
     def state(self) -> ProfileRepositoryState:
@@ -144,6 +163,11 @@ class TTSProfileRepository:
             BaseException: A worker control-flow signal, after partial
                 ownership has been cleaned.
         """
+
+        with self._state_lock:
+            shared_completion = self._open_completion
+        if shared_completion is not None:
+            return await self._await_open_completion(shared_completion)
 
         async with self._lifecycle_lock:
             with self._state_lock:
@@ -193,7 +217,22 @@ class TTSProfileRepository:
             assert open_future is not None
 
             completion = asyncio.create_task(self._finish_open(generation, open_future))
+            with self._state_lock:
+                self._open_completion = completion
+            return await self._await_open_completion(completion)
+
+    async def _await_open_completion(
+        self,
+        completion: asyncio.Task[ProfileStoreResult[None]],
+    ) -> ProfileStoreResult[None]:
+        """Join one open attempt and clear its marker only after settlement."""
+
+        try:
             return await self._await_lifecycle_completion(completion)
+        finally:
+            with self._state_lock:
+                if completion.done() and self._open_completion is completion:
+                    self._open_completion = None
 
     def _open_state_error_locked(self) -> str | None:
         if self._state is ProfileRepositoryState.RESTORING:
@@ -373,6 +412,7 @@ class TTSProfileRepository:
 
         wrapped_future = asyncio.wrap_future(admission.future)
         worker_cancelled = False
+        worker_error: BaseException | None = None
         try:
             value = await asyncio.shield(wrapped_future)
         except asyncio.CancelledError:
@@ -380,9 +420,14 @@ class TTSProfileRepository:
             if not worker_cancelled:
                 raise
             value = cast(_T, None)
+        except BaseException as error:
+            worker_error = error
+            value = cast(_T, None)
 
         if worker_cancelled:
             raise _repository_error("stale")
+        if worker_error is not None:
+            _raise_operation_error(worker_error)
 
         with self._state_lock:
             state_error = self._worker_state_error_locked(admission.generation)
@@ -516,5 +561,5 @@ class TTSProfileRepository:
         if cancellation is not None:
             raise cancellation
         if completion_error is not None:
-            raise completion_error
+            _raise_operation_error(completion_error)
         return cast(_T, result)
