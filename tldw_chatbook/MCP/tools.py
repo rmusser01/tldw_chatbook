@@ -16,6 +16,18 @@ from ..config import get_api_key
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..RAG_Search.simplified.search_service import SimplifiedRAGSearchService
+from ..Utils.input_validation import validate_number_range, validate_text_input
+
+# Bounds for `search_conversations`' free-text `query` / integer `limit`
+# inputs, mirroring the same query+limit validation shape already used for
+# the Library RAG search entry point (`Library/library_rag_state.py`'s
+# `LIBRARY_RAG_QUERY_MAX_LENGTH` / `LIBRARY_RAG_TOP_K_MAX`) rather than
+# inventing new bounds. An unvalidated `limit` reaches SQLite's `LIMIT ?`
+# directly (`ChaChaNotes_DB.search_conversations_by_content`); a negative
+# value there returns every matching row unbounded (SQLite's `LIMIT -1`
+# means "no limit").
+MAX_SEARCH_QUERY_LENGTH = 2000
+MAX_SEARCH_RESULTS_LIMIT = 100
 
 # `save_conversation_from_messages` (tldw_chatbook.Chat.Chat_Functions) and
 # `chat_with_provider` (tldw_chatbook.LLM_Calls.LLM_API_Calls) were both
@@ -160,21 +172,65 @@ class MCPTools:
     async def search_conversations(
         self, query: str, limit: int = 10, character_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Search conversations by content.
+        """Search conversations by message content.
 
         Args:
-            query: Search query
-            limit: Maximum number of results
-            character_id: Optional character ID to filter by
+            query: Search query (FTS5 syntax, matched against message text).
+            limit: Maximum number of conversations to return.
+            character_id: Optional character ID to filter results by.
 
         Returns:
-            List of matching conversations
+            List of matching conversations, each with id/title/preview/
+            created/character_id/message_count. A single-item list with an
+            ``error`` key if ``query``/``limit`` fail validation or the
+            search itself raises.
+
+        Note:
+            This used to call ``self.chachanotes_db.search_all_content``,
+            which does not exist anywhere on ``CharactersRAGDB`` (TASK-985).
+            The real accessor, ``search_conversations_by_content(search_query,
+            limit)``, returns conversation rows (``conversations`` table
+            columns plus an aggregated ``message_count``) with no inline
+            message content to preview -- the ``conversations`` table has no
+            content column at all. Rather than guess at a substitute (e.g.
+            truncating the title), ``preview`` is sourced from a second,
+            deliberate query per matching conversation:
+            ``search_messages_by_content(content_query=query,
+            conversation_id=..., limit=1)``, the best-matching *message* in
+            that conversation against the same FTS index. That is real
+            seeded data -- the actual message text that made the
+            conversation match ``query`` -- not fabricated from an
+            unrelated field.
         """
+        if not isinstance(query, str) or not query.strip():
+            return [{"error": "query must be a non-empty string"}]
+        if not validate_text_input(
+            query, max_length=MAX_SEARCH_QUERY_LENGTH, allow_html=False
+        ):
+            return [
+                {
+                    "error": (
+                        "query must be plain text of at most "
+                        f"{MAX_SEARCH_QUERY_LENGTH} characters"
+                    )
+                }
+            ]
+        if not validate_number_range(
+            limit, min_val=1, max_val=MAX_SEARCH_RESULTS_LIMIT
+        ):
+            return [
+                {
+                    "error": (
+                        f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}"
+                    )
+                }
+            ]
+        limit = int(limit)
+
         try:
             results = await asyncio.to_thread(
-                self.chachanotes_db.search_all_content,
+                self.chachanotes_db.search_conversations_by_content,
                 search_query=query,
-                content_type="conversation",
                 limit=limit,
             )
 
@@ -183,13 +239,26 @@ class MCPTools:
                 if character_id and result.get("character_id") != character_id:
                     continue
 
+                preview = ""
+                matching_messages = await asyncio.to_thread(
+                    self.chachanotes_db.search_messages_by_content,
+                    content_query=query,
+                    conversation_id=result["id"],
+                    limit=1,
+                )
+                if matching_messages:
+                    message_content = matching_messages[0].get("content") or ""
+                    preview = (
+                        message_content[:200] + "..."
+                        if len(message_content) > 200
+                        else message_content
+                    )
+
                 conversations.append(
                     {
                         "id": result["id"],
                         "title": result["title"],
-                        "preview": result["content"][:200] + "..."
-                        if len(result["content"]) > 200
-                        else result["content"],
+                        "preview": preview,
                         "created": result["created_at"],
                         "character_id": result.get("character_id"),
                         "message_count": result.get("message_count", 0),

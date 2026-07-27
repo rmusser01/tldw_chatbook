@@ -325,7 +325,14 @@ class TldwMCPServer:
         async def search_conversations(
             query: str, limit: int = 10, character_id: Optional[int] = None
         ) -> List[Dict[str, Any]]:
-            """Search conversations by content."""
+            """Search conversations by message content.
+
+            Each result's ``preview`` is the best-matching message's text in
+            that conversation (there is no conversation-level content field
+            to preview from), truncated to 200 characters -- see
+            ``MCPTools.search_conversations`` for the full rationale
+            (TASK-985).
+            """
             return await self.tools.search_conversations(
                 query=query, limit=limit, character_id=character_id
             )
@@ -472,10 +479,15 @@ class TldwMCPServer:
             """Get media content by ID."""
             return await self.resources.get_media_resource(media_id)
 
-        @self.mcp.resource("rag-chunk://{chunk_id}")
-        async def get_rag_chunk(chunk_id: str) -> Dict[str, Any]:
-            """Get a RAG chunk by ID."""
-            return await self.resources.get_rag_chunk_resource(chunk_id)
+        @self.mcp.resource("rag-chunk://{chunk_uuid}")
+        async def get_rag_chunk(chunk_uuid: str) -> Dict[str, Any]:
+            """Get a RAG chunk by UUID.
+
+            Keyed on the chunk's UUID (`UnvectorizedMediaChunks.uuid`), not
+            an integer id -- see `MCPResources.get_rag_chunk_resource` for
+            why (TASK-985).
+            """
+            return await self.resources.get_rag_chunk_resource(chunk_uuid)
 
         # List resources
         @self.mcp.list_resources()
