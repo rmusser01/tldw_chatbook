@@ -31,6 +31,7 @@ from tldw_chatbook.TTS.profile_types import (
 
 CURRENT_PROFILE_SCHEMA_VERSION = 1
 BUSY_TIMEOUT_MS = 5_000
+_DEADLINE_PROGRESS_OPCODE_INTERVAL = 1_000
 _MAX_PERSISTED_DISPLAY_NAME_CHARACTERS = 128
 _MAX_PERSISTED_RESPONSE_FORMAT_CHARACTERS = 32
 _MAX_PERSISTED_OPTIONS_BYTES = 16 * 1024
@@ -515,8 +516,83 @@ def _has_exact_primary_key_index(
     )
 
 
-def _validate_schema(connection: sqlite3.Connection) -> None:
+def _run_with_deadline_progress(
+    connection: sqlite3.Connection,
+    check_deadline: Callable[[], None] | None,
+    operation: Callable[[], None],
+) -> None:
+    """Run SQLite work with cooperative deadline interruption when requested."""
+
+    if check_deadline is None:
+        operation()
+        return
+
+    callback_error: BaseException | None = None
+    body_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
+    progress_installed = False
+
+    def interrupt_after_deadline() -> int:
+        nonlocal callback_error
+        try:
+            check_deadline()
+        except BaseException as error:
+            callback_error = error
+            return 1
+        return 0
+
+    try:
+        check_deadline()
+        connection.set_progress_handler(
+            interrupt_after_deadline,
+            _DEADLINE_PROGRESS_OPCODE_INTERVAL,
+        )
+        progress_installed = True
+        operation()
+        check_deadline()
+    except BaseException as error:
+        body_error = error
+
+    if progress_installed:
+        try:
+            connection.set_progress_handler(None, 0)
+        except BaseException as error:
+            cleanup_error = error
+
+    if callback_error is not None:
+        body_error = callback_error
+    for candidate_error in (body_error, cleanup_error):
+        if candidate_error is not None and not isinstance(candidate_error, Exception):
+            raise candidate_error
+    if cleanup_error is not None:
+        raise cleanup_error
+    if body_error is not None:
+        raise body_error
+
+
+def _validate_schema(
+    connection: sqlite3.Connection,
+    *,
+    check_deadline: Callable[[], None] | None = None,
+) -> None:
     """Validate every required structural and integrity invariant for v1."""
+
+    try:
+        _run_with_deadline_progress(
+            connection,
+            check_deadline,
+            lambda: _validate_schema_body(connection),
+        )
+    except ProfileRepositoryError:
+        raise
+    except BaseException as error:
+        if not isinstance(error, Exception):
+            raise
+        raise _repository_error("schema_corrupt") from None
+
+
+def _validate_schema_body(connection: sqlite3.Connection) -> None:
+    """Validate schema invariants while any caller-owned progress hook is active."""
 
     try:
         if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
@@ -672,6 +748,7 @@ def open_profile_store(
     path: Path,
     *,
     must_exist: bool = False,
+    check_deadline: Callable[[], None] | None = None,
 ) -> sqlite3.Connection:
     """Open/configure a live store, optionally refusing to create a missing file.
 
@@ -679,6 +756,7 @@ def open_profile_store(
         path: Profile-store path.
         must_exist: When true, use SQLite ``mode=rw`` so no missing database can
             be created during restore validation or lifecycle rebind.
+        check_deadline: Optional restore-time cooperative deadline callback.
 
     Returns:
         One fully configured and validated caller-owned connection.
@@ -690,8 +768,14 @@ def open_profile_store(
     connection: sqlite3.Connection | None = None
     body_error: BaseException | None = None
     try:
-        if not isinstance(path, Path) or type(must_exist) is not bool:
+        if (
+            not isinstance(path, Path)
+            or type(must_exist) is not bool
+            or (check_deadline is not None and not callable(check_deadline))
+        ):
             raise _repository_error("operation_failed")
+        if check_deadline is not None:
+            check_deadline()
         database_uri: str | None = None
         if must_exist:
             resolution_missing = False
@@ -735,7 +819,11 @@ def open_profile_store(
                 raise _repository_error("missing")
             raise connect_error
         assert connection is not None
+        if check_deadline is not None:
+            check_deadline()
         _configure_connection(connection)
+        if check_deadline is not None:
+            check_deadline()
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if type(version) is not int:
             raise _repository_error("schema_corrupt")
@@ -753,11 +841,17 @@ def open_profile_store(
         elif version != CURRENT_PROFILE_SCHEMA_VERSION:
             raise _repository_error("schema_unsupported")
         else:
-            _validate_schema(connection)
+            _validate_schema(
+                connection,
+                check_deadline=check_deadline,
+            )
             journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
             if journal_mode != "wal":
                 raise _repository_error("schema_corrupt")
-        _validate_schema(connection)
+        _validate_schema(
+            connection,
+            check_deadline=check_deadline,
+        )
     except BaseException as error:
         body_error = error
 
@@ -1015,7 +1109,10 @@ def validate_profile_candidate(
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if version != CURRENT_PROFILE_SCHEMA_VERSION:
             raise _repository_error("schema_unsupported")
-        _validate_schema(connection)
+        _validate_schema(
+            connection,
+            check_deadline=check_deadline,
+        )
         validate_profile_store_rows(
             connection,
             check_deadline=check_deadline,

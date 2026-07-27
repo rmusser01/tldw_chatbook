@@ -508,6 +508,52 @@ def _require_restore_time(deadline: float) -> None:
         raise _repository_error("restore_failed")
 
 
+def _run_with_restore_progress(
+    connection: sqlite3.Connection,
+    deadline: float,
+    operation: Callable[[], _T],
+) -> _T:
+    """Run SQLite work with one deadline-aware VM progress handler."""
+
+    callback_error: BaseException | None = None
+    body_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
+    progress_installed = False
+    result: _T | None = None
+
+    def interrupt_after_deadline() -> int:
+        nonlocal callback_error
+        try:
+            _require_restore_time(deadline)
+        except BaseException as error:
+            callback_error = error
+            return 1
+        return 0
+
+    try:
+        _require_restore_time(deadline)
+        connection.set_progress_handler(
+            interrupt_after_deadline,
+            _RESTORE_PROGRESS_OPCODE_INTERVAL,
+        )
+        progress_installed = True
+        result = operation()
+        _require_restore_time(deadline)
+    except BaseException as error:
+        body_error = error
+
+    if progress_installed:
+        try:
+            connection.set_progress_handler(None, 0)
+        except BaseException as error:
+            cleanup_error = error
+
+    if callback_error is not None:
+        body_error = callback_error
+    _raise_with_cleanup_precedence(body_error, cleanup_error)
+    return cast(_T, result)
+
+
 def _unlink_path_if_present(path: Path) -> None:
     try:
         path.unlink()
@@ -1726,7 +1772,7 @@ class TTSProfileRepository:
             )
             _require_restore_time(deadline)
             self._require_configured_path_matches(active_path, "restore_failed")
-            self._worker_remove_live_sidecars()
+            self._worker_remove_live_sidecars(deadline=deadline)
             _require_restore_time(deadline)
             self._require_configured_path_matches(active_path, "restore_failed")
             _fsync_file(stage_path)
@@ -1742,7 +1788,15 @@ class TTSProfileRepository:
             self._require_configured_path_matches(active_path, "restore_failed")
 
             _require_restore_time(deadline)
-            scoped = open_profile_store(active_path, must_exist=True)
+
+            def deadline_check() -> None:
+                _require_restore_time(deadline)
+
+            scoped = open_profile_store(
+                active_path,
+                must_exist=True,
+                check_deadline=deadline_check,
+            )
             scoped_error: BaseException | None = None
             try:
                 _require_restore_time(deadline)
@@ -1752,7 +1806,7 @@ class TTSProfileRepository:
                 )
                 validate_profile_store_rows(
                     scoped,
-                    check_deadline=lambda: _require_restore_time(deadline),
+                    check_deadline=deadline_check,
                 )
                 self._worker_store_counts(scoped, deadline=deadline)
             except BaseException as error:
@@ -1784,6 +1838,7 @@ class TTSProfileRepository:
             rebound_connection = open_profile_store(
                 active_path,
                 must_exist=True,
+                check_deadline=deadline_check,
             )
             # Validate the authoritative long-lived handle, not only the
             # scoped pre-handoff handle.
@@ -1793,7 +1848,7 @@ class TTSProfileRepository:
             )
             validate_profile_store_rows(
                 rebound_connection,
-                check_deadline=lambda: _require_restore_time(deadline),
+                check_deadline=deadline_check,
             )
             profile_count, assignment_count = self._worker_store_counts(
                 rebound_connection,
@@ -1805,17 +1860,19 @@ class TTSProfileRepository:
                 assignment_count=assignment_count,
             )
             self._require_configured_path_matches(active_path, "restore_failed")
-            self._lease = rebound_lease
-            self._connection = rebound_connection
-            rebound_lease = None
-            rebound_connection = None
+            _require_restore_time(deadline)
             with self._state_lock:
+                _require_restore_time(deadline)
                 if (
                     self._generation != generation
                     or self._terminal
                     or self._state is not ProfileRepositoryState.RESTORING
                 ):
                     raise _repository_error("stale")
+                self._lease = rebound_lease
+                self._connection = rebound_connection
+                rebound_lease = None
+                rebound_connection = None
                 self._state = ProfileRepositoryState.OPEN
         except BaseException as error:
             primary_error = error
@@ -1915,10 +1972,41 @@ class TTSProfileRepository:
         if connection is None or lease is None:
             raise _repository_error("invalid_state")
         _require_restore_time(deadline)
-        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-        _require_restore_time(deadline)
+        timeout_row = connection.execute("PRAGMA busy_timeout").fetchone()
+        if (
+            timeout_row is None
+            or len(timeout_row) != 1
+            or type(timeout_row[0]) is not int
+            or timeout_row[0] < 0
+        ):
+            raise _repository_error("restore_failed")
+        original_timeout_ms = cast(int, timeout_row[0])
+        remaining = _remaining_seconds(deadline)
+        if remaining <= 0:
+            raise _repository_error("restore_failed")
+        bounded_timeout_ms = min(original_timeout_ms, int(remaining * 1_000))
+        checkpoint: object = None
+        body_error: BaseException | None = None
+        cleanup_error: BaseException | None = None
+        try:
+            connection.execute(f"PRAGMA busy_timeout = {bounded_timeout_ms}")
+            checkpoint = _run_with_restore_progress(
+                connection,
+                deadline,
+                lambda: connection.execute(
+                    "PRAGMA wal_checkpoint(TRUNCATE)"
+                ).fetchone(),
+            )
+        except BaseException as error:
+            body_error = error
+        try:
+            connection.execute(f"PRAGMA busy_timeout = {original_timeout_ms}")
+        except BaseException as error:
+            cleanup_error = error
+        _raise_with_cleanup_precedence(body_error, cleanup_error)
         if (
             checkpoint is None
+            or not isinstance(checkpoint, (tuple, sqlite3.Row))
             or len(checkpoint) != 3
             or any(type(value) is not int for value in checkpoint)
             or tuple(checkpoint) != (0, 0, 0)
@@ -2012,7 +2100,11 @@ class TTSProfileRepository:
             )
             recovery_path = Path(recovery_name)
             os.close(descriptor)
-            source = open_profile_store(active_path, must_exist=True)
+            source = open_profile_store(
+                active_path,
+                must_exist=True,
+                check_deadline=lambda: _require_restore_time(deadline),
+            )
             destination = sqlite3.connect(recovery_path, isolation_level=None)
             self._worker_online_backup(
                 source,
@@ -2057,24 +2149,31 @@ class TTSProfileRepository:
         assert recovery_path is not None
         return recovery_path
 
-    def _worker_remove_live_sidecars(self) -> None:
+    def _worker_remove_live_sidecars(self, *, deadline: float) -> None:
         database_path = self._worker_active_path()
         rollback_journal = database_path.with_name(f"{database_path.name}-journal")
+        _require_restore_time(deadline)
         try:
             rollback_journal.lstat()
         except FileNotFoundError:
             pass
         else:
             raise _repository_error("restore_failed")
+        _require_restore_time(deadline)
         for suffix in ("-wal", "-shm"):
             sidecar = database_path.with_name(f"{database_path.name}{suffix}")
+            _require_restore_time(deadline)
             try:
                 state = sidecar.lstat()
             except FileNotFoundError:
+                _require_restore_time(deadline)
                 continue
+            _require_restore_time(deadline)
             if not stat.S_ISREG(state.st_mode):
                 raise _repository_error("restore_failed")
+            _require_restore_time(deadline)
             sidecar.unlink()
+            _require_restore_time(deadline)
 
     def _worker_remove_temporary_store(self, path: Path) -> list[BaseException]:
         errors: list[BaseException] = []
@@ -2097,17 +2196,31 @@ class TTSProfileRepository:
         *,
         deadline: float | None = None,
     ) -> tuple[int, int]:
-        counts: list[int] = []
-        for table in ("tts_generation_profiles", "character_tts_assignments"):
+        def read_counts() -> tuple[int, int]:
+            counts: list[int] = []
+            for table in ("tts_generation_profiles", "character_tts_assignments"):
+                if deadline is not None:
+                    _require_restore_time(deadline)
+                row = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+                if (
+                    row is None
+                    or len(row) != 1
+                    or type(row[0]) is not int
+                    or row[0] < 0
+                ):
+                    raise _repository_error("corrupt_data")
+                counts.append(cast(int, row[0]))
             if deadline is not None:
                 _require_restore_time(deadline)
-            row = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
-            if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
-                raise _repository_error("corrupt_data")
-            counts.append(cast(int, row[0]))
-        if deadline is not None:
-            _require_restore_time(deadline)
-        return (counts[0], counts[1])
+            return (counts[0], counts[1])
+
+        if deadline is None:
+            return read_counts()
+        return _run_with_restore_progress(
+            connection,
+            deadline,
+            read_counts,
+        )
 
     def _worker_rebind_current_store(self) -> None:
         active_path = self._worker_active_path()

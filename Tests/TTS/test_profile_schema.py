@@ -1977,6 +1977,59 @@ def test_candidate_deadline_interrupts_private_snapshot_copy_and_cleans_up(
     assert not snapshot_paths[0].exists()
 
 
+def test_schema_quick_check_is_interrupted_by_deadline_progress(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    connection = open_profile_store(path)
+    expired = False
+    progress_handlers: list[tuple[object, int]] = []
+
+    class ProgressProxy:
+        progress_handler: Callable[[], int] | None = None
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(connection, name)
+
+        def set_progress_handler(
+            self,
+            handler: Callable[[], int] | None,
+            opcode_interval: int,
+        ) -> None:
+            self.progress_handler = handler
+            progress_handlers.append((handler, opcode_interval))
+
+        def execute(
+            self,
+            statement: str,
+            parameters: object = (),
+        ) -> sqlite3.Cursor:
+            nonlocal expired
+            if statement.strip() == "PRAGMA quick_check":
+                expired = True
+                assert self.progress_handler is not None
+                if self.progress_handler() != 0:
+                    raise sqlite3.OperationalError
+            return connection.execute(statement, parameters)
+
+    def check_deadline() -> None:
+        if expired:
+            raise ProfileRepositoryError("restore_failed")
+
+    try:
+        with _safe_error("restore_failed"):
+            profile_schema._validate_schema(
+                ProgressProxy(),  # type: ignore[arg-type]
+                check_deadline=check_deadline,
+            )
+    finally:
+        connection.close()
+
+    assert callable(progress_handlers[0][0])
+    assert progress_handlers[0][1] > 0
+    assert progress_handlers[-1] == (None, 0)
+
+
 def test_candidate_ordinary_error_removes_private_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

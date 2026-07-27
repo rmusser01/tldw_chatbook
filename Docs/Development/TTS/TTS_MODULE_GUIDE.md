@@ -143,10 +143,12 @@ create a blank database. Corrupt, partial, unsupported-version, or missing
 established stores likewise fail closed instead of being recreated.
 
 The restore timeout is one absolute cooperative budget. SQLite copies run in
-bounded page batches, integrity queries use SQLite VM progress interruption,
-and schema-owned rows and private candidate-copy chunks check the same
-deadline. Checks also surround staging, recovery, replacement, and durable
-flush boundaries so the exclusive lease is released promptly on expiry.
+bounded page batches; structural, quick-check, foreign-key, integrity, and
+count queries use SQLite VM progress interruption; and schema-owned rows and
+private candidate-copy chunks check the same deadline. Checkpoint busy waiting
+is capped to the remaining budget. Checks also surround staging, sidecar
+handling, recovery, replacement, final publication, and durable flush
+boundaries so the exclusive lease is released promptly on expiry.
 An individual kernel call such as `fsync`, `replace`, `stat`, `read`, or
 `write` cannot be interrupted after it starts, so one such in-flight call may
 finish just beyond the requested timeout before cleanup releases ownership.

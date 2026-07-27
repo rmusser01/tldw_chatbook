@@ -2273,6 +2273,102 @@ def test_restore_integrity_check_interrupts_and_clears_progress_handler(
     assert progress_handlers[-1] == (None, 0)
 
 
+def test_restore_checkpoint_caps_busy_wait_to_remaining_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    now = 0.0
+    observed_checkpoint_timeout: int | None = None
+    timeout_updates: list[int] = []
+    progress_handlers: list[tuple[object, int]] = []
+    events: list[tuple[str, int]] = []
+    lease = _RecordingLease(events)
+    lease.acquired = True
+
+    class Cursor:
+        def __init__(self, row: tuple[int, ...] | None = None) -> None:
+            self.row = row
+
+        def fetchone(self) -> tuple[int, ...] | None:
+            return self.row
+
+    class Connection:
+        busy_timeout = 5_000
+
+        def execute(self, statement: str) -> Cursor:
+            nonlocal now, observed_checkpoint_timeout
+            normalized = statement.strip()
+            if normalized == "PRAGMA busy_timeout":
+                return Cursor((self.busy_timeout,))
+            if normalized.startswith("PRAGMA busy_timeout = "):
+                self.busy_timeout = int(normalized.rsplit(" ", 1)[1])
+                timeout_updates.append(self.busy_timeout)
+                return Cursor()
+            if normalized == "PRAGMA wal_checkpoint(TRUNCATE)":
+                observed_checkpoint_timeout = self.busy_timeout
+                now = 0.3
+                return Cursor((0, 0, 0))
+            raise AssertionError
+
+        def set_progress_handler(
+            self,
+            handler: Callable[[], int] | None,
+            opcode_interval: int,
+        ) -> None:
+            progress_handlers.append((handler, opcode_interval))
+
+    monkeypatch.setattr(module, "_monotonic", lambda: now)
+    connection = Connection()
+    repository._connection = cast(sqlite3.Connection, connection)
+    repository._lease = cast(ProfileStoreLease, lease)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        repository._worker_close_for_restore(0.25)
+
+    _assert_safe_error(caught.value, "restore_failed")
+    assert observed_checkpoint_timeout is not None
+    assert observed_checkpoint_timeout <= 250
+    assert timeout_updates[-1] == 5_000
+    assert callable(progress_handlers[0][0])
+    assert progress_handlers[-1] == (None, 0)
+    assert repository._connection is connection
+    assert repository._lease is lease
+    assert lease.acquired is True
+
+
+def test_restore_sidecar_checks_deadline_between_filesystem_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    wal_path = database_path.with_name(f"{database_path.name}-wal")
+    wal_path.write_bytes(b"must remain")
+    repository = module.TTSProfileRepository(database_path)
+    repository._active_database_path = database_path
+    now = 0.0
+    real_lstat = Path.lstat
+
+    def expiring_lstat(path: Path) -> os.stat_result:
+        nonlocal now
+        try:
+            return real_lstat(path)
+        finally:
+            if path.name.endswith("-journal"):
+                now = 2.0
+
+    monkeypatch.setattr(module, "_monotonic", lambda: now)
+    monkeypatch.setattr(Path, "lstat", expiring_lstat)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        repository._worker_remove_live_sidecars(deadline=1.0)
+
+    _assert_safe_error(caught.value, "restore_failed")
+    assert wal_path.read_bytes() == b"must remain"
+
+
 @pytest.mark.asyncio
 async def test_online_backup_rejects_live_lock_and_sidecar_targets(
     tmp_path: Path,
@@ -2921,13 +3017,22 @@ async def test_post_replace_long_lived_reopen_failure_is_unavailable_without_bla
     real_open = module.open_profile_store
     strict_calls = 0
 
-    def injected_open(path: Path, *, must_exist: bool = False) -> sqlite3.Connection:
+    def injected_open(
+        path: Path,
+        *,
+        must_exist: bool = False,
+        check_deadline: Callable[[], None] | None = None,
+    ) -> sqlite3.Connection:
         nonlocal strict_calls
         if must_exist:
             strict_calls += 1
             if strict_calls == 3:
                 raise RuntimeError(secret)
-        return real_open(path, must_exist=must_exist)
+        return real_open(
+            path,
+            must_exist=must_exist,
+            check_deadline=check_deadline,
+        )
 
     monkeypatch.setattr(module, "open_profile_store", injected_open)
     with pytest.raises(ProfileRepositoryError) as caught:
@@ -3290,9 +3395,14 @@ async def test_restore_live_connection_close_failure_retains_protecting_lease(
         path: Path,
         *,
         must_exist: bool = False,
+        check_deadline: Callable[[], None] | None = None,
     ) -> sqlite3.Connection:
         nonlocal strict_calls
-        connection = real_open(path, must_exist=must_exist)
+        connection = real_open(
+            path,
+            must_exist=must_exist,
+            check_deadline=check_deadline,
+        )
         if must_exist:
             strict_calls += 1
             target_call = {
@@ -3391,13 +3501,18 @@ async def test_restore_release_failure_retains_residual_lease_for_later_cleanup(
         path: Path,
         *,
         must_exist: bool = False,
+        check_deadline: Callable[[], None] | None = None,
     ) -> sqlite3.Connection:
         nonlocal strict_calls
         if must_exist:
             strict_calls += 1
             if boundary == "rebound_release" and strict_calls == 3:
                 raise RuntimeError(secret)
-        return real_open(path, must_exist=must_exist)
+        return real_open(
+            path,
+            must_exist=must_exist,
+            check_deadline=check_deadline,
+        )
 
     monkeypatch.setattr(module, "ProfileStoreLease", ControlledReleaseLease)
     monkeypatch.setattr(module, "open_profile_store", injected_open)
@@ -3825,9 +3940,9 @@ async def test_restore_refuses_live_rollback_journal_without_deleting_it(
     real_rebind = repository._worker_rebind_current_store
     journal_seen_before_rebind = False
 
-    def inject_journal() -> None:
+    def inject_journal(*, deadline: float) -> None:
         journal.touch()
-        real_remove_sidecars()
+        real_remove_sidecars(deadline=deadline)
 
     def observed_rebind() -> None:
         nonlocal journal_seen_before_rebind
@@ -4228,6 +4343,68 @@ async def test_restore_stage_consuming_deadline_does_not_create_recovery_or_repl
         page = await repository.list_profiles()
         assert [profile.display_name for profile in page.value.profiles] == ["Original"]
         await _assert_exclusive_lease_blocked(database_path)
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_restore_deadline_expiring_during_final_path_check_does_not_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    await _create_profile_store(candidate, "Candidate")
+    repository = _repository(database_path)
+    await repository.open()
+    await repository.create_profile(
+        _draft("Original"),
+        UUID("00000000-0000-4000-8000-000000000099"),
+    )
+    now = 0.0
+    count_calls = 0
+    rebound_counts_complete = False
+    final_path_check_seen = False
+    real_counts = repository._worker_store_counts
+    real_path_check = repository._require_configured_path_matches
+
+    def observed_counts(
+        connection: sqlite3.Connection,
+        *,
+        deadline: float | None = None,
+    ) -> tuple[int, int]:
+        nonlocal count_calls, rebound_counts_complete
+        result = real_counts(connection, deadline=deadline)
+        count_calls += 1
+        if count_calls == 2:
+            rebound_counts_complete = True
+        return result
+
+    def expiring_path_check(active_path: Path, failure_code: str) -> None:
+        nonlocal now, final_path_check_seen
+        real_path_check(active_path, failure_code)
+        if rebound_counts_complete:
+            final_path_check_seen = True
+            now = 11.0
+
+    monkeypatch.setattr(module, "_monotonic", lambda: now)
+    monkeypatch.setattr(repository, "_worker_store_counts", observed_counts)
+    monkeypatch.setattr(
+        repository,
+        "_require_configured_path_matches",
+        expiring_path_check,
+    )
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.restore_from(candidate, timeout_seconds=10.0)
+
+        _assert_safe_error(caught.value, "restore_failed")
+        assert count_calls == 2
+        assert final_path_check_seen is True
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert repository.generation == 2
     finally:
         await repository.close()
 
