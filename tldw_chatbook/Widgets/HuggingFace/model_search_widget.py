@@ -4,6 +4,7 @@ Search widget for HuggingFace GGUF models.
 """
 
 from typing import Optional, List, Dict, Any
+
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.css.query import QueryError

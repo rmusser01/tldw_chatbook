@@ -235,6 +235,50 @@ class LabScreen(BaseAppScreen):
             source="lab", shortcuts=self.LAB_FOOTER_SHORTCUTS
         )
 
+    async def recompose(self) -> None:
+        """Re-populate the rail/inspector and re-schedule the body mount.
+
+        ``on_mount()`` -- where ``_populate_regions()`` and the deferred
+        ``_mount_lab_body()`` normally run -- fires exactly once per screen
+        instance and does NOT re-run on a screen-level
+        ``refresh(recompose=True)``. ``Widget.recompose()`` (what that
+        schedules, via ``BaseAppScreen``'s override for its own mouse-capture
+        cleanup -- task-627) tears down every child ``compose_content()``
+        yielded and rebuilds them from scratch, including a brand-new
+        ``LabWorkbench`` with empty ``#lab-rail``/``#lab-inspector`` regions
+        and no body. Left alone, that reproduces exactly the bug
+        ``toggle_lab_rail`` used to have (see its docstring): the mode's
+        entire content vanishes for the life of the screen, because nothing
+        else ever calls ``_populate_regions()``/``_mount_lab_body()`` again.
+
+        Overriding ``recompose()`` itself -- rather than ``on_mount()`` --
+        is what makes this safe: it runs on every recompose, not just the
+        first mount, and preserves the deferred body mount (Models' body
+        costs 488-787 ms; mounting it inline here would defeat the point of
+        deferring it in the first place). ``_mount_lab_body()`` calls
+        ``on_lab_body_ready()`` at the end exactly as it does on first
+        mount, so a mode is deliberately given the chance to re-wire itself
+        against the fresh body instance ``build_lab_body()`` just built --
+        ``LLMScreen`` needs this to re-register its ``active_view`` watch on
+        the new ``LLMManagementWindow``, and guards its own
+        ``set_interval`` poll so a recompose does not start a second,
+        duplicate timer alongside the one from first mount (that timer is
+        owned by this screen, not the recomposed body, so it survives the
+        teardown untouched).
+
+        Footer shortcuts are not re-registered here: ``BaseAppScreen.
+        compose()`` already re-seeds them from
+        ``self._footer_shortcut_registration`` on every recompose.
+        """
+        await super().recompose()
+        if not self.is_mounted:
+            # The screen was torn down during the teardown/remount above
+            # (e.g. the user navigated away mid-recompose) -- normal race,
+            # nothing left to populate.
+            return
+        self._populate_regions()
+        self.call_after_refresh(self._mount_lab_body)
+
     def action_lab_mode_focus(self, delta: int) -> None:
         """Move focus to an adjacent mode chip, wrapping at both ends.
 

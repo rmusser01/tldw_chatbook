@@ -66,6 +66,14 @@ class LLMScreen(LabScreen):
         """
         super().__init__(app_instance, "llm", **kwargs)
         self.llm_window: LLMManagementWindow | None = None
+        #: Guards the ``set_interval`` poll below against a screen-level
+        #: recompose: ``on_lab_body_ready()`` fires again on every recompose
+        #: (see ``LabScreen.recompose()``) so it can rebind the
+        #: ``active_view`` watch to the fresh ``LLMManagementWindow``, but
+        #: the poll timer is owned by this screen -- not the recomposed
+        #: body -- so it already survives the teardown; starting a second
+        #: one alongside it would be a real leak.
+        self._status_poll_started = False
 
     def lab_header_state(self) -> WorkbenchHeaderState:
         """Return the Models destination header copy."""
@@ -140,12 +148,22 @@ class LLMScreen(LabScreen):
         the rail highlight -- necessary because ``LLMManagementWindow.on_mount``
         sets ``active_view`` itself, so a press-only handler would leave the
         rail unhighlighted on arrival.
+
+        This also fires again after a screen-level recompose (``LabScreen.
+        recompose()`` reruns the deferred body mount, which calls this once
+        the fresh body exists), so the watch is rebound to the NEW
+        ``LLMManagementWindow`` instance each time -- the old one is gone.
+        The poll timer, in contrast, is owned by this screen and already
+        survives a recompose untouched, so ``_status_poll_started`` guards
+        it against being started a second time.
         """
         if self.llm_window is None:
             return
         self.watch(self.llm_window, "active_view", self._sync_rail_active, init=True)
         self.refresh_lab_status()
-        self.set_interval(LAB_SERVER_POLL_SECONDS, self.refresh_lab_status)
+        if not self._status_poll_started:
+            self._status_poll_started = True
+            self.set_interval(LAB_SERVER_POLL_SECONDS, self.refresh_lab_status)
 
     def _sync_rail_active(self, active_view: str) -> None:
         """Move the rail highlight to the row matching the active view.

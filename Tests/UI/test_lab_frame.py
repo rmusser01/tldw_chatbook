@@ -349,3 +349,56 @@ async def test_toggling_a_rail_preserves_the_mounted_mode_content(fake_rail_stor
         assert screen.query_one("#lab-rail-handle").display is False
 
         assert fake_rail_store, "toggle_lab_rail did not persist the new layout"
+
+
+@pytest.mark.asyncio
+async def test_screen_level_recompose_repopulates_rail_inspector_and_body(
+    fake_rail_store,
+):
+    """Regression test: a screen-level recompose must not leave the frame
+    permanently blank.
+
+    `_populate_regions()` and the deferred `_mount_lab_body()` used to run
+    only from `on_mount()`, which fires exactly once per screen instance --
+    never again on a later `refresh(recompose=True)`. Textual's
+    `Widget.recompose()` (what that schedules) tears down every child
+    `compose_content()` yielded and rebuilds them from scratch, including a
+    brand-new `LabWorkbench` with fresh, empty `#lab-rail`/`#lab-inspector`
+    regions and no body -- exactly the defect class `toggle_lab_rail` used
+    to trigger (see `test_toggling_a_rail_preserves_the_mounted_mode_content`
+    above) before it switched to an in-place layout apply. This test drives
+    a real screen-level recompose directly (`fake_rail_store` is passed
+    purely as the belt-and-suspenders guard the rest of this file uses,
+    since `LabScreen.__init__` reads the rail layout and nothing here should
+    ever reach the real config store).
+    """
+    app, screen = _mount(lambda a: _ProbeLabScreen(a))
+    async with app.run_test() as pilot:
+        await app.push_screen(screen)
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.query_one("#probe-rail-row") is not None
+        assert screen.query_one("#probe-inspector-row") is not None
+        assert screen.query_one(_ProbeBody) is not None
+        body_ready_before = screen.body_ready_calls
+        assert body_ready_before == 1
+
+        screen.refresh(recompose=True)
+        # One pause lets the scheduled `_check_recompose` run `recompose()`
+        # itself (removal + remount of the workbench); the deferred body
+        # mount this test cares about is scheduled with `call_after_refresh`
+        # from inside that, so it needs further pauses to actually land.
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert (
+            screen.query_one("#probe-rail-row") is not None
+        ), "rail content missing after screen-level recompose"
+        assert (
+            screen.query_one("#probe-inspector-row") is not None
+        ), "inspector content missing after screen-level recompose"
+        assert (
+            screen.query_one(_ProbeBody) is not None
+        ), "body missing after screen-level recompose"
+        assert screen.body_ready_calls == body_ready_before + 1
