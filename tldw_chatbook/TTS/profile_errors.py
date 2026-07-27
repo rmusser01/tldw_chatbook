@@ -8,9 +8,12 @@ _VALIDATION_CODES = frozenset(
         "audio_cpp",
         "assignment",
         "assignment_count",
+        "availability",
         "authority_id",
         "byte_count",
+        "catalog_revision",
         "character_id",
+        "configuration_revision",
         "created_at",
         "display_name",
         "generation",
@@ -20,6 +23,7 @@ _VALIDATION_CODES = frozenset(
         "profile_id",
         "profile_count",
         "provider_id",
+        "recovery_action",
         "profiles",
         "response_format",
         "revision",
@@ -51,6 +55,16 @@ _REPOSITORY_CODES = frozenset(
         "stale",
         "terminal",
         "unavailable",
+    }
+)
+_SERVICE_CODES = frozenset(
+    {
+        "artifact_ineligible",
+        "operation_failed",
+        "profile_unavailable",
+        "profile_unverified",
+        "stale_configuration",
+        "unsupported_profile",
     }
 )
 
@@ -93,3 +107,16 @@ class ProfileRepositoryError(_ProfileError, RuntimeError):
 
     def __reduce__(self) -> tuple[type["ProfileRepositoryError"], tuple[str]]:
         return (ProfileRepositoryError, (self.code,))
+
+
+class ProfileServiceError(_ProfileError, RuntimeError):
+    """A value-independent failure at the profile-service boundary."""
+
+    def __init__(self, code: str) -> None:
+        safe_code = (
+            code if type(code) is str and code in _SERVICE_CODES else "operation_failed"
+        )
+        super().__init__(safe_code, f"TTS profile service failed: {safe_code}")
+
+    def __reduce__(self) -> tuple[type["ProfileServiceError"], tuple[str]]:
+        return (ProfileServiceError, (self.code,))
