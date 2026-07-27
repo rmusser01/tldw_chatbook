@@ -141,14 +141,14 @@ git diff --check
 
 - Do not mass-format the verified pre-task `app.py` baseline exception.
 
-- [ ] Commit implementation:
+- [x] Commit implementation:
 
 ```bash
 git add tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/media_runtime_state.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/app.py Tests/ProductionApp/test_media_state_ownership.py Tests/test_application_state_ownership.py
 git commit -m "refactor(media): own state and stop mutations at destination (task-652)"
 ```
 
-- [ ] Re-read TASK-652, add Implementation Notes containing actual commands,
+- [x] Re-read TASK-652, add Implementation Notes containing actual commands,
   counts, durations, mutation/staleness evidence, modified files, ADRs, and
   deviations, check all acceptance criteria, then mark Done and commit its
   task file:
