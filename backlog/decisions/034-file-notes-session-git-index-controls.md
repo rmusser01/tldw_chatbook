@@ -28,10 +28,14 @@ unless Chatbook can prove it is reversing its own index action.
   one inseparable Git group.
 - Offer selected-group and bulk Stage/Unstage actions. Staging is whole-file,
   path-scoped behavior and is labelled as such.
-- Refuse groups with pre-existing or partially staged same-path state, unmerged
-  entries, ignored paths, or nested repository boundaries.
+- Freshly preflight and refuse groups with observed pre-existing or partially
+  staged same-path state, unmerged entries, ignored paths, or nested repository
+  boundaries.
 - Record exact repository, `HEAD`, and index-entry signatures after a successful
   Chatbook stage. Unstage only while that complete signature still matches.
+- Track ownership per endpoint so a later Chatbook move or move chain may
+  retain ownership only when every staged entry is already covered by a valid
+  Chatbook signature; otherwise block the expanded group.
 - Keep Git ownership and repository trust in process memory. Restart or external
   index/`HEAD` change revokes Chatbook's Unstage authority.
 - Revalidate canonical worktree and Git-directory identity before mutation.
@@ -59,8 +63,10 @@ unless Chatbook can prove it is reversing its own index action.
 - Git remains an optional projection/action surface. Disk remains the note
   authority and SQLite remains an independent recovery replica.
 - Concurrent external index mutations cannot be made transactionally atomic
-  with Chatbook's semantic preflight. Git protects index-file integrity;
-  Chatbook detects uncertainty afterward and drops ownership.
+  with Chatbook's semantic preflight. Concurrent external index mutation during
+  one Chatbook action is unsupported. Git protects index-file integrity;
+  Chatbook minimizes the race, detects observable uncertainty afterward, and
+  drops ownership, but does not claim a cross-process compare-and-swap.
 
 ## Alternatives considered
 

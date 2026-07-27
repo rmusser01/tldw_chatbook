@@ -111,6 +111,15 @@ Git rows describe effective path groups rather than every autosave event:
 Coalescing never broadens beyond paths present in Chatbook's in-memory session
 changes. External changes to another repository path cannot enter a bulk action.
 
+Ownership is tracked per literal endpoint under one repository/`HEAD`
+generation, then projected onto the current coalesced groups. If a staged file
+is later moved, or a staged move gains another chained endpoint, the expanded
+group remains Chatbook-owned only when every staged delta still matches a saved
+endpoint signature and every new endpoint has no external staged delta. A
+successful Stage update replaces those endpoint signatures with the expanded
+group's fresh entries. Any unmatched staged endpoint blocks the group and
+revokes its aggregate ownership instead of guessing how histories should merge.
+
 ## Git command contract
 
 Git is invoked directly with argument arrays, never through a shell. All
@@ -150,7 +159,8 @@ why they are blocked.
 
 Before staging, each group receives a fresh preflight:
 
-- any pre-existing staged delta on an endpoint blocks the entire group;
+- any pre-existing staged delta observed on an endpoint blocks the entire
+  group;
 - mixed staged/unstaged state not owned by Chatbook is `Partially staged
   externally`;
 - unmerged entries, ignored paths, nested repository boundaries, an invalid
@@ -215,10 +225,14 @@ Every query runs in a worker and uses a generation token so stale results cannot
 replace newer state. Git mutations are serialized with one service lock.
 
 External Git can still race between Chatbook's final preflight and Git's own
-index lock. Git prevents index-file corruption, but no Git CLI compare-and-swap
-exists for Chatbook's semantic precondition. Chatbook therefore rereads actual
-state after every command and revokes ownership whenever it cannot prove the
-expected result.
+index lock. Git prevents index-file corruption, but no porcelain Git CLI
+compare-and-swap exists for Chatbook's semantic precondition. The supported
+contract therefore excludes concurrent external index mutation during one
+Chatbook Stage or Unstage action. Chatbook minimizes that window with an
+immediate preflight, reports lock contention, rereads actual state after every
+command, and revokes ownership whenever the result is uncertain. It does not
+claim that post-command inspection can prove an external writer did not finish
+inside the remaining race window.
 
 ## Error behavior
 
@@ -237,6 +251,11 @@ All failures remain local to Session Git:
 
 Chatbook never initializes or repairs a repository, changes configuration,
 invokes remotes or credentials, or edits the worktree through Git.
+
+If users run another index-mutating Git command concurrently with a Chatbook
+action, ordinary Git last-writer behavior may affect the same session path.
+That unsupported race is disclosed in the Session Git help text; it is not
+misrepresented as an atomic cross-process ownership guarantee.
 
 ## Focused verification
 

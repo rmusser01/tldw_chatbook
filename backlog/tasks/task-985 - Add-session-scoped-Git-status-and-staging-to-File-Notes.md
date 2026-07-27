@@ -4,6 +4,7 @@ title: Add session-scoped Git status and staging to File Notes
 status: To Do
 assignee: []
 created_date: '2026-07-27 19:52'
+updated_date: '2026-07-27 20:01'
 labels:
   - notes
   - git
@@ -29,11 +30,12 @@ Let users inspect and safely stage or unstage only paths changed during the curr
 <!-- AC:BEGIN -->
 - [ ] #1 A selected File Notes root inside one supported Git worktree shows coalesced current-session path rows with actual Git state and explicit Session paths only and whole-file staging labels.
 - [ ] #2 User can stage or unstage one eligible logical row and can Stage All or Unstage All eligible rows; move endpoints remain one inseparable group and pending autosave is flushed before staging.
-- [ ] #3 Pre-existing or partially staged same-path content, conflicts, ignored paths, and nested repository boundaries remain visible but disabled and are never mutated by Chatbook.
-- [ ] #4 Chatbook unstages only exact index entries it staged in the current process; external index changes or a new Chatbook session revoke ownership without changing the worktree.
-- [ ] #5 Stage and unstage never modify note bytes, the File Notes SQLite replica, unrelated index entries, or File Notes session history.
-- [ ] #6 Missing or unsupported Git, non-repository or replaced roots, index locks, command failures, and status timeouts remain nonfatal and never disable File Notes editing.
-- [ ] #7 The Session Git navigator view, per-row and bulk controls, refresh behavior, and trust confirmation remain responsive without remounting the editor or breaking narrow-terminal navigation.
-- [ ] #8 Focused unit, disposable-repository integration, mounted Textual, and disposable-repository acceptance checks cover the approved safety boundary without requiring full-suite or network execution.
-- [ ] #9 Commit, push, remotes, credentials, branch mutation, hunk staging, repository initialization, persistent staging ownership, full-repository status, and nested-repository management remain absent.
+- [ ] #3 Stage and unstage never modify note bytes, the File Notes SQLite replica, unrelated index entries, or File Notes session history.
+- [ ] #4 Missing or unsupported Git, non-repository or replaced roots, index locks, command failures, and status timeouts remain nonfatal and never disable File Notes editing.
+- [ ] #5 The Session Git navigator view, per-row and bulk controls, refresh behavior, and trust confirmation remain responsive without remounting the editor or breaking narrow-terminal navigation.
+- [ ] #6 Focused unit, disposable-repository integration, mounted Textual, and disposable-repository acceptance checks cover the approved safety boundary without requiring full-suite or network execution.
+- [ ] #7 Commit, push, remotes, credentials, branch mutation, hunk staging, repository initialization, persistent staging ownership, full-repository status, and nested-repository management remain absent.
+- [ ] #8 A fresh preflight blocks observed pre-existing or partially staged same-path content, conflicts, ignored paths, and nested repository boundaries without intentionally targeting that index state.
+- [ ] #9 Chatbook unstages only exact index entries it staged in the current process while repository, HEAD, endpoint topology, and index signatures still match; observed external changes or a new process revoke ownership.
+- [ ] #10 Concurrent external index mutation during one Chatbook Stage or Unstage action is an unsupported race; lock contention and observable uncertainty are surfaced without claiming atomic cross-process ownership.
 <!-- AC:END -->
