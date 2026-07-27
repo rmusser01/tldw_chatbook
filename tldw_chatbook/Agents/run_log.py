@@ -97,22 +97,59 @@ class RunLogWriter:
             max_record_bytes: Per-record ceiling; defaults to
                 ``[agents] run_log_max_record_bytes``.
         """
-        self._dir_name = dir_name or str(_setting("run_log_dir_name", DEFAULT_DIR_NAME))
-        self._segment_bytes = int(
-            segment_bytes
-            if segment_bytes is not None
-            else _setting("run_log_segment_bytes", DEFAULT_SEGMENT_BYTES)
-        )
-        self._max_record_bytes = int(
-            max_record_bytes
-            if max_record_bytes is not None
-            else _setting("run_log_max_record_bytes", DEFAULT_MAX_RECORD_BYTES)
-        )
+        # Coerce dir_name defensively; non-string or empty falls back to default.
+        if dir_name:
+            self._dir_name = str(dir_name)
+        else:
+            configured = _setting("run_log_dir_name", DEFAULT_DIR_NAME)
+            try:
+                self._dir_name = str(configured)
+                if not self._dir_name:
+                    raise ValueError("empty dir_name")
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "run log: invalid dir_name config, using default"
+                )
+                self._dir_name = DEFAULT_DIR_NAME
+
+        # Coerce segment_bytes defensively; non-numeric or invalid falls back to default.
+        if segment_bytes is not None:
+            self._segment_bytes = int(segment_bytes)
+        else:
+            configured = _setting("run_log_segment_bytes", DEFAULT_SEGMENT_BYTES)
+            try:
+                val = int(configured)
+                if val <= 0:
+                    raise ValueError("non-positive segment_bytes")
+                self._segment_bytes = val
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "run log: invalid segment_bytes config, using default"
+                )
+                self._segment_bytes = DEFAULT_SEGMENT_BYTES
+
+        # Coerce max_record_bytes defensively; non-numeric or invalid falls back to default.
+        if max_record_bytes is not None:
+            self._max_record_bytes = int(max_record_bytes)
+        else:
+            configured = _setting("run_log_max_record_bytes", DEFAULT_MAX_RECORD_BYTES)
+            try:
+                val = int(configured)
+                if val <= 0:
+                    raise ValueError("non-positive max_record_bytes")
+                self._max_record_bytes = val
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "run log: invalid max_record_bytes config, using default"
+                )
+                self._max_record_bytes = DEFAULT_MAX_RECORD_BYTES
+
         self._lock = threading.Lock()
         self._counter = 0
         self._segment_index = 1
         self._segment_size = 0
         self._active = False
+        self._bind_attempted = False  # Track whether bind() was called, success or failure
         self.log_dir: Path | None = None
 
     @property
@@ -127,8 +164,10 @@ class RunLogWriter:
             run_id: The PRIMARY run's id. Later calls are ignored so a
                 child run never rebinds its parent's writer.
         """
-        if self.log_dir is not None:
+        if self._bind_attempted:
             return
+        self._bind_attempted = True
+
         if not _setting("run_log_enabled", True):
             self._active = False
             return
@@ -137,7 +176,16 @@ class RunLogWriter:
             self._active = False
             return
         try:
+            from tldw_chatbook.Tools.file_operation_tools import is_within
+
             base = root / self._dir_name
+            # Verify containment before creating any directories.
+            if not is_within(base, root):
+                logger.warning(
+                    "run log: base directory escapes root; logging disabled"
+                )
+                self._active = False
+                return
             base.mkdir(parents=True, exist_ok=True)
             gitignore = base / ".gitignore"
             if not gitignore.exists():
@@ -145,6 +193,13 @@ class RunLogWriter:
                 # is itself a mutation.
                 gitignore.write_text("*\n", encoding="utf-8")
             run_dir = base / run_id
+            # Verify containment of run_dir before creating it.
+            if not is_within(run_dir, root):
+                logger.warning(
+                    "run log: run directory escapes root; logging disabled"
+                )
+                self._active = False
+                return
             run_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
             logger.opt(exception=True).warning(
