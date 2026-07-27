@@ -70,7 +70,8 @@ Reason: ADR-025 already governs routing, v3 language transparency, INT8, explici
   UI and Console dictation test modules. User documentation is in
   `Docs/Features/TRANSCRIPTION.md` and
   `Docs/Features/TRANSCRIPTION_PROVIDERS.md`.
-- Fresh expanded verification command: 226 passed, 11 skipped, and 3 warnings.
+- Fresh post-rebase expanded verification command: 227 passed, 11 skipped, and
+  3 warnings.
   Ruff lint passed on all cumulative changed runtime/test files; compileall
   passed on changed runtime modules; routing mypy reported no issues;
   `git diff --check` passed. The known whole-file `app.py` Ruff-format baseline
