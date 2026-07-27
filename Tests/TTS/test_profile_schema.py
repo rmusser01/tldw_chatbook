@@ -112,6 +112,13 @@ def _safe_error(code: str) -> pytest.RaisesExc[ProfileRepositoryError]:
     )
 
 
+def _directory_snapshot(path: Path) -> dict[str, bytes | None]:
+    return {
+        item.name: item.read_bytes() if item.is_file() else None
+        for item in path.iterdir()
+    }
+
+
 def test_empty_store_migrates_transactionally_and_is_configured(tmp_path: Path) -> None:
     path = tmp_path / "profiles.sqlite3"
 
@@ -288,8 +295,9 @@ def test_malformed_v1_profile_schema_is_rejected(tmp_path: Path, schema: str) ->
         open_profile_store(path)
 
 
-def test_partial_unique_index_does_not_satisfy_normalized_name_uniqueness(
-    tmp_path: Path,
+@pytest.mark.parametrize("defect", ["partial", "nocase"])
+def test_incompatible_unique_index_does_not_satisfy_normalized_name_uniqueness(
+    tmp_path: Path, defect: str
 ) -> None:
     path = tmp_path / "profiles.sqlite3"
     connection = sqlite3.connect(path)
@@ -305,8 +313,15 @@ def test_partial_unique_index_does_not_satisfy_normalized_name_uniqueness(
         """
     )
     connection.execute(
-        "CREATE UNIQUE INDEX partial_normalized_name "
-        "ON tts_generation_profiles(normalized_name) WHERE revision > 1"
+        "CREATE UNIQUE INDEX incompatible_normalized_name "
+        "ON tts_generation_profiles("
+        + (
+            "normalized_name COLLATE NOCASE"
+            if defect == "nocase"
+            else "normalized_name"
+        )
+        + ")"
+        + (" WHERE revision > 1" if defect == "partial" else "")
     )
     connection.execute(
         """
@@ -332,7 +347,16 @@ def test_partial_unique_index_does_not_satisfy_normalized_name_uniqueness(
 
 @pytest.mark.parametrize(
     "defect",
-    ["pk", "extra_pk", "index", "partial_index", "unique_index", "fk", "delete"],
+    [
+        "pk",
+        "extra_pk",
+        "index",
+        "partial_index",
+        "unique_index",
+        "nocase_index",
+        "fk",
+        "delete",
+    ],
 )
 def test_malformed_v1_assignment_schema_is_rejected(
     tmp_path: Path, defect: str
@@ -379,9 +403,25 @@ def test_malformed_v1_assignment_schema_is_rejected(
         connection.execute(
             ("CREATE UNIQUE INDEX " if defect == "unique_index" else "CREATE INDEX ")
             + "idx_character_tts_assignments_profile_id "
-            "ON character_tts_assignments(profile_id)"
+            "ON character_tts_assignments("
+            + (
+                "profile_id COLLATE NOCASE"
+                if defect == "nocase_index"
+                else "profile_id"
+            )
+            + ")"
             + (" WHERE source = 'local'" if defect == "partial_index" else "")
         )
+    if defect == "nocase_index":
+        query_plan = " ".join(
+            row[3]
+            for row in connection.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM character_tts_assignments "
+                "WHERE profile_id = ?",
+                (str(PROFILE_ID),),
+            )
+        )
+        assert ASSIGNMENT_PROFILE_INDEX not in query_plan
     connection.execute("PRAGMA user_version = 1")
     connection.close()
 
@@ -554,17 +594,17 @@ def test_hostile_row_mapping_is_mapped_to_safe_corrupt_data() -> None:
 def test_candidate_validation_reads_all_domain_rows_and_preserves_file(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "candidate.sqlite3"
+    path = tmp_path / "candidate #1?.sqlite3"
     connection = open_profile_store(path)
     _insert_profile(connection, _profile())
     _insert_assignment(connection, _assignment())
     connection.commit()
     connection.close()
-    before = path.read_bytes()
+    before = _directory_snapshot(tmp_path)
 
     validate_profile_candidate(path)
 
-    assert path.read_bytes() == before
+    assert _directory_snapshot(tmp_path) == before
 
 
 def test_candidate_v0_is_rejected_without_migration(tmp_path: Path) -> None:
@@ -603,6 +643,40 @@ def test_corrupt_candidate_is_not_replaced(tmp_path: Path) -> None:
     assert path.read_bytes() == raw
 
 
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_candidate_with_live_sidecar_is_rejected_without_mutation(
+    tmp_path: Path, suffix: str
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    connection.close()
+    sidecar = path.with_name(f"{path.name}{suffix}")
+    sidecar.write_bytes(b"preexisting sidecar state")
+    before = _directory_snapshot(tmp_path)
+
+    with _safe_error("schema_corrupt"):
+        validate_profile_candidate(path)
+
+    assert _directory_snapshot(tmp_path) == before
+
+
+def test_symlink_candidate_cannot_bypass_target_sidecar_rejection(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target.sqlite3"
+    connection = open_profile_store(target)
+    connection.close()
+    candidate = tmp_path / "candidate.sqlite3"
+    candidate.symlink_to(target)
+    target.with_name(f"{target.name}-wal").write_bytes(b"target WAL state")
+    before = _directory_snapshot(tmp_path)
+
+    with _safe_error("schema_corrupt"):
+        validate_profile_candidate(candidate)
+
+    assert _directory_snapshot(tmp_path) == before
+
+
 def test_candidate_rejects_invalid_domain_row(tmp_path: Path) -> None:
     path = tmp_path / "candidate.sqlite3"
     connection = open_profile_store(path)
@@ -620,9 +694,12 @@ def test_candidate_rejects_invalid_domain_row(tmp_path: Path) -> None:
     )
     connection.commit()
     connection.close()
+    before = _directory_snapshot(tmp_path)
 
     with _safe_error("corrupt_data"):
         validate_profile_candidate(path)
+
+    assert _directory_snapshot(tmp_path) == before
 
 
 def test_foreign_key_check_failure_is_rejected(tmp_path: Path) -> None:

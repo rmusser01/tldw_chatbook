@@ -410,8 +410,19 @@ def _table_info(connection: sqlite3.Connection, table: str) -> dict[str, sqlite3
     }
 
 
-def _index_columns(connection: sqlite3.Connection, index: str) -> list[str]:
-    return [row["name"] for row in connection.execute(f"PRAGMA index_info({index})")]
+def _has_exact_binary_index_key(
+    connection: sqlite3.Connection, index: str, column: str
+) -> bool:
+    key_rows = [
+        row
+        for row in connection.execute(f"PRAGMA index_xinfo({index})")
+        if row["key"] == 1
+    ]
+    return len(key_rows) == 1 and (
+        key_rows[0]["name"],
+        key_rows[0]["desc"],
+        key_rows[0]["coll"],
+    ) == (column, 0, "BINARY")
 
 
 def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -456,7 +467,9 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
             if (
                 row["unique"] == 1
                 and row["partial"] == 0
-                and _index_columns(connection, row["name"]) == ["normalized_name"]
+                and _has_exact_binary_index_key(
+                    connection, row["name"], "normalized_name"
+                )
             ):
                 unique_normalized = True
         if not unique_normalized:
@@ -499,7 +512,9 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
             or profile_index["origin"] != "c"
             or profile_index["partial"] != 0
             or profile_index["unique"] != 0
-            or _index_columns(connection, ASSIGNMENT_PROFILE_INDEX) != ["profile_id"]
+            or not _has_exact_binary_index_key(
+                connection, ASSIGNMENT_PROFILE_INDEX, "profile_id"
+            )
         ):
             raise ValueError
 
@@ -603,13 +618,26 @@ def _validate_all_rows(connection: sqlite3.Connection) -> None:
 
 
 def validate_profile_candidate(path: Path) -> None:
-    """Validate an existing v1 candidate without writing or migrating it."""
+    """Validate a standalone v1 backup without writing or consulting WAL state."""
 
-    if not isinstance(path, Path) or not path.is_file():
+    if not isinstance(path, Path):
         raise _repository_error("missing")
+    try:
+        resolved_path = path.resolve(strict=True)
+    except FileNotFoundError:
+        raise _repository_error("missing") from None
+    except Exception:
+        raise _repository_error("schema_corrupt") from None
+    if not resolved_path.is_file():
+        raise _repository_error("missing")
+    if any(
+        resolved_path.with_name(f"{resolved_path.name}{suffix}").exists()
+        for suffix in ("-wal", "-shm", "-journal")
+    ):
+        raise _repository_error("schema_corrupt")
     connection: sqlite3.Connection | None = None
     try:
-        uri = f"{path.resolve().as_uri()}?mode=ro"
+        uri = f"{resolved_path.as_uri()}?mode=ro&immutable=1"
         connection = sqlite3.connect(uri, uri=True, isolation_level=None)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA query_only = ON")
