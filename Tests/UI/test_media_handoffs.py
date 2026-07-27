@@ -14,7 +14,6 @@ from tldw_chatbook.runtime_policy.engine import PolicyEngine
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
-from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
 
 
@@ -30,7 +29,7 @@ class MediaViewerTestApp(App[None]):
 def _media_app(runtime_backend: str = "local") -> Mock:
     app = Mock()
     app._media_types_for_ui = []
-    app.media_runtime_state = MediaRuntimeState(runtime_backend=runtime_backend)
+    app.get_authoritative_runtime_source = Mock(return_value=runtime_backend)
     app.notify = Mock()
     app.open_chat_with_handoff = Mock()
     return app
@@ -76,16 +75,15 @@ async def test_media_viewer_use_in_chat_button_tracks_loaded_media():
 
 def test_media_window_builds_handoff_from_hydrated_detail():
     app = _media_app(runtime_backend="server")
-    app.media_runtime_state.selected_record_id = "record-1"
-    app.media_runtime_state.detail_by_record_id["record-1"] = {
+    window = MediaWindow(app)
+    window.runtime_state.selected_record_id = "record-1"
+    window.runtime_state.detail_by_record_id["record-1"] = {
         "id": "record-1",
         "title": "Lecture",
         "content": "Transcript",
         "url": "https://example.com",
         "media_type": "video",
     }
-    window = MediaWindow(app)
-    window.runtime_state = app.media_runtime_state
     window.viewer_panel = Mock()
     window.viewer_panel.media_data = {"id": "record-1", "title": "Fallback"}
 
@@ -107,7 +105,6 @@ def test_media_window_builds_handoff_from_hydrated_detail():
 def test_media_window_use_in_chat_handler_routes_event_to_app():
     app = _media_app()
     window = MediaWindow(app)
-    window.runtime_state = app.media_runtime_state
     window.viewer_panel = Mock()
     window.viewer_panel.media_data = None
     event = MediaViewerPanel.UseInChatRequested(
@@ -126,7 +123,6 @@ def test_media_window_use_in_chat_unavailable_explains_recovery():
     app = _media_app()
     app.open_chat_with_handoff = None
     window = MediaWindow(app)
-    window.runtime_state = app.media_runtime_state
     window.viewer_panel = Mock()
     window.viewer_panel.media_data = None
     event = MediaViewerPanel.UseInChatRequested(
@@ -149,7 +145,6 @@ def test_media_window_use_in_chat_policy_block_explains_recovery():
     )
     app.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
     window = MediaWindow(app)
-    window.runtime_state = app.media_runtime_state
     window.viewer_panel = Mock()
     window.viewer_panel.media_data = None
     event = MediaViewerPanel.UseInChatRequested(

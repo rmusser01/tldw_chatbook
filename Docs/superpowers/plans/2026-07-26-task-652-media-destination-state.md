@@ -4,7 +4,7 @@
 
 **Goal:** Make `MediaWindow` the sole Media view/selection owner, stop handled messages at that destination, and guarantee one metadata event causes one scoped mutation.
 
-**Architecture:** `MediaScreen` snapshots the mounted `MediaWindow`; the destination stops selection/search/mutation messages before any await. Durable mutations use the existing scoped service, and presentation updates are guarded by the selected record plus a local operation generation. The app-level duplicate handler and legacy Media root/search paths are deleted.
+**Architecture:** `MediaScreen` snapshots the mounted `MediaWindow`; the destination stops selection/search/mutation messages before any await. `MediaWindow` owns its runtime state and local operation generations. Metadata updates reserve per-record last-request-wins ordering at the long-lived scoped-service boundary, then run in an app-owned Textual worker so the durable operation survives outgoing-screen teardown and remains ordered across replacement destinations; the app owns only the generic worker lifetime and no Media payload, result, cache, or presentation state. Presentation updates are guarded by the exact mounted owner, selected record, active type, query tuple, and local generation. The app-level duplicate handler and legacy Media root/search paths are deleted.
 
 **Tech Stack:** Python 3.11+, Textual messages/reactives/workers, scoped media services, pytest/pytest-asyncio, AST ownership tests.
 
@@ -44,40 +44,48 @@ current_loaded_media_item
 _media_search_timers
 _media_search_generation
 _initial_media_view
+media_runtime_state
 ```
 
 Legacy Chat sidebar pagination/selection fields belong exclusively to
 TASK-650 and are not part of this task.
-`MediaWindow.media_active_view` is destination-owned and remains allowed.
+`MediaWindow.media_active_view` is also removed because no production writer
+remains after the legacy app path is deleted; `active_media_type` is the live
+destination navigation authority.
 
 ## File Structure
 
 - Modify `tldw_chatbook/UI/MediaWindow_v2.py`: stop handled messages before await and guard stale presentation.
+- Modify `tldw_chatbook/Media/media_reading_scope_service.py`: serialize same-record metadata writes and skip not-yet-started superseded requests across destination replacement.
 - Modify `tldw_chatbook/UI/Screens/media_screen.py`: keep snapshot/restore limited to the mounted window.
 - Modify `tldw_chatbook/Event_Handlers/media_events.py`: retain message contracts/live shared helpers, delete app-root mutation/search/list implementations.
 - Modify `tldw_chatbook/Event_Handlers/collections_tag_events.py`: remove fallback refresh through deleted app Media fields.
-- Modify `tldw_chatbook/Event_Handlers/tab_initializers/misc_tab_initializers.py` and `__init__.py`: remove the obsolete Media initializer.
-- Modify `tldw_chatbook/app.py`: remove root fields/watchers/input handlers and duplicate metadata registration.
+- Modify `tldw_chatbook/app.py`: remove root fields/watchers/input handlers, the duplicate metadata registration, and the app-owned `MediaRuntimeState`.
 - Create `Tests/ProductionApp/test_media_state_ownership.py`.
+- Modify `Tests/Media/test_media_reading_scope_service.py`.
 - Modify `Tests/test_application_state_ownership.py`.
+- Retire tests whose sole subject is the deleted legacy root Media path.
+
+Current-dev correction: the earlier `tab_initializers` path no longer exists,
+so no initializer file is part of this task.
 
 ## Task 1: Start TASK-652 and Reproduce Double Dispatch
 
-- [ ] Move the task In Progress and add its task-local plan:
+- [x] Move the task In Progress and add its task-local plan:
 
 ```bash
 backlog task edit 652 -s "In Progress"
 backlog task edit 652 --plan $'ADR required: yes\nADR path: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/011-chatbook-workbench-ui-system.md\nReason: Existing ADRs make MediaWindow the production state/action owner.\n\n1. Reproduce one event reaching destination and app.\n2. Stop handled messages before await.\n3. Remove duplicate root Media paths.\n4. Guard stale presentation and verify snapshots.'
 ```
 
-- [ ] On a real mounted `MediaWindow`, install a recording scoped media
+- [x] On a real mounted `MediaWindow`, install a recording scoped media
   mutation collaborator, post one real `MediaMetadataUpdateEvent`, and record
   mutation/refresh counts. Add a temporary observation hook to the real app
   handler only to prove bubbling; do not call an unbound method.
-- [ ] Add analogous propagation assertions for type, search, item selection,
+- [x] Add analogous propagation assertions for type, search, item selection,
   delete/undelete, read-later, reading-highlight, and analysis mutation
   messages that the destination handles.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 pytest Tests/ProductionApp/test_media_state_ownership.py -q -k "metadata or propagation"
@@ -87,58 +95,66 @@ Expected: the metadata regression fails by observing duplicate reach before the 
 
 ## Task 2: Stop Messages and Guard Async Presentation
 
-- [ ] Call `event.stop()` at the start of every handled destination method,
-  before its first await or state mutation.
-- [ ] Add destination-local generations for metadata mutation, item-detail
+- [x] Call `event.stop()` at the start of every handled destination method,
+  before its first await, worker launch, or state mutation.
+- [x] Launch metadata persistence as an app-owned Textual worker carrying an
+  immutable detached request. Keep paths/payloads/results out of `TldwCli`;
+  refresh only the exact still-mounted initiating `MediaWindow`.
+- [x] Reserve metadata write generations synchronously on the shared scope
+  service and serialize writes per backend/record so a slower earlier edit
+  cannot overwrite a newer edit, including after `MediaWindow` replacement.
+- [x] Add destination-local generations for metadata mutation, item-detail
   loading, and search completion. Each async path captures its record/query
   identity before awaiting; durable mutations always settle, but list/viewer
   presentation applies only when the same generation, active media type,
   search tuple, and selected record are still current.
-- [ ] On failure, retain stopped propagation, show bounded recovery, and log
+- [x] On failure, retain stopped propagation, show bounded recovery, and log
   only operation/record category and exception category—not media content,
   metadata values, or response bodies.
-- [ ] Add tests for exactly one mutation/refresh, service failure, selection
-  change while awaiting, screen navigation while awaiting, reverse-order
-  item-detail completion, and reverse-order search completion. An older detail
-  or search must never overwrite the newer selection/query.
+- [x] Add tests for exactly one mutation/refresh, service failure, selection
+  change while awaiting, screen navigation while awaiting, same-window and
+  replacement-window metadata ordering, reverse-order item-detail completion,
+  and reverse-order search completion. An older metadata, detail, or search
+  completion must never overwrite the newer durable edit, selection, or query.
 
 ## Task 3: Delete App-Root Media State and Legacy Handlers
 
-- [ ] Remove the exact root descriptors/fields, assignments, watcher,
-  initializer, input handlers, legacy list/search/page handlers, and
-  `TldwCli.on_media_metadata_update()`.
-- [ ] Keep Media message classes and live destination helpers in
+- [x] Remove the exact root descriptors/fields, assignments, watcher,
+  `media_runtime_state`, input handlers, legacy list/search/page handlers, and
+  `TldwCli.on_media_metadata_update()`. Construct `MediaRuntimeState` inside
+  the real destination owner from the authoritative runtime source.
+- [x] Keep Media message classes and live destination helpers in
   `media_events.py`; delete root-only functions after an import census.
-- [ ] Remove `collections_tag_events` fallback refresh through
+- [x] Remove `collections_tag_events` fallback refresh through
   `current_media_type_filter_slug`; the destination refreshes itself through
   its scoped owner.
-- [ ] Keep `MediaScreen.save_state()`/`restore_state()` reading and applying
+- [x] Keep `MediaScreen.save_state()`/`restore_state()` reading and applying
   only actual `MediaWindow` fields. Do not add screen/root mirrors.
-- [ ] Extend AST guards so root `app.media_active_view` is rejected while the
-  destination descriptor remains allowed.
+- [x] Extend AST guards so root `app.media_active_view` is rejected and the
+  dead duplicate destination descriptor cannot return.
 
 ## Task 4: Verify and Close TASK-652
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 pytest Tests/ProductionApp/test_media_state_ownership.py Tests/test_application_state_ownership.py -q
-python -m compileall -q tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/Event_Handlers/tab_initializers tldw_chatbook/app.py
-python -m ruff check tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/Event_Handlers/tab_initializers tldw_chatbook/app.py Tests/ProductionApp/test_media_state_ownership.py Tests/test_application_state_ownership.py
-python -m ruff format --check tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/Event_Handlers/tab_initializers Tests/ProductionApp/test_media_state_ownership.py Tests/test_application_state_ownership.py
+python -m compileall -q tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/media_runtime_state.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/app.py
+python -m ruff check tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/media_runtime_state.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/app.py Tests/ProductionApp/test_media_state_ownership.py Tests/test_application_state_ownership.py
+python -m ruff format --check tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/media_runtime_state.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py Tests/ProductionApp/test_media_state_ownership.py Tests/test_application_state_ownership.py
 git diff --check
 ```
 
 - Do not mass-format the verified pre-task `app.py` baseline exception.
 
-- [ ] Commit implementation:
+- [x] Commit implementation:
 
 ```bash
-git add tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/Event_Handlers/tab_initializers tldw_chatbook/app.py Tests/ProductionApp/test_media_state_ownership.py Tests/test_application_state_ownership.py
+git add tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/media_runtime_state.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/app.py Tests/ProductionApp/test_media_state_ownership.py Tests/test_application_state_ownership.py
 git commit -m "refactor(media): own state and stop mutations at destination (task-652)"
 ```
 
-- [ ] Re-read TASK-652, add Implementation Notes containing actual commands,
+- [x] Re-read TASK-652, add Implementation Notes containing actual commands,
   counts, durations, mutation/staleness evidence, modified files, ADRs, and
   deviations, check all acceptance criteria, then mark Done and commit its
   task file:

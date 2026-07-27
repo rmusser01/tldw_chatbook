@@ -339,7 +339,7 @@ async def test_full_app_coordinator_store_failure_retains_every_precommit_surfac
     old_context_snapshot = app.runtime_policy.snapshot()
     old_projection = app._runtime_policy_projection_snapshot
     old_targets = provider.target_store.list_targets()
-    old_media_backend = app.media_runtime_state.runtime_backend
+    old_media_backend = app.get_authoritative_runtime_source()
 
     class CachedClientSentinel:
         def __init__(self) -> None:
@@ -425,7 +425,7 @@ async def test_full_app_coordinator_store_failure_retains_every_precommit_surfac
     assert app.runtime_policy.snapshot() == old_context_snapshot
     assert app._runtime_policy_projection_snapshot == old_projection
     assert provider.target_store.list_targets() == old_targets
-    assert app.media_runtime_state.runtime_backend == old_media_backend
+    assert app.get_authoritative_runtime_source() == old_media_backend
     assert screen_calls == []
     assert notifications == [
         (
@@ -595,7 +595,7 @@ async def test_full_app_coordinator_success_orders_commit_rebind_and_actual_scre
         assert app.app_config is candidate_config
         assert provider.app_config is candidate_config
         events.append("screen_callback")
-        screen.media_runtime_state.reset_for_backend(runtime_backend)
+        screen.media_window.runtime_state.reset_for_backend(runtime_backend)
 
     monkeypatch.setattr(
         MediaScreen,
@@ -628,7 +628,7 @@ async def test_full_app_coordinator_success_orders_commit_rebind_and_actual_scre
     assert app.active_server_id == "https://ordered.example.test/api"
     assert app.app_config is candidate_config
     assert provider.app_config is candidate_config
-    assert app.media_runtime_state.runtime_backend == "server"
+    assert app.get_authoritative_runtime_source() == "server"
 
 
 @pytest.mark.asyncio
@@ -696,7 +696,6 @@ async def test_full_app_coordinator_without_candidate_updates_mounted_media_scre
 ) -> None:
     app, _store = full_app_with_controllable_runtime_store
     provider = app.server_context_provider
-    app.media_runtime_state.reset_for_backend("server")
     invalidations: list[tuple[str | None, str | None]] = []
     original_invalidate = provider.invalidate_for_server_switch
 
@@ -732,15 +731,14 @@ async def test_full_app_coordinator_without_candidate_updates_mounted_media_scre
         result = await app.handle_runtime_backend_changed("local")
 
         assert app.screen is mounted_screen
-        assert mounted_screen.media_runtime_state is app.media_runtime_state
-        assert (
-            mounted_screen.media_window.runtime_state is app.media_runtime_state
-        )
+        assert not hasattr(app, "media_runtime_state")
+        assert not hasattr(mounted_screen, "media_runtime_state")
+        assert mounted_screen.media_window.runtime_state.runtime_backend == "local"
 
     assert result is True
     assert app.current_runtime_backend == "local"
     assert app.runtime_backend == "local"
-    assert app.media_runtime_state.runtime_backend == "local"
+    assert app.get_authoritative_runtime_source() == "local"
     assert refreshes == ["local"]
     assert invalidations == [
         (
