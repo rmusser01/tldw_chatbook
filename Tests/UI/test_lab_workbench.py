@@ -53,14 +53,17 @@ class _WorkbenchHarness(App[None]):
 
 @pytest.mark.asyncio
 async def test_all_three_regions_render_when_nothing_is_collapsed():
+    """The handles are always composed now (task-5 fix); assert hidden, not
+    absent -- ``apply_rail_layout`` toggles ``display`` in place so a rail
+    toggle never has to remount the regions the frame already populated."""
     app = _WorkbenchHarness(LabRailLayout())
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         assert app.query_one("#lab-rail").display is True
         assert app.query_one("#lab-body").display is True
         assert app.query_one("#lab-inspector").display is True
-        assert not app.query("#lab-rail-handle")
-        assert not app.query("#lab-inspector-handle")
+        assert app.query_one("#lab-rail-handle").display is False
+        assert app.query_one("#lab-inspector-handle").display is False
 
 
 @pytest.mark.asyncio

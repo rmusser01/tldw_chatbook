@@ -52,43 +52,64 @@ class LabWorkbench(Horizontal):
         self.rail_layout = rail_layout
 
     def compose(self) -> ComposeResult:
-        """Render handles and regions according to the rail layout.
+        """Render both handles and both regions, left to right.
+
+        Both handles are always composed alongside their regions -- never
+        conditionally -- so a later collapse toggle can flip ``display``
+        in place via :meth:`apply_rail_layout` instead of remounting
+        anything. Remounting would drop whatever the frame already mounted
+        into ``#lab-rail``/``#lab-body``/``#lab-inspector``, since a fresh
+        ``LabWorkbench`` instance starts with empty regions and nothing
+        re-populates them outside ``LabScreen.on_mount``.
 
         Returns:
-            A ``ComposeResult`` yielding, left to right: the rail handle, the
-            rail, the body, the inspector, and the inspector handle. A
-            collapsed region and its handle swap visibility.
+            A ``ComposeResult`` yielding, in order: the rail handle, the
+            rail, the body, the inspector, and the inspector handle.
+            Visibility is applied afterwards, in ``on_mount``.
         """
-        rail_collapsed = self.rail_layout.is_collapsed(LAB_RAIL_LEFT)
-        inspector_collapsed = self.rail_layout.is_collapsed(LAB_RAIL_INSPECTOR)
-
-        if rail_collapsed:
-            yield DestinationRailHandle(
-                label="Catalog",
-                button_id="lab-rail-open",
-                badge_id="lab-rail-badge",
-                side="left",
-                id="lab-rail-handle",
-            )
-
-        rail = VerticalScroll(id="lab-rail", classes="lab-region lab-rail")
-        rail.display = not rail_collapsed
-        yield rail
-
-        body = Vertical(id="lab-body", classes="lab-region lab-body")
-        yield body
-
-        inspector = VerticalScroll(
-            id="lab-inspector", classes="lab-region lab-inspector"
+        yield DestinationRailHandle(
+            label="Catalog",
+            button_id="lab-rail-open",
+            badge_id="lab-rail-badge",
+            side="left",
+            id="lab-rail-handle",
         )
-        inspector.display = not inspector_collapsed
-        yield inspector
 
-        if inspector_collapsed:
-            yield DestinationRailHandle(
-                label="Inspector",
-                button_id="lab-inspector-open",
-                badge_id="lab-inspector-badge",
-                side="right",
-                id="lab-inspector-handle",
-            )
+        yield VerticalScroll(id="lab-rail", classes="lab-region lab-rail")
+
+        yield Vertical(id="lab-body", classes="lab-region lab-body")
+
+        yield VerticalScroll(id="lab-inspector", classes="lab-region lab-inspector")
+
+        yield DestinationRailHandle(
+            label="Inspector",
+            button_id="lab-inspector-open",
+            badge_id="lab-inspector-badge",
+            side="right",
+            id="lab-inspector-handle",
+        )
+
+    def on_mount(self) -> None:
+        """Apply the rail layout's initial visibility once children exist."""
+        self.apply_rail_layout(self.rail_layout)
+
+    def apply_rail_layout(self, rail_layout: LabRailLayout) -> None:
+        """Show or hide each region and its handle, with no widget churn.
+
+        A region is visible exactly when its handle is not, and vice versa.
+        Setting ``display`` never removes or remounts anything, so this is
+        safe to call after the initial mount -- e.g. from a rail toggle --
+        without losing whatever the frame has already mounted into the
+        regions.
+
+        Args:
+            rail_layout: Which rails are collapsed.
+        """
+        self.rail_layout = rail_layout
+        rail_collapsed = rail_layout.is_collapsed(LAB_RAIL_LEFT)
+        inspector_collapsed = rail_layout.is_collapsed(LAB_RAIL_INSPECTOR)
+
+        self.query_one("#lab-rail").display = not rail_collapsed
+        self.query_one("#lab-rail-handle").display = rail_collapsed
+        self.query_one("#lab-inspector").display = not inspector_collapsed
+        self.query_one("#lab-inspector-handle").display = inspector_collapsed

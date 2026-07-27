@@ -207,9 +207,20 @@ class LabScreen(BaseAppScreen):
     def toggle_lab_rail(self, rail: str) -> None:
         """Collapse or expand one rail and persist the new state.
 
+        Applies the new layout to the existing workbench in place via
+        ``apply_rail_layout`` rather than ``self.refresh(recompose=True)``:
+        a screen-level recompose would rebuild ``compose_content()`` --
+        including a brand-new ``LabWorkbench`` with empty regions -- without
+        re-firing ``on_mount()``, so ``_populate_regions()`` and the
+        deferred ``_mount_lab_body()`` would never run again and the mode's
+        entire content would vanish for the life of the screen.
+
         Args:
             rail: ``LAB_RAIL_LEFT`` or ``LAB_RAIL_INSPECTOR``.
         """
         self.rail_layout = self.rail_layout.toggle(rail)
         save_rail_layout(self.rail_layout)
-        self.refresh(recompose=True)
+        try:
+            self.query_one(LabWorkbench).apply_rail_layout(self.rail_layout)
+        except QueryError:
+            logger.warning("Lab workbench missing; rail toggle not applied.")

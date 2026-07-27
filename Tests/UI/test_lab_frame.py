@@ -7,7 +7,11 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from tldw_chatbook.UI.Lab_Modules.lab_rail_layout import LAB_RAIL_INSPECTOR
+from tldw_chatbook.UI.Lab_Modules.lab_rail_layout import (
+    LAB_RAIL_INSPECTOR,
+    LAB_RAIL_LEFT,
+)
+from tldw_chatbook.UI.Screens import lab_frame
 from tldw_chatbook.UI.Screens.lab_frame import LabScreen, LabStatusChip
 from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -129,3 +133,63 @@ async def test_the_inspector_starts_collapsed_on_first_run():
         await pilot.pause()
         assert screen.rail_layout.is_collapsed(LAB_RAIL_INSPECTOR) is True
         assert screen.query_one("#lab-inspector-handle") is not None
+
+
+@pytest.fixture
+def fake_rail_store(monkeypatch):
+    """Prevent `toggle_lab_rail` from writing the user's real config.
+
+    Patches the names `lab_frame` imported into its own module namespace,
+    mirroring how `Tests/UI/test_lab_rail_store.py` patches the config
+    accessors `lab_rail_store` imported. Pytest's autouse isolation fixture
+    (`Tests/conftest.py`) already redirects config reads/writes to a temp
+    XDG/HOME sandbox, but this monkeypatch belt-and-suspenders that: it
+    proves `toggle_lab_rail` never even reaches the config layer, and it
+    captures each persisted layout for assertions.
+    """
+    saved = []
+    monkeypatch.setattr(lab_frame, "save_rail_layout", saved.append)
+    return saved
+
+
+@pytest.mark.asyncio
+async def test_toggling_a_rail_preserves_the_mounted_mode_content(fake_rail_store):
+    """Regression test: a rail toggle must not blow away mounted content.
+
+    `toggle_lab_rail` used to end with `self.refresh(recompose=True)`,
+    which rebuilds `compose_content()` -- including a brand-new
+    `LabWorkbench` with fresh, empty regions -- without re-firing
+    `on_mount()`. Since `_populate_regions()`/`_mount_lab_body()` only ever
+    run from `on_mount()`, the mode's rail row and deferred body vanished
+    for the life of the screen after any toggle. The fix applies the new
+    layout to the existing workbench in place instead of recomposing.
+    """
+    app, screen = _mount(lambda a: _ProbeLabScreen(a))
+    async with app.run_test() as pilot:
+        await app.push_screen(screen)
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.query_one(_ProbeBody) is not None
+        assert screen.query_one("#probe-rail-row") is not None
+        assert screen.query_one("#lab-rail").display is True
+        assert screen.query_one("#lab-rail-handle").display is False
+
+        screen.toggle_lab_rail(LAB_RAIL_LEFT)
+        await pilot.pause()
+
+        assert screen.query_one(_ProbeBody) is not None, "body lost after toggle"
+        assert (
+            screen.query_one("#probe-rail-row") is not None
+        ), "rail content lost after toggle"
+        assert screen.query_one("#lab-rail").display is False
+        assert screen.query_one("#lab-rail-handle").display is True
+
+        screen.toggle_lab_rail(LAB_RAIL_LEFT)
+        await pilot.pause()
+
+        assert screen.query_one(_ProbeBody) is not None
+        assert screen.query_one("#probe-rail-row") is not None
+        assert screen.query_one("#lab-rail").display is True
+        assert screen.query_one("#lab-rail-handle").display is False
+
+        assert fake_rail_store, "toggle_lab_rail did not persist the new layout"
