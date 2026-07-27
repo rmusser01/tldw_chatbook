@@ -570,7 +570,12 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
     backup_rows = _inventory_rows("B")
 
     assert [row["id"] for row in connection_rows] == [
-        f"C{number:02d}" for number in range(1, 36)
+        # C36 added for `ensure_site_configs_schema`: it opens the
+        # subscriptions database to declare one table without constructing the
+        # whole `SubscriptionsDB`. Extending this range is the deliberate step
+        # the inventory exists to force -- a new connection site must be
+        # documented and owner-registered, not merely written.
+        f"C{number:02d}" for number in range(1, 37)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 17)

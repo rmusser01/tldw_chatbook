@@ -35,6 +35,7 @@ from urllib.parse import urlparse, urlunparse
 from loguru import logger
 
 # Local Imports
+from .private_sqlite import connect_private_sqlite
 from .base_db import BaseDB
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
@@ -88,7 +89,14 @@ def ensure_site_configs_schema(db_path) -> None:
     tables plus their indices and triggers -- a side effect no caller asked
     for. This applies only the table the manager actually needs.
     """
-    with closing(sqlite3.connect(str(db_path))) as conn:
+    # Goes through `connect_private_sqlite`, not `sqlite3.connect`. Every
+    # database this app opens is meant to pass the private-path guards
+    # (ownership, no shared-writable ancestor, no untrusted symlink) and land
+    # with private file modes. A raw connect here would open a database
+    # outside all of that, and would be an undocumented raw call site --
+    # `Tests/DB/test_private_sqlite_inventory.py` audits exactly that and
+    # caught this when the helper was first written.
+    with closing(connect_private_sqlite("db.subscriptions.site_configs", db_path)) as conn:
         conn.executescript(SITE_CONFIGS_DDL)
         conn.commit()
 

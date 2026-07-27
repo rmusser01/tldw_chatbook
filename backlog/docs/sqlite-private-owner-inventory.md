@@ -54,6 +54,7 @@ Classifications have these meanings:
 | C33 | tldw_chatbook/TTS/profile_schema | validate_profile_candidate | tts.profile_candidate | read_only_uri | immutable validation read | Migrated via `connect_private_sqlite`. Validate an owner-only immutable snapshot rather than opening the caller-selected candidate directly. |
 | C34 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_backup_to | tts.profile_backup | private_file | backup destination | Migrated via `connect_private_sqlite`. Open the already-created private temporary destination through the checked writable seam before online backup. |
 | C35 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_validate_standalone_snapshot | tts.profile_snapshot | read_only_uri | immutable integrity read | Migrated via `connect_private_sqlite`. Run full integrity checks through a validated immutable read-only handle. |
+| C36 | tldw_chatbook/DB/Subscriptions_DB | ensure_site_configs_schema | db.subscriptions.site_configs | private_file | declare one table | Migrated via `connect_private_sqlite`. Declares `site_configs` on a caller-supplied path without opening the whole `SubscriptionsDB`, so the one table `SiteConfigManager` needs exists without imposing ~15 unrelated tables on that file. |
 
 ## SQLite backup and restore inventory
 

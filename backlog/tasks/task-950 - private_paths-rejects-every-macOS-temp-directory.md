@@ -42,7 +42,7 @@ Do not fix this by loosening the guard's symlink rejection wholesale — rejecti
 <!-- AC:BEGIN -->
 - [x] #1 A SQLite database can be opened under the system temp directory on macOS
 - [x] #2 The guard still rejects a symlinked component that is not part of the platform's own temp root
-- [x] #3 `Tests/UI/test_destination_visual_parity_correction.py`, `Tests/UI/test_watchlists_destination_shell.py` and `Tests/Watchlists` all pass on macOS from a clean `dev` checkout — **NOT MET, see Implementation Notes**: two of 104 in `test_destination_visual_parity_correction.py` still fail on unrelated, pre-existing test/app drift that this bug was masking
+- [x] #3 `Tests/UI/test_destination_visual_parity_correction.py`, `Tests/UI/test_watchlists_destination_shell.py` and `Tests/Watchlists` all pass on macOS from a clean `dev` checkout — 104 / 48 / 167, zero failures (the two survivors the implementer flagged were closed by the controller; see the note below)
 - [x] #4 A test covers the macOS `/var` → `/private/var` case specifically, and fails against the current code
 - [x] #5 `Tests/UI/test_screen_navigation.py` no longer assigns the read-only `current_runtime_backend` property, and is fixed only alongside #1 so it does not unmask this
 - [x] #6 The security intent of the guard is stated in its docstring, so the next person does not weaken it to make a test pass
