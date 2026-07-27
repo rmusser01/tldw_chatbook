@@ -25,7 +25,6 @@ def test_watchlist_tables_created(db):
     tables = _tables(db)
     assert "watchlists" in tables
     assert "watchlist_sources" in tables
-    assert "watchlist_migration_state" in tables
 
 
 def test_item_content_columns_created(db):
@@ -117,6 +116,161 @@ def test_lazy_run_schema_helper_is_gone():
     from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
 
     assert not hasattr(LocalWatchlistsService, "_ensure_run_schema")
+
+
+def test_alert_rules_table_owned_by_db(db):
+    # Fresh database: no service call needed — SubscriptionsDB owns this
+    # table now via _initialize_schema, same as local_watchlist_runs.
+    assert "local_watchlist_alert_rules" in _tables(db)
+    cols = _columns(db, "local_watchlist_alert_rules")
+    assert {
+        "job_id",
+        "name",
+        "enabled",
+        "condition_type",
+        "condition_value_json",
+        "severity",
+        "created_at",
+        "updated_at",
+    } <= cols
+
+
+def test_alert_rules_schema_creation_is_idempotent_across_reopen(tmp_path):
+    # "Already migrated" case: opening the same file a second time must be a
+    # silent no-op, not an error, since _initialize_schema always runs and
+    # uses CREATE TABLE IF NOT EXISTS.
+    path = tmp_path / "subs.db"
+    first = SubscriptionsDB(str(path), client_id="test")
+    assert "local_watchlist_alert_rules" in _tables(first)
+
+    second = SubscriptionsDB(str(path), client_id="test")
+    assert "local_watchlist_alert_rules" in _tables(second)
+
+
+def test_alert_rules_table_and_rows_survive_legacy_lazy_creation(tmp_path):
+    import sqlite3
+    from contextlib import closing
+
+    # A database created before this relocation: it already has
+    # local_watchlist_alert_rules (created on demand by the old
+    # LocalWatchlistsService._ensure_alert_rule_schema path), with an
+    # existing row referencing a real subscription.
+    path = tmp_path / "legacy.db"
+    with closing(sqlite3.connect(path)) as legacy_conn:
+        legacy_conn.executescript(
+            """
+            CREATE TABLE subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                tags TEXT,
+                priority INTEGER DEFAULT 3,
+                folder TEXT,
+                last_checked DATETIME,
+                is_active BOOLEAN DEFAULT 1,
+                is_paused BOOLEAN DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE local_watchlist_alert_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                condition_type TEXT NOT NULL,
+                condition_value_json TEXT NOT NULL DEFAULT '{}',
+                severity TEXT NOT NULL DEFAULT 'warning',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (job_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+            );
+            """
+        )
+        legacy_conn.execute(
+            "INSERT INTO subscriptions (id, name, type, source) VALUES (1, 'ArXiv', 'rss', 'https://a.example/f')"
+        )
+        legacy_conn.execute(
+            "INSERT INTO local_watchlist_alert_rules "
+            "(job_id, name, enabled, condition_type, condition_value_json, severity, created_at, updated_at) "
+            "VALUES (1, 'Existing rule', 1, 'new_items', '{}', 'warning', "
+            "'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        )
+        legacy_conn.commit()
+
+    migrated = SubscriptionsDB(str(path), client_id="test")
+    assert "local_watchlist_alert_rules" in _tables(migrated)
+    rows = migrated.conn.execute(
+        "SELECT name, job_id FROM local_watchlist_alert_rules"
+    ).fetchall()
+    assert [(row[0], row[1]) for row in rows] == [("Existing rule", 1)]
+
+
+def test_alert_rules_orphaned_row_survives_reopen_with_fk_enforcement_on(tmp_path):
+    import sqlite3
+    from contextlib import closing
+
+    # A pre-existing orphan: job_id references a subscription that no longer
+    # exists. FK enforcement was not always on for this table (it is
+    # per-connection and only recently enabled), so a real legacy database
+    # can already contain rows like this. Relocating table creation into
+    # _initialize_schema must not touch or rebuild this table's data --
+    # CREATE TABLE IF NOT EXISTS is a no-op against an existing table -- so
+    # opening must not raise IntegrityError the way a data-copying rebuild
+    # would.
+    path = tmp_path / "legacy_orphan.db"
+    with closing(sqlite3.connect(path)) as legacy_conn:
+        legacy_conn.executescript(
+            """
+            CREATE TABLE subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                tags TEXT,
+                priority INTEGER DEFAULT 3,
+                folder TEXT,
+                last_checked DATETIME,
+                is_active BOOLEAN DEFAULT 1,
+                is_paused BOOLEAN DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE local_watchlist_alert_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                condition_type TEXT NOT NULL,
+                condition_value_json TEXT NOT NULL DEFAULT '{}',
+                severity TEXT NOT NULL DEFAULT 'warning',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (job_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+            );
+            """
+        )
+        legacy_conn.execute(
+            "INSERT INTO local_watchlist_alert_rules "
+            "(job_id, name, enabled, condition_type, condition_value_json, severity, created_at, updated_at) "
+            "VALUES (999, 'Orphaned rule', 1, 'new_items', '{}', 'warning', "
+            "'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        )
+        legacy_conn.commit()
+
+    # Must not raise IntegrityError despite the orphaned job_id and FK
+    # enforcement being on for every connection this class opens.
+    migrated = SubscriptionsDB(str(path), client_id="test")
+    rows = migrated.conn.execute(
+        "SELECT name, job_id FROM local_watchlist_alert_rules"
+    ).fetchall()
+    assert [(row[0], row[1]) for row in rows] == [("Orphaned rule", 999)]
+
+
+def test_lazy_alert_rule_schema_helper_is_gone():
+    from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
+
+    assert not hasattr(LocalWatchlistsService, "_ensure_alert_rule_schema")
 
 
 def _insert_item(db, subscription_id, url, title, content):

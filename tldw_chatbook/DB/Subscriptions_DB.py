@@ -314,6 +314,24 @@ class SubscriptionsDB(BaseDB):
                 FOREIGN KEY (source_id) REFERENCES subscriptions(id) ON DELETE CASCADE
             );
 
+            -- Local watchlist alert rules. Same reasoning as
+            -- local_watchlist_runs above: owned here rather than created
+            -- lazily by LocalWatchlistsService, so a lazily-created table can
+            -- never race an additive migration that needs it to already
+            -- exist.
+            CREATE TABLE IF NOT EXISTS local_watchlist_alert_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                condition_type TEXT NOT NULL,
+                condition_value_json TEXT NOT NULL DEFAULT '{}',
+                severity TEXT NOT NULL DEFAULT 'warning',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (job_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+            );
+
             -- Create indices
             CREATE INDEX IF NOT EXISTS idx_subscriptions_priority_active ON subscriptions(priority DESC, is_active, is_paused);
             CREATE INDEX IF NOT EXISTS idx_subscriptions_tags ON subscriptions(tags);
@@ -530,15 +548,6 @@ class SubscriptionsDB(BaseDB):
                 UPDATE watchlists SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END
         """)
-        # Per-migration markers. schema_version cannot be reused: it is a single
-        # INTEGER PRIMARY KEY column with no room for keys.
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS watchlist_migration_state (
-                key TEXT PRIMARY KEY,
-                applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
         # local_watchlist_runs is guaranteed to exist: BaseDB.__init__ runs
         # _initialize_schema (base_db.py:76), which creates it and then calls
         # this method. Only the column needs checking, for databases created

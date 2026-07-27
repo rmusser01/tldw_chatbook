@@ -1,6 +1,7 @@
 """Tests for the Watchlists sources pane."""
 
 import pytest
+from rich.style import Style
 from textual.app import App, ComposeResult
 from textual.widgets import Button, DataTable, Input, Select, Switch
 
@@ -306,3 +307,84 @@ async def test_sources_pane_filters_by_tags():
         table = pane.query_one("#sources-table", DataTable)
         assert table.row_count == 1
         assert "B" in str(table.get_row_at(0)[0])
+
+
+# --- task-876: selected row is distinguishable from a merely-focused one ---
+#
+# `DataTable`'s own cursor is a keyboard-focus affordance that always sits
+# somewhere -- including on a row this pane does not consider selected. The
+# actual selection (`selected_source`) is marked with Rich's own
+# terminal-agnostic "reverse bold" idiom directly on the cell `Text`, the
+# same approach `snippet_editor.py`/`library_media_viewer.py` already use for
+# a DataTable/Static cell that cannot reference Textual CSS variables.
+
+
+def _cell_style(table: DataTable, row_key: str, column_index: int) -> Style:
+    """The Rich `Style` a cell's `Text` carries.
+
+    `Text.style` stores whatever was passed to its constructor verbatim --
+    a plain string here, not a parsed `Style` -- so this parses it the same
+    way Rich itself would at render time.
+    """
+    column_key = list(table.columns.keys())[column_index]
+    raw_style = table.get_cell(row_key, column_key).style
+    return Style.parse(raw_style) if isinstance(raw_style, str) else raw_style
+
+
+@pytest.mark.asyncio
+async def test_selected_source_row_is_styled_distinctly_from_others(sample_sources):
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = sample_sources
+        pane.select_source_by_id("source-1")
+        await pilot.pause()
+
+        table = pane.query_one("#sources-table", DataTable)
+        selected_style = _cell_style(table, "source-1", 0)
+        other_style = _cell_style(table, "source-2", 0)
+        assert selected_style.reverse, "the selected row must carry the highlight style"
+        assert not other_style.reverse, "an unselected row must not"
+
+
+@pytest.mark.asyncio
+async def test_selection_highlight_moves_without_rebuilding_the_table(sample_sources):
+    """Selecting a different row moves the highlight via a targeted
+    `update_cell`, not a table rebuild -- `selected_source` is deliberately
+    NOT `recompose=True` (a selection must not discard the DataTable's own
+    scroll position/cursor).
+    """
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = sample_sources
+        pane.select_source_by_id("source-1")
+        await pilot.pause()
+
+        table = pane.query_one("#sources-table", DataTable)
+        assert _cell_style(table, "source-1", 0).reverse
+
+        pane.select_source_by_id("source-2")
+        await pilot.pause()
+
+        # Same table instance throughout (no recompose destroyed and
+        # rebuilt it), the old row reverted, and the new one highlighted.
+        assert pane.query_one("#sources-table", DataTable) is table
+        assert not _cell_style(table, "source-1", 0).reverse
+        assert _cell_style(table, "source-2", 0).reverse
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_selection_removes_the_highlight(sample_sources):
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.sources = sample_sources
+        pane.select_source_by_id("source-1")
+        await pilot.pause()
+
+        pane.selected_source = None
+        await pilot.pause()
+
+        table = pane.query_one("#sources-table", DataTable)
+        assert not _cell_style(table, "source-1", 0).reverse
