@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import FrozenInstanceError
 from types import MappingProxyType
 from typing import Any
 
+import httpx
 import pytest
 
 from Tests.TTS.adapter_fakes import FakeAdapter
@@ -25,9 +28,15 @@ from tldw_chatbook.TTS.adapter_registry import (
     TTSAdapterRegistry,
 )
 from tldw_chatbook.TTS.adapter_types import TTSProviderSpec
+from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
+from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 
 _WAIT_SECONDS = 1.0
+_CAPABILITY_TASK_NAMES = {
+    "tts_native_capability_voice",
+    "tts_native_capability_voice_cleanup",
+}
 
 
 def _model(model_id: str) -> TTSModelInfo:
@@ -76,6 +85,7 @@ class _CapabilityAdapter(FakeAdapter):
         self.freshness = freshness
         self.health_states = health_states
         self.catalog_calls = 0
+        self.catalog_refreshes: list[bool] = []
         self.voice_calls: list[str] = []
         self.active_voice_calls = 0
         self.max_active_voice_calls = 0
@@ -86,7 +96,7 @@ class _CapabilityAdapter(FakeAdapter):
         self.observed_revision = revisions[0]
 
     async def get_catalog(self, refresh: bool = False) -> TTSProviderCatalog:
-        assert refresh is True
+        self.catalog_refreshes.append(refresh)
         self.catalog_started.set()
         if self.catalog_release is not None:
             await self.catalog_release.wait()
@@ -203,7 +213,7 @@ class _PhasedDeadlineAdapter(_CapabilityAdapter):
 
 
 class _RecordingRegistry(TTSAdapterRegistry):
-    def __init__(self, adapter: FakeAdapter) -> None:
+    def __init__(self, adapter: object) -> None:
         super().__init__(
             specs=(
                 TTSProviderSpec(
@@ -243,7 +253,7 @@ class _RecordingRegistry(TTSAdapterRegistry):
 
 
 def _service(
-    adapter: FakeAdapter,
+    adapter: object,
 ) -> tuple[TTSService, _RecordingRegistry]:
     registry = _RecordingRegistry(adapter)
     service = TTSService(
@@ -264,6 +274,69 @@ def _service(
 async def _close_service(service: TTSService) -> None:
     await service.close()
     await service.wait_closed()
+
+
+def _active_capability_tasks() -> tuple[asyncio.Task[Any], ...]:
+    return tuple(
+        task
+        for task in asyncio.all_tasks()
+        if not task.done() and task.get_name() in _CAPABILITY_TASK_NAMES
+    )
+
+
+class _MockResponseStream(httpx.AsyncByteStream):
+    def __init__(self, value: object) -> None:
+        self._body = json.dumps(value, separators=(",", ":")).encode()
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self._body
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _mock_json_response(value: object) -> httpx.Response:
+    return httpx.Response(200, stream=_MockResponseStream(value))
+
+
+def _real_audio_cpp_adapter(
+    requests: list[str],
+) -> AudioCppAdapter:
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/health":
+            return _mock_json_response({"status": "ok", "backend": "cpu", "models": 1})
+        if request.url.path == "/v1/models":
+            return _mock_json_response(
+                {
+                    "object": "list",
+                    "data": [
+                        {
+                            "id": "model",
+                            "object": "model",
+                            "owned_by": "engine",
+                            "family": "family",
+                            "task": "tts",
+                            "mode": "offline",
+                        }
+                    ],
+                }
+            )
+        if request.url.path == "/v1/audio/voices":
+            return _mock_json_response({"voices": ["voice"]})
+        raise AssertionError("Unexpected audio.cpp request")
+
+    return AudioCppAdapter(
+        AudioCppConfig.from_mapping(
+            {
+                "max_metadata_bytes": 1024,
+                "max_catalog_models": 16,
+                "max_voices_per_model": 16,
+                "max_identifier_characters": 128,
+            }
+        ),
+        transport=httpx.MockTransport(respond),
+    )
 
 
 def test_capability_snapshot_is_frozen_and_copies_voice_results() -> None:
@@ -419,6 +492,134 @@ def test_capability_snapshot_state_literal_is_public() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model_ids", ((), ("model",)))
+async def test_real_audio_cpp_snapshot_keeps_one_catalog_revision(
+    model_ids: tuple[str, ...],
+) -> None:
+    requests: list[str] = []
+    adapter = _real_audio_cpp_adapter(requests)
+    service, registry = _service(adapter)
+    try:
+        snapshot = await service.get_native_capability_snapshot(
+            "audio_cpp",
+            model_ids,
+        )
+
+        assert snapshot.state == "complete", (snapshot, requests)
+        assert snapshot.catalog is not None
+        assert snapshot.catalog.revision == 1
+        assert tuple(snapshot.voice_results) == model_ids
+        assert requests.count("/health") == 1
+        assert requests.count("/v1/models") == 1
+        assert requests.count("/v1/audio/voices") == len(model_ids)
+        assert registry._total_leases() == 0
+    finally:
+        await _close_service(service)
+
+
+@pytest.mark.asyncio
+async def test_capability_input_rejects_row_51_without_allocating_work() -> None:
+    consumed = 0
+
+    def rows() -> Iterator[str]:
+        nonlocal consumed
+        for number in range(100):
+            consumed += 1
+            yield f"model-{number}"
+
+    adapter = _CapabilityAdapter(())
+    adapter.voice_release = asyncio.Event()
+    service, registry = _service(adapter)
+    observation = asyncio.create_task(
+        service.get_native_capability_snapshot("audio_cpp", rows())
+    )
+    try:
+        await asyncio.sleep(0)
+
+        assert observation.done()
+        with pytest.raises(ValueError, match="at most 50"):
+            await observation
+        assert consumed == 51
+        assert registry.expected_revisions == []
+        assert adapter.catalog_calls == 0
+        assert _active_capability_tasks() == ()
+    finally:
+        observation.cancel()
+        adapter.voice_release.set()
+        await asyncio.gather(observation, return_exceptions=True)
+        await _close_service(service)
+
+
+@pytest.mark.asyncio
+async def test_capability_accepts_50_rows_with_bounded_child_task_allocation() -> None:
+    model_ids = tuple(f"model-{number}" for number in range(50))
+    adapter = _CapabilityAdapter(model_ids)
+    adapter.voice_release = asyncio.Event()
+    service, registry = _service(adapter)
+    observation = asyncio.create_task(
+        service.get_native_capability_snapshot("audio_cpp", model_ids)
+    )
+    try:
+        await asyncio.wait_for(
+            adapter.four_voice_calls_started.wait(),
+            timeout=_WAIT_SECONDS,
+        )
+
+        active_tasks = _active_capability_tasks()
+        assert len(active_tasks) == 50
+        assert all(
+            task.get_name() == "tts_native_capability_voice" for task in active_tasks
+        )
+        assert registry._total_leases() == 1
+
+        adapter.voice_release.set()
+        snapshot = await asyncio.wait_for(observation, timeout=_WAIT_SECONDS)
+        assert snapshot.state == "complete"
+        assert len(snapshot.voice_results) == 50
+        assert _active_capability_tasks() == ()
+    finally:
+        observation.cancel()
+        adapter.voice_release.set()
+        await asyncio.gather(observation, return_exceptions=True)
+        await _close_service(service)
+
+
+@pytest.mark.asyncio
+async def test_capability_preprocessing_counts_toward_aggregate_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.TTS_Generation as generation_module
+
+    deadline_calls = 0
+
+    def deadline() -> float:
+        nonlocal deadline_calls
+        deadline_calls += 1
+        return asyncio.get_running_loop().time() + 0.01
+
+    def slow_rows() -> Iterator[str]:
+        time.sleep(0.03)
+        yield "model"
+
+    adapter = _CapabilityAdapter(("model",))
+    service, registry = _service(adapter)
+    monkeypatch.setattr(generation_module, "_native_capability_deadline", deadline)
+    try:
+        snapshot = await service.get_native_capability_snapshot(
+            "audio_cpp",
+            slow_rows(),
+        )
+
+        assert snapshot.state == "unverified"
+        assert deadline_calls == 1
+        assert registry.expected_revisions == []
+        assert adapter.catalog_calls == 0
+        assert _active_capability_tasks() == ()
+    finally:
+        await _close_service(service)
+
+
+@pytest.mark.asyncio
 async def test_capability_lease_is_revision_matched_and_gate_exits_before_network() -> (
     None
 ):
@@ -518,6 +719,7 @@ async def test_voice_failure_cancels_and_joins_siblings_before_releasing_lease()
         assert adapter.active == 0
         assert adapter.finalized == 4
         assert registry._total_leases() == 0
+        assert _active_capability_tasks() == ()
     finally:
         adapter.release_siblings.set()
         adapter.release_finalizers.set()
@@ -552,6 +754,7 @@ async def test_repeated_caller_cancellation_cannot_bypass_voice_task_cleanup() -
     assert adapter.active == 0
     assert adapter.finalized == 4
     assert registry._total_leases() == 0
+    assert _active_capability_tasks() == ()
     await _close_service(service)
 
 
@@ -566,6 +769,7 @@ async def test_server_default_only_snapshot_performs_no_voice_observation() -> N
         assert snapshot.voice_results == {}
         assert adapter.voice_calls == []
         assert registry.expected_revisions == [("audio_cpp", 1)]
+        assert adapter.catalog_refreshes == [True, False]
     finally:
         await _close_service(service)
 
@@ -661,6 +865,7 @@ async def test_capability_snapshot_uses_one_aggregate_deadline(
         assert elapsed < 0.2
         assert adapter.max_active_voice_calls == 4
         assert registry._total_leases() == 0
+        assert _active_capability_tasks() == ()
     finally:
         adapter.voice_release.set()
         await _close_service(service)
@@ -701,6 +906,7 @@ async def test_capability_deadline_is_established_once_across_all_phases(
         assert adapter.active_voice_calls == 0
         assert elapsed < 0.3
         assert registry._total_leases() == 0
+        assert _active_capability_tasks() == ()
     finally:
         await _close_service(service)
 
@@ -723,6 +929,7 @@ async def test_one_catalog_advance_retries_once_and_returns_one_revision() -> No
         assert snapshot.catalog.revision == 2
         assert snapshot.voice_results["model"].catalog_revision == 2
         assert adapter.catalog_calls == 4
+        assert adapter.catalog_refreshes == [True, False, True, False]
         assert adapter.voice_calls == ["model", "model"]
     finally:
         await _close_service(service)
@@ -745,6 +952,7 @@ async def test_second_catalog_advance_returns_unverified_without_mixed_authority
 
         assert snapshot.state == "unverified"
         assert adapter.catalog_calls == 4
+        assert adapter.catalog_refreshes == [True, False, True, False]
         assert adapter.voice_calls == ["model", "model"]
         assert snapshot.catalog is not None
         assert snapshot.catalog.revision == 3
@@ -805,6 +1013,7 @@ async def test_cancellation_propagates_only_after_capability_lease_release() -> 
         await observation
     assert cancellation.value.args == ("capability caller cancelled",)
     assert registry._total_leases() == 0
+    assert _active_capability_tasks() == ()
     await _close_service(service)
 
 

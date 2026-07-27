@@ -45,6 +45,7 @@ _CLEANUP_FAILURE_NOTE = "TTS cleanup also failed while preserving the original e
 _TTS_SETTINGS_FOREGROUND_TIMEOUT_SECONDS = 2.0
 _NATIVE_CAPABILITY_TIMEOUT_SECONDS = 10.0
 _NATIVE_CAPABILITY_VOICE_CONCURRENCY = 4
+_NATIVE_CAPABILITY_MAX_MODEL_ROWS = 50
 
 
 def _native_capability_deadline() -> float:
@@ -587,6 +588,8 @@ class TTSService:
             expected_revision,
         )
 
+    # Native capability snapshot orchestration
+
     async def get_native_capability_snapshot(
         self,
         provider_id: str,
@@ -594,7 +597,7 @@ class TTSService:
     ) -> TTSNativeCapabilitySnapshot:
         """Observe one bounded native capability snapshot without exposing a lease."""
         self._require_native_provider(provider_id)
-        model_ids = self._distinct_capability_model_ids(exact_voice_model_ids)
+        deadline = _native_capability_deadline()
         revision = 0
         lease: TTSAdapterLease | None = None
         result = TTSNativeCapabilitySnapshot(
@@ -604,8 +607,10 @@ class TTSService:
             catalog=None,
             voice_results={},
         )
+        model_ids = self._distinct_capability_model_ids(exact_voice_model_ids)
+        if asyncio.get_running_loop().time() >= deadline:
+            return result
         primary_error: BaseException | None = None
-        deadline = _native_capability_deadline()
         try:
             async with asyncio.timeout_at(deadline):
                 (
@@ -698,7 +703,7 @@ class TTSService:
                 model_ids,
             )
             voice_results = dict(zip(model_ids, observed, strict=True))
-            final_catalog = await adapter.get_catalog(refresh=True)  # type: ignore[attr-defined]
+            final_catalog = await adapter.get_catalog(refresh=False)  # type: ignore[attr-defined]
             if (
                 type(final_catalog) is not TTSProviderCatalog
                 or final_catalog.provider_id != provider_id
@@ -838,6 +843,8 @@ class TTSService:
             voice_results={},
         )
 
+    # Capability request boundaries
+
     def _require_native_provider(self, provider_id: str) -> None:
         if type(provider_id) is not str:
             raise TypeError("TTS provider ID must be a string")
@@ -854,7 +861,9 @@ class TTSService:
         model_ids: Iterable[str],
     ) -> tuple[str, ...]:
         distinct: dict[str, None] = {}
-        for model_id in model_ids:
+        for row_number, model_id in enumerate(model_ids, start=1):
+            if row_number > _NATIVE_CAPABILITY_MAX_MODEL_ROWS:
+                raise ValueError("Capability model selection accepts at most 50 rows")
             if type(model_id) is not str or not model_id:
                 raise ValueError("Capability model ID is invalid")
             try:
