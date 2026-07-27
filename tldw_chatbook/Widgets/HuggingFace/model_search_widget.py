@@ -141,8 +141,30 @@ class ModelSearchWidget(Container):
         yield ListView(id="results-list", classes="results-list")
 
     def on_mount(self) -> None:
-        """Initialize with popular models on mount."""
-        # Defer initial browse to allow Select to fully initialize
+        """Show the pre-browse state; do NOT reach the network yet.
+
+        This used to `call_after_refresh(self._initial_browse)`, which hit
+        huggingface.co on mount. The widget lives inside
+        `llm-view-download-models`, which `LLMManagementWindow.compose()`
+        builds eagerly -- so every visit to the Models screen fired an
+        unrequested live request, for users who never open Download Models,
+        and it contributed to that screen's 488-787ms mount. The browse now
+        waits until the view is actually activated
+        (`ensure_initial_browse`, called from
+        `LLMManagementWindow.watch_active_view`).
+        """
+        self._show_pre_browse_message()
+
+    def ensure_initial_browse(self) -> None:
+        """Run the first browse, once, when the view is actually shown.
+
+        Idempotent: activating the view repeatedly must not re-fetch, and a
+        user who has already searched must not have their results replaced
+        by the popular list.
+        """
+        if self._initial_browse_done:
+            return
+        self._initial_browse_done = True
         self.call_after_refresh(self._initial_browse)
 
     def _initial_browse(self) -> None:
@@ -150,6 +172,21 @@ class ModelSearchWidget(Container):
         # Just perform search without setting select value
         self.browsing_mode = True
         self.perform_search()
+
+    def _show_pre_browse_message(self) -> None:
+        """State the list is empty because nothing has been fetched yet.
+
+        An unexplained empty list reads as "no models exist"; this says the
+        browse has not run, which is the truth until the view is opened.
+        """
+        try:
+            results_list = self.query_one("#results-list", ListView)
+        except QueryError:
+            return
+        results_list.clear()
+        results_list.append(
+            ListItem(Static("Open this view to browse popular models."))
+        )
 
     def watch_is_loading(self, is_loading: bool) -> None:
         """Update UI when loading state changes."""
@@ -320,6 +357,10 @@ class ModelSearchWidget(Container):
         """Initialize the search widget."""
         super().__init__(**kwargs)
         self.browsing_mode = False
+        #: Guards `ensure_initial_browse` so activating the download-models
+        #: view repeatedly does not re-fetch, and a user who has already
+        #: searched does not get their results replaced by the popular list.
+        self._initial_browse_done = False
 
     async def _update_results_list(self, results: List[Dict[str, Any]]) -> None:
         """Update the ListView with search results."""
