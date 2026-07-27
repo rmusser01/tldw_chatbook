@@ -79,12 +79,14 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     return app
 
 
-async def _wait_for_screen(app: TldwCli, pilot, screen_type):
+async def _wait_for_screen(app: TldwCli, pilot, screen_type, canonical_tab: str):
     for _ in range(300):
-        if isinstance(app.screen, screen_type):
+        if isinstance(app.screen, screen_type) and app.current_tab == canonical_tab:
             return app.screen
         await pilot.pause(0.01)
-    raise AssertionError(f"production TldwCli did not mount {screen_type.__name__}")
+    raise AssertionError(
+        f"production TldwCli did not finish routing to {screen_type.__name__}"
+    )
 
 
 async def _close_production_app(app: TldwCli) -> None:
@@ -180,21 +182,27 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
             # so attach the privacy sentinel only after the real app is live.
             diagnostic_sink = logger.add(diagnostic_output, format="{message}")
             app.post_message(NavigateToScreen("ccp"))
-            personas = await _wait_for_screen(app, pilot, PersonasScreen)
+            personas = await _wait_for_screen(app, pilot, PersonasScreen, TAB_PERSONAS)
             assert app.current_tab == TAB_PERSONAS
             assert personas.state.active_mode == "characters"
 
-            await personas._import_character_from_path(str(character_path))
+            character_worker = personas._start_character_import(str(character_path))
+            assert character_worker.node is app
+            await character_worker.wait()
             await pilot.pause()
             assert personas.state.selected_entity_kind == "character"
             assert personas.state.selected_entity_name == character_name
 
             app.post_message(NavigateToScreen("prompts"))
-            library = await _wait_for_screen(app, pilot, LibraryScreen)
+            library = await _wait_for_screen(app, pilot, LibraryScreen, TAB_LIBRARY)
             assert app.current_tab == TAB_LIBRARY
             assert library._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
 
-            await library._run_library_prompts_import(str(prompt_path))
+            library._library_prompts_import_path = str(prompt_path)
+            prompt_worker = library._start_library_prompts_import()
+            assert prompt_worker is not None
+            assert prompt_worker.node is app
+            await prompt_worker.wait()
             await pilot.pause()
             assert library._library_prompts_import_status.startswith("1 imported")
             assert all(not hasattr(app, name) for name in REMOVED_ROOT_NAMES)
@@ -209,11 +217,17 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                 "save_prompt",
                 fail_prompt_save,
             )
-            await library._run_library_prompts_import(str(failed_prompt_path))
+            library._library_prompts_import_path = str(failed_prompt_path)
+            failed_prompt_worker = library._start_library_prompts_import()
+            assert failed_prompt_worker is not None
+            assert failed_prompt_worker.node is app
+            await failed_prompt_worker.wait()
             assert "1 failed" in library._library_prompts_import_status
 
             app.post_message(NavigateToScreen("ccp"))
-            stale_personas = await _wait_for_screen(app, pilot, PersonasScreen)
+            stale_personas = await _wait_for_screen(
+                app, pilot, PersonasScreen, TAB_PERSONAS
+            )
             refresh_calls: list[str] = []
 
             async def record_stale_refresh() -> None:
@@ -239,18 +253,26 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                 "import_character_card",
                 delayed_real_import,
             )
-            import_task = asyncio.create_task(
-                stale_personas._import_character_from_path(str(stale_character_path))
+            import_worker = stale_personas._start_character_import(
+                str(stale_character_path)
             )
+            assert import_worker.node is app
             assert await asyncio.to_thread(import_started.wait, 5)
             app.post_message(NavigateToScreen("prompts"))
-            await _wait_for_screen(app, pilot, LibraryScreen)
+            await _wait_for_screen(app, pilot, LibraryScreen, TAB_LIBRARY)
+            # Textual leaves ``is_mounted`` true after pruning; a closed,
+            # detached message pump is the completed-unmount invariant.
+            assert stale_personas._closed
+            assert stale_personas._parent is None
+            assert not import_worker.is_finished
             release_import.set()
-            await import_task
+            await import_worker.wait()
             assert refresh_calls == []
 
             app.post_message(NavigateToScreen("ccp"))
-            fresh_personas = await _wait_for_screen(app, pilot, PersonasScreen)
+            fresh_personas = await _wait_for_screen(
+                app, pilot, PersonasScreen, TAB_PERSONAS
+            )
             for _ in range(300):
                 if any(
                     record.get("name") == stale_character_name
@@ -274,4 +296,92 @@ async def test_real_personas_and_library_own_character_and_prompt_imports(
                 logger.remove(diagnostic_sink)
             except ValueError:
                 pass
+        await _close_production_app(app)
+
+
+@pytest.mark.asyncio
+async def test_real_library_prompt_batch_survives_owner_unmount(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    app = _production_app(monkeypatch)
+    prompt_names = (
+        "TASK-651 durable prompt one",
+        "TASK-651 durable prompt two",
+    )
+    prompt_path = tmp_path / "task-651-durable-prompts.json"
+    prompt_path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": name,
+                    "system_prompt": f"System for {name}",
+                    "user_prompt": f"User for {name}",
+                }
+                for name in prompt_names
+            ]
+        ),
+        encoding="utf-8",
+    )
+    save_started = threading.Event()
+    release_save = threading.Event()
+
+    try:
+        async with app.run_test(size=(150, 48)) as pilot:
+            app.post_message(NavigateToScreen("prompts"))
+            library = await _wait_for_screen(app, pilot, LibraryScreen, TAB_LIBRARY)
+            real_save_prompt = app.prompt_scope_service.save_prompt
+            saved_names: list[str] = []
+
+            async def delayed_save_prompt(**kwargs):
+                saved_names.append(kwargs["name"])
+                if len(saved_names) == 1:
+                    save_started.set()
+                    if not await asyncio.to_thread(release_save.wait, 5):
+                        raise TimeoutError("TASK-651 prompt import release timed out")
+                return await real_save_prompt(**kwargs)
+
+            monkeypatch.setattr(
+                app.prompt_scope_service,
+                "save_prompt",
+                delayed_save_prompt,
+            )
+            library._library_prompts_import_path = str(prompt_path)
+            import_worker = library._start_library_prompts_import()
+            assert import_worker is not None
+            assert import_worker.node is app
+            assert await asyncio.to_thread(save_started.wait, 5)
+
+            # Repeated starts preserve a single durable slot and must not
+            # cancel or replace the in-flight batch.
+            assert library._start_library_prompts_import() is import_worker
+
+            app.post_message(NavigateToScreen("ccp"))
+            await _wait_for_screen(app, pilot, PersonasScreen, TAB_PERSONAS)
+            assert library._closed
+            assert library._parent is None
+            assert not import_worker.is_finished
+
+            release_save.set()
+            await import_worker.wait()
+            assert saved_names == list(prompt_names)
+
+            app.post_message(NavigateToScreen("prompts"))
+            fresh_library = await _wait_for_screen(
+                app, pilot, LibraryScreen, TAB_LIBRARY
+            )
+            for _ in range(300):
+                visible_names = {
+                    row.name
+                    for row in fresh_library._build_library_prompts_state().rows
+                }
+                if set(prompt_names) <= visible_names:
+                    break
+                await pilot.pause(0.01)
+            else:
+                raise AssertionError(
+                    "fresh Library owner did not load the completed prompt batch"
+                )
+    finally:
+        release_save.set()
         await _close_production_app(app)

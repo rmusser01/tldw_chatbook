@@ -1,10 +1,10 @@
 ---
 id: TASK-651
 title: Remove legacy CCP and prompt root state
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-07-26 23:50'
-updated_date: '2026-07-27 17:44'
+updated_date: '2026-07-27 17:59'
 labels:
   - architecture
   - state
@@ -30,9 +30,9 @@ Remove root state and stale callbacks for the retired CCP and prompt editor so P
 <!-- AC:BEGIN -->
 - [x] #1 ccp_active_view, CCP provider state, editing and current CCP or conversation identifiers, current prompt state, and their root watchers and handlers are removed.
 - [x] #2 Companion character-image, search-timer, generation, and dead-initializer state is removed.
-- [x] #3 Production import completion refreshes the mounted real owner or defers to a fresh owner load without old widget identifiers or a root cache.
-- [x] #4 Canonical Personas and Library prompt flows pass in the normal production TldwCli.
-- [x] #5 Focused ownership, privacy, static, formatting, compile, and authorized integration checks pass.
+- [ ] #3 Production import completion refreshes the mounted real owner or defers to a fresh owner load without old widget identifiers or a root cache.
+- [ ] #4 Canonical Personas and Library prompt flows pass in the normal production TldwCli.
+- [ ] #5 Focused ownership, privacy, static, formatting, compile, and authorized integration checks pass.
 <!-- AC:END -->
 
 ## Implementation Plan

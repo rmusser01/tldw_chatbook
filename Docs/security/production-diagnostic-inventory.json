@@ -1938,7 +1938,7 @@
     },
     {
       "call_count": 17,
-      "diagnostic_digest": "0374ef8003ca89b871bf",
+      "diagnostic_digest": "9bf459e168c4a3d5a802",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1952,7 +1952,7 @@
     },
     {
       "call_count": 20,
-      "diagnostic_digest": "e877dd164c8976806023",
+      "diagnostic_digest": "92e45f2656d595cce614",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/personas_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"

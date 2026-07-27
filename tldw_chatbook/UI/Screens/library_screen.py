@@ -286,6 +286,7 @@ _LIBRARY_PROMPT_IMPORT_PARSERS = {
     ".md": parse_markdown_prompts_from_content,
     ".txt": parse_txt_prompts_from_content,
 }
+_LIBRARY_PROMPTS_IMPORT_WORKER_GROUP = "library-prompts-import"
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
 LIBRARY_SERVICE_UNAVAILABLE_COPY = (
     "Library source services are unavailable in this runtime."
@@ -9712,27 +9713,37 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._start_library_prompts_import()
 
-    def _start_library_prompts_import(self) -> None:
+    def _start_library_prompts_import(self) -> Worker[None] | None:
         """Validate the Import row has a non-blank path, then run the import worker.
 
-        Worker-executed (exclusive, its own group) since it performs file
-        IO plus one or more service calls per parsed prompt -- never
-        inline on the UI thread. A blank path is a quiet inline status
-        line, matching every other Library form's "nothing to do yet"
-        gate (e.g. ``_submit_library_ingest_form``'s blank-path notice).
+        Worker-executed (one app-owned slot) since it performs file IO plus
+        one or more service calls per parsed prompt -- never inline on the UI
+        thread. App ownership lets the batch finish if its initiating screen
+        is unmounted. A blank path is a quiet inline status line, matching
+        every other Library form's "nothing to do yet" gate (e.g.
+        ``_submit_library_ingest_form``'s blank-path notice).
         """
         if self._library_prompts_view != "list":
-            return
+            return None
         raw_path = self._library_prompts_import_path.strip()
         if not raw_path:
             self._apply_library_prompts_import_status(
                 "Please enter a file or folder path."
             )
-            return
-        self.run_worker(
+            return None
+        for worker in self.app_instance.workers:
+            if (
+                worker.node is self.app_instance
+                and worker.group == _LIBRARY_PROMPTS_IMPORT_WORKER_GROUP
+                and not worker.is_finished
+            ):
+                self._apply_library_prompts_import_status(
+                    "A prompt import is already in progress."
+                )
+                return worker
+        return self.app_instance.run_worker(
             self._run_library_prompts_import(raw_path),
-            exclusive=True,
-            group="library_prompts_import",
+            group=_LIBRARY_PROMPTS_IMPORT_WORKER_GROUP,
         )
 
     def _apply_library_prompts_import_status(self, text: str) -> None:

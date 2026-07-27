@@ -17,6 +17,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.timer import Timer
+from textual.worker import Worker
 from textual.widgets import Button, Input, ListView, Static, TabbedContent, TextArea
 
 from ...Character_Chat.active_user_profile import (
@@ -246,6 +247,7 @@ PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
 PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
+_PERSONAS_CHARACTER_IMPORT_WORKER_GROUP = "personas-character-import"
 
 # Character editor avatar thumbnail box, in character cells. Must stay in
 # sync with #personas-char-editor-avatar-thumb's CSS max-width/max-height in
@@ -5993,6 +5995,9 @@ class PersonasScreen(BaseAppScreen):
 
     async def _open_import_dialog(self) -> None:
         """Continuation for the guarded import action: launch the dialog worker."""
+        if self._active_character_import_worker() is not None:
+            self._notify("A character import is already in progress.", "information")
+            return
         if self._io_dialog_active:
             logger.debug(
                 "Import/export dialog already active; ignoring import request."
@@ -6006,6 +6011,7 @@ class PersonasScreen(BaseAppScreen):
         # (ccp_character_handler.handle_import).
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen
 
+        durable_import_started = False
         try:
             picker = EnhancedFileOpen(
                 title="Import Character Card",
@@ -6020,7 +6026,48 @@ class PersonasScreen(BaseAppScreen):
                 )
                 return
             if file_path:
-                await self._import_character_from_path(str(file_path))
+                if self._active_character_import_worker() is not None:
+                    self._notify(
+                        "A character import is already in progress.", "information"
+                    )
+                    return
+                self._start_character_import(str(file_path))
+                durable_import_started = True
+        finally:
+            if not durable_import_started:
+                self._io_dialog_active = False
+
+    def _active_character_import_worker(self) -> Worker[None] | None:
+        """Return the active app-owned character import, if any."""
+        for worker in self.app_instance.workers:
+            if (
+                worker.node is self.app_instance
+                and worker.group == _PERSONAS_CHARACTER_IMPORT_WORKER_GROUP
+                and not worker.is_finished
+            ):
+                return worker
+        return None
+
+    def _start_character_import(self, path: str) -> Worker[None]:
+        """Launch one durable character import owned by the application.
+
+        The worker carries the path in its coroutine; no domain payload or
+        result is mirrored onto ``TldwCli``. Application ownership only keeps
+        the durable operation alive while ``switch_screen`` unmounts the
+        initiating Personas screen.
+        """
+        active_worker = self._active_character_import_worker()
+        if active_worker is not None:
+            return active_worker
+        return self.app_instance.run_worker(
+            self._run_durable_character_import(path),
+            group=_PERSONAS_CHARACTER_IMPORT_WORKER_GROUP,
+        )
+
+    async def _run_durable_character_import(self, path: str) -> None:
+        """Complete a character import and release the initiating dialog slot."""
+        try:
+            await self._import_character_from_path(path)
         finally:
             self._io_dialog_active = False
 
