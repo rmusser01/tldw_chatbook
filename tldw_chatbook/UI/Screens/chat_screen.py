@@ -13385,7 +13385,12 @@ class ChatScreen(BaseAppScreen):
                 await self._sync_native_console_chat_ui()
                 return True
             self._pending_console_delete_message_id = None
-            self._clear_console_original_attempt_preview(message_id)
+            session_id = store.session_id_for_message(message_id)
+            controller = self._ensure_console_chat_controller()
+            # Deletion is subtree-wide, so clear the owning session while
+            # descendant-to-session identity is still available.
+            controller.clear_original_attempts_for_session(session_id)
+            self._console_original_attempt_previews.clear()
             store.delete_message(message_id)
             # TASK-251: a deleted message can change what the browser row
             # shows for this conversation (title/updated_at) -- invalidate
