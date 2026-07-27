@@ -3537,9 +3537,17 @@ async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
 
         # AC#2: one collapsed watchlist occupies exactly one rail row. The
         # chevron used to own a row of its own directly above the name.
-        assert "▸" not in rows[node.region.y - 1], (
+        # Guarded: a watchlist painted on row 0 has no row above it, and an
+        # unguarded `y - 1` would wrap to the last row and compare against
+        # something unrelated (Qodo #2 on PR #1017).
+        assert node.region.y > 0, (
+            f"expected the watchlist below the rail heading, not at the top "
+            f"of the screen: {node.region}"
+        )
+        row_above = rows[node.region.y - 1]
+        assert "▸" not in row_above, (
             f"the row above the watchlist still paints a stray chevron: "
-            f"{rows[node.region.y - 1].strip()!r}"
+            f"{row_above.strip()!r}"
         )
 
         # AC#4: expanding still nests the sources under the watchlist.

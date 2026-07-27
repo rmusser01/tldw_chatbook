@@ -1141,23 +1141,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _watchlists_are_empty(self) -> bool:
         """Whether this profile has nothing in Watchlists yet (TASK-998).
 
-        Deliberately the same predicate `OverviewPane._is_first_run` uses, and
-        guarded the same way: `overview_data` is `{}` until its worker lands,
-        and an absent `total_sources` means "not loaded" rather than "empty" —
-        without that guard the Inspector would show first-run copy for a tick
-        on every visit, including for users who have hundreds of sources.
+        Delegates to `OverviewPane.profile_is_empty`, which is the one
+        definition of this question (Qodo #3 on PR #1017). It used to be
+        copied here, and two copies deciding what the Overview region and the
+        Inspector each say is a drift waiting to happen -- the two disagreeing
+        is precisely the confusing first-run state TASK-998 removed.
+
+        Returns:
+            True only once `overview_data` has loaded and reports nothing.
         """
-        data = self.overview_data
-        if "total_sources" not in data:
-            return False
-        return not any(
-            (
-                data.get("total_sources"),
-                data.get("total_items"),
-                data.get("active_alert_rules"),
-                data.get("failed_runs"),
-            )
-        )
+        return OverviewPane.profile_is_empty(self.overview_data)
 
     def _build_inspector_pane(
         self,

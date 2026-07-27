@@ -33,6 +33,40 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
         value = self.data.get(key, "-")
         return f"{label}\n{value}"
 
+    @staticmethod
+    def profile_is_empty(data: dict) -> bool:
+        """Whether `data` says this profile has nothing in Watchlists yet.
+
+        The single definition of that question (Qodo #3 on PR #1017). It lived
+        here and, copied, on `WatchlistsCollectionsScreen`; two copies of a
+        predicate that decides what the Overview region and the Inspector each
+        say is a drift waiting to happen, and the two disagreeing is exactly
+        the confusing state TASK-998 set out to remove.
+
+        Guarded on `total_sources` being PRESENT, not merely falsy: `data`
+        starts as `{}` and is filled by a worker, so a plain zero-check would
+        show first-run copy for the tick before the numbers land and then swap
+        it -- a flash on every visit for users who do have sources. An absent
+        key means "not loaded yet", which is not the same answer as "loaded,
+        and empty".
+
+        Args:
+            data: The overview payload, as published to `overview_data`.
+
+        Returns:
+            True only when the payload has loaded and reports nothing.
+        """
+        if "total_sources" not in data:
+            return False
+        return not any(
+            (
+                data.get("total_sources"),
+                data.get("total_items"),
+                data.get("active_alert_rules"),
+                data.get("failed_runs"),
+            )
+        )
+
     def _is_first_run(self) -> bool:
         """Whether this profile has nothing for the cards to report.
 
@@ -43,16 +77,7 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
         sources. An absent key means "not loaded yet", which is not the same
         answer as "loaded, and empty".
         """
-        if "total_sources" not in self.data:
-            return False
-        return not any(
-            (
-                self.data.get("total_sources"),
-                self.data.get("total_items"),
-                self.data.get("active_alert_rules"),
-                self.data.get("failed_runs"),
-            )
-        )
+        return self.profile_is_empty(self.data)
 
     def _first_run_body(self) -> str:
         """What to do next, phrased for what the user has actually done.
