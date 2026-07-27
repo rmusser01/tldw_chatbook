@@ -127,10 +127,6 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
     with (
         patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
         patch(
-            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
-            side_effect=_test_cli_setting,
-        ),
-        patch(
             "tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.get_cli_setting",
             side_effect=_test_cli_setting,
         ),

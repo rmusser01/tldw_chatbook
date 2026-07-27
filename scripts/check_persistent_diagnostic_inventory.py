@@ -37,7 +37,6 @@ TASK_492_PREFIXES = (
 )
 TASK_492_FILES = {
     "tldw_chatbook/Agents/mcp_tool_provider.py",
-    "tldw_chatbook/Utils/chat_diagnostics.py",
 }
 SINK_CALL_NAMES = {
     "FileHandler",

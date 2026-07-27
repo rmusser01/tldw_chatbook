@@ -131,15 +131,6 @@
 }
 /* Input widget styling (shared) */
 
-/* ========================================
- * ChatWindowEnhanced specific styles
- * ======================================== */
-
-ChatWindowEnhanced {
-    layout: horizontal;
-    height: 100%;
-}
-
 /* Image attachment indicator */
 #image-attachment-indicator {
     margin: 0 1;

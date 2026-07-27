@@ -829,12 +829,8 @@ async def handle_chat_send_button_pressed(
     )  # This is from the RIGHT sidebar's loaded char
     final_system_prompt_for_api = system_prompt_from_ui  # Default to UI
 
-    # Check if we're using enhanced chat window (needed for multiple places in this function)
+    # Transitional message-widget preference; root Chat wiring is removed in TASK-650.
     use_enhanced_chat = get_cli_setting("chat_defaults", "use_enhanced_window", False)
-
-    # Initialize pending_image and pending_attachment early (needed for multiple places in this function)
-    pending_image = None
-    pending_attachment = None
 
     # Initialize world info processor
     world_info_processor = None
@@ -1157,73 +1153,17 @@ async def handle_chat_send_button_pressed(
 
     # --- 6. Mount User Message to UI ---
     if not reuse_last_user_bubble and not resend_conversation:
-        # Check if we're using enhanced chat window and if there's a pending image
-        if use_enhanced_chat:
-            try:
-                from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
-
-                chat_window = app.query_one(ChatWindowEnhanced)
-
-                # Try new attachment system first
-                if hasattr(chat_window, "get_pending_attachment"):
-                    pending_attachment = chat_window.get_pending_attachment()
-                    if pending_attachment:
-                        loguru_logger.info(
-                            f"DEBUG: Retrieved pending_attachment from chat window - file_type: {pending_attachment.get('file_type')}, insert_mode: {pending_attachment.get('insert_mode')}"
-                        )
-                        # For backward compatibility, if it's an image, also set pending_image
-                        if pending_attachment.get("file_type") == "image":
-                            pending_image = {
-                                "data": pending_attachment["data"],
-                                "mime_type": pending_attachment["mime_type"],
-                                "path": pending_attachment.get("path"),
-                            }
-                            loguru_logger.info(
-                                "DEBUG: Also set pending_image for backward compatibility"
-                            )
-                        loguru_logger.debug(
-                            f"Enhanced chat window - pending attachment: {pending_attachment.get('file_type', 'unknown')} ({pending_attachment.get('display_name', 'unnamed')})"
-                        )
-                # Fall back to old pending_image system
-                elif hasattr(chat_window, "get_pending_image"):
-                    pending_image = chat_window.get_pending_image()
-                    loguru_logger.debug(
-                        f"Enhanced chat window - pending image (legacy): {'Yes' if pending_image else 'No'}"
-                    )
-
-            except QueryError:
-                loguru_logger.debug("Enhanced chat window not found in DOM")
-            except AttributeError as e:
-                loguru_logger.debug(f"Enhanced chat window attribute error: {e}")
-            except Exception as e:
-                loguru_logger.opt(exception=True).warning(
-                    f"Unexpected error getting pending attachment/image: {e}"
-                )
-
         # Get user display name from User Identifier or default to "User"
         user_display_name = llm_user_identifier_value or "User"
 
-        # Create appropriate widget based on image presence
-        if pending_image:
+        if use_enhanced_chat:
             user_msg_widget_instance = ChatMessageEnhanced(
-                message=message_text_from_input,
-                role=user_display_name,
-                image_data=pending_image["data"],
-                image_mime_type=pending_image["mime_type"],
-            )
-            loguru_logger.info(
-                f"Created ChatMessageEnhanced with image (type: {pending_image['mime_type']})"
+                message_text_from_input, role=user_display_name
             )
         else:
-            # Use enhanced widget if available and we're in enhanced mode, otherwise basic
-            if use_enhanced_chat:
-                user_msg_widget_instance = ChatMessageEnhanced(
-                    message_text_from_input, role=user_display_name
-                )
-            else:
-                user_msg_widget_instance = ChatMessage(
-                    message_text_from_input, role=user_display_name
-                )
+            user_msg_widget_instance = ChatMessage(
+                message_text_from_input, role=user_display_name
+            )
 
         await chat_container.mount(user_msg_widget_instance)
         loguru_logger.debug(
@@ -1263,37 +1203,13 @@ async def handle_chat_send_button_pressed(
                 loguru_logger.debug(
                     f"Chat is persistent (ID: {active_conversation_id}). Saving user message to DB."
                 )
-                # Include image data if present
-                image_data = None
-                image_mime_type = None
-                if pending_image:
-                    try:
-                        # Validate image data before saving
-                        from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
-                            ChatImageHandler,
-                        )
-
-                        if ChatImageHandler.validate_image_data(pending_image["data"]):
-                            image_data = pending_image["data"]
-                            image_mime_type = pending_image["mime_type"]
-                            loguru_logger.debug(
-                                f"Including validated image in DB save (type: {image_mime_type}, size: {len(image_data)} bytes)"
-                            )
-                        else:
-                            loguru_logger.warning(
-                                "Image data validation failed, not saving to DB"
-                            )
-                    except Exception as e:
-                        loguru_logger.error(f"Error validating image data: {e}")
-                        # Continue without image rather than failing the entire message
-
                 user_message_db_id_version_tuple = ccl.add_message_to_conversation(
                     db,
                     conversation_id=active_conversation_id,
                     sender="User",
                     content=message_text_from_input,
-                    image_data=image_data,
-                    image_mime_type=image_mime_type,
+                    image_data=None,
+                    image_mime_type=None,
                 )
                 # add_message_to_conversation in ccl returns message_id (str). Version is handled by DB.
                 # We need to fetch the message to get its version.
@@ -1491,103 +1407,7 @@ async def handle_chat_send_button_pressed(
         f"Dispatching API call to worker. Current message: '{message_text_with_world_info[:50]}...', History items: {len(chat_history_for_api)}"
     )
 
-    # Prepare media content if attachment is present
     media_content_for_api = {}
-
-    # Debug log attachment status
-    loguru_logger.info(
-        f"DEBUG: Before processing - pending_attachment exists: {bool(pending_attachment)}, pending_image exists: {bool(pending_image)}"
-    )
-    if pending_attachment:
-        loguru_logger.info(
-            f"DEBUG: pending_attachment details - insert_mode: {pending_attachment.get('insert_mode')}, file_type: {pending_attachment.get('file_type')}"
-        )
-
-    # Handle new unified attachment system
-    if pending_attachment and pending_attachment.get("insert_mode") == "attachment":
-        file_type = pending_attachment.get("file_type", "unknown")
-
-        # For images, check if model supports vision
-        vision_capable = is_vision_capable(selected_provider, selected_model)
-        loguru_logger.info(
-            f"DEBUG: Vision capability check - provider: {selected_provider}, model: {selected_model}, is_vision_capable: {vision_capable}"
-        )
-        if file_type == "image":
-            if vision_capable:
-                try:
-                    import base64
-
-                    media_content_for_api = {
-                        "base64_data": base64.b64encode(
-                            pending_attachment["data"]
-                        ).decode(),
-                        "mime_type": pending_attachment["mime_type"],
-                    }
-                    loguru_logger.info(
-                        f"Including image attachment in API call (type: {pending_attachment['mime_type']}, size: {len(pending_attachment['data'])} bytes)"
-                    )
-                    # Notify user that image is being sent
-                    app.notify(
-                        f"Sending image with message ({pending_attachment.get('display_name', 'image')})",
-                        severity="information",
-                        timeout=2,
-                    )
-                except Exception as e:
-                    loguru_logger.error(
-                        f"Failed to prepare image attachment for API: {e}"
-                    )
-                    app.notify("Failed to prepare image attachment", severity="error")
-                    # Continue without image
-            else:
-                # Model doesn't support vision
-                loguru_logger.warning(
-                    f"Model {selected_model} does not support vision. Image attachment will be ignored."
-                )
-                app.notify(
-                    f"⚠️ {selected_model} doesn't support images. Image not sent.",
-                    severity="warning",
-                    timeout=5,
-                )
-        else:
-            # For non-image attachments, we could potentially handle them differently in the future
-            # For now, log that we have an attachment but it's not being sent
-            loguru_logger.debug(
-                f"Attachment of type '{file_type}' present but not included in API call"
-            )
-
-    # Fall back to legacy pending_image if no attachment
-    elif pending_image:
-        vision_capable = is_vision_capable(selected_provider, selected_model)
-        loguru_logger.info(
-            f"DEBUG: Legacy image path - vision_capable: {vision_capable}"
-        )
-        if vision_capable:
-            try:
-                import base64
-
-                media_content_for_api = {
-                    "base64_data": base64.b64encode(pending_image["data"]).decode(),
-                    "mime_type": pending_image["mime_type"],
-                }
-                loguru_logger.info(
-                    f"Including image in API call (legacy) (type: {pending_image['mime_type']}, size: {len(pending_image['data'])} bytes)"
-                )
-                app.notify(
-                    "Sending image with message", severity="information", timeout=2
-                )
-            except Exception as e:
-                loguru_logger.error(f"Failed to prepare image for API (legacy): {e}")
-                app.notify("Failed to prepare image", severity="error")
-                # Continue without image
-        else:
-            loguru_logger.warning(
-                f"Model {selected_model} does not support vision. Image will be ignored."
-            )
-            app.notify(
-                f"⚠️ {selected_model} doesn't support images. Image not sent.",
-                severity="warning",
-                timeout=5,
-            )
 
     # Log API parameters for debugging
     api_params = {
@@ -1764,23 +1584,6 @@ async def handle_chat_send_button_pressed(
     )
     app.set_current_chat_worker(worker)
 
-    # Clear pending attachment/image after sending
-    if use_enhanced_chat and (pending_image or pending_attachment):
-        try:
-            # Clear both old and new attachment systems
-            if hasattr(chat_window, "pending_attachment"):
-                chat_window.pending_attachment = None
-            if hasattr(chat_window, "pending_image"):
-                chat_window.pending_image = None
-            # Update UI to reflect cleared attachment
-            attach_button = chat_window.query_one("#attach-image", Button)
-            attach_button.label = "📎"
-            indicator = chat_window.query_one("#image-attachment-indicator", Static)
-            indicator.add_class("hidden")
-            loguru_logger.debug("Cleared pending attachment/image after sending")
-        except Exception as e:
-            loguru_logger.debug(f"Could not clear pending attachment UI: {e}")
-
     # Log UI response time metrics
     ui_response_time = time.time() - start_time
     log_histogram(
@@ -1790,7 +1593,7 @@ async def handle_chat_send_button_pressed(
             "tab": prefix,
             "provider": selected_provider or "none",
             "streaming": str(should_stream),
-            "has_image": str(bool(pending_image)),
+            "has_image": "False",
             "has_character": str(bool(app.current_chat_active_character_data)),
         },
     )
@@ -3109,11 +2912,7 @@ async def handle_chat_new_temp_chat_button_pressed(
         try:
             chat_log_widget = app.screen.query_one("#chat-log", VerticalScroll)
         except QueryError:
-            try:
-                chat_window = app.screen.query_one("#chat-window")
-                chat_log_widget = chat_window.query_one("#chat-log", VerticalScroll)
-            except QueryError:
-                chat_log_widget = app.query_one("#chat-log", VerticalScroll)
+            chat_log_widget = app.query_one("#chat-log", VerticalScroll)
 
         # Properly clear existing widgets to prevent memory leak
         existing_widgets = list(chat_log_widget.children)
@@ -3188,11 +2987,7 @@ async def handle_chat_new_conversation_button_pressed(
         try:
             chat_log_widget = app.screen.query_one("#chat-log", VerticalScroll)
         except QueryError:
-            try:
-                chat_window = app.screen.query_one("#chat-window")
-                chat_log_widget = chat_window.query_one("#chat-log", VerticalScroll)
-            except QueryError:
-                chat_log_widget = app.query_one("#chat-log", VerticalScroll)
+            chat_log_widget = app.query_one("#chat-log", VerticalScroll)
 
         # Properly clear existing widgets to prevent memory leak
         existing_widgets = list(chat_log_widget.children)
@@ -4687,17 +4482,9 @@ async def handle_chat_load_character_button_pressed(
                 "#chat-character-search-results-list", ListView
             )
         except QueryError:
-            # If not found in screen, try the chat window
-            try:
-                chat_window = app.screen.query_one("#chat-window")
-                results_list_view = chat_window.query_one(
-                    "#chat-character-search-results-list", ListView
-                )
-            except QueryError:
-                # Last resort: try app-level query
-                results_list_view = app.query_one(
-                    "#chat-character-search-results-list", ListView
-                )
+            results_list_view = app.query_one(
+                "#chat-character-search-results-list", ListView
+            )
         highlighted_widget = results_list_view.highlighted_child
 
         # --- Type checking and attribute access fix for highlighted_item ---
@@ -5257,17 +5044,9 @@ async def _populate_chat_character_search_list(
                 "#chat-character-search-results-list", ListView
             )
         except QueryError:
-            # If not found in screen, try the chat window
-            try:
-                chat_window = app.screen.query_one("#chat-window")
-                results_list_view = chat_window.query_one(
-                    "#chat-character-search-results-list", ListView
-                )
-            except QueryError:
-                # Last resort: try app-level query
-                results_list_view = app.query_one(
-                    "#chat-character-search-results-list", ListView
-                )
+            results_list_view = app.query_one(
+                "#chat-character-search-results-list", ListView
+            )
         await results_list_view.clear()
 
         if not app.notes_service:
@@ -6051,7 +5830,7 @@ async def handle_respond_for_me_button_pressed(
                 f"{get_char(EMOJI_THINKING, FALLBACK_THINKING)} Suggesting..."
             )
         except QueryError:
-            # Button doesn't exist in this window (e.g., ChatWindowEnhanced), that's okay
+            # Button is not mounted for this route.
             loguru_logger.debug("Respond button not found in UI, continuing without it")
             respond_button = None
 

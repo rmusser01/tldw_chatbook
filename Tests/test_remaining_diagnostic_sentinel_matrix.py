@@ -24,7 +24,6 @@ DOMAIN_OWNERS = [
     ("notes_sync", "tldw_chatbook.Notes.sync_engine"),
     ("subscriptions", "tldw_chatbook.Subscriptions.content_processor"),
     ("web", "tldw_chatbook.Web_Scraping.Article_Extractor_Lib"),
-    ("ui", "tldw_chatbook.UI.Chat_Window_Enhanced"),
     ("application", "tldw_chatbook.app"),
 ]
 

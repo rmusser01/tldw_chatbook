@@ -2,7 +2,7 @@
 
 Date: 2026-07-27
 
-Status: pre-deletion inventory
+Status: verified post-deletion
 
 Task: [TASK-649](../../../backlog/tasks/task-649%20-%20Retire-the-unreachable-legacy-Chat-composition.md)
 
@@ -101,6 +101,11 @@ Two mixed sentinels are `prune-exclusive-branch`:
   `Tests/test_smoke.py`;
 - remove the `tldw_chatbook.UI.Chat_Window_Enhanced` diagnostic matrix row
   from `Tests/test_remaining_diagnostic_sentinel_matrix.py`.
+- remove only the stale deleted-module monkeypatches from
+  `Tests/UI/test_product_maturity_phase1_core_loop.py` and
+  `Tests/UI/test_product_maturity_phase1_empty_setup_states.py`. These suites
+  were not used as TASK-649 verification because they construct simplified
+  applications; the production route check is the authorized replacement.
 
 Tests that mention a local `chat_window` variable but primarily cover
 `ChatScreenState`, handoff models, or root-wired tab handlers are
@@ -111,11 +116,34 @@ a simplified application.
 
 ## Final evidence
 
-To be updated after deletion with:
-
-- zero production definitions/imports of `ChatWindow` and
-  `ChatWindowEnhanced`;
-- zero `ChatScreen.chat_window` or `_ensure_chat_window` branches;
-- the retained live importer list for `CompactModelBar`;
-- rebuilt CSS evidence;
-- normal production `TldwCli` route, action, and snapshot results.
+- `rg` reports zero production Python or TCSS hits for `Chat_Window`,
+  `ChatWindow`, `ChatWindowEnhanced`, `chat_window`, `#chat-window`,
+  `ChatDiagnostics`, `chat_diagnostics`, `ChatShellBar`, `chat_shell_bar`, or
+  `UI.Chat_Modules`.
+- The structural ownership tests confirm zero production definitions/imports
+  of `ChatWindow` and `ChatWindowEnhanced`, and zero `ChatScreen.chat_window`
+  or `_ensure_chat_window` syntax.
+- `CompactModelBar` remains live through native Console consumers:
+  `Widgets/Console/console_control_bar.py` constructs it and
+  `UI/Screens/chat_screen.py` queries/synchronizes that mounted instance. Its
+  legacy ancestor fallback was removed.
+- `python tldw_chatbook/css/build_css.py` rebuilt
+  `css/tldw_cli_modular.tcss` from the pruned source (299,477 characters);
+  the bundle contains native Console selectors and no legacy Chat selector.
+- The generated persistent-diagnostic inventory now contains 416 owners,
+  1,006 TASK-492 calls, 6,804 TASK-494 calls, and the same five persistent
+  sink files. Relative to a fresh inventory generated from branch `HEAD`,
+  TASK-649 removes exactly eight owner files, four TASK-492 calls, and 213
+  TASK-494 calls. Sink-call digests are unchanged. Branch `HEAD` already had
+  an inherited TASK-648 snapshot drift of one net TASK-494 call plus line/digest
+  movement in `app.py`, `chat_screen.py`, and `settings_screen.py`; that
+  pre-existing delta is reconciled in the same generated snapshot and is not
+  attributed to TASK-649.
+- The normal production `TldwCli` test mounts the registered `ChatScreen`,
+  verifies `ConsoleSessionSurface` plus the real composer, clicks the real
+  collapse and expand actions, navigates through the registered Settings
+  route, and restores the native Console draft snapshot.
+- Post-deletion checkpoint:
+  `Tests/ProductionApp/test_chat_composition_retirement.py` plus
+  `Tests/ProductionApp/test_provider_selection_ownership.py` plus
+  `Tests/test_application_state_ownership.py` passed 34 tests in 85.91 seconds.

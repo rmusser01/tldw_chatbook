@@ -35,11 +35,17 @@ consumer.
 
 - Create `Docs/superpowers/reviews/2026-07-26-task-649-legacy-chat-reachability.md`: import/reachability disposition.
 - Modify `tldw_chatbook/UI/Screens/chat_screen.py`: remove the legacy field, constructor, branches, delegation, and diagnostics.
+- Modify `tldw_chatbook/app.py`: remove the legacy checkbox branch that imports and queries the retired composition; defer unrelated root Chat state to TASK-650.
+- Modify `tldw_chatbook/Chat/attachment_core.py`: remove the false claim that the retained app-independent helper still serves the deleted legacy composition.
 - Delete `tldw_chatbook/UI/Chat_Window.py` and `tldw_chatbook/UI/Chat_Window_Enhanced.py`.
 - Delete or prune `tldw_chatbook/UI/Chat_Modules/*`, `tldw_chatbook/Widgets/compact_model_bar.py`, and `tldw_chatbook/Utils/chat_diagnostics.py` only according to the manifest.
 - Modify `tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py`, `chat_events_tabs.py`, `chat_events_worldbooks.py`, and `worker_events.py` only to remove imports/branches exclusive to the deleted composition; defer root-state deletion to TASK-650.
 - Modify `tldw_chatbook/css/features/_chat.tcss` and rebuild `tldw_chatbook/css/tldw_cli_modular.tcss`.
+- Modify `scripts/check_persistent_diagnostic_inventory.py` and regenerate
+  `Docs/security/production-diagnostic-inventory.json` after reviewing the
+  deleted diagnostic owners and proving persistent sink topology is unchanged.
 - Delete legacy-only tests identified by the manifest.
+- Prune stale deleted-module monkeypatches from the two product-maturity UI suites without using those simplified-app suites as TASK-649 verification.
 - Create `Tests/ProductionApp/test_chat_composition_retirement.py`.
 - Modify `Tests/test_application_state_ownership.py`.
 
@@ -137,9 +143,9 @@ python tldw_chatbook/css/build_css.py
 
 ```bash
 pytest Tests/ProductionApp/test_chat_composition_retirement.py Tests/ProductionApp/test_provider_selection_ownership.py Tests/test_application_state_ownership.py -q
-python -m compileall -q tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Chat_Modules tldw_chatbook/Event_Handlers/Chat_Events tldw_chatbook/Event_Handlers/worker_events.py
-python -m ruff check tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Chat_Modules tldw_chatbook/Event_Handlers/Chat_Events tldw_chatbook/Event_Handlers/worker_events.py Tests/ProductionApp/test_chat_composition_retirement.py Tests/test_application_state_ownership.py
-python -m ruff format --check tldw_chatbook/UI/Chat_Modules tldw_chatbook/Event_Handlers/worker_events.py Tests/ProductionApp/test_chat_composition_retirement.py Tests/test_application_state_ownership.py
+python -m compileall -q tldw_chatbook/app.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Event_Handlers/Chat_Events tldw_chatbook/Event_Handlers/worker_events.py
+python -m ruff check tldw_chatbook/app.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events_tabs.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events_worldbooks.py tldw_chatbook/Event_Handlers/worker_events.py Tests/ProductionApp/test_chat_composition_retirement.py Tests/test_application_state_ownership.py
+python -m ruff format --check tldw_chatbook/Chat/attachment_core.py tldw_chatbook/Widgets/compact_model_bar.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events_tabs.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events_worldbooks.py tldw_chatbook/Event_Handlers/worker_events.py scripts/check_persistent_diagnostic_inventory.py Tests/ProductionApp/test_chat_composition_retirement.py Tests/test_application_state_ownership.py Tests/test_remaining_diagnostic_sentinel_matrix.py Tests/test_smoke.py
 git diff --check
 ```
 
@@ -151,7 +157,7 @@ git diff --check
 - [ ] Commit the retirement using the exact manifest-approved file set:
 
 ```bash
-git add Docs/superpowers/reviews/2026-07-26-task-649-legacy-chat-reachability.md tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Event_Handlers/Chat_Events tldw_chatbook/Event_Handlers/worker_events.py tldw_chatbook/css/features/_chat.tcss tldw_chatbook/css/tldw_cli_modular.tcss Tests/ProductionApp/test_chat_composition_retirement.py Tests/test_application_state_ownership.py
+git add Docs/superpowers/reviews/2026-07-26-task-649-legacy-chat-reachability.md Docs/security/production-diagnostic-inventory.json scripts/check_persistent_diagnostic_inventory.py tldw_chatbook/app.py tldw_chatbook/Chat/attachment_core.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/compact_model_bar.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events_tabs.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events_worldbooks.py tldw_chatbook/Event_Handlers/worker_events.py tldw_chatbook/css/features/_chat.tcss tldw_chatbook/css/tldw_cli_modular.tcss Tests/ProductionApp/test_chat_composition_retirement.py Tests/test_application_state_ownership.py Tests/test_smoke.py Tests/test_remaining_diagnostic_sentinel_matrix.py Tests/UI/test_product_maturity_phase1_core_loop.py Tests/UI/test_product_maturity_phase1_empty_setup_states.py
 git commit -m "refactor(chat): retire dormant legacy composition (task-649)"
 ```
 

@@ -54,16 +54,6 @@ def get_active_session_data(app: "TldwCli") -> Optional[ChatSessionData]:
             tab_id="default", title="Chat", is_ephemeral=app.current_chat_is_ephemeral
         )
 
-    # Tabs enabled - get from tab container
-    try:
-        chat_window = app.query_one("#chat-window")
-        if hasattr(chat_window, "tab_container") and chat_window.tab_container:
-            active_session = chat_window.tab_container.get_active_session()
-            if active_session:
-                return active_session.session_data
-    except Exception as e:
-        logger.error(f"Error getting active session: {e}")
-
     return None
 
 
@@ -385,14 +375,8 @@ async def display_conversation_in_chat_tab_ui_with_tabs(
                 else:
                     session_data.title = _derive_session_title(session_data)
 
-                # If we have access to the tab container, update the tab label
-                chat_window = original_query_one("#chat-window")
-                if hasattr(chat_window, "tab_container") and chat_window.tab_container:
-                    chat_window.tab_container.update_tab_title(
-                        session_data.tab_id, session_data.title
-                    )
             except Exception as e:
-                logger.debug(f"Could not update tab title: {e}")
+                logger.debug(f"Could not derive tab title: {e}")
 
     finally:
         # Restore original query methods

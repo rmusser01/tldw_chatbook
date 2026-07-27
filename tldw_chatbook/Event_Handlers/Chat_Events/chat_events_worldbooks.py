@@ -198,13 +198,7 @@ async def refresh_active_worldbooks(app: "TldwCli") -> None:
                 "#chat-worldbook-active-listview", ListView
             )
         except QueryError:
-            try:
-                chat_window = app.screen.query_one("#chat-window")
-                active_list = chat_window.query_one(
-                    "#chat-worldbook-active-listview", ListView
-                )
-            except QueryError:
-                active_list = app.query_one("#chat-worldbook-active-listview", ListView)
+            active_list = app.query_one("#chat-worldbook-active-listview", ListView)
         await active_list.clear()
 
         # Get the current conversation ID

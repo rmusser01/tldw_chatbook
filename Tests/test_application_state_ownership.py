@@ -32,6 +32,18 @@ SCREEN_STATE_STORE_PATH = (
 )
 HANDOFF_STORE_PATH = PRODUCTION_ROOT / "UI" / "Navigation" / "pending_handoff_store.py"
 CHAT_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen.py"
+LEGACY_CHAT_COMPOSITION_PATHS = (
+    PRODUCTION_ROOT / "UI" / "Chat_Window.py",
+    PRODUCTION_ROOT / "UI" / "Chat_Window_Enhanced.py",
+)
+LEGACY_CHAT_COMPOSITION_MODULES = {
+    "Chat_Window",
+    "Chat_Window_Enhanced",
+}
+LEGACY_CHAT_COMPOSITION_CLASSES = {
+    "ChatWindow",
+    "ChatWindowEnhanced",
+}
 STUDY_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "study_screen.py"
 ARTIFACTS_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "artifacts_screen.py"
 ACP_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "acp_screen.py"
@@ -290,6 +302,65 @@ mapping["retired_state"]
     assert kinds.count("attribute_del") == 1
     assert kinds.count("dynamic_name") == 3
     assert kinds.count("subscript_name") == 1
+
+
+def test_legacy_chat_composition_modules_imports_and_classes_are_absent() -> None:
+    violations: list[tuple[str, str, int]] = []
+
+    for path in LEGACY_CHAT_COMPOSITION_PATHS:
+        if path.exists():
+            violations.append(
+                (str(path.relative_to(PROJECT_ROOT)), "retired_module", 1)
+            )
+
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        for node in ast.walk(_parse(path)):
+            if isinstance(node, ast.ClassDef):
+                if node.name in LEGACY_CHAT_COMPOSITION_CLASSES:
+                    violations.append(
+                        (
+                            str(path.relative_to(PROJECT_ROOT)),
+                            f"class:{node.name}",
+                            node.lineno,
+                        )
+                    )
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.rsplit(".", 1)[-1] in LEGACY_CHAT_COMPOSITION_MODULES:
+                        violations.append(
+                            (
+                                str(path.relative_to(PROJECT_ROOT)),
+                                f"import:{alias.name}",
+                                node.lineno,
+                            )
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                module_name = (node.module or "").rsplit(".", 1)[-1]
+                imported_names = {alias.name for alias in node.names}
+                if (
+                    module_name in LEGACY_CHAT_COMPOSITION_MODULES
+                    or imported_names.intersection(LEGACY_CHAT_COMPOSITION_CLASSES)
+                ):
+                    violations.append(
+                        (
+                            str(path.relative_to(PROJECT_ROOT)),
+                            f"import_from:{node.module}",
+                            node.lineno,
+                        )
+                    )
+
+    assert violations == []
+
+
+def test_chat_screen_has_no_legacy_composition_field_or_adapter() -> None:
+    violations = {
+        target: _occurrences(CHAT_SCREEN_PATH, target)
+        for target in ("chat_window", "_ensure_chat_window")
+        if _occurrences(CHAT_SCREEN_PATH, target)
+    }
+
+    assert violations == {}
+    assert "#chat-window" not in CHAT_SCREEN_PATH.read_text(encoding="utf-8")
 
 
 def test_tldw_cli_neither_imports_nor_instantiates_app_state() -> None:

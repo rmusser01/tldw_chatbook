@@ -241,66 +241,20 @@ async def handle_api_call_worker_state_changed(
                         logger.error(
                             f"Error getting chat container for tab {tab_id}: {e}"
                         )
-                        # Try to get the active tab's chat log
                         try:
-                            chat_window = current_screen.query_one("#chat-window")
-                            if (
-                                hasattr(chat_window, "tab_container")
-                                and chat_window.tab_container
-                            ):
-                                active_session = (
-                                    chat_window.tab_container.get_active_session()
-                                )
-                                if active_session and active_session.session_data:
-                                    tab_id = active_session.session_data.tab_id
-                                    chat_container: VerticalScroll = (
-                                        current_screen.query_one(
-                                            f"#{prefix}-log-{tab_id}", VerticalScroll
-                                        )
-                                    )
-                                else:
-                                    logger.error("No active chat session found")
-                                    return
-                            else:
-                                # Fallback to non-tabbed mode
-                                chat_container: VerticalScroll = (
-                                    current_screen.query_one(
-                                        f"#{prefix}-log", VerticalScroll
-                                    )
-                                )
-                        except Exception as e2:
-                            logger.error(
-                                f"Error getting chat container with tabs: {e2}"
-                            )
-                            return
-                else:
-                    # No stored tab ID, try to get from active session
-                    try:
-                        chat_window = current_screen.query_one("#chat-window")
-                        if (
-                            hasattr(chat_window, "tab_container")
-                            and chat_window.tab_container
-                        ):
-                            active_session = (
-                                chat_window.tab_container.get_active_session()
-                            )
-                            if active_session and active_session.session_data:
-                                tab_id = active_session.session_data.tab_id
-                                chat_container: VerticalScroll = (
-                                    current_screen.query_one(
-                                        f"#{prefix}-log-{tab_id}", VerticalScroll
-                                    )
-                                )
-                            else:
-                                logger.error("No active chat session found")
-                                return
-                        else:
-                            # Fallback to non-tabbed mode
-                            chat_container: VerticalScroll = current_screen.query_one(
+                            chat_container = current_screen.query_one(
                                 f"#{prefix}-log", VerticalScroll
                             )
+                        except Exception as e2:
+                            logger.error(f"Error getting fallback chat container: {e2}")
+                            return
+                else:
+                    try:
+                        chat_container = current_screen.query_one(
+                            f"#{prefix}-log", VerticalScroll
+                        )
                     except Exception as e:
-                        logger.error(f"Error getting chat container with tabs: {e}")
+                        logger.error(f"Error getting fallback chat container: {e}")
                         return
             else:
                 # Non-chat or tabs disabled

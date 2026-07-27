@@ -6259,23 +6259,9 @@ class TldwCli(
             return self.current_chat_worker
 
     def set_current_chat_is_streaming(self, is_streaming: bool) -> None:
-        """Thread-safely set the streaming state and update UI."""
+        """Thread-safely set the legacy streaming state."""
         with self._chat_state_lock:
             self.current_chat_is_streaming = is_streaming
-
-        # Update the chat window button state when streaming changes
-        # This replaces the polling approach with event-driven updates
-        try:
-            # For screen navigation, find the active chat screen
-            from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-            if self.screen and isinstance(self.screen, ChatScreen):
-                if hasattr(self.screen, "chat_window") and self.screen.chat_window:
-                    self.screen.chat_window._update_button_state()
-
-        except Exception:
-            # Silently ignore if chat window isn't available
-            pass
 
     def get_current_chat_is_streaming(self) -> bool:
         """Thread-safely get the streaming state."""
@@ -9046,19 +9032,6 @@ class TldwCli(
             from .config import save_setting_to_cli_config
 
             save_setting_to_cli_config("chat.images", "show_attach_button", event.value)
-
-            # Update the UI if enhanced chat window is active
-            use_enhanced_chat = get_cli_setting(
-                "chat_defaults", "use_enhanced_window", False
-            )
-            if use_enhanced_chat:
-                try:
-                    from .UI.Chat_Window_Enhanced import ChatWindowEnhanced
-
-                    chat_window = self.query_one("#chat-window", ChatWindowEnhanced)
-                    await chat_window.toggle_attach_button_visibility(event.value)
-                except Exception as e:
-                    loguru_logger.error(f"Error toggling attach button visibility: {e}")
         elif (
             checkbox_id == "chat-show-dictation-button-checkbox"
             and current_active_tab == TAB_CHAT

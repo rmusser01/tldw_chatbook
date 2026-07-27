@@ -89,12 +89,6 @@ def _test_cli_setting(section: str, key: str, default=None):
     return default
 
 
-def _test_chat_window_setting(section: str, key: str, default=None):
-    if section == "chat_defaults" and key == "enable_tabs":
-        return False
-    return _test_cli_setting(section, key, default)
-
-
 def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for env_var, path_name in (
         ("HOME", "home"),
@@ -159,13 +153,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
 ) -> None:
     app = _build_clean_setup_state_app(monkeypatch, tmp_path)
 
-    with (
-        patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
-        patch(
-            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
-            side_effect=_test_chat_window_setting,
-        ),
-    ):
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,
