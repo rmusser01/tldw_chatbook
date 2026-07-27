@@ -1,15 +1,18 @@
 ---
 id: TASK-839
 title: Prevent optional MLX imports from aborting test collection
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-27 02:06'
-updated_date: '2026-07-27 02:06'
+updated_date: '2026-07-27 20:25'
 labels:
   - testing
   - optional-deps
   - stt
 dependencies: []
+references:
+  - Docs/superpowers/specs/2026-07-27-lazy-mlx-import-boundary-design.md
 priority: medium
 ---
 
