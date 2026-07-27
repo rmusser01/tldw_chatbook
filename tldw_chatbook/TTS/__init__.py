@@ -20,6 +20,7 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     ProfileValidationError,
 )
+from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -63,6 +64,7 @@ __all__ = [
     "TTSOperationError",
     "TTSConfigMutation",
     "TTSGenerationProfile",
+    "TTSProfileRepository",
     "TTSProfileDraft",
     "TTSProfilePage",
     "TTSPreferencesSnapshot",

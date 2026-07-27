@@ -91,6 +91,7 @@ from .config import (
     get_research_db_path,
     get_scheduled_tasks_db_path,
     get_subscriptions_db_path,
+    get_tts_profiles_db_path,
     get_user_data_dir,
     get_workspaces_db_path,
     get_writing_db_path,
@@ -223,6 +224,10 @@ from tldw_chatbook.Utils.ui_helpers import UIHelpers
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
+from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
+from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.TTS_Generation import (
     bind_tts_service,
     close_tts_resources,
@@ -3649,6 +3654,9 @@ class TldwCli(
         self.app_config = load_settings()
         self.tts_service = build_default_tts_service(self.app_config)
         self._tts_binding_active = False
+        self._tts_profile_repository = TTSProfileRepository(get_tts_profiles_db_path())
+        self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
+        self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
         self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(
             self.app_config
         )
@@ -7359,6 +7367,132 @@ class TldwCli(
         finally:
             self._tts_binding_active = False
 
+    async def _ensure_tts_profile_repository(
+        self,
+    ) -> TTSProfileRepository | None:
+        """Open and return the one app-owned profile repository on first use."""
+
+        repository = getattr(self, "_tts_profile_repository", None)
+        if repository is None:
+            return None
+        if repository.state is ProfileRepositoryState.OPEN:
+            return repository
+        if getattr(self, "_tts_profile_repository_close_task", None) is not None:
+            return None
+
+        open_task = getattr(self, "_tts_profile_repository_open_task", None)
+        if open_task is None or open_task.done():
+
+            async def open_repository() -> bool:
+                try:
+                    await repository.open()
+                except Exception as error:
+                    error_code = (
+                        error.code
+                        if isinstance(error, ProfileRepositoryError)
+                        else "operation_failed"
+                    )
+                    self.loguru_logger.warning(
+                        "TTS profile repository phase=open failed "
+                        f"type={type(error).__name__} code={error_code}"
+                    )
+                    return False
+                return repository.state is ProfileRepositoryState.OPEN
+
+            open_task = asyncio.create_task(
+                open_repository(),
+                name="open_tts_profile_repository",
+            )
+            self._tts_profile_repository_open_task = open_task
+
+        try:
+            opened = await asyncio.shield(open_task)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if open_task.done() and self._tts_profile_repository_open_task is open_task:
+                self._tts_profile_repository_open_task = None
+
+        if not opened or repository.state is not ProfileRepositoryState.OPEN:
+            return None
+        return repository
+
+    async def _close_tts_profile_repository(self) -> None:
+        """Definitively close the app-owned profile repository once."""
+
+        repository = getattr(self, "_tts_profile_repository", None)
+        if repository is None:
+            return
+
+        close_task = getattr(self, "_tts_profile_repository_close_task", None)
+        if close_task is None:
+
+            async def close_repository() -> None:
+                await repository.close()
+
+            close_task = asyncio.create_task(
+                close_repository(),
+                name="close_tts_profile_repository",
+            )
+            self._tts_profile_repository_close_task = close_task
+
+        def record_failure_after_cancellation(
+            cancellation: BaseException,
+            cleanup_error: BaseException,
+        ) -> None:
+            cancellation.add_note(
+                "TTS profile repository cleanup also failed while preserving "
+                "shutdown cancellation"
+            )
+            self.loguru_logger.warning(
+                "TTS profile repository phase=close failed while preserving "
+                f"cancellation type={type(cleanup_error).__name__} "
+                "code=operation_failed"
+            )
+
+        await join_retained_task(
+            close_task,
+            on_failure_after_cancellation=record_failure_after_cancellation,
+        )
+
+    async def _close_owned_tts_resources(self) -> None:
+        """Close both app-owned TTS resources without masking cancellation."""
+
+        failures: list[tuple[str, BaseException]] = []
+        try:
+            await self._close_tts_profile_repository()
+        except BaseException as profile_close_error:
+            failures.append(("profile_repository", profile_close_error))
+
+        try:
+            await self._close_tts_service()
+        except BaseException as service_close_error:
+            failures.append(("tts_service", service_close_error))
+
+        if not failures:
+            return
+
+        cancellations = [
+            failure
+            for failure in failures
+            if isinstance(failure[1], asyncio.CancelledError)
+        ]
+        primary_phase, primary_error = (
+            cancellations[0] if cancellations else failures[0]
+        )
+        for phase, failure_error in failures:
+            if failure_error is primary_error:
+                continue
+            primary_error.add_note(
+                "TTS owner cleanup also failed while preserving the primary error"
+            )
+            self.loguru_logger.warning(
+                f"TTS owner cleanup phase={phase} failed while preserving "
+                f"phase={primary_phase} type={type(failure_error).__name__} "
+                "code=operation_failed"
+            )
+        raise primary_error
+
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self._bind_tts_service()
@@ -8373,6 +8507,7 @@ class TldwCli(
             )
 
         # Stop all background services and threads
+        service_cleanup_primary: BaseException | None = None
         try:
             deferred_tasks = [
                 task
@@ -8471,14 +8606,37 @@ class TldwCli(
                     f"Error closing server context provider cached client: {e}"
                 )
 
+        except asyncio.CancelledError as error:
+            service_cleanup_primary = error
         except Exception as e:
             self.loguru_logger.error(f"Error during service cleanup: {e}")
+        except BaseException as error:
+            service_cleanup_primary = error
         finally:
             try:
-                await self._close_tts_service()
-                self.loguru_logger.info("TTS service cleaned up properly")
-            except Exception:
-                self.loguru_logger.exception("Error cleaning up TTS service")
+                await self._close_owned_tts_resources()
+                self.loguru_logger.info("TTS resources cleaned up properly")
+            except BaseException as cleanup_error:
+                if service_cleanup_primary is not None:
+                    service_cleanup_primary.add_note(
+                        "TTS cleanup also failed while preserving the primary "
+                        "shutdown error"
+                    )
+                    self.loguru_logger.warning(
+                        "TTS owner cleanup failed while preserving shutdown "
+                        f"type={type(cleanup_error).__name__} "
+                        "code=operation_failed"
+                    )
+                elif isinstance(cleanup_error, Exception):
+                    self.loguru_logger.warning(
+                        "TTS owner cleanup phase=unmount failed "
+                        f"type={type(cleanup_error).__name__} "
+                        "code=operation_failed"
+                    )
+                else:
+                    raise
+        if service_cleanup_primary is not None:
+            raise service_cleanup_primary
 
         # Original cleanup code
         if self._rich_log_handler:  # Ensure it's removed if it exists
