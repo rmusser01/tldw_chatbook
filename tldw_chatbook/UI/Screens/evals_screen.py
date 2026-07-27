@@ -33,8 +33,9 @@ from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.models import PreflightResult
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
-from ..Evals.inspector import EvalsInspector
+from ..Evals.inspector import EvalsCellInspector, EvalsInspector
 from ..Evals.library_rail import RAIL_SECTIONS, LibraryRail
+from ..Evals.results_grid import ResultsGrid
 from ..Evals.snippet_editor import SnippetEditor
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState
@@ -98,8 +99,33 @@ class EvalsScreen(BaseAppScreen):
                 "none"``, or a caller clearing the selection).
         """
         self._selection = EvalsSelection(kind=kind, id=id)
+        self._register_grid_shortcuts()
         if self.is_mounted:
             self.refresh(recompose=True)
+
+    def _register_grid_shortcuts(self) -> None:
+        """Advertises the results grid's `l`/`b`/`s` keys (see
+        ``results_grid.ResultsGrid.BINDINGS``) through the shared
+        ``ShortcutContext`` machinery only while a run group is selected --
+        the only selection kind that mounts a ``ResultsGrid`` at all -- so
+        the footer never advertises a grid shortcut with no grid on
+        screen. `e` (export) is deliberately not advertised here: it is
+        Task 2's job, and the key is left unbound in ``ResultsGrid`` so a
+        later PR can claim it without a collision.
+
+        Mirrors ``library_screen.py``'s ``_register_footer_shortcuts``: a
+        static hint set, re-registered on every selection change rather
+        than driven from inside the grid widget itself, since the grid
+        does not know when it stops being the active selection (its own
+        unmount does not fire a footer-clearing hook).
+        """
+        if self._selection.kind == "run_group" and self._selection.id:
+            self.register_footer_shortcuts(
+                source="evals-grid",
+                shortcuts=(("l", "lens"), ("b", "baseline"), ("s", "sort")),
+            )
+        else:
+            self.clear_footer_shortcuts(source="evals-grid")
 
     @on(LibraryRail.EvalsSelectionChanged)
     def _on_library_selection_changed(
@@ -107,6 +133,22 @@ class EvalsScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         self.select(kind=event.selection.kind, id=event.selection.id)
+
+    @on(ResultsGrid.CellFocused)
+    def _on_grid_cell_focused(self, event: ResultsGrid.CellFocused) -> None:
+        """Forwards a focused grid cell to the inspector pane's
+        ``EvalsCellInspector`` -- a targeted ``show_cell()`` call against
+        an already-mounted widget, never a screen recompose (see
+        ``results_grid.py``'s module docstring for why that distinction
+        matters on every arrow-key press)."""
+        event.stop()
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches _footer_status's own local import
+
+        try:
+            inspector = self.query_one(EvalsCellInspector)
+        except QueryError:
+            return
+        inspector.show_cell(event)
 
     # No `#evals-primary-action` press handler: `_primary_action_state`
     # below keeps the button disabled unconditionally (even for a found,
@@ -221,14 +263,16 @@ class EvalsScreen(BaseAppScreen):
                     id="evals-detail-missing",
                 )
                 return
-            yield Static(
-                str(group.get("task_name") or "Untitled run"),
-                id="evals-detail-run-name",
-                classes="evals-pane-heading",
-            )
-            yield Static(
-                f"Targets run: {group.get('run_count', 0)}",
-                id="evals-detail-run-count",
+            # ResultsGrid renders its own header (bench name, prompt mode,
+            # effective K, cell/failure counts) -- see results_grid.py's
+            # _render_header -- so no separate name/count Statics are
+            # yielded here; that would restate the same facts from a
+            # SECOND, unsynchronized source (this pane reads `group` from
+            # `EvalsViewModel.run_groups()`'s pivot, the grid reads its own
+            # `load_grid` snapshot -- two reads of related but distinct
+            # data that must not drift against each other in the UI).
+            yield ResultsGrid(
+                self._view_model, selection.id, id="evals-results-grid"
             )
             return
 
@@ -264,6 +308,22 @@ class EvalsScreen(BaseAppScreen):
             # one; `_primary_action_state()` is never consulted for this
             # kind.
             return
+
+        if selection.kind == "run_group":
+            group = (
+                self._view_model.run_group_by_id(selection.id)
+                if selection.id
+                else None
+            )
+            if group is not None:
+                # Focused-cell detail (full top-K + probe table), updated
+                # by `_on_grid_cell_focused` as the grid's cell cursor
+                # moves -- see that handler and results_grid.py's module
+                # docstring for why this is a targeted `show_cell()` call,
+                # never a recompose. The primary action button below still
+                # renders (with its existing "already completed" reason,
+                # unchanged from Task 3) beneath it.
+                yield EvalsCellInspector(id="evals-cell-inspector")
 
         label, disabled, tooltip = self._primary_action_state()
         yield Button(

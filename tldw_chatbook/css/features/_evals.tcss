@@ -207,3 +207,43 @@
 #evals-import-snippets {
     margin: 1 0 0 0;
 }
+
+/* Task 1 (results grid + lenses). The grid fills its detail pane; the
+   DataTable does its own row virtualization/scrolling once given a real
+   height via `1fr`, so -- unlike #evals-snippet-table/#evals-bench-target-
+   table above, which are plain Static lists with no scrolling of their
+   own -- the wrapping #evals-results-grid does not need `overflow-y: auto`
+   itself. */
+#evals-results-grid {
+    height: 100%;
+    min-height: 0;
+}
+
+#evals-grid-meta,
+#evals-grid-state {
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+#evals-grid-controls {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+#evals-grid-controls > Select {
+    width: 1fr;
+}
+
+#evals-grid-table {
+    height: 1fr;
+    min-height: 0;
+}
+
+/* Focused-cell detail can run to many lines (a full top-K plus a probe
+   table) -- scrolled at this level per the I4 convention above, mirroring
+   #evals-inspector-bench/#evals-classic-detail (no separate list-body vs.
+   sibling-control split needed here). */
+#evals-cell-inspector {
+    overflow-y: auto;
+}
