@@ -10,6 +10,7 @@ reaches every caller directly.
 """
 
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -860,3 +861,335 @@ def test_grep_worker_script_end_to_end_via_real_subprocess(tmp_path):
     parsed = json.loads(proc.stdout)
     assert len(parsed["matches"]) == 1
     assert parsed["matches"][0]["line"] == "DEBUG marker line"
+
+
+# ---------------------------------------------------------------------------
+# Follow-up hardening review (post TASK-843/TASK-850), Finding 1: draining
+# `_iter_candidates_across_roots` all the way to `_MAX_CANDIDATES` before
+# ever spawning the search subprocess undid the pre-subprocess early-break
+# (`len(matches) >= _MAX_MATCHES` / `lines_scanned >=
+# _MAX_GREP_LINES_SCANNED`, checked DURING enumeration). Reviewer-measured:
+# ~0.32ms/candidate means a 5,000-file tree with a pattern matching every
+# file went from ~0.1s (old early-break, ~200 files examined) to ~1.58s (all
+# 5,000 examined first). `_run_grep_search` restores the early exit by
+# streaming candidate discovery and the subprocess search together in
+# growing batches, and starts its wall-clock deadline before the first
+# candidate is even pulled -- these pin both halves of that fix.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_grep_files_high_hit_rate_pattern_does_not_over_enumerate(
+    tmp_path, monkeypatch
+):
+    """Reproduces the reviewer's exact regression scenario: a 5,000-file
+    tree where the pattern matches every file. Pins BOTH symptoms of the
+    fix rather than either alone:
+
+    - Structural (the real proof, immune to machine speed): the number of
+      candidates actually PULLED from `_iter_candidates_across_roots`
+      before the match budget (`_MAX_MATCHES` = 200) is satisfied must be
+      a small fraction of the 5,000-file tree, not the whole thing.
+    - Wall-clock (a generous sanity check): the call completes well
+      within the ballpark the fix targets, not the ~1s+ the drained-
+      enumeration bug cost (measured directly on this branch: median
+      ~1.0-1.3s before this fix, ~0.07-0.36s after).
+    """
+    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(tmp_path))
+    for i in range(5_000):
+        (tmp_path / f"f{i}.py").write_text("DEBUG = True\n")
+
+    pulled = 0
+    real_iter = fot._iter_candidates_across_roots
+
+    def counting_iter(*args, **kwargs):
+        nonlocal pulled
+        for path in real_iter(*args, **kwargs):
+            pulled += 1
+            yield path
+
+    monkeypatch.setattr(fot, "_iter_candidates_across_roots", counting_iter)
+
+    start = time.perf_counter()
+    result = await fot.GrepFiles().execute(pattern="DEBUG", glob="**/*.py")
+    elapsed = time.perf_counter() - start
+
+    assert len(result["matches"]) == fot._MAX_MATCHES
+    assert pulled < 2_500, (
+        f"enumerated {pulled} of 5,000 candidates before the match budget "
+        "was satisfied -- expected a small fraction, not most/all of the "
+        "tree (is discovery being drained before the subprocess ever "
+        "starts searching?)"
+    )
+    assert elapsed < 2.0, (
+        f"grep_files took {elapsed:.2f}s for a high-hit-rate pattern over "
+        "a large tree -- is candidate discovery running away before the "
+        "search subprocess is ever spawned?"
+    )
+
+
+@pytest.mark.asyncio
+async def test_grep_files_aggregates_matches_across_multiple_batches(
+    sandbox, monkeypatch
+):
+    """`_run_grep_search` must correctly accumulate matches (and the
+    lines-scanned budget) across MULTIPLE batches/subprocess calls, not
+    just the common single-batch case every other test exercises. Forces
+    several small batches by shrinking the batch-size constants, and
+    confirms every match survives into the final, merged result -- and
+    that more than one subprocess call actually happened.
+    """
+    monkeypatch.setattr(fot, "_GREP_INITIAL_CANDIDATE_BATCH_SIZE", 2)
+    monkeypatch.setattr(fot, "_GREP_MAX_CANDIDATE_BATCH_SIZE", 2)
+    monkeypatch.setattr(fot, "_MAX_MATCHES", 1_000)
+    for i in range(10):
+        (sandbox / f"extra{i}.py").write_text(f"DEBUG_MARKER_{i}\n")
+
+    calls: list[list[str]] = []
+    real = fot._run_grep_subprocess
+
+    def spy(pattern, file_paths, **kwargs):
+        calls.append(list(file_paths))
+        return real(pattern, file_paths, **kwargs)
+
+    monkeypatch.setattr(fot, "_run_grep_subprocess", spy)
+
+    result = await fot.GrepFiles().execute(
+        pattern=r"DEBUG_MARKER_\d+", glob="extra*.py"
+    )
+
+    assert len(result["matches"]) == 10
+    assert len(calls) > 1, (
+        "expected multiple batched subprocess calls with a batch size of 2 "
+        "and 10 candidates"
+    )
+    # Every candidate handed to any one call stays within that call's batch
+    # size -- proves batching, not one call quietly given everything anyway.
+    assert all(len(batch) <= 2 for batch in calls)
+
+
+@pytest.mark.asyncio
+async def test_grep_files_search_deadline_starts_before_the_first_candidate_is_pulled(
+    sandbox, monkeypatch
+):
+    """Finding 1's second half: the wall-clock deadline must start
+    counting BEFORE candidate discovery begins, not after it finishes --
+    otherwise a slow discovery phase could push the real wall-clock past
+    `GrepFiles.timeout_seconds` without this deadline ever catching it
+    (exactly the false invariant the pre-fix `_GREP_SUBPROCESS_TIMEOUT_
+    SECONDS` comment claimed held). Proven by making discovery itself
+    slow and setting the deadline shorter than that delay: the call must
+    report a timeout rather than silently proceeding to search anyway.
+    """
+    monkeypatch.setattr(fot, "_GREP_SUBPROCESS_TIMEOUT_SECONDS", 0.05)
+    (sandbox / "slow.py").write_text("DEBUG\n")
+
+    real_iter = fot._iter_candidates_across_roots
+
+    def slow_iter(*args, **kwargs):
+        time.sleep(0.2)
+        yield from real_iter(*args, **kwargs)
+
+    monkeypatch.setattr(fot, "_iter_candidates_across_roots", slow_iter)
+
+    result = await fot.GrepFiles().execute(pattern="DEBUG", glob="slow.py")
+
+    assert "error" in result
+    assert "timed out" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Finding 3 (follow-up hardening review): the search subprocess previously
+# inherited the parent's full environment, actual cwd, and (via the
+# script's own directory) `sys.path[0]` -- a probe confirmed a parent-only
+# secret env var visible in the child, and `sys.path[0]` pointing at this
+# project's own `Tools/` source directory. Not an escalation on its own
+# (planting a shadow module there already requires source-tree write
+# access), but removing the surface costs nothing. These pin the fix:
+# explicit `-P`, `cwd=`, and a minimal `env=`.
+# ---------------------------------------------------------------------------
+
+
+def test_run_grep_subprocess_isolates_worker_cwd_and_env(tmp_path, monkeypatch):
+    """The worker must not inherit the parent's real cwd or its full
+    environment -- it only ever needs the absolute paths handed to it on
+    stdin.
+    """
+    monkeypatch.setenv("MY_FAKE_SECRET_9f21", "sk-should-not-leak")
+    captured: dict = {}
+    real_popen = subprocess.Popen
+
+    def spying_popen(args, **kwargs):
+        captured["args"] = args
+        captured["cwd"] = kwargs.get("cwd")
+        captured["env"] = kwargs.get("env")
+        return real_popen(args, **kwargs)
+
+    monkeypatch.setattr(fot.subprocess, "Popen", spying_popen)
+
+    target = tmp_path / "a.txt"
+    target.write_text("DEBUG\n")
+
+    result = fot._run_grep_subprocess(
+        pattern="DEBUG",
+        file_paths=[str(target)],
+        max_matches=200,
+        max_line_search_chars=500,
+        max_lines_scanned=200_000,
+        max_file_bytes=5_000_000,
+        timeout_seconds=5.0,
+    )
+
+    assert len(result["matches"]) == 1
+    assert "-P" in captured["args"]
+    assert captured["cwd"] is not None
+    assert os.path.realpath(captured["cwd"]) != os.path.realpath(os.getcwd())
+    assert captured["env"] is not None
+    assert "MY_FAKE_SECRET_9f21" not in captured["env"]
+
+
+def test_grep_worker_env_omits_arbitrary_parent_variables(monkeypatch):
+    """Direct unit test of the helper itself: only the small, named
+    allowlist survives, never an arbitrary parent-set variable.
+    """
+    monkeypatch.setenv("MY_FAKE_API_KEY_TEST_71a2", "sk-LEAKED")
+
+    env = fot._grep_worker_env()
+
+    assert "MY_FAKE_API_KEY_TEST_71a2" not in env
+
+
+# ---------------------------------------------------------------------------
+# Finding 4 (follow-up hardening review): `_run_grep_subprocess` previously
+# returned the worker's parsed JSON verbatim once it was confirmed to be a
+# dict -- never confirming `matches` was actually a list of well-formed
+# entries, or that `lines_scanned` was actually an int. A worker emitting
+# `{"matches": "not-a-list"}` would propagate that shape straight through.
+# These pin the added validation.
+# ---------------------------------------------------------------------------
+
+
+def test_run_grep_subprocess_rejects_a_matches_field_that_is_not_a_list(monkeypatch):
+    class _FakeProc:
+        pid = 999_994
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):
+            return '{"matches": "not-a-list", "lines_scanned": 1}', ""
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(fot.subprocess, "Popen", lambda *a, **k: _FakeProc())
+
+    result = fot._run_grep_subprocess(
+        pattern="x",
+        file_paths=[],
+        max_matches=200,
+        max_line_search_chars=500,
+        max_lines_scanned=200_000,
+        max_file_bytes=5_000_000,
+        timeout_seconds=5.0,
+    )
+
+    assert "error" in result
+    assert "matches" not in result
+
+
+def test_run_grep_subprocess_rejects_a_malformed_match_entry(monkeypatch):
+    """Each match entry must be `{"path": str, "line_number": int, "line":
+    str}` -- a worker omitting `line_number` (or any other required key)
+    must not slip through.
+    """
+
+    class _FakeProc:
+        pid = 999_993
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):
+            return (
+                '{"matches": [{"path": "x.txt", "line": "hi"}], '
+                '"lines_scanned": 1}',
+                "",
+            )
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(fot.subprocess, "Popen", lambda *a, **k: _FakeProc())
+
+    result = fot._run_grep_subprocess(
+        pattern="x",
+        file_paths=[],
+        max_matches=200,
+        max_line_search_chars=500,
+        max_lines_scanned=200_000,
+        max_file_bytes=5_000_000,
+        timeout_seconds=5.0,
+    )
+
+    assert "error" in result
+
+
+def test_run_grep_subprocess_rejects_a_non_int_lines_scanned(monkeypatch):
+    class _FakeProc:
+        pid = 999_992
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):
+            return '{"matches": [], "lines_scanned": "many"}', ""
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(fot.subprocess, "Popen", lambda *a, **k: _FakeProc())
+
+    result = fot._run_grep_subprocess(
+        pattern="x",
+        file_paths=[],
+        max_matches=200,
+        max_line_search_chars=500,
+        max_lines_scanned=200_000,
+        max_file_bytes=5_000_000,
+        timeout_seconds=5.0,
+    )
+
+    assert "error" in result
+
+
+def test_run_grep_subprocess_still_accepts_a_well_formed_payload(monkeypatch):
+    """Sanity check alongside the malformed-payload tests above: a
+    genuinely well-formed worker payload must still pass validation
+    unchanged, not just be rejected less often by accident.
+    """
+
+    class _FakeProc:
+        pid = 999_991
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):
+            return (
+                '{"matches": [{"path": "x.txt", "line_number": 3, '
+                '"line": "hi"}], "lines_scanned": 3}',
+                "",
+            )
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(fot.subprocess, "Popen", lambda *a, **k: _FakeProc())
+
+    result = fot._run_grep_subprocess(
+        pattern="x",
+        file_paths=[],
+        max_matches=200,
+        max_line_search_chars=500,
+        max_lines_scanned=200_000,
+        max_file_bytes=5_000_000,
+        timeout_seconds=5.0,
+    )
+
+    assert result == {
+        "matches": [{"path": "x.txt", "line_number": 3, "line": "hi"}],
+        "lines_scanned": 3,
+    }

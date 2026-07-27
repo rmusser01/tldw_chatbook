@@ -6,9 +6,12 @@ These tools allow LLMs to perform safe file operations with proper validation.
 
 import asyncio
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path, PureWindowsPath
 from typing import Dict, Any, Iterator
 
@@ -628,17 +631,58 @@ _MAX_GREP_LINE_SEARCH_CHARS = 500
 #: cost of any single catastrophic one.
 _MAX_GREP_LINES_SCANNED = 200_000
 
-#: Wall-clock ceiling for the grep worker SUBPROCESS itself (TASK-843),
-#: passed to `_run_grep_subprocess`. Deliberately shorter than
-#: `GrepFiles.timeout_seconds` (20.0s): this is the timeout that actually
-#: matters for bounding CPU, because unlike the run loop's own
-#: thread-based `_call_with_timeout` (which ABANDONS a hung worker
-#: thread), this one ends in `Popen.kill()` -- a subprocess genuinely can
-#: be killed. Leaving ~2s of headroom below the outer 20.0s covers
-#: candidate-gathering plus process spawn/teardown, so the kill fires (and
-#: the child's CPU consumption actually stops) at or before the point the
-#: agent is told the call failed, not sometime after.
+#: Wall-clock ceiling for the ENTIRE grep search phase (TASK-843; widened
+#: by the follow-up hardening review's Finding 1 -- see `_run_grep_search`).
+#: Deliberately shorter than `GrepFiles.timeout_seconds` (20.0s): this is
+#: the timeout that actually matters for bounding CPU, because unlike the
+#: run loop's own thread-based `_call_with_timeout` (which ABANDONS a hung
+#: worker thread), every subprocess spawned within this budget ends in
+#: `Popen.kill()` -- a subprocess genuinely can be killed.
+#:
+#: What this covers changed with Finding 1: candidate discovery and the
+#: regex search used to be sequential phases -- discovery ran to
+#: completion, in-process, un-timed, THEN one subprocess call got this
+#: whole budget. That let a slow discovery phase (a large, high-hit-rate
+#: tree; see `_run_grep_search`'s docstring for the measured regression)
+#: eat into time this constant never accounted for, pushing the REAL
+#: worst-case wall-clock past `GrepFiles.timeout_seconds` and making the
+#: "kill fires before the agent is told the call failed" guarantee false.
+#: `_run_grep_search` now starts this deadline before pulling the first
+#: candidate and re-derives the remaining budget before every subsequent
+#: batch/subprocess call, so discovery time and every batch's subprocess
+#: wait are drawn from the SAME 18.0s window rather than the former
+#: (discovery) + 18.0s (search). Leaving ~2s of headroom below the outer
+#: 20.0s still covers process spawn/teardown for whichever batch is in
+#: flight when the deadline is reached, so the kill (or the timeout-error
+#: return before ever starting another batch) fires at or before the
+#: point the agent is told the call failed, not sometime after -- for the
+#: aggregate of however many batches this call actually needed, not just
+#: one.
 _GREP_SUBPROCESS_TIMEOUT_SECONDS = 18.0
+
+#: Initial number of candidates `_run_grep_search` pulls from
+#: `_iter_candidates_across_roots` before the FIRST subprocess call
+#: (Finding 1, follow-up hardening review). Chosen small enough that an
+#: ordinary, high-hit-rate search's enumeration cost before that first
+#: call stays close to what the old in-process, single-phase
+#: implementation paid before its early-break -- at the reviewer's
+#: measured ~0.32ms/candidate, 256 candidates costs ~82ms, comfortably in
+#: the same ballpark as the ~0.1s the old early-break stopped at (~200
+#: files). Doubles on each subsequent round, up to
+#: `_GREP_MAX_CANDIDATE_BATCH_SIZE` -- see that constant for why a fixed
+#: small size is not used throughout.
+_GREP_INITIAL_CANDIDATE_BATCH_SIZE = 256
+
+#: Ceiling `_run_grep_search`'s per-round batch size grows to (doubling
+#: from `_GREP_INITIAL_CANDIDATE_BATCH_SIZE`) before it stops growing
+#: further. Exists so a pattern with few or zero hits -- which must still
+#: examine candidates up to `_MAX_CANDIDATES` (20,000) to confirm that --
+#: does not pay for a large number of small, separately-spawned
+#: subprocess calls to get there: capped at this size, covering
+#: `_MAX_CANDIDATES` costs on the order of a handful of subprocess spawns
+#: (doubling from 256: 256, 512, 1024, 2048, 4096, 4096, ... -- roughly 8
+#: rounds to reach 20,000), not one call per few hundred candidates.
+_GREP_MAX_CANDIDATE_BATCH_SIZE = 4096
 
 
 def _rejects_traversal(pattern: str) -> bool:
@@ -776,6 +820,22 @@ def _iter_candidates_across_roots(
     (e.g. a bound workspace folder that happens to nest the sandbox, or
     two bound folders that overlap) is yielded at most once, deduplicated
     by resolved identity.
+
+    Finding 5 (follow-up hardening review): that global bound is consumed
+    root-by-root IN ORDER, not split fairly across roots -- ``roots[0]``'s
+    candidates are drained (up to ``_MAX_CANDIDATES``) before ``roots[1]``
+    is ever globbed at all. A first root that alone holds
+    ``_MAX_CANDIDATES`` or more matching entries therefore starves every
+    later root completely, and the caller cannot distinguish that from
+    those later roots genuinely containing no matches -- both look like
+    "no results from root N" from the outside. This is judged correct,
+    not a bug to fix: the bound must stay global (see above), and there is
+    no principled way to divide a single global budget fairly across an
+    arbitrary number of roots without either wasting it on roots with
+    nothing to find or starving one that has plenty. A caller that needs a
+    specific root's results reliably included should narrow the search
+    (e.g. a ``glob``/``pattern`` scoped under that root specifically)
+    rather than rely on root ordering.
 
     Args:
         pattern: A glob pattern, already checked by ``_rejects_traversal``.
@@ -950,6 +1010,93 @@ class GlobFiles(Tool):
 #: is a plain script with no import of this package at all.
 _GREP_WORKER_SCRIPT = str(Path(__file__).with_name("_grep_worker.py"))
 
+#: Working directory for the grep worker subprocess (Finding 3, follow-up
+#: hardening review). Every path the worker ever touches is one of the
+#: already-fully-resolved, ABSOLUTE candidates `_iter_candidates_across_roots`
+#: yielded (every root -- the sandbox and every bound workspace folder --
+#: is itself absolute; see `_tool_sandbox_root`/`allowed_file_roots`), so
+#: the worker has no legitimate use for the PARENT's actual working
+#: directory. Inheriting it for free (the default when `cwd=` is omitted)
+#: would still expose that directory's identity to a process whose only
+#: job is running a possibly-adversarial regex, for no benefit -- a
+#: neutral, always-present directory costs nothing to pass explicitly
+#: instead.
+_GREP_WORKER_CWD = tempfile.gettempdir()
+
+
+def _grep_worker_env() -> Dict[str, str]:
+    """Minimal environment for the grep worker subprocess (Finding 3).
+
+    Inheriting the parent's full environment (the default when `env=` is
+    omitted from `subprocess.Popen`) costs nothing under this worker's
+    existing trust model -- it only ever runs a regex against paths the
+    PARENT has already fully validated, and a module shadow-attack via a
+    leaked `sys.path` entry would require source-tree write access, i.e.
+    already-complete compromise. It is still a needless surface: a probe
+    confirmed a secret set in the parent's environment (e.g.
+    `MY_FAKE_API_KEY=sk-...`) is visible verbatim inside the child. The
+    worker imports nothing beyond the standard library and never shells
+    out, so it needs none of the parent's environment to do its job.
+
+    Returns:
+        A dict containing `PATH` (needed for the interpreter's own
+        startup/library resolution, not for anything the worker itself
+        invokes) plus, on Windows only, `SystemRoot` -- `subprocess.Popen`
+        with a genuinely empty `env={}` can fail outright on Windows,
+        since several CRT/socket-initialization paths read it
+        unconditionally regardless of what the child program needs.
+    """
+    env: Dict[str, str] = {}
+    path = os.environ.get("PATH")
+    if path:
+        env["PATH"] = path
+    if sys.platform == "win32":
+        system_root = os.environ.get("SystemRoot")
+        if system_root:
+            env["SystemRoot"] = system_root
+    return env
+
+
+def _validated_grep_worker_payload(parsed: dict) -> dict:
+    """Validate the shape of a successfully-parsed worker JSON payload.
+
+    Finding 4 (follow-up hardening review): `_run_grep_subprocess`
+    previously returned `parsed` straight from `json.loads(stdout)` once
+    it was confirmed to be *a dict* -- but never confirmed `matches` was
+    actually a list, or that `lines_scanned` was actually an int. A worker
+    emitting `{"matches": "not-a-list"}` (a bug, not plausibly an attack:
+    both ends of this pipe -- `_grep_worker.py` and this module -- are
+    code this project owns) would propagate that shape straight through
+    to `GrepFiles.execute` and on to the agent, instead of the documented
+    `{"path": str, "line_number": int, "line": str}` per-match shape.
+
+    Args:
+        parsed: A JSON value already confirmed to be a `dict` (see the
+            caller), with no `"error"` key -- i.e. the worker's claimed
+            success path.
+
+    Returns:
+        `parsed` unchanged if `matches` is a list of well-formed
+        `{"path": str, "line_number": int, "line": str}` dicts and
+        `lines_scanned` is an int; otherwise a fresh
+        `{"error": "grep worker produced malformed output"}` dict --
+        never raises.
+    """
+    matches = parsed.get("matches")
+    if not isinstance(matches, list):
+        return {"error": "grep worker produced malformed output"}
+    for entry in matches:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("path"), str)
+            or not isinstance(entry.get("line_number"), int)
+            or not isinstance(entry.get("line"), str)
+        ):
+            return {"error": "grep worker produced malformed output"}
+    if not isinstance(parsed.get("lines_scanned"), int):
+        return {"error": "grep worker produced malformed output"}
+    return parsed
+
 
 def _run_grep_subprocess(
     pattern: str,
@@ -1005,10 +1152,19 @@ def _run_grep_subprocess(
     up to `timeout_seconds` before it is killed (down from unbounded
     before this task, but not zero), and every `grep_files` call now pays
     a small, fixed process spawn/teardown cost (~15-20ms locally with the
-    `-S` flag below, negligible against the ~18s ceiling) whether the
-    pattern is pathological or not. `RLIMIT_CPU` is POSIX-only; the
+    `-S`/`-P` flags below, negligible against the ~18s ceiling) whether
+    the pattern is pathological or not. `RLIMIT_CPU` is POSIX-only; the
     `communicate(timeout=)` + `kill()` path is the guarantee that holds on
     every platform, including Windows.
+
+    Note (Finding 1, follow-up hardening review): `GrepFiles.execute` no
+    longer calls this once with every candidate -- `_run_grep_search`
+    calls it once per BATCH, with a shrinking `timeout_seconds` and a
+    shrinking `max_matches`/`max_lines_scanned` reflecting the budget
+    already spent by earlier batches. Nothing about this function's own
+    guarantee changes: every individual call it makes is still bounded
+    and killable exactly as documented above, independent of how many
+    times it is called in one `grep_files` invocation.
 
     Args:
         pattern: The regular expression to search for. `GrepFiles.execute`
@@ -1021,17 +1177,26 @@ def _run_grep_subprocess(
             neither this function nor the worker it spawns performs any
             of that validation, and must never be handed a path the
             caller has not already cleared.
-        max_matches: Same bound as `_MAX_MATCHES` -- stop once this many
-            matches are found.
+        max_matches: Stop once this many matches are found from THIS
+            batch -- the caller (`_run_grep_search`) passes the REMAINING
+            budget out of `_MAX_MATCHES`, not always the same constant.
         max_line_search_chars: Same bound as `_MAX_GREP_LINE_SEARCH_CHARS`.
-        max_lines_scanned: Same bound as `_MAX_GREP_LINES_SCANNED`.
+        max_lines_scanned: Same per-batch-remaining-budget treatment as
+            `max_matches`, out of `_MAX_GREP_LINES_SCANNED`.
         max_file_bytes: Same bound as `_MAX_GREP_FILE_BYTES`.
-        timeout_seconds: Wall-clock ceiling for the whole subprocess call
-            (typically `_GREP_SUBPROCESS_TIMEOUT_SECONDS`).
+        timeout_seconds: Wall-clock ceiling for THIS subprocess call --
+            the caller passes whatever remains of the overall search
+            deadline (see `_GREP_SUBPROCESS_TIMEOUT_SECONDS`), not always
+            that same constant.
 
     Returns:
-        Dict with a `matches` list of `{path, line_number, line}` dicts on
-        success, or an `error` string -- never raises.
+        Dict with a `matches` list of `{path, line_number, line}` dicts
+        and a `lines_scanned` int on success, or an `error` string --
+        never raises. The success shape is validated (Finding 4; see
+        `_validated_grep_worker_payload`) before being returned, so a
+        worker emitting a malformed payload (e.g. `matches` not actually a
+        list) surfaces as an error dict here rather than propagating that
+        shape onward.
     """
     request = json.dumps(
         {
@@ -1050,11 +1215,25 @@ def _run_grep_subprocess(
             # none of which needs site-packages, and this measurably
             # shrinks interpreter startup (~15ms vs ~20ms, locally) paid
             # on every single grep_files call.
-            [sys.executable, "-S", _GREP_WORKER_SCRIPT],
+            # "-P" (Finding 3, follow-up hardening review; Python >=3.11,
+            # matching this project's floor): don't prepend the script's
+            # own directory to `sys.path`. Without it, a probe confirmed
+            # `sys.path[0]` inside the worker is `Tools/` -- this
+            # project's own source directory -- for no reason the worker
+            # needs; planting a shadow module there to exploit that would
+            # already require source-tree write access (full compromise
+            # on its own), so this is not an escalation, just a needless
+            # surface removed for free.
+            [sys.executable, "-S", "-P", _GREP_WORKER_SCRIPT],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            # Explicit `cwd=`/`env=` (Finding 3): see `_GREP_WORKER_CWD`/
+            # `_grep_worker_env` for why the worker needs neither the
+            # parent's actual working directory nor its environment.
+            cwd=_GREP_WORKER_CWD,
+            env=_grep_worker_env(),
         )
     except OSError as exc:
         return {"error": f"could not start grep worker process: {exc}"}
@@ -1090,7 +1269,158 @@ def _run_grep_subprocess(
         return {"error": "grep worker produced malformed output"}
     if not isinstance(parsed, dict):
         return {"error": "grep worker produced malformed output"}
-    return parsed
+    if "error" in parsed:
+        error_value = parsed.get("error")
+        if not isinstance(error_value, str):
+            return {"error": "grep worker produced malformed output"}
+        return parsed
+    return _validated_grep_worker_payload(parsed)
+
+
+async def _run_grep_search(
+    pattern: str,
+    candidates: Iterator[Path],
+    *,
+    max_matches: int,
+    max_line_search_chars: int,
+    max_lines_scanned: int,
+    max_file_bytes: int,
+    deadline_seconds: float,
+) -> dict:
+    """Search ``candidates`` for ``pattern``, streaming batches to killable subprocesses.
+
+    Finding 1 (follow-up hardening review). TASK-843 moved the regex
+    search into a killable child process, but `GrepFiles.execute` still
+    drained `candidates` (bounded by `_MAX_CANDIDATES`, up to 20,000)
+    all the way to completion, in-process, BEFORE ever spawning that
+    subprocess -- undoing the early-break the pre-subprocess implementation
+    had (`len(matches) >= _MAX_MATCHES` / `lines_scanned >=
+    _MAX_GREP_LINES_SCANNED`, checked during enumeration itself). That
+    made an ordinary, HIGH-HIT-RATE search over a large tree pay for every
+    candidate the match/line budget never needed just to reach the point
+    of spawning a subprocess at all -- measured: a 5,000-file tree with a
+    pattern matching every file went from the old ~0.1s (in-process,
+    early-broken after ~200 files) to ~1.6s (all 5,000 candidates
+    enumerated first).
+
+    This function restores that early exit without giving up the
+    subprocess boundary TASK-843 added: it pulls candidates from
+    ``candidates`` (already fully validated -- containment, the
+    sensitive-path denylist, the hidden-component rule, and
+    ``_MAX_CANDIDATES`` -- by ``_iter_candidates_across_roots``) in
+    GROWING batches, starting at ``_GREP_INITIAL_CANDIDATE_BATCH_SIZE`` and
+    doubling up to ``_GREP_MAX_CANDIDATE_BATCH_SIZE``, running each batch
+    through its OWN call to ``_run_grep_subprocess`` with whatever
+    match/line/time budget remains, and stopping -- WITHOUT pulling
+    another candidate -- the moment that budget is satisfied. A small
+    initial batch keeps a high-hit-rate search's pre-first-call
+    enumeration cost close to what the old in-process early-break paid;
+    growing it on later rounds keeps a rare/zero-hit search (which must
+    still examine candidates up to ``_MAX_CANDIDATES`` to confirm that)
+    from paying for a large number of small, separately-spawned
+    subprocesses to get there.
+
+    Killability is unchanged: every batch is still searched by its own
+    fully killable child process (see ``_run_grep_subprocess``) -- this
+    function only changes HOW MANY candidates are handed to it and in how
+    many calls, never how a batch is searched once handed off. A
+    catastrophic-backtracking pattern inside any one batch is bounded and
+    killed exactly as before, independent of batching.
+
+    The wall-clock deadline (``deadline_seconds``) starts the moment this
+    function is entered -- i.e. BEFORE the first candidate is even pulled,
+    not after candidate discovery finishes. This is what makes
+    ``_GREP_SUBPROCESS_TIMEOUT_SECONDS``'s ~2s headroom below
+    ``GrepFiles.timeout_seconds`` an honest bound again: discovery time
+    and every batch's subprocess wait are drawn from the SAME window, so
+    the aggregate -- however it is spent across batches -- cannot exceed
+    it. The deadline is re-checked before pulling each batch and again
+    before spawning each subprocess call; between those checks, pulling
+    one batch of up to the current (capped) batch size from an
+    already-validated iterator is itself bounded, so the worst-case
+    overshoot before a check catches it is small and fixed, not unbounded.
+
+    Args:
+        pattern: The already-`re.compile`-checked pattern to search for.
+        candidates: Iterator of already-validated candidate paths (see
+            ``_iter_candidates_across_roots``). This function performs
+            NONE of that validation itself and trusts every path it pulls
+            completely.
+        max_matches: Same bound as ``_MAX_MATCHES`` -- the TOTAL across
+            every batch, not per batch.
+        max_line_search_chars: Same bound as ``_MAX_GREP_LINE_SEARCH_CHARS``.
+        max_lines_scanned: Same bound as ``_MAX_GREP_LINES_SCANNED`` --
+            the TOTAL across every batch, not per batch.
+        max_file_bytes: Same bound as ``_MAX_GREP_FILE_BYTES``.
+        deadline_seconds: Wall-clock budget for this ENTIRE search phase
+            -- candidate discovery interleaved with every batch's
+            subprocess call, together -- starting now, not after
+            discovery. Typically ``_GREP_SUBPROCESS_TIMEOUT_SECONDS``.
+
+    Returns:
+        Dict with a `matches` list (capped at `max_matches`) on success,
+        or an `error` string -- never raises for a worker-level failure
+        (see ``_run_grep_subprocess``). A syntactically invalid glob
+        pattern can still raise ``ValueError``/``NotImplementedError`` out
+        of ``next(candidates)`` (``Path.glob()``'s lazy validation) --
+        exactly as before this function existed -- and callers must still
+        handle that themselves.
+    """
+    deadline = time.monotonic() + deadline_seconds
+    all_matches: list[dict] = []
+    lines_scanned_total = 0
+    batch_size = _GREP_INITIAL_CANDIDATE_BATCH_SIZE
+
+    while len(all_matches) < max_matches and lines_scanned_total < max_lines_scanned:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {
+                "error": (
+                    f"grep search timed out after {deadline_seconds:g}s and "
+                    "was terminated"
+                )
+            }
+
+        batch: list[str] = []
+        for _ in range(batch_size):
+            try:
+                batch.append(str(next(candidates)))
+            except StopIteration:
+                break
+        if not batch:
+            break
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {
+                "error": (
+                    f"grep search timed out after {deadline_seconds:g}s and "
+                    "was terminated"
+                )
+            }
+
+        result = await asyncio.to_thread(
+            _run_grep_subprocess,
+            pattern,
+            batch,
+            max_matches=max_matches - len(all_matches),
+            max_line_search_chars=max_line_search_chars,
+            max_lines_scanned=max_lines_scanned - lines_scanned_total,
+            max_file_bytes=max_file_bytes,
+            timeout_seconds=remaining,
+        )
+        if "error" in result:
+            return result
+        all_matches.extend(result["matches"])
+        lines_scanned_total += result["lines_scanned"]
+
+        if len(batch) < batch_size:
+            # The iterator ran out mid-batch -- no candidates remain, so
+            # there is no point looping again only to find that out.
+            break
+        batch_size = min(batch_size * 2, _GREP_MAX_CANDIDATE_BATCH_SIZE)
+
+    return {"matches": all_matches[:max_matches]}
 
 
 class GrepFiles(Tool):
@@ -1138,9 +1468,10 @@ class GrepFiles(Tool):
         A legitimate search over the candidate bound (`_MAX_CANDIDATES`
         files, `_MAX_GREP_LINES_SCANNED` lines total) is comfortably fast:
         locally measured, 200,000 lines against a realistic non-pathological
-        pattern complete in well under a second, plus the search
-        subprocess's own small, fixed spawn cost (TASK-843; see
-        `_run_grep_subprocess`). 20s leaves generous headroom above that
+        pattern complete in well under a second, plus however many search
+        subprocesses that takes (TASK-843/Finding 1; see
+        `_run_grep_search`) -- each with its own small, fixed spawn cost
+        (`_run_grep_subprocess`). 20s leaves generous headroom above that
         for a slower disk or a loaded system, while still being far
         tighter than the run's own default (`RunBudget.max_tool_call_
         seconds`, 300s at defaults) -- so a pathological call is reported
@@ -1148,14 +1479,16 @@ class GrepFiles(Tool):
 
         Unlike before TASK-843, a pathological pattern's CPU burn no
         longer keeps running unbounded past this deadline: the actual
-        search now runs in a subprocess bounded by its OWN, shorter
-        internal ceiling (`_GREP_SUBPROCESS_TIMEOUT_SECONDS`), which ends
-        in `Popen.kill()` rather than `_call_with_timeout`
-        (`Agents/agent_service.py`) abandoning a worker thread it cannot
-        actually kill. This property's value still governs when the run
-        loop itself gives up and reports failure; see
-        `_run_grep_subprocess`'s docstring for exactly what does and does
-        not stop once that happens.
+        search now runs in one or more subprocesses (`_run_grep_search`
+        batches candidate discovery and the search together; see its
+        docstring), bounded by their OWN, shorter internal ceiling
+        (`_GREP_SUBPROCESS_TIMEOUT_SECONDS`, counted from before the first
+        candidate is even pulled), which ends in `Popen.kill()` rather
+        than `_call_with_timeout` (`Agents/agent_service.py`) abandoning a
+        worker thread it cannot actually kill. This property's value
+        still governs when the run loop itself gives up and reports
+        failure; see `_run_grep_subprocess`'s docstring for exactly what
+        does and does not stop once that happens.
 
         Returns:
             20.0 seconds.
@@ -1181,10 +1514,20 @@ class GrepFiles(Tool):
         small, finite amount of work, and remain in place as the cheap
         first line of defence. What actually stops a pathological
         pattern's CPU burn from continuing after this call returns is
-        that the search itself now runs in a separate, killable
-        subprocess (`_run_grep_subprocess`) rather than in this process --
+        that the search itself now runs in one or more separate, killable
+        subprocesses (`_run_grep_subprocess`) rather than in this process --
         see that function's docstring for exactly what it does and does
         not guarantee.
+
+        Finding 1 (follow-up hardening review): candidate discovery
+        (`_iter_candidates_across_roots`) and the search are STREAMED
+        together via `_run_grep_search` rather than fully separated into
+        "discover everything, then search everything" -- draining
+        discovery all the way to `_MAX_CANDIDATES` before ever spawning a
+        subprocess made an ordinary, high-hit-rate search over a large
+        tree pay for candidates the match budget never needed. See
+        `_run_grep_search`'s docstring for exactly how batching restores
+        that early exit without giving up killability.
 
         Args:
             pattern: Python regular expression to search for.
@@ -1223,34 +1566,26 @@ class GrepFiles(Tool):
             sensitive_ctx = resolve_sensitive_context()
 
             # Candidate discovery (containment, sensitivity, hidden-component,
-            # _MAX_CANDIDATES) happens HERE, in-process -- none of it runs the
-            # user-supplied regex, so none of it needs the subprocess
-            # boundary below. Only the actual content search does.
-            candidate_paths: list[str] = []
+            # _MAX_CANDIDATES) and the search are STREAMED together, in
+            # growing batches, by `_run_grep_search` (Finding 1, follow-up
+            # hardening review) -- neither discovery nor the deadline that
+            # bounds it waits for the other to fully finish first. See that
+            # function's docstring for exactly why and how.
+            candidates = _iter_candidates_across_roots(
+                glob_pattern, usable_roots, sensitive_ctx
+            )
             try:
-                for path in _iter_candidates_across_roots(
-                    glob_pattern, usable_roots, sensitive_ctx
-                ):
-                    candidate_paths.append(str(path))
+                return await _run_grep_search(
+                    raw_pattern,
+                    candidates,
+                    max_matches=_MAX_MATCHES,
+                    max_line_search_chars=_MAX_GREP_LINE_SEARCH_CHARS,
+                    max_lines_scanned=_MAX_GREP_LINES_SCANNED,
+                    max_file_bytes=_MAX_GREP_FILE_BYTES,
+                    deadline_seconds=_GREP_SUBPROCESS_TIMEOUT_SECONDS,
+                )
             except (ValueError, NotImplementedError) as exc:
                 return {"error": f"invalid glob: {exc}"}
-
-            if not candidate_paths:
-                return {"matches": []}
-
-            result = await asyncio.to_thread(
-                _run_grep_subprocess,
-                raw_pattern,
-                candidate_paths,
-                max_matches=_MAX_MATCHES,
-                max_line_search_chars=_MAX_GREP_LINE_SEARCH_CHARS,
-                max_lines_scanned=_MAX_GREP_LINES_SCANNED,
-                max_file_bytes=_MAX_GREP_FILE_BYTES,
-                timeout_seconds=_GREP_SUBPROCESS_TIMEOUT_SECONDS,
-            )
-            if "error" in result:
-                return result
-            return {"matches": result.get("matches", [])}
         except OSError as exc:
             return {"error": f"sandbox root is not usable: {exc}"}
         except Exception as exc:

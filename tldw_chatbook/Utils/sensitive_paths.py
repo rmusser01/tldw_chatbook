@@ -609,6 +609,30 @@ def refuses_new_directory_chain(
     container directory (created by the app itself before an agent tool
     ever runs) fully reachable.
 
+    Consequence worth naming (Finding 2, follow-up hardening review): a
+    not-yet-existing name always fails ``is_sensitive_path``'s ``is_dir()``
+    gate, so this refuses creating **any** brand-new subdirectory directly
+    inside one of the container directories the direct-child-file rule
+    protects (``get_user_data_dir()``, the ChromaDB persist directory,
+    ...) -- not only a name that happens to collide with a state file this
+    app actually uses. Reproduced: with the sandbox root widened to
+    contain the ChromaDB persist directory,
+    ``write_file("chromadb/newcoll/x.txt", create_directories=True)`` is
+    refused (``newcoll`` does not exist yet, so it fails the same gate a
+    genuine collision would), while ``write_file("chromadb/coll1/new.txt",
+    create_directories=True)`` succeeds once ``coll1`` already exists as a
+    directory -- the walk stops at the first already-existing ancestor, as
+    documented above. This is deliberate, not a bug to fix here: telling
+    "a legitimate brand-new container" apart from "a shadow directory
+    aimed at a not-yet-created state file" by name alone would require
+    exactly the enumeration this design avoids (see the module
+    docstring), so failing closed is the right default. It is only
+    reachable when the sandbox root (or a bound workspace folder) is
+    widened to actually contain one of these container directories -- the
+    default sandbox root never does. Noted here so the next reader is not
+    surprised by an agent's brand-new-subdirectory `write_file` call being
+    refused under such a configuration.
+
     Args:
         target_dir: The directory ``mkdir(parents=True)`` is about to
             create -- typically a write target's parent directory.
