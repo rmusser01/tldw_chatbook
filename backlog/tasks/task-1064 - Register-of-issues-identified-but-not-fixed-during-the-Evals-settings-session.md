@@ -50,7 +50,7 @@ Deliberately not acted on during the session: this checkout hosts many concurren
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `ConsoleProviderGateway` uses a per-loop client cache; a test proves two live loops never close each other's client
+- [x] #1 `ConsoleProviderGateway` uses a per-loop client cache; a test proves two live loops never close each other's client
 - [x] #2 The 18 failures in `test_console_native_chat_flow.py` are each classified as stale-test or product regression, and resolved
 - [ ] #3 Repo gc/prune is run at a quiet moment and `.git/gc.log` cleared
 - [ ] #4 Any item split into its own task is linked from here
@@ -59,6 +59,23 @@ Deliberately not acted on during the session: this checkout hosts many concurren
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Item 1 (ConsoleProviderGateway loop-cache race) fixed; items 2 and 3 remain open and are tracked separately.
+
+Approach: replaced `Chat/console_provider_gateway.py`'s single-slot `http_client`/`_client_loop` swap with a per-loop cache (`_loop_clients: WeakKeyDictionary[loop, AsyncClient]`), following the pattern already proven in `Utils/github_api_client.py` under TASK-981/PR #1009 rather than inventing a new approach.
+
+- Keyed by the running event loop itself (WeakKeyDictionary), so entries are reclaimable once a loop is GC'd; `_prune_closed_loops()` (called under the lock on every `_active_http_client()`/`aclose()` access) proactively drops entries for loops that have already closed, bounding growth from the many short-lived per-turn `asyncio.run()` loops the agent bridge creates.
+- Kept the existing `_client_lock` guarding the whole check-cache/create-and-insert critical section (PR #629 Fix 1(a)) and the `_owns_http_client` ownership flag (injected clients still bypass the cache entirely, untouched).
+- Kept `_schedule_stale_client_close` (PR #629 Fix 1(b) non-leaking-close), but its role moved: it's no longer invoked from every cross-loop touch (there is no more "stale" client to discard on a get -- each live loop keeps its own cache entry), it's now used by `aclose()` to hand off every OTHER cached loop's client for closing on its own loop while the caller's own loop's client is awaited/closed directly. Its done-callback now actually logs failures via `logger.opt(exception=exc).warning(...)` instead of silently discarding them.
+- Added an "unclaimed client" escape hatch: the client eagerly built in `__init__` (before any loop has touched it) is adopted by the first loop that calls `_active_http_client()`, rather than being discarded and closed -- avoids wasting a connection and mirrors `GitHubAPIClient.client`'s unknown-loop escape hatch.
+
+Decisive test: `test_concurrent_live_loops_never_close_each_others_client` runs two real OS threads, each with its own `asyncio.run()` loop, barrier-synchronized so both loops are genuinely alive at the same wall-clock moment while each resolves `_active_http_client()` on the same shared gateway. Verified this test FAILS against the pre-fix single-slot code (confirming it discriminates, unlike a sequential probe): `AssertionError: loop A's client was closed while loop B was concurrently alive and touching the shared gateway -- a live loop must never close another live loop's client / assert True is False / + where True = <httpx.AsyncClient object at 0x107fb63c0>.is_closed`. Passes reliably post-fix (5/5 local reruns).
+
+Two existing tests exercised the OLD single-slot swap mechanics specifically and were rewritten to match the new architecture's invariants rather than the removed swap-and-close-on-every-touch behavior: `test_active_http_client_swap_is_mutually_exclusive_across_threads` -> `test_active_http_client_creation_is_mutually_exclusive_across_threads` (primes the cache first so both racing threads exercise the actual `_new_owned_http_client()` creation path, since the very first touch is now an adopt, not a create); `test_first_swap_still_schedules_close_of_the_original_owned_client` -> split into `test_active_http_client_first_touch_adopts_the_unclaimed_init_client` (no swap/close on first touch) and `test_aclose_closes_current_loop_client_and_schedules_others` (non-leaking close re-proven for a cache that can hold multiple live entries).
+
+Testing: `Tests/Chat/test_console_provider_gateway.py` 85 passed (was 82 passed + 2 pre-existing-design tests replaced, +3 new tests); `Tests/Utils/test_github_api_client.py` 38 passed (reference implementation undisturbed); combined with agent-bridge/agent-swap/native-tools/generation-actions/citation-boundary/run-state gateway-adjacent suites, 496 passed. Did not touch or attempt to fix `Tests/UI/test_console_native_chat_flow.py` (already red on dev, tracked as item 2) or run the full suite, per scope.
+
+Modified files: tldw_chatbook/Chat/console_provider_gateway.py, Tests/Chat/test_console_provider_gateway.py.
+
 Triaged all 18 red tests in `Tests/UI/test_console_native_chat_flow.py`. All 18 are stale tests; no product regressions found. Full file: 210 passed in 4m32s (was 18 failed/192 passed in ~5m24s on dev).
 
 Root causes (3 distinct, all test-only):
