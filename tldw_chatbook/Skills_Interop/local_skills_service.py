@@ -32,6 +32,38 @@ if TYPE_CHECKING:
 _INDEX_FILENAME = "tldw_chatbook_skills.json"
 _SKILLS_DIRNAME = "skills"
 _SKILL_FILENAME = "SKILL.md"
+
+#: Name of this app's top-level local-skills store directory, directly
+#: under ``get_user_data_dir()``. Distinct from ``_SKILLS_DIRNAME`` above --
+#: that one names the BUNDLE subdirectory nested one level inside a store
+#: dir built from this constant (``<user_data_dir>/skills/skills``). Both
+#: happen to be spelled "skills", but they name different levels of the
+#: tree; keep that straight when reading ``default_local_skills_store_dir``
+#: below.
+_LOCAL_SKILLS_STORE_DIRNAME = "skills"
+
+
+def default_local_skills_store_dir(user_data_dir: str | Path) -> Path:
+    """Return this app's local-skills store directory for a user data dir.
+
+    Single source of truth for the top-level ``skills`` subdirectory name.
+    ``app.py`` calls this to build the live ``LocalSkillsService``/
+    ``SkillTrustService`` wiring, and ``Utils.sensitive_paths`` calls it to
+    carve the trust/grant store back out of the directory-exemption rule
+    that would otherwise let everything under ``skills/`` inherit
+    reachability (see ``skill_trust_store.default_trust_store_dir`` for the
+    ``trust`` subdirectory nested inside this one, and
+    ``Utils/sensitive_paths.py``'s module docstring for why a re-spelled
+    literal here is the exact class of drift a past finding was filed
+    against).
+
+    Args:
+        user_data_dir: ``config.get_user_data_dir()``.
+
+    Returns:
+        ``Path(user_data_dir) / "skills"``.
+    """
+    return Path(user_data_dir) / _LOCAL_SKILLS_STORE_DIRNAME
 _FRONT_MATTER_PATTERN = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 _METADATA_FIELDS = {
     "name",

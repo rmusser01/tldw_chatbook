@@ -1,0 +1,30 @@
+---
+id: TASK-858
+title: >-
+  Reconcile the evals/prompts/media/rag/subscriptions DB path maps with
+  get_*_db_path()
+status: To Do
+assignee: []
+created_date: '2026-07-27 04:35'
+labels:
+  - security
+  - db
+  - config
+dependencies: []
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+The evals DB alone is named three different, disagreeing ways: Event_Handlers/eval_db_operations.py:28 hardcodes Path.home()/".config"/"tldw_cli"/"evals.db"; the real accessor, Evals/eval_orchestrator.py:90-99, derives get_user_data_dir()/<user_id>/"evals.db"; and UI/Tools_Settings_Window.py:6493 reads a config key evals_db_path that is declared nowhere in config.py's [database] defaults (nor are rag_db_path or subscriptions_db_path). A sandboxed reproduction showed the literal resolving to .../.config/tldw_cli/evals.db, the real accessor resolving to .../.local/share/tldw_cli/default_user/evals.db, and the settings key resolving to '<undeclared>'.
+
+The same defect class appears at UI/Tools_Settings_Window.py:6480-6507 and :6631-6652: the DB path map backing the integrity-check, backup, vacuum, and chatbook-import maintenance operations omits the <user_folder> segment for all six databases it lists, AND uses wrong filenames for at least two of them (tldw_prompts_db.db vs. the real tldw_chatbook_prompts.db; tldw_media_db.db vs. the real tldw_chatbook_media_v2.db). Run as written, these maintenance operations operate on files the app never opens -- an integrity check or vacuum against these paths silently does nothing to the real, live databases.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 eval_db_operations.py resolves the evals DB path the same way Evals/eval_orchestrator.py does (via get_user_data_dir(), not a Path.home()/'.config' literal)
+- [ ] #2 The DB path map behind the Settings screen's integrity check, backup, vacuum, and chatbook-import features is rebuilt from the real get_*_db_path() accessors for every database it lists, with corrected filenames
+- [ ] #3 evals_db_path, rag_db_path, and subscriptions_db_path are either declared as real config defaults or removed as dead config-key references
+- [ ] #4 A test asserts each maintenance-operation path equals its corresponding get_*_db_path() return value, not a hand-typed literal, for all six databases
+<!-- AC:END -->

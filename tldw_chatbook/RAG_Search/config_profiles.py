@@ -30,6 +30,27 @@ def _slugify(name: str) -> str:
     return slug or "profile"
 
 
+#: Name of this app's RAG-profile store directory, directly under
+#: ``get_user_data_dir()``.
+_RAG_PROFILES_DIRNAME = "rag_profiles"
+
+
+def default_rag_profiles_dir() -> Path:
+    """Return this app's default RAG-profile store directory.
+
+    Single source of truth for the ``rag_profiles`` subdirectory name --
+    ``ConfigProfileManager.__init__`` calls this for its own default (rather
+    than re-spelling the name inline), and ``Utils.sensitive_paths`` calls
+    it to refuse a profile file placed directly inside it (the same class
+    of plaintext RAG-provider config a widened sandbox root would otherwise
+    expose next to the vector store; see that module's docstring).
+
+    Returns:
+        ``get_user_data_dir() / "rag_profiles"``.
+    """
+    return get_user_data_dir() / _RAG_PROFILES_DIRNAME
+
+
 # Filenames under profiles_dir that are never treated as user-profile files.
 _RESERVED_PROFILE_FILES = {"custom_profiles.json", "custom_profiles.json.migrated"}
 
@@ -186,7 +207,7 @@ class ConfigProfileManager:
     """
 
     def __init__(self, profiles_dir: Optional[Path] = None):
-        self.profiles_dir = profiles_dir or (get_user_data_dir() / "rag_profiles")
+        self.profiles_dir = profiles_dir or default_rag_profiles_dir()
         self.profiles_dir.mkdir(parents=True, exist_ok=True)
 
         self._profiles: Dict[str, ProfileConfig] = {}
