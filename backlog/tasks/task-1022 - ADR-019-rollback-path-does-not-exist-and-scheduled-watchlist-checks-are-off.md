@@ -43,6 +43,9 @@ This needs an owner decision rather than a mechanical fix, which is why it is fi
 - If the migration is far enough along that rollback is no longer wanted, update ADR-019 to say so and retire the dead scheduler, worker and controller together.
 
 Either way the ADR and the code should stop disagreeing.
+**How it came to be unreachable.** The ADR was not wrong when written. `019-watchlist-scheduler-migration.md` landed at 2026-07-19 09:29 (`8a9ce5cf9`), while `SubscriptionWindow.py` — the live caller that constructed `SubscriptionBackendController` — still existed. Roughly twelve hours later the same day, `fc9e50da5` ("retire SubscriptionWindow and fold subscriptions route into Watchlists") removed that window, orphaning the controller and with it the only construction path to the old scheduler.
+
+So this is not an ADR that was authored against code that never worked; it is a rollback path that was silently severed by a later refactor on the same day, with nothing to detect the loss. That is worth knowing for the decision below: restoring rollback means giving the old scheduler a new entry point, not merely repairing an old one.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
