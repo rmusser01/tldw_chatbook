@@ -1,6 +1,6 @@
 """Local and server SKILL.md interoperability services."""
 
-from .local_skills_service import LocalSkillsService
+from .local_skills_service import LocalSkillsService, default_local_skills_store_dir
 from .server_skills_service import ServerSkillsService
 from .skill_trust_service import SkillTrustService
 from .skill_trust_models import SkillTrustBlockedError, SkillTrustStatus
@@ -14,4 +14,5 @@ __all__ = [
     "SkillTrustStatus",
     "SkillsBackend",
     "SkillsScopeService",
+    "default_local_skills_store_dir",
 ]

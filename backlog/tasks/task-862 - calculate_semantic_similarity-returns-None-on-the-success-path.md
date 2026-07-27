@@ -2,7 +2,7 @@
 id: TASK-862
 title: >-
   calculate_semantic_similarity discards its result and returns None on the success path
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-27 01:00'
 labels:
@@ -51,8 +51,25 @@ Seven call sites total (`eval_runner.py:1197,1201,1275,1331,1341`, `specialized_
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] `calculate_semantic_similarity` returns the computed cosine similarity on the numpy path
-- [ ] It returns the computed value on the pure-Python fallback path
-- [ ] A test asserts a float is returned when an embedding model is supplied, not just when one is absent
-- [ ] `Tests/Evals/test_evaluation_metrics.py::test_instruction_adherence_basic` passes deterministically
+- [x] `calculate_semantic_similarity` returns the computed cosine similarity on the numpy path
+- [x] It returns the computed value on the pure-Python fallback path
+- [x] A test asserts a float is returned when an embedding model is supplied, not just when one is absent
+- [x] `Tests/Evals/test_evaluation_metrics.py::test_instruction_adherence_basic` passes deterministically
 <!-- AC:END -->
+
+## Implementation Notes
+
+Fixed in PR #957 (merged to dev 2026-07-27).
+
+The investigation found three defects rather than the one filed, and fixing the first exposed a fourth:
+
+1. The cosine was computed and discarded on both success paths — bare expression statements — so a function annotated `-> float` fell through to an implicit `None`.
+2. The pure-Python zero-guard was inverted: it divided *by* `0.0` when the norms vanished, raising `ZeroDivisionError` that the broad `except Exception` silently converted into the lexical fallback.
+3. Cosine is `[-1, 1]` while callers treat the result as a `[0, 1]` score, so unrelated text could score negative. Now clamped.
+4. Float32 embeddings put a vector's similarity with itself a few ULPs short of 1.0. Upcasting to float64 alone was NOT sufficient: measured across 2000 random float32 vectors of MiniLM's 384 dims, only 802 self-similarities land exactly `1.0` and 593 land *below* it, where a clamp cannot help — and the real model returns `0.9999999999999998` for `"the cat sat on the mat"`. Relying on the upcast would have made the existing test pass for its one input string without guaranteeing anything, which is the same "works for this input, on this machine" shape as the original bug. Fixed by construction instead, with an exact-string-equality short-circuit before any embedding work — correct by definition, and it skips a pointless model round-trip. The float64 upcast was kept because it genuinely improves the non-identical cases, but nothing depends on it for exactness.
+
+**Why it survived:** every existing test exercised only the path where `sentence_transformers` is missing, where the lexical fallback returns a correct float. The new tests assert a real float comes back when an embedding model IS present, using stub models so they stay fast and offline.
+
+**Blast radius was worse than a null score:** `_calculate_instruction_adherence` appended the `None` into `requirement_scores` and summed it, raising `TypeError` for any sample carrying an `include`/`avoid` requirement.
+
+The root cause — a duplicated `MetricsCalculator` whose copies drifted unnoticed — is tracked separately as TASK-863.

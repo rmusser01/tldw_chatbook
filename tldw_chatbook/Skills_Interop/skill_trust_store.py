@@ -27,6 +27,15 @@ from .skill_trust_crypto import (
 
 _MANIFEST_FILENAME = "skill_trust_manifest.json"
 _SNAPSHOTS_DIRNAME = "snapshots"
+_TRUST_DIRNAME = "trust"
+
+#: Name of the local generation-marker fallback file, used when no secure
+#: keyring backend is available (see ``build_skill_trust_marker_store_with_fallback``).
+#: Public (no leading underscore) because ``app.py`` needs it to build the
+#: live marker store's fallback path, and ``Utils.sensitive_paths`` needs it
+#: too -- see ``default_trust_store_dir``'s docstring for why a shared
+#: constant beats each caller re-spelling the filename as its own literal.
+MARKER_FILENAME = "generation_marker.json"
 _DEFAULT_MARKER_SERVICE_NAME = "tldw_chatbook.skill_trust"
 _DEFAULT_KEY_CACHE_SERVICE_NAME = "tldw_chatbook.skill_trust.keys"
 _MARKER_USERNAME = "local-skills:generation-marker:v1"
@@ -57,6 +66,27 @@ def skill_trust_account_scope(store_dir: Path) -> str:
     """
     resolved = str(Path(store_dir).resolve())
     return hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:16]
+
+
+def default_trust_store_dir(local_skills_store_dir: str | Path) -> Path:
+    """Return the trust/grant store directory nested under a skills store dir.
+
+    Single source of truth for the ``trust`` subdirectory name: ``app.py``
+    calls this to build the live ``SkillTrustStore`` (``store_dir=``), and
+    ``Utils.sensitive_paths`` calls it to refuse the whole subtree on the
+    agent-tool denylist -- both must name it identically or the denylist
+    silently stops matching the moment either drifted, the same class of
+    bug a re-spelled literal caused elsewhere in this app (see
+    ``Utils/sensitive_paths.py``'s module docstring).
+
+    Args:
+        local_skills_store_dir: The local-skills store directory, i.e.
+            ``Skills_Interop.default_local_skills_store_dir(user_data_dir)``.
+
+    Returns:
+        ``Path(local_skills_store_dir) / "trust"``.
+    """
+    return Path(local_skills_store_dir) / _TRUST_DIRNAME
 
 
 class SkillTrustMarkerUnavailable(RuntimeError):

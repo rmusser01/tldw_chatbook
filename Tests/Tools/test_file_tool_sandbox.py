@@ -282,6 +282,90 @@ def test_read_file_refuses_wal_sidecar_of_this_apps_own_sqlite_db(monkeypatch):
     assert "recent-uncommitted-row-marker" not in str(result)
 
 
+def test_read_file_refuses_chroma_vector_store_file_even_when_sandbox_root_contains_it(
+    monkeypatch,
+):
+    """TASK-848 AC#1: ``chromadb/chroma.sqlite3`` -- plaintext chunks of the
+    same conversations and notes ``ChaChaNotes.db`` protects -- must not
+    become readable just because a widened sandbox root happens to contain
+    it. ``chromadb`` itself stays reachable as a container (per the
+    existing-directory exemption); only the file directly inside it is
+    refused.
+    """
+    from tldw_chatbook.RAG_Search.simplified.config import (
+        default_chroma_persist_directory,
+    )
+
+    chroma_dir = default_chroma_persist_directory()
+    chroma_dir.mkdir(parents=True, exist_ok=True)
+    (chroma_dir / "chroma.sqlite3").write_text("plaintext vector chunk marker")
+
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: chroma_dir.resolve())
+
+    result = asyncio.run(fot.ReadFileTool().execute(file_path="chroma.sqlite3"))
+
+    assert "error" in result
+    assert "plaintext vector chunk marker" not in str(result)
+
+
+def test_write_file_refuses_to_plant_a_directory_shadowing_a_state_file(monkeypatch):
+    """TASK-849: an agent must not be able to create a directory named
+    after a state file this app has not created yet -- verified before this
+    fix: ``search_history.db/`` (``get_user_data_dir() / "search_history.db"``,
+    see ``UI/Views/RAGSearch/search_rag_window.py``) was permitted, and the
+    app's own later ``sqlite3.connect(...)`` on that path would fail
+    outright (a denial of service, not a disclosure).
+
+    Widened sandbox root = ``get_user_data_dir()`` itself, the same
+    reachability precondition the other TASK-848 gaps share -- under the
+    shipped default (``tool_sandbox``, a SIBLING of ``search_history.db``)
+    this path is never reachable at all.
+    """
+    from tldw_chatbook import config as app_config
+
+    user_data_dir = app_config.get_user_data_dir()
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: user_data_dir.resolve())
+
+    result = asyncio.run(
+        fot.WriteFileTool().execute(
+            file_path="search_history.db/note.txt",
+            content="hello",
+            create_directories=True,
+        )
+    )
+
+    assert "error" in result
+    assert not (user_data_dir / "search_history.db").exists()
+
+
+def test_write_file_still_creates_legitimate_new_nested_directories(monkeypatch):
+    """The TASK-849 fix must not block ordinary nested directory creation:
+    an agent creating a brand-new subdirectory INSIDE an EXISTING container
+    (``tool_sandbox``) must still succeed end to end, even under the same
+    widened-root configuration the collision test above uses.
+    """
+    from tldw_chatbook import config as app_config
+
+    user_data_dir = app_config.get_user_data_dir()
+    sandbox_root = user_data_dir / "tool_sandbox"
+    sandbox_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: user_data_dir.resolve())
+
+    result = asyncio.run(
+        fot.WriteFileTool().execute(
+            file_path="tool_sandbox/brand_new_subdir/note.txt",
+            content="hello",
+            create_directories=True,
+        )
+    )
+
+    assert "error" not in result, result
+    assert (sandbox_root / "brand_new_subdir" / "note.txt").read_text() == "hello"
+
+
 # ---------------------------------------------------------------------------
 # Finding 2's guardrail must not break the shipped DEFAULT configuration:
 # the default sandbox root is `get_user_data_dir() / "tool_sandbox"`, a
