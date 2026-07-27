@@ -4,7 +4,7 @@ title: Add session-scoped Git status and staging to File Notes
 status: To Do
 assignee: []
 created_date: '2026-07-27 19:52'
-updated_date: '2026-07-27 20:04'
+updated_date: '2026-07-27 20:26'
 labels:
   - notes
   - git
@@ -23,19 +23,20 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Let users inspect and safely stage or unstage only paths changed during the current Chatbook File Notes session while preserving disk authority and existing external Git index state. This first Git slice must remain optional and must not add commit, push, remote, branch-mutation, or repository-wide status behavior.
+Let users inspect and safely stage or unstage only paths changed during the current Chatbook File Notes session while preserving disk authority and external Git index state observed by a fresh preflight. This first Git slice remains optional and excludes commit, push, remote, branch-mutation, and repository-wide status behavior.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A selected File Notes root inside one supported Git worktree shows coalesced current-session path rows with actual Git state and explicit Session paths only and whole-file staging labels.
-- [ ] #2 User can stage or unstage one eligible logical row and can Stage All or Unstage All eligible rows; move endpoints remain one inseparable group and pending autosave is flushed before staging.
-- [ ] #3 Stage and unstage never modify note bytes, the File Notes SQLite replica, unrelated index entries, or File Notes session history.
-- [ ] #4 Missing or unsupported Git, non-repository or replaced roots, index locks, command failures, and status timeouts remain nonfatal and never disable File Notes editing.
-- [ ] #5 The Session Git navigator view, per-row and bulk controls, refresh behavior, and trust confirmation remain responsive without remounting the editor or breaking narrow-terminal navigation.
-- [ ] #6 Focused unit, disposable-repository integration, mounted Textual, and disposable-repository acceptance checks cover the approved safety boundary without requiring full-suite or network execution.
-- [ ] #7 Commit, push, remotes, credentials, branch mutation, hunk staging, repository initialization, persistent staging ownership, full-repository status, and nested-repository management remain absent.
-- [ ] #8 A fresh preflight blocks observed pre-existing or partially staged same-path content, conflicts, ignored paths, and nested repository boundaries without intentionally targeting that index state.
-- [ ] #9 Concurrent external index mutation during one Chatbook Stage or Unstage action is an unsupported race; lock contention and observable uncertainty are surfaced without claiming atomic cross-process ownership.
-- [ ] #10 Chatbook reverses only exact index entries it staged in the current process; repository, HEAD, and saved signatures must still match, and any later move-chain endpoint must satisfy the approved verified no-op expansion rule. Observed external changes or a new process revoke Unstage eligibility.
+- [ ] #1 A selected File Notes root inside one supported Git worktree replaces the unbounded session summary with Session Git (N), where N is the coalesced current-session group count; after trust, rows show actual path-scoped Git state plus explicit Session paths only and whole-file staging labels.
+- [ ] #2 User can Stage or Unstage one eligible logical row and can Stage All or Unstage All eligible rows; pending autosave is flushed, move lineage remains one policy group, and only effective Git-matchable mutation paths are supplied with create, modify, and delete semantics.
+- [ ] #3 Chatbook selects no Git operation intended to update the worktree and never writes the File Notes SQLite replica or session history during Git actions; unrelated index entries are not intentionally targeted, while arbitrary side effects from explicitly trusted user-configured filters are disclosed as outside the guarantee.
+- [ ] #4 Missing, unsupported, untrusted, locked, unsafe, non-repository, or replaced Git roots plus command failures and status timeouts remain nonfatal and never disable File Notes editing.
+- [ ] #5 Chatbook reverses only index entries it staged in the current process while repository, HEAD, mode, object ID, stage, semantic flags, and approved no-op move-endpoint preconditions still match; observed external changes or a new process revoke Unstage eligibility.
+- [ ] #6 Concurrent external index mutation during one Chatbook Stage or Unstage action remains an explicitly unsupported race; lock contention and observable uncertainty are surfaced without claiming atomic cross-process ownership.
+- [ ] #7 Focused unit, disposable-repository integration, mounted Textual, one 1,000-plus-unrelated-notes scale fixture, and disposable-repository acceptance checks cover the approved boundary without full-suite, network, pagination, or broad performance execution.
+- [ ] #8 Commit, push, pull, fetch, remotes, credentials, branch mutation, hunk staging, repository initialization or repair, persistent staging ownership, full-repository status, and nested-repository management remain absent.
+- [ ] #9 The documented state-to-action mapping controls selected and bulk eligibility; refresh preserves stable row selection, performs no periodic or hidden-view Git work, permits one status query plus at most one coalesced rerun, makes mutations wait for active status, and keeps editor input and narrow-terminal navigation responsive.
+- [ ] #10 A fresh preflight blocks observed pre-existing or partially staged same-path state, conflicts, ignored paths, nested repository boundaries, directory or other unsafe worktree types, and nondefault semantic index flags such as skip-worktree, assume-unchanged, or intent-to-add.
+- [ ] #11 Before the first worktree-aware status or Stage for a selected root and repository identity, Chatbook explains that configured filters may execute and requires process-lifetime trust; identity is revalidated before each worktree-aware command, identity change clears trust, and declining runs neither operation while File Notes remains usable.
 <!-- AC:END -->

@@ -19,16 +19,21 @@ operations. It does not record external filesystem changes as Chatbook session
 changes.
 
 This design amends only the Git boundary. The filesystem service and
-`file_notes.sqlite` remain unaware of Git. No note bytes, recovery rows,
-revisions, or session history are changed by a Git action.
+`file_notes.sqlite` remain unaware of Git. The Git service does not write note
+bytes, recovery rows, revisions, or session history, and it never selects a Git
+operation intended to update the worktree. Worktree-aware Git commands may run
+user-configured clean/process filters after explicit trust; arbitrary side
+effects from those programs are disclosed and outside Chatbook's guarantee.
 
 ## User experience
 
-The Navigator keeps its current Files and search-result modes. A compact
-`Session Git (N)` entry opens a third navigator mode instead of permanently
-squeezing a potentially long Git list beneath the folder tree. Returning to
-Files restores the previous tree/search state. On narrow terminals this remains
-inside Navigator and does not remount or resize the editor.
+The Navigator keeps its current Files and search-result modes. The existing
+unbounded `Session changes: ...` text is replaced by a compact
+`Session Git (N)` entry, where `N` is the number of coalesced session groups.
+The entry opens a third navigator mode instead of permanently squeezing a
+potentially long Git list beneath the folder tree. Returning to Files restores
+the previous tree/search state. On narrow terminals this remains inside
+Navigator and does not remount or resize the editor.
 
 The Session Git view contains:
 
@@ -43,18 +48,30 @@ The Session Git view contains:
 The view never claims to show full repository status. Other repository changes
 and staged paths are intentionally neither listed nor counted.
 
-Rows use these user-facing states:
+Before the first worktree-aware status for a selected root in a process, the
+view explains that Git status and staging may execute configured filters and
+asks for trust. Declining runs no worktree-aware Git command, leaves File Notes
+fully usable, and offers an explicit retry.
 
-- `Unstaged`;
-- `Staged by Chatbook`;
-- `Staged by Chatbook · newer unstaged edits`;
-- `Staged externally`;
-- `Partially staged externally`;
-- `Clean · currently matches HEAD`;
-- `Ignored`;
-- `Git conflict`;
-- `Nested repository unsupported`;
-- `Git unavailable` or `Error`.
+Rows use this action contract:
+
+| State | Selected-row actions | Stage All | Unstage All |
+| --- | --- | --- | --- |
+| `Unstaged` | `Stage selected` | Included | Excluded |
+| `Staged by Chatbook` | `Unstage selected` | Excluded | Included |
+| `Staged by Chatbook · newer unstaged edits` | `Stage update`, `Unstage selected` | Included as update | Included |
+| `Staged externally` | Disabled: external index state | Excluded | Excluded |
+| `Partially staged externally` | Disabled: external index state | Excluded | Excluded |
+| `Clean · currently matches HEAD` | No action | Excluded | Excluded |
+| `Ignored` | Disabled: ignored | Excluded | Excluded |
+| `Git conflict` | Disabled: conflict | Excluded | Excluded |
+| `Unsupported Git index state` | Disabled with flag reason | Excluded | Excluded |
+| `Nested repository unsupported` | Disabled: nested repository | Excluded | Excluded |
+| `Git unavailable` or `Error` | Disabled with reason | Excluded | Excluded |
+
+Each coalesced group has a stable process-local identity based on its earliest
+session-change sequence. Refresh retains the selected row while that group
+still exists, including when a later move expands its endpoint lineage.
 
 A clean row remains visible because this surface is also the current session's
 activity record. A created-then-deleted path or a file edited back to `HEAD`
@@ -75,9 +92,10 @@ worktree. A session path that crosses into another nested worktree or submodule
 beneath the selected root is visible but not actionable.
 
 Repository identity includes the canonical worktree top-level and canonical Git
-directory identities. Discovery is repeated before an index mutation. A moved,
-replaced, or differently resolved repository invalidates the service and
-requires the user to reopen Session Git.
+directory identities. Identity is revalidated before every worktree-aware
+status or index mutation. A moved, replaced, or differently resolved repository
+invalidates the service and its trust grant, requiring the user to reopen
+Session Git and trust the new identity.
 
 ### Workspace integration
 
@@ -85,16 +103,18 @@ requires the user to reopen Session Git.
 session-only repository trust confirmation, refresh scheduling, and worker
 lifecycle. It asks the existing File Notes leave/flush path to settle pending
 autosave before staging. A remaining dirty, saving, conflict, or error state
-blocks the action.
+blocks the action. Trust is required before the first worktree-aware status or
+index mutation for the selected root, not merely before Stage.
 
 The editor is not locked for the duration of Git. Once the initial flush
 finishes, later typing and atomic autosaves may continue. If disk content
 changes after `git add` reads it, the refreshed row truthfully becomes staged
 with newer unstaged edits.
 
-Git ownership and trust are process-lifetime memory only. Root changes and
-application restart discard them. A path left staged after restart is reported
-as externally staged and cannot be unstaged by Chatbook.
+Git ownership and trust are process-lifetime memory only. Trust is keyed by the
+selected root plus repository identity. Root or identity changes and application
+restart discard it. A path left staged after restart is reported as externally
+staged and cannot be unstaged by Chatbook.
 
 ## Session change coalescing
 
@@ -103,13 +123,19 @@ Git rows describe effective path groups rather than every autosave event:
 - repeated changes to one path form one row;
 - a move groups its source and destination as one inseparable action;
 - later changes to the move destination stay in that move group;
-- chained moves retain every touched path as a literal pathspec while displaying
-  the original source and final destination;
+- chained moves retain every touched path as a lineage endpoint while
+  displaying the original source and final destination;
 - create/delete, delete/restore, and edit/revert sequences remain visible even
   when their current Git result is clean.
 
 Coalescing never broadens beyond paths present in Chatbook's in-memory session
 changes. External changes to another repository path cannot enter a bulk action.
+Every lineage endpoint participates in boundary, eligibility, and ownership
+preflight. Mutation pathspecs are a separate derived set containing only
+endpoints that currently match something in `HEAD`, the index, or worktree and
+whose index state the selected action can change. A transient move-chain path
+absent from all three remains visible in the lineage but is never passed as an
+unmatched mutation pathspec.
 
 Ownership is tracked per literal endpoint under one repository/`HEAD`
 generation, then projected onto the current coalesced groups. If a staged file
@@ -132,16 +158,21 @@ boundary. Machine output is consumed as bytes using NUL-delimited porcelain v2
 records; filenames are decoded through the platform filesystem rules and
 sanitized only for display.
 
+Stage uses path-scoped `git add --all` semantics so creations, modifications,
+and tracked deletions are handled together. A selected or bulk action is one
+logical operation over eligible groups, but only effective mutation pathspecs
+are supplied to Git; lineage-only and verified no-op endpoints are omitted.
+
 The runner removes ambient variables that can redirect the Git directory,
 worktree, common directory, index, object database, namespace, discovery, or
 injected configuration. It retains the ordinary environment and Git
 configuration needed for normal attributes and clean filters. Terminal prompts
 are disabled.
 
-Read-only status runs with optional locks and filesystem-monitor hooks disabled.
-It has a short hard timeout because it does not own an index mutation. The
-service capability-checks the installed Git version/commands instead of parsing
-human-readable fallback output.
+After trust, read-only status runs with optional locks and filesystem-monitor
+hooks disabled. It has a short hard timeout because it does not own an index
+mutation. The service capability-checks the installed Git version/commands
+instead of parsing human-readable fallback output.
 
 Index mutations are single-flight per service. They are not force-killed merely
 because they are slow: `git add` may legitimately execute a clean filter. The
@@ -149,11 +180,12 @@ UI reports elapsed slow state while File Notes remains usable. Application
 shutdown first requests graceful child termination and never deletes a
 remaining Git lock file.
 
-Git's normal clean filters and attributes, including Git LFS, remain active for
-staging so the index matches ordinary command-line Git semantics. Because a
-repository-local clean filter may execute a program, the first Stage action for
-each selected root in a process requires a concise trust confirmation. Status
-does not require that confirmation.
+Git's normal clean filters and attributes, including Git LFS, remain active so
+status and staging match ordinary command-line Git semantics. Worktree-aware
+status can invoke the same configured clean/process filters while comparing
+worktree content with the index. The first such status or Stage action for each
+selected root/repository identity in a process therefore requires the concise
+trust confirmation.
 
 ## Status and eligibility
 
@@ -169,6 +201,10 @@ Before staging, each group receives a fresh preflight:
   externally`;
 - unmerged entries, ignored paths, nested repository boundaries, an invalid
   repository identity, or unavailable Git are blocked;
+- an endpoint present as a directory, symlink, or other non-regular worktree
+  type is blocked before its path can reach a mutation command;
+- endpoints with nondefault semantic index state, including `skip-worktree`,
+  `assume-unchanged`, or intent-to-add, are blocked rather than normalized;
 - clean groups remain visible but have no Stage action;
 - an already Chatbook-owned group may be staged again only while its saved
   ownership signature still matches.
@@ -180,17 +216,22 @@ that same path. The persistent whole-file label makes this limitation explicit.
 ## Stage flow
 
 1. Flush the current File Notes autosave through the existing workspace guard.
-2. Snapshot the coalesced group set and run fresh Git status/index preflight.
-3. Obtain the process-lifetime repository trust confirmation if this is the
-   first Stage action.
-4. Revalidate repository identity.
-5. Run one literal, path-scoped Git command for the selected group or all
-   eligible groups. A move always supplies every endpoint.
-6. Read `HEAD` identity and exact index entries again.
-7. Claim ownership only when Git exited successfully, repository and `HEAD`
+2. Discover and revalidate repository identity using commands that do not
+   inspect worktree content; identity change clears the prior trust grant.
+3. Obtain process-lifetime trust for the current root/repository identity if
+   no trusted status has run for it.
+4. Snapshot the coalesced group set and run fresh Git status/index preflight.
+5. Revalidate repository identity again immediately before mutation; a change
+   aborts without running a worktree-aware command for the new identity.
+6. Run one literal, path-scoped `git add --all` operation over the effective
+   mutation pathspecs for the selected group or all eligible groups. Every move
+   lineage endpoint is preflighted, but an absent transient endpoint is omitted.
+7. Read `HEAD` identity and exact index entries again.
+8. Claim ownership only when Git exited successfully, repository and `HEAD`
    identities remained stable, and the fresh entries are valid for every
    endpoint in the group.
-8. Refresh all displayed session rows from actual Git state.
+9. Refresh displayed session rows if Session Git remains visible; otherwise
+   mark the view stale for its next open.
 
 `Stage All` skips ineligible rows and reports the exact staged, already staged,
 clean, and blocked counts. A nonzero or uncertain command result creates no new
@@ -202,34 +243,43 @@ An owned group's Unstage signature contains:
 
 - repository identity;
 - the `HEAD` object ID, or an explicit unborn-branch marker;
-- each Chatbook-staged endpoint's exact index mode, object ID, and stage number;
+- each Chatbook-staged endpoint's exact index mode, object ID, stage number,
+  and semantic flags;
 - explicit absence for deleted source paths;
 - any later move endpoint's verified no-op `HEAD`-equivalent entry or absence.
 
 Before Unstage, Chatbook compares the complete current signature with the saved
-one. A different `HEAD`, conflict stage, entry, or absence revokes ownership and
-changes the row to externally staged. Chatbook does not attempt a merge.
+one. A different `HEAD`, conflict stage, entry, semantic flag, or absence
+revokes ownership. A fresh status result then derives the row's actual state;
+Chatbook does not force an external-staged label or attempt a merge.
 
 When the signature still matches, Git restores only those index paths to their
 known precondition: each path's `HEAD` entry, or absence when `HEAD` does not
 contain the path or the branch is unborn. Later move endpoints are included in
-the inseparable group but already equal that target, so they remain no-ops;
-only entries Chatbook staged are reversed. The worktree is never restored or
-modified. `Unstage All` includes only currently valid Chatbook-owned groups. It
-then refreshes actual index state before clearing ownership.
+the inseparable group's eligibility and signature checks but, when already at
+that target, are omitted from the mutation pathspecs as no-ops. Only entries
+Chatbook staged are reversed. Chatbook selects no worktree-restoring operation.
+`Unstage All` includes only currently valid Chatbook-owned groups. It then
+refreshes actual index state before clearing ownership.
 
 ## Refresh and concurrency
 
 Status refresh is:
 
-- immediate when Session Git opens;
-- debounced after a File Notes session mutation;
-- immediate after a Git action;
-- available through manual Refresh;
-- polled slowly only while Session Git is visible.
+- immediate after trust when Session Git opens;
+- debounced after a File Notes session mutation while Session Git is visible;
+- immediate after a Git action only if Session Git remains visible;
+- available through manual Refresh.
 
-Every query runs in a worker and uses a generation token so stale results cannot
-replace newer state. Git mutations are serialized with one service lock.
+This first slice does not poll Git status. At most one status query runs for the
+selected root. Triggers arriving during a query coalesce into at most one rerun
+using the latest session snapshot. No status query starts while an index
+mutation is active, and a mutation waits for the active status query before
+running its own fresh preflight. When a mutation finishes, it schedules one
+refresh only if the view remains visible; otherwise it marks the view stale.
+Session mutations while the Git view is hidden do the same. Reopening performs
+the refresh. Every query uses a generation token so stale results cannot replace
+newer state. Git mutations are serialized with one service lock.
 
 External Git can still race between Chatbook's final preflight and Git's own
 index lock. Git prevents index-file corruption, but no porcelain Git CLI
@@ -245,6 +295,7 @@ inside the remaining race window.
 
 All failures remain local to Session Git:
 
+- declined or missing trust runs no worktree-aware status or index mutation;
 - missing/unsupported Git and non-repository roots disable Git controls only;
 - `safe.directory` and ownership errors are shown without changing global or
   local Git configuration;
@@ -253,11 +304,15 @@ All failures remain local to Session Git:
 - status timeout leaves the prior view marked stale;
 - bounded, control-character-sanitized stderr supplies the row or action error;
 - repository disappearance or identity change invalidates the service;
-- filter/command failure is followed by a fresh status read and no unproven
-  ownership claim.
+- status or filter failure leaves the prior view stale without an automatic
+  retry loop;
+- mutation failure creates no ownership claim and schedules at most one normal
+  post-action refresh when visible, otherwise marking the view stale.
 
 Chatbook never initializes or repairs a repository, changes configuration,
-invokes remotes or credentials, or edits the worktree through Git.
+invokes remotes or credentials, or selects a Git operation intended to edit the
+worktree. The trust prompt discloses that a user-configured filter is an
+arbitrary program whose own side effects cannot be constrained by Chatbook.
 
 If users run another index-mutating Git command concurrently with a Chatbook
 action, ordinary Git last-writer behavior may affect the same session path.
@@ -275,6 +330,7 @@ Fast unit tests cover:
 - session lineage/coalescing;
 - row-state and eligibility policy;
 - exact ownership signature comparison;
+- semantic index-flag blocking and ownership invalidation;
 - command construction and sanitized environment boundaries;
 - simulated status timeout and preflight/result races.
 
@@ -282,6 +338,8 @@ A compact disposable-repository matrix covers:
 
 - repository root equal to and above the notes root;
 - modify, create, delete, restore, and grouped/chained moves;
+- transient move-chain endpoints remaining in lineage while being omitted from
+  effective mutation pathspecs;
 - per-group and bulk stage/unstage;
 - unrelated worktree and index entries remaining untouched;
 - pre-existing and partially staged same-path blocking;
@@ -290,16 +348,24 @@ A compact disposable-repository matrix covers:
 - ignored, conflict, detached, unborn, nested, and replaced-repository states;
 - supported names containing spaces, leading dashes, and pathspec characters;
 - redirecting Git environment variables being unable to change the target;
-- exact worktree bytes, SQLite replica state, and File Notes session history
-  remaining unchanged by Stage and Unstage.
+- Chatbook's command paths requesting no worktree, SQLite replica, or File Notes
+  session-history mutation.
 
-One controlled filter fixture proves status executes no configured filter and
-Stage reaches the filter only after trust confirmation.
+One controlled filter fixture proves declining trust runs neither status nor
+the filter, accepting trust allows status and Stage to reach the configured
+filter, and Chatbook itself requests no worktree update.
 
 Mounted Textual tests cover Session Git navigator switching, retained drafts,
-selected and bulk actions, blocked rows, action summaries, nonfatal Git errors,
-worker refresh, and narrow layout. Acceptance testing repeats the primary flow
-against one disposable real repository and inspects both `git diff` and
+the state/action table, stable row selection, selected and bulk actions, blocked
+rows, action summaries, nonfatal Git errors, and narrow layout. A delayed-runner
+fixture proves refresh triggers coalesce to one in-flight query plus at most one
+rerun while editor input remains processable.
+
+One focused scale fixture uses at least 1,000 unrelated notes and a small
+session set. It asserts only session rows and pathspecs are produced and the
+Files/search state survives Session Git navigation; this slice adds no
+pagination or broad performance harness. Acceptance testing repeats the primary
+flow against one disposable real repository and inspects both `git diff` and
 `git diff --cached`.
 
 ## Explicit non-goals

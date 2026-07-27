@@ -25,12 +25,16 @@ unless Chatbook can prove it is reversing its own index action.
 - Show status only for paths present in current-process Chatbook session
   changes. Never describe it as full repository status.
 - Coalesce repeated changes and treat every move's source/destination lineage as
-  one inseparable Git group.
+  one inseparable Git group. Preflight every lineage endpoint, but pass only
+  effective Git-matchable endpoints to mutation commands.
 - Offer selected-group and bulk Stage/Unstage actions. Staging is whole-file,
   path-scoped behavior and is labelled as such.
 - Freshly preflight and refuse groups with observed pre-existing or partially
   staged same-path state, unmerged entries, ignored paths, or nested repository
   boundaries.
+- Refuse nondefault semantic index states such as `skip-worktree`,
+  `assume-unchanged`, and intent-to-add. Include semantic flags in saved
+  ownership signatures so later flag changes revoke Unstage authority.
 - Record exact repository, `HEAD`, and index-entry signatures after a successful
   Chatbook stage. Unstage only while that complete signature still matches.
 - Track ownership per endpoint. A later Chatbook move or move-chain endpoint
@@ -44,10 +48,20 @@ unless Chatbook can prove it is reversing its own index action.
 - Invoke Git through direct argument arrays and literal pathspecs with
   repository/index/config redirecting environment variables removed.
 - Run read-only status without optional index writes or filesystem-monitor
-  hooks. Preserve normal Git attributes and clean filters for Stage, preceded by
-  one process-lifetime trust confirmation per selected root.
+  hooks. Preserve normal Git attributes and clean filters for worktree-aware
+  status and Stage, preceded by one process-lifetime trust confirmation per
+  selected root/repository identity. Revalidate that identity before every
+  worktree-aware command and clear trust if it changes.
+- Replace the unbounded session-change summary with a dedicated Session Git
+  navigator mode whose state/action mapping and selection remain stable across
+  refresh.
+- Do not poll Git status in this slice. Permit one query at a time and coalesce
+  concurrent refresh triggers into at most one rerun. Hidden views become stale
+  instead of launching Git, and mutations wait for an active status query.
 - Keep File Notes usable when Git is absent, unsupported, locked, unsafe,
-  replaced, or failing. Git errors never mutate note bytes or SQLite state.
+  replaced, untrusted, or failing. Chatbook selects no Git command intended to
+  update note bytes or SQLite state; trusted filter side effects are disclosed
+  as outside its guarantee.
 - Do not add commit, push, remote, credential, branch, hunk, repository
   initialization, repair, or full-status behavior.
 
@@ -60,8 +74,8 @@ unless Chatbook can prove it is reversing its own index action.
   row.
 - Chatbook can safely reverse only staging it still proves it owns. A restart or
   external Git change may require command-line unstage.
-- Stage may execute trusted repository clean filters, matching normal Git
-  semantics. Merely opening Session Git does not execute them.
+- Worktree-aware status and Stage may execute trusted clean/process filters,
+  matching normal Git semantics. Declining trust runs neither operation.
 - Git remains an optional projection/action surface. Disk remains the note
   authority and SQLite remains an independent recovery replica.
 - Concurrent external index mutations cannot be made transactionally atomic
