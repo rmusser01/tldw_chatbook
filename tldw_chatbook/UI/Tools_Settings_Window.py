@@ -7008,7 +7008,7 @@ Thank you for using tldw-chatbook! 🎉
             )
 
             if success:
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.app_instance.notify,
                     f"Successfully imported {status.successful_items} items "
                     f"({status.skipped_items} skipped, {status.failed_items} failed)",
@@ -7018,7 +7018,7 @@ Thank you for using tldw-chatbook! 🎉
                 error_msg = "Import failed"
                 if status.errors:
                     error_msg += f": {status.errors[0]}"
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.app_instance.notify, error_msg, severity="error"
                 )
 
@@ -7027,7 +7027,7 @@ Thank you for using tldw-chatbook! 🎉
                 logger.warning(f"Import warning: {warning}")
 
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error during import: {str(e)}",
                 severity="error",

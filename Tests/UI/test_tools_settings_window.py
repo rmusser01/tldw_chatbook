@@ -1110,6 +1110,40 @@ def test_import_chatbook_paths_reuse_the_single_source_of_truth():
     assert "_get_database_path" in source or "_DB_PATH_RESOLVERS" in source
 
 
+def test_no_bare_call_from_thread_calls_in_tools_settings_window():
+    """Guard against this bug class recurring anywhere in the file.
+
+    ToolsSettingsWindow extends Container, and Container (like Widget in
+    general) has no ``call_from_thread`` of its own -- only App does. A bare
+    ``self.call_from_thread(...)`` inside a ``@work(thread=True)`` worker
+    therefore raises AttributeError instead of reaching the UI, silently
+    swallowing both success and error notifications. This was found twice in
+    this file (the four single-db maintenance workers, then
+    _import_chatbook_worker) -- always use ``self.app.call_from_thread(...)``.
+    """
+    import inspect
+    import re
+
+    import tldw_chatbook.UI.Tools_Settings_Window as module
+    from textual.app import App
+    from textual.containers import Container
+
+    source = inspect.getsource(module)
+    bare_calls = re.findall(r"self\.call_from_thread\(", source)
+    assert not bare_calls, (
+        f"found {len(bare_calls)} bare 'self.call_from_thread(' call(s) in "
+        "Tools_Settings_Window.py -- use 'self.app.call_from_thread(' instead"
+    )
+
+    # Documents WHY the bare form is wrong: Container (ToolsSettingsWindow's
+    # base) genuinely has no call_from_thread of its own -- only App does. If
+    # this ever stops holding (e.g. Textual adds it to Widget), the source
+    # scan above is still the operative guard.
+    assert not hasattr(Container, "call_from_thread")
+    assert hasattr(App, "call_from_thread")
+    assert not hasattr(ToolsSettingsWindow, "call_from_thread")
+
+
 @pytest.mark.asyncio
 async def test_get_database_path_resolves_via_config_resolvers_and_honours_profile(
     monkeypatch, temp_config_path
