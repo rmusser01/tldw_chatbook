@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Library import library_local_rag_search_service
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
@@ -3905,8 +3906,22 @@ async def test_console_rag_query_validation_blocks_unsafe_markup():
 
 
 @pytest.mark.asyncio
-async def test_console_rag_action_without_service_stages_recoverable_blocker():
+async def test_console_rag_action_without_service_stages_recoverable_blocker(
+    monkeypatch,
+):
     app = _build_test_app()
+    app.library_rag_search_service = None
+    rag_factory_calls = []
+
+    def record_rag_factory_call():
+        rag_factory_calls.append(True)
+        return None
+
+    monkeypatch.setattr(
+        library_local_rag_search_service,
+        "get_shared_rag_service",
+        record_rag_factory_call,
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(196, 48)) as pilot:
@@ -3917,9 +3932,13 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker():
         console.query_one(
             "#console-library-rag-query-input", Input
         ).value = "What changed?"
-        await pilot.pause(0.1)
+        await _wait_for_console_library_rag_button_state(
+            console,
+            pilot,
+            disabled=False,
+        )
         console.query_one("#console-run-library-rag", Button).press()
-        await _wait_for_selector(console, pilot, "#console-live-work-status")
+        await _wait_for_visible_text(console, pilot, "Status: blocked")
 
         text = _visible_text(console)
         assert "Status: blocked" in text
@@ -3927,6 +3946,7 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker():
         assert "RAG/source:" not in text
         assert "Unavailable: Library Search/RAG retrieval." in text
         assert "Owner: Library retrieval service." in text
+        assert rag_factory_calls == []
 
 
 @pytest.mark.asyncio
