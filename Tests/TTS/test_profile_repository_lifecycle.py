@@ -54,6 +54,9 @@ class _RecordingConnection:
         self.close_error = close_error
         self.closed = False
 
+    def execute(self, _sql: str) -> tuple[object, ...]:
+        return ()
+
     def close(self) -> None:
         self.events.append(("connection.close", threading.get_ident()))
         if self.close_error is not None:
@@ -120,6 +123,9 @@ class _SequencedCloseConnection:
         self.before_close = before_close
         self.close_calls = 0
         self.closed = False
+
+    def execute(self, _sql: str) -> tuple[object, ...]:
+        return ()
 
     def close(self) -> None:
         if self.before_close is not None:
@@ -396,6 +402,7 @@ def test_constructor_is_pure_and_starts_initial_closed(
     assert repository._connection is None
     assert repository._lease is None
     assert repository._active_database_path is None
+    assert repository._store_established is False
     assert repository._owner_loop is None
     assert repository._lifecycle_lock is None
 
@@ -442,6 +449,7 @@ async def test_open_uses_one_worker_for_lease_connection_sql_and_cleanup(
     repository = module.TTSProfileRepository(database_path)
 
     opened = await repository.open()
+    assert repository._store_established is True
 
     def query(connection: sqlite3.Connection) -> int:
         events.append(("operation", threading.get_ident()))
@@ -1337,8 +1345,13 @@ async def test_retry_cleans_residual_connection_before_acquiring_new_lease(
         leases.append(lease)
         return lease
 
-    def controlled_open(_database_path: Path) -> Any:
+    def controlled_open(
+        _database_path: Path,
+        *,
+        must_exist: bool = False,
+    ) -> Any:
         nonlocal open_calls
+        assert must_exist is (open_calls > 0)
         connection = connections[open_calls]
         open_calls += 1
         events.append((f"store.open-{open_calls}", threading.get_ident()))
@@ -2763,6 +2776,262 @@ async def test_restore_handoff_opens_newer_valid_store_that_wins_before_shared_r
             "Newer one",
             "Newer two",
         ]
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_restore_handoff_rejects_domain_invalid_authoritative_winner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    real_lease_type = module.ProfileStoreLease
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    invalid_winner = tmp_path / "invalid-winner.sqlite3"
+    await _create_profile_store(candidate, "Candidate")
+    await _create_profile_store(invalid_winner, "Invalid winner")
+    invalid = sqlite3.connect(invalid_winner, isolation_level=None)
+    invalid.execute("UPDATE tts_generation_profiles SET revision = 0")
+    invalid.close()
+    repository = _repository(database_path)
+    await repository.open()
+    await repository.create_profile(
+        _draft("Original"),
+        UUID("00000000-0000-4000-8000-000000000099"),
+    )
+    replaced_during_handoff = False
+
+    class InvalidHandoffLease(real_lease_type):
+        def release(self) -> None:
+            nonlocal replaced_during_handoff
+            super().release()
+            if (
+                self.mode is ProfileStoreLockMode.EXCLUSIVE
+                and not replaced_during_handoff
+            ):
+                os.replace(invalid_winner, database_path)
+                replaced_during_handoff = True
+
+    monkeypatch.setattr(module, "ProfileStoreLease", InvalidHandoffLease)
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.restore_from(candidate)
+
+        _assert_safe_error(caught.value, "restore_failed", str(database_path))
+        assert replaced_during_handoff is True
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert repository.generation == 2
+        assert repository._connection is None
+        assert repository._lease is None
+        assert repository._active_database_path is None
+        recoveries = tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
+        assert len(recoveries) == 1
+        validate_profile_candidate(recoveries[0])
+        live = sqlite3.connect(database_path)
+        try:
+            assert (
+                live.execute("SELECT revision FROM tts_generation_profiles").fetchone()[
+                    0
+                ]
+                == 0
+            )
+        finally:
+            live.close()
+
+        with pytest.raises(ProfileRepositoryError) as retry_error:
+            await repository.open()
+        _assert_safe_error(retry_error.value, "corrupt_data", str(database_path))
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert repository.generation == 3
+        assert repository._connection is None
+        assert repository._lease is None
+        assert repository._store_established is True
+
+        for suffix in ("-wal", "-shm", "-journal"):
+            try:
+                database_path.with_name(f"{database_path.name}{suffix}").unlink()
+            except FileNotFoundError:
+                pass
+        recovered_copy = tmp_path / "recovered-copy.sqlite3"
+        recovered_copy.write_bytes(recoveries[0].read_bytes())
+        os.replace(recovered_copy, database_path)
+        reopened = await repository.open()
+        assert reopened == ProfileStoreResult(generation=4, value=None)
+        page = await repository.list_profiles()
+        assert [profile.display_name for profile in page.value.profiles] == ["Original"]
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_restore_failure_rebind_rejects_domain_invalid_original_and_keeps_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    secret = str(tmp_path / "secret-replace")
+    await _create_profile_store(candidate, "Candidate")
+    repository = _repository(database_path)
+    await repository.open()
+    await repository.create_profile(
+        _draft("Original"),
+        UUID("00000000-0000-4000-8000-000000000099"),
+    )
+    real_replace = module.os.replace
+
+    def corrupt_then_fail_replace(source: object, destination: object) -> None:
+        if Path(destination) == database_path:
+            invalid = sqlite3.connect(database_path, isolation_level=None)
+            invalid.execute("UPDATE tts_generation_profiles SET revision = 0")
+            invalid.close()
+            raise OSError(secret)
+        real_replace(source, destination)
+
+    monkeypatch.setattr(module.os, "replace", corrupt_then_fail_replace)
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.restore_from(candidate)
+
+        _assert_safe_error(caught.value, "restore_failed", secret, str(database_path))
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert repository.generation == 2
+        assert repository._connection is None
+        assert repository._lease is None
+        assert repository._active_database_path is None
+        assert not tuple(tmp_path.glob("*.restore-stage.sqlite3"))
+        recoveries = tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
+        assert len(recoveries) == 1
+        validate_profile_candidate(recoveries[0])
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_restore_preclose_failure_does_not_reopen_domain_invalid_shared_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    secret = str(tmp_path / "secret-clock")
+    await _create_profile_store(candidate, "Candidate")
+    repository = _repository(database_path)
+    await repository.open()
+    await repository.create_profile(
+        _draft("Original"),
+        UUID("00000000-0000-4000-8000-000000000099"),
+    )
+    original_connection = repository._connection
+    original_lease = repository._lease
+    await repository._submit_operation(
+        lambda connection: connection.execute(
+            "UPDATE tts_generation_profiles SET revision = 0"
+        )
+    )
+    monkeypatch.setattr(
+        repository,
+        "_clock",
+        lambda: (_ for _ in ()).throw(RuntimeError(secret)),
+    )
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.restore_from(candidate)
+
+        _assert_safe_error(caught.value, "restore_failed", secret, str(database_path))
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert repository.generation == 2
+        assert repository._connection is original_connection
+        assert repository._lease is original_lease
+        assert repository._lease is not None
+        assert repository._lease.mode is ProfileStoreLockMode.SHARED
+        assert repository._lease.acquired is True
+        assert repository._active_database_path == database_path.resolve()
+        assert not tuple(tmp_path.glob("*.restore-stage.sqlite3"))
+        assert not tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
+        await _assert_exclusive_lease_blocked(database_path)
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_established_store_retry_does_not_recreate_missing_postreplace_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    real_lease_type = module.ProfileStoreLease
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    await _create_profile_store(candidate, "Candidate")
+    repository = _repository(database_path)
+    await repository.open()
+    await repository.create_profile(
+        _draft("Original"),
+        UUID("00000000-0000-4000-8000-000000000099"),
+    )
+    removed_during_handoff = False
+
+    class RemovingHandoffLease(real_lease_type):
+        def release(self) -> None:
+            nonlocal removed_during_handoff
+            super().release()
+            if (
+                self.mode is ProfileStoreLockMode.EXCLUSIVE
+                and not removed_during_handoff
+            ):
+                for target in (
+                    database_path,
+                    *(
+                        database_path.with_name(f"{database_path.name}{suffix}")
+                        for suffix in ("-wal", "-shm", "-journal")
+                    ),
+                ):
+                    try:
+                        target.unlink()
+                    except FileNotFoundError:
+                        pass
+                removed_during_handoff = True
+
+    monkeypatch.setattr(module, "ProfileStoreLease", RemovingHandoffLease)
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as restore_error:
+            await repository.restore_from(candidate)
+        _assert_safe_error(restore_error.value, "restore_failed", str(database_path))
+        assert removed_during_handoff is True
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert repository._store_established is True
+        assert database_path.exists() is False
+        recoveries = tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
+        assert len(recoveries) == 1
+        validate_profile_candidate(recoveries[0])
+
+        with pytest.raises(ProfileRepositoryError) as retry_error:
+            await repository.open()
+        _assert_safe_error(retry_error.value, "missing", str(database_path))
+        assert repository.state is ProfileRepositoryState.UNAVAILABLE
+        assert repository.generation == 3
+        assert repository._store_established is True
+        assert database_path.exists() is False
+        assert not any(
+            database_path.with_name(f"{database_path.name}{suffix}").exists()
+            for suffix in ("-wal", "-shm", "-journal")
+        )
+
+        database_path.write_bytes(recoveries[0].read_bytes())
+        reopened = await repository.open()
+        assert reopened == ProfileStoreResult(generation=4, value=None)
+        assert repository.state is ProfileRepositoryState.OPEN
+        assert repository._store_established is True
+        page = await repository.list_profiles()
+        assert [profile.display_name for profile in page.value.profiles] == ["Original"]
     finally:
         await repository.close()
 

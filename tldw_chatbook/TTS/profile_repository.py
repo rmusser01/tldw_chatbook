@@ -32,6 +32,7 @@ from tldw_chatbook.TTS.profile_schema import (
     encode_uuid,
     open_profile_store,
     validate_profile_candidate,
+    validate_profile_store_rows,
 )
 from tldw_chatbook.TTS.profile_store_lock import (
     ProfileStoreLease,
@@ -773,6 +774,7 @@ class TTSProfileRepository:
         self._connection: sqlite3.Connection | None = None
         self._lease: ProfileStoreLease | None = None
         self._active_database_path: Path | None = None
+        self._store_established = False
         self._pending_futures: set[Future[object]] = set()
         self._open_completion: asyncio.Task[ProfileStoreResult[None]] | None = None
 
@@ -971,9 +973,13 @@ class TTSProfileRepository:
                 ProfileStoreLockMode.SHARED,
             )
             lease.acquire()
-            connection = open_profile_store(active_path)
+            if self._store_established:
+                connection = open_profile_store(active_path, must_exist=True)
+            else:
+                connection = open_profile_store(active_path)
             if connection is None:
                 raise _repository_error("operation_failed")
+            validate_profile_store_rows(connection)
             self._require_configured_path_matches(
                 active_path,
                 "operation_failed",
@@ -987,6 +993,7 @@ class TTSProfileRepository:
             self._lease = lease
             self._connection = connection
             self._active_database_path = active_path
+            self._store_established = True
             return
 
         connection_error: BaseException | None = None
@@ -1524,6 +1531,7 @@ class TTSProfileRepository:
             scoped_error: BaseException | None = None
             try:
                 self._worker_require_full_integrity(scoped)
+                validate_profile_store_rows(scoped)
                 self._worker_store_counts(scoped)
             except BaseException as error:
                 scoped_error = error
@@ -1553,6 +1561,7 @@ class TTSProfileRepository:
             # Validate the authoritative long-lived handle, not only the
             # scoped pre-handoff handle.
             self._worker_require_full_integrity(rebound_connection)
+            validate_profile_store_rows(rebound_connection)
             profile_count, assignment_count = self._worker_store_counts(
                 rebound_connection
             )
@@ -1620,6 +1629,7 @@ class TTSProfileRepository:
                         or not self._lease.acquired
                     ):
                         raise _repository_error("restore_failed")
+                    validate_profile_store_rows(self._connection)
                     self._worker_store_counts(self._connection)
                     rebound_ok = True
                 elif self._connection is None and self._lease is None:
@@ -1831,6 +1841,7 @@ class TTSProfileRepository:
     def _worker_rebind_current_store(self) -> None:
         active_path = self._worker_active_path()
         if self._connection is not None and self._lease is not None:
+            validate_profile_store_rows(self._connection)
             self._worker_store_counts(self._connection)
             return
 
@@ -1855,6 +1866,7 @@ class TTSProfileRepository:
                 active_path,
                 must_exist=True,
             )
+            validate_profile_store_rows(connection)
             self._worker_store_counts(connection)
         except BaseException as error:
             body_error = error

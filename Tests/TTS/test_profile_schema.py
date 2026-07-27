@@ -1788,6 +1788,21 @@ def test_candidate_rejects_invalid_domain_row(tmp_path: Path) -> None:
     assert _directory_snapshot(tmp_path) == before
 
 
+def test_full_row_validator_rejects_domain_invalid_live_store_row(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    connection = open_profile_store(path)
+    _insert_profile(connection, _profile())
+    connection.execute("UPDATE tts_generation_profiles SET revision = 0")
+
+    try:
+        with _safe_error("corrupt_data"):
+            profile_schema.validate_profile_store_rows(connection)
+    finally:
+        connection.close()
+
+
 def test_candidate_ordinary_error_removes_private_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -756,7 +756,17 @@ def open_profile_store(
     raise _repository_error("schema_corrupt") from None
 
 
-def _validate_all_rows(connection: sqlite3.Connection) -> None:
+def validate_profile_store_rows(connection: sqlite3.Connection) -> None:
+    """Decode every schema-owned profile, assignment, and joined snapshot row.
+
+    Args:
+        connection: Caller-owned connection to a validated profile-store schema.
+
+    Raises:
+        ProfileRepositoryError: If any persisted domain value fails closed.
+        BaseException: A caller control-flow signal preserved unchanged.
+    """
+
     try:
         for row in connection.execute(f"SELECT * FROM {PROFILE_TABLE}"):
             decode_profile(row)
@@ -938,7 +948,7 @@ def validate_profile_candidate(path: Path) -> None:
         if version != CURRENT_PROFILE_SCHEMA_VERSION:
             raise _repository_error("schema_unsupported")
         _validate_schema(connection)
-        _validate_all_rows(connection)
+        validate_profile_store_rows(connection)
         if not _snapshot_is_unchanged(
             snapshot_fd,
             snapshot_path,
