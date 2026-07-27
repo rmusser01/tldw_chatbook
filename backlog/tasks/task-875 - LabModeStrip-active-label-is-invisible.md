@@ -1,5 +1,5 @@
 ---
-id: TASK-864
+id: TASK-875
 title: >-
   LabModeStrip's active label is invisible — a one-row strip inheriting a
   three-row border

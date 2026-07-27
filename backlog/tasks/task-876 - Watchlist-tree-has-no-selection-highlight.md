@@ -1,5 +1,5 @@
 ---
-id: TASK-865
+id: TASK-876
 title: >-
   The watchlist tree does not show which node the screen is scoped to
 status: To Do
