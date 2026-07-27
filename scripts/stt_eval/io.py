@@ -289,6 +289,67 @@ def stream_file_identity(
             os.close(descriptor)
 
 
+def read_bounded_regular_file(
+    path: Path,
+    *,
+    root: Path | None = None,
+    max_bytes: int,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> bytes:
+    """Read one descriptor-pinned regular file up to a strict byte bound."""
+
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
+        raise ValueError("maximum size must be a positive integer")
+    if chunk_size <= 0:
+        raise ValueError("chunk size must be positive")
+
+    descriptor = _open_artifact_descriptor(Path(path), root)
+    try:
+        before = os.fstat(descriptor)
+        if before.st_size <= 0 or before.st_size > max_bytes:
+            raise ValueError(
+                f"file size is outside the allowed bound: {before.st_size}"
+            )
+        stream = cast(BinaryIO, os.fdopen(descriptor, "rb"))
+        descriptor = -1
+        chunks: list[bytes] = []
+        byte_count = 0
+        with stream:
+            while True:
+                chunk = stream.read(min(chunk_size, max_bytes - byte_count + 1))
+                if not chunk:
+                    break
+                byte_count += len(chunk)
+                if byte_count > max_bytes:
+                    raise ValueError("file exceeds the allowed byte bound")
+                chunks.append(chunk)
+            after = os.fstat(stream.fileno())
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_nlink,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_nlink,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if before_identity != after_identity or byte_count != before.st_size:
+            raise ValueError("file identity changed during bounded read")
+        return b"".join(chunks)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 @contextmanager
 def open_verified_file(
     path: Path,
@@ -576,6 +637,7 @@ __all__ = [
     "atomic_write_json",
     "atomic_write_jsonl",
     "open_verified_file",
+    "read_bounded_regular_file",
     "revalidate_file_identity",
     "resolve_contained_path",
     "stream_file_identity",

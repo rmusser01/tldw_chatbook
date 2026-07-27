@@ -7,7 +7,8 @@ import json
 import unicodedata
 from enum import Enum
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Annotated, Literal, Mapping
+from typing import Annotated, Literal, Mapping, Union
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
@@ -91,8 +92,13 @@ PositiveDuration = Annotated[
     float,
     Field(strict=True, gt=0, le=MAX_DURATION_SECONDS, allow_inf_nan=False),
 ]
+NonNegativeDuration = Annotated[
+    float,
+    Field(strict=True, ge=0, le=MAX_DURATION_SECONDS, allow_inf_nan=False),
+]
 ThreadCount = Annotated[int, Field(strict=True, gt=0, le=MAX_THREADS)]
 Ratio = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
+Seed = Annotated[int, Field(strict=True, ge=0, le=2**63 - 1)]
 SchemaVersion = Literal[1]
 
 
@@ -489,6 +495,328 @@ class CorpusManifest(StrictModel):
         return self
 
 
+class AcquisitionMode(str, Enum):
+    """How a preparation source is allowed to cross the trust boundary."""
+
+    VERIFIED_DOWNLOAD = "verified_download"
+    LOCAL_FILE = "local_file"
+
+
+def _validate_archive_member_name(value: str) -> str:
+    posix = PurePosixPath(value)
+    windows = PureWindowsPath(value)
+    parts = value.split("/")
+    windows_reserved = {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{number}" for number in range(1, 10)),
+        *(f"LPT{number}" for number in range(1, 10)),
+    }
+    unsafe_windows_component = any(
+        part.endswith((".", " "))
+        or ":" in part
+        or part.split(".", maxsplit=1)[0].upper() in windows_reserved
+        for part in parts
+    )
+    if (
+        value != unicodedata.normalize("NFC", value)
+        or value.startswith("/")
+        or value.endswith("/")
+        or "\\" in value
+        or posix.is_absolute()
+        or windows.is_absolute()
+        or windows.drive
+        or posix.as_posix() != value
+        or any(part in {"", ".", ".."} for part in parts)
+        or unsafe_windows_component
+        or any(unicodedata.category(character) in {"Cc", "Cf"} for character in value)
+    ):
+        raise ValueError(
+            "archive member name must be an unambiguous contained POSIX path"
+        )
+    return value
+
+
+class ArchiveMember(StrictModel):
+    """One exact regular file in a complete source-archive allowlist."""
+
+    name: NonEmptyStr
+    file_type: Literal["regular_file"]
+    size_bytes: PositiveByteSize
+    sha256: Sha256
+    selected_for_preparation: StrictBool
+
+    @field_validator("name")
+    @classmethod
+    def name_is_unambiguous_contained_posix_path(cls, value: str) -> str:
+        return _validate_archive_member_name(value)
+
+
+ArchiveMembers = Annotated[
+    tuple[ArchiveMember, ...],
+    Field(min_length=1, max_length=100_000),
+]
+
+
+class PreparationLimits(StrictModel):
+    """Hard limits applied before and during corpus preparation."""
+
+    max_member_count: PositiveCount
+    max_file_bytes: PositiveByteSize
+    max_uncompressed_bytes: PositiveByteSize
+    staging_headroom_bytes: PositiveByteSize
+
+
+class PreparationSource(StrictModel):
+    """One immutable archive and its complete member allowlist."""
+
+    source_id: Identifier
+    repository: NonEmptyStr
+    revision: NonEmptyStr
+    source_url: NonEmptyStr
+    license: NonEmptyStr
+    acquisition_mode: AcquisitionMode
+    archive: ArtifactFile
+    members: ArchiveMembers
+
+    @field_validator("members")
+    @classmethod
+    def members_are_unique_and_unambiguous(
+        cls, value: tuple[ArchiveMember, ...]
+    ) -> tuple[ArchiveMember, ...]:
+        names = [member.name for member in value]
+        comparison_names = [name.casefold() for name in names]
+        if len(names) != len(set(names)) or len(comparison_names) != len(
+            set(comparison_names)
+        ):
+            raise ValueError("archive member names must be unique and unambiguous")
+        seen_prefixes: dict[tuple[str, ...], tuple[str, ...]] = {}
+        for name in names:
+            exact_prefix: list[str] = []
+            comparison_prefix: list[str] = []
+            for part in name.split("/"):
+                exact_prefix.append(part)
+                comparison_prefix.append(part.casefold())
+                key = tuple(comparison_prefix)
+                exact = tuple(exact_prefix)
+                previous = seen_prefixes.setdefault(key, exact)
+                if previous != exact:
+                    raise ValueError(
+                        "archive member names must be unique and unambiguous"
+                    )
+        return value
+
+    @model_validator(mode="after")
+    def download_url_is_fixed_and_credential_free(self) -> "PreparationSource":
+        if self.acquisition_mode is not AcquisitionMode.VERIFIED_DOWNLOAD:
+            return self
+        parsed = urlsplit(self.source_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.fragment
+            or parsed.query
+        ):
+            raise ValueError(
+                "verified downloads require a credential-free HTTPS source URL"
+            )
+        return self
+
+
+class NormalizedSampleRecipe(StrictModel):
+    """Map one selected archive member to one normalized prepared sample."""
+
+    recipe_type: Literal["normalize"]
+    recipe_revision: NonEmptyStr
+    sample_id: Identifier
+    source_id: Identifier
+    source_member: NonEmptyStr
+    prepared_file: ArtifactFile
+
+    @field_validator("source_member")
+    @classmethod
+    def source_member_is_contained(cls, value: str) -> str:
+        return _validate_archive_member_name(value)
+
+
+class SilenceRecipe(StrictModel):
+    """Generate exact PCM silence for a declared duration."""
+
+    recipe_type: Literal["silence"]
+    recipe_revision: NonEmptyStr
+    sample_id: Identifier
+    duration_seconds: PositiveDuration
+    prepared_file: ArtifactFile
+
+    @field_validator("duration_seconds")
+    @classmethod
+    def duration_is_an_integral_pcm_frame(cls, value: float) -> float:
+        if not (value * 16_000).is_integer():
+            raise ValueError("duration must resolve to an integral 16 kHz frame")
+        return value
+
+
+class NoiseRecipe(StrictModel):
+    """Apply fixed-seed bounded noise to a declared prepared source."""
+
+    recipe_type: Literal["noise"]
+    recipe_revision: NonEmptyStr
+    sample_id: Identifier
+    source_sample_id: Identifier
+    seed: Seed
+    noise_amplitude: Ratio
+    source_gain: Ratio
+    prepared_file: ArtifactFile
+
+
+class ConcatenationRecipe(StrictModel):
+    """Concatenate ordered prepared inputs with exact silence gaps."""
+
+    recipe_type: Literal["concatenation"]
+    recipe_revision: NonEmptyStr
+    sample_id: Identifier
+    source_sample_ids: Annotated[
+        tuple[Identifier, ...],
+        Field(min_length=1, max_length=MAX_COUNT),
+    ]
+    silence_gaps_seconds: Annotated[
+        tuple[NonNegativeDuration, ...],
+        Field(max_length=MAX_COUNT),
+    ]
+    prepared_file: ArtifactFile
+
+    @model_validator(mode="after")
+    def gaps_match_inputs_and_resolve_to_frames(self) -> "ConcatenationRecipe":
+        if len(self.silence_gaps_seconds) != len(self.source_sample_ids) - 1:
+            raise ValueError(
+                "concatenation requires exactly one silence gap between inputs"
+            )
+        if any(
+            not (duration * 16_000).is_integer()
+            for duration in self.silence_gaps_seconds
+        ):
+            raise ValueError(
+                "concatenation gaps must resolve to integral 16 kHz frames"
+            )
+        return self
+
+
+DerivedRecipe = Annotated[
+    Union[SilenceRecipe, NoiseRecipe, ConcatenationRecipe],
+    Field(discriminator="recipe_type"),
+]
+
+
+class PreparationManifest(StrictModel):
+    """Closed source, normalization, derivation, and bound declaration."""
+
+    schema_version: SchemaVersion
+    sources: Annotated[
+        tuple[PreparationSource, ...],
+        Field(min_length=1, max_length=10_000),
+    ]
+    limits: PreparationLimits
+    normalized_samples: Annotated[
+        tuple[NormalizedSampleRecipe, ...],
+        Field(max_length=MAX_COUNT),
+    ]
+    derived_recipes: Annotated[
+        tuple[DerivedRecipe, ...],
+        Field(max_length=MAX_COUNT),
+    ]
+
+    @model_validator(mode="after")
+    def identities_and_recipe_references_are_closed(self) -> "PreparationManifest":
+        source_ids = [source.source_id for source in self.sources]
+        if len(source_ids) != len(set(source_ids)):
+            raise ValueError("preparation source identities must be unique")
+        sources = {source.source_id: source for source in self.sources}
+
+        known_samples: set[str] = set()
+        output_names: set[str] = set()
+        for recipe in self.normalized_samples:
+            if recipe.sample_id in known_samples:
+                raise ValueError("prepared sample identities must be unique")
+            source = sources.get(recipe.source_id)
+            if source is None:
+                raise ValueError(
+                    f"normalization references unknown source {recipe.source_id!r}"
+                )
+            matching_members = [
+                member
+                for member in source.members
+                if member.name == recipe.source_member
+            ]
+            if (
+                len(matching_members) != 1
+                or not matching_members[0].selected_for_preparation
+            ):
+                raise ValueError(
+                    "normalization source member must be declared and selected"
+                )
+            known_samples.add(recipe.sample_id)
+            output_names.add(recipe.prepared_file.filename)
+
+        for recipe in self.derived_recipes:
+            if recipe.sample_id in known_samples:
+                raise ValueError("prepared sample identities must be unique")
+            if recipe.prepared_file.filename in output_names:
+                raise ValueError("prepared output filenames must be unique")
+            inputs: tuple[str, ...]
+            if isinstance(recipe, NoiseRecipe):
+                inputs = (recipe.source_sample_id,)
+            elif isinstance(recipe, ConcatenationRecipe):
+                inputs = recipe.source_sample_ids
+            else:
+                inputs = ()
+            unknown_inputs = [
+                sample_id for sample_id in inputs if sample_id not in known_samples
+            ]
+            if unknown_inputs:
+                raise ValueError(
+                    f"derived recipe references unknown input {unknown_inputs[0]!r}"
+                )
+            known_samples.add(recipe.sample_id)
+            output_names.add(recipe.prepared_file.filename)
+
+        normalized_output_names = [
+            recipe.prepared_file.filename for recipe in self.normalized_samples
+        ]
+        if len(normalized_output_names) != len(set(normalized_output_names)):
+            raise ValueError("prepared output filenames must be unique")
+        return self
+
+
+class SourceArchiveIdentity(StrictModel):
+    """Verified source archive recorded in a completion receipt."""
+
+    source_id: Identifier
+    archive: ArtifactFile
+
+
+class PreparationReceipt(StrictModel):
+    """Terminal proof that an immutable prepared corpus is complete."""
+
+    schema_version: SchemaVersion
+    status: Literal["complete"]
+    experiment_fingerprint: Sha256
+    preparation_manifest_sha256: Sha256
+    ffmpeg_executable: NonEmptyStr
+    ffmpeg_version: NonEmptyStr
+    source_archives: Annotated[
+        tuple[SourceArchiveIdentity, ...],
+        Field(min_length=1, max_length=10_000),
+    ]
+    prepared_files: Annotated[
+        tuple[ArtifactFile, ...],
+        Field(max_length=MAX_COUNT),
+    ]
+
+
 class MatrixRequirement(StrictModel):
     """Declared candidate/baseline population and its applicable profiles."""
 
@@ -852,13 +1180,17 @@ def run_fingerprint(
 
 __all__ = [
     "APPROVED_V3_LANGUAGES",
+    "AcquisitionMode",
+    "ArchiveMember",
     "ArtifactFile",
     "BootstrapSettings",
     "ComparisonMatrixCell",
+    "ConcatenationRecipe",
     "CorpusManifest",
     "CorpusPopulation",
     "CorpusSample",
     "CorpusSource",
+    "DerivedRecipe",
     "EffectiveExecutionSettings",
     "ExperimentManifest",
     "GateSettings",
@@ -868,10 +1200,18 @@ __all__ = [
     "ModelFamily",
     "ModelManifest",
     "ModelVariant",
+    "NoiseRecipe",
+    "NormalizedSampleRecipe",
+    "PreparationLimits",
+    "PreparationManifest",
+    "PreparationReceipt",
+    "PreparationSource",
     "PrimaryMetric",
     "QualificationRole",
     "RunIdentityInputs",
     "RuntimeSettings",
+    "SilenceRecipe",
+    "SourceArchiveIdentity",
     "StrictModel",
     "VadVariant",
     "canonical_json",
