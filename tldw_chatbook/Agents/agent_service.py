@@ -247,6 +247,7 @@ class AgentService:
         install_skill_tool: Callable[[str], ToolResult] | None = None,
         run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
         | None = None,
+        run_log_writer: "RunLogWriter | None" = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -296,6 +297,12 @@ class AgentService:
         # see the schema-pin comment in _run_one for the rationale. `None`
         # (the default) means the run is not wired for it.
         self._run_skill_script_tool = run_skill_script_tool
+        # Constructed here (or by the caller) so EVERY caller gets a log --
+        # on_step is passed in by the Console bridge, so anything riding
+        # that hook would silently log nothing for other callers.
+        from .run_log import RunLogWriter as _RunLogWriter
+
+        self.run_log_writer = run_log_writer or _RunLogWriter()
 
     # -- internals -------------------------------------------------------
 
@@ -441,6 +448,10 @@ class AgentService:
             budget=dataclasses.asdict(config.budget),
             assistant_message_id=assistant_message_id,
         )
+        # Two-phase: the writer was constructed before any run id existed.
+        # Only the PRIMARY run binds; a child finds it already bound.
+        if agent_kind == AGENT_KIND_PRIMARY:
+            self.run_log_writer.bind(run_id)
         started = self.clock()
 
         active, offer_find_load = initial_disclosure(self.registry, config.budget)
@@ -706,6 +717,19 @@ class AgentService:
                 return ToolResult(ok=False, error=f"skill_file: {exc}")
             return ToolResult(ok=True, content=str(content))
 
+        def on_record(record_type: str, payload: dict) -> int | None:
+            # MUST return the record number: Task 7 threads it into the
+            # truncation trailer so a cut result points at its full copy.
+            return self.run_log_writer.append(
+                run_id=run_id,
+                kind=agent_kind,
+                type=record_type,
+                content=str(payload.get("content", "")),
+                tool=str(payload.get("tool", "")),
+                status=str(payload.get("status", "")),
+                call_id=str(payload.get("call_id", "")),
+            )
+
         deps = LoopDeps(
             call_model=self._make_call_model(config, api_endpoint, runtime_schemas),
             invoke_tool=invoke_tool,
@@ -739,6 +763,7 @@ class AgentService:
                 else None
             ),
             run_skill_script=self._run_skill_script_tool,
+            on_record=on_record,
         )
         try:
             outcome = run_agent_loop(config, messages, active, deps)
@@ -819,7 +844,7 @@ class AgentService:
         # is listed fresh at this point, so skill CRUD since the last run
         # is always picked up with no separate invalidation signal needed.
         self.registry.reset_catalog_cache()
-        return self._run_one(
+        run_id, outcome = self._run_one(
             conversation_id=conversation_id,
             messages=messages,
             config=config,
@@ -830,3 +855,20 @@ class AgentService:
             parent_run_id=None,
             assistant_message_id=assistant_message_id,
         )
+        # Manifest needs run-level metadata the writer itself does not have
+        # (including supersession), so it is written once the whole run
+        # tree finishes, here rather than inside _run_one.
+        self.run_log_writer.write_manifest(
+            {
+                "run_id": run_id,
+                "model": config.model,
+                "api_endpoint": api_endpoint,
+                "allowed_tools": list(config.allowed_tools),
+                "budget": dataclasses.asdict(config.budget),
+                "status": outcome.status,
+                "superseded_run_id": supersede_run_id or "",
+                "total_tokens": outcome.total_tokens,
+            }
+        )
+        self.run_log_writer.close()
+        return run_id, outcome
