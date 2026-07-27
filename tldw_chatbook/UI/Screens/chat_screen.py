@@ -118,11 +118,13 @@ from ...Chat.console_skill_resolver import (
 )
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
+    CONSOLE_RUN_MARKER_GLYPHS,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleChatMessage,
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunMarker,
     ConsoleRunStatus,
     ConsoleVariant,
     ConsoleVariantSet,
@@ -2079,7 +2081,9 @@ class ChatScreen(BaseAppScreen):
         # TASK-251: last-applied payloads for equality-guarded tick sub-syncs
         # (skip Static.update()/style work when the computed payload hasn't
         # changed since the last successful apply).
-        self._console_agent_section_last: tuple[str, str, str, bool] | None = None
+        self._console_agent_section_last: (
+            tuple[str, str, str, str, bool] | None
+        ) = None
         self._console_rail_system_line_last: tuple[str, bool] | None = None
         self._console_rail_prune_dispatched = False
         self._console_workspace_conversation_query = ""
@@ -2880,6 +2884,25 @@ class ChatScreen(BaseAppScreen):
         )
         return (status, steps, subagents)
 
+    def _console_agent_fleet_summary_line(self) -> str:
+        """Return the Agent rail's fleet summary line (parallel-agents spec §6).
+
+        Sourced from ``ConsoleChatController.fleet_summary_counts`` (other
+        running / other pending-approval sessions, relative to the active
+        one). Copy is VERBATIM per spec §6 -- no singular/plural grammar
+        handling, so ``"1 other agents running, ..."`` is intentional, not a
+        bug. Returns ``""`` when both counts are zero; the caller hides the
+        fleet Static in that case (absent, not present-but-blank) so it
+        never crowds the rail with an empty line.
+        """
+        controller = getattr(self, "_console_chat_controller", None)
+        if controller is None:
+            return ""
+        running, pending = controller.fleet_summary_counts()
+        if running + pending <= 0:
+            return ""
+        return f"{running} other agents running, {pending} waiting for approval."
+
     def _sync_console_agent_section(self) -> None:
         """Refresh the mounted Agent rail Statics + Back-button visibility.
 
@@ -2889,8 +2912,9 @@ class ChatScreen(BaseAppScreen):
         nothing agent-related had changed.
         """
         status_line, steps_text, subagents_text = self._console_agent_section_lines()
+        fleet_line = self._console_agent_fleet_summary_line()
         back_visible = bool(self._console_agent_drilldown_run_id)
-        payload = (status_line, steps_text, subagents_text, back_visible)
+        payload = (status_line, steps_text, subagents_text, fleet_line, back_visible)
         if payload == self._console_agent_section_last:
             return
         try:
@@ -2899,6 +2923,9 @@ class ChatScreen(BaseAppScreen):
             self.query_one("#console-agent-section-subagents", Static).update(
                 subagents_text
             )
+            fleet_summary = self.query_one("#console-agent-fleet-summary", Static)
+            fleet_summary.update(fleet_line)
+            fleet_summary.styles.display = "block" if fleet_line else "none"
             back_button = self.query_one("#console-agent-drilldown-back", Button)
             back_button.styles.display = "block" if back_visible else "none"
         except (NoMatches, QueryError):
@@ -5439,6 +5466,7 @@ class ChatScreen(BaseAppScreen):
         labels = self._console_browser_workspace_labels()
         starred_ids = self._starred_console_conversation_ids()
         active_session_id = store.active_session_id
+        controller = getattr(self, "_console_chat_controller", None)
         rows: list[ConsoleConversationBrowserInputRow] = []
         for session in store.sessions():
             session_workspace_id = str(session.workspace_id or "").strip()
@@ -5455,6 +5483,18 @@ class ChatScreen(BaseAppScreen):
             )
             row_key = persisted_id or f"native:{session.id}"
             selected = session.id == active_session_id
+            # Parallel-agents spec PA-T8: resolved here (glyph string, not the
+            # raw `ConsoleRunMarker`) so `conversation_browser_state.py` and
+            # the tray widget stay free of a model-layer import -- threaded
+            # like TASK-717 threaded `openable` (input row -> normalize ->
+            # display row -> row label).
+            run_marker = (
+                CONSOLE_RUN_MARKER_GLYPHS.get(
+                    controller.run_marker_for(session.id), ""
+                )
+                if controller is not None
+                else ""
+            )
             row = ConsoleConversationBrowserInputRow(
                 row_key=row_key,
                 conversation_id=persisted_id or None,
@@ -5469,6 +5509,7 @@ class ChatScreen(BaseAppScreen):
                 selected=selected,
                 source_kind="native",
                 updated_sort=str(session.updated_at or ""),
+                run_marker=run_marker,
             )
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
@@ -9464,6 +9505,23 @@ class ChatScreen(BaseAppScreen):
                                 classes="console-agent-section-subagents",
                                 markup=False,
                             )
+                            # Parallel-agents spec §6 (PA-T8): fleet summary
+                            # -- "N other agents running, M waiting for
+                            # approval." Present but display:none when both
+                            # counts are zero (mirrors the recovery Static
+                            # above), so `_sync_console_agent_section`'s
+                            # targeted update never needs to mount/unmount.
+                            fleet_line = self._console_agent_fleet_summary_line()
+                            fleet_summary = Static(
+                                fleet_line,
+                                id="console-agent-fleet-summary",
+                                classes="console-agent-section-fleet-summary",
+                                markup=False,
+                            )
+                            fleet_summary.styles.display = (
+                                "block" if fleet_line else "none"
+                            )
+                            yield fleet_summary
                             back_button = Button(
                                 "Back",
                                 id="console-agent-drilldown-back",
@@ -10993,10 +11051,23 @@ class ChatScreen(BaseAppScreen):
         streaming_session_id = (
             controller.streaming_session_id() if controller is not None else None
         )
+        sessions = store.sessions()
+        # Parallel-agents spec PA-T8: per-session fleet marker (RUNNING /
+        # NEEDS_APPROVAL / FINISHED_OK / FINISHED_FAILED), superseding the
+        # legacy single-session `streaming_session_id` cursor above for tabs
+        # that have a controller -- `run_marker_for` already derives RUNNING
+        # from the same live-busy definition `streaming_session_id` used, so
+        # this is a strict superset, not a second notion of "in-flight".
+        run_markers = (
+            {session.id: controller.run_marker_for(session.id) for session in sessions}
+            if controller is not None
+            else None
+        )
         await surface.sync_sessions(
-            sessions=store.sessions(),
+            sessions=sessions,
             active_session_id=store.active_session_id,
             streaming_session_id=streaming_session_id,
+            run_markers=run_markers,
         )
 
     async def _append_native_console_system_message(

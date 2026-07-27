@@ -171,6 +171,13 @@ class ConsoleConversationBrowserInputRow:
     #: TASK-717: False when a prior open attempt proved the conversation
     #: record is missing; the row renders visibly broken and inert.
     openable: bool = True
+    #: Parallel-agents spec PA-T8: the resolved fleet run-marker glyph for a
+    #: live native session (empty for every other row -- membership/persisted
+    #: rows have no live session to mark). Already resolved via
+    #: ``CONSOLE_RUN_MARKER_GLYPHS[controller.run_marker_for(session_id)]`` by
+    #: the caller building this row, so the display layer needs no enum/model
+    #: import to render it.
+    run_marker: str = ""
 
 
 @dataclass(frozen=True)
@@ -211,6 +218,8 @@ class ConsoleConversationBrowserRow:
     subagent_count: int = 0
     #: TASK-717: False when the conversation record is known to be missing.
     openable: bool = True
+    #: Parallel-agents spec PA-T8: resolved fleet run-marker glyph, or "".
+    run_marker: str = ""
 
 
 @dataclass(frozen=True)
@@ -475,6 +484,7 @@ def _normalize_input_row(
         starred_sort=str(row.starred_sort or ""),
         updated_sort=str(row.updated_sort or ""),
         openable=bool(row.openable),
+        run_marker=str(row.run_marker or ""),
     )
 
 
@@ -499,6 +509,7 @@ def _to_browser_row(
         source_kind=row.source_kind,
         subagent_count=subagent_count,
         openable=bool(row.openable),
+        run_marker=str(row.run_marker or ""),
     )
 
 

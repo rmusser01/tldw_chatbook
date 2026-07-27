@@ -10,6 +10,7 @@ from textual.widgets import Static
 
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
+    _visible_text,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import (
@@ -316,3 +317,40 @@ async def test_background_run_sensitivity_reverting_the_gate_fails() -> None:
             assert "SHOULD-LEAK" in _transcript_text(console)
         finally:
             del console._append_native_console_system_message
+
+
+@pytest.mark.asyncio
+async def test_tab_and_sidebar_show_run_markers_and_fleet_line() -> None:
+    """Task 8 (parallel-agents spec §6): a background session's live run
+    marks BOTH the session tab and its sidebar conversation-browser row
+    with the fleet glyph, and the Agent rail grows a fleet summary line --
+    all sourced from Task 7's `run_marker_for`/`fleet_summary_counts`.
+
+    Brief's illustrative `controller.store.set_active_session(...)` does not
+    exist (`ConsoleChatStore` has no such method, matching the finding
+    already noted by `Tests/Chat/test_console_run_markers.py`) -- the real
+    API is `switch_session`, mirrored here on the `viewed`/`background`
+    idiom `test_background_run_never_mutates_viewed_transcript` above uses.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # keep viewing the first session
+
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg"),
+            session_id=background,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.3)
+
+        text = _visible_text(console)
+        assert "●" in text  # running glyph on tab/row
+        assert "1 other agents running, 0 waiting for approval." in text
