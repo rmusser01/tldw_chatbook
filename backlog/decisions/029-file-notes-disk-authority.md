@@ -14,7 +14,8 @@ files.
 
 ## Decision
 
-- The selected folder and its relative paths are authoritative.
+- The selected canonical folder plus each relative path are authoritative and
+  namespace replica/recovery rows.
 - Chatbook reads editor content from disk and writes ordinary filesystem
   changes beneath that folder.
 - One dedicated SQLite database outside the selected folder stores the latest
@@ -24,9 +25,12 @@ files.
   cannot overwrite a file.
 - Every save compares the current disk hash with the hash observed when the
   editor loaded or last saved. A mismatch becomes a visible conflict.
+- A protected note's exact pre-edit bytes commit before its first write in an
+  editing session; failure stops that write.
 - A valid leading frontmatter block is kept as untouched bytes while only the
   body is edited.
 - Delete commits a recovery snapshot and tombstone before unlinking the file.
+- A missing root is offline, never auto-created or treated as mass deletion.
 - Git remains external. Chatbook only reports files changed during the current
   Chatbook session.
 
@@ -39,4 +43,3 @@ files.
 - Multiple roots, Git controls, folder mutation, watcher dependencies,
   platform-specific filesystem adapters, storage pairing, quotas, and recovery
   tooling are deferred until demonstrated need.
-
