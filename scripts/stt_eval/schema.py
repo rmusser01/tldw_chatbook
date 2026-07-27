@@ -155,6 +155,13 @@ class VadMode(str, Enum):
     RUNTIME_INTERNAL = "runtime_internal"
 
 
+class DatasetFamily(str, Enum):
+    """Closed external datasets approved for qualification preparation."""
+
+    FLEURS = "fleurs"
+    COMMON_VOICE = "common_voice"
+
+
 class StrictModel(BaseModel):
     """Base for immutable persisted records with a closed field set."""
 
@@ -384,6 +391,7 @@ class CorpusSource(StrictModel):
     """Immutable provenance for one external corpus source."""
 
     source_id: Identifier
+    dataset_family: DatasetFamily
     repository: NonEmptyStr
     revision: NonEmptyStr
     source_url: NonEmptyStr
@@ -406,6 +414,9 @@ class CorpusSample(StrictModel):
     ]
     cluster_id: Identifier
     duration_seconds: PositiveDuration
+    sample_rate_hz: Literal[16_000]
+    channels: Literal[1]
+    encoding: Literal["pcm_s16le_wav"]
 
     @field_validator("tags")
     @classmethod
@@ -502,6 +513,15 @@ class AcquisitionMode(str, Enum):
     LOCAL_FILE = "local_file"
 
 
+class PreparedAudioFormat(StrictModel):
+    """Fixed prepared-audio format and channel-conversion contract."""
+
+    sample_rate_hz: Literal[16_000]
+    channels: Literal[1]
+    encoding: Literal["pcm_s16le_wav"]
+    channel_conversion: Literal["mono"]
+
+
 def _validate_archive_member_name(value: str) -> str:
     posix = PurePosixPath(value)
     windows = PureWindowsPath(value)
@@ -573,6 +593,7 @@ class PreparationSource(StrictModel):
     """One immutable archive and its complete member allowlist."""
 
     source_id: Identifier
+    dataset_family: DatasetFamily
     repository: NonEmptyStr
     revision: NonEmptyStr
     source_url: NonEmptyStr
@@ -610,6 +631,16 @@ class PreparationSource(StrictModel):
 
     @model_validator(mode="after")
     def download_url_is_fixed_and_credential_free(self) -> "PreparationSource":
+        expected_mode = (
+            AcquisitionMode.VERIFIED_DOWNLOAD
+            if self.dataset_family is DatasetFamily.FLEURS
+            else AcquisitionMode.LOCAL_FILE
+        )
+        if self.acquisition_mode is not expected_mode:
+            raise ValueError(
+                f"dataset family {self.dataset_family.value!r} requires "
+                f"{expected_mode.value!r} acquisition"
+            )
         if self.acquisition_mode is not AcquisitionMode.VERIFIED_DOWNLOAD:
             return self
         parsed = urlsplit(self.source_url)
@@ -635,6 +666,7 @@ class NormalizedSampleRecipe(StrictModel):
     sample_id: Identifier
     source_id: Identifier
     source_member: NonEmptyStr
+    output_format: PreparedAudioFormat
     prepared_file: ArtifactFile
 
     @field_validator("source_member")
@@ -650,6 +682,7 @@ class SilenceRecipe(StrictModel):
     recipe_revision: NonEmptyStr
     sample_id: Identifier
     duration_seconds: PositiveDuration
+    output_format: PreparedAudioFormat
     prepared_file: ArtifactFile
 
     @field_validator("duration_seconds")
@@ -670,6 +703,9 @@ class NoiseRecipe(StrictModel):
     seed: Seed
     noise_amplitude: Ratio
     source_gain: Ratio
+    noise_source: NonEmptyStr
+    noise_license: NonEmptyStr
+    output_format: PreparedAudioFormat
     prepared_file: ArtifactFile
 
 
@@ -687,6 +723,7 @@ class ConcatenationRecipe(StrictModel):
         tuple[NonNegativeDuration, ...],
         Field(max_length=MAX_COUNT),
     ]
+    output_format: PreparedAudioFormat
     prepared_file: ArtifactFile
 
     @model_validator(mode="after")
@@ -1190,6 +1227,7 @@ __all__ = [
     "CorpusPopulation",
     "CorpusSample",
     "CorpusSource",
+    "DatasetFamily",
     "DerivedRecipe",
     "EffectiveExecutionSettings",
     "ExperimentManifest",
@@ -1202,6 +1240,7 @@ __all__ = [
     "ModelVariant",
     "NoiseRecipe",
     "NormalizedSampleRecipe",
+    "PreparedAudioFormat",
     "PreparationLimits",
     "PreparationManifest",
     "PreparationReceipt",

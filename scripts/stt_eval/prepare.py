@@ -41,6 +41,7 @@ from scripts.stt_eval.schema import (
     AcquisitionMode,
     ArtifactFile,
     ConcatenationRecipe,
+    ExperimentManifest,
     NoiseRecipe,
     PreparationManifest,
     PreparationReceipt,
@@ -48,6 +49,7 @@ from scripts.stt_eval.schema import (
     SilenceRecipe,
     SourceArchiveIdentity,
     canonical_json,
+    experiment_fingerprint,
 )
 
 
@@ -194,7 +196,7 @@ class PrepareRequest:
     """Explicit local execution inputs and injectable external boundaries."""
 
     manifest: PreparationManifest
-    experiment_fingerprint: str
+    experiment: ExperimentManifest
     destination: Path
     local_inputs: Mapping[str, Path]
     ffmpeg_executable: Path
@@ -229,25 +231,90 @@ def _is_executable(path: Path) -> bool:
     return located is not None
 
 
-def _validate_experiment_fingerprint(value: str) -> None:
-    if len(value) != 64 or any(
-        character not in "0123456789abcdef" for character in value
-    ):
-        raise PreparationError(
-            "experiment fingerprint must be 64 lowercase hexadecimal characters"
-        )
-
-
 def _prepared_artifacts(manifest: PreparationManifest) -> tuple[ArtifactFile, ...]:
     normalized = tuple(recipe.prepared_file for recipe in manifest.normalized_samples)
     derived = tuple(recipe.prepared_file for recipe in manifest.derived_recipes)
     return normalized + derived
 
 
+def _validate_experiment_closure(request: PrepareRequest) -> None:
+    if not isinstance(request.experiment, ExperimentManifest):
+        raise PreparationError("validated ExperimentManifest is required")
+
+    preparation_sources = {
+        source.source_id: (
+            source.dataset_family,
+            source.repository,
+            source.revision,
+            source.source_url,
+            source.license,
+            source.archive,
+        )
+        for source in request.manifest.sources
+    }
+    experiment_sources = {
+        source.source_id: (
+            source.dataset_family,
+            source.repository,
+            source.revision,
+            source.source_url,
+            source.license,
+            source.artifact,
+        )
+        for source in request.experiment.corpus.sources
+    }
+    if preparation_sources != experiment_sources:
+        raise PreparationError(
+            "preparation/experiment closure mismatch for source provenance"
+        )
+
+    preparation_samples = {
+        recipe.sample_id: recipe.prepared_file
+        for recipe in (
+            *request.manifest.normalized_samples,
+            *request.manifest.derived_recipes,
+        )
+    }
+    experiment_samples = {
+        sample.sample_id: sample.prepared_file
+        for sample in request.experiment.corpus.samples
+    }
+    if preparation_samples != experiment_samples:
+        raise PreparationError(
+            "preparation/experiment closure mismatch for prepared samples"
+        )
+
+    experiment_sample_sources = {
+        sample.sample_id: sample.source_id
+        for sample in request.experiment.corpus.samples
+    }
+    if any(
+        experiment_sample_sources[recipe.sample_id] != recipe.source_id
+        for recipe in request.manifest.normalized_samples
+    ):
+        raise PreparationError(
+            "preparation/experiment closure mismatch for sample provenance"
+        )
+
+    recipe_revisions = tuple(
+        dict.fromkeys(
+            recipe.recipe_revision
+            for recipe in (
+                *request.manifest.normalized_samples,
+                *request.manifest.derived_recipes,
+            )
+        )
+    )
+    if recipe_revisions != request.experiment.corpus.derived_recipe_revisions:
+        raise PreparationError(
+            "preparation/experiment closure mismatch for recipe revisions"
+        )
+
+
 def preflight(request: PrepareRequest) -> PreparationPreflight:
     """Return a read-only plan; never transfer, extract, invoke, or publish."""
 
-    _validate_experiment_fingerprint(request.experiment_fingerprint)
+    _validate_experiment_closure(request)
     destination = Path(request.destination)
     parent = destination.parent
     if not parent.is_dir():
@@ -318,7 +385,14 @@ def prepare(
 
     destination = Path(request.destination)
     if _path_lexists(destination):
-        _verify_existing_destination(request, destination)
+        if plan.missing_tools:
+            raise PreparationError("missing tool(s): " + ", ".join(plan.missing_tools))
+        current_ffmpeg_version = _ffmpeg_version(request)
+        _verify_existing_destination(
+            request,
+            destination,
+            current_ffmpeg_version,
+        )
         return destination
 
     blockers: list[str] = []
@@ -385,7 +459,7 @@ def _default_http_client() -> Iterator[httpx.Client]:
     with httpx.Client(
         headers={"User-Agent": USER_AGENT},
         timeout=timeout,
-        follow_redirects=True,
+        follow_redirects=False,
         max_redirects=3,
         trust_env=False,
     ) as client:
@@ -412,7 +486,14 @@ def _download_archive(
                 "GET",
                 source.source_url,
                 headers={"User-Agent": USER_AGENT},
+                follow_redirects=False,
             ) as response:
+                if (
+                    response.history
+                    or str(response.url) != source.source_url
+                    or response.is_redirect
+                ):
+                    raise PreparationError(f"redirect rejected for {source.source_id}")
                 response.raise_for_status()
                 with _exclusive_binary_writer(destination) as output:
                     for chunk in response.iter_bytes(CHUNK_SIZE):
@@ -955,7 +1036,7 @@ def _expected_receipt(
     return PreparationReceipt(
         schema_version=1,
         status="complete",
-        experiment_fingerprint=request.experiment_fingerprint,
+        experiment_fingerprint=experiment_fingerprint(request.experiment),
         preparation_manifest_sha256=hashlib.sha256(
             canonical_json(request.manifest)
         ).hexdigest(),
@@ -990,6 +1071,7 @@ def _verify_corpus_directory(
     request: PrepareRequest,
     destination: Path,
     receipt: PreparationReceipt,
+    current_ffmpeg_version: str,
 ) -> None:
     if not destination.is_dir() or destination.is_symlink():
         raise PreparationError("existing destination is not a safe directory")
@@ -998,8 +1080,10 @@ def _verify_corpus_directory(
         SourceArchiveIdentity(source_id=source.source_id, archive=source.archive)
         for source in request.manifest.sources
     )
+    if receipt.ffmpeg_version != current_ffmpeg_version:
+        raise PreparationError("completion receipt ffmpeg version mismatch")
     if (
-        receipt.experiment_fingerprint != request.experiment_fingerprint
+        receipt.experiment_fingerprint != experiment_fingerprint(request.experiment)
         or receipt.preparation_manifest_sha256
         != hashlib.sha256(canonical_json(request.manifest)).hexdigest()
         or receipt.ffmpeg_executable != os.fspath(request.ffmpeg_executable)
@@ -1055,10 +1139,16 @@ def _verify_corpus_directory(
 def _verify_existing_destination(
     request: PrepareRequest,
     destination: Path,
+    current_ffmpeg_version: str,
 ) -> None:
     try:
         receipt = _load_receipt(destination)
-        _verify_corpus_directory(request, destination, receipt)
+        _verify_corpus_directory(
+            request,
+            destination,
+            receipt,
+            current_ffmpeg_version,
+        )
     except PreparationError as error:
         raise PreparationError(f"invalid existing destination: {error}") from error
 
@@ -1162,7 +1252,13 @@ def _execute_preparation(request: PrepareRequest) -> Path:
         shutil.rmtree(work)
         receipt = _expected_receipt(request, ffmpeg_version)
         atomic_write_json(staging / RECEIPT_FILENAME, receipt)
-        _verify_corpus_directory(request, staging, receipt)
+        staged_receipt = _load_receipt(staging)
+        _verify_corpus_directory(
+            request,
+            staging,
+            staged_receipt,
+            ffmpeg_version,
+        )
         _fsync_tree(staging)
         try:
             request.publisher(staging, destination)

@@ -47,6 +47,31 @@ def test_minimal_experiment_fixture_is_valid_and_frozen() -> None:
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sample_rate_hz", None),
+        ("sample_rate_hz", 8_000),
+        ("channels", None),
+        ("channels", 2),
+        ("encoding", None),
+        ("encoding", "pcm_f32le_wav"),
+    ],
+)
+def test_corpus_sample_audio_provenance_is_required_and_closed(
+    field: str, value: object
+) -> None:
+    raw = minimal_experiment()
+    sample = raw["corpus"]["samples"][0]  # type: ignore[index]
+    if value is None:
+        del sample[field]
+    else:
+        sample[field] = value
+
+    with pytest.raises(ValidationError):
+        ExperimentManifest.model_validate(raw)
+
+
+@pytest.mark.parametrize(
     ("path", "value"),
     [
         ((), 2),
@@ -569,10 +594,10 @@ def test_fingerprint_contract_has_fixed_golden_values() -> None:
     )
 
     assert experiment == (
-        "12bcce20375618668c69e205d7c81900a4ddc4ccd71a758c936cbd427648eeaf"
+        "83c6903e3ebe538e485914bcaa184e6561bf5ac43fe998f27e1c9fdca823ebf7"
     )
     assert run_fingerprint(experiment, run) == (
-        "4ee7126674305e0ef0fca3a6e7f6c08dec7bf60f35167b55e92523b3db593fde"
+        "e86ef6f037df16a3addb8d1ee6252e88870a314e340eb80d620d6713487d8122"
     )
 
 

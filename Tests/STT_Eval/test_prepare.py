@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import io
+import json
 import math
 import random
 import subprocess
 import tarfile
 import wave
+from dataclasses import replace
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, cast
 
 import httpx
 import pytest
@@ -25,21 +28,31 @@ from scripts.stt_eval.schema import (
     ArchiveMember,
     ArtifactFile,
     ConcatenationRecipe,
+    DatasetFamily,
+    ExperimentManifest,
     NoiseRecipe,
     NormalizedSampleRecipe,
+    PreparedAudioFormat,
     PreparationLimits,
     PreparationManifest,
     PreparationReceipt,
     PreparationSource,
     SilenceRecipe,
+    experiment_fingerprint,
 )
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FFMPEG_FIXTURE = FIXTURES / "fake_ffmpeg.py"
+EXPERIMENT_FIXTURE = FIXTURES / "minimal-experiment.json"
 SHA = "a" * 64
-EXPERIMENT_ID = "e" * 64
 AMPLE_SPACE = 1 << 40
+AUDIO_FORMAT = PreparedAudioFormat(
+    sample_rate_hz=16_000,
+    channels=1,
+    encoding="pcm_s16le_wav",
+    channel_conversion="mono",
+)
 
 
 def digest(data: bytes) -> str:
@@ -166,6 +179,7 @@ def local_source(
 ) -> PreparationSource:
     return PreparationSource(
         source_id="common-voice-en",
+        dataset_family=DatasetFamily.COMMON_VOICE,
         repository="datacollective.mozillafoundation.org/common-voice",
         revision="cv-23.0",
         source_url="local://mozilla-data-collective",
@@ -182,6 +196,7 @@ def download_source(
 ) -> PreparationSource:
     return PreparationSource(
         source_id="fleurs-en",
+        dataset_family=DatasetFamily.FLEURS,
         repository="huggingface.co/datasets/google/fleurs",
         revision="1" * 40,
         source_url="https://example.test/fleurs-en.tar",
@@ -199,13 +214,103 @@ def manifest_for(
     *,
     preparation_limits: PreparationLimits | None = None,
 ) -> PreparationManifest:
+    selected_member = next(
+        member for member in source.members if member.selected_for_preparation
+    )
+    standard_sample_ids = tuple(
+        sample["sample_id"]
+        for sample in json.loads(EXPERIMENT_FIXTURE.read_text(encoding="utf-8"))[
+            "corpus"
+        ]["samples"]
+    )
+    normalized_by_id = {recipe.sample_id: recipe for recipe in normalized}
+    normalized_samples = tuple(normalized) + tuple(
+        NormalizedSampleRecipe(
+            recipe_type="normalize",
+            recipe_revision="pcm16-16khz-mono-v1",
+            sample_id=sample_id,
+            source_id=source.source_id,
+            source_member=selected_member.name,
+            output_format=AUDIO_FORMAT,
+            prepared_file=ArtifactFile(
+                filename=f"{sample_id}.wav",
+                size_bytes=selected_member.size_bytes,
+                sha256=selected_member.sha256,
+            ),
+        )
+        for sample_id in standard_sample_ids
+        if sample_id not in normalized_by_id
+    )
     return PreparationManifest(
         schema_version=1,
         sources=(source,),
         limits=preparation_limits or limits(),
-        normalized_samples=normalized,
+        normalized_samples=normalized_samples,
         derived_recipes=derived,
     )
+
+
+def experiment_for_manifest(manifest: PreparationManifest) -> ExperimentManifest:
+    raw = json.loads(EXPERIMENT_FIXTURE.read_text(encoding="utf-8"))
+    original_samples = {
+        sample["sample_id"]: sample for sample in raw["corpus"]["samples"]
+    }
+    raw["corpus"]["sources"] = [
+        {
+            "source_id": source.source_id,
+            "dataset_family": source.dataset_family.value,
+            "repository": source.repository,
+            "revision": source.revision,
+            "source_url": source.source_url,
+            "license": source.license,
+            "artifact": source.archive.model_dump(mode="json"),
+        }
+        for source in manifest.sources
+    ]
+    prepared_samples: list[dict[str, object]] = []
+    for recipe in (*manifest.normalized_samples, *manifest.derived_recipes):
+        original = original_samples.get(recipe.sample_id)
+        source_id = (
+            recipe.source_id
+            if isinstance(recipe, NormalizedSampleRecipe)
+            else manifest.sources[0].source_id
+        )
+        prepared_samples.append(
+            {
+                "sample_id": recipe.sample_id,
+                "source_id": source_id,
+                "upstream_sample_id": (
+                    original["upstream_sample_id"]
+                    if original is not None
+                    else f"derived:{recipe.sample_id}"
+                ),
+                "prepared_file": recipe.prepared_file.model_dump(mode="json"),
+                "reference_text": (
+                    original["reference_text"] if original is not None else "test"
+                ),
+                "language": original["language"] if original is not None else "en",
+                "tags": original["tags"] if original is not None else ["clean"],
+                "cluster_id": (
+                    original["cluster_id"]
+                    if original is not None
+                    else f"{recipe.sample_id}-cluster"
+                ),
+                "duration_seconds": (
+                    original["duration_seconds"] if original is not None else 1.0
+                ),
+                "sample_rate_hz": 16_000,
+                "channels": 1,
+                "encoding": "pcm_s16le_wav",
+            }
+        )
+    raw["corpus"]["samples"] = prepared_samples
+    raw["corpus"]["derived_recipe_revisions"] = list(
+        dict.fromkeys(
+            recipe.recipe_revision
+            for recipe in (*manifest.normalized_samples, *manifest.derived_recipes)
+        )
+    )
+    return ExperimentManifest.model_validate(raw)
 
 
 def executable_ffmpeg(tmp_path: Path) -> Path:
@@ -230,9 +335,12 @@ def request_for(
         "free_space": lambda _path: AMPLE_SPACE,
     }
     defaults.update(kwargs)
+    experiment = defaults.pop("experiment", None)
+    if experiment is None:
+        experiment = experiment_for_manifest(manifest)
     return PrepareRequest(
         manifest=manifest,
-        experiment_fingerprint=EXPERIMENT_ID,
+        experiment=experiment,
         destination=tmp_path / "prepared corpus",
         local_inputs=local_inputs,
         ffmpeg_executable=executable_ffmpeg(tmp_path),
@@ -284,7 +392,7 @@ def test_preflight_is_read_only_and_reports_full_resource_plan(tmp_path: Path) -
     destination = tmp_path / "never-created"
     request = PrepareRequest(
         manifest=combined,
-        experiment_fingerprint=EXPERIMENT_ID,
+        experiment=experiment_for_manifest(combined),
         destination=destination,
         local_inputs={"common-voice-en": archive_path},
         ffmpeg_executable=tmp_path / "missing-ffmpeg",
@@ -428,6 +536,7 @@ def test_archive_schema_rejects_case_colliding_parent_paths() -> None:
     with pytest.raises(ValidationError, match="unambiguous"):
         PreparationSource(
             source_id="source",
+            dataset_family=DatasetFamily.COMMON_VOICE,
             repository="repo",
             revision="revision",
             source_url="local://source",
@@ -589,7 +698,16 @@ def test_source_id_cannot_escape_private_staging(tmp_path: Path) -> None:
     unsafe_source = manifest.sources[0].model_copy(
         update={"source_id": "a/../../../../outside"}
     )
-    unsafe_manifest = manifest.model_copy(update={"sources": (unsafe_source,)})
+    unsafe_recipes = tuple(
+        recipe.model_copy(update={"source_id": unsafe_source.source_id})
+        for recipe in manifest.normalized_samples
+    )
+    unsafe_manifest = manifest.model_copy(
+        update={
+            "sources": (unsafe_source,),
+            "normalized_samples": unsafe_recipes,
+        }
+    )
     request = request_for(tmp_path, unsafe_manifest, archive_path)
 
     prepare(request, execute=True)
@@ -663,6 +781,7 @@ def complete_recipe_manifest(
                 sample_id="base",
                 source_id=source.source_id,
                 source_member="clips/source file.wav",
+                output_format=AUDIO_FORMAT,
                 prepared_file=normalized_file,
             ),
         ),
@@ -672,6 +791,7 @@ def complete_recipe_manifest(
                 recipe_revision="synthetic-v1",
                 sample_id="silence",
                 duration_seconds=0.001,
+                output_format=AUDIO_FORMAT,
                 prepared_file=silence_file,
             ),
             NoiseRecipe(
@@ -682,6 +802,9 @@ def complete_recipe_manifest(
                 seed=593,
                 noise_amplitude=0.01,
                 source_gain=1.0,
+                noise_source="synthetic-uniform-v1",
+                noise_license="CC0-1.0",
+                output_format=AUDIO_FORMAT,
                 prepared_file=noise_file,
             ),
             ConcatenationRecipe(
@@ -690,6 +813,7 @@ def complete_recipe_manifest(
                 sample_id="long-form",
                 source_sample_ids=("base", "silence", "noise"),
                 silence_gaps_seconds=(0.001, 0.0),
+                output_format=AUDIO_FORMAT,
                 prepared_file=concat_file,
             ),
         ),
@@ -756,7 +880,10 @@ def test_ffmpeg_vector_version_and_all_deterministic_recipes(
     )
     assert receipt.status == "complete"
     assert receipt.ffmpeg_version == "ffmpeg version fake-593 exact test build"
-    assert tuple(file.filename for file in receipt.prepared_files) == tuple(expected)
+    assert tuple(file.filename for file in receipt.prepared_files) == tuple(
+        recipe.prepared_file.filename
+        for recipe in (*manifest.normalized_samples, *manifest.derived_recipes)
+    )
 
 
 def test_noise_and_concatenation_are_byte_identical_across_runs(
@@ -786,6 +913,7 @@ def test_recipe_parameters_reject_non_finite_values(invalid_value: float) -> Non
             recipe_revision="v1",
             sample_id="silence",
             duration_seconds=invalid_value,
+            output_format=AUDIO_FORMAT,
             prepared_file=ArtifactFile(filename="x.wav", size_bytes=1, sha256=SHA),
         )
 
@@ -793,6 +921,7 @@ def test_recipe_parameters_reject_non_finite_values(invalid_value: float) -> Non
 def test_manifest_rejects_unknown_recipe_input() -> None:
     source = PreparationSource(
         source_id="source",
+        dataset_family=DatasetFamily.COMMON_VOICE,
         repository="repo",
         revision="rev",
         source_url="local://source",
@@ -821,6 +950,9 @@ def test_manifest_rejects_unknown_recipe_input() -> None:
                     seed=1,
                     noise_amplitude=0.1,
                     source_gain=1.0,
+                    noise_source="synthetic-uniform-v1",
+                    noise_license="CC0-1.0",
+                    output_format=AUDIO_FORMAT,
                     prepared_file=ArtifactFile(
                         filename="noise.wav", size_bytes=1, sha256=SHA
                     ),
@@ -973,3 +1105,212 @@ def test_receipt_and_persisted_schemas_are_strict_and_frozen(tmp_path: Path) -> 
         )
     with pytest.raises(ValidationError):
         receipt.status = "partial"  # type: ignore[misc]
+
+
+def test_prepare_request_has_no_free_form_experiment_fingerprint() -> None:
+    assert "experiment" in inspect.signature(PrepareRequest).parameters
+    assert "experiment_fingerprint" not in inspect.signature(PrepareRequest).parameters
+
+
+def test_preflight_requires_a_validated_experiment_manifest(tmp_path: Path) -> None:
+    manifest, archive_path, _ = one_source_manifest(tmp_path)
+    request = request_for(tmp_path, manifest, archive_path)
+    invalid_request = replace(
+        request,
+        experiment=cast(ExperimentManifest, object()),
+    )
+
+    with pytest.raises(PreparationError, match="validated ExperimentManifest"):
+        preflight(invalid_request)
+
+
+def test_manifest_experiment_mismatch_fails_before_external_checks(
+    tmp_path: Path,
+) -> None:
+    manifest, archive_path, _ = one_source_manifest(tmp_path)
+    experiment = experiment_for_manifest(manifest)
+    raw = experiment.model_dump(mode="json")
+    raw["corpus"]["samples"][0]["prepared_file"]["sha256"] = SHA
+    mismatch = ExperimentManifest.model_validate(raw)
+    external_check_called = False
+
+    def forbidden_free_space(_path: Path) -> int:
+        nonlocal external_check_called
+        external_check_called = True
+        raise AssertionError("closure validation must happen first")
+
+    request = request_for(
+        tmp_path,
+        manifest,
+        archive_path,
+        experiment=mismatch,
+        free_space=forbidden_free_space,
+        http_client=NetworkBomb(),
+    )
+
+    with pytest.raises(PreparationError, match="closure"):
+        prepare(request, execute=True)
+
+    assert not external_check_called
+    assert not request.destination.exists()
+
+
+@pytest.mark.parametrize(
+    ("source_factory", "mode"),
+    [
+        (local_source, "verified_download"),
+        (download_source, "local_file"),
+    ],
+)
+def test_dataset_family_enforces_acquisition_mode(
+    tmp_path: Path,
+    source_factory: Callable[[bytes, tuple[ArchiveMember, ...]], PreparationSource],
+    mode: str,
+) -> None:
+    manifest, _, _ = one_source_manifest(tmp_path, source_factory=source_factory)
+    raw = manifest.sources[0].model_dump(mode="json")
+    raw["acquisition_mode"] = mode
+
+    with pytest.raises(ValidationError, match="dataset family"):
+        PreparationSource.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "redirect_url",
+    [
+        "http://example.test/fleurs-en.tar",
+        "https://cdn.example.test/fleurs-en.tar",
+    ],
+)
+def test_download_rejects_redirect_without_following_or_publishing(
+    tmp_path: Path,
+    redirect_url: str,
+) -> None:
+    manifest, _, _ = one_source_manifest(tmp_path, source_factory=download_source)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(302, headers={"Location": redirect_url})
+
+    client = httpx.Client(
+        follow_redirects=True,
+        transport=httpx.MockTransport(handler),
+    )
+    request = request_for(tmp_path, manifest, None, http_client=client)
+
+    with pytest.raises(PreparationError, match="redirect"):
+        prepare(request, execute=True)
+
+    assert calls == ["https://example.test/fleurs-en.tar"]
+    assert not request.destination.exists()
+    client.close()
+
+
+@pytest.mark.parametrize(
+    ("recipe_kind", "field", "value"),
+    [
+        ("normalized", "output_format", None),
+        ("silence", "output_format", None),
+        ("noise", "output_format", None),
+        ("concatenation", "output_format", None),
+        ("normalized", "sample_rate_hz", 8_000),
+        ("noise", "noise_source", None),
+        ("noise", "noise_license", None),
+    ],
+)
+def test_recipe_provenance_is_required_and_closed(
+    tmp_path: Path,
+    recipe_kind: str,
+    field: str,
+    value: object,
+) -> None:
+    manifest, _, _ = complete_recipe_manifest(tmp_path)
+    recipe_types = {
+        "silence": SilenceRecipe,
+        "noise": NoiseRecipe,
+        "concatenation": ConcatenationRecipe,
+    }
+    recipe = (
+        manifest.normalized_samples[0]
+        if recipe_kind == "normalized"
+        else next(
+            item
+            for item in manifest.derived_recipes
+            if isinstance(item, recipe_types[recipe_kind])
+        )
+    )
+    raw = recipe.model_dump(mode="json")
+    if value is None:
+        del raw[field]
+    elif field == "sample_rate_hz":
+        raw["output_format"]["sample_rate_hz"] = value
+    else:
+        raw[field] = value
+
+    model = (
+        NormalizedSampleRecipe
+        if recipe_kind == "normalized"
+        else recipe_types[recipe_kind]
+    )
+    with pytest.raises(ValidationError):
+        model.model_validate(raw)
+
+
+def test_existing_destination_rejects_changed_current_ffmpeg_version(
+    tmp_path: Path,
+) -> None:
+    manifest, archive_path, _ = complete_recipe_manifest(tmp_path)
+    request = request_for(tmp_path, manifest, archive_path)
+    destination = prepare(request, execute=True)
+    receipt_path = destination / "receipt.json"
+    receipt = PreparationReceipt.model_validate_json(receipt_path.read_bytes())
+    tampered = receipt.model_copy(update={"ffmpeg_version": "ffmpeg version old"})
+    receipt_path.write_text(
+        json.dumps(tampered.model_dump(mode="json")),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PreparationError, match="ffmpeg version"):
+        prepare(request, execute=True)
+
+
+def test_staged_receipt_is_reloaded_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import scripts.stt_eval.prepare as prepare_module
+
+    manifest, archive_path, _ = complete_recipe_manifest(tmp_path)
+    request = request_for(tmp_path, manifest, archive_path)
+    original_write = prepare_module.atomic_write_json
+
+    def write_then_tamper(destination: Path, value: object) -> None:
+        original_write(destination, value)  # type: ignore[arg-type]
+        receipt = PreparationReceipt.model_validate_json(destination.read_bytes())
+        tampered = receipt.model_copy(update={"ffmpeg_version": "tampered"})
+        destination.write_text(
+            json.dumps(tampered.model_dump(mode="json")),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(prepare_module, "atomic_write_json", write_then_tamper)
+
+    with pytest.raises(PreparationError, match="receipt|ffmpeg version"):
+        prepare(request, execute=True)
+
+    assert not request.destination.exists()
+
+
+def test_receipt_experiment_identity_is_derived_from_validated_manifest(
+    tmp_path: Path,
+) -> None:
+    manifest, archive_path, _ = complete_recipe_manifest(tmp_path)
+    request = request_for(tmp_path, manifest, archive_path)
+
+    destination = prepare(request, execute=True)
+
+    receipt = PreparationReceipt.model_validate_json(
+        (destination / "receipt.json").read_bytes()
+    )
+    assert receipt.experiment_fingerprint == experiment_fingerprint(request.experiment)
