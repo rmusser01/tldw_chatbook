@@ -59,6 +59,37 @@ class TestValidatePathSimple:
         result = validate_path_simple("/tmp/new_file.txt", require_exists=False)
         assert isinstance(result, Path)
 
+    def test_single_parent_ref_accepted_both_separator_conventions(self):
+        """A legitimate single parent-dir segment must be treated the same
+        regardless of which separator convention the string uses.
+
+        Regression test for task-838: the raw-substring scan used to look
+        for POSIX "../.." (two consecutive parent refs) but Windows "..\\"
+        (a *single* parent ref), so the same logical path --
+        ``nested/../locks`` -- was accepted with forward slashes and
+        rejected with backslashes. This is exercised directly (not via
+        ``os.path`` helpers) so it is meaningful on POSIX CI too: the whole
+        point is that the pattern list must not depend on the host platform.
+        """
+        # POSIX-style: single parent ref, unresolved.
+        result = validate_path_simple("/tmp/xyz/nested/../locks")
+        assert isinstance(result, Path)
+
+        # Windows-style: the same logical path, single parent ref.
+        result = validate_path_simple("C:\\Temp\\xyz\\nested\\..\\locks")
+        assert isinstance(result, Path)
+
+    def test_multi_level_parent_ref_still_rejected_both_conventions(self):
+        """A genuine multi-level traversal attempt must still be rejected
+        for both separator conventions -- the parity fix must not weaken
+        the check, only stop over-rejecting single, legitimate parent refs.
+        """
+        with pytest.raises(ValueError, match="dangerous pattern"):
+            validate_path_simple("../../etc/passwd")
+
+        with pytest.raises(ValueError, match="dangerous pattern"):
+            validate_path_simple("..\\..\\etc\\passwd")
+
 
 class TestLogSanitizer:
     """Test the log sanitization utilities."""
