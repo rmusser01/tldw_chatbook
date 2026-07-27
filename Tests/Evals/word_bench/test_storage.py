@@ -125,8 +125,13 @@ def test_grid_renders_from_the_snapshot_after_the_bench_is_edited(
     save_cell(db, run_ids[targets[0].id], snippets[0], _capture())
 
     edited = BenchConfig(
+        # dataset_id is intentionally the fixture's own real id, not a
+        # literal placeholder: save_bench's edit path never actually passes
+        # dataset_id through to update_task (see its docstring), so this
+        # value's identity is inert either way -- but the project's fixture
+        # convention is "no literal ids", and a real id costs nothing here.
         name="loaded-nouns v2", prompt_mode="chat", top_k=5,
-        dataset_id="d1", target_ids=(targets[0].id,), probes=(),
+        dataset_id=config.dataset_id, target_ids=(targets[0].id,), probes=(),
     )
     save_bench(db, edited, task_id=task_id)
 

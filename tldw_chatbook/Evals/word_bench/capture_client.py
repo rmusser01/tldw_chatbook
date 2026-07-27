@@ -46,8 +46,68 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _parse_status_code(detail: str) -> Optional[int]:
+    try:
+        return int(detail)
+    except (TypeError, ValueError):
+        return None
+
+
+def _preflight_state_for_error(result: CellError) -> str:
+    """Classify a failed canary capture into a preflight state.
+
+    A 4xx status means the server was reachable and understood enough to
+    respond, but rejected the request outright -- that reads as Blocked, not
+    Unavailable. A 5xx, or any transport-level failure (connection refused,
+    timeout, DNS), means the server could not be reached in any way that
+    would let it reject anything, so it stays Unavailable.
+
+    Within the 4xx family, a 404 on the request URL is a distinct, reliable
+    signal rather than a guess: ``_build_request`` posts to a FIXED path
+    (``/v1/completions`` or ``/v1/chat/completions``) that this module picks
+    from ``mode``, so a 404 means THAT ROUTE does not exist on this server --
+    exactly the design spec's "raw mode unsupported by endpoint" case, and
+    unlike inferring an unobserved JSON response *shape* (which
+    ``normalizer.py``'s module docstring rules out), interpreting a standard
+    HTTP status code by its own defined meaning is not a guess. Every OTHER
+    4xx (401, 400, 422, 429, ...) reports a rejection for some other reason
+    a bare status code cannot distinguish, and stays the more generic
+    ``no_logprobs`` state (both render the same "Blocked" label; see
+    ``models._STATUS_LABELS``).
+    """
+    if result.reason == "http_error":
+        status_code = _parse_status_code(result.detail)
+        if status_code == 404:
+            return "mode_unsupported"
+        if status_code is not None and 400 <= status_code < 500:
+            return "no_logprobs"
+        return "unreachable"
+    if result.reason in ("unreachable", "no_logprobs", "no_content_token"):
+        return result.reason
+    return "no_logprobs"
+
+
 class WordBenchCaptureClient:
-    """Captures one next-token distribution per call."""
+    """Captures one next-token distribution per call.
+
+    Holds ONE ``httpx.AsyncClient`` for the lifetime of this instance
+    (created lazily, on the first request) rather than opening a fresh
+    connection per call -- a 100+ cell grid against the same target would
+    otherwise pay a new TCP/TLS handshake for every single cell instead of
+    reusing keep-alive connections. ``httpx.AsyncClient`` is documented as
+    safe for concurrent use by multiple coroutines, which is what
+    ``WordBenchRunner`` does under ``BenchConfig.concurrency > 1`` -- several
+    ``capture()`` calls for the SAME target never overlap in practice
+    (the runner never dispatches two in-flight requests to one target at
+    once), but calls for DIFFERENT targets sharing a client instance would
+    be fine either way.
+
+    Call ``aclose()`` (or use this object as an ``async with`` context
+    manager) when done with it to release the underlying connection pool;
+    ``WordBenchRunner.run`` does this automatically for every client it
+    creates, after the whole run (including any concurrent in-flight
+    requests) has finished -- never while a request could still be using it.
+    """
 
     def __init__(
         self,
@@ -60,12 +120,39 @@ class WordBenchCaptureClient:
         self._api_key = api_key
         self._timeout = timeout
         self._transport = transport
+        self._client: Optional[httpx.AsyncClient] = None
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
+
+    def _ensure_client(self) -> httpx.AsyncClient:
+        """Build the pooled client on first use. No ``await`` happens
+        between the ``None`` check and the assignment, so this is safe to
+        call from multiple concurrently-running coroutines without a lock:
+        asyncio is cooperative, and nothing here yields control in between."""
+        if self._client is None:
+            kwargs: dict[str, Any] = {"timeout": self._timeout}
+            if self._transport is not None:
+                kwargs["transport"] = self._transport
+            self._client = httpx.AsyncClient(**kwargs)
+        return self._client
+
+    async def aclose(self) -> None:
+        """Release the pooled connection. Safe to call even if no request
+        was ever made (the client is created lazily), and safe to call more
+        than once."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def __aenter__(self) -> "WordBenchCaptureClient":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.aclose()
 
     def _build_request(
         self, snippet: str, target: Target, mode: PromptMode, top_k: int
@@ -91,13 +178,10 @@ class WordBenchCaptureClient:
         return f"{self._base_url}/v1/chat/completions", payload
 
     async def _post(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"timeout": self._timeout}
-        if self._transport is not None:
-            kwargs["transport"] = self._transport
-        async with httpx.AsyncClient(**kwargs) as client:
-            response = await client.post(url, json=payload, headers=self._headers())
-            response.raise_for_status()
-            return response.json()
+        client = self._ensure_client()
+        response = await client.post(url, json=payload, headers=self._headers())
+        response.raise_for_status()
+        return response.json()
 
     async def capture(
         self, snippet: str, target: Target, mode: PromptMode, top_k: int
@@ -144,14 +228,23 @@ class WordBenchCaptureClient:
         A degenerate canary does NOT block the run -- a target whose raw
         continuation is out-of-distribution may be exactly what a user wants
         to study. It downgrades to a warned state that every cell carries.
+
+        The canary prompt is sent through the SAME steering (``prefix`` in
+        raw mode, ``system_prompt`` in chat mode) as every measured cell for
+        this target, never a bare, unsteered request -- readiness is a
+        property of what the run will actually send, not of the endpoint in
+        the abstract. This means a legitimate, working steering prefix can
+        itself push the canary continuation out of distribution and warn
+        ``degenerate`` on that column even though nothing is actually wrong;
+        that is a real, honest signal about THIS bench's specific
+        configuration, not a defect in the target, and any UI surfacing this
+        state must not present it as an unqualified target failure.
         """
         result = await self.capture(CANARY_PROMPT, target, mode, top_k)
         checked_at = _utcnow()
 
         if isinstance(result, CellError):
-            state = result.reason if result.reason != "http_error" else "unreachable"
-            if state not in ("unreachable", "no_logprobs", "no_content_token"):
-                state = "no_logprobs"
+            state = _preflight_state_for_error(result)
             return PreflightResult(
                 state=state, k_returned=None, canary="unchecked",
                 detail=result.detail, checked_at=checked_at,
