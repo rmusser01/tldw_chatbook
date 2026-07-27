@@ -12,7 +12,9 @@ store = get_user_data_dir() / "skills"; trust_dir = store / "skills" ; trust_dir
 skills_dir = store / "skills"
 scope = skill_trust_account_scope(trust_dir)
 marker_store, reduced = build_skill_trust_marker_store_with_fallback(
-    fallback_marker_path=trust_dir / "generation_marker.json", account_scope=scope)
+    fallback_marker_path=trust_dir / "generation_marker.json",
+    store_dir=trust_dir,
+    account_scope=scope)
 print("marker store:", type(marker_store).__name__, "reduced_rollback:", reduced)
 trust = SkillTrustService(
     skills_dir=skills_dir,
