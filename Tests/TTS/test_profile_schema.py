@@ -1215,7 +1215,23 @@ def test_candidate_source_open_is_nonblocking_across_fifo_swap(
         original_path.replace(path)
 
     assert len(observed_flags) == 1
+    assert observed_flags[0] == profile_schema._candidate_source_open_flags()
     assert observed_flags[0] & profile_schema.os.O_NONBLOCK
+
+
+def test_candidate_source_open_flags_include_every_available_required_flag() -> None:
+    class AllFlags:
+        O_RDONLY = 1
+        O_CLOEXEC = 2
+        O_NONBLOCK = 4
+        O_NOFOLLOW = 8
+        O_BINARY = 16
+
+    class ReadOnlyFlag:
+        O_RDONLY = 1
+
+    assert profile_schema._candidate_source_open_flags(AllFlags()) == 31
+    assert profile_schema._candidate_source_open_flags(ReadOnlyFlag()) == 1
 
 
 def test_candidate_rejects_private_snapshot_path_replacement(

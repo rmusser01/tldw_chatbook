@@ -721,6 +721,16 @@ def _source_identity(value: os.stat_result) -> tuple[int, ...]:
     )
 
 
+def _candidate_source_open_flags(flag_source: object = os) -> int:
+    return (
+        int(getattr(flag_source, "O_RDONLY", 0))
+        | int(getattr(flag_source, "O_CLOEXEC", 0))
+        | int(getattr(flag_source, "O_NONBLOCK", 0))
+        | int(getattr(flag_source, "O_NOFOLLOW", 0))
+        | int(getattr(flag_source, "O_BINARY", 0))
+    )
+
+
 def _candidate_sidecars(resolved_path: Path) -> tuple[Path, ...]:
     return tuple(
         resolved_path.with_name(f"{resolved_path.name}{suffix}")
@@ -820,11 +830,7 @@ def validate_profile_candidate(path: Path) -> None:
         if not stat.S_ISREG(path_state[2]):
             raise ValueError
 
-        source_flags = (
-            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
-        )
-        source_flags |= getattr(os, "O_NOFOLLOW", 0)
-        source_fd = os.open(resolved_path, source_flags)
+        source_fd = os.open(resolved_path, _candidate_source_open_flags())
         source_state = _source_identity(os.fstat(source_fd))
         if source_state != path_state or not _source_is_unchanged(
             source_fd,
