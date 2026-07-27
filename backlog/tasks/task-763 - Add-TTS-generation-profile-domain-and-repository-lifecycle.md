@@ -79,15 +79,18 @@ Final delivery evidence:
   `20ff9928622de58f2adc96212258876e5a5d06a6`; all 57 implementation commits
   remained patch-identical across the rebase.
 - The final eight-file profile unit/integration/concurrency/lifecycle gate
-  passed: 656 passed, 3 warnings.
-- The broad TTS gate passed on the same patch-identical implementation:
+  passed: 662 passed, 3 warnings.
+- The pre-review broad TTS gate passed on the patch-identical rebased
+  implementation:
   1552 passed, 14 expected optional skips, 13 dependency/deprecation warnings.
-- Task-scoped Ruff and Ruff format, compileall, focused mypy across the five
-  profile modules, and exact-range `git diff --check` passed.
+- Task-scoped Ruff and Ruff format, compileall, focused mypy across six
+  profile/migration modules, and exact-range `git diff --check` passed.
 - Independent whole-range and post-rebase integration reviews found no
-  Critical, Important, or Minor issues. The final upstream overlap in
-  `path_validation.py` is non-conflicting: upstream Windows-path handling and
-  this slice's value-free privacy diagnostic are both retained.
+  Critical, Important, or Minor issues. PR policy review amendments then routed
+  public backup/restore inputs through shared path validation before the
+  stricter identity checks, validated and quoted dynamic PRAGMA identifiers,
+  removed avoidable dynamic SQL, and moved v0-to-v1 DDL/version setting into
+  `TTS/migrations/`.
 - Privacy and scope review found no task-added credential, provider endpoint,
   message-content, managed-process, STTS-library, character-editor, runtime
   routing, or portability behavior.

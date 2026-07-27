@@ -2202,6 +2202,37 @@ async def test_backup_and_restore_path_filesystem_checks_run_only_on_worker(
         await repository.close()
 
 
+def test_backup_destination_applies_central_path_safety_validation(
+    tmp_path: Path,
+) -> None:
+    module = _repository_module()
+    destination = tmp_path / "backup;unsafe.sqlite3"
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        module._validate_backup_destination(
+            destination,
+            tmp_path / "profiles.sqlite3",
+        )
+
+    _assert_safe_error(caught.value, "backup_failed", str(destination))
+
+
+def test_restore_candidate_applies_central_path_safety_validation(
+    tmp_path: Path,
+) -> None:
+    module = _repository_module()
+    candidate = tmp_path / "candidate;unsafe.sqlite3"
+    candidate.write_bytes(b"candidate")
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        module._validate_restore_candidate_path(
+            candidate,
+            tmp_path / "profiles.sqlite3",
+        )
+
+    _assert_safe_error(caught.value, "restore_failed", str(candidate))
+
+
 def test_restore_online_backup_checks_deadline_between_page_batches(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

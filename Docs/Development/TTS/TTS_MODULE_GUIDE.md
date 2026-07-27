@@ -41,7 +41,9 @@ tldw_chatbook/TTS/
 ├── request_admission.py     # Atomic preference/revision/lease admission
 ├── profile_errors.py        # Value-independent profile/store failures
 ├── profile_types.py         # Immutable profiles, assignments, and receipts
-├── profile_schema.py        # Dedicated versioned SQLite schema and codecs
+├── profile_schema.py        # Dedicated SQLite validation and codecs
+├── migrations/
+│   └── v0_to_v1.py         # Versioned profile-store schema migration
 ├── profile_store_lock.py    # Cooperative shared/exclusive process locking
 ├── profile_repository.py    # Serialized CRUD, backup, and restore lifecycle
 ├── playground_types.py      # Immutable Playground request/artifact contracts

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -199,6 +200,48 @@ def test_empty_store_migrates_transactionally_and_is_configured(tmp_path: Path) 
             "tts_generation_profiles",
             "character_tts_assignments",
         } <= tables
+    finally:
+        connection.close()
+
+
+def test_profile_schema_ddl_lives_in_versioned_migration_module() -> None:
+    schema_source = inspect.getsource(profile_schema)
+
+    assert "CREATE TABLE tts_generation_profiles" not in schema_source
+
+    from tldw_chatbook.TTS.migrations import v0_to_v1
+
+    assert v0_to_v1.TARGET_VERSION == CURRENT_PROFILE_SCHEMA_VERSION == 1
+    assert MIGRATIONS[0] is v0_to_v1.migrate
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda connection: profile_schema._table_xinfo_manifest(
+            connection,
+            "profiles); SELECT 1; --",
+        ),
+        lambda connection: profile_schema._has_exact_binary_index_keys(
+            connection,
+            "index); SELECT 1; --",
+            ("profile_id",),
+        ),
+        lambda connection: profile_schema._has_exact_primary_key_index(
+            connection,
+            "profiles); SELECT 1; --",
+            ("profile_id",),
+        ),
+    ],
+)
+def test_schema_pragma_helpers_reject_invalid_identifiers_before_sqlite(
+    operation: Callable[[sqlite3.Connection], object],
+) -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        with pytest.raises(ValueError):
+            operation(connection)
     finally:
         connection.close()
 

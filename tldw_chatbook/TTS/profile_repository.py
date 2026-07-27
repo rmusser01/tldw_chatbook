@@ -51,6 +51,7 @@ from tldw_chatbook.TTS.profile_types import (
     TTSProfileDraft,
     TTSProfilePage,
 )
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 
 _T = TypeVar("_T")
@@ -374,6 +375,7 @@ def _validate_backup_destination(
     snapshot: _DestinationSnapshot | None = None
     try:
         exact_destination = cast(Path, destination)
+        validate_path_simple(exact_destination, require_exists=False)
         if os.path.lexists(exact_destination) and exact_destination.is_symlink():
             raise ValueError
         resolved_destination = exact_destination.resolve(strict=False)
@@ -435,6 +437,7 @@ def _validate_restore_candidate_path(
     snapshot: _CandidateSnapshot | None = None
     try:
         exact_candidate = cast(Path, candidate)
+        validate_path_simple(exact_candidate, require_exists=True)
         if exact_candidate.is_symlink():
             raise ValueError
         resolved_candidate = exact_candidate.resolve(strict=True)
@@ -2199,10 +2202,13 @@ class TTSProfileRepository:
     ) -> tuple[int, int]:
         def read_counts() -> tuple[int, int]:
             counts: list[int] = []
-            for table in ("tts_generation_profiles", "character_tts_assignments"):
+            for statement in (
+                "SELECT COUNT(*) FROM tts_generation_profiles",
+                "SELECT COUNT(*) FROM character_tts_assignments",
+            ):
                 if deadline is not None:
                     _require_restore_time(deadline)
-                row = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+                row = connection.execute(statement).fetchone()
                 if (
                     row is None
                     or len(row) != 1

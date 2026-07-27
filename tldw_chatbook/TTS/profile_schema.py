@@ -17,7 +17,18 @@ from pathlib import Path
 from typing import Literal, TypeAlias, cast
 from uuid import UUID
 
+from tldw_chatbook.DB.sql_validation import escape_identifier, validate_identifier
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.migrations.v0_to_v1 import (
+    ASSIGNMENT_PROFILE_INDEX_DDL as _ASSIGNMENT_PROFILE_INDEX_DDL,
+)
+from tldw_chatbook.TTS.migrations.v0_to_v1 import (
+    ASSIGNMENT_TABLE_DDL as _ASSIGNMENT_TABLE_DDL,
+)
+from tldw_chatbook.TTS.migrations.v0_to_v1 import (
+    PROFILE_TABLE_DDL as _PROFILE_TABLE_DDL,
+)
+from tldw_chatbook.TTS.migrations.v0_to_v1 import migrate as _migrate_v0_to_v1
 from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
@@ -92,40 +103,6 @@ SELECT
 FROM character_tts_assignments AS a
 LEFT JOIN tts_generation_profiles AS p ON p.profile_id = a.profile_id
 """
-
-_PROFILE_TABLE_DDL = """
-CREATE TABLE tts_generation_profiles (
-    profile_id TEXT PRIMARY KEY,
-    display_name TEXT NOT NULL,
-    normalized_name TEXT NOT NULL UNIQUE,
-    provider_id TEXT NOT NULL,
-    model_id TEXT NOT NULL,
-    voice_id TEXT NULL,
-    response_format TEXT NOT NULL,
-    speed REAL NOT NULL,
-    options_json TEXT NOT NULL,
-    revision INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-)
-"""
-_ASSIGNMENT_TABLE_DDL = """
-CREATE TABLE character_tts_assignments (
-    source TEXT NOT NULL,
-    authority_id TEXT NOT NULL,
-    character_id TEXT NOT NULL,
-    profile_id TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY(source, authority_id, character_id),
-    FOREIGN KEY(profile_id)
-        REFERENCES tts_generation_profiles(profile_id)
-        ON DELETE RESTRICT
-)
-"""
-_ASSIGNMENT_PROFILE_INDEX_DDL = (
-    f"CREATE INDEX {ASSIGNMENT_PROFILE_INDEX} ON character_tts_assignments(profile_id)"
-)
 
 RowLike: TypeAlias = sqlite3.Row | Mapping[str, object]
 
@@ -392,14 +369,6 @@ def decode_assigned_snapshot(row: RowLike) -> AssignedTTSProfileSnapshot:
         raise _repository_error("corrupt_data") from None
 
 
-def _migrate_v0_to_v1(connection: sqlite3.Connection) -> None:
-    """Create schema version 1 inside the caller's active transaction."""
-
-    connection.execute(_PROFILE_TABLE_DDL)
-    connection.execute(_ASSIGNMENT_TABLE_DDL)
-    connection.execute(_ASSIGNMENT_PROFILE_INDEX_DDL)
-
-
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {0: _migrate_v0_to_v1}
 
 
@@ -408,7 +377,7 @@ def _configure_connection(connection: sqlite3.Connection) -> None:
     connection.execute("PRAGMA foreign_keys = ON")
     if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
         raise _repository_error("schema_corrupt")
-    connection.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    connection.execute("PRAGMA busy_timeout = 5000")
     if connection.execute("PRAGMA busy_timeout").fetchone()[0] != BUSY_TIMEOUT_MS:
         raise _repository_error("schema_corrupt")
 
@@ -441,6 +410,15 @@ def _normalized_ddl(sql: str) -> str:
     return " ".join(sql.split())
 
 
+def _validated_quoted_identifier(identifier: object, identifier_kind: str) -> str:
+    if type(identifier) is not str:
+        raise ValueError
+    exact_identifier = cast(str, identifier)
+    if not validate_identifier(exact_identifier, identifier_kind):
+        raise ValueError
+    return escape_identifier(exact_identifier)
+
+
 def _validate_owned_schema_sql(connection: sqlite3.Connection) -> None:
     expected = {
         ("table", PROFILE_TABLE): _normalized_ddl(_PROFILE_TABLE_DDL),
@@ -471,6 +449,7 @@ def _validate_owned_schema_sql(connection: sqlite3.Connection) -> None:
 def _table_xinfo_manifest(
     connection: sqlite3.Connection, table: str
 ) -> list[tuple[int, str, str, int, object, int, int]]:
+    quoted_table = _validated_quoted_identifier(table, "table name")
     return [
         (
             row["cid"],
@@ -481,16 +460,17 @@ def _table_xinfo_manifest(
             row["pk"],
             row["hidden"],
         )
-        for row in connection.execute(f"PRAGMA table_xinfo({table})")
+        for row in connection.execute(f"PRAGMA table_xinfo({quoted_table})")
     ]
 
 
 def _has_exact_binary_index_keys(
     connection: sqlite3.Connection, index: str, columns: tuple[str, ...]
 ) -> bool:
+    quoted_index = _validated_quoted_identifier(index, "index name")
     key_rows = [
         row
-        for row in connection.execute(f"PRAGMA index_xinfo({index})")
+        for row in connection.execute(f"PRAGMA index_xinfo({quoted_index})")
         if row["key"] == 1
     ]
     return [(row["name"], row["desc"], row["coll"]) for row in key_rows] == [
@@ -501,9 +481,10 @@ def _has_exact_binary_index_keys(
 def _has_exact_primary_key_index(
     connection: sqlite3.Connection, table: str, columns: tuple[str, ...]
 ) -> bool:
+    quoted_table = _validated_quoted_identifier(table, "table name")
     primary_indexes = [
         row
-        for row in connection.execute(f"PRAGMA index_list({table})")
+        for row in connection.execute(f"PRAGMA index_list({quoted_table})")
         if row["origin"] == "pk"
     ]
     return (
@@ -620,7 +601,7 @@ def _validate_schema_body(connection: sqlite3.Connection) -> None:
             raise ValueError
 
         profile_indexes = list(
-            connection.execute(f"PRAGMA index_list({PROFILE_TABLE})")
+            connection.execute("PRAGMA index_list(tts_generation_profiles)")
         )
         normalized_indexes = [row for row in profile_indexes if row["origin"] == "u"]
         if (
@@ -633,7 +614,7 @@ def _validate_schema_body(connection: sqlite3.Connection) -> None:
             )
         ):
             raise ValueError
-        if list(connection.execute(f"PRAGMA foreign_key_list({PROFILE_TABLE})")):
+        if list(connection.execute("PRAGMA foreign_key_list(tts_generation_profiles)")):
             raise ValueError
 
         if _table_xinfo_manifest(connection, ASSIGNMENT_TABLE) != [
@@ -653,7 +634,7 @@ def _validate_schema_body(connection: sqlite3.Connection) -> None:
             raise ValueError
 
         assignment_index_rows = list(
-            connection.execute(f"PRAGMA index_list({ASSIGNMENT_TABLE})")
+            connection.execute("PRAGMA index_list(character_tts_assignments)")
         )
         assignment_indexes = {row["name"]: row for row in assignment_index_rows}
         profile_index = assignment_indexes.get(ASSIGNMENT_PROFILE_INDEX)
@@ -670,7 +651,7 @@ def _validate_schema_body(connection: sqlite3.Connection) -> None:
             raise ValueError
 
         foreign_keys = list(
-            connection.execute(f"PRAGMA foreign_key_list({ASSIGNMENT_TABLE})")
+            connection.execute("PRAGMA foreign_key_list(character_tts_assignments)")
         )
         if len(foreign_keys) != 1:
             raise ValueError
@@ -731,7 +712,14 @@ def _migrate_empty_store(connection: sqlite3.Connection) -> None:
                 raise RuntimeError
             migration(connection)
             version += 1
-            connection.execute(f"PRAGMA user_version = {version}")
+            version_row = connection.execute("PRAGMA user_version").fetchone()
+            if (
+                version_row is None
+                or len(version_row) != 1
+                or type(version_row[0]) is not int
+                or version_row[0] != version
+            ):
+                raise RuntimeError
         connection.commit()
     except BaseException as error:
         body_error = error
@@ -886,11 +874,11 @@ def validate_profile_store_rows(
     try:
         if check_deadline is not None:
             check_deadline()
-        for row in connection.execute(f"SELECT * FROM {PROFILE_TABLE}"):
+        for row in connection.execute("SELECT * FROM tts_generation_profiles"):
             if check_deadline is not None:
                 check_deadline()
             decode_profile(row)
-        for row in connection.execute(f"SELECT * FROM {ASSIGNMENT_TABLE}"):
+        for row in connection.execute("SELECT * FROM character_tts_assignments"):
             if check_deadline is not None:
                 check_deadline()
             decode_assignment(row)
