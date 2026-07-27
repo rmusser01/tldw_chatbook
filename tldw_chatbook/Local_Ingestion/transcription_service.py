@@ -101,42 +101,21 @@ try:
 except (ImportError, ValueError, ModuleNotFoundError):
     ONNX_ASR_AVAILABLE = False
 
-try:
-    if sys.platform == "darwin":
-        from lightning_whisper_mlx import LightningWhisperMLX
 
-        LIGHTNING_WHISPER_AVAILABLE = True
-    else:
-        LIGHTNING_WHISPER_AVAILABLE = False
-except ImportError:
-    LightningWhisperMLX = None
-    LIGHTNING_WHISPER_AVAILABLE = False
-    if sys.platform == "darwin":
-        logger.warning(
-            "lightning-whisper-mlx not available. Install with: pip install lightning-whisper-mlx"
+def _optional_module_available(module_name: str) -> bool:
+    try:
+        return (
+            sys.platform == "darwin"
+            and importlib.util.find_spec(module_name) is not None
         )
-else:
-    if sys.platform != "darwin":
-        LightningWhisperMLX = None
+    except (AttributeError, ImportError, ValueError):
+        return False
 
-try:
-    if sys.platform == "darwin":
-        from parakeet_mlx import from_pretrained as parakeet_from_pretrained
 
-        PARAKEET_MLX_AVAILABLE = True
-        logger.info("parakeet-mlx is available for real-time ASR on Apple Silicon")
-    else:
-        PARAKEET_MLX_AVAILABLE = False
-except ImportError:
-    parakeet_from_pretrained = None
-    PARAKEET_MLX_AVAILABLE = False
-    if sys.platform == "darwin":
-        logger.warning(
-            "parakeet-mlx not available. Install with: pip install parakeet-mlx"
-        )
-else:
-    if sys.platform != "darwin":
-        parakeet_from_pretrained = None
+LIGHTNING_WHISPER_AVAILABLE = _optional_module_available("lightning_whisper_mlx")
+PARAKEET_MLX_AVAILABLE = _optional_module_available("parakeet_mlx")
+LightningWhisperMLX = None
+parakeet_from_pretrained = None
 
 # torch/transformers are heavy optional dependencies (torch alone pulls in
 # ~500 transitive modules). Probe availability cheaply via find_spec instead
@@ -255,6 +234,40 @@ class TranscriptionError(Exception):
     """Base exception for transcription errors."""
 
     pass
+
+
+def _ensure_lightning_whisper_mlx_import():
+    global LIGHTNING_WHISPER_AVAILABLE, LightningWhisperMLX
+    if LightningWhisperMLX is not None:
+        return LightningWhisperMLX
+    if not LIGHTNING_WHISPER_AVAILABLE:
+        raise TranscriptionError("lightning-whisper-mlx is not installed")
+    try:
+        from ..Utils.optional_deps import require_dependency
+
+        module = require_dependency("lightning_whisper_mlx")
+        LightningWhisperMLX = module.LightningWhisperMLX
+    except Exception as exc:
+        LIGHTNING_WHISPER_AVAILABLE = False
+        raise TranscriptionError("lightning-whisper-mlx could not be loaded") from exc
+    return LightningWhisperMLX
+
+
+def _ensure_parakeet_mlx_import():
+    global PARAKEET_MLX_AVAILABLE, parakeet_from_pretrained
+    if parakeet_from_pretrained is not None:
+        return parakeet_from_pretrained
+    if not PARAKEET_MLX_AVAILABLE:
+        raise TranscriptionError("parakeet-mlx is not installed")
+    try:
+        from ..Utils.optional_deps import require_dependency
+
+        module = require_dependency("parakeet_mlx")
+        parakeet_from_pretrained = module.from_pretrained
+    except Exception as exc:
+        PARAKEET_MLX_AVAILABLE = False
+        raise TranscriptionError("parakeet-mlx could not be loaded") from exc
+    return parakeet_from_pretrained
 
 
 class ConversionError(TranscriptionError):
@@ -2200,7 +2213,8 @@ class TranscriptionService:
                     model_load_start = time.time()
 
                     try:
-                        lightning_model = LightningWhisperMLX(
+                        lightning_whisper_cls = _ensure_lightning_whisper_mlx_import()
+                        lightning_model = lightning_whisper_cls(
                             model=model, batch_size=batch_size, quant=quant
                         )
                         # Store config for cache comparison
@@ -2515,9 +2529,6 @@ class TranscriptionService:
                     # Add detailed logging before the problematic call
                     logger.debug(f"Current working directory: {os.getcwd()}")
                     logger.debug(f"PARAKEET_MLX_AVAILABLE: {PARAKEET_MLX_AVAILABLE}")
-                    logger.debug(
-                        f"parakeet_from_pretrained function: {parakeet_from_pretrained}"
-                    )
 
                     logger.info("[PARAKEET] About to call parakeet_from_pretrained...")
                     logger.info(f"[PARAKEET] Model name: '{model}'")
@@ -2545,9 +2556,8 @@ class TranscriptionService:
 
                     # Note: We cannot use signal-based timeout in worker threads
                     # The model loading will either succeed or fail on its own
-                    self._parakeet_mlx_model = parakeet_from_pretrained(
-                        model, dtype=dtype
-                    )
+                    parakeet_loader = _ensure_parakeet_mlx_import()
+                    self._parakeet_mlx_model = parakeet_loader(model, dtype=dtype)
                     logger.info(
                         "[PARAKEET] parakeet_from_pretrained completed successfully"
                     )
@@ -3683,9 +3693,8 @@ class TranscriptionService:
                     precision = self._parakeet_mlx_config["precision"]
                     dtype = dtype_map.get(precision, mx.bfloat16)
 
-                    self._parakeet_mlx_model = parakeet_from_pretrained(
-                        model_name, dtype=dtype
-                    )
+                    parakeet_loader = _ensure_parakeet_mlx_import()
+                    self._parakeet_mlx_model = parakeet_loader(model_name, dtype=dtype)
                     self._parakeet_mlx_model._model_name = model_name
                     logger.info(f"Loaded Parakeet MLX model: {model_name}")
 
@@ -3878,9 +3887,8 @@ class TranscriptionService:
                     }
                     dtype = dtype_map.get(precision, mx.bfloat16)
 
-                    self._parakeet_mlx_model = parakeet_from_pretrained(
-                        model, dtype=dtype
-                    )
+                    parakeet_loader = _ensure_parakeet_mlx_import()
+                    self._parakeet_mlx_model = parakeet_loader(model, dtype=dtype)
                     self._parakeet_mlx_model._model_name = model
                     logger.info("Model loaded successfully")
                 except Exception as e:
