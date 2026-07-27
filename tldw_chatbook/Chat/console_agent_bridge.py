@@ -90,50 +90,62 @@ _KNOWN_SUBAGENT_PREFIXES: set[str] = {SUBAGENT_SYSTEM_PROMPT}
 # cost 2 more turns / 6 more steps (6 turns / 16 steps total), so even the
 # old 8-turn cap cleared the floor with room to spare.
 #
-# The three numbers below are sized TOGETHER so that max_model_turns stays
+# The four numbers below are sized TOGETHER so that max_model_turns stays
 # the primary limiter -- raising it alone would just move the wall to
-# whichever of the other two binds first:
-#   * max_model_turns=20 gives ~20 tool-calling rounds per user message
-#     (raised from 8).
-#   * max_steps=64: a fence tool round costs 3 steps (STEP_MODEL +
-#     STEP_TOOL_CALL + STEP_TOOL_RESULT), so 19 rounds + 1 wrap-up
-#     STEP_MODEL = 3*19 + 1 = 58 steps. At the old 32 the step check would
-#     have fired around round 10, never letting the 20-turn cap be reached.
-#     64 clears 58 while staying a real backstop: a NATIVE multi-call batch
-#     (task-243) costs 1 + 2N steps per turn, so a run of heavy parallel
-#     batches can still legitimately hit the step backstop before the turn
-#     cap -- that is the backstop doing its job.
-#   * max_wall_seconds=1200: the prior 480s was derived as 25-50s/turn x up
-#     to 8 model turns at the slow local-model pace this gate exercises; at
-#     20 turns that same pace needs ~500-1000s, so 480 would have become
-#     the new binding limit around turn 10. 1200s covers the 20-turn worst
-#     case. This is a backstop, not a target -- fast cloud models finish 20
-#     turns in a fraction of it, and the user can Stop at any point (the
-#     tool-call wrapper polls cancellation every 0.5s, task-327).
+# whichever of the other constants binds first:
+#   * max_model_turns=30 gives ~30 tool-calling rounds per user message
+#     (raised from 20).
+#   * max_steps=96: a fence tool round costs 3 steps (STEP_MODEL +
+#     STEP_TOOL_CALL + STEP_TOOL_RESULT), so 29 rounds + 1 wrap-up
+#     STEP_MODEL = 3*29 + 1 = 88 steps. 96 clears that while staying a real
+#     backstop: a NATIVE multi-call batch (task-243) costs 1 + 2N steps per
+#     turn, so a run of heavy parallel batches can still legitimately hit the
+#     step backstop before the turn cap -- that is the backstop doing its job.
+#   * max_wall_seconds=1800: derived as 25-50s/turn x 30 model turns at the
+#     slow local-model pace this gate exercises = 750-1500s at N=30. 1800s
+#     covers the 30-turn worst case. This is a backstop, not a target -- fast
+#     cloud models finish 30 turns in a fraction of it, and the user can Stop
+#     at any point (the tool-call wrapper polls cancellation every 0.5s, task-327).
+#   * max_total_tokens=1_000_000: Sub-agents inherit the turn and step budget
+#     (agent_models.clamp_child_budget, operator decision 2026-07-25), so one
+#     message can reach 30 * (1 + max_subagents) = 90 provider turns. The wall
+#     clock bounds that in TIME but not in SPEND; at a ~20k-token working
+#     prompt a runaway approaches ~1.8M tokens. This ceiling stops that while
+#     sitting far above any normal 30-turn run.
 # The engine's own RunBudget defaults (agent_models.RunBudget) keep the
 # bare max_steps=8, so this override applies only at the Console bridge's
 # own config-assembly site (run_reply below); other callers of
 # RunBudget()/AgentConfig keep the conservative engine default.
 #: Tool-calling rounds the Console agent gets per user message. THE primary
-#: limiter -- the two constants below exist to keep it reachable.
-CONSOLE_MAX_MODEL_TURNS = 20
+#: limiter -- the constants below exist to keep it reachable and to bound
+#: what it costs.
+CONSOLE_MAX_MODEL_TURNS = 30
 
 #: Step backstop. A fence round costs 3 steps (STEP_MODEL + STEP_TOOL_CALL +
 #: STEP_TOOL_RESULT) and the wrap-up reply costs 1, so N turns need
-#: 3*(N-1)+1 steps -- 58 at N=20. 64 clears that while staying a real
+#: 3*(N-1)+1 steps -- 88 at N=30. 96 clears that while staying a real
 #: backstop for native multi-call batches (1 + 2N steps per turn).
 #: `test_console_budget_step_cap_admits_a_full_model_turn_run` fails if this
 #: ever drops below the derived minimum.
-CONSOLE_MAX_STEPS = 64
+CONSOLE_MAX_STEPS = 96
 
-#: Wall-clock backstop for the whole run, at the slow local-model pace this
-#: gate exercises (25-50s per turn x CONSOLE_MAX_MODEL_TURNS).
-CONSOLE_MAX_WALL_SECONDS = 1200.0
+#: Wall-clock backstop, at the slow local-model pace this gate exercises
+#: (25-50s per turn x CONSOLE_MAX_MODEL_TURNS = 750-1500s at N=30).
+CONSOLE_MAX_WALL_SECONDS = 1800.0
+
+#: Cumulative prompt+completion spend ceiling. Sub-agents INHERIT the turn
+#: and step budget (agent_models.clamp_child_budget, operator decision
+#: 2026-07-25), so one message can reach 30 * (1 + max_subagents) = 90
+#: provider turns. The wall clock bounds that in time but not in spend; at a
+#: ~20k-token working prompt a runaway approaches ~1.8M tokens. This stops
+#: that while sitting far above any normal 30-turn run.
+CONSOLE_MAX_TOTAL_TOKENS = 1_000_000
 
 CONSOLE_RUN_BUDGET = RunBudget(
     max_steps=CONSOLE_MAX_STEPS,
     max_wall_seconds=CONSOLE_MAX_WALL_SECONDS,
     max_model_turns=CONSOLE_MAX_MODEL_TURNS,
+    max_total_tokens=CONSOLE_MAX_TOTAL_TOKENS,
 )
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}

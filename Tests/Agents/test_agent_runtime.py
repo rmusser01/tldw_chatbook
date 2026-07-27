@@ -866,3 +866,14 @@ def test_run_agent_loop_truncates_review_hook_refusal_in_history():
     assert "truncated" in content and "calculator" in content
 
 
+def test_console_budget_bounds_spend_not_only_time():
+    """Sub-agents inherit the turn budget by an explicit operator decision.
+
+    Worst case is max_model_turns * (1 + max_subagents) provider turns for
+    one message -- 90 at 30/2. The wall clock bounds that in TIME but not
+    in SPEND, so the Console budget carries a token ceiling.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
+
+    assert CONSOLE_RUN_BUDGET.max_model_turns == 30
+    assert CONSOLE_RUN_BUDGET.max_total_tokens > 0
