@@ -526,6 +526,145 @@ class TestChatFunction:
 
 @pytest.mark.unit
 class TestProviderRequestPayloads:
+    def test_gpt_5_6_defaults_to_chat_completions_with_function_tools(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Gets the weather.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model=None,
+            streaming=False,
+            max_tokens=512,
+            tools=[tool],
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/chat/completions"
+        assert captured["json"]["model"] == "gpt-5.6-terra"
+        assert captured["json"]["reasoning_effort"] == "none"
+        assert captured["json"]["max_completion_tokens"] == 512
+        assert "max_tokens" not in captured["json"]
+        assert "max_output_tokens" not in captured["json"]
+        assert captured["json"]["tools"] == [tool]
+
+    def test_gpt_5_6_none_reasoning_effort_uses_chat_completions(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model="gpt-5.6-terra",
+            streaming=False,
+            max_tokens=512,
+            reasoning_effort="none",
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/chat/completions"
+        assert captured["json"]["reasoning_effort"] == "none"
+        assert captured["json"]["max_completion_tokens"] == 512
+        assert "max_tokens" not in captured["json"]
+        assert "max_output_tokens" not in captured["json"]
+
+    def test_gpt_5_6_non_none_reasoning_effort_uses_responses_api(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, {"output_text": "OK"}),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model="gpt-5.6-terra",
+            streaming=False,
+            max_tokens=512,
+            reasoning_effort="high",
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/responses"
+        assert captured["json"]["max_output_tokens"] == 512
+        assert "max_completion_tokens" not in captured["json"]
+        assert captured["json"]["reasoning"] == {"effort": "high"}
+
+    @pytest.mark.parametrize(
+        ("reasoning_summary", "verbosity"),
+        [("auto", None), (None, "medium")],
+    )
+    def test_gpt_5_6_none_effort_with_responses_controls_uses_responses_api(
+        self, monkeypatch, reasoning_summary, verbosity
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, {"output_text": "OK"}),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model="gpt-5.6-terra",
+            streaming=False,
+            max_tokens=512,
+            reasoning_effort="none",
+            reasoning_summary=reasoning_summary,
+            verbosity=verbosity,
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/responses"
+        assert captured["json"]["max_output_tokens"] == 512
+        assert "max_completion_tokens" not in captured["json"]
+
     def test_openai_reasoning_uses_responses_api_and_normalizes_output(
         self, monkeypatch
     ):

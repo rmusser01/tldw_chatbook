@@ -187,14 +187,30 @@ def _is_present_setting(value: object) -> bool:
     return value is not None and str(value).strip() != ""
 
 
+def _is_openai_gpt_5_6_model(model: object) -> bool:
+    """Return whether ``model`` is an unprefixed OpenAI GPT-5.6 family ID."""
+    if not isinstance(model, str):
+        return False
+    normalized_model = model.strip().lower()
+    return normalized_model == "gpt-5.6" or normalized_model.startswith("gpt-5.6-")
+
+
+def _normalize_openai_reasoning_effort(value: object) -> Optional[str]:
+    """Return a normalized OpenAI reasoning effort, if one was provided."""
+    if not _is_present_setting(value):
+        return None
+    return str(value).strip().lower()
+
+
 def _openai_use_responses_api(
-    reasoning_effort: object,
+    normalized_reasoning_effort: Optional[str],
     reasoning_summary: object,
     verbosity: object,
 ) -> bool:
-    return any(
-        _is_present_setting(value)
-        for value in (reasoning_effort, reasoning_summary, verbosity)
+    return (
+        normalized_reasoning_effort not in {None, "none"}
+        or _is_present_setting(reasoning_summary)
+        or _is_present_setting(verbosity)
     )
 
 
@@ -509,7 +525,7 @@ def chat_with_openai(
 
     # Resolve parameters: User-provided > Function arg default > Config default > Hardcoded default
     final_model = (
-        model if model is not None else openai_config.get("model", "gpt-4o-mini")
+        model if model is not None else openai_config.get("model", "gpt-5.6-terra")
     )
     final_temp = (
         temp if temp is not None else float(openai_config.get("temperature", 0.7))
@@ -547,11 +563,15 @@ def chat_with_openai(
         api_messages.append({"role": "system", "content": system_message})
     api_messages.extend(input_data)
 
+    normalized_reasoning_effort = _normalize_openai_reasoning_effort(
+        reasoning_effort
+    )
     use_responses_api = _openai_use_responses_api(
-        reasoning_effort,
+        normalized_reasoning_effort,
         reasoning_summary,
         verbosity,
     )
+    is_gpt_5_6_model = _is_openai_gpt_5_6_model(final_model)
     payload = {
         "model": final_model,
         "stream": final_streaming,
@@ -578,6 +598,8 @@ def chat_with_openai(
             payload["top_p"] = final_top_p  # OpenAI uses top_p
     if final_max_tokens is not None and use_responses_api:
         payload["max_output_tokens"] = final_max_tokens
+    elif final_max_tokens is not None and is_gpt_5_6_model:
+        payload["max_completion_tokens"] = final_max_tokens
     elif final_max_tokens is not None:
         payload["max_tokens"] = final_max_tokens
     if frequency_penalty is not None:
@@ -609,8 +631,8 @@ def chat_with_openai(
         payload["tools"] = tools
     if use_responses_api:
         reasoning_options = {}
-        if _is_present_setting(reasoning_effort):
-            reasoning_options["effort"] = str(reasoning_effort).strip().lower()
+        if normalized_reasoning_effort is not None:
+            reasoning_options["effort"] = normalized_reasoning_effort
         if _is_present_setting(reasoning_summary):
             summary_value = str(reasoning_summary).strip().lower()
             if summary_value != "none":
@@ -619,6 +641,8 @@ def chat_with_openai(
             payload["reasoning"] = reasoning_options
         if _is_present_setting(verbosity):
             payload.setdefault("text", {})["verbosity"] = str(verbosity).strip().lower()
+    elif is_gpt_5_6_model:
+        payload["reasoning_effort"] = normalized_reasoning_effort or "none"
 
     # Then conditionally add tool_choice:
     if payload.get("tools") and tool_choice is not None:
