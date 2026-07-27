@@ -173,7 +173,9 @@ def build_server_ingest_kwargs(
         "media_type": media_type,
         "perform_chunking": chunk_enabled,
         "chunk_size": _coerce_int(
-            generic.get("chunk_size", _generic_default("chunk_size", DEFAULT_CHUNK_SIZE)),
+            generic.get(
+                "chunk_size", _generic_default("chunk_size", DEFAULT_CHUNK_SIZE)
+            ),
             DEFAULT_CHUNK_SIZE,
         ),
         "chunk_overlap": _coerce_int(
