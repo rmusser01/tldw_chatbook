@@ -768,11 +768,73 @@ def _non_colliding_mcp_names(
         The subset of ``mcp_provider.list_catalog()`` names not present in
         ``collision_names``, in catalog order.
     """
-    return tuple(
-        entry.name
-        for entry in mcp_provider.list_catalog()
-        if entry.name not in collision_names
+    non_colliding, _shadowed = _partition_mcp_catalog_by_collision(
+        mcp_provider, collision_names
     )
+    return non_colliding
+
+
+def shadowed_mcp_names(
+    mcp_provider: Any,
+    collision_names: frozenset[str] | set[str],
+) -> tuple[str, ...]:
+    """MCP tool names this run drops because a built-in owns the name.
+
+    The exact complement of ``_non_colliding_mcp_names``. Built-ins win
+    collisions deliberately -- letting the MCP side win would let a
+    compromised server name-squat an audited built-in like ``write_file``
+    and intercept calls the user believes are gated -- but a user whose
+    configured tool silently stops working has no way to discover why.
+
+    Both this function and ``_non_colliding_mcp_names`` delegate to
+    ``_partition_mcp_catalog_by_collision``, which walks the catalog once
+    and buckets every entry into exactly one side. That keeps the two
+    public results an exact partition by construction -- there is no
+    second copy of the ``entry.name in collision_names`` test to drift out
+    of sync as the collision rule evolves.
+
+    Args:
+        mcp_provider: A composed ``MCPToolProvider`` (or test double).
+        collision_names: Names owned by builtins, runtime tools, or skills.
+
+    Returns:
+        The dropped names, in catalog order.
+    """
+    _non_colliding, shadowed = _partition_mcp_catalog_by_collision(
+        mcp_provider, collision_names
+    )
+    return shadowed
+
+
+def _partition_mcp_catalog_by_collision(
+    mcp_provider: Any,
+    collision_names: frozenset[str] | set[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split an MCP provider's catalog into (non-colliding, shadowed) names.
+
+    The single place the collision predicate is evaluated. Both
+    ``_non_colliding_mcp_names`` and ``shadowed_mcp_names`` are thin views
+    onto this partition, so they can never disagree about which side a
+    given name falls on.
+
+    Args:
+        mcp_provider: A composed ``MCPToolProvider`` (or test double) whose
+            ``list_catalog()`` has already been built.
+        collision_names: Names that must never be treated as a distinct
+            MCP tool -- builtins, ``RUNTIME_TOOL_NAMES``, and this run's
+            own eligible skill names.
+
+    Returns:
+        A ``(non_colliding, shadowed)`` pair, each in catalog order, whose
+        union (in either order) reproduces the full catalog's names with
+        no overlap and no omission.
+    """
+    non_colliding: list[str] = []
+    shadowed: list[str] = []
+    for entry in mcp_provider.list_catalog():
+        bucket = shadowed if entry.name in collision_names else non_colliding
+        bucket.append(entry.name)
+    return tuple(non_colliding), tuple(shadowed)
 
 
 def _compose_run_registry_and_allowed(
@@ -839,6 +901,12 @@ def _compose_run_registry_and_allowed(
     if mcp_provider is not None:
         collision_names = set(builtin_names) | set(skill_names) | RUNTIME_TOOL_NAMES
         mcp_names = _non_colliding_mcp_names(mcp_provider, collision_names)
+        for shadowed in shadowed_mcp_names(mcp_provider, collision_names):
+            logger.warning(
+                "MCP tool {name} is shadowed by a built-in of the same name "
+                "and is not offered this run",
+                name=shadowed,
+            )
         if mcp_names:
             registry.register_provider(
                 _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names))
