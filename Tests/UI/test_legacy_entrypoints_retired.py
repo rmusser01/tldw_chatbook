@@ -83,7 +83,7 @@ RETIRED_MODULES = (
     # in the deleted chat_events.py send flow. worker_events.py itself
     # SURVIVES in reduced form -- it still defines chat_wrapper_function
     # (the sole live path is app.chat_wrapper, reached by MediaWindow_v2's
-    # media-analysis flow and by conv_char_events.py's CCP generators) and
+    # media-analysis flow) and
     # the StreamingChunk/StreamingChunkWithLogits/StreamDone message classes,
     # which are load-bearing internals of that kept function's stream-loop
     # and exception branches -- see test_task_577_pr2_pipeline_retired below
@@ -271,9 +271,8 @@ def test_task_577_pr2_pipeline_retired():
 
     ``worker_events.py`` is NOT in that list -- it SURVIVES in reduced form.
     Its ``chat_wrapper_function`` is still the live target reached via
-    ``app.chat_wrapper``, whose remaining callers are ``MediaWindow_v2.py``'s
-    media-analysis flow and ``conv_char_events.py``'s CCP generators (out of
-    577 scope). The ``StreamingChunk``/``StreamingChunkWithLogits``/
+    ``app.chat_wrapper``, whose remaining caller is ``MediaWindow_v2.py``'s
+    media-analysis flow. The ``StreamingChunk``/``StreamingChunkWithLogits``/
     ``StreamDone`` message classes are deliberately NOT pinned absent here --
     they are load-bearing internals of the kept function's streaming-loop and
     exception branches (adjudicated correct), not dead code. What IS

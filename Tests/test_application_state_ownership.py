@@ -102,6 +102,45 @@ LEGACY_CHAT_ROOT_MODULE_PATHS = (
     PRODUCTION_ROOT / "Event_Handlers" / "tab_initializers" / "chat_tab_initializer.py",
     PRODUCTION_ROOT / "Event_Handlers" / "worker_handlers" / "chat_worker_handler.py",
 )
+LEGACY_CCP_ROOT_NAMES = (
+    "ccp_active_view",
+    "ccp_api_provider_value",
+    "current_editing_character_id",
+    "current_editing_character_data",
+    "conv_char_sidebar_left_collapsed",
+    "conv_char_sidebar_right_collapsed",
+    "current_conv_char_tab_conversation_id",
+    "current_ccp_character_details",
+    "current_prompt_id",
+    "current_prompt_uuid",
+    "current_prompt_name",
+    "current_prompt_author",
+    "current_prompt_details",
+    "current_prompt_system",
+    "current_prompt_user",
+    "current_prompt_keywords_str",
+    "current_prompt_version",
+    "current_ccp_character_image",
+    "_conv_char_search_timer",
+    "_ccp_conversation_search_generation",
+)
+LEGACY_CCP_ROOT_METHOD_NAMES = (
+    "switch_ccp_center_view",
+    "_clear_prompt_fields",
+    "_load_prompt_for_editing",
+    "update_ccp_provider_reactive",
+    "_update_model_select",
+    "on_ccp_conversations_collapsible_toggle",
+    *(f"watch_{name}" for name in LEGACY_CCP_ROOT_NAMES),
+)
+LEGACY_CCP_HANDLER_PATHS = (
+    PRODUCTION_ROOT / "Event_Handlers" / "conv_char_events.py",
+    PRODUCTION_ROOT / "Event_Handlers" / "character_ingest_events.py",
+    PRODUCTION_ROOT / "Event_Handlers" / "prompt_ingest_events.py",
+    PRODUCTION_ROOT / "Event_Handlers" / "worker_handlers" / "ai_generation_handler.py",
+)
+INGEST_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "ingest_events.py"
+INGEST_UTILS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "ingest_utils.py"
 WORKER_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "worker_events.py"
 STUDY_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "study_screen.py"
 ARTIFACTS_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "artifacts_screen.py"
@@ -508,6 +547,65 @@ def test_legacy_chat_root_state_and_accessors_are_absent() -> None:
     assert violations == {}
 
 
+def test_legacy_ccp_prompt_root_state_and_accessors_are_absent() -> None:
+    """Reject CCP/prompt mirrors while allowing destination-owned state."""
+    violations: dict[
+        str, list[tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]]
+    ] = {}
+    for name in LEGACY_CCP_ROOT_NAMES:
+        occurrences = _occurrences(APP_PATH, name)
+        for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+            if path == APP_PATH:
+                continue
+            occurrences.extend(_root_app_occurrences(path, name))
+        if occurrences:
+            violations[name] = occurrences
+
+    for method_name in LEGACY_CCP_ROOT_METHOD_NAMES:
+        occurrences = _production_occurrences(method_name)
+        if occurrences:
+            violations[method_name] = occurrences
+
+    assert violations == {}
+
+
+def test_legacy_ccp_prompt_handlers_and_compatibility_exports_are_absent() -> None:
+    assert [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in LEGACY_CCP_HANDLER_PATHS
+        if path.exists()
+    ] == []
+
+    ingest_source = INGEST_EVENTS_PATH.read_text(encoding="utf-8")
+    assert "character_ingest_events" not in ingest_source
+    assert "prompt_ingest_events" not in ingest_source
+    assert "INGEST_BUTTON_HANDLERS" not in ingest_source
+
+    ingest_utils_source = INGEST_UTILS_PATH.read_text(encoding="utf-8")
+    for retired_name in (
+        "MAX_PROMPT_PREVIEWS",
+        "PROMPT_FILE_FILTERS",
+        "MAX_CHARACTER_PREVIEWS",
+        "CHARACTER_FILE_FILTERS",
+    ):
+        assert retired_name not in ingest_utils_source
+
+
+def test_tldw_cli_does_not_render_or_retain_prompt_bodies() -> None:
+    app_source = APP_PATH.read_text(encoding="utf-8")
+    prohibited_prompt_widget_ids = (
+        "#ccp-prompt-editor-view",
+        "#ccp-editor-prompt-",
+        "#prompt-import-",
+    )
+
+    assert all(
+        widget_id not in app_source for widget_id in prohibited_prompt_widget_ids
+    )
+    assert _occurrences(APP_PATH, "current_prompt_system") == []
+    assert _occurrences(APP_PATH, "current_prompt_user") == []
+
+
 def test_tldw_cli_neither_imports_nor_instantiates_app_state() -> None:
     tree = _parse(APP_PATH)
     imported: list[str] = []
@@ -816,6 +914,32 @@ def test_tldw_cli_constructor_invokes_runtime_loader_as_standalone_expression() 
 
     assert len(standalone_calls) == 1
     assert assigned_calls == []
+
+
+def test_retained_note_ingest_state_is_initialized_per_app_instance() -> None:
+    app_class = _class_definition(APP_PATH, "TldwCli")
+    constructor = _method_definition(app_class, "__init__")
+    class_annotations = {
+        statement.target.id: statement
+        for statement in app_class.body
+        if isinstance(statement, ast.AnnAssign)
+        and isinstance(statement.target, ast.Name)
+    }
+    constructor_assignments = [
+        target.attr
+        for statement in ast.walk(constructor)
+        if isinstance(statement, ast.Assign)
+        for target in statement.targets
+        if isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "self"
+    ]
+
+    assert class_annotations["selected_note_files_for_import"].value is None
+    assert constructor_assignments.count("selected_note_files_for_import") == 1
+    assert constructor_assignments.count("last_note_import_dir") == 1
+    assert "selected_notes_files_for_import" not in constructor_assignments
+    assert "last_notes_import_dir" not in constructor_assignments
 
 
 def test_runtime_policy_loader_has_exact_production_reference_allowlist() -> None:

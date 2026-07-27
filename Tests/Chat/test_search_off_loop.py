@@ -1,14 +1,12 @@
 """Tests for task-283: move debounced-search DB work off the event loop.
 
-Covers the three search leaves the perf audit (§P1 B4) identified as
+Covers the retained search leaves the perf audit (§P1 B4) identified as
 running sync sqlite/FTS work on the event loop when run_worker(coroutine)
 fires after a debounce:
 
   * Console browser search -- ChatConversationScopeService.list_conversations
     (chat_conversation_scope_service.py) and the raw-service branch in
     ChatScreen._persisted_console_browser_rows (chat_screen.py).
-  * CCP conversation search -- perform_ccp_conversation_search's DB leaf
-    (conv_char_events.py).
   * Media search -- perform_media_search_and_display's search_media_db call
     (media_events.py).
 
@@ -34,7 +32,7 @@ from textual.css.query import QueryError
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
-from tldw_chatbook.Event_Handlers import conv_char_events, media_events
+from tldw_chatbook.Event_Handlers import media_events
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -231,111 +229,6 @@ async def test_refresh_console_conversation_browser_search_discards_result_when_
     # before persisted rows returned (empty, since it starts as ()).
     assert screen._console_conversation_browser_total is None
     assert screen._console_conversation_browser_rows == ()
-
-
-# ---------------------------------------------------------------------------
-# CCP conversation search
-# ---------------------------------------------------------------------------
-
-
-class _CountingCcpDb:
-    def __init__(self, *, is_memory_db: bool, on_call=None):
-        self.is_memory_db = is_memory_db
-        self.calls = 0
-        self.thread_idents: list[int] = []
-        self._on_call = on_call
-
-    def _record(self):
-        self.calls += 1
-        self.thread_idents.append(threading.get_ident())
-        if self._on_call is not None:
-            self._on_call()
-
-    def list_all_active_conversations(self, *, limit=200):
-        self._record()
-        return [{"id": "conv-1", "title": "Alpha", "character_id": None}]
-
-    def get_conversations_for_character(self, *, character_id, limit=200):
-        self._record()
-        return []
-
-    def search_conversations_by_title(self, *, title_query, character_id, limit=200):
-        self._record()
-        return []
-
-    def search_conversations_by_content(self, term, *, limit=200):
-        return []
-
-    def search_keywords(self, term, *, limit=10):
-        return []
-
-    def get_conversations_for_keyword(self, keyword_id, *, limit=200):
-        return []
-
-    def get_character_card_by_id(self, character_id):
-        return None
-
-
-def _ccp_app(db: Any) -> _SelectorApp:
-    app = _selector_app(
-        **{
-            "#conv-char-search-input": _FakeInput(""),
-            "#conv-char-keyword-search-input": _FakeInput(""),
-            "#conv-char-tags-search-input": _FakeInput(""),
-            "#conv-char-search-include-character-checkbox": _FakeCheckbox(True),
-            "#conv-char-search-all-characters-checkbox": _FakeCheckbox(True),
-            "#conv-char-character-select": _FakeSelect(None),
-            "#conv-char-search-results-list": _FakeListView(),
-        }
-    )
-    app.notes_service = SimpleNamespace(_get_db=lambda user_id: db)
-    app.notes_user_id = "default_user"
-    app.loguru_logger = _real_logger
-    app._ccp_conversation_search_generation = 0
-    return app
-
-
-@pytest.mark.asyncio
-async def test_ccp_search_threads_file_backed_db():
-    db = _CountingCcpDb(is_memory_db=False)
-    app = _ccp_app(db)
-    caller_thread = threading.get_ident()
-
-    await conv_char_events.perform_ccp_conversation_search(app)
-
-    assert db.calls >= 1
-    assert all(ident != caller_thread for ident in db.thread_idents)
-    results_list = app.query_one("#conv-char-search-results-list", None)
-    assert len(results_list.items) == 1
-
-
-@pytest.mark.asyncio
-async def test_ccp_search_stays_inline_for_memory_backed_db():
-    db = _CountingCcpDb(is_memory_db=True)
-    app = _ccp_app(db)
-    caller_thread = threading.get_ident()
-
-    await conv_char_events.perform_ccp_conversation_search(app)
-
-    assert db.calls >= 1
-    assert all(ident == caller_thread for ident in db.thread_idents)
-
-
-@pytest.mark.asyncio
-async def test_ccp_search_discards_stale_generation():
-    def bump_generation():
-        app._ccp_conversation_search_generation += 1
-
-    db = _CountingCcpDb(is_memory_db=False, on_call=bump_generation)
-    app = _ccp_app(db)
-
-    await conv_char_events.perform_ccp_conversation_search(app)
-
-    results_list = app.query_one("#conv-char-search-results-list", None)
-    # The generation was bumped (simulating a newer search starting) while
-    # this search's DB work was off-thread -- its results must be dropped,
-    # leaving the list exactly where the pre-search clear() left it.
-    assert results_list.items == []
 
 
 # ---------------------------------------------------------------------------

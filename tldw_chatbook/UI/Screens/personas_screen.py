@@ -8,7 +8,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from loguru import logger
 from textual import on, work
@@ -17,6 +17,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.timer import Timer
+from textual.worker import Worker
 from textual.widgets import Button, Input, ListView, Static, TabbedContent, TextArea
 
 from ...Character_Chat.active_user_profile import (
@@ -187,6 +188,10 @@ from ...Character_Chat.character_generation_controller import (
 )
 from ..Persona_Modules.personas_preview_controller import PersonasPreviewController
 
+if TYPE_CHECKING:
+    from ...Character_Chat.expression_set_io import ExpressionSetApplyResult
+    from ...Chat.console_image_view import ConsoleImageRenderCache
+
 
 logger = logger.bind(module="PersonasScreen")
 
@@ -242,6 +247,7 @@ PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
 PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
+_PERSONAS_CHARACTER_IMPORT_WORKER_GROUP = "personas-character-import"
 
 # Character editor avatar thumbnail box, in character cells. Must stay in
 # sync with #personas-char-editor-avatar-thumb's CSS max-width/max-height in
@@ -5989,6 +5995,9 @@ class PersonasScreen(BaseAppScreen):
 
     async def _open_import_dialog(self) -> None:
         """Continuation for the guarded import action: launch the dialog worker."""
+        if self._active_character_import_worker() is not None:
+            self._notify("A character import is already in progress.", "information")
+            return
         if self._io_dialog_active:
             logger.debug(
                 "Import/export dialog already active; ignoring import request."
@@ -6002,6 +6011,7 @@ class PersonasScreen(BaseAppScreen):
         # (ccp_character_handler.handle_import).
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen
 
+        durable_import_started = False
         try:
             picker = EnhancedFileOpen(
                 title="Import Character Card",
@@ -6016,7 +6026,48 @@ class PersonasScreen(BaseAppScreen):
                 )
                 return
             if file_path:
-                await self._import_character_from_path(str(file_path))
+                if self._active_character_import_worker() is not None:
+                    self._notify(
+                        "A character import is already in progress.", "information"
+                    )
+                    return
+                self._start_character_import(str(file_path))
+                durable_import_started = True
+        finally:
+            if not durable_import_started:
+                self._io_dialog_active = False
+
+    def _active_character_import_worker(self) -> Worker[None] | None:
+        """Return the active app-owned character import, if any."""
+        for worker in self.app_instance.workers:
+            if (
+                worker.node is self.app_instance
+                and worker.group == _PERSONAS_CHARACTER_IMPORT_WORKER_GROUP
+                and not worker.is_finished
+            ):
+                return worker
+        return None
+
+    def _start_character_import(self, path: str) -> Worker[None]:
+        """Launch one durable character import owned by the application.
+
+        The worker carries the path in its coroutine; no domain payload or
+        result is mirrored onto ``TldwCli``. Application ownership only keeps
+        the durable operation alive while ``switch_screen`` unmounts the
+        initiating Personas screen.
+        """
+        active_worker = self._active_character_import_worker()
+        if active_worker is not None:
+            return active_worker
+        return self.app_instance.run_worker(
+            self._run_durable_character_import(path),
+            group=_PERSONAS_CHARACTER_IMPORT_WORKER_GROUP,
+        )
+
+    async def _run_durable_character_import(self, path: str) -> None:
+        """Complete a character import and release the initiating dialog slot."""
+        try:
+            await self._import_character_from_path(path)
         finally:
             self._io_dialog_active = False
 
@@ -6042,10 +6093,18 @@ class PersonasScreen(BaseAppScreen):
                 ccp_character_handler.import_character_card, path
             )
         except Exception as exc:
-            logger.opt(exception=True).error(
-                f"Error importing character card from {path}: {exc}"
+            file_type = Path(path).suffix.lower()
+            if file_type not in {".json", ".png", ".webp", ".md", ".markdown"}:
+                file_type = "other"
+            logger.error(
+                "Character import failed (file_type={}, category={}).",
+                file_type,
+                type(exc).__name__,
             )
-            self._notify(f"Import failed: {exc}", "error")
+            self._notify(
+                "Character import failed; verify the file and retry.",
+                "error",
+            )
             return
         if imported_id is None:
             self._notify(
@@ -6054,6 +6113,15 @@ class PersonasScreen(BaseAppScreen):
             )
             return
         imported_id = str(imported_id)
+        if (
+            not self.is_mounted
+            or self.app.screen is not self
+            or self.state.active_mode != "characters"
+        ):
+            # Durable import already settled. Presentation belongs only to the
+            # still-mounted Characters owner; a future Personas visit reloads
+            # the database rather than refreshing this stale screen instance.
+            return
         post_import_count = None
         if db is not None:
             try:
@@ -6074,7 +6142,11 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             pass
         await self.character_handler.refresh_character_list()
-        if not self.is_mounted or self.state.active_mode != "characters":
+        if (
+            not self.is_mounted
+            or self.app.screen is not self
+            or self.state.active_mode != "characters"
+        ):
             # The user left Characters mode while the import ran; the list is
             # refreshed but selection/center pane belong to the new mode.
             return
@@ -6088,6 +6160,12 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).debug(
                 "Could not resolve imported character name by id."
             )
+        if (
+            not self.is_mounted
+            or self.app.screen is not self
+            or self.state.active_mode != "characters"
+        ):
+            return
         name = str((loaded or {}).get("name") or "Imported character")
         await self._select_character(imported_id, name)
         # The selection changed outside _run_guarded; refresh the footer hints

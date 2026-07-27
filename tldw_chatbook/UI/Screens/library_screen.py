@@ -286,6 +286,7 @@ _LIBRARY_PROMPT_IMPORT_PARSERS = {
     ".md": parse_markdown_prompts_from_content,
     ".txt": parse_txt_prompts_from_content,
 }
+_LIBRARY_PROMPTS_IMPORT_WORKER_GROUP = "library-prompts-import"
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
 LIBRARY_SERVICE_UNAVAILABLE_COPY = (
     "Library source services are unavailable in this runtime."
@@ -9712,34 +9713,49 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._start_library_prompts_import()
 
-    def _start_library_prompts_import(self) -> None:
+    def _start_library_prompts_import(self) -> Worker[None] | None:
         """Validate the Import row has a non-blank path, then run the import worker.
 
-        Worker-executed (exclusive, its own group) since it performs file
-        IO plus one or more service calls per parsed prompt -- never
-        inline on the UI thread. A blank path is a quiet inline status
-        line, matching every other Library form's "nothing to do yet"
-        gate (e.g. ``_submit_library_ingest_form``'s blank-path notice).
+        Worker-executed (one app-owned slot) since it performs file IO plus
+        one or more service calls per parsed prompt -- never inline on the UI
+        thread. App ownership lets the batch finish if its initiating screen
+        is unmounted. A blank path is a quiet inline status line, matching
+        every other Library form's "nothing to do yet" gate (e.g.
+        ``_submit_library_ingest_form``'s blank-path notice).
         """
         if self._library_prompts_view != "list":
-            return
+            return None
         raw_path = self._library_prompts_import_path.strip()
         if not raw_path:
             self._apply_library_prompts_import_status(
                 "Please enter a file or folder path."
             )
-            return
-        self.run_worker(
+            return None
+        for worker in self.app_instance.workers:
+            if (
+                worker.node is self.app_instance
+                and worker.group == _LIBRARY_PROMPTS_IMPORT_WORKER_GROUP
+                and not worker.is_finished
+            ):
+                self._apply_library_prompts_import_status(
+                    "A prompt import is already in progress."
+                )
+                return worker
+        return self.app_instance.run_worker(
             self._run_library_prompts_import(raw_path),
-            exclusive=True,
-            group="library_prompts_import",
+            group=_LIBRARY_PROMPTS_IMPORT_WORKER_GROUP,
         )
 
     def _apply_library_prompts_import_status(self, text: str) -> None:
         """Set the Import row's outcome line and recompose to show it."""
+        if (
+            not self.is_mounted
+            or self.app.screen is not self
+            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS
+        ):
+            return
         self._library_prompts_import_status = text
-        if self.is_mounted:
-            self.refresh(recompose=True)
+        self.refresh(recompose=True)
 
     async def _run_library_prompts_import(self, raw_path: str) -> None:
         """Import prompts from a file or folder path, skipping duplicate names.
@@ -9777,9 +9793,10 @@ class LibraryScreen(BaseAppScreen):
             validated_path = validate_path_simple(
                 Path(raw_path).expanduser(), require_exists=True
             )
-        except ValueError:
-            logger.opt(exception=True).warning(
-                f"Rejected Library prompts import path {raw_path!r}."
+        except ValueError as exc:
+            logger.warning(
+                "Library prompt import path rejected (category={}).",
+                type(exc).__name__,
             )
             self._apply_library_prompts_import_status(
                 "Could not find that file or folder."
@@ -9794,14 +9811,16 @@ class LibraryScreen(BaseAppScreen):
                     if child.is_file()
                     and child.suffix.lower() in _LIBRARY_PROMPT_IMPORT_PARSERS
                 )
-            except Exception:
+            except Exception as exc:
                 # Same quiet-status pattern as the per-file read below --
                 # e.g. a folder whose permissions were revoked after the
                 # path-validation check above (TOCTOU) must surface an
                 # honest outcome line, never hang or silently report
                 # "No supported prompt files found."
-                logger.opt(exception=True).warning(
-                    f"Could not enumerate Library prompt import folder '{validated_path}'."
+                logger.warning(
+                    "Library prompt folder enumeration failed "
+                    "(category={}).",
+                    type(exc).__name__,
                 )
                 self._apply_library_prompts_import_status("Could not read that folder.")
                 return
@@ -9839,9 +9858,12 @@ class LibraryScreen(BaseAppScreen):
                     file_path.read_text, encoding="utf-8", errors="strict"
                 )
                 parsed_prompts = parser(content)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Could not parse Library prompt import file '{file_path}'; skipping it whole."
+            except Exception as exc:
+                logger.warning(
+                    "Library prompt import parse failed "
+                    "(file_type={}, category={}).",
+                    file_path.suffix.lower(),
+                    type(exc).__name__,
                 )
                 continue
 
@@ -9906,14 +9928,26 @@ class LibraryScreen(BaseAppScreen):
                         keywords=keywords,
                         isolate_in_worker=True,
                     )
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        f"Failed to import Library prompt '{name}' from '{file_path}'."
+                except Exception as exc:
+                    logger.warning(
+                        "Library prompt save failed "
+                        "(file_type={}, category={}).",
+                        file_path.suffix.lower(),
+                        type(exc).__name__,
                     )
                     failed += 1
                     continue
                 imported += 1
 
+        if (
+            not self.is_mounted
+            or self.app.screen is not self
+            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS
+        ):
+            # Durable saves above are complete. A stale screen must not update
+            # presentation or refresh a snapshot; the next Library owner
+            # loads the saved prompts from the scope service.
+            return
         self._library_prompts_import_path = ""
         status = f"{imported} imported · {skipped} skipped (duplicate name)"
         if failed:
