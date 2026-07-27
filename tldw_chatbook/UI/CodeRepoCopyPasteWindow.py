@@ -989,7 +989,19 @@ class CodeRepoCopyPasteWindow(ModalScreen):
 
     @work(thread=True)
     async def _export_to_zip_worker(self, selected_files: List[str]) -> None:
-        """Worker to export selected files to ZIP."""
+        """Worker to export selected files to ZIP.
+
+        TASK-981 cross-event-loop audit: this worker genuinely awaits
+        ``self.api_client.get_files_content_batch(...)``, so it stays
+        ``async def``. It shares ``self.api_client`` (a ``GitHubAPIClient``)
+        with app-loop handlers such as ``load_repository`` -- that WAS a
+        real cross-loop hazard (the client's cached ``httpx.AsyncClient``
+        got built on whichever loop touched it first and then reused from
+        the other), fixed at the source in
+        ``GitHubAPIClient.client``/``close`` (see ``Utils/github_api_client.py``),
+        which now scopes the cached client to the currently running loop
+        instead of caching a single instance across loops.
+        """
         try:
             # Show loading state
             self.loading_message = "Preparing ZIP export..."
@@ -1123,7 +1135,13 @@ class CodeRepoCopyPasteWindow(ModalScreen):
 
     @work(thread=True)
     async def load_node_children(self, node_path: str) -> None:
-        """Load children for a specific directory node."""
+        """Load children for a specific directory node.
+
+        TASK-981 cross-event-loop audit: genuinely awaits
+        ``self.api_client.get_directory_contents(...)`` on the same shared
+        ``GitHubAPIClient`` as ``_export_to_zip_worker`` above and the
+        app-loop handlers -- same fix, see the note there.
+        """
         try:
             branch = self.query_one("#branch-selector", Select).value
 

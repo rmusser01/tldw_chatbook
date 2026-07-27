@@ -378,7 +378,17 @@ class MultiItemReviewWindow(Container):
     async def _generate_analyses_worker(
         self, prompt: str, items: List[Dict[str, Any]], save: bool
     ) -> None:
-        """Worker to generate analyses for multiple items."""
+        """Worker to generate analyses for multiple items.
+
+        TASK-981 cross-event-loop audit: this worker genuinely awaits
+        (``asyncio.sleep``, ``_generate_single_analysis`` -> LLM call), so it
+        stays ``async def``. Everything it awaits is created fresh inside
+        this call graph -- no asyncio ``Lock``/``Event``/``Queue`` or cached
+        client shared with the app's event loop is touched, so the fact
+        that Textual runs this coroutine on its own throwaway loop (via
+        ``asyncio.run()`` inside ``Worker._run_threaded``) is not a hazard
+        here. Safe as-is.
+        """
         total_items = len(items)
         progress_bar = self.query_one("#analysis-progress", ProgressBar)
         progress_label = self.query_one("#progress-label", Static)

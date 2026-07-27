@@ -65,11 +65,18 @@ class CCPMessageManager:
             logger.opt(exception=True).error(f"Error clearing messages: {e}")
 
     @work(thread=True)
-    async def load_conversation_messages(self, conversation_id: ConversationId) -> None:
+    def load_conversation_messages(self, conversation_id: ConversationId) -> None:
         """Load and display messages for a conversation.
 
         Args:
             conversation_id: The ID of the conversation to load messages for
+
+        Plain ``def`` (not ``async def``) on purpose: this body is entirely
+        synchronous (a sync DB read plus ``self.window.call_from_thread``
+        calls) and contains no ``await``. TASK-981 cross-event-loop audit:
+        as ``async def``, Textual's ``@work(thread=True)`` would route this
+        through ``asyncio.run()`` on the worker thread purely to run
+        synchronous code -- a whole throwaway event loop bought nothing.
         """
         logger.info(f"Loading messages for conversation {conversation_id}")
 

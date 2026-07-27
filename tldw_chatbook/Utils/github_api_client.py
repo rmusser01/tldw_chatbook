@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 from typing import Optional, List, Dict, Any
+import asyncio
 import base64
 import re
 import os
 import time
 import hashlib
 import sys
+import weakref
 
 import httpx
 from loguru import logger
@@ -56,6 +58,24 @@ class GitHubAPIClient:
 
         self.base_url = "https://api.github.com"
         self._client: Optional[httpx.AsyncClient] = None
+        # The event loop that ``self._client`` was constructed on, if known.
+        # Mirrors whichever entry in ``_loop_clients`` was most recently
+        # resolved -- kept for the "unknown loop" escape hatch (see the
+        # ``client`` property) and for introspection.
+        self._client_loop: Optional[asyncio.AbstractEventLoop] = None
+        # Per-loop client cache: every event loop that is *currently alive*
+        # and has touched ``client`` gets its own ``httpx.AsyncClient``, so
+        # that two loops alive at the same time (the app's long-lived loop
+        # and a `@work(thread=True)` worker's throwaway loop) never fight
+        # over -- or close -- each other's client. Keyed by the loop object
+        # itself via a ``WeakKeyDictionary`` so an entry can be reclaimed as
+        # soon as nothing else references that loop; pruned proactively in
+        # ``_prune_closed_loops`` (below) so a long-running process that
+        # spawns many short-lived worker loops over time doesn't accumulate
+        # dead entries waiting on GC.
+        self._loop_clients: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]" = (
+            weakref.WeakKeyDictionary()
+        )
 
         # Load config settings
         self.enable_rate_limit_handling = get_cli_setting(
@@ -83,23 +103,172 @@ class GitHubAPIClient:
 
     @property
     def client(self) -> httpx.AsyncClient:
-        """Get or create the HTTP client."""
-        if self._client is None:
-            headers = {
-                "Accept": "application/vnd.github.v3+json",
-                "User-Agent": "tldw-chatbook-repo-selector",
-            }
-            if self.token:
-                headers["Authorization"] = f"token {self.token}"
+        """Get or create the HTTP client, scoped to the current event loop.
 
-            self._client = httpx.AsyncClient(headers=headers, timeout=30.0)
-        return self._client
+        ``httpx.AsyncClient`` pins its connection pool/transport to whichever
+        asyncio event loop is running when it is constructed. This client is
+        shared by a single ``GitHubAPIClient`` instance that is used both
+        from the app's long-lived event loop and from the short-lived,
+        throwaway loops that Textual creates for ``@work(thread=True)``
+        workers decorated with ``async def`` (``Worker._run_threaded`` routes
+        those through ``asyncio.run()``, which closes that loop when the
+        worker returns). Reusing a single cached instance across those loops
+        produces ``RuntimeError: Event loop is closed`` / "attached to a
+        different loop" errors, or hangs.
+
+        Guard against that with a per-loop cache (``_loop_clients``): every
+        currently running loop that touches this property gets its own
+        client, so an app-loop request in flight and a worker-loop request
+        running concurrently never fight over, or close, each other's
+        client -- unlike invalidating a single cached slot, which would
+        require discarding (and scheduling a close of) whichever client the
+        *other*, still-live loop was using. Entries for loops that have
+        since closed are pruned so the cache cannot grow unboundedly across
+        many worker invocations. If ``_client_loop`` is unknown (e.g. a test
+        injected ``_client`` directly without going through this property)
+        we trust the cached client as-is rather than second-guessing it.
+
+        Returns:
+            The ``httpx.AsyncClient`` bound to the caller's current event
+            loop (or the legacy single-slot ``_client`` when no loop is
+            running, or when it was injected without a known owning loop).
+        """
+        try:
+            loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is None:
+            # No running loop to key by -- trust whatever is cached (sync
+            # context, or a test that injected ``_client`` directly).
+            if self._client is None:
+                self._client = self._build_client()
+            return self._client
+
+        self._prune_closed_loops()
+
+        cached = self._loop_clients.get(loop)
+        if cached is not None:
+            self._client, self._client_loop = cached, loop
+            return cached
+
+        if self._client is not None and self._client_loop is None:
+            # Unknown-loop escape hatch: a test (or caller) injected
+            # ``_client`` directly without going through this property, so
+            # we don't know which loop it "belongs" to. Trust it once, and
+            # adopt it into the per-loop cache for the loop that is
+            # actually running now so later calls on this same loop reuse
+            # it instead of rebuilding.
+            self._loop_clients[loop] = self._client
+            self._client_loop = loop
+            return self._client
+
+        new_client = self._build_client()
+        self._loop_clients[loop] = new_client
+        self._client, self._client_loop = new_client, loop
+        return new_client
+
+    def _build_client(self) -> httpx.AsyncClient:
+        """Construct a fresh ``httpx.AsyncClient`` with this instance's headers."""
+        headers = {
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "tldw-chatbook-repo-selector",
+        }
+        if self.token:
+            headers["Authorization"] = f"token {self.token}"
+        return httpx.AsyncClient(headers=headers, timeout=30.0)
+
+    def _prune_closed_loops(self) -> None:
+        """Drop ``_loop_clients`` entries whose owning loop has closed.
+
+        ``WeakKeyDictionary`` alone would eventually reclaim these once the
+        loop object itself is garbage collected, but asyncio loops can take
+        a while to be collected (reference cycles via internal callbacks),
+        and nothing here needs to keep an already-closed loop's entry
+        around -- there is nothing left to gracefully close on it (see
+        ``_schedule_close``). Pruning proactively on every access bounds
+        the cache's size even under many short-lived worker loops.
+        """
+        for stale_loop in [lp for lp in self._loop_clients if lp.is_closed()]:
+            del self._loop_clients[stale_loop]
+
+    def _schedule_close(
+        self, client: httpx.AsyncClient, loop: asyncio.AbstractEventLoop
+    ) -> None:
+        """Best-effort close ``client`` on ``loop`` without blocking the caller.
+
+        If ``loop`` is already closed there is nothing left to gracefully
+        close -- the reference is simply dropped and the client's own
+        finalizer will release its sockets. Otherwise the close is
+        scheduled via ``run_coroutine_threadsafe``; the returned
+        ``Future`` is kept and given a done-callback that logs any
+        exception, so a failed close on another loop is never silent.
+        """
+        if loop.is_closed():
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(client.aclose(), loop)
+        except RuntimeError:
+            logger.debug(
+                "Could not schedule close of stale GitHub HTTP client; "
+                "owning loop is unavailable"
+            )
+            return
+
+        def _log_close_failure(fut) -> None:
+            try:
+                exc = fut.exception()
+            except Exception:
+                # Cancelled or otherwise unable to retrieve the exception --
+                # nothing more we can do here.
+                return
+            if exc is not None:
+                logger.opt(exception=exc).warning(
+                    "Failed to close a stale GitHub HTTP client on its owning loop: {}",
+                    exc,
+                )
+
+        future.add_done_callback(_log_close_failure)
 
     async def close(self) -> None:
-        """Close the HTTP client."""
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+        """Close the HTTP client(s) owned by this instance.
+
+        The client bound to the caller's current running loop is closed
+        directly (safe, since we are already running on that loop). Every
+        other cached per-loop client -- e.g. one built earlier by the app's
+        long-lived loop, or by a different worker's throwaway loop that is
+        still alive -- is closed best-effort via ``run_coroutine_threadsafe``
+        on its own loop; we never await, and never close, a client bound to
+        a loop we are not currently running on.
+        """
+        try:
+            loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        self._prune_closed_loops()
+
+        current_client: Optional[httpx.AsyncClient] = None
+        if loop is not None:
+            current_client = self._loop_clients.pop(loop, None)
+            if current_client is None and self._client is not None and self._client_loop is None:
+                # Unknown-loop escape hatch, mirroring the ``client``
+                # property: an injected ``_client`` with no known owning
+                # loop is treated as belonging to whichever loop is calling
+                # ``close()`` now.
+                current_client = self._client
+
+        for other_loop, other_client in list(self._loop_clients.items()):
+            if other_client is current_client:
+                continue
+            self._schedule_close(other_client, other_loop)
+        self._loop_clients.clear()
+
+        if current_client is not None and loop is not None:
+            await current_client.aclose()
+
+        self._client = None
+        self._client_loop = None
 
     def clear_cache(self) -> None:
         """Clear all cached responses."""
@@ -543,8 +712,6 @@ class GitHubAPIClient:
         Returns:
             Dictionary mapping file paths to content
         """
-        import asyncio
-
         results = {}
         errors = {}
         semaphore = asyncio.Semaphore(self.max_concurrent_requests)

@@ -210,9 +210,9 @@ class SwarmUIWidget(Container):
             is_online = await self.service.initialize()
             return "online" if is_online else "offline"
 
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             status = loop.run_until_complete(check())
             self.server_status = status
 
@@ -223,6 +223,12 @@ class SwarmUIWidget(Container):
             logger.error(f"Error checking server status: {e}")
             self.server_status = "offline"
             self.app.call_from_thread(self.update_status_indicator, "offline")
+        finally:
+            # Deterministically release this thread's throwaway loop --
+            # left unclosed, every status check leaked its selector/epoll
+            # resources (see Finding 4, TASK-981).
+            loop.close()
+            asyncio.set_event_loop(None)
 
     def update_status_indicator(self, status: str) -> None:
         """Update the status indicator."""
@@ -254,9 +260,9 @@ class SwarmUIWidget(Container):
         async def get_models():
             return await self.service.get_available_models()
 
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             models = loop.run_until_complete(get_models())
 
             if models:
@@ -265,6 +271,12 @@ class SwarmUIWidget(Container):
 
         except Exception as e:
             logger.error(f"Error loading models: {e}")
+        finally:
+            # Deterministically release this thread's throwaway loop --
+            # left unclosed, every model load leaked its selector/epoll
+            # resources (see Finding 4, TASK-981).
+            loop.close()
+            asyncio.set_event_loop(None)
 
     def update_model_selector(self, models: List[str]) -> None:
         """Update the model selector with available models."""
@@ -355,14 +367,31 @@ class SwarmUIWidget(Container):
         )
 
     @work(exclusive=True, thread=True)
-    async def generate_image(self) -> None:
-        """Generate an image based on current settings."""
+    def generate_image(self) -> None:
+        """Generate an image based on current settings.
+
+        Plain ``def`` (not ``async def``) on purpose: this body never uses
+        ``await`` -- it bridges to the async ``ImageGenerationService`` via
+        its own ``asyncio.new_event_loop()``/``run_until_complete()``, the
+        same pattern already used by ``check_server_status`` and
+        ``load_models`` above. That matters here specifically because
+        Textual's ``@work(thread=True)`` wraps an ``async def`` worker in
+        its own ``asyncio.run()`` on the worker thread (see
+        ``Worker._run_threaded``); nesting another ``run_until_complete()``
+        loop inside a coroutine that ``asyncio.run()`` is already driving
+        raises ``RuntimeError: Cannot run the event loop while another loop
+        is running`` on every call. A plain ``def`` worker is invoked
+        directly (no enclosing loop), so its internal loop is the only one.
+        """
         if self.is_generating:
             return
 
         self.is_generating = True
         self.app.call_from_thread(self.show_generating_ui)
 
+        import asyncio
+
+        loop: Optional[asyncio.AbstractEventLoop] = None
         try:
             # Get parameters from UI
             prompt = self.query_one("#prompt-input", TextArea).text.strip()
@@ -390,8 +419,6 @@ class SwarmUIWidget(Container):
             seed = int(self.query_one("#seed-input", Input).value or "-1")
 
             # Generate image
-            import asyncio
-
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
@@ -433,6 +460,14 @@ class SwarmUIWidget(Container):
             self.post_message(ImageGenerationMessage(False, [], str(e)))
 
         finally:
+            if loop is not None:
+                # Deterministically release this thread's throwaway loop --
+                # left unclosed, every generation leaked its selector/epoll
+                # resources (see Finding 4, TASK-981). Runs on every exit
+                # path (success, the "no prompt" early return, and any
+                # exception from `service.generate_custom`).
+                loop.close()
+                asyncio.set_event_loop(None)
             self.is_generating = False
             self.app.call_from_thread(self.hide_generating_ui)
 
