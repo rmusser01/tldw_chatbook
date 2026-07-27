@@ -1476,12 +1476,14 @@ async def _capture_local_pipeline_results(
         normalized: list[NormalizedLocalResult] = []
         rejected_count = 0
         off_selection_count = 0
+        canonical_candidate_seen = False
         for candidate_rank, result in enumerate(results, start=1):
             try:
                 candidate = normalize_local_result(
                     result,
                     candidate_rank=candidate_rank,
                 )
+                canonical_candidate_seen = True
                 if candidate.source_kind not in selected_source_kind_set:
                     off_selection_count += 1
                     continue
@@ -1522,7 +1524,12 @@ async def _capture_local_pipeline_results(
         )
         context = formatted.context if formatted.context.strip() else None
         repair_contract = _repair_contract_for_local_evidence(formatted)
-        if context is None and legacy_context and legacy_context.strip():
+        if (
+            context is None
+            and not canonical_candidate_seen
+            and legacy_context
+            and legacy_context.strip()
+        ):
             logger.info("RAG context retained; reason=legacy_pipeline_fallback")
             return LocalRagContextResult(legacy_context, None)
         if builder is None:

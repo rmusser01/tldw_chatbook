@@ -1585,6 +1585,46 @@ async def test_empty_retrieval_records_run_but_returns_no_prompt_id(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_current_authority_exclusion_does_not_revive_legacy_with_builder(
+    monkeypatch,
+):
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository, media_ids=())
+    _patch_pipeline(
+        monkeypatch,
+        [_ranked_result(result_id="deleted-media")],
+        "LEGACY CONTEXT MUST NOT REVIVE DELETED MEDIA",
+    )
+
+    captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+    assert captured.context is None
+    assert captured.citation_builder is repository.builders[0]
+    assert captured.prompt_evidence_set_id is None
+    assert captured.citation_repair_contract is None
+    assert len(captured.citation_builder.evidence_runs) == 1
+    assert captured.citation_builder.evidence_run_payloads[0].candidates == ()
+    assert captured.citation_builder.prompt_evidence_sets == ()
+
+
+@pytest.mark.asyncio
+async def test_current_authority_exclusion_does_not_revive_legacy_without_builder(
+    monkeypatch,
+):
+    app = _CaptureApp(media_ids=())
+    _patch_pipeline(
+        monkeypatch,
+        [_ranked_result(result_id="deleted-media")],
+        "LEGACY CONTEXT MUST NOT REVIVE DELETED MEDIA",
+    )
+
+    captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+    assert captured == cre.LocalRagContextResult(None, None)
+    assert captured.citation_repair_contract is None
+
+
+@pytest.mark.asyncio
 async def test_prompt_authority_failure_returns_no_context_builder_or_prompt_id(
     monkeypatch,
 ):
@@ -1745,6 +1785,39 @@ async def test_off_selection_source_is_excluded_before_authorization_and_capture
     assert [entry.marker_ordinal for entry in prompt.entries] == [1]
     rendered_logs = "".join(str(message) for message in captured_logs)
     assert sentinel not in rendered_logs
+
+
+@pytest.mark.asyncio
+async def test_unselected_supported_source_does_not_revive_legacy_context(monkeypatch):
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository)
+    note_result = {
+        "source": "note",
+        "id": "n1",
+        "title": "Unselected note",
+        "content": "must remain excluded",
+        "score": 0.9,
+        "metadata": {},
+    }
+    assert (
+        normalize_local_result(note_result, candidate_rank=1).source_kind
+        is CanonicalSourceKind.NOTES
+    )
+    _patch_pipeline(
+        monkeypatch,
+        [note_result],
+        "LEGACY CONTEXT MUST NOT EXPAND TO NOTES",
+    )
+
+    captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+    assert captured.context is None
+    assert captured.citation_builder is repository.builders[0]
+    assert captured.prompt_evidence_set_id is None
+    assert captured.citation_repair_contract is None
+    assert len(captured.citation_builder.evidence_runs) == 1
+    assert captured.citation_builder.evidence_run_payloads[0].candidates == ()
+    assert captured.citation_builder.prompt_evidence_sets == ()
 
 
 @pytest.mark.asyncio
