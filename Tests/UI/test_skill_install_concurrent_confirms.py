@@ -173,3 +173,88 @@ def test_stale_request_id_with_both_rounds_live_resolves_neither(controller):
     t2.join(timeout=5)
     assert results["one"] is True
     assert results["two"] is False
+
+
+def test_shutdown_denies_every_armed_round_with_real_session_ids(controller):
+    """Fix round 2 (review): mirrors `test_skill_script_concurrent_confirms
+    .test_shutdown_denies_every_armed_round`, but for install and with two
+    DIFFERENT REAL session ids throughout (never `session_id=None`).
+
+    `_is_session_cancelled` checks ONLY the round's own
+    `_active_cancel_events` entry when `session_id is not None` -- it never
+    reads the bare `_shutdown_requested` flag in that branch (see that
+    method's own docstring: "when session_id is known, check ONLY that
+    session's own _active_cancel_events entry -- never the shared flag").
+    `shutdown()`'s actual body (see its docstring/source) reaches a
+    real-session round by calling `_signal_stop(session_id=...)` for every
+    session it finds in `_active_stream_tasks` -- reproduced directly here
+    (rather than driving the full async `shutdown()` coroutine, which also
+    cancels/awaits real `asyncio.Task` objects unrelated to this check)
+    since that per-session fanout is the ONLY mechanism a real-session
+    confirm bridge ever observes teardown through. Pre-populates each
+    session's `_active_cancel_events` entry first, mirroring what
+    `_run_agent_reply` already does at a real run's start (see
+    `test_own_session_cancel_event_denies_the_round` in
+    `test_console_skill_install_confirm.py` for the identical single-round
+    setup) -- `_signal_stop` itself is a no-op for a session with no
+    registered event yet.
+    """
+    controller._active_cancel_events[controller.session_a] = threading.Event()
+    controller._active_cancel_events[controller.session_b] = threading.Event()
+
+    results = {}
+    t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
+    t2 = _arm(controller, "https://x/two", controller.session_b, results, "two")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 2)
+
+    # Mirrors `shutdown()`'s own body: the global flag first, then the
+    # per-session cancel-event fanout for every live session.
+    controller._shutdown_requested.set()
+    controller._signal_stop(session_id=controller.session_a)
+    controller._signal_stop(session_id=controller.session_b)
+
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+    assert results["one"] is False
+    assert results["two"] is False
+    assert controller.pending_skill_install_ids() == []
+
+
+def test_bare_shutdown_flag_alone_does_not_deny_a_real_session_round(controller):
+    """Fix round 2 finding (evidence, not a desired-behavior pin): the bare
+    `_shutdown_requested` flag alone -- WITHOUT the per-session
+    `_signal_stop` fanout `shutdown()` normally performs -- does NOT deny a
+    round armed with a real `session_id`. This is a pre-existing property
+    of `_is_session_cancelled` shared by all three approval/confirm bridges
+    (MCP, skill-install, skill-script) -- not introduced by TASK-910's
+    install-bridge conversion, and not exercised by the sibling
+    `test_shutdown_denies_every_armed_round` tests (both MCP's and
+    script's use `session_id=None`, whose fallback branch DOES read
+    `_shutdown_requested` directly -- see `_is_session_cancelled`'s
+    docstring). A real production `shutdown()` call still correctly
+    reaches a real-session round via its per-session `_signal_stop` fanout
+    (see the sibling test above) as long as that session is already present
+    in `_active_stream_tasks` at the moment `shutdown()` snapshots it --
+    the narrow gap this test documents is the (pre-existing, cross-bridge)
+    race window where it is not yet. Still fails CLOSED, never open: the
+    round is never auto-approved, only left waiting until its own confirm
+    timeout -- proven below with a shortened timeout so this stays fast.
+    """
+    controller.skill_install_confirm_timeout_seconds = lambda: 0.3
+    results = {}
+    t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
+
+    controller._shutdown_requested.set()  # global flag only -- no per-session fanout
+    time.sleep(0.1)
+    assert t1.is_alive(), (
+        "a real-session round was denied by the bare _shutdown_requested "
+        "flag alone with no per-session _signal_stop fanout -- if this now "
+        "fails, _is_session_cancelled's real-session branch changed to "
+        "read the shared flag; update this test (and its docstring) to "
+        "match the new, presumably-safer, behavior"
+    )
+
+    t1.join(timeout=2.0)  # released by its own shortened confirm timeout
+    assert results["one"] is False  # still fails closed, never auto-approved
