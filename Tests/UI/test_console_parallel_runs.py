@@ -433,8 +433,8 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
       the DOM (`ConsoleSessionSurface.compose` yields it once, not
       per-session), toggled via its own `.display` flag rather than
       mount/unmount. "Not mounted" is therefore verified as `display is
-      False`, matching `ChatApprovalCard.set_batch`/`set_approval`'s own
-      visibility convention.
+      False`, matching `ChatApprovalCard.set_batch`'s own visibility
+      convention.
     - `ChatScreen._park_console_approval(session_id)` is the seam this
       task adds -- the UI-thread half of the park path (flag + toast),
       wired as `ConsoleChatController.park_pending_approval` and invoked
@@ -643,6 +643,207 @@ async def test_fleet_summary_line_is_reachable_on_the_live_rendered_surface() ->
         ) == ""
 
 
+def _agent_section_open(console) -> bool:
+    """True if the Agent rail section body is currently displayed."""
+    body = console.query_one("#console-rail-section-body-agent")
+    return body.styles.display != "none"
+
+
+def _no_persisted_agent_open_true(console) -> None:
+    """Assert no stored rail preference has ``agent_open: True``.
+
+    TASK-915 AC2: the auto-open force (`_apply_fleet_agent_section_auto_
+    open`) must never write to the persisted preference store -- only the
+    RENDERED rail state it returns changes. Walking every stored key (not
+    just the active session's) catches a leak through any scope, not only
+    the one under test.
+    """
+    for stored in console._console_rail_state_config().values():
+        assert isinstance(stored, dict)
+        assert stored.get("agent_open") is not True, (
+            f"persisted rail preference was force-written open: {stored!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_manual_collapse_of_agent_section_sticks_across_busy_payload_changes() -> (
+    None
+):
+    """TASK-915 AC1: collapsing the Agent section while the fleet is busy
+    must stick across a later agent-section payload change WITHIN that same
+    busy window (e.g. a second background run starting) -- not just until
+    the next 0.2s sync tick recomputes the force.
+
+    Pre-fix, `_sync_console_agent_section`'s `section_open` came straight
+    from `_current_console_rail_state().agent_open`, which re-ran
+    `_apply_fleet_agent_section_auto_open` on every call -- so the very next
+    payload-changing event (unrelated to the section itself) silently
+    re-forced the section open again.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background_a = controller.new_session().id
+        store.switch_session(viewed)
+
+        # Fleet goes busy -- the section force-opens (round 2 behavior,
+        # unchanged by this fix).
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg-a"),
+            session_id=background_a,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert console._console_agent_fleet_summary_line()
+        assert _agent_section_open(console)
+        assert console._current_console_rail_state().agent_open is True
+        assert console._agent_section_user_dismissed_while_busy is False
+
+        # User manually collapses it while still busy.
+        console._toggle_console_rail_section("agent")
+        assert not _agent_section_open(console)
+        assert console._current_console_rail_state().agent_open is False
+        assert console._agent_section_user_dismissed_while_busy is True
+
+        # A second background run starts -- an agent-section PAYLOAD change
+        # (the fleet count text itself flips from "1 other..." to "2
+        # other...") within the same busy window. `new_session()` activates
+        # the created session, so switch back to `viewed` afterwards --
+        # otherwise the new session would be excluded from its own fleet
+        # count instead of adding to it. Pre-fix, this payload change
+        # re-forced the section open.
+        background_b = controller.new_session().id
+        store.switch_session(viewed)
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg-b"),
+            session_id=background_b,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert (
+            console._console_agent_fleet_summary_line()
+            == "2 other agents running, 0 waiting for approval."
+        )
+        assert not _agent_section_open(console)
+        assert console._current_console_rail_state().agent_open is False
+
+        _no_persisted_agent_open_true(console)
+
+
+@pytest.mark.asyncio
+async def test_agent_section_auto_opens_again_for_new_busy_window_after_quiet() -> None:
+    """TASK-915 AC2: once the fleet quiets, the sticky dismissal releases so
+    a LATER, newly-busy fleet still auto-opens the section -- the fix must
+    not turn the collapse into a permanent override.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg"),
+            session_id=background,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert _agent_section_open(console)
+
+        console._toggle_console_rail_section("agent")
+        assert not _agent_section_open(console)
+        assert console._agent_section_user_dismissed_while_busy is True
+
+        # Fleet quiets.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"),
+            session_id=background,
+        )
+        controller.mark_session_visited(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert console._console_agent_fleet_summary_line() == ""
+        assert console._agent_section_user_dismissed_while_busy is False
+        # Persisted preference (collapsed, from the manual toggle above) is
+        # honored once quiet -- unchanged behavior, not this task's AC, but
+        # asserted here so a regression that force-opens on quiet is caught.
+        assert not _agent_section_open(console)
+
+        # A NEW busy window starts. `new_session()` activates the created
+        # session, so switch back to `viewed` afterwards -- otherwise the
+        # newly-busy session would be the ACTIVE one and excluded from its
+        # own fleet count (`fleet_summary_counts` is relative to viewed).
+        background_2 = controller.new_session().id
+        store.switch_session(viewed)
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg-2"),
+            session_id=background_2,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert console._console_agent_fleet_summary_line()
+        assert _agent_section_open(console)  # auto-open fires again
+        assert console._current_console_rail_state().agent_open is True
+
+        _no_persisted_agent_open_true(console)
+
+
+@pytest.mark.asyncio
+async def test_manual_reopen_of_agent_section_clears_busy_dismissal() -> None:
+    """TASK-915: a manual reopen (not just a quiet fleet) also releases the
+    sticky dismissal -- the flag must not outlive the user's own request to
+    see the section again.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg"),
+            session_id=background,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+
+        console._toggle_console_rail_section("agent")  # collapse while busy
+        assert console._agent_section_user_dismissed_while_busy is True
+
+        console._toggle_console_rail_section("agent")  # manual reopen
+        assert _agent_section_open(console)
+        assert console._agent_section_user_dismissed_while_busy is False
+
+        # Still busy: a payload change now keeps the section open via the
+        # user's own (now True) persisted preference, not the force.
+        background_2 = controller.new_session().id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg-2"),
+            session_id=background_2,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert _agent_section_open(console)
+
+
 def _single_pending_call() -> MCPPendingCall:
     return MCPPendingCall(
         llm_name="mcp__srv__tool",
@@ -782,3 +983,135 @@ async def test_new_session_clears_a_mounted_card_from_the_session_being_left() -
         decisions = await asyncio.wait_for(decisions_task, timeout=2.0)
         assert decisions == {"mcp__srv__tool": "deny"}
         assert new_session.id != session_a
+
+
+@pytest.mark.asyncio
+async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_on_visit() -> None:
+    """TASK-910: `request_skill_install_confirm` now gets the SAME park/
+    badge/toast/re-mount treatment as `request_mcp_approvals` -- see
+    `test_background_approval_parks_with_badge_and_single_toast` above,
+    which this mirrors, but through the REAL controller bridge (a genuine
+    worker thread via `asyncio.to_thread`) rather than a seeded payload,
+    exercising the full seam end-to-end: park -> badge -> one toast ->
+    mount on visit -> re-mount on revisit -> resolve.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        # See `test_mounted_round_survives_switch_away_and_switch_back` for
+        # why this must be `host` (the actually-running App), not
+        # `app_instance`: `call_from_thread` needs a real running loop to
+        # marshal the worker thread's widget mutations onto.
+        controller.app = host
+        controller.skill_install_confirm_timeout_seconds = lambda: 30.0
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # keep viewing the first session
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        decision_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_skill_install_confirm,
+                "https://github.com/o/r",
+                session_id=background,
+            )
+        )
+        await pilot.pause(0.3)
+
+        install_card = console.query_one("#chat-skill-install-card")
+        assert not install_card.display  # parked: never mounted over the viewed tab
+        approval_toasts = [n for n in notifications if "needs approval" in n]
+        assert len(approval_toasts) == 1
+        assert (
+            controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+        )
+
+        # Visiting mounts the card through the existing mount path.
+        controller.switch_session(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert console.query_one("#chat-skill-install-card").display
+
+        # Switch-away-and-back re-mounts the SAME round without a second toast.
+        controller.switch_session(viewed)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+        assert not console.query_one("#chat-skill-install-card").display
+        controller.switch_session(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+        assert console.query_one("#chat-skill-install-card").display
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        request_id = controller._parked_skill_install_payloads[background]["request_id"]
+        controller.resolve_pending_skill_install(True, request_id=request_id)
+        allowed = await asyncio.wait_for(decision_task, timeout=2.0)
+        assert allowed is True
+        assert background not in controller._pending_approvals
+
+
+@pytest.mark.asyncio
+async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on_visit() -> None:
+    """TASK-910: `request_skill_script_confirm` gets the identical
+    treatment -- see the sibling skill-install test above."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        controller.app = host
+        controller.skill_script_confirm_timeout_seconds = lambda: 30.0
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # keep viewing the first session
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        decision_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_skill_script_confirm,
+                {"skill_name": "demo", "script_path": "scripts/hello.py"},
+                session_id=background,
+            )
+        )
+        await pilot.pause(0.3)
+
+        script_card = console.query_one("#chat-skill-script-card")
+        assert not script_card.display  # parked: never mounted over the viewed tab
+        approval_toasts = [n for n in notifications if "needs approval" in n]
+        assert len(approval_toasts) == 1
+        assert (
+            controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+        )
+
+        controller.switch_session(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert console.query_one("#chat-skill-script-card").display
+
+        controller.switch_session(viewed)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+        assert not console.query_one("#chat-skill-script-card").display
+        controller.switch_session(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+        assert console.query_one("#chat-skill-script-card").display
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        request_id = controller._parked_skill_script_payloads[background]["request_id"]
+        controller.resolve_pending_skill_script(True, False, request_id=request_id)
+        decision = await asyncio.wait_for(decision_task, timeout=2.0)
+        assert decision == {"allow": True, "remember": False}
+        assert background not in controller._pending_approvals

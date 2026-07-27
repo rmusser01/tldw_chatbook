@@ -820,9 +820,25 @@ class ConsoleChatController:
         self.set_pending_skill_install: Callable[[dict | None], None] | None = None
         #: Optional test override for the confirm timeout.
         self.skill_install_confirm_timeout_seconds: Callable[[], float] | None = None
-        #: The active confirm round's release Event + shared decision box.
-        self._pending_skill_install_event: threading.Event | None = None
-        self._pending_skill_install_decision: dict[str, bool] | None = None
+        #: TASK-910: per-round release Event + shared decision box + owning
+        #: session id, keyed by a freshly minted request id -- mirrors
+        #: `_pending_skill_script_rounds`' identical shape (itself task-581's
+        #: fix for the same "single shared slot clobbers a second concurrent
+        #: round" hazard `request_mcp_approvals` solved with `round_id`).
+        #: Pre-TASK-910 this was a single `_pending_skill_install_event`/
+        #: `_pending_skill_install_decision` pair -- fine while only one
+        #: session could ever have a live install confirm, but parking makes
+        #: two DIFFERENT background sessions' install confirms genuinely
+        #: concurrent.
+        self._pending_skill_install_rounds: dict[str, dict[str, Any]] = {}
+        self._pending_skill_install_lock = threading.Lock()
+        #: TASK-910 (parked background skill confirms): retained payload for
+        #: a session-attributed `request_skill_install_confirm` round --
+        #: mounted or parked, exactly like `_parked_approval_payloads`.
+        #: `switch_session`/`new_session`/`close_session` re-derive the
+        #: mounted card from this map on every activation, never from
+        #: whatever the card happened to already be showing.
+        self._parked_skill_install_payloads: dict[str, dict[str, Any]] = {}
         #: UI-thread callback that pushes/clears the pending skill-SCRIPT
         #: confirm payload into the owning screen's task-resume state.
         #: Invoked through self.app.call_from_thread from
@@ -833,12 +849,21 @@ class ConsoleChatController:
         #: `skill_install_confirm_timeout_seconds`.
         self.skill_script_confirm_timeout_seconds: Callable[[], float] | None = None
         #: The active script-confirm round's release Event + shared
-        #: decision box ({"allow": bool, "remember": bool}).
+        #: decision box ({"allow": bool, "remember": bool}), now also
+        #: carrying the round's owning session id (TASK-910) so teardown can
+        #: tell whether ANOTHER still-armed round belongs to the SAME
+        #: session (must not clear the mounted card out from under it --
+        #: see `request_skill_script_confirm`) independently of whether some
+        #: OTHER session also has a round outstanding.
         #: task-581: rounds keyed by request_id, not a single slot. Two rounds
         #: armed at once previously clobbered each other's event/decision and
         #: both worker threads then blocked to their full deadline.
         self._pending_skill_script_rounds: dict[str, dict[str, Any]] = {}
         self._pending_skill_script_lock = threading.Lock()
+        #: TASK-910 (parked background skill confirms): retained payload for
+        #: a session-attributed `request_skill_script_confirm` round --
+        #: mirrors `_parked_skill_install_payloads` above.
+        self._parked_skill_script_payloads: dict[str, dict[str, Any]] = {}
         #: The currently-armed round's unique id (see `request_skill_script_
         #: confirm` / `resolve_pending_skill_script`). A resolve carrying any
         #: other id (including None) is dropped -- this is what stops a
@@ -1435,6 +1460,12 @@ class ConsoleChatController:
             with self._approval_state_lock:
                 parked_payload = self._parked_approval_payloads.get(session.id)
             self.set_pending_approval(parked_payload)
+        # TASK-910: same re-derive for the skill-install/script cards -- a
+        # brand-new session can never itself have a parked confirm, so this
+        # always resolves to clearing whatever the session being left behind
+        # had shown (mirrors the approval re-derive immediately above).
+        self._remount_parked_skill_install(session.id)
+        self._remount_parked_skill_script(session.id)
         return session
 
     def _maybe_auto_title_session(
@@ -1587,12 +1618,17 @@ class ConsoleChatController:
             with self._approval_state_lock:
                 parked_payload = self._parked_approval_payloads.get(session_id)
             self.set_pending_approval(parked_payload)
-        # Skill-install/script confirms are NOT parked by this task (out of
-        # scope -- see PA-T9 report): still single-slot, controller-wide
-        # rounds, so a context change unconditionally denies whichever one
-        # is pending, same as before Task 9.
-        self._deny_pending_skill_install_on_context_change()
-        self._deny_pending_skill_script_on_context_change()
+        # TASK-910: skill-install/script confirms now get the SAME park/
+        # re-derive treatment as MCP batch approvals above -- a context
+        # change (switch away) no longer force-denies either bridge's
+        # pending confirm; the round stays alive (parked, badge + one
+        # toast via `park_pending_approval`) until its own resolution,
+        # cancellation, or shutdown. Superseded the pre-TASK-910
+        # `_deny_pending_skill_install_on_context_change()`/`_deny_pending_
+        # skill_script_on_context_change()` calls that used to run here
+        # unconditionally on every switch.
+        self._remount_parked_skill_install(session_id)
+        self._remount_parked_skill_script(session_id)
         return session
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
@@ -1652,6 +1688,12 @@ class ConsoleChatController:
                 with self._approval_state_lock:
                     parked_payload = self._parked_approval_payloads.get(new_active_id)
                 self.set_pending_approval(parked_payload)
+            # TASK-910: same re-derive for the skill-install/script cards --
+            # closing the ACTIVE session auto-activates a neighbor, which is
+            # now the VIEWED session exactly as if `switch_session` had
+            # navigated to it.
+            self._remount_parked_skill_install(new_active_id)
+            self._remount_parked_skill_script(new_active_id)
         return closed
 
     def original_attempt_for_message(self, message_id: str) -> str | None:
@@ -1931,7 +1973,8 @@ class ConsoleChatController:
             else (self.store.active_session_id or "")
         )
         # F2b fix (Qodo wave): guard the round registration -- the UI
-        # thread's `resolve_pending_approval`/legacy fallback and the
+        # thread's `resolve_pending_approval` (TASK-913: fails closed by
+        # round_id now, no more active-session scan) and the
         # `fleet_summary_counts` sync tick can read/iterate this map
         # concurrently with this worker thread's own writes.
         with self._approval_state_lock:
@@ -2053,7 +2096,7 @@ class ConsoleChatController:
             return {name: decisions.get(name, "deny") for name in unique_names}
         finally:
             # F2b fix (Qodo wave): guard both pops -- `resolve_pending_
-            # approval`'s legacy fallback and `switch_session`'s re-derive
+            # approval`'s round_id lookup and `switch_session`'s re-derive
             # read can each observe these maps from the UI thread while
             # this worker thread tears the round down.
             with self._approval_state_lock:
@@ -2290,18 +2333,23 @@ class ConsoleChatController:
         unchanged on the next visit; nothing is ever auto-approved or
         denied-by-accident here.
 
-        ``round_id=None`` preserves the pre-fix-round-1 fallback for
-        direct/legacy callers with no token to pass (e.g. existing tests
-        that call this immediately after arming a round with no session
-        switch in between): resolves whichever round belongs to the
-        CURRENTLY ACTIVE session, matching every such caller's existing
-        expectations. Production (``ChatApprovalCard``/``ChatScreen``)
-        always passes the real ``round_id`` now.
+        TASK-913 (AC#2): ``round_id=None`` no longer falls back to
+        "whichever round belongs to the currently active session" -- it
+        fails closed immediately, mirroring
+        ``resolve_pending_skill_script``'s/``resolve_pending_skill_install``'s
+        identical ``if request_id is None: return`` contract. Production
+        (``ChatApprovalCard``/``ChatScreen``) has only ever had a single
+        emitter (``ChatApprovalCard._submit_batch_decisions``) and it
+        always threads the real ``round_id`` through; the active-session
+        fallback existed only for legacy direct-call tests, which have
+        been migrated to pass the real round id captured from the
+        mounted/parked payload instead.
 
-        A no-op when there is no matching round at all (e.g. a stale
-        message arriving after a timeout/cancellation already resolved and
-        cleared it, or -- with no ``round_id`` -- simply no round pending
-        for the active session).
+        A no-op both when ``round_id`` is ``None`` and when it doesn't
+        match any currently-armed round (e.g. a stale message arriving
+        after a timeout/cancellation already resolved and cleared it) --
+        the real round (if any) stays pending and undecided; nothing is
+        ever auto-approved or denied-by-accident here.
 
         NOTE: Snapshots the round's ``decisions``/``event`` into locals to
         avoid TOCTOU race: the worker thread's ``finally`` block pops the
@@ -2313,31 +2361,23 @@ class ConsoleChatController:
                 (``approve_once``/``approve_session``/``always_allow``/
                 ``deny``) to merge into the round's shared decisions dict.
             round_id: The specific round to resolve (the id stamped onto
-                the card the user actually decided). ``None`` falls back to
-                whichever round belongs to the currently active session
-                (legacy/direct-call compatibility -- see above).
+                the card the user actually decided). ``None`` (the
+                default) never matches an armed round, so an un-migrated
+                or malformed caller fails closed by omission.
         """
-        # F2b/F3b fix (Qodo wave, task-913): both branches read
-        # ``_pending_approval_rounds`` under the shared lock -- the worker
-        # thread's own registration (``request_mcp_approvals``) and
-        # teardown (its ``finally``) can mutate this dict concurrently
-        # with either branch here. The legacy ``round_id=None`` fallback
-        # in particular used to iterate ``.values()`` live; snapshotting
-        # it into a list under the lock first (then iterating the
-        # snapshot, outside the lock) closes the same
-        # "dictionary changed size during iteration" hazard
-        # ``fleet_summary_counts`` had for ``_pending_approvals``.
-        if round_id is not None:
-            with self._approval_state_lock:
-                round_state = self._pending_approval_rounds.get(round_id)
-        else:
-            active = self.store.active_session_id or ""
-            with self._approval_state_lock:
-                round_states = list(self._pending_approval_rounds.values())
-            round_state = next(
-                (state for state in round_states if state.get("session_id") == active),
-                None,
-            )
+        # TASK-913 (AC#2): fail closed on a missing round_id rather than
+        # scanning `_pending_approval_rounds.values()` for "whichever round
+        # belongs to the active session" -- that active-session fallback
+        # was production-unreachable (see docstring) and is now removed
+        # entirely, taking its AC#1 lock-guarded-snapshot protection with
+        # it (moot once the scan itself is gone). The remaining branch's
+        # `.get()` read stays guarded: the worker thread's own registration
+        # (`request_mcp_approvals`) and teardown (its `finally`) can mutate
+        # this dict concurrently.
+        if round_id is None:
+            return
+        with self._approval_state_lock:
+            round_state = self._pending_approval_rounds.get(round_id)
         if round_state is None:
             return
         # Snapshot both at once to prevent TOCTOU race with worker thread's finally block
@@ -2346,31 +2386,49 @@ class ConsoleChatController:
         decisions_dict.update(decisions or {})
         approval_event.set()
 
-    # -- Skill-install confirm bridge (task-5) -------------------------------
+    # -- Skill-install confirm bridge (task-5, parked TASK-910) --------------
 
     def request_skill_install_confirm(
         self, url: str, *, session_id: str | None = None
     ) -> bool:
         """WORKER THREAD: ask the user to confirm a skill install before any fetch.
 
-        Blocks on a fresh threading.Event, surfacing an Allow/Deny card via
-        set_pending_skill_install (marshaled onto the UI thread), then polls
-        re-checking this run's cancel signals (scoped to ``session_id``'s
-        own cancel event when known -- PA-T9 finding #1, see
-        ``_is_session_cancelled``) and a deadline. Cancel/stop, timeout,
-        context-change, or no wired UI all resolve to DENY (fail-closed).
-        Returns True only on an explicit Allow.
+        TASK-910: mirrors ``request_mcp_approvals``' park/mount/retain
+        contract. Registers a fresh round (event + decision box + owning
+        session id) under a freshly minted request id in
+        ``_pending_skill_install_rounds`` (mirrors ``_pending_skill_script_
+        rounds``' identical per-round design -- the pre-TASK-910 single
+        ``_pending_skill_install_event``/``_pending_skill_install_decision``
+        pair could not survive two DIFFERENT sessions each raising their own
+        install confirm concurrently, exactly the hazard task-581 already
+        fixed for skill-script). Either MOUNTS the card immediately
+        (``session_id`` is the active/viewed session, or unknown -- legacy
+        no-session callers keep the pre-TASK-910 always-mount behavior) or
+        PARKS it (a different, background session -- the retained payload
+        goes into ``_parked_skill_install_payloads`` for ``switch_session``/
+        ``new_session``/``close_session`` to remount later, and
+        ``park_pending_approval`` fires the SAME fleet badge + one-shot
+        toast machinery ``request_mcp_approvals`` uses, per the train's
+        toast-copy convention).
+
+        Then polls re-checking this round's OWN cancel signal
+        (``_is_session_cancelled``, scoped to ``session_id`` when known) and
+        a deadline. Cancel/stop (of the OWNING session, or real process
+        teardown via ``_shutdown_requested``), timeout, or no wired UI all
+        resolve to DENY (fail-closed). A plain switch away no longer denies
+        -- the round parks and stays alive until its own resolution,
+        cancellation, or shutdown. Returns True only on an explicit Allow.
 
         Args:
             url: The skill source URL the model wants to install, surfaced
                 verbatim on the confirm card for the user to inspect.
-            session_id: The run's OWNING session (Task 3/9). ``None``
-                preserves the pre-Task-9 VIEWED-session/global-flag
-                fallback (see ``_is_session_cancelled``).
+            session_id: The run's OWNING session (Task 3/9/TASK-910).
+                ``None`` preserves the pre-Task-9 VIEWED-session/global-flag
+                fallback (see ``_is_session_cancelled``) and never parks.
 
         Returns:
             True only on an explicit Allow; every other path (deny, cancel,
-            stop, timeout, context change, or no wired UI) returns False.
+            stop, timeout, or no wired UI) returns False.
         """
         # No UI bridge wired means the marshal below is a no-op and nothing
         # can ever set the Event -- fail closed immediately instead of
@@ -2380,8 +2438,16 @@ class ConsoleChatController:
 
         event = threading.Event()
         decision: dict[str, bool] = {}
-        self._pending_skill_install_event = event
-        self._pending_skill_install_decision = decision
+        request_id = str(uuid4())
+        owning_session_id = session_id if session_id is not None else (
+            self.store.active_session_id or ""
+        )
+        with self._pending_skill_install_lock:
+            self._pending_skill_install_rounds[request_id] = {
+                "event": event,
+                "decision": decision,
+                "session_id": owning_session_id,
+            }
 
         timeout_seconds = (
             self.skill_install_confirm_timeout_seconds()
@@ -2389,9 +2455,35 @@ class ConsoleChatController:
             else _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS
         )
         deadline = time.monotonic() + timeout_seconds
-        payload = {"url": url, "timeout_seconds": timeout_seconds}
+        payload = {
+            "url": url,
+            "timeout_seconds": timeout_seconds,
+            "request_id": request_id,
+            "session_id": owning_session_id,
+        }
+        # TASK-910: park rather than mount when this round's session is a
+        # DIFFERENT, background session -- mirrors `request_mcp_approvals`'
+        # identical `is_parked` gate. `session_id is None` (a legacy caller
+        # with no session context) always mounts.
+        is_parked = (
+            session_id is not None
+            and session_id != (self.store.active_session_id or "")
+        )
+        if session_id is not None:
+            self.set_run_pending_approval(session_id, True)
+            # Retain THIS round's payload for EVERY session-attributed
+            # round -- mounted or parked -- not just a parked one, mirroring
+            # `request_mcp_approvals`' identical retention (Fix wave,
+            # CRITICAL 1): a round that mounted immediately must still be
+            # recoverable after a switch-away-and-back.
+            with self._approval_state_lock:
+                self._parked_skill_install_payloads[session_id] = payload
         try:
-            self._marshal_pending_skill_install(payload)
+            if is_parked:
+                if self.app is not None and self.park_pending_approval is not None:
+                    self.app.call_from_thread(self.park_pending_approval, session_id)
+            else:
+                self._marshal_pending_skill_install(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
                 if self._is_session_cancelled(session_id):
                     break
@@ -2399,14 +2491,50 @@ class ConsoleChatController:
                     break
             return bool(decision.get("allow", False))
         finally:
-            self._pending_skill_install_event = None
-            self._pending_skill_install_decision = None
-            try:
-                self._marshal_pending_skill_install(None)
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug(
-                    "Failed to clear skill-install confirm during teardown"
+            with self._pending_skill_install_lock:
+                self._pending_skill_install_rounds.pop(request_id, None)
+                still_armed_same_session = any(
+                    state.get("session_id") == owning_session_id
+                    for state in self._pending_skill_install_rounds.values()
                 )
+            if session_id is not None:
+                with self._approval_state_lock:
+                    self._parked_skill_install_payloads.pop(session_id, None)
+                self.set_run_pending_approval(session_id, False)
+            # Only clear the MOUNTED card if this round's session is still
+            # the one being viewed right now, AND no OTHER round for the
+            # SAME session remains armed (mirrors `request_mcp_approvals`'
+            # `still_active` guard, plus the task-581 same-session
+            # multi-round guard `request_skill_script_confirm` already
+            # relies on).
+            still_active = session_id is None or session_id == (
+                self.store.active_session_id or ""
+            )
+            if still_active and not still_armed_same_session:
+                try:
+                    self._marshal_pending_skill_install(None)
+                except Exception:  # noqa: BLE001
+                    logger.opt(exception=True).debug(
+                        "Failed to clear skill-install confirm during teardown"
+                    )
+
+    def _remount_parked_skill_install(self, session_id: str) -> None:
+        """Re-derive the mounted skill-install confirm card for ``session_id``.
+
+        TASK-910: called from `switch_session`/`new_session`/`close_session`
+        exactly like the MCP approval card's own re-derive -- mounts
+        ``session_id``'s retained payload (if any) and clears whatever the
+        departing session had shown, all in one call. A no-op when no UI
+        bridge is wired.
+
+        Args:
+            session_id: The session now being activated/viewed.
+        """
+        if self.set_pending_skill_install is None:
+            return
+        with self._approval_state_lock:
+            parked_payload = self._parked_skill_install_payloads.get(session_id)
+        self.set_pending_skill_install(parked_payload)
 
     def _marshal_pending_skill_install(self, payload: dict[str, Any] | None) -> None:
         """WORKER THREAD: hand a skill-install confirm payload to the UI thread.
@@ -2421,24 +2549,50 @@ class ConsoleChatController:
         if self.app is not None and self.set_pending_skill_install is not None:
             self.app.call_from_thread(self.set_pending_skill_install, payload)
 
-    def resolve_pending_skill_install(self, allow: bool) -> None:
+    def resolve_pending_skill_install(
+        self, allow: bool, *, request_id: str | None = None
+    ) -> None:
         """UI THREAD: apply the user's Allow/Deny, releasing the worker thread.
+
+        TASK-910: strict match against ``request_id``, mirroring
+        ``resolve_pending_skill_script``'s identical contract -- a resolve
+        carrying no id, or an id belonging to any round other than the one
+        it names, is silently dropped rather than resolved. This closes the
+        same stale-late-click hazard ``resolve_pending_skill_script``'s own
+        docstring documents: once two sessions can each have their own
+        concurrent install-confirm round (TASK-910 parking), "whichever
+        round happens to be active" is no longer a safe fallback the way it
+        was pre-TASK-910 (a single global slot could only ever have one
+        candidate).
 
         Args:
             allow: True to allow the pending install, False to deny it.
+            request_id: The armed round's id, as echoed back by the UI
+                (``SkillInstallConfirmCard.InstallDecided.request_id``).
+                ``None`` (the default) never matches an armed round, so an
+                un-migrated or malformed caller fails closed by omission.
         """
-        decision = self._pending_skill_install_decision
-        event = self._pending_skill_install_event
-        if decision is None or event is None:
+        if request_id is None:
             return
-        decision["allow"] = bool(allow)
-        event.set()
+        with self._pending_skill_install_lock:
+            round_state = self._pending_skill_install_rounds.get(request_id)
+        if round_state is None:
+            return
+        round_state["decision"]["allow"] = bool(allow)
+        round_state["event"].set()
 
-    def _deny_pending_skill_install_on_context_change(self) -> None:
-        """Force-deny a pending confirm (Event set, decision left False)."""
-        event = self._pending_skill_install_event
-        if event is not None:
-            event.set()
+    def pending_skill_install_ids(self) -> list[str]:
+        """Return the request ids of every currently-armed install-confirm round.
+
+        Mirrors ``pending_skill_script_ids`` -- exposed for tests and for
+        any surface that needs to know whether a decision is outstanding.
+
+        Returns:
+            The armed round ids, in insertion order. Empty when none is
+            pending.
+        """
+        with self._pending_skill_install_lock:
+            return list(self._pending_skill_install_rounds)
 
     # -- Skill-script confirm bridge -----------------------------------------
 
@@ -2451,25 +2605,35 @@ class ConsoleChatController:
         allow this run, and whether to remember the choice for this skill.
 
         Each call arms a fresh round under a newly-generated request id
-        (stashed in ``self._pending_skill_script_request_id`` and also
-        embedded in the payload handed to the UI as ``"request_id"``) so
+        (embedded in the payload handed to the UI as ``"request_id"``) so
         that ``resolve_pending_skill_script`` can reject a decision left
         over from a prior, already-torn-down round -- see that method's
         docstring for why this matters.
+
+        TASK-910: also carries the SAME park/mount/retain contract as
+        ``request_mcp_approvals``/``request_skill_install_confirm`` -- see
+        ``request_skill_install_confirm``'s docstring for the full
+        mount-vs-park/retain rationale, identical here. The per-round
+        registry (keyed by ``request_id``, task-581) now also stores this
+        round's owning session id, so teardown can distinguish "another
+        round for a DIFFERENT session is still armed" (must not suppress
+        clearing THIS session's card) from "another round for the SAME
+        session is still armed" (must not clear it out from under that
+        sibling round, preserving task-581's original guarantee).
 
         Args:
             payload: Confirm details to render ({"skill_name", "script_path",
                 "mechanism", "args", ...}); "timeout_seconds" and
                 "request_id" keys are added before marshaling to the UI.
-            session_id: The run's OWNING session (Task 3/9), scoping the
-                cancel check (``_is_session_cancelled`` -- PA-T9 finding
-                #1). ``None`` preserves the pre-Task-9 VIEWED-session/
-                global-flag fallback.
+            session_id: The run's OWNING session (Task 3/9/TASK-910), scoping
+                the cancel check (``_is_session_cancelled`` -- PA-T9 finding
+                #1) and the park/mount decision. ``None`` preserves the
+                pre-Task-9 VIEWED-session/global-flag fallback and never
+                parks.
 
         Returns:
             ``{"allow": bool, "remember": bool}``. Every non-Allow path (deny,
-            cancel, stop, timeout, context change, no wired UI) returns
-            ``allow=False``.
+            cancel, stop, timeout, no wired UI) returns ``allow=False``.
         """
         if self.app is None or self.set_pending_skill_script is None:
             return {"allow": False, "remember": False}
@@ -2477,10 +2641,14 @@ class ConsoleChatController:
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
+        owning_session_id = session_id if session_id is not None else (
+            self.store.active_session_id or ""
+        )
         with self._pending_skill_script_lock:
             self._pending_skill_script_rounds[request_id] = {
                 "event": event,
                 "decision": decision,
+                "session_id": owning_session_id,
             }
 
         timeout_seconds = (
@@ -2492,8 +2660,21 @@ class ConsoleChatController:
         card_payload = dict(payload)
         card_payload["timeout_seconds"] = timeout_seconds
         card_payload["request_id"] = request_id
+        card_payload["session_id"] = owning_session_id
+        is_parked = (
+            session_id is not None
+            and session_id != (self.store.active_session_id or "")
+        )
+        if session_id is not None:
+            self.set_run_pending_approval(session_id, True)
+            with self._approval_state_lock:
+                self._parked_skill_script_payloads[session_id] = card_payload
         try:
-            self._marshal_pending_skill_script(card_payload)
+            if is_parked:
+                if self.app is not None and self.park_pending_approval is not None:
+                    self.app.call_from_thread(self.park_pending_approval, session_id)
+            else:
+                self._marshal_pending_skill_script(card_payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
                 if self._is_session_cancelled(session_id):
                     break
@@ -2506,16 +2687,50 @@ class ConsoleChatController:
         finally:
             with self._pending_skill_script_lock:
                 self._pending_skill_script_rounds.pop(request_id, None)
-                still_armed = bool(self._pending_skill_script_rounds)
-            try:
-                # Clearing unconditionally would hide a sibling round's card;
-                # only blank the surface when nothing is left pending.
-                if not still_armed:
-                    self._marshal_pending_skill_script(None)
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).debug(
-                    "Failed to clear skill-script confirm during teardown"
+                still_armed_same_session = any(
+                    state.get("session_id") == owning_session_id
+                    for state in self._pending_skill_script_rounds.values()
                 )
+            if session_id is not None:
+                with self._approval_state_lock:
+                    self._parked_skill_script_payloads.pop(session_id, None)
+                self.set_run_pending_approval(session_id, False)
+            # Only clear the MOUNTED card if this round's session is still
+            # the one being viewed right now, AND no OTHER round for the
+            # SAME session remains armed -- a sibling round for a
+            # DIFFERENT (background/parked) session must never suppress
+            # clearing THIS session's card (pre-TASK-910 `still_armed` was
+            # global across every session, which would have done exactly
+            # that), while a sibling round for the SAME session still must
+            # (task-581's original guarantee).
+            still_active = session_id is None or session_id == (
+                self.store.active_session_id or ""
+            )
+            if still_active and not still_armed_same_session:
+                try:
+                    self._marshal_pending_skill_script(None)
+                except Exception:  # noqa: BLE001
+                    logger.opt(exception=True).debug(
+                        "Failed to clear skill-script confirm during teardown"
+                    )
+
+    def _remount_parked_skill_script(self, session_id: str) -> None:
+        """Re-derive the mounted skill-script confirm card for ``session_id``.
+
+        TASK-910: called from `switch_session`/`new_session`/`close_session`
+        exactly like the MCP approval card's own re-derive -- mounts
+        ``session_id``'s retained payload (if any) and clears whatever the
+        departing session had shown, all in one call. A no-op when no UI
+        bridge is wired.
+
+        Args:
+            session_id: The session now being activated/viewed.
+        """
+        if self.set_pending_skill_script is None:
+            return
+        with self._approval_state_lock:
+            parked_payload = self._parked_skill_script_payloads.get(session_id)
+        self.set_pending_skill_script(parked_payload)
 
     def _marshal_pending_skill_script(self, payload: dict[str, Any] | None) -> None:
         """WORKER THREAD: hand a skill-script confirm payload to the UI thread.
@@ -2564,17 +2779,6 @@ class ConsoleChatController:
         round_state["decision"]["allow"] = bool(allow)
         round_state["decision"]["remember"] = bool(remember)
         round_state["event"].set()
-
-    def _deny_pending_skill_script_on_context_change(self) -> None:
-        """Force-deny every armed script confirm (Events set, decisions left False).
-
-        Denies ALL rounds, not just the newest: a conversation switch
-        invalidates the context every pending confirm was raised in.
-        """
-        with self._pending_skill_script_lock:
-            rounds = list(self._pending_skill_script_rounds.values())
-        for round_state in rounds:
-            round_state["event"].set()
 
     def pending_skill_script_ids(self) -> list[str]:
         """Return the request ids of every currently-armed confirm round.
