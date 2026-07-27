@@ -275,10 +275,14 @@ class ProfileStoreLease:
                         recovery_error = candidate
                         break
 
-            if recovery_error is not None:
-                # Recovery promises one control-flow interruption. After it is
-                # captured, retry cleanup and bypass hostile subclass assignment
-                # behavior while restoring identity-safe state.
+            current_handle = self._handle
+            state_needs_forced_repair = (
+                handle.closed and current_handle is handle
+            ) or (not handle.closed and current_handle is None)
+            if recovery_error is not None or state_needs_forced_repair:
+                # Recovery promises at most one control-flow interruption.
+                # Retry cleanup after an interruption or untruthful normal state
+                # repair, then bypass hostile subclass assignment behavior.
                 retry_cleanup_error = _unlock_and_close(
                     handle,
                     may_be_locked=may_be_locked,

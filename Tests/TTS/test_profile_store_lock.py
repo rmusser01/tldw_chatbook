@@ -8,7 +8,7 @@ from collections.abc import Callable
 from multiprocessing.connection import Connection
 from pathlib import Path
 from types import FrameType
-from typing import Any, BinaryIO, Protocol
+from typing import Any, BinaryIO, Protocol, cast
 
 import portalocker
 import pytest
@@ -448,6 +448,24 @@ class _NonClosingHandle(_RecordingHandle):
         if self.fail_close:
             raise OSError("close-private-secret")
         self.closed = True
+
+
+class _NonClosingRealHandle:
+    def __init__(self, delegate: BinaryIO) -> None:
+        self.delegate = delegate
+        self.fail_close = True
+
+    @property
+    def closed(self) -> bool:
+        return self.delegate.closed
+
+    def fileno(self) -> int:
+        return self.delegate.fileno()
+
+    def close(self) -> None:
+        if self.fail_close:
+            raise OSError("close-private-secret")
+        self.delegate.close()
 
 
 def _patch_open(
@@ -1322,6 +1340,107 @@ def test_acquire_recovery_adopts_nonclosed_handle_conservatively(
     finally:
         handle.fail_close = False
         lease.release()
+
+
+def test_acquire_forces_adoption_after_ordinary_residual_state_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingAssignmentLease(ProfileStoreLease):
+        def __init__(self, database_path: Path) -> None:
+            self.fail_assignment = False
+            self.assignment_attempts = 0
+            super().__init__(database_path, ProfileStoreLockMode.EXCLUSIVE)
+            self.fail_assignment = True
+
+        def __setattr__(self, name: str, value: object) -> None:
+            if (
+                name == "_handle"
+                and value is not None
+                and getattr(self, "fail_assignment", False)
+            ):
+                object.__setattr__(
+                    self,
+                    "assignment_attempts",
+                    self.assignment_attempts + 1,
+                )
+                raise RuntimeError("assignment-private-secret")
+            super().__setattr__(name, value)
+
+    database_path = tmp_path / "profiles.sqlite3"
+    original_open = Path.open
+    original_unlock = portalocker.unlock
+    opened_handles: list[_NonClosingRealHandle] = []
+
+    def open_first_as_nonclosing(
+        path: Path,
+        *args: Any,
+        **kwargs: Any,
+    ) -> BinaryIO:
+        delegate = cast(BinaryIO, original_open(path, *args, **kwargs))
+        if opened_handles:
+            return delegate
+        handle = _NonClosingRealHandle(delegate)
+        opened_handles.append(handle)
+        return cast(BinaryIO, handle)
+
+    lease = FailingAssignmentLease(database_path)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "open", open_first_as_nonclosing)
+            patch.setattr(
+                portalocker,
+                "unlock",
+                lambda current_handle: (_ for _ in ()).throw(
+                    OSError("unlock-private-secret")
+                ),
+            )
+
+            with pytest.raises(ProfileRepositoryError) as exc_info:
+                lease.acquire()
+
+            _assert_safe_repository_error(
+                exc_info.value,
+                "operation_failed",
+                "assignment-private-secret",
+                "unlock-private-secret",
+                "close-private-secret",
+            )
+            assert lease.assignment_attempts == 2
+            assert len(opened_handles) == 1
+            handle = opened_handles[0]
+            assert handle.closed is False
+            assert lease._handle is handle
+            assert lease.acquired is True
+
+            contender = ProfileStoreLease(
+                database_path,
+                ProfileStoreLockMode.EXCLUSIVE,
+                timeout_seconds=0.02,
+                check_interval_seconds=0.005,
+            )
+            with pytest.raises(ProfileRepositoryError) as contender_exc_info:
+                contender.acquire()
+            _assert_safe_repository_error(contender_exc_info.value, "lock_timeout")
+    finally:
+        if opened_handles:
+            handle = opened_handles[0]
+            handle.fail_close = False
+            if lease._handle is handle:
+                lease.release()
+            elif not handle.closed:
+                try:
+                    original_unlock(cast(BinaryIO, handle))
+                finally:
+                    handle.close()
+
+    with ProfileStoreLease(
+        database_path,
+        ProfileStoreLockMode.EXCLUSIVE,
+        timeout_seconds=0.05,
+        check_interval_seconds=0.005,
+    ) as recovered:
+        assert recovered.acquired is True
 
 
 def test_acquire_recovery_never_overwrites_different_live_handle(
