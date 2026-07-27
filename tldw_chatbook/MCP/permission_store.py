@@ -73,9 +73,16 @@ HIGH_RISK_TAGS = frozenset({"mutates", "process"})
 #: arbitrary sandbox files is a disclosure risk even though it mutates
 #: nothing, and treat network egress as prompt-worthy too, because egress
 #: is the exfiltration leg of a prompt-injection chain. MCP deliberately
-#: keeps ``HIGH_RISK_TAGS`` -- widening the shared set would make remote
-#: tools carrying ``"reads"`` or ``"network"`` start prompting, which is
-#: not this phase's call to make.
+#: keeps ``HIGH_RISK_TAGS``. TASK-845 asked whether ``network`` should move
+#: to the shared set and resolved NO, on evidence rather than preference:
+#: an MCP tool's tags are not ours, they are derived from the remote
+#: server's own payload -- ``risk_class`` plus a free-form ``capabilities``
+#: list, lowercased (``MCP.hub_tool_catalog._extra_tags``). "network" is an
+#: ordinary word for a server to list among its capabilities, so widening
+#: the shared set would not be the no-op it looks like: it would start
+#: prompting on real servers because of a string they chose for unrelated
+#: reasons. The built-in set is a vocabulary WE control and can reason
+#: about; the shared set is partly server-supplied and should stay narrow.
 BUILTIN_HIGH_RISK_TAGS = HIGH_RISK_TAGS | frozenset({"reads", "network"})
 
 _DEFAULT_PROFILE_ID = "default"
