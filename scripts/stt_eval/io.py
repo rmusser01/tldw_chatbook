@@ -93,6 +93,58 @@ def _open_regular_file_no_symlinks(path: Path) -> int:
         os.close(parent_descriptor)
 
 
+def _contained_relative_parts(relative_path: str | Path) -> tuple[str, ...]:
+    raw = os.fspath(relative_path)
+    if not raw or raw == "." or "\\" in raw:
+        raise ValueError("path must be a contained relative path")
+    posix = PurePosixPath(raw)
+    windows = PureWindowsPath(raw)
+    if (
+        posix.is_absolute()
+        or windows.is_absolute()
+        or windows.drive
+        or any(part in {"", ".", ".."} for part in raw.split("/"))
+    ):
+        raise ValueError("path must be a contained relative path")
+    return posix.parts
+
+
+def _open_regular_file_under_root(
+    root_descriptor: int,
+    relative_path: str | Path,
+) -> int:
+    parts = _contained_relative_parts(relative_path)
+    current_descriptor = os.dup(root_descriptor)
+    try:
+        for part in parts[:-1]:
+            try:
+                child = os.open(
+                    part,
+                    _descriptor_flags(),
+                    dir_fd=current_descriptor,
+                )
+            except OSError as error:
+                _raise_unsafe_component(Path(relative_path), error)
+            os.close(current_descriptor)
+            current_descriptor = child
+
+        try:
+            descriptor = os.open(
+                parts[-1],
+                os.O_RDONLY | os.O_NOFOLLOW,
+                dir_fd=current_descriptor,
+            )
+        except OSError as error:
+            _raise_unsafe_component(Path(relative_path), error)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            os.close(descriptor)
+            raise ValueError(f"artifact path is not a regular file: {relative_path}")
+        return descriptor
+    finally:
+        os.close(current_descriptor)
+
+
 def _validate_sha256(value: str) -> None:
     if len(value) != 64 or any(
         character not in "0123456789abcdef" for character in value
@@ -103,16 +155,27 @@ def _validate_sha256(value: str) -> None:
 def stream_file_identity(
     path: Path,
     *,
+    root: Path | None = None,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> tuple[int, str]:
-    """Return byte size and SHA-256 without following symlinks."""
+    """Return size/hash, anchoring a relative path under ``root`` when given."""
 
     if chunk_size <= 0:
         raise ValueError("chunk size must be positive")
 
     path = Path(path)
     try:
-        descriptor = _open_regular_file_no_symlinks(path)
+        if root is None:
+            descriptor = _open_regular_file_no_symlinks(path)
+        else:
+            root_descriptor = _open_directory_no_symlinks(root)
+            try:
+                descriptor = _open_regular_file_under_root(
+                    root_descriptor,
+                    path,
+                )
+            finally:
+                os.close(root_descriptor)
     except FileNotFoundError:
         raise FileNotFoundError(f"artifact file does not exist: {path}") from None
 
@@ -137,11 +200,12 @@ def stream_file_identity(
 def verify_file(
     path: Path,
     *,
+    root: Path | None = None,
     expected_size: int,
     expected_sha256: str,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> None:
-    """Verify one regular file against its immutable identity."""
+    """Verify a file, anchoring a relative path under ``root`` when given."""
 
     if (
         isinstance(expected_size, bool)
@@ -152,6 +216,7 @@ def verify_file(
     _validate_sha256(expected_sha256)
     actual_size, actual_sha256 = stream_file_identity(
         path,
+        root=root,
         chunk_size=chunk_size,
     )
     if actual_size != expected_size:
@@ -166,21 +231,9 @@ def verify_file(
 
 
 def resolve_contained_path(root: Path, relative_path: str | Path) -> Path:
-    """Resolve a relative target under a real root without symlink traversal."""
+    """Check a contained path; use ``verify_file(root=...)`` before reading."""
 
-    raw = os.fspath(relative_path)
-    if not raw or raw == "." or "\\" in raw:
-        raise ValueError("path must be a contained relative path")
-    posix = PurePosixPath(raw)
-    windows = PureWindowsPath(raw)
-    raw_parts = raw.split("/")
-    if (
-        posix.is_absolute()
-        or windows.is_absolute()
-        or windows.drive
-        or any(part in {"", ".", ".."} for part in raw_parts)
-    ):
-        raise ValueError("path must be a contained relative path")
+    parts = _contained_relative_parts(relative_path)
 
     root = Path(root)
     try:
@@ -191,8 +244,8 @@ def resolve_contained_path(root: Path, relative_path: str | Path) -> Path:
     try:
         current_descriptor = root_descriptor
         root_descriptor = -1
-        for index, part in enumerate(posix.parts):
-            is_last = index == len(posix.parts) - 1
+        for index, part in enumerate(parts):
+            is_last = index == len(parts) - 1
             if is_last:
                 try:
                     metadata = os.stat(
@@ -216,7 +269,7 @@ def resolve_contained_path(root: Path, relative_path: str | Path) -> Path:
             except FileNotFoundError:
                 break
             except OSError as error:
-                _raise_unsafe_component(Path(raw), error)
+                _raise_unsafe_component(Path(relative_path), error)
             os.close(current_descriptor)
             current_descriptor = child
     finally:
@@ -226,7 +279,7 @@ def resolve_contained_path(root: Path, relative_path: str | Path) -> Path:
             os.close(current_descriptor)
 
     absolute_root = _lexical_absolute(root)
-    candidate = absolute_root.joinpath(*posix.parts)
+    candidate = absolute_root.joinpath(*parts)
     return candidate
 
 

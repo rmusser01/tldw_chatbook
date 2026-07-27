@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from enum import Enum
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Annotated, Literal, Mapping
@@ -139,8 +140,10 @@ class ArtifactFile(StrictModel):
         windows = PureWindowsPath(value)
         if (
             value in {".", ".."}
-            or value != value.strip()
-            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+            or any(
+                character.isspace() or unicodedata.category(character) in {"Cc", "Cf"}
+                for character in value
+            )
             or "/" in value
             or "\\" in value
             or posix.is_absolute()

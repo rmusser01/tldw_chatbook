@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import stat
@@ -103,6 +104,12 @@ def test_manifest_rejects_unknown_fields_at_every_level(
         "model\n.onnx",
         " model.onnx",
         "model.onnx ",
+        "model file.onnx",
+        "model\tfile.onnx",
+        "model\u00a0file.onnx",
+        "model\u0085file.onnx",
+        "model\u200bfile.onnx",
+        "model\u2060file.onnx",
     ],
 )
 def test_artifact_file_rejects_unsafe_filenames(filename: str) -> None:
@@ -483,6 +490,54 @@ def test_verify_file_rejects_intermediate_symlink(tmp_path: Path) -> None:
                 "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
             ),
         )
+
+
+def test_verify_file_holds_root_descriptor_through_directory_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "declared-root"
+    safe_directory = root / "payloads"
+    safe_directory.mkdir(parents=True)
+    (safe_directory / "artifact.bin").write_bytes(b"safe")
+
+    replacement = tmp_path / "replacement-root"
+    malicious_directory = replacement / "payloads"
+    malicious_directory.mkdir(parents=True)
+    (malicious_directory / "artifact.bin").write_bytes(b"evil")
+
+    archived = tmp_path / "archived-root"
+    real_open = os.open
+    swapped = False
+
+    def swap_root_before_relative_open(
+        path: str | bytes,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        if path == "payloads" and dir_fd is not None and not swapped:
+            root.rename(archived)
+            replacement.rename(root)
+            swapped = True
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", swap_root_before_relative_open)
+    monkeypatch.setattr(
+        os,
+        "supports_dir_fd",
+        os.supports_dir_fd | {swap_root_before_relative_open},
+    )
+
+    verify_file(
+        Path("payloads") / "artifact.bin",
+        root=root,
+        expected_size=4,
+        expected_sha256=hashlib.sha256(b"safe").hexdigest(),
+    )
+
+    assert swapped
 
 
 def test_verify_file_rejects_non_regular_file(tmp_path: Path) -> None:
