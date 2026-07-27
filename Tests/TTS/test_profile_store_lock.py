@@ -196,6 +196,42 @@ def test_timing_values_are_normalized_to_float(tmp_path: Path) -> None:
     assert type(lease.check_interval_seconds) is float
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    ["timeout_seconds", "check_interval_seconds"],
+)
+def test_oversized_integer_timing_fails_safely_before_path_io(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field_name: str,
+) -> None:
+    oversized = 10**400
+    database_path = tmp_path / "private-profile-name.sqlite3"
+    resolve_called = False
+
+    def unexpected_resolve(path: Path, *, strict: bool = False) -> Path:
+        nonlocal resolve_called
+        resolve_called = True
+        raise AssertionError("path resolution should not run")
+
+    monkeypatch.setattr(Path, "resolve", unexpected_resolve)
+
+    with pytest.raises(ProfileRepositoryError) as exc_info:
+        ProfileStoreLease(
+            database_path,
+            ProfileStoreLockMode.SHARED,
+            **{field_name: oversized},
+        )
+
+    _assert_safe_repository_error(
+        exc_info.value,
+        "operation_failed",
+        str(oversized),
+        str(database_path),
+    )
+    assert resolve_called is False
+
+
 def test_path_resolution_failure_is_safe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -684,6 +720,51 @@ def test_acquisition_base_exception_closes_handle_and_is_preserved(
     )
 
     with pytest.raises(KeyboardInterrupt) as exc_info:
+        lease.acquire()
+
+    assert exc_info.value is interrupt
+    assert handle.closed is True
+    assert lease.acquired is False
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(9)])
+def test_post_open_clock_base_exception_closes_handle_and_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt: BaseException,
+) -> None:
+    class InterruptingClock:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def monotonic(self) -> float:
+            self.calls += 1
+            if self.calls == 1:
+                return 0.0
+            raise interrupt
+
+        def sleep(self, seconds: float) -> None:
+            raise AssertionError("clock interrupt must happen before sleep")
+
+    handle = _RecordingHandle(OSError("cleanup-private-secret"))
+    _patch_open(monkeypatch, handle)
+    monkeypatch.setattr(lock_module, "time", InterruptingClock())
+    monkeypatch.setattr(
+        portalocker,
+        "lock",
+        lambda current_handle, flags: (_ for _ in ()).throw(
+            portalocker.exceptions.AlreadyLocked(
+                "contention-private-secret",
+                fh=current_handle,
+            )
+        ),
+    )
+    lease = ProfileStoreLease(
+        tmp_path / "profiles.sqlite3",
+        ProfileStoreLockMode.SHARED,
+    )
+
+    with pytest.raises(type(interrupt)) as exc_info:
         lease.acquire()
 
     assert exc_info.value is interrupt

@@ -24,11 +24,19 @@ class ProfileStoreLockMode(str, Enum):
     EXCLUSIVE = "exclusive"
 
 
-def _valid_timing(value: object) -> bool:
+def _normalize_timing(value: object) -> float | None:
     if type(value) not in (int, float):
-        return False
+        return None
     timing = cast(int | float, value)
-    return math.isfinite(timing) and timing > 0
+    conversion_failed = False
+    normalized = 0.0
+    try:
+        normalized = float(timing)
+    except Exception:
+        conversion_failed = True
+    if conversion_failed or not math.isfinite(normalized) or normalized <= 0:
+        return None
+    return normalized
 
 
 def _close_after_failed_acquire(handle: BinaryIO) -> BaseException | None:
@@ -71,13 +79,14 @@ class ProfileStoreLease:
                 path cannot be canonicalized.
         """
 
-        inputs_valid = (
-            type(database_path) is _PATH_TYPE
-            and type(mode) is ProfileStoreLockMode
-            and _valid_timing(timeout_seconds)
-            and _valid_timing(check_interval_seconds)
-        )
-        if not inputs_valid:
+        normalized_timeout = _normalize_timing(timeout_seconds)
+        normalized_check_interval = _normalize_timing(check_interval_seconds)
+        if (
+            type(database_path) is not _PATH_TYPE
+            or type(mode) is not ProfileStoreLockMode
+            or normalized_timeout is None
+            or normalized_check_interval is None
+        ):
             raise ProfileRepositoryError("operation_failed")
 
         resolution_failed = False
@@ -91,8 +100,8 @@ class ProfileStoreLease:
 
         self._database_path = resolved_path
         self.mode = mode
-        self.timeout_seconds = float(timeout_seconds)
-        self.check_interval_seconds = float(check_interval_seconds)
+        self.timeout_seconds = normalized_timeout
+        self.check_interval_seconds = normalized_check_interval
         self._handle: BinaryIO | None = None
 
     @property
@@ -149,11 +158,17 @@ class ProfileStoreLease:
         while True:
             deadline_failed = False
             deadline_reached = False
+            deadline_control_error: BaseException | None = None
             if attempted:
                 try:
                     deadline_reached = time.monotonic() >= deadline
                 except Exception:
                     deadline_failed = True
+                except BaseException as error:
+                    deadline_control_error = error
+            if deadline_control_error is not None:
+                _close_after_failed_acquire(handle)
+                raise deadline_control_error
             if deadline_failed:
                 self._fail_acquire(handle, "operation_failed")
             if deadline_reached:
@@ -182,11 +197,17 @@ class ProfileStoreLease:
 
             attempted = True
             clock_failed = False
+            clock_control_error: BaseException | None = None
             remaining = 0.0
             try:
                 remaining = deadline - time.monotonic()
             except Exception:
                 clock_failed = True
+            except BaseException as error:
+                clock_control_error = error
+            if clock_control_error is not None:
+                _close_after_failed_acquire(handle)
+                raise clock_control_error
             if clock_failed:
                 self._fail_acquire(handle, "operation_failed")
             if remaining <= 0:
