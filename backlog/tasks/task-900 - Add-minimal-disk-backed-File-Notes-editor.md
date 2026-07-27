@@ -1,10 +1,11 @@
 ---
 id: TASK-900
 title: Add minimal disk-backed File Notes editor
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-27 14:32'
-updated_date: '2026-07-27 14:37'
+updated_date: '2026-07-27 14:51'
 labels:
   - notes
   - library
@@ -12,6 +13,7 @@ labels:
 dependencies: []
 documentation:
   - Docs/superpowers/specs/2026-07-27-minimal-file-notes-design.md
+  - Docs/superpowers/plans/2026-07-27-minimal-file-notes.md
   - backlog/decisions/029-file-notes-disk-authority.md
 priority: high
 ---
@@ -36,3 +38,16 @@ Let users manage one existing Git-backed Markdown/text folder from Library while
 - [ ] #10 External changes detected before publication are never silently overwritten, reconciliation does not remount an open editor, and scanning does not block the UI.
 - [ ] #11 Restorable deletions remain discoverable after restart.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/029-file-notes-disk-authority.md
+Reason: Implements the accepted disk-authority, independent-replica, conflict, and Library ownership boundaries.
+
+1. Build the single SQLite replica with FTS, protected checkpoints, and tombstones.
+2. Build the exact-byte, hash-checked filesystem service.
+3. Mount one retained File Notes workspace in Library and delegate leave guards.
+4. Run only focused File Notes tests and close the task.
+<!-- SECTION:PLAN:END -->
