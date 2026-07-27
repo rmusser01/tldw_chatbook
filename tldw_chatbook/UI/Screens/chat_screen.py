@@ -14032,7 +14032,6 @@ class ChatScreen(BaseAppScreen):
         controller: ConsoleChatController,
         message_id: str,
     ) -> None:
-        self._clear_console_original_attempt_preview(message_id)
         self._start_console_transcript_sync_timer()
         result = await controller.regenerate_message(message_id)
         if result.visible_copy and not result.accepted:

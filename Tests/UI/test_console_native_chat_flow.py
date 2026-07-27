@@ -1288,7 +1288,8 @@ def test_console_transcript_fingerprint_tolerates_empty_variant_container():
 
     fingerprint = screen._native_console_transcript_fingerprint([message])
 
-    assert fingerprint[1][0][-1] == (0, ())
+    assert fingerprint[1][0][-2] == (0, ())
+    assert fingerprint[1][0][-1] is None
 
 
 def test_console_provider_selection_reads_local_llamacpp_configured_model():
@@ -4047,6 +4048,72 @@ async def test_console_regenerate_action_streams_selected_variant():
         assert new_sibling.variants is None
         assert controller.original_attempt_for_message(source.id) is None
         assert source.id not in console._console_original_attempt_previews
+
+
+@pytest.mark.asyncio
+async def test_console_rejected_regenerate_preserves_original_attempt_preview():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = BlockedGateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        _select_llamacpp_console(console)
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session = store.ensure_session(title="Chat 1")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="prompt",
+        )
+        source = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="repaired answer [S1]",
+        )
+        store.set_citation_presentation(
+            source.id,
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            ),
+        )
+        controller._remember_original_attempt(source.id, "original answer")
+        console._console_original_attempt_previews[source.id] = "original answer"
+        assert controller.original_attempt_for_message(source.id) == "original answer"
+        seeded = store.get_message(source.id)
+        assert seeded.citation_presentation is not None
+        assert seeded.citation_presentation.original_attempt_available is True
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(source.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console,
+            pilot,
+            f"#console-message-action-regenerate-{source.id}",
+        )
+        await pilot.click(f"#console-message-action-regenerate-{source.id}")
+        await _wait_for_text(console, pilot, "Provider blocked")
+
+        retained = store.get_message(source.id)
+        assert controller.original_attempt_for_message(source.id) == "original answer"
+        assert retained.citation_presentation is not None
+        assert retained.citation_presentation.original_attempt_available is True
+        assert console._console_original_attempt_previews == {
+            source.id: "original answer"
+        }
+        assert source.id in store.active_path_message_ids(session.id)
+        assert [
+            message.id
+            for message in store.messages_for_session(session.id)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        ] == [source.id]
 
 
 @pytest.mark.asyncio
