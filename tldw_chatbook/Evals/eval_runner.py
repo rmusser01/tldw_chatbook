@@ -876,7 +876,17 @@ class MetricsCalculator:
 
     @staticmethod
     def calculate_rouge_scores(predicted: str, expected: str) -> Dict[str, float]:
-        """Calculate all ROUGE scores (ROUGE-1, ROUGE-2, ROUGE-L)."""
+        """
+        Calculate all ROUGE scores (ROUGE-1, ROUGE-2, ROUGE-L).
+
+        Args:
+            predicted: Predicted text.
+            expected: Reference (expected) text.
+
+        Returns:
+            Dictionary with keys "rouge_1", "rouge_2", and "rouge_l", each mapping
+            to the corresponding ROUGE F-measure score.
+        """
         return {
             "rouge_1": MetricsCalculator.calculate_rouge_1(predicted, expected),
             "rouge_2": MetricsCalculator.calculate_rouge_2(predicted, expected),
@@ -888,26 +898,41 @@ class MetricsCalculator:
         predicted_labels: List[str],
         true_labels: List[str],
         labels: Optional[List[str]] = None,
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Any]:
         """
         Calculate classification metrics (accuracy, precision, recall, F1).
 
         Args:
-            predicted_labels: List of predicted labels
-            true_labels: List of true labels
-            labels: Optional list of all possible labels
+            predicted_labels: List of predicted labels.
+            true_labels: List of true labels.
+            labels: Optional list of all possible labels to score. If ``None``
+                or an empty list, the label set is derived from the union of
+                ``predicted_labels`` and ``true_labels``.
 
         Returns:
-            Dictionary of classification metrics
+            Dictionary with the macro-averaged "accuracy", "precision",
+            "recall", and "f1" (all floats), plus "per_label_metrics": a dict
+            mapping each label to its own precision/recall/f1 (empty dict when
+            there are no labels or no predictions to report). This shape is
+            identical on every return path.
         """
         if len(predicted_labels) != len(true_labels):
             raise ValueError("Predicted and true labels must have the same length")
 
         if not predicted_labels:
-            return {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0}
+            return {
+                "accuracy": 0.0,
+                "precision": 0.0,
+                "recall": 0.0,
+                "f1": 0.0,
+                "per_label_metrics": {},
+            }
 
-        # Get unique labels if not provided
-        if labels is None:
+        # Get unique labels if not provided. An explicitly empty list is
+        # treated the same as None (derive from the data) rather than being
+        # left as a label set of size zero, which would make the
+        # macro-average below undefined.
+        if not labels:
             labels = list(set(true_labels) | set(predicted_labels))
 
         # Calculate confusion matrix
@@ -973,12 +998,17 @@ class MetricsCalculator:
         Calculate all requested metrics.
 
         Args:
-            predicted: Predicted text
-            expected: Expected text
-            metric_names: List of metric names to calculate
+            predicted: Predicted text.
+            expected: Expected text.
+            metric_names: List of metric names to calculate. Supported values
+                are "exact_match", "contains", "f1", "bleu", "rouge_1",
+                "rouge_2", "rouge_l", and "semantic_similarity". Defaults to
+                ``["exact_match", "f1", "rouge_1"]`` when ``None``. Unknown
+                names are logged and skipped rather than raising.
 
         Returns:
-            Dictionary of metric values
+            Dictionary mapping each recognized metric name in ``metric_names``
+            to its computed float value.
         """
         if metric_names is None:
             metric_names = ["exact_match", "f1", "rouge_1"]
