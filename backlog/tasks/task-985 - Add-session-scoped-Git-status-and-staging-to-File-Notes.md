@@ -4,7 +4,7 @@ title: Add session-scoped Git status and staging to File Notes
 status: To Do
 assignee: []
 created_date: '2026-07-27 19:52'
-updated_date: '2026-07-27 20:01'
+updated_date: '2026-07-27 20:04'
 labels:
   - notes
   - git
@@ -36,6 +36,6 @@ Let users inspect and safely stage or unstage only paths changed during the curr
 - [ ] #6 Focused unit, disposable-repository integration, mounted Textual, and disposable-repository acceptance checks cover the approved safety boundary without requiring full-suite or network execution.
 - [ ] #7 Commit, push, remotes, credentials, branch mutation, hunk staging, repository initialization, persistent staging ownership, full-repository status, and nested-repository management remain absent.
 - [ ] #8 A fresh preflight blocks observed pre-existing or partially staged same-path content, conflicts, ignored paths, and nested repository boundaries without intentionally targeting that index state.
-- [ ] #9 Chatbook unstages only exact index entries it staged in the current process while repository, HEAD, endpoint topology, and index signatures still match; observed external changes or a new process revoke ownership.
-- [ ] #10 Concurrent external index mutation during one Chatbook Stage or Unstage action is an unsupported race; lock contention and observable uncertainty are surfaced without claiming atomic cross-process ownership.
+- [ ] #9 Concurrent external index mutation during one Chatbook Stage or Unstage action is an unsupported race; lock contention and observable uncertainty are surfaced without claiming atomic cross-process ownership.
+- [ ] #10 Chatbook reverses only exact index entries it staged in the current process; repository, HEAD, and saved signatures must still match, and any later move-chain endpoint must satisfy the approved verified no-op expansion rule. Observed external changes or a new process revoke Unstage eligibility.
 <!-- AC:END -->

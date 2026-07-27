@@ -114,11 +114,15 @@ changes. External changes to another repository path cannot enter a bulk action.
 Ownership is tracked per literal endpoint under one repository/`HEAD`
 generation, then projected onto the current coalesced groups. If a staged file
 is later moved, or a staged move gains another chained endpoint, the expanded
-group remains Chatbook-owned only when every staged delta still matches a saved
-endpoint signature and every new endpoint has no external staged delta. A
-successful Stage update replaces those endpoint signatures with the expanded
-group's fresh entries. Any unmatched staged endpoint blocks the group and
-revokes its aggregate ownership instead of guessing how histories should merge.
+group remains eligible for Unstage only when every saved staged endpoint still
+matches and each new endpoint is freshly verified to have no staged delta. The
+new endpoint's exact `HEAD`-equivalent index state—an entry when `HEAD` contains
+the path or absence when it does not, including an unborn branch—is saved as a
+no-op Unstage precondition; Chatbook does not claim it staged that endpoint. A
+successful Stage update replaces the staged and no-op preconditions with the
+expanded group's fresh owned signatures. Any unmatched endpoint blocks the
+group and revokes aggregate Unstage eligibility instead of guessing how
+histories should merge.
 
 ## Git command contract
 
@@ -194,22 +198,25 @@ ownership claim, even if a later refresh finds an index change.
 
 ## Unstage flow
 
-An ownership signature contains:
+An owned group's Unstage signature contains:
 
 - repository identity;
 - the `HEAD` object ID, or an explicit unborn-branch marker;
-- every endpoint's exact index mode, object ID, and stage number;
-- explicit absence for deleted source paths.
+- each Chatbook-staged endpoint's exact index mode, object ID, and stage number;
+- explicit absence for deleted source paths;
+- any later move endpoint's verified no-op `HEAD`-equivalent entry or absence.
 
 Before Unstage, Chatbook compares the complete current signature with the saved
 one. A different `HEAD`, conflict stage, entry, or absence revokes ownership and
 changes the row to externally staged. Chatbook does not attempt a merge.
 
 When the signature still matches, Git restores only those index paths to their
-known precondition: `HEAD` for a normal repository, or absence for paths
-Chatbook added on an unborn branch. The worktree is never restored or modified.
-`Unstage All` includes only currently valid Chatbook-owned groups. It then
-refreshes actual index state before clearing ownership.
+known precondition: each path's `HEAD` entry, or absence when `HEAD` does not
+contain the path or the branch is unborn. Later move endpoints are included in
+the inseparable group but already equal that target, so they remain no-ops;
+only entries Chatbook staged are reversed. The worktree is never restored or
+modified. `Unstage All` includes only currently valid Chatbook-owned groups. It
+then refreshes actual index state before clearing ownership.
 
 ## Refresh and concurrency
 

@@ -33,9 +33,11 @@ unless Chatbook can prove it is reversing its own index action.
   boundaries.
 - Record exact repository, `HEAD`, and index-entry signatures after a successful
   Chatbook stage. Unstage only while that complete signature still matches.
-- Track ownership per endpoint so a later Chatbook move or move chain may
-  retain ownership only when every staged entry is already covered by a valid
-  Chatbook signature; otherwise block the expanded group.
+- Track ownership per endpoint. A later Chatbook move or move-chain endpoint
+  may join an owned group only when its index state is freshly verified as a
+  `HEAD`-equivalent entry or absence no-op precondition and every previously
+  staged endpoint still matches. Unstage then reverses only entries Chatbook
+  staged; otherwise the expanded group is blocked.
 - Keep Git ownership and repository trust in process memory. Restart or external
   index/`HEAD` change revokes Chatbook's Unstage authority.
 - Revalidate canonical worktree and Git-directory identity before mutation.
