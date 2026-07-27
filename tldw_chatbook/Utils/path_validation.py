@@ -304,8 +304,15 @@ def validate_path_simple(
 
         # Check for obvious traversal attempts
         dangerous_patterns = [
-            "../..",  # Multiple parent refs
-            "..\\",  # Windows parent ref
+            "../..",  # Multiple parent refs (POSIX)
+            "..\\..\\",  # Multiple parent refs (Windows) -- kept in parity
+            # with the POSIX pattern above; a single "..\" segment is a
+            # legitimate, unresolved component (e.g. "nested\..\locks") and
+            # must not be flagged here. This function has no base directory
+            # to resolve against, so genuine traversal outside an intended
+            # base is the sibling validate_path()/validate_path_safety()'s
+            # job; this raw substring scan only catches egregious,
+            # unresolvable inputs.
             "~/",  # Home directory expansion
             "~\\",  # Windows home
             "\x00",  # Null byte
