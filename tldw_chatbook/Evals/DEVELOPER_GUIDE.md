@@ -129,7 +129,7 @@ class StandardEvalRunner(BaseEvalRunner):
         return EvalSampleResult(...)
 ```
 
-### 4. Metrics System (`metrics_calculator.py`)
+### 4. Metrics System (`eval_runner.py`)
 
 Comprehensive metrics calculation for various task types.
 
@@ -391,7 +391,7 @@ def create_runner(task_type: str, **kwargs) -> BaseEvalRunner:
 1. Extend the metrics calculator:
 
 ```python
-# In metrics_calculator.py or custom module
+# In eval_runner.py or custom module
 class ExtendedMetricsCalculator(MetricsCalculator):
     
     def calculate_semantic_similarity(self, expected: str, 

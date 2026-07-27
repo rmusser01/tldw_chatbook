@@ -13,9 +13,6 @@ from tldw_chatbook.Evals.eval_runner import (
     EvalSampleResult,
     MetricsCalculator,
 )
-from tldw_chatbook.Evals.metrics_calculator import (
-    MetricsCalculator as StandaloneMetricsCalculator,
-)
 from tldw_chatbook.Evals.task_loader import TaskConfig
 
 
@@ -553,73 +550,45 @@ class TestSemanticSimilarityExactMatchShortCircuit:
         assert score == pytest.approx(1.0)
 
 
-class TestStandaloneMetricsCalculatorSemanticSimilarity:
-    """Regression coverage for the second ``MetricsCalculator`` copy.
+class TestExactlyOneMetricsCalculatorImplementation:
+    """Regression guard for TASK-863 (metrics_calculator.py orphan removal).
 
-    ``tldw_chatbook/Evals/metrics_calculator.py`` defines a standalone
-    ``MetricsCalculator`` that duplicates the one in ``eval_runner.py``
-    (see TASK-863). Nothing imports it at runtime, but ``Evals/README.md``
-    and ``DEVELOPER_GUIDE.md`` both instruct users to import it directly, so
-    it needs to uphold the same ``[0, 1]``-score invariants as the
-    ``eval_runner`` copy even though the two have not yet been consolidated
-    into one implementation. These tests exercise
-    ``StandaloneMetricsCalculator`` (imported from ``metrics_calculator``,
-    aliased to avoid colliding with the ``eval_runner`` import used above)
-    directly, independent of the ``eval_runner`` tests.
+    ``tldw_chatbook/Evals/metrics_calculator.py`` used to define a second,
+    standalone ``MetricsCalculator`` that duplicated the one in
+    ``eval_runner.py``. Nothing imported it at runtime, but nothing compared
+    the two copies either, so they silently drifted: ``eval_runner.py``'s
+    copy lost its ``return`` from ``calculate_semantic_similarity`` and had
+    its zero-guard corrupted from ``else 1.0`` to ``else 0.0`` (TASK-862),
+    while ``Evals/README.md`` kept telling users to import the *other*
+    (uncorrupted-but-differently-behaved) copy. TASK-863 deleted the orphan
+    and merged its unique methods into ``eval_runner.py`` so there is now
+    exactly one implementation.
+
+    This test walks the ``Evals`` package source with ``ast`` (not import
+    machinery) looking for any class literally named ``MetricsCalculator``,
+    so it fails loudly - independent of behavior - the moment a second copy
+    is reintroduced anywhere in the package, before it has a chance to
+    drift.
     """
 
-    def test_exact_match_returns_one(self):
-        """An exact string match returns exactly 1.0 without calling the embedding model."""
-        model = _ConstantEmbeddingModel(_PRECISION_LOSING_VECTOR)
+    def test_only_one_metrics_calculator_class_defined_in_evals_package(self):
+        import ast
+        from pathlib import Path
 
-        score = StandaloneMetricsCalculator.calculate_semantic_similarity(
-            "the cat sat on the mat", "the cat sat on the mat", embedding_model=model
+        import tldw_chatbook.Evals as evals_package
+
+        evals_dir = Path(evals_package.__file__).parent
+        hits = []
+        for path in sorted(evals_dir.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef) and node.name == "MetricsCalculator":
+                    hits.append(path.relative_to(evals_dir))
+
+        assert hits == [Path("eval_runner.py")], (
+            "Expected exactly one `class MetricsCalculator` in the Evals "
+            f"package (in eval_runner.py), found: {hits}. A second copy "
+            "will silently drift from the first, as it already has once "
+            "(see TASK-862/TASK-863) - consolidate into eval_runner.py's "
+            "MetricsCalculator instead of adding a new class."
         )
-
-        assert score == 1.0
-
-    def test_opposite_embeddings_are_clamped_to_zero_not_negative_one(self):
-        """Cosine similarity is [-1, 1], but callers expect a [0, 1] score.
-
-        Opposite vectors give raw cosine similarity -1.0; the standalone
-        copy must clamp that into range rather than returning the negative
-        raw cosine value (the defect TASK-863 flagged: this copy previously
-        returned raw cosine similarity uncapped).
-        """
-        model = _StubEmbeddingModel(
-            {
-                "positive": [1.0, 0.0],
-                "negative": [-1.0, 0.0],
-            }
-        )
-
-        score = StandaloneMetricsCalculator.calculate_semantic_similarity(
-            "positive", "negative", embedding_model=model
-        )
-
-        assert score is not None
-        assert score == pytest.approx(0.0)
-        assert 0.0 <= score <= 1.0
-
-    def test_zero_norm_embedding_returns_zero_without_raising(self):
-        """A zero-magnitude embedding vector must yield 0.0, not raise or return NaN.
-
-        Uses two DIFFERENT (not exactly equal, so the string-equality
-        short-circuit does not fire) strings, both mapped to a
-        zero-magnitude embedding vector. An unguarded division here
-        computes 0/0, which numpy turns into NaN rather than raising -
-        asserting exactly 0.0 (not just "no exception") fails loudly if
-        that NaN leaks out instead of being caught by the zero-guard.
-        """
-        model = _StubEmbeddingModel(
-            {
-                "the cat sat down": [0.0, 0.0, 0.0],
-                "the cat sat": [0.0, 0.0, 0.0],
-            }
-        )
-
-        score = StandaloneMetricsCalculator.calculate_semantic_similarity(
-            "the cat sat down", "the cat sat", embedding_model=model
-        )
-
-        assert score == 0.0
