@@ -458,9 +458,7 @@ def build_tool_review_hook(
         decisions = request_approvals(all_pending)
         if mcp_provider is not None:
             mcp_decisions = {
-                name: decisions[name]
-                for name in mcp_claimed_names
-                if name in decisions
+                name: decisions[name] for name in mcp_claimed_names if name in decisions
             }
             mcp_provider.apply_batch_decisions(mcp_decisions)
         for row in builtin_pending:
@@ -717,7 +715,9 @@ class ConsoleChatController:
         # way as the two maps above -- keyed by the run's OWNING session id,
         # so a background session's in-flight repair can never be read/
         # cleared by another session's close/stop/teardown path.
-        self._active_citation_repair_sessions: dict[str, ConsoleCitationRepairSession] = {}
+        self._active_citation_repair_sessions: dict[
+            str, ConsoleCitationRepairSession
+        ] = {}
         self._original_attempts: OrderedDict[str, str] = OrderedDict()
         #: Per-run cancellation flag for the agent bridge's background
         #: thread (see ``_run_agent_reply``), keyed by owning session id
@@ -1040,9 +1040,7 @@ class ConsoleChatController:
         with self._approval_state_lock:
             pending_snapshot = set(self._pending_approvals)
         other_pending = {
-            sid
-            for sid in pending_snapshot
-            if sid in live_ids and sid != active
+            sid for sid in pending_snapshot if sid in live_ids and sid != active
         }
         other_busy = {sid for sid in self._live_busy_session_ids() if sid != active}
         return len(other_busy - other_pending), len(other_pending)
@@ -1129,9 +1127,7 @@ class ConsoleChatController:
             The session's list of recorded ``ConsoleRunStatus`` values,
             initialized to ``[ConsoleRunStatus.IDLE]`` when absent.
         """
-        return self._run_state_histories.setdefault(
-            session_id, [ConsoleRunStatus.IDLE]
-        )
+        return self._run_state_histories.setdefault(session_id, [ConsoleRunStatus.IDLE])
 
     async def submit_draft(
         self, draft: str, *, session_id: str | None = None
@@ -1451,7 +1447,9 @@ class ConsoleChatController:
             return
         derived = derive_console_session_title(draft)
         if derived:
-            self.store.rename_session(session.id, derived)  # (session, persisted) — auto-title best-effort
+            self.store.rename_session(
+                session.id, derived
+            )  # (session, persisted) — auto-title best-effort
 
     def update_provider_selection(self, selection: ConsoleProviderSelection) -> None:
         """Sync controller provider settings from a Console selection."""
@@ -1779,7 +1777,9 @@ class ConsoleChatController:
         the shared, lifecycle-reset ``_stop_requested`` flag with the
         never-reset ``_shutdown_requested`` in that same fallback branch.
         """
-        cancel_event = self._active_cancel_events.get(self.store.active_session_id or "")
+        cancel_event = self._active_cancel_events.get(
+            self.store.active_session_id or ""
+        )
         return cancel_event is not None and cancel_event.is_set()
 
     def _is_session_cancelled(self, session_id: str | None) -> bool:
@@ -1925,8 +1925,10 @@ class ConsoleChatController:
         # ever resolved by -- mirrors `_pending_skill_script_rounds`'
         # identical `request_id`-keyed defense.
         round_id = str(uuid4())
-        owning_session_id = session_id if session_id is not None else (
-            self.store.active_session_id or ""
+        owning_session_id = (
+            session_id
+            if session_id is not None
+            else (self.store.active_session_id or "")
         )
         # F2b fix (Qodo wave): guard the round registration -- the UI
         # thread's `resolve_pending_approval`/legacy fallback and the
@@ -1962,9 +1964,8 @@ class ConsoleChatController:
         # DIFFERENT, background session -- `session_id is None` (a legacy
         # caller with no session context) always mounts, matching every
         # pre-Task-9 call site.
-        is_parked = (
-            session_id is not None
-            and session_id != (self.store.active_session_id or "")
+        is_parked = session_id is not None and session_id != (
+            self.store.active_session_id or ""
         )
         if session_id is not None:
             # Set the badge flag directly here (worker thread, plain-dict/
@@ -2334,11 +2335,7 @@ class ConsoleChatController:
             with self._approval_state_lock:
                 round_states = list(self._pending_approval_rounds.values())
             round_state = next(
-                (
-                    state
-                    for state in round_states
-                    if state.get("session_id") == active
-                ),
+                (state for state in round_states if state.get("session_id") == active),
                 None,
             )
         if round_state is None:
@@ -2807,9 +2804,7 @@ class ConsoleChatController:
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
-        provider_messages = await self._apply_world_info(
-            provider_messages, session_id
-        )
+        provider_messages = await self._apply_world_info(provider_messages, session_id)
         prefill = self._pinned_prefill_for_session(session_id)
         return await self._stream_assistant_response(
             resolution=resolution,
@@ -2880,9 +2875,7 @@ class ConsoleChatController:
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
-        provider_messages = await self._apply_world_info(
-            provider_messages, session_id
-        )
+        provider_messages = await self._apply_world_info(provider_messages, session_id)
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -2988,9 +2981,7 @@ class ConsoleChatController:
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
-        provider_messages = await self._apply_world_info(
-            provider_messages, session_id
-        )
+        provider_messages = await self._apply_world_info(provider_messages, session_id)
         prefill = self._pinned_prefill_for_session(session_id)
         self.clear_original_attempt(message_id)
         new_message = self.store.create_sibling(
@@ -3194,14 +3185,20 @@ class ConsoleChatController:
             ]
             transcript_text = "\n".join(lines)
             if prior_summary:
-                return f"[Previous summary]\n{prior_summary}\n\n{transcript_text}".rstrip()
+                return (
+                    f"[Previous summary]\n{prior_summary}\n\n{transcript_text}".rstrip()
+                )
             return transcript_text
 
         rows = list(span)
         body = assemble(rows)
-        while len(rows) > 1 and count_console_messages_tokens(
-            [{"role": "user", "content": body}], model
-        ) > self._SUMMARY_SPAN_TOKEN_BUDGET:
+        while (
+            len(rows) > 1
+            and count_console_messages_tokens(
+                [{"role": "user", "content": body}], model
+            )
+            > self._SUMMARY_SPAN_TOKEN_BUDGET
+        ):
             rows = rows[1:]
             body = assemble(rows)
         return body
@@ -3393,9 +3390,7 @@ class ConsoleChatController:
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
-        provider_messages = await self._apply_world_info(
-            provider_messages, session_id
-        )
+        provider_messages = await self._apply_world_info(provider_messages, session_id)
         prefill = self._pinned_prefill_for_session(session_id)
 
         # Every transform succeeded: now (and only now) fork the edited USER
@@ -3493,7 +3488,9 @@ class ConsoleChatController:
             )
 
             # Chat dictionaries are safe to apply (string replacements only).
-            provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+            provider_messages = await self._apply_chat_dictionaries(
+                provider_messages, session_id
+            )
 
             # task-548: mirror the dispatch choke point's boundary-summary
             # compaction so the preview matches what is actually sent when a
@@ -3528,7 +3525,9 @@ class ConsoleChatController:
                 ]
 
             # Replace image data with placeholders for the preview, including historical images.
-            provider_messages = self._replace_image_data_with_placeholders(provider_messages)
+            provider_messages = self._replace_image_data_with_placeholders(
+                provider_messages
+            )
 
             # Gather native tool schemas and MCP note.
             tools_info = self._build_tools_info_for_snapshot()
@@ -3616,7 +3615,9 @@ class ConsoleChatController:
             )
 
     @staticmethod
-    def _replace_image_data_with_placeholders(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _replace_image_data_with_placeholders(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         result = copy.deepcopy(messages)
 
         def _is_data_url(value: Any) -> bool:
@@ -3648,7 +3649,9 @@ class ConsoleChatController:
                     if not isinstance(part, dict):
                         continue
                     if part.get("type") == "image_url":
-                        part["image_url"] = _redact_image_url_value(part.get("image_url"))
+                        part["image_url"] = _redact_image_url_value(
+                            part.get("image_url")
+                        )
                     if part.get("type") == "image":
                         # Anthropic-style image parts use a ``source`` dict with
                         # base64 data; preserve the surrounding structure.
@@ -3718,9 +3721,7 @@ class ConsoleChatController:
             tools = self._agent_bridge.native_tool_schemas()
         mcp_note: str | None = None
         if self._mcp_provider:
-            mcp_note = (
-                "MCP tools are configured but live catalog composition is not shown in this preview."
-            )
+            mcp_note = "MCP tools are configured but live catalog composition is not shown in this preview."
         if tools:
             preview_note = (
                 "This preview shows only builtin native tools. "
@@ -3734,15 +3735,20 @@ class ConsoleChatController:
             "preview_note": preview_note,
         }
 
-    _SECRET_REDACTION_KEYS = {"api_key", "apikey", "token", "password", "secret", "bearer"}
+    _SECRET_REDACTION_KEYS = {
+        "api_key",
+        "apikey",
+        "token",
+        "password",
+        "secret",
+        "bearer",
+    }
     _SECRET_REDACTION_KEYS_NORMALIZED = {
         k.replace("-", "").replace("_", "") for k in _SECRET_REDACTION_KEYS
     }
     _SECRET_REDACTION_PATTERN = re.compile(
         r"(?P<open_quote>[\"']?)"
-        r"(?P<key>"
-        + "|".join(re.escape(k) for k in _SECRET_REDACTION_KEYS)
-        + r")"
+        r"(?P<key>" + "|".join(re.escape(k) for k in _SECRET_REDACTION_KEYS) + r")"
         r"(?P=open_quote)"
         r"(?P<sep>\s*[:=]\s*)"
         r"(?P<value>"
@@ -3777,7 +3783,9 @@ class ConsoleChatController:
                 sep = match.group("sep")
                 return f"{open_quote}{key}{open_quote}{sep}{redacted_value}"
 
-            return ConsoleChatController._SECRET_REDACTION_PATTERN.sub(_replace_value, value)
+            return ConsoleChatController._SECRET_REDACTION_PATTERN.sub(
+                _replace_value, value
+            )
 
         def _matches_secret_key(key: str) -> bool:
             """Return True when ``key`` matches or ends with a secret word.
@@ -3913,9 +3921,7 @@ class ConsoleChatController:
 
     async def _apply_skill_substitution(
         self, provider_messages: list[dict[str, Any]]
-    ) -> tuple[
-        list[dict[str, Any]], str | None, tuple[str, ...], tuple[str, ...], str
-    ]:
+    ) -> tuple[list[dict[str, Any]], str | None, tuple[str, ...], tuple[str, ...], str]:
         """Render-fresh the triggering turn's skill mention(s) at payload build time.
 
         Spec: "Invocation semantics" §5 (the substitution rule) -- one rule
@@ -4146,9 +4152,7 @@ class ConsoleChatController:
                 result.get("execution_mode") if isinstance(result, Mapping) else None
             )
             rendered = (
-                result.get("rendered_prompt", "")
-                if isinstance(result, Mapping)
-                else ""
+                result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
             )
             # Fork (or anything non-inline) cannot splice in place: leave
             # the mention literal, no note (this is not a trust failure).
@@ -4573,8 +4577,7 @@ class ConsoleChatController:
             (
                 index
                 for index in range(len(provider_messages) - 1, -1, -1)
-                if provider_messages[index].get("role")
-                == ConsoleMessageRole.USER.value
+                if provider_messages[index].get("role") == ConsoleMessageRole.USER.value
             ),
             None,
         )
@@ -4823,7 +4826,10 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(owner_id, None)
                 self._active_assistant_message_ids.pop(owner_id, None)
                 self._stop_requested = False
-                if self._active_citation_repair_sessions.get(owner_id) is citation_repair_session:
+                if (
+                    self._active_citation_repair_sessions.get(owner_id)
+                    is citation_repair_session
+                ):
                     self._active_citation_repair_sessions.pop(owner_id, None)
                 # Task 3b (agent path): `_run_agent_reply`'s own finally
                 # deliberately leaves its cancel_event live past its own
@@ -5573,11 +5579,9 @@ class ConsoleChatController:
             # preserves whatever partial content already streamed
             # otherwise).
             visible_copy = f"Agent run failed: {describe_stream_failure(exc)}"
-            if (
-                getattr(getattr(exc, "response", None), "status_code", None)
-                is not None
-                and self._session_history_carries_images(session_id)
-            ):
+            if getattr(
+                getattr(exc, "response", None), "status_code", None
+            ) is not None and self._session_history_carries_images(session_id):
                 visible_copy += self._IMAGE_REJECTION_RECOVERY_HINT
             try:
                 self.store.mark_message_failed(assistant_message_id)
@@ -5670,9 +5674,8 @@ class ConsoleChatController:
         # prior status for a regenerate, "stopped" for a plain send) and
         # the variant base (already popped), so this is a benign no-op
         # read-back, never an error, in either case.
-        stopped_now = (
-            (current is not None and current.status == "stopped")
-            or (cancel_event is not None and cancel_event.is_set())
+        stopped_now = (current is not None and current.status == "stopped") or (
+            cancel_event is not None and cancel_event.is_set()
         )
         if stopped_now:
             # The stopped message was already persisted by
@@ -5688,20 +5691,31 @@ class ConsoleChatController:
                 ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped."),
                 session_id=session_id,
             )
-            return ConsoleSubmitResult(True, True, current.content if current is not None else "")
+            return ConsoleSubmitResult(
+                True, True, current.content if current is not None else ""
+            )
 
         if outcome.status == RUN_CANCELLED:
             return self._finalize_agent_cancelled(
-                assistant_message_id, session_id, variant_mode=variant_mode,
-                run_id=run_id)
+                assistant_message_id,
+                session_id,
+                variant_mode=variant_mode,
+                run_id=run_id,
+            )
 
         if outcome.status != RUN_DONE:
             return self._finalize_agent_failure(
-                assistant_message_id, session_id, outcome, variant_mode=variant_mode,
-                run_id=run_id)
+                assistant_message_id,
+                session_id,
+                outcome,
+                variant_mode=variant_mode,
+                run_id=run_id,
+            )
 
         return await self._finalize_agent_success(
-            assistant_message_id, session_id, outcome,
+            assistant_message_id,
+            session_id,
+            outcome,
             variant_mode=variant_mode,
             run_id=run_id,
             citation_repair_session=citation_repair_session,
@@ -5709,7 +5723,9 @@ class ConsoleChatController:
         )
 
     def _ensure_assistant_placeholder(
-        self, assistant_message_id: str, session_id: str,
+        self,
+        assistant_message_id: str,
+        session_id: str,
     ) -> ConsoleChatMessage | None:
         """Return the assistant placeholder message if it still exists.
 
@@ -5723,7 +5739,8 @@ class ConsoleChatController:
             return None
 
     def _find_runtime_written_assistant(
-        self, session_id: str,
+        self,
+        session_id: str,
     ) -> ConsoleChatMessage | None:
         """Return the most recent assistant message in ``session_id``, if any."""
         try:
@@ -5736,7 +5753,10 @@ class ConsoleChatController:
         return None
 
     def _complete_agent_message(
-        self, assistant_message_id: str, variant_mode: bool, outcome: Any,
+        self,
+        assistant_message_id: str,
+        variant_mode: bool,
+        outcome: Any,
     ) -> ConsoleChatMessage:
         """Finalize a placeholder, applying the empty-final-text fallback.
 
@@ -5754,7 +5774,11 @@ class ConsoleChatController:
         return self.store.mark_message_complete(assistant_message_id)
 
     def _finalize_agent_cancelled(
-        self, assistant_message_id: str, session_id: str, *, variant_mode: bool,
+        self,
+        assistant_message_id: str,
+        session_id: str,
+        *,
+        variant_mode: bool,
         run_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Handle a ``RUN_CANCELLED`` outcome: the placeholder becomes ``failed``.
@@ -5768,7 +5792,9 @@ class ConsoleChatController:
         ordinal fallback -- see ``_record_run_assistant_message``).
         """
         visible_copy = "Response stopped/cancelled."
-        placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+        placeholder = self._ensure_assistant_placeholder(
+            assistant_message_id, session_id
+        )
         if placeholder is not None:
             failed = self.store.mark_message_failed(assistant_message_id)
         else:
@@ -5781,8 +5807,13 @@ class ConsoleChatController:
         return ConsoleSubmitResult(True, True, failed.content)
 
     def _finalize_agent_failure(
-        self, assistant_message_id: str, session_id: str, outcome: Any,
-        *, variant_mode: bool, run_id: str | None = None,
+        self,
+        assistant_message_id: str,
+        session_id: str,
+        outcome: Any,
+        *,
+        variant_mode: bool,
+        run_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Handle ``RUN_ERROR``, ``RUN_STUCK``, or any unknown non-done outcome.
 
@@ -5803,7 +5834,9 @@ class ConsoleChatController:
             self._session_history_carries_images(session_id)
         ):
             visible_copy += self._IMAGE_REJECTION_RECOVERY_HINT
-        placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+        placeholder = self._ensure_assistant_placeholder(
+            assistant_message_id, session_id
+        )
         if placeholder is not None:
             failed = self.store.mark_message_failed(assistant_message_id)
             self._record_run_assistant_message(run_id, failed)
@@ -5815,7 +5848,10 @@ class ConsoleChatController:
             return ConsoleSubmitResult(True, True, failed.content)
 
         runtime_written = self._find_runtime_written_assistant(session_id)
-        if runtime_written is not None and runtime_written.status in {"pending", "streaming"}:
+        if runtime_written is not None and runtime_written.status in {
+            "pending",
+            "streaming",
+        }:
             self.store.append_stream_chunk(runtime_written.id, f"\n\n{visible_copy}")
             failed = self.store.mark_message_failed(runtime_written.id)
         else:
@@ -5828,7 +5864,10 @@ class ConsoleChatController:
         return ConsoleSubmitResult(True, True, failed.content)
 
     async def _finalize_agent_success(
-        self, assistant_message_id: str, session_id: str, outcome: Any,
+        self,
+        assistant_message_id: str,
+        session_id: str,
+        outcome: Any,
         *,
         variant_mode: bool,
         run_id: str | None = None,
@@ -5847,7 +5886,9 @@ class ConsoleChatController:
         ``_record_run_assistant_message`` -- the load-bearing correction of
         the native id ``create_run`` recorded, which resume anchors markers by.
         """
-        placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+        placeholder = self._ensure_assistant_placeholder(
+            assistant_message_id, session_id
+        )
         if placeholder is not None:
             if (
                 citation_repair_session is not None
@@ -5883,7 +5924,9 @@ class ConsoleChatController:
                         True,
                         selection.selected_body,
                     )
-            completed = self._complete_agent_message(assistant_message_id, variant_mode, outcome)
+            completed = self._complete_agent_message(
+                assistant_message_id, variant_mode, outcome
+            )
             self._record_run_assistant_message(run_id, completed)
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
@@ -5892,8 +5935,13 @@ class ConsoleChatController:
             return ConsoleSubmitResult(True, True, completed.content)
 
         runtime_written = self._find_runtime_written_assistant(session_id)
-        if runtime_written is not None and runtime_written.status in {"pending", "streaming"}:
-            completed = self._complete_agent_message(runtime_written.id, variant_mode=False, outcome=outcome)
+        if runtime_written is not None and runtime_written.status in {
+            "pending",
+            "streaming",
+        }:
+            completed = self._complete_agent_message(
+                runtime_written.id, variant_mode=False, outcome=outcome
+            )
             self._record_run_assistant_message(run_id, completed)
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
@@ -5903,7 +5951,8 @@ class ConsoleChatController:
 
         final_text = getattr(outcome, "final_text", "") or "No response was generated."
         completed = self.store.append_message(
-            session_id, role=ConsoleMessageRole.ASSISTANT, content=final_text)
+            session_id, role=ConsoleMessageRole.ASSISTANT, content=final_text
+        )
         self._record_run_assistant_message(run_id, completed)
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
@@ -5912,7 +5961,9 @@ class ConsoleChatController:
         return ConsoleSubmitResult(True, True, completed.content)
 
     def _record_run_assistant_message(
-        self, run_id: str | None, completed: ConsoleChatMessage,
+        self,
+        run_id: str | None,
+        completed: ConsoleChatMessage,
     ) -> None:
         """Write the completed reply's PERSISTED id onto the agent run.
 
@@ -5954,9 +6005,7 @@ class ConsoleChatController:
         if self._agent_bridge is None:
             return None
         try:
-            return self._agent_bridge.latest_unanchored_primary_run_id(
-                conversation_id
-            )
+            return self._agent_bridge.latest_unanchored_primary_run_id(conversation_id)
         except Exception:  # noqa: BLE001 -- bookkeeping must never fail the stop
             logger.opt(exception=True).warning(
                 "failed to look up unanchored primary run for stop recording",
@@ -5965,7 +6014,9 @@ class ConsoleChatController:
             return None
 
     def _append_failed_assistant(
-        self, session_id: str, visible_copy: str,
+        self,
+        session_id: str,
+        visible_copy: str,
     ) -> ConsoleChatMessage:
         """Append a failed assistant message carrying ``visible_copy``.
 
@@ -5974,7 +6025,8 @@ class ConsoleChatController:
         streamed in, and then it is marked failed.
         """
         message = self.store.append_message(
-            session_id, role=ConsoleMessageRole.ASSISTANT, content="")
+            session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
         self.store.append_stream_chunk(message.id, visible_copy)
         return self.store.mark_message_failed(message.id)
 
@@ -6133,7 +6185,9 @@ class ConsoleChatController:
             if message.id == message_id:
                 break
         return self._leading_system_message() + self._provider_message_payloads(
-            collected, skip_failed=False, use_variant_content=True,
+            collected,
+            skip_failed=False,
+            use_variant_content=True,
             annotate_ids=annotate_ids,
         )
 
@@ -6321,8 +6375,10 @@ class ConsoleChatController:
         active one once a background run outlives a session switch) pass it
         explicitly.
         """
-        target = session_id if session_id is not None else (
-            self.store.active_session_id or ""
+        target = (
+            session_id
+            if session_id is not None
+            else (self.store.active_session_id or "")
         )
         # Task 10 (background completion toasts): captured BEFORE the
         # overwrite below so the once-guard downstream can tell a genuine
@@ -6378,7 +6434,8 @@ class ConsoleChatController:
             # the same COMPLETED/FAILED status again (e.g. a defensive
             # re-stamp) does not re-toast.
             if (
-                run_state.status in (ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED)
+                run_state.status
+                in (ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED)
                 and previous_status
                 not in {
                     ConsoleRunStatus.BLOCKED,
@@ -6398,8 +6455,10 @@ class ConsoleChatController:
         background run in progress on another session is untouched when the
         viewed session changes.
         """
-        target = session_id if session_id is not None else (
-            self.store.active_session_id or ""
+        target = (
+            session_id
+            if session_id is not None
+            else (self.store.active_session_id or "")
         )
         if self.run_state_for(target).status in {
             ConsoleRunStatus.BLOCKED,
