@@ -6,7 +6,7 @@ These tools allow LLMs to perform safe file operations with proper validation.
 
 import re
 from pathlib import Path, PureWindowsPath
-from typing import Dict, Any
+from typing import Dict, Any, Iterator
 
 from loguru import logger
 
@@ -704,17 +704,25 @@ def _sandbox_root_is_hidden(root: Path) -> bool:
     because each routes through `validate_path_multi` -> `validate_path`
     against this same root, and that check fires unconditionally once the
     root's own name starts with `.` -- independent of the candidate.
-    `glob_files`/`grep_files` instead glob `_tool_sandbox_root()` directly
-    and never pass through `validate_path` at all, so without this
-    mirrored guard a dotted root INVERTS the hidden-file protection: the
-    three siblings refuse everything while these two enumerate/read it
-    normally (live-reproduced: `grep_files` returned a plain, non-hidden
-    file's contents from inside a dotted root while `read_file` refused
-    the identical path).
+    `glob_files`/`grep_files` instead glob their roots directly and never
+    pass through `validate_path` at all, so without this mirrored guard a
+    dotted root INVERTS the hidden-file protection: the three siblings
+    refuse everything while these two enumerate/read it normally
+    (live-reproduced: `grep_files` returned a plain, non-hidden file's
+    contents from inside a dotted root while `read_file` refused the
+    identical path).
+
+    TASK-850 generalizes this from a single sandbox root to the whole
+    ``allowed_file_roots`` set: called once per root by
+    ``GlobFiles.execute``/``GrepFiles.execute`` when building
+    ``usable_roots``, so a dotted root is excluded from the search rather
+    than checked only once against the sandbox. See those callers for how
+    a dotted root's absence is handled when it leaves zero usable roots.
 
     Args:
-        root: The resolved sandbox root, as returned by
-            ``_tool_sandbox_root()``.
+        root: One of the resolved roots ``allowed_file_roots`` returned
+            (the sandbox root, or one of the run's bound workspace
+            folders) -- not necessarily the sandbox root itself.
 
     Returns:
         True if ``root``'s final path component starts with ``.``.
@@ -722,8 +730,99 @@ def _sandbox_root_is_hidden(root: Path) -> bool:
     return root.name.startswith(".")
 
 
+def _iter_candidates_across_roots(
+    pattern: str,
+    roots: tuple[Path, ...],
+    sensitive_ctx: SensitivePathContext,
+) -> Iterator[Path]:
+    """Yield validated file candidates across every allowed root, once each.
+
+    Shared by ``GlobFiles.execute`` and ``GrepFiles.execute`` (TASK-850):
+    both previously globbed the tool sandbox root only, which was strictly
+    narrower than -- and inconsistent with -- `read_file`/`write_file`/
+    `list_directory`, all three of which already honour every root
+    ``allowed_file_roots`` returns (the sandbox plus any workspace folder
+    bound to the run). They now search the SAME root set, so an agent can
+    no longer read a file by path that it cannot find by search.
+
+    Every existing guard applies to every candidate from every root, not
+    just the first: containment (``is_within``, which also applies the
+    sensitive-path denylist) and the hidden-component rule
+    (``_is_hidden_within``, mirroring ``validate_path``'s dotfile
+    refusal). Callers must pre-filter ``roots`` down to the ones that pass
+    the dotted-root rule (``_sandbox_root_is_hidden``) themselves -- this
+    function assumes every entry in ``roots`` already qualifies; see
+    ``GlobFiles.execute``/``GrepFiles.execute`` for where that filtering
+    (and the "refuse the whole call only if none survive" decision)
+    happens.
+
+    ``_MAX_CANDIDATES`` bounds the TOTAL number of candidates pulled from
+    the underlying ``Path.glob()`` iterators across ALL roots COMBINED,
+    never per root -- otherwise N configured roots would multiply the
+    worst-case walk by N. A candidate reachable through more than one root
+    (e.g. a bound workspace folder that happens to nest the sandbox, or
+    two bound folders that overlap) is yielded at most once, deduplicated
+    by resolved identity.
+
+    Args:
+        pattern: A glob pattern, already checked by ``_rejects_traversal``.
+        roots: Roots to search, in priority order. Every entry must
+            already have passed ``_sandbox_root_is_hidden`` (i.e. none is
+            itself dot-prefixed) -- this function does not check that
+            again.
+        sensitive_ctx: A ``SensitivePathContext`` resolved ONCE by the
+            caller for this whole invocation (see
+            ``Utils.sensitive_paths.resolve_sensitive_context``) and
+            reused for every candidate from every root here -- never
+            re-resolved per root or per candidate.
+
+    Yields:
+        Each qualifying candidate ``Path`` (as returned by ``glob()``,
+        not pre-resolved), at most ``_MAX_CANDIDATES`` total across every
+        root and never repeated.
+
+    Raises:
+        ValueError: The pattern is syntactically invalid for the root
+            currently being searched. ``Path.glob()`` validates lazily --
+            on the first ``next()`` pulled from it, not at construction --
+            so this can surface from a ``next()`` call deep inside
+            iteration; it propagates straight out of this generator so
+            callers can distinguish a bad pattern from a legitimate empty
+            result.
+        NotImplementedError: Same lazy-validation timing, for a pattern
+            form ``pathlib`` does not support.
+    """
+    seen_resolved: set[Path] = set()
+    examined = 0
+    for root in roots:
+        if examined >= _MAX_CANDIDATES:
+            return
+        root_resolved = root.resolve()
+        candidates = root.glob(pattern)
+        while examined < _MAX_CANDIDATES:
+            try:
+                path = next(candidates)
+            except StopIteration:
+                break
+            examined += 1
+            if not path.is_file() or not is_within(path, root, context=sensitive_ctx):
+                continue
+            # A dotfile/dotdir must be invisible here even though it
+            # passed `is_within` -- see `_is_hidden_within`.
+            try:
+                resolved = path.resolve()
+            except (OSError, RuntimeError):
+                continue
+            if _is_hidden_within(resolved, root_resolved):
+                continue
+            if resolved in seen_resolved:
+                continue
+            seen_resolved.add(resolved)
+            yield path
+
+
 class GlobFiles(Tool):
-    """`glob_files` -- path-pattern search inside the sandbox root."""
+    """`glob_files` -- path-pattern search across the sandbox and workspace roots."""
 
     @property
     def name(self) -> str:
@@ -732,8 +831,9 @@ class GlobFiles(Tool):
     @property
     def description(self) -> str:
         return (
-            "Find files by path pattern inside the tool sandbox. Supports "
-            "glob syntax including ** for recursive matches, e.g. '**/*.py'. "
+            "Find files by path pattern inside the tool sandbox and any "
+            "bound workspace folders. Supports glob syntax including ** "
+            "for recursive matches, e.g. '**/*.py'. "
             f"Returns at most {_MAX_MATCHES} paths."
         )
 
@@ -756,7 +856,18 @@ class GlobFiles(Tool):
         return ("reads",)
 
     async def execute(self, **kwargs) -> dict:
-        """Search for files under the sandbox root by glob pattern.
+        """Search for files by glob pattern across every allowed root.
+
+        TASK-850: previously globbed the tool sandbox root only -- strictly
+        narrower than, and inconsistent with, `read_file`/`write_file`/
+        `list_directory`, which already honour every root
+        `allowed_file_roots` returns (the sandbox plus any workspace
+        folder bound to the current run). Now searches that SAME root
+        set: each root is globbed and results are merged, with
+        `_MAX_CANDIDATES`/`_MAX_MATCHES` still applied GLOBALLY across all
+        roots combined, not per root -- so N configured roots do not
+        multiply the worst-case walk by N (see
+        `_iter_candidates_across_roots`).
 
         Args:
             pattern: Glob pattern, e.g. ``"**/*.py"``. Absolute patterns and
@@ -772,57 +883,38 @@ class GlobFiles(Tool):
         if _rejects_traversal(pattern):
             return {"error": "pattern must stay inside the sandbox root"}
         try:
-            root = _tool_sandbox_root()
-            # Mirrors validate_path's hidden-base-directory rejection, which
-            # is why read_file/write_file/list_directory refuse EVERYTHING
-            # once the sandbox root is itself dotted -- those three route
-            # through validate_path against this same root; glob()ing it
-            # directly here bypasses that check entirely without this
-            # mirrored guard. See _sandbox_root_is_hidden.
-            if _sandbox_root_is_hidden(root):
+            roots = allowed_file_roots(write=False, sandbox_root=_tool_sandbox_root())
+            # Dotted-root rule, extended to a ROOT SET (TASK-850): with a
+            # single root (the sandbox alone, the sandbox-only
+            # configuration), a dotted root refuses the WHOLE call, exactly
+            # as before -- see _sandbox_root_is_hidden. With several roots,
+            # each is checked independently here and a dotted one is simply
+            # excluded from `usable_roots` rather than failing every other,
+            # still-valid root's results too; the call is refused outright
+            # only when NONE survive that filter (which is exactly the
+            # single-dotted-root case, so sandbox-only behavior is
+            # unchanged).
+            usable_roots = tuple(
+                root for root in roots if not _sandbox_root_is_hidden(root)
+            )
+            if not usable_roots:
                 return {"error": "Access to hidden files/directories is not allowed"}
+            # Resolved ONCE for this call and reused for every candidate
+            # from every root, rather than letting `is_within` ->
+            # `is_sensitive_path` re-resolve the sensitive-path set (11
+            # config accessors) per candidate -- see
+            # Utils.sensitive_paths.resolve_sensitive_context.
+            sensitive_ctx = resolve_sensitive_context()
+            matches: list[str] = []
             try:
-                candidates = root.glob(pattern)
+                for path in _iter_candidates_across_roots(
+                    pattern, usable_roots, sensitive_ctx
+                ):
+                    matches.append(str(path))
+                    if len(matches) >= _MAX_MATCHES:
+                        break
             except (ValueError, NotImplementedError) as exc:
                 return {"error": f"invalid pattern: {exc}"}
-            matches: list[str] = []
-            examined = 0
-            # Resolved ONCE for this call and reused for every candidate
-            # below, rather than letting `is_within` -> `is_sensitive_path`
-            # re-resolve the sensitive-path set (11 config accessors) per
-            # candidate -- see Utils.sensitive_paths.resolve_sensitive_context.
-            sensitive_ctx = resolve_sensitive_context()
-            root_resolved = root.resolve()
-            while True:
-                # `Path.glob()` validates lazily: a malformed pattern (e.g.
-                # "**foo/*") doesn't raise at construction above, it raises
-                # on the first `next()` here. Only the `next()` call is
-                # inside this try -- `path.is_file()`/`is_within()` below
-                # run outside it, so a ValueError from the loop body is
-                # never misreported as an invalid pattern.
-                try:
-                    path = next(candidates)
-                except StopIteration:
-                    break
-                except (ValueError, NotImplementedError) as exc:
-                    return {"error": f"invalid pattern: {exc}"}
-                examined += 1
-                if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
-                    break
-                if not path.is_file() or not is_within(path, root, context=sensitive_ctx):
-                    continue
-                # A dotfile/dotdir must be invisible here even though it
-                # passed `is_within` -- that call applies the
-                # credential/app-state denylist, not the hidden-component
-                # rule `read_file`/`write_file` enforce via `validate_path`.
-                # See `_is_hidden_within`.
-                try:
-                    resolved = path.resolve()
-                except (OSError, RuntimeError):
-                    continue
-                if _is_hidden_within(resolved, root_resolved):
-                    continue
-                matches.append(str(path))
             return {"matches": sorted(matches)}
         except OSError as exc:
             return {"error": f"sandbox root is not usable: {exc}"}
@@ -838,8 +930,9 @@ class GlobFiles(Tool):
             return {"error": f"Failed to glob files: {exc}"}
 
 
+
 class GrepFiles(Tool):
-    """`grep_files` -- content search inside the sandbox root."""
+    """`grep_files` -- content search across the sandbox and workspace roots."""
 
     @property
     def name(self) -> str:
@@ -849,8 +942,9 @@ class GrepFiles(Tool):
     def description(self) -> str:
         return (
             "Search file contents by regular expression inside the tool "
-            "sandbox, optionally narrowed by a path glob. Returns matching "
-            f"lines with their file and line number, at most {_MAX_MATCHES}."
+            "sandbox and any bound workspace folders, optionally narrowed "
+            "by a path glob. Returns matching lines with their file and "
+            f"line number, at most {_MAX_MATCHES}."
         )
 
     @property
@@ -900,7 +994,14 @@ class GrepFiles(Tool):
         return 20.0
 
     async def execute(self, **kwargs) -> dict:
-        """Search file contents under the sandbox root by regular expression.
+        """Search file contents across every allowed root by regular expression.
+
+        TASK-850: previously searched the tool sandbox root only; now
+        searches every root `allowed_file_roots` returns (the sandbox plus
+        any workspace folder bound to the run), the same root set
+        `read_file`/`write_file`/`list_directory` already honour --
+        merged via `_iter_candidates_across_roots`, with
+        `_MAX_CANDIDATES` applied globally across all roots, not per root.
 
         The supplied `pattern` is compiled with Python's `re`, which has no
         match timeout. To keep a catastrophic-backtracking pattern's worst
@@ -930,103 +1031,78 @@ class GrepFiles(Tool):
             return {"error": f"invalid regular expression: {exc}"}
 
         try:
-            root = _tool_sandbox_root()
-            # Mirrors validate_path's hidden-base-directory rejection, which
-            # is why read_file/write_file/list_directory refuse EVERYTHING
-            # once the sandbox root is itself dotted -- see the matching
-            # comment in GlobFiles.execute and _sandbox_root_is_hidden.
-            if _sandbox_root_is_hidden(root):
-                return {"error": "Access to hidden files/directories is not allowed"}
             glob_pattern = str(kwargs.get("glob") or "**/*")
             if _rejects_traversal(glob_pattern):
                 return {"error": "glob must stay inside the sandbox root"}
-            try:
-                candidates = root.glob(glob_pattern)
-            except (ValueError, NotImplementedError) as exc:
-                return {"error": f"invalid glob: {exc}"}
+            roots = allowed_file_roots(write=False, sandbox_root=_tool_sandbox_root())
+            # Dotted-root rule, extended to a ROOT SET (TASK-850) -- see the
+            # matching comment in GlobFiles.execute.
+            usable_roots = tuple(
+                root for root in roots if not _sandbox_root_is_hidden(root)
+            )
+            if not usable_roots:
+                return {"error": "Access to hidden files/directories is not allowed"}
+            # Resolved ONCE for this call and reused for every candidate
+            # from every root -- see the matching comment in
+            # GlobFiles.execute above.
+            sensitive_ctx = resolve_sensitive_context()
 
             matches: list[dict] = []
-            # Deliberately NOT sorted(candidates): materialising and sorting
-            # the generator defeats _MAX_CANDIDATES on a broad pattern.
-            examined = 0
             # Total lines read across ALL files this invocation, checked
-            # alongside `examined`/`len(matches)` below so a corpus of many
-            # small-line files can't extend the invocation's total scan
-            # cost past _MAX_GREP_LINES_SCANNED even though each file
-            # individually stays under _MAX_GREP_FILE_BYTES.
+            # alongside `len(matches)` below so a corpus of many small-line
+            # files can't extend the invocation's total scan cost past
+            # _MAX_GREP_LINES_SCANNED even though each file individually
+            # stays under _MAX_GREP_FILE_BYTES.
             lines_scanned = 0
-            # Resolved ONCE for this call and reused for every candidate
-            # below -- see the matching comment in GlobFiles.execute above.
-            sensitive_ctx = resolve_sensitive_context()
-            root_resolved = root.resolve()
-            while True:
-                # As in GlobFiles: `Path.glob()` validates lazily, so a bad
-                # pattern raises here, on `next()`, not at the call above.
-                # Only `next()` is inside this try -- the body below
-                # (is_file, is_within, the streamed read, regex.search) runs
-                # outside it, so a ValueError raised there is never
-                # misreported as a bad glob.
-                try:
-                    path = next(candidates)
-                except StopIteration:
-                    break
-                except (ValueError, NotImplementedError) as exc:
-                    return {"error": f"invalid glob: {exc}"}
-                examined += 1
-                if (
-                    len(matches) >= _MAX_MATCHES
-                    or examined > _MAX_CANDIDATES
-                    or lines_scanned >= _MAX_GREP_LINES_SCANNED
+            try:
+                for path in _iter_candidates_across_roots(
+                    glob_pattern, usable_roots, sensitive_ctx
                 ):
-                    break
-                if not path.is_file() or not is_within(path, root, context=sensitive_ctx):
-                    continue
-                # A dotfile/dotdir must be unreadable here even though it
-                # passed `is_within` -- see the matching comment in
-                # GlobFiles.execute and `_is_hidden_within`.
-                try:
-                    resolved = path.resolve()
-                except (OSError, RuntimeError):
-                    continue
-                if _is_hidden_within(resolved, root_resolved):
-                    continue
-                try:
-                    if path.stat().st_size > _MAX_GREP_FILE_BYTES:
+                    if (
+                        len(matches) >= _MAX_MATCHES
+                        or lines_scanned >= _MAX_GREP_LINES_SCANNED
+                    ):
+                        break
+                    try:
+                        if path.stat().st_size > _MAX_GREP_FILE_BYTES:
+                            continue
+                    except OSError:
                         continue
-                except OSError:
-                    continue
-                # Streamed line-by-line rather than `read_text()` +
-                # `splitlines()` (which would materialize the whole file,
-                # and a second full copy split into lines, in memory at
-                # once): one large file in the sandbox previously forced a
-                # large peak allocation. The per-file byte cap above still
-                # bounds the worst case for a single pathological line with
-                # no newline.
-                try:
-                    with path.open("r", encoding="utf-8", errors="replace") as fh:
-                        for number, line in enumerate(fh, start=1):
-                            lines_scanned += 1
-                            # Search only a length-capped slice of the line,
-                            # never the full line -- see
-                            # _MAX_GREP_LINE_SEARCH_CHARS above for why this
-                            # is the only genuine bound on a
-                            # catastrophic-backtracking pattern's worst-case
-                            # runtime, and what it does NOT buy.
-                            if regex.search(line[:_MAX_GREP_LINE_SEARCH_CHARS]):
-                                matches.append(
-                                    {
-                                        "path": str(path),
-                                        "line_number": number,
-                                        "line": line.rstrip("\n")[:500],
-                                    }
-                                )
-                            if (
-                                len(matches) >= _MAX_MATCHES
-                                or lines_scanned >= _MAX_GREP_LINES_SCANNED
-                            ):
-                                break
-                except OSError:
-                    continue
+                    # Streamed line-by-line rather than `read_text()` +
+                    # `splitlines()` (which would materialize the whole
+                    # file, and a second full copy split into lines, in
+                    # memory at once): one large file in an allowed root
+                    # previously forced a large peak allocation. The
+                    # per-file byte cap above still bounds the worst case
+                    # for a single pathological line with no newline.
+                    try:
+                        with path.open("r", encoding="utf-8", errors="replace") as fh:
+                            for number, line in enumerate(fh, start=1):
+                                lines_scanned += 1
+                                # Search only a length-capped slice of the
+                                # line, never the full line -- see
+                                # _MAX_GREP_LINE_SEARCH_CHARS above for why
+                                # this is the only genuine bound on a
+                                # catastrophic-backtracking pattern's
+                                # worst-case runtime, and what it does NOT
+                                # buy.
+                                if regex.search(line[:_MAX_GREP_LINE_SEARCH_CHARS]):
+                                    matches.append(
+                                        {
+                                            "path": str(path),
+                                            "line_number": number,
+                                            "line": line.rstrip("\n")[:500],
+                                        }
+                                    )
+                                if (
+                                    len(matches) >= _MAX_MATCHES
+                                    or lines_scanned >= _MAX_GREP_LINES_SCANNED
+                                ):
+                                    break
+                    except OSError:
+                        continue
+            except (ValueError, NotImplementedError) as exc:
+                return {"error": f"invalid glob: {exc}"}
             return {"matches": matches}
         except OSError as exc:
             return {"error": f"sandbox root is not usable: {exc}"}
