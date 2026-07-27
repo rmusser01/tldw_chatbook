@@ -23,6 +23,10 @@ from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
     LIBRARY_ROW_BROWSE_NOTES,
 )
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
+from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
+    FileNotesSessionOwner,
+    SessionBinding,
+)
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
     FileNotesService,
     OperationResult,
@@ -231,6 +235,126 @@ async def test_root_transition_retains_and_freezes_old_document_until_scan_finis
 
 
 @pytest.mark.asyncio
+async def test_root_transition_rebinds_after_owned_replica_reopens(
+    tmp_path: Path,
+) -> None:
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    old_root.mkdir()
+    new_root.mkdir()
+    workspace = LibraryFileNotesWorkspace(
+        root=old_root,
+        replica_path=tmp_path / "owned.sqlite",
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized,
+            "initial scan did not finish",
+        )
+        old_service = workspace._service
+        assert old_service is not None
+        old_service.close()
+        workspace._replica = None
+        workspace._service = None
+
+        assert await workspace.set_root(new_root, persist=False)
+        service = workspace._service
+        assert service is not None
+        assert service.create_file("new.md", "new").status == "ok"
+        workspace._refresh_session_changes()
+        assert (
+            _static_text(workspace, "#file-notes-session-changes")
+            == "Session Git (1)"
+        )
+
+    await workspace.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stale_initialization_cannot_reselect_root_after_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_root = (tmp_path / "old").resolve()
+    new_root = (tmp_path / "new").resolve()
+    old_root.mkdir()
+    new_root.mkdir()
+    owner = FileNotesSessionOwner()
+    replica = FileNotesReplica(":memory:")
+    old_select_started = threading.Event()
+    release_old_select = threading.Event()
+    old_select_finished = threading.Event()
+    new_select_finished = threading.Event()
+    real_select_root = FileNotesSessionOwner.select_root
+
+    def delayed_select_root(
+        candidate_owner: FileNotesSessionOwner,
+        root: str | Path,
+    ) -> SessionBinding:
+        canonical = Path(root).expanduser().resolve(strict=False)
+        if (
+            candidate_owner is owner
+            and canonical == old_root
+            and not old_select_started.is_set()
+        ):
+            old_select_started.set()
+            assert release_old_select.wait(timeout=5)
+            binding = real_select_root(candidate_owner, root)
+            old_select_finished.set()
+            return binding
+        binding = real_select_root(candidate_owner, root)
+        if candidate_owner is owner and canonical == new_root:
+            new_select_finished.set()
+        return binding
+
+    monkeypatch.setattr(
+        FileNotesSessionOwner,
+        "select_root",
+        delayed_select_root,
+    )
+    workspace = LibraryFileNotesWorkspace(
+        root=old_root,
+        replica=replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(
+            pilot,
+            old_select_started.is_set,
+            "stale initialization did not reach root selection",
+        )
+        transition = asyncio.create_task(
+            workspace.set_root(new_root, persist=False)
+        )
+        await asyncio.to_thread(new_select_finished.wait, 0.2)
+        release_old_select.set()
+        await _wait_until(
+            pilot,
+            old_select_finished.is_set,
+            "stale initialization did not finish",
+        )
+        assert await transition
+
+        service = workspace._service
+        assert service is not None
+        assert service.create_file("current.md", "current").status == "ok"
+        workspace._refresh_session_changes()
+        assert (
+            _static_text(workspace, "#file-notes-session-changes")
+            == "Session Git (1)"
+        )
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_tree_search_open_dirty_and_autosave_keep_one_editor(
     tmp_path: Path,
 ) -> None:
@@ -418,10 +542,86 @@ async def test_create_move_delete_protect_and_restore_use_real_service(
             lambda: (root / "moved.md").exists(),
             "restore did not recreate exact file",
         )
-        changes = _static_text(workspace, "#file-notes-session-changes")
-        assert all(
-            action in changes for action in ("created", "moved", "deleted", "restored")
+        assert (
+            _static_text(workspace, "#file-notes-session-changes")
+            == "Session Git (4)"
         )
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_injected_owner_retains_same_root_log_across_workspaces(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    owner = FileNotesSessionOwner()
+    replica = FileNotesReplica(":memory:")
+    first = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+
+    async with _WorkspaceHarness(first).run_test() as pilot:
+        await _wait_until(pilot, lambda: first.initialized, "first scan did not finish")
+        service = first._service
+        assert service is not None
+        assert service.create_file("retained.md", "retained").status == "ok"
+        first._refresh_session_changes()
+        assert (
+            _static_text(first, "#file-notes-session-changes") == "Session Git (1)"
+        )
+    await first.shutdown()
+
+    binding = owner.select_root(root)
+    status = owner.try_acquire_status(binding)
+    assert status is not None
+    status.release()
+
+    second = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+    async with _WorkspaceHarness(second).run_test() as pilot:
+        await _wait_until(
+            pilot,
+            lambda: second.initialized,
+            "second scan did not finish",
+        )
+        assert (
+            _static_text(second, "#file-notes-session-changes") == "Session Git (1)"
+        )
+    await second.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_workspace_shuts_down_only_its_private_session_owner(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace scan did not finish",
+        )
+        owner = workspace._session_owner
+        binding = owner.select_root(root)
+
+    await workspace.shutdown()
+    await workspace.shutdown()
+
+    assert owner.try_acquire_status(binding) is None
     replica.close()
 
 
@@ -944,9 +1144,9 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
             "pre-remount edit did not become dirty",
         )
         assert await retained.flush_pending_work()
-        assert "modified library.md" in _static_text(
-            retained,
-            "#file-notes-session-changes",
+        assert (
+            _static_text(retained, "#file-notes-session-changes")
+            == "Session Git (1)"
         )
         screen.query_one("#library-notes-source-database", Button).press()
         await _wait_until(
@@ -971,9 +1171,9 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
             lambda: editor.text == "changed while hidden",
             "remount did not reconcile the retained open file",
         )
-        assert "modified library.md" in _static_text(
-            retained,
-            "#file-notes-session-changes",
+        assert (
+            _static_text(retained, "#file-notes-session-changes")
+            == "Session Git (1)"
         )
 
         original_finish = service._finish_published_file

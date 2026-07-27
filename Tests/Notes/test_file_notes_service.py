@@ -19,6 +19,11 @@ sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
 
 import tldw_chatbook.Notes.file_notes_service as service_module  # noqa: E402
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
+from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
+    FileNotesSessionOwner,
+    SessionBinding,
+    SessionChange,
+)
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
     MAX_FILE_BYTES,
     MAX_FILE_CHARS,
@@ -35,6 +40,176 @@ def replica() -> FileNotesReplica:
     value = FileNotesReplica(":memory:")
     yield value
     value.close()
+
+
+def _session_service(
+    root: Path,
+    replica: FileNotesReplica,
+) -> tuple[FileNotesSessionOwner, SessionBinding, FileNotesService]:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    service = FileNotesService(
+        root,
+        replica,
+        session_owner=owner,
+        session_binding=binding,
+    )
+    return owner, binding, service
+
+
+def test_injected_owner_records_each_successful_disk_mutation_once(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    owner, binding, service = _session_service(root, replica)
+
+    assert service.create_file("one.md", "one").status == "ok"
+    opened = service.open_file("one.md")
+    assert service.save_file(opened, "two", session_key="session").status == "ok"
+    assert service.move_file("one.md", "moved.md").status == "ok"
+    moved = service.open_file("moved.md")
+    assert (
+        service.delete_file("moved.md", expected_hash=moved.content_hash).status
+        == "ok"
+    )
+    assert service.restore_file("moved.md").status == "ok"
+
+    sequenced = owner.snapshot(binding).changes
+    assert [item.sequence for item in sequenced] == [1, 2, 3, 4, 5]
+    assert [item.change for item in sequenced] == [
+        SessionChange("created", "one.md"),
+        SessionChange("modified", "one.md"),
+        SessionChange("moved", "one.md", "moved.md"),
+        SessionChange("deleted", "moved.md"),
+        SessionChange("restored", "moved.md"),
+    ]
+    assert service.session_changes == tuple(item.change for item in sequenced)
+    assert all(isinstance(change, SessionChange) for change in service.session_changes)
+    assert service_module.SessionChange is SessionChange
+
+
+@pytest.mark.parametrize("operation", ["create", "modify", "move", "delete", "restore"])
+def test_injected_owner_records_only_after_disk_success(
+    operation: str,
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / operation
+    root.mkdir()
+    target = root / "note.md"
+
+    if operation == "restore":
+        target.write_text("recover", encoding="utf-8")
+        setup = FileNotesService(root, replica)
+        opened = setup.open_file("note.md")
+        assert (
+            setup.delete_file("note.md", expected_hash=opened.content_hash).status
+            == "ok"
+        )
+    elif operation != "create":
+        target.write_text("before", encoding="utf-8")
+
+    owner, binding, service = _session_service(root, replica)
+    if operation in {"create", "restore"}:
+        real_open = service_module.os.open
+
+        def fail_open(
+            path: str | os.PathLike[str],
+            *args: object,
+            **kwargs: object,
+        ) -> int:
+            if Path(path) == target:
+                raise PermissionError("forced disk failure")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(service_module.os, "open", fail_open)
+        if operation == "create":
+            result = service.create_file("note.md", "replacement")
+        else:
+            result = service.restore_file("note.md")
+    elif operation == "modify":
+        opened = service.open_file("note.md")
+        real_replace = service_module.os.replace
+
+        def fail_replace(
+            source: str | os.PathLike[str],
+            destination: str | os.PathLike[str],
+        ) -> None:
+            if Path(destination) == target:
+                raise PermissionError("forced disk failure")
+            real_replace(source, destination)
+
+        monkeypatch.setattr(service_module.os, "replace", fail_replace)
+        result = service.save_file(opened, "replacement", session_key="session")
+    elif operation == "move":
+        destination = root / "moved.md"
+        real_unlink = service_module.os.unlink
+
+        def fail_source_unlink(
+            path: str | os.PathLike[str],
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            if Path(path) == target:
+                raise PermissionError("forced disk failure")
+            real_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(service_module.os, "unlink", fail_source_unlink)
+        result = service.move_file("note.md", destination.name)
+    else:
+        opened = service.open_file("note.md")
+        real_unlink = service_module.os.unlink
+
+        def fail_delete_unlink(
+            path: str | os.PathLike[str],
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            if Path(path) == target:
+                raise PermissionError("forced disk failure")
+            real_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(service_module.os, "unlink", fail_delete_unlink)
+        result = service.delete_file("note.md", expected_hash=opened.content_hash)
+
+    if operation == "create":
+        assert not target.exists()
+    elif operation == "move":
+        assert target.exists()
+        assert not (root / "moved.md").exists()
+    elif operation == "restore":
+        assert not target.exists()
+    else:
+        assert target.exists()
+
+    assert result.status == "error"
+    assert owner.snapshot(binding).changes == ()
+    assert service.session_changes == ()
+
+
+def test_late_success_from_old_root_generation_is_not_published(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    old_root.mkdir()
+    new_root.mkdir()
+    owner, old_binding, service = _session_service(old_root, replica)
+
+    new_binding = owner.select_root(new_root)
+    result = service.create_file("late.md", "disk write still succeeds")
+
+    assert result.status == "ok"
+    assert (old_root / "late.md").read_text(encoding="utf-8") == (
+        "disk write still succeeds"
+    )
+    assert owner.snapshot(old_binding).changes == ()
+    assert owner.snapshot(new_binding).changes == ()
+    assert service.session_changes == ()
 
 
 def test_scan_excludes_git_and_symlinks_and_rejects_unsafe_paths(
@@ -903,7 +1078,7 @@ def test_reconcile_projects_external_changes_without_session_changes(
     root.mkdir()
     (root / "modified.md").write_text("old", encoding="utf-8")
     (root / "deleted.md").write_text("gone", encoding="utf-8")
-    service = FileNotesService(root, replica)
+    owner, binding, service = _session_service(root, replica)
     assert not service.scan().offline
     real_read = service_module._read_regular_file
     reads: list[str] = []
@@ -928,6 +1103,7 @@ def test_reconcile_projects_external_changes_without_session_changes(
     assert result.deleted == ("deleted.md",)
     assert sorted(reads) == ["created.txt", "modified.md"]
     assert service.session_changes == ()
+    assert owner.snapshot(binding).changes == ()
     assert replica.search(str(root.resolve()), "created") == ["created.txt"]
     assert replica.list_deleted(str(root.resolve())) == ["deleted.md"]
 

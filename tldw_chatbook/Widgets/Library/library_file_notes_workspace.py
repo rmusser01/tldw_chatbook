@@ -26,6 +26,10 @@ from tldw_chatbook.config import (
     save_setting_to_cli_config,
 )
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+from tldw_chatbook.Notes.file_notes_session_owner import (
+    FileNotesSessionOwner,
+    SessionBinding,
+)
 from tldw_chatbook.Notes.file_notes_service import (
     FileNoteEntry,
     FileNotesService,
@@ -151,6 +155,7 @@ class LibraryFileNotesWorkspace(Vertical):
         root: str | Path | None | object = _UNSET,
         replica: FileNotesReplica | None | object = _UNSET,
         replica_path: str | Path | None = None,
+        session_owner: FileNotesSessionOwner | None = None,
         poll_interval: float = 1.5,
         autosave_delay: float = 2.0,
         **kwargs: Any,
@@ -163,6 +168,7 @@ class LibraryFileNotesWorkspace(Vertical):
             replica: Optional injected replica. When omitted, the standard
                 user-data replica is opened off the UI loop.
             replica_path: Optional persistent replica location.
+            session_owner: Optional process owner retained across workspaces.
             poll_interval: Reconciliation cadence in seconds.
             autosave_delay: Debounce delay in seconds.
             **kwargs: Textual widget arguments.
@@ -177,6 +183,11 @@ class LibraryFileNotesWorkspace(Vertical):
             replica if isinstance(replica, FileNotesReplica) else None
         )
         self._owns_replica = replica is _UNSET
+        self._session_owner = (
+            FileNotesSessionOwner() if session_owner is None else session_owner
+        )
+        self._owns_session_owner = session_owner is None
+        self._session_binding: SessionBinding | None = None
         self._service: FileNotesService | None = None
         self._runtime_warning = ""
 
@@ -320,7 +331,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 search_results.display = False
                 yield search_results
                 yield Static(
-                    "Session changes: none",
+                    "Session Git (0)",
                     id="file-notes-session-changes",
                     markup=False,
                 )
@@ -415,6 +426,8 @@ class LibraryFileNotesWorkspace(Vertical):
                 timer.stop()
         self._poll_timer = None
         self._autosave_timer = None
+        if self._owns_session_owner:
+            await asyncio.to_thread(self._session_owner.shutdown)
         if self._owns_replica:
             await asyncio.to_thread(self._close_owned_replica)
 
@@ -440,7 +453,10 @@ class LibraryFileNotesWorkspace(Vertical):
         generation = self._root_generation
         previous_service = self._service
         was_initialized = self._initialized
-        root, replica, service, warning = await asyncio.to_thread(self._build_runtime)
+        root, replica, service, warning = await asyncio.to_thread(
+            self._build_runtime,
+            generation,
+        )
         if not self._active or generation != self._root_generation:
             return
         resuming = was_initialized and service is previous_service
@@ -488,6 +504,9 @@ class LibraryFileNotesWorkspace(Vertical):
 
     def _build_runtime(
         self,
+        expected_generation: int,
+        *,
+        bind_session: bool = True,
     ) -> tuple[
         Path | None,
         FileNotesReplica | None,
@@ -517,6 +536,12 @@ class LibraryFileNotesWorkspace(Vertical):
                 except Exception as error:
                     replica = None
                     warning = f"Recovery unavailable: {error}"
+            generation_is_current = expected_generation == self._root_generation
+            if not bind_session or not generation_is_current:
+                return root, replica, self._service, warning
+            binding = (
+                None if root is None else self._session_owner.select_root(root)
+            )
             service = self._service
             if root is None:
                 service = None
@@ -524,13 +549,30 @@ class LibraryFileNotesWorkspace(Vertical):
                 service is None
                 or service.root_key != str(root)
                 or previous_replica is not replica
+                or self._session_binding != binding
             ):
+                assert binding is not None
                 service = FileNotesService(
                     root,
                     replica,
                     operation_lock=self._service_lock,
+                    session_owner=self._session_owner,
+                    session_binding=binding,
                 )
+            self._session_binding = binding
             return root, replica, service, warning
+
+    def _select_root_binding(
+        self,
+        root: Path,
+        generation: int,
+    ) -> SessionBinding | None:
+        with self._runtime_lock:
+            if self._shutdown or generation != self._root_generation:
+                return None
+            binding = self._session_owner.select_root(root)
+            self._session_binding = binding
+            return binding
 
     async def _load_deleted_paths(
         self,
@@ -706,20 +748,15 @@ class LibraryFileNotesWorkspace(Vertical):
     def _refresh_session_changes(self) -> None:
         if not self._active or not self.is_mounted:
             return
-        changes = () if self._service is None else self._service.session_changes
-        text = "Session changes: none"
-        if changes:
-            parts = []
-            for change in changes:
-                if change.destination_path:
-                    parts.append(
-                        f"{change.action} {change.relative_path} → "
-                        f"{change.destination_path}"
-                    )
-                else:
-                    parts.append(f"{change.action} {change.relative_path}")
-            text = "Session changes: " + "; ".join(parts)
-        self.query_one("#file-notes-session-changes", Static).update(text)
+        binding = self._session_binding
+        count = (
+            0
+            if binding is None
+            else len(self._session_owner.snapshot(binding).changes)
+        )
+        self.query_one("#file-notes-session-changes", Static).update(
+            f"Session Git ({count})"
+        )
 
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
         self._save_state = state
@@ -823,17 +860,28 @@ class LibraryFileNotesWorkspace(Vertical):
                 return False
             if self._replica_seed is _UNSET and self._replica is None:
                 _, replica, _, warning = await asyncio.to_thread(
-                    self._build_runtime
+                    self._build_runtime,
+                    generation,
+                    bind_session=False,
                 )
                 if not self._active or generation != self._root_generation:
                     return False
                 self._replica = replica
                 self._runtime_warning = warning
+            binding = await asyncio.to_thread(
+                self._select_root_binding,
+                canonical,
+                generation,
+            )
+            if binding is None:
+                return False
             service = await asyncio.to_thread(
                 FileNotesService,
                 canonical,
                 self._replica,
                 operation_lock=self._service_lock,
+                session_owner=self._session_owner,
+                session_binding=binding,
             )
             if not self._active or generation != self._root_generation:
                 return False
@@ -854,6 +902,7 @@ class LibraryFileNotesWorkspace(Vertical):
             if not self._active or generation != self._root_generation:
                 return False
             self._root = canonical
+            self._session_binding = binding
             self._service = service
             self._clear_open_document()
             self._initialized = True

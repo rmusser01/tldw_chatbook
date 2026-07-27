@@ -17,6 +17,11 @@ from typing import Literal, TypeVar, cast
 from loguru import logger
 
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica, ReplicaFileInfo
+from tldw_chatbook.Notes.file_notes_session_owner import (
+    FileNotesSessionOwner,
+    SessionBinding,
+    SessionChange,
+)
 from tldw_chatbook.Utils.path_validation import get_safe_relative_path
 
 MAX_FILE_BYTES = 8_000_000
@@ -85,15 +90,6 @@ class OpenedFileNote:
 
 
 @dataclass(frozen=True)
-class SessionChange:
-    """One successful filesystem mutation initiated by this service instance."""
-
-    action: Literal["created", "modified", "moved", "deleted", "restored"]
-    relative_path: str
-    destination_path: str | None = None
-
-
-@dataclass(frozen=True)
 class OperationResult:
     """Typed result for an expected filesystem or recovery outcome."""
 
@@ -149,6 +145,8 @@ class FileNotesService:
         replica: FileNotesReplica | None,
         *,
         operation_lock: RLock | None = None,
+        session_owner: FileNotesSessionOwner | None = None,
+        session_binding: SessionBinding | None = None,
     ) -> None:
         """Bind the service to one canonical root and optional SQLite replica.
 
@@ -156,12 +154,29 @@ class FileNotesService:
             root: Filesystem directory kept authoritative by this service.
             replica: Optional SQLite search and recovery replica.
             operation_lock: Optional lock shared by services using one replica.
+            session_owner: Optional process owner for session-change publication.
+            session_binding: Root generation used to reject late publications.
+
+        Raises:
+            ValueError: If only one session dependency is supplied or the
+                binding belongs to another root.
         """
         self.root = Path(root).expanduser().resolve(strict=False)
         self.root_key = str(self.root)
         self._replica = replica
         self._operation_lock = operation_lock or RLock()
-        self._session_changes: list[SessionChange] = []
+        if (session_owner is None) != (session_binding is None):
+            raise ValueError(
+                "session_owner and session_binding must be supplied together"
+            )
+        if session_owner is None:
+            session_owner = FileNotesSessionOwner()
+            session_binding = session_owner.select_root(self.root)
+        assert session_binding is not None
+        if session_binding.root_key != self.root_key:
+            raise ValueError("session binding belongs to another File Notes root")
+        self._session_owner = session_owner
+        self._session_binding = session_binding
         self._entry_cache: dict[str, FileNoteEntry] = {}
         self._pending_replica_moves: dict[str, str] = {}
 
@@ -173,7 +188,8 @@ class FileNotesService:
         Returns:
             An immutable snapshot of this session's disk changes.
         """
-        return tuple(self._session_changes)
+        snapshot = self._session_owner.snapshot(self._session_binding)
+        return tuple(item.change for item in snapshot.changes)
 
     @_serialized
     def close(self) -> None:
@@ -613,7 +629,7 @@ class FileNotesService:
             self._pending_replica_moves.pop(relative_path, None)
         else:
             self._pending_replica_moves[relative_path] = destination_path
-        self._session_changes.append(
+        self._record_session_change(
             SessionChange("moved", relative_path, destination_path)
         )
         return OperationResult(
@@ -720,7 +736,7 @@ class FileNotesService:
                 warning=warning,
             )
 
-        self._session_changes.append(SessionChange("deleted", relative_path))
+        self._record_session_change(SessionChange("deleted", relative_path))
         return OperationResult(
             status="ok",
             relative_path=relative_path,
@@ -1156,7 +1172,7 @@ class FileNotesService:
         content_hash: str,
         warning: str | None = None,
     ) -> OperationResult:
-        self._session_changes.append(SessionChange(action, relative_path))
+        self._record_session_change(SessionChange(action, relative_path))
         try:
             file_stat = path.stat()
         except OSError as error:
@@ -1180,6 +1196,9 @@ class FileNotesService:
             content_hash=content_hash,
             replica_warning=warning,
         )
+
+    def _record_session_change(self, change: SessionChange) -> None:
+        self._session_owner.record_change(self._session_binding, change)
 
     def _upsert_opened(self, opened: OpenedFileNote) -> str | None:
         return self._upsert_bytes(
