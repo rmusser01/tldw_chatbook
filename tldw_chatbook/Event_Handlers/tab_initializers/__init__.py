@@ -13,7 +13,6 @@ from .misc_tab_initializers import (
     SearchTabInitializer,
     IngestTabInitializer,
     ToolsSettingsTabInitializer,
-    LLMTabInitializer,
     EvalsTabInitializer,
 )
 
@@ -26,6 +25,5 @@ __all__ = [
     "SearchTabInitializer",
     "IngestTabInitializer",
     "ToolsSettingsTabInitializer",
-    "LLMTabInitializer",
     "EvalsTabInitializer",
 ]

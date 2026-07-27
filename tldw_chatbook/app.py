@@ -81,14 +81,6 @@ from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
 
 #
 # --- Local API library Imports ---
-from .Event_Handlers.LLM_Management_Events import (
-    llm_management_events,
-    llm_management_events_mlx_lm,
-    llm_management_events_ollama,
-    llm_management_events_onnx,
-    llm_management_events_transformers,
-    llm_management_events_vllm,
-)
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import (
     handle_streaming_chunk,
     handle_stream_done,
@@ -132,8 +124,6 @@ from tldw_chatbook.Constants import (
     TAB_ACP,
     TAB_SKILLS,
     TAB_SETTINGS,
-    LLAMA_CPP_SERVER_ARGS_HELP_TEXT,
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT,
     TAB_STTS,
     TAB_STUDY,
     TAB_WRITING,
@@ -209,14 +199,12 @@ from tldw_chatbook.Utils.Emoji_Handling import (
     FALLBACK_TITLE_BRAIN,
     supports_emoji,
 )
-from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 from tldw_chatbook.Utils.ui_helpers import UIHelpers
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Event_Handlers.worker_handlers import (
     WorkerHandlerRegistry,
     ChatWorkerHandler,
-    ServerWorkerHandler,
     AIGenerationHandler,
     MiscWorkerHandler,
 )
@@ -234,9 +222,7 @@ from .Event_Handlers import (
     conv_char_events as ccp_handlers,
     worker_events,
     ingest_events,
-    llm_nav_events,
     media_events,
-    app_lifecycle,
 )
 from .Event_Handlers.Chat_Events import (
     chat_events as chat_handlers,
@@ -2982,10 +2968,6 @@ class TldwCli(
 
     _prompt_search_timer: Optional[Timer] = None
 
-    # LLM Inference Tab
-    llm_active_view: reactive[Optional[str]] = reactive(None)
-    _initial_llm_view: Optional[str] = "llm-view-llama-cpp"
-
     llamacpp_server_process: Optional[subprocess.Popen] = None
     llamafile_server_process: Optional[subprocess.Popen] = None
     vllm_server_process: Optional[subprocess.Popen] = None
@@ -3119,6 +3101,8 @@ class TldwCli(
         self.ollama_server_process = None
         self.mlx_server_process = None
         self.onnx_server_process = None
+        self._llm_server_launch_claims = {}
+        self._llm_server_lifecycle_lock = threading.RLock()
         self.media_current_page = 1
         self.media_search_current_page = 1
         self.media_search_total_pages = 1
@@ -3325,10 +3309,6 @@ class TldwCli(
         self._wire_research_services()
         self._wire_character_persona_services()
         self._wire_chat_conversation_services()
-
-        # --- Create the master handler map ---
-        # This one-time setup makes the dispatcher clean and fast.
-        self.button_handler_map = self._build_handler_map()
 
         # --- Initialize worker handler registry ---
         self._init_worker_handlers()
@@ -5157,184 +5137,10 @@ class TldwCli(
 
         # Register all worker handlers
         self.worker_handler_registry.register(ChatWorkerHandler(self))
-        self.worker_handler_registry.register(ServerWorkerHandler(self))
         self.worker_handler_registry.register(AIGenerationHandler(self))
         self.worker_handler_registry.register(MiscWorkerHandler(self))
 
         self.loguru_logger.info("Worker handler registry initialized with all handlers")
-
-    def _build_handler_map(self) -> dict:
-        """Constructs the master button handler map from all event modules."""
-
-        # --- Generic, Awaitable Helper Handlers ---
-        async def _handle_nav(
-            app: "TldwCli", event: Button.Pressed, *, prefix: str, reactive_attr: str
-        ) -> None:
-            """Generic handler for switching views within a tab."""
-            view_to_activate = event.button.id.replace(
-                f"{prefix}-nav-", f"{prefix}-view-"
-            )
-            app.loguru_logger.info(
-                f"_handle_nav called: Nav button '{event.button.id}' pressed. Prefix: '{prefix}', Reactive attr: '{reactive_attr}', Activating view '{view_to_activate}'."
-            )
-            old_value = getattr(app, reactive_attr, None)
-            setattr(app, reactive_attr, view_to_activate)
-            new_value = getattr(app, reactive_attr, None)
-            app.loguru_logger.info(
-                f"_handle_nav: Set {reactive_attr} from '{old_value}' to '{new_value}'"
-            )
-
-        async def _handle_sidebar_toggle(
-            app: "TldwCli", event: Button.Pressed, *, reactive_attr: str
-        ) -> None:
-            """Generic handler for toggling a sidebar's collapsed state."""
-            setattr(app, reactive_attr, not getattr(app, reactive_attr))
-
-        # --- LLM Management Handlers ---
-        llm_handlers_map = {
-            **llm_management_events.LLM_MANAGEMENT_BUTTON_HANDLERS,
-            **llm_nav_events.LLM_NAV_BUTTON_HANDLERS,
-            **llm_management_events_mlx_lm.MLX_LM_BUTTON_HANDLERS,
-            **llm_management_events_ollama.OLLAMA_BUTTON_HANDLERS,
-            **llm_management_events_onnx.ONNX_BUTTON_HANDLERS,
-            **llm_management_events_transformers.TRANSFORMERS_BUTTON_HANDLERS,
-            **llm_management_events_vllm.VLLM_BUTTON_HANDLERS,
-        }
-
-        # --- Chat Handlers ---
-
-        chat_handlers_map = {
-            **chat_events.CHAT_BUTTON_HANDLERS,
-            **chat_events_sidebar.CHAT_SIDEBAR_BUTTON_HANDLERS,
-            "toggle-chat-left-sidebar": functools.partial(
-                _handle_sidebar_toggle, reactive_attr="chat_sidebar_collapsed"
-            ),
-            "toggle-chat-right-sidebar": functools.partial(
-                _handle_sidebar_toggle, reactive_attr="chat_right_sidebar_collapsed"
-            ),
-        }
-
-        # --- Media Tab Handlers (NEW DYNAMIC WAY) ---
-        media_handlers_map = {}
-        for media_type_name in self._media_types_for_ui:
-            slug = slugify(media_type_name)
-            media_handlers_map[f"media-nav-{slug}"] = (
-                media_events.handle_media_nav_button_pressed
-            )
-            media_handlers_map[f"media-load-selected-button-{slug}"] = (
-                media_events.handle_media_load_selected_button_pressed
-            )
-            media_handlers_map[f"media-prev-page-button-{slug}"] = (
-                media_events.handle_media_page_change_button_pressed
-            )
-            media_handlers_map[f"media-next-page-button-{slug}"] = (
-                media_events.handle_media_page_change_button_pressed
-            )
-
-        # Add handlers for special media sub-tabs
-        media_handlers_map["media-nav-analysis-review"] = (
-            media_events.handle_media_nav_button_pressed
-        )
-        media_handlers_map["media-nav-collections-tags"] = (
-            media_events.handle_media_nav_button_pressed
-        )
-        media_handlers_map["media-nav-multi-item-review"] = (
-            media_events.handle_media_nav_button_pressed
-        )
-
-        # --- Search Handlers ---
-        search_handlers = {
-            SEARCH_NAV_RAG_QA: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-            SEARCH_NAV_RAG_CHAT: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-            SEARCH_NAV_RAG_MANAGEMENT: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-            SEARCH_NAV_WEB_SEARCH: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-            SEARCH_NAV_EMBEDDINGS_CREATE: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-            SEARCH_NAV_EMBEDDINGS_MANAGE: functools.partial(
-                _handle_nav, prefix="search", reactive_attr="search_active_sub_tab"
-            ),
-        }
-
-        # --- Ingest Handlers ---
-        ingest_handlers_map = {
-            **ingest_events.INGEST_BUTTON_HANDLERS,
-            # Add nav handlers using the helper
-            **{
-                button_id: functools.partial(
-                    _handle_nav, prefix="ingest", reactive_attr="ingest_active_view"
-                )
-                for button_id in INGEST_NAV_BUTTON_IDS
-            },
-        }
-
-        # --- Tools & Settings Handlers ---
-        tools_settings_handlers = {
-            "ts-nav-general-settings": functools.partial(
-                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
-            ),
-            "ts-nav-config-file-settings": functools.partial(
-                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
-            ),
-            "ts-nav-db-tools": functools.partial(
-                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
-            ),
-            "ts-nav-appearance": functools.partial(
-                _handle_nav, prefix="ts", reactive_attr="tools_settings_active_view"
-            ),
-        }
-
-        # --- Evals Handler ---
-        evals_handlers = {
-            "toggle-evals-sidebar": functools.partial(
-                _handle_sidebar_toggle, reactive_attr="evals_sidebar_collapsed"
-            ),
-        }
-
-        # Master map organized by tab
-        return {
-            TAB_CHAT: chat_handlers_map,
-            TAB_CCP: {
-                **ccp_handlers.CCP_BUTTON_HANDLERS,
-                "toggle-conv-char-left-sidebar": functools.partial(
-                    _handle_sidebar_toggle,
-                    reactive_attr="conv_char_sidebar_left_collapsed",
-                ),
-                "toggle-conv-char-right-sidebar": functools.partial(
-                    _handle_sidebar_toggle,
-                    reactive_attr="conv_char_sidebar_right_collapsed",
-                ),
-            },
-            TAB_MEDIA: {
-                **media_events.MEDIA_BUTTON_HANDLERS,
-                **{
-                    f"media-nav-{slugify(media_type)}": functools.partial(
-                        _handle_nav, prefix="media", reactive_attr="media_active_view"
-                    )
-                    for media_type in self._media_types_for_ui
-                },
-                "media-nav-all-media": functools.partial(
-                    _handle_nav, prefix="media", reactive_attr="media_active_view"
-                ),
-            },
-            TAB_INGEST: ingest_handlers_map,
-            TAB_LLM: llm_handlers_map,
-            TAB_LOGS: app_lifecycle.APP_LIFECYCLE_BUTTON_HANDLERS,
-            TAB_TOOLS_SETTINGS: tools_settings_handlers,
-            TAB_SEARCH: search_handlers,
-            TAB_EVALS: evals_handlers,
-            TAB_STTS: {},  # STTS handles its own events
-            TAB_STUDY: {},  # Study handles its own events
-            TAB_WATCHLISTS_COLLECTIONS: {},  # Watchlists handles its own events
-        }
 
     def _setup_buffered_logging(self):
         """Set up a persistent buffered logging handler for screen navigation mode."""
@@ -6389,29 +6195,6 @@ class TldwCli(
                 f"Error toggling CCP right pane: {e}"
             )
 
-    # ###################################################################
-    # --- Helper methods for Local LLM Inference logging ---
-    # ###################################################################
-    def _update_llamacpp_log(self, message: str) -> None:
-        """Helper to write messages to the Llama.cpp log widget."""
-        LogWidgetManager.update_llamacpp_log(self, message)
-
-    def _update_transformers_log(self, message: str) -> None:
-        """Helper to write messages to the Transformers log widget."""
-        LogWidgetManager.update_transformers_log(self, message)
-
-    def _update_llamafile_log(self, message: str) -> None:
-        """Helper to write messages to the Llamafile log widget."""
-        LogWidgetManager.update_llamafile_log(self, message)
-
-    def _update_vllm_log(self, message: str) -> None:
-        """Helper to write messages to the vLLM log widget."""
-        LogWidgetManager.update_vllm_log(self, message)
-
-    # ###################################################################
-    # --- End of Helper methods for Local LLM Inference logging ---
-    # ###################################################################
-
     # --- Modify _clear_prompt_fields and _load_prompt_for_editing ---
     def _clear_prompt_fields(self) -> None:
         """Clears prompt input fields in the CENTER PANE editor."""
@@ -6791,94 +6574,6 @@ class TldwCli(
             self.loguru_logger.opt(exception=True).error(
                 f"Unexpected error in watch_tools_settings_active_view: {e_watch}"
             )
-
-    # --- LLM Tab Watcher ---
-    def watch_llm_active_view(
-        self, old_view: Optional[str], new_view: Optional[str]
-    ) -> None:
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        self.loguru_logger.debug(
-            f"LLM Management active view changing from '{old_view}' to: '{new_view}'"
-        )
-
-        try:
-            content_pane = self.query_one("#llm-content-pane")
-        except QueryError:
-            self.loguru_logger.error(
-                "#llm-content-pane not found. Cannot switch LLM views."
-            )
-            return
-
-        for child in content_pane.query(".llm-view-area"):  # Query by common class
-            child.styles.display = "none"
-
-        if new_view:
-            try:
-                target_view_id_selector = f"#{new_view}"
-                view_to_show = content_pane.query_one(
-                    target_view_id_selector, Container
-                )
-                view_to_show.styles.display = "block"
-                self.loguru_logger.info(f"Switched LLM Management view to: {new_view}")
-                # Populate help text when view becomes active
-                if new_view == "llm-view-llama-cpp":
-                    try:
-                        help_widget = view_to_show.query_one(
-                            "#llamacpp-args-help-display", RichLog
-                        )
-                        # Check if help_widget has any lines. RichLog.lines is a list of segments.
-                        # A simple check is if it has any children (lines are added as children internally).
-                        # Or, more robustly, we can set a flag or check if the first line matches our help text.
-                        # For simplicity, let's assume if it has children, it's been populated.
-                        # A more direct way: RichLog stores its lines in a deque called 'lines'.
-                        if (
-                            not help_widget.lines
-                        ):  # Check if the internal lines deque is empty
-                            self.loguru_logger.debug(
-                                f"Populating Llama.cpp help text in {new_view} as it's empty."
-                            )
-                            help_widget.clear()  # Ensure it's clear before writing
-                            help_widget.write(LLAMA_CPP_SERVER_ARGS_HELP_TEXT)
-                        else:
-                            self.loguru_logger.debug(
-                                f"Llama.cpp help text in {new_view} already populated or not empty."
-                            )
-                    except QueryError:
-                        self.loguru_logger.debug(
-                            f"Help display widget #llamacpp-args-help-display not found in {new_view} during view switch - may not be mounted yet."
-                        )
-                    except Exception as e_help_populate:
-                        self.loguru_logger.opt(exception=True).error(
-                            f"Error ensuring Llama.cpp help text in {new_view}: {e_help_populate}"
-                        )
-                elif new_view == "llm-view-llamafile":
-                    try:
-                        help_widget = view_to_show.query_one(
-                            "#llamafile-args-help-display", RichLog
-                        )
-                        help_widget.clear()  # Clear and rewrite when tab becomes active
-                        help_widget.write(LLAMAFILE_SERVER_ARGS_HELP_TEXT)
-                        self.loguru_logger.debug(
-                            f"Ensured Llamafile help text in {new_view}."
-                        )
-                    except QueryError:
-                        self.loguru_logger.debug(
-                            f"Help display widget for Llamafile not found in {new_view} during view switch - may not be mounted yet."
-                        )
-                # Add similar for other views like llamafile, vllm if they have help sections
-                # elif new_view == "llm-view-llamafile":
-                #     try:
-                #         help_widget = view_to_show.query_one("#llamafile-args-help-display", RichLog)
-                #         if not help_widget.document.strip():
-                #             help_widget.write(LLAMAFILE_ARGS_HELP_TEXT)
-                #     except QueryError: pass
-            except QueryError as e:
-                self.loguru_logger.opt(exception=True).error(
-                    f"UI component '{new_view}' not found in #llm-content-pane: {e}"
-                )
 
     def watch_current_chat_is_ephemeral(self, is_ephemeral: bool) -> None:
         self.loguru_logger.debug(f"Chat ephemeral state changed to: {is_ephemeral}")
@@ -8417,16 +8112,6 @@ class TldwCli(
 
             # Call immediately after refresh
             self.call_after_refresh(initialize_tools_settings)
-        elif new_tab == TAB_LLM:  # New elif block for LLM tab
-            if not self.llm_active_view:  # If no view is active yet
-                self.loguru_logger.debug(
-                    f"Switched to LLM Management tab, activating initial view: {self._initial_llm_view}"
-                )
-                self.call_later(
-                    setattr, self, "llm_active_view", self._initial_llm_view
-                )
-            # Populate LLM help texts when the tab is shown
-            self.call_after_refresh(llm_management_events.populate_llm_help_texts, self)
         elif new_tab == TAB_EVALS:  # Added for Evals tab
             # EvalsLab is a unified dashboard - no need for view activation
             self.loguru_logger.debug("Switched to Evals tab")
@@ -9124,23 +8809,6 @@ class TldwCli(
     # --- EVENT DISPATCHERS ---
     #
     ########################################################################
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Dispatches button presses to the appropriate event handler."""
-        button_id = event.button.id
-        if not button_id:
-            return
-
-        self.loguru_logger.info(f"Button pressed: ID='{button_id}'")
-
-        # Screen-based navigation: let the screen handle its own buttons
-        # The screen should handle its own button events
-        # If it bubbles up here, it's a navigation button or unhandled
-        # Navigation buttons are already handled by NavigateToScreen messages
-        self.loguru_logger.debug(
-            f"Button event '{button_id}' reached app level in screen navigation mode"
-        )
-        return
-
     async def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Handles text area changes, e.g., for live updates to character data."""
         control_id = event.control.id
@@ -9161,14 +8829,6 @@ class TldwCli(
             ]:
                 await chat_handlers.handle_chat_character_attribute_changed(self, event)
         # Notes editor changes are handled inside the Library screen, not dispatched here.
-
-    def _update_model_download_log(self, message: str) -> None:
-        """Helper to write messages to the model download log widget."""
-        LogWidgetManager.update_model_download_log(self, message)
-
-    def _update_mlx_log(self, message: str) -> None:
-        """Helper to write messages to the MLX-LM log widget."""
-        LogWidgetManager.update_mlx_log(self, message)
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         input_id = event.input.id

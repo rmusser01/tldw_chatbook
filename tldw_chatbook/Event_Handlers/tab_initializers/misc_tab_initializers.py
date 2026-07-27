@@ -202,35 +202,6 @@ class ToolsSettingsTabInitializer(BaseTabInitializer):
         self.schedule_initialization(initialize_tools_settings)
 
 
-class LLMTabInitializer(BaseTabInitializer):
-    """Handles LLM Management tab initialization."""
-
-    def get_tab_id(self) -> str:
-        """Return the LLM tab ID."""
-        from tldw_chatbook.Constants import TAB_LLM
-
-        return TAB_LLM
-
-    async def on_tab_shown(self) -> None:
-        """Initialize the LLM tab when shown."""
-        if not self.app.llm_active_view:
-            self.log_initialization(
-                f"LLM tab shown, activating initial view: {self.app._initial_llm_view}"
-            )
-            self.app.call_later(
-                setattr, self.app, "llm_active_view", self.app._initial_llm_view
-            )
-
-        # Import here to avoid circular imports
-        from tldw_chatbook.Event_Handlers.LLM_Management_Events import (
-            llm_management_events,
-        )
-
-        # Populate LLM help texts
-        self.call_async_handler(llm_management_events.populate_llm_help_texts, self.app)
-        self.log_initialization("LLM help texts population initiated")
-
-
 class EvalsTabInitializer(BaseTabInitializer):
     """Handles Evals tab initialization."""
 

@@ -800,6 +800,68 @@ def test_legacy_state_docs_describe_compatibility_not_live_authority() -> None:
     assert "compatibility" in rendered
 
 
+def test_tldw_cli_has_no_retired_llm_destination_state_or_dispatcher() -> None:
+    retired_names = (
+        "llm_active_view",
+        "button_handler_map",
+        "_build_handler_map",
+        "_update_llamacpp_log",
+        "_update_llamafile_log",
+        "_update_vllm_log",
+        "_update_mlx_log",
+        "_update_model_download_log",
+    )
+    violations = {
+        name: _occurrences(APP_PATH, name)
+        for name in retired_names
+        if _occurrences(APP_PATH, name)
+    }
+
+    assert violations == {}
+
+
+def test_tldw_cli_has_no_constant_reactive_attribute_dispatch() -> None:
+    app_class = _class_definition(APP_PATH, "TldwCli")
+    violations = [
+        (node.lineno, ast.unparse(node.value))
+        for node in ast.walk(app_class)
+        if isinstance(node, ast.keyword)
+        and node.arg == "reactive_attr"
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    ]
+
+    assert violations == []
+
+
+def test_production_does_not_import_retired_llm_navigation_events() -> None:
+    violations: list[tuple[str, int, str]] = []
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        for node in ast.walk(_parse(path)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.rsplit(".", 1)[-1] == "llm_nav_events":
+                        violations.append(
+                            (
+                                str(path.relative_to(PROJECT_ROOT)),
+                                node.lineno,
+                                alias.name,
+                            )
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "llm_nav_events":
+                        violations.append(
+                            (
+                                str(path.relative_to(PROJECT_ROOT)),
+                                node.lineno,
+                                f"{node.module}.{alias.name}",
+                            )
+                        )
+
+    assert violations == []
+
+
 def test_retired_raw_handoff_fields_are_absent_from_production() -> None:
     violations = {
         field: _production_occurrences(field)

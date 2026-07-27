@@ -2,11 +2,11 @@
 #
 #
 # Imports
-from typing import TYPE_CHECKING
+import inspect
+from typing import TYPE_CHECKING, Callable
 
 #
 # 3rd-Party Imports
-from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
@@ -15,7 +15,30 @@ from textual.widgets import Static, Button, Input, RichLog, Label, TextArea, Col
 from loguru import logger
 
 # Local Imports
-#
+from ..Event_Handlers.LLM_Management_Events.llm_management_events import (
+    LLM_MANAGEMENT_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.llm_management_events_mlx_lm import (
+    MLX_LM_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.llm_management_events_ollama import (
+    OLLAMA_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.llm_management_events_onnx import (
+    ONNX_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.llm_management_events_transformers import (
+    TRANSFORMERS_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.llm_management_events_vllm import (
+    VLLM_BUTTON_HANDLERS,
+)
+from ..Event_Handlers.LLM_Management_Events.server_lifecycle import (
+    current_llm_destination,
+    server_is_active,
+)
+from ..Utils.log_widget_manager import LogWidgetManager
+
 if TYPE_CHECKING:
     from ..app import TldwCli
 #
@@ -238,9 +261,27 @@ class LLMManagementWindow(Container):
     # Reactive property to track active view
     active_view = reactive("llama-cpp", recompose=False)
 
+    ACTION_HANDLERS: dict[str, Callable] = {
+        **LLM_MANAGEMENT_BUTTON_HANDLERS,
+        **MLX_LM_BUTTON_HANDLERS,
+        **OLLAMA_BUTTON_HANDLERS,
+        **ONNX_BUTTON_HANDLERS,
+        **TRANSFORMERS_BUTTON_HANDLERS,
+        **VLLM_BUTTON_HANDLERS,
+    }
+    SERVER_CONTROLS = {
+        "llamacpp": ("llamacpp-start-server-button", "llamacpp-stop-server-button"),
+        "llamafile": ("llamafile-start-server-button", "llamafile-stop-server-button"),
+        "vllm": ("vllm-start-server-button", "vllm-stop-server-button"),
+        "onnx": ("onnx-start-server-button", "onnx-stop-server-button"),
+        "mlx": ("mlx-start-server-button", "mlx-stop-server-button"),
+        "ollama": ("ollama-start-service-button", "ollama-stop-service-button"),
+    }
+
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self._async_presentation_generations: dict[str, int] = {}
 
         # Map navigation button IDs to view IDs
         self.view_mapping = {
@@ -267,6 +308,7 @@ class LLMManagementWindow(Container):
         # Force the watcher to run by setting the value
         # Even though it's the same as the default, this ensures proper initialization
         self.active_view = "llama-cpp"
+        self._sync_all_process_controls()
 
     def compose(self) -> ComposeResult:
         """Compose the LLM Management UI with sidebar navigation and content area."""
@@ -358,6 +400,7 @@ class LLMManagementWindow(Container):
                         "Stop Server",
                         id="llamacpp-stop-server-button",
                         classes="action_button",
+                        disabled=True,
                     )
 
                 yield RichLog(
@@ -435,6 +478,7 @@ class LLMManagementWindow(Container):
                         "Stop Server",
                         id="llamafile-stop-server-button",
                         classes="action_button",
+                        disabled=True,
                     )
 
                 yield RichLog(
@@ -501,6 +545,7 @@ class LLMManagementWindow(Container):
                         "Stop Server",
                         id="vllm-stop-server-button",
                         classes="action_button",
+                        disabled=True,
                     )
 
                 yield RichLog(
@@ -580,6 +625,7 @@ class LLMManagementWindow(Container):
                         "Stop ONNX Server",
                         id="onnx-stop-server-button",
                         classes="action_button",
+                        disabled=True,
                     )
 
                 yield RichLog(
@@ -643,62 +689,7 @@ class LLMManagementWindow(Container):
                     classes="action_button",
                 )
 
-                yield Static("---", classes="separator")
-
-                yield Label(
-                    "Run Custom Transformers Server Script:", classes="section_label"
-                )
-                yield Label("Python Interpreter:", classes="label")
-                yield Input(
-                    id="transformers-python-path",
-                    value="python",
-                    placeholder="e.g., /path/to/venv/bin/python",
-                )
-
-                yield Label("Path to your Server Script (.py):", classes="label")
-                with Container(classes="input_container"):
-                    yield Input(
-                        id="transformers-script-path",
-                        placeholder="/path/to/your_transformers_server_script.py",
-                    )
-                    yield Button(
-                        "Browse Script",
-                        id="transformers-browse-script-button",
-                        classes="browse_button",
-                        tooltip="Choose the custom Transformers server script to run.",
-                    )
-
-                yield Label("Model to Load (ID or Path for script):", classes="label")
-                yield Input(
-                    id="transformers-server-model-arg",
-                    placeholder="Script-dependent model identifier",
-                )
-
-                yield Label("Host:", classes="label")
-                yield Input(id="transformers-server-host", value="127.0.0.1")
-
-                yield Label("Port:", classes="label")
-                yield Input(id="transformers-server-port", value="8003")
-
-                yield Label("Additional Script Arguments:", classes="label")
-                yield TextArea(
-                    id="transformers-server-additional-args",
-                    classes="additional_args_textarea",
-                    theme="vscode_dark",
-                )
-
-                yield Button(
-                    "Start Transformers Server",
-                    id="transformers-start-server-button",
-                    classes="action_button",
-                )
-                yield Button(
-                    "Stop Transformers Server",
-                    id="transformers-stop-server-button",
-                    classes="action_button",
-                )
-
-                yield Label("Operations Log:", classes="section_label")
+                yield Label("Model Operations Output", classes="section_label")
                 yield RichLog(
                     id="transformers-log-output",
                     classes="log_output",
@@ -763,6 +754,7 @@ class LLMManagementWindow(Container):
                         "Stop MLX Server",
                         id="mlx-stop-server-button",
                         classes="action_button",
+                        disabled=True,
                     )
 
                 yield RichLog(
@@ -790,7 +782,11 @@ class LLMManagementWindow(Container):
                     yield Button(
                         "Start Ollama Service", id="ollama-start-service-button"
                     )
-                    yield Button("Stop Ollama Service", id="ollama-stop-service-button")
+                    yield Button(
+                        "Stop Ollama Service",
+                        id="ollama-stop-service-button",
+                        disabled=True,
+                    )
 
                 yield Label(
                     "Ollama API Management (requires running service)",
@@ -960,24 +956,128 @@ class LLMManagementWindow(Container):
                     self.app_instance, id="huggingface-model-browser"
                 )
 
-    @on(Button.Pressed, ".llm-nav-button")
-    def handle_nav_button(self, event: Button.Pressed) -> None:
-        """Handle navigation button clicks."""
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Route navigation and allowlisted actions inside this destination."""
+
+        event.stop()
         button = event.button
         if not button.id:
             return
 
-        # Extract view name from button ID (nav-llama-cpp -> llama-cpp)
-        view_name = button.id.replace("nav-", "")
-
-        # Don't switch if already active
-        if view_name == self.active_view:
+        if button.id.startswith("nav-"):
+            self._activate_navigation(button.id)
             return
 
-        logger.debug(f"Switching LLM view to: {view_name}")
+        callback = self.ACTION_HANDLERS.get(button.id)
+        if callback is None:
+            return
 
-        # Update active view (will trigger watcher)
-        self.active_view = view_name
+        try:
+            result = callback(self, self.app_instance, event)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            self._recover_failed_action(button.id, exc)
+
+    def _activate_navigation(self, button_id: str) -> None:
+        """Activate a destination-owned view from its navigation button ID."""
+
+        view_name = button_id.removeprefix("nav-")
+        if view_name != self.active_view:
+            logger.debug(f"Switching LLM view to: {view_name}")
+            self.active_view = view_name
+
+    def _recover_failed_action(self, action_id: str, exc: Exception) -> None:
+        """Restore truthful controls and surface bounded, non-sensitive recovery."""
+
+        exception_category = type(exc).__name__
+        logger.error(
+            "LLM destination action failed (action_id={}, exception_category={})",
+            action_id,
+            exception_category,
+        )
+        self._restore_process_controls(action_id)
+        message = (
+            f"Action {action_id} failed ({exception_category}). "
+            "Try again or check application logs."
+        )[:200]
+        log_type = self._log_type_for_action(action_id)
+        if log_type is not None:
+            LogWidgetManager.update_log(self, log_type, message)
+        self.app_instance.notify(message, severity="error")
+
+    def _restore_process_controls(self, action_id: str) -> None:
+        """Set start/stop controls from the actual process handle after a failure."""
+
+        provider = next(
+            (name for name in self.SERVER_CONTROLS if action_id.startswith(f"{name}-")),
+            None,
+        )
+        if provider is None:
+            return
+        self._sync_process_controls(provider)
+
+    def _sync_process_controls(self, provider: str) -> None:
+        """Render one provider's controls from app-owned lifecycle state."""
+
+        start_id, stop_id = self.SERVER_CONTROLS[provider]
+        active = server_is_active(self.app_instance, provider)
+        try:
+            self.query_one(f"#{start_id}", Button).disabled = active
+            self.query_one(f"#{stop_id}", Button).disabled = not active
+        except QueryError:
+            logger.warning(
+                "Could not restore LLM process controls (provider={})",
+                provider,
+            )
+
+    def _handle_server_process_state_change(
+        self,
+        provider: str,
+        status: str | None = None,
+    ) -> None:
+        """Refresh one destination and surface only bounded worker status."""
+
+        self._sync_process_controls(provider)
+        if status is not None:
+            self.app_instance.notify(status[:200], severity="error")
+
+    def _sync_all_process_controls(self) -> None:
+        """Render every process control pair from app-owned lifecycle state."""
+
+        for provider in self.SERVER_CONTROLS:
+            self._sync_process_controls(provider)
+
+    def _begin_async_presentation(self, channel: str) -> int:
+        """Reserve the next local completion generation for one output channel."""
+
+        generation = self._async_presentation_generations.get(channel, 0) + 1
+        self._async_presentation_generations[channel] = generation
+        return generation
+
+    def _owns_async_presentation(self, channel: str, generation: int) -> bool:
+        """Return whether this mounted destination still owns one completion."""
+
+        return (
+            self._async_presentation_generations.get(channel) == generation
+            and current_llm_destination(self.app_instance) is self
+        )
+
+    @staticmethod
+    def _log_type_for_action(action_id: str) -> str | None:
+        """Return the destination log category associated with an action."""
+
+        if action_id.startswith("llamacpp-"):
+            return "llamacpp"
+        if action_id.startswith("llamafile-"):
+            return "llamafile"
+        if action_id.startswith("vllm-"):
+            return "vllm"
+        if action_id.startswith("mlx-"):
+            return "mlx"
+        if action_id.startswith("transformers-"):
+            return "transformers"
+        return None
 
     def watch_active_view(self, old_view: str, new_view: str) -> None:
         """React to active view changes."""

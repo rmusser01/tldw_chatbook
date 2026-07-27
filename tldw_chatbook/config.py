@@ -3,6 +3,7 @@
 #
 # Imports
 import copy
+import importlib.util
 import json
 import sys
 from datetime import datetime
@@ -67,6 +68,15 @@ def get_cli_config_path() -> Path:
     """Return the effective config path, including any environment override."""
 
     return _get_effective_config_path()
+
+
+def _optional_package_available(module_name: str) -> bool:
+    """Return whether an optional top-level module is installed without importing it."""
+
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (AttributeError, ImportError, ValueError):
+        return False
 
 
 def application_owned_config_directory(config_path: Path) -> Path | None:
@@ -921,26 +931,20 @@ def load_settings(force_reload: bool = False) -> Dict:
     # Determine platform-specific default STT provider
     default_stt_provider = "faster_whisper"
     if sys.platform == "darwin":
-        # Check if macOS-specific providers are available
-        try:
-            import parakeet_mlx  # noqa: F401
-
+        if _optional_package_available("parakeet_mlx"):
             default_stt_provider = "parakeet-mlx"
             logger.debug(
                 "Detected parakeet-mlx available on macOS, setting as default STT provider"
             )
-        except ImportError:
-            try:
-                from lightning_whisper_mlx import LightningWhisperMLX  # noqa: F401
-
-                default_stt_provider = "lightning-whisper-mlx"
-                logger.debug(
-                    "Detected lightning-whisper-mlx available on macOS, setting as default STT provider"
-                )
-            except ImportError:
-                logger.debug(
-                    "No macOS-specific STT providers found, using faster-whisper as default"
-                )
+        elif _optional_package_available("lightning_whisper_mlx"):
+            default_stt_provider = "lightning-whisper-mlx"
+            logger.debug(
+                "Detected lightning-whisper-mlx available on macOS, setting as default STT provider"
+            )
+        else:
+            logger.debug(
+                "No macOS-specific STT providers found, using faster-whisper as default"
+            )
 
     config_dict = {
         # General App
