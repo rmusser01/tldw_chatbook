@@ -22,7 +22,16 @@ Confirmed live during the task-1035 fix.
 
 A user creating their first source is told nothing happened: the form closes and the table is still empty. The obvious next move is to create it again, which either duplicates the source or hits a uniqueness error for something they cannot see.
 
-Note the Feeds region *does* update, because it reads `scoped_source_rows()` off a different path — so the screen contradicts itself, with the new source visible on the left and absent from the table in the centre.
+The Feeds region *does* update, because it reads `scoped_source_rows()` off a different path — so the screen contradicts itself.
+
+**The tree's counts are stale in the same way**, verified live immediately after creating a source through the fixed form:
+
+```
+│ All sources  0           ││  Feeds in All sources (1)
+│ Unassigned  0            ││  AI News RSS  (rss)
+```
+
+The rail says zero, the centre says one, and they are describing the same thing. So this is not only the sources table: **creating a source refreshes only the view that happens to read it directly**, and every count and list derived from it stays behind. Fix them together, or the next one found will be filed separately again.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -31,5 +40,7 @@ Note the Feeds region *does* update, because it reads `scoped_source_rows()` off
 - [ ] #2 The Feeds region and the sources table agree immediately after creation
 - [ ] #3 The reload happens off the UI thread and does not block the form closing
 - [ ] #4 A test creates a source and asserts the table contents, proven to fail against current code
-- [ ] #5 Deleting a source refreshes the table the same way
+- [ ] #5 Deleting a source refreshes the table, the tree counts and Feeds the same way
+- [ ] #6 The tree's `All sources` and `Unassigned` counts match the Feeds heading immediately after a create or delete
+- [ ] #7 A test asserts the tree count and the Feeds heading agree after creating a source, proven to fail against current code
 <!-- AC:END -->
