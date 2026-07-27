@@ -266,6 +266,68 @@ def clean_run_group(evals_db: EvalsDB) -> dict:
     return {"group_id": group_id, "base_id": base_id, "poor_id": poor_id}
 
 
+@pytest.fixture
+def k_depth_matched_run_group(evals_db: EvalsDB) -> dict:
+    """A single-snippet K=20-vs-K=5 grid where EVERY cell's ``top_k``
+    length actually matches its claimed ``k_returned`` -- unlike
+    ``clean_run_group``'s s2/s3 rows above, whose ``top_k`` is
+    deliberately abbreviated below their claimed ``k_returned`` (a
+    fixture-writing shorthand used throughout this file: list only the
+    tokens whose probability matters and let the rest live in
+    ``_distribution``'s implicit "other" bucket).
+
+    ``analysis.effective_k`` (TASK-861) now clamps each cell's
+    ``k_returned`` to ``len(top_k)`` before taking the cross-cell minimum
+    -- a defensive guard against corrupted stored JSON, a no-op on a real
+    capture where the two always agree by construction (see
+    ``capture_client.py``). Mixing one of ``clean_run_group``'s
+    abbreviated rows into a grid-wide ``effective_k`` computation would
+    drag the WHOLE grid's effective K down to that row's tiny native
+    length (1 or 2), which is exactly why this fixture exists rather than
+    reusing ``clean_run_group`` for the two tests below: padding s2/s3
+    out to their claimed K would change the divergence figures a dozen
+    OTHER tests in this file hard-code (bang-marker flags, spread
+    ordering, group means), while this fixture's single row is a direct
+    copy of ``clean_run_group``'s own s1 -- already K-depth-matched by the
+    original author, per its own comment -- so nothing about the asserted
+    entropy/truncation numbers below changes.
+
+    Args:
+        evals_db: The EvalsDB database instance for creating models,
+            datasets, and run groups.
+
+    Returns:
+        A dict with keys "group_id" (str), "base_id" (int), and "poor_id"
+        (int) identifying the test run group and its two target models.
+    """
+    base_id = evals_db.create_model(name="llama-3-8b", provider="llama_cpp", model_id="m")
+    poor_id = evals_db.create_model(name="capped-target", provider="openai", model_id="m2")
+    dataset_id = evals_db.create_dataset(
+        name="k-depth-set", format="custom", source_path="inline:k-depth-set"
+    )
+    config = BenchConfig(
+        name="k-depth bench", prompt_mode="raw", top_k=20,
+        dataset_id=dataset_id, target_ids=(base_id, poor_id),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [
+        Target(id=base_id, name="llama-3-8b", provider="llama_cpp", model_id="m"),
+        Target(id=poor_id, name="capped-target", provider="openai", model_id="m2"),
+    ]
+    snippets = [Snippet(id="s1", text="the protestors were", group="neutral")]
+    group_id, run_ids = create_run_group(evals_db, task_id, config, targets, snippets)
+
+    same_dist = [(" a", 0.5), (" the", 0.3), (" an", 0.1), (" some", 0.05), (" one", 0.03)]
+    rich_tail = [(f"_extra_{i}", 0.001) for i in range(15)]  # +15 real low-prob tokens
+    save_cell(
+        evals_db, run_ids[base_id], snippets[0],
+        _cap(same_dist + rich_tail, k_returned=20),
+    )
+    save_cell(evals_db, run_ids[poor_id], snippets[0], _cap(same_dist, k_returned=5))
+
+    return {"group_id": group_id, "base_id": base_id, "poor_id": poor_id}
+
+
 # ---------------------------------------------------------------------------
 # Fixture: a snippet whose text is itself Rich markup syntax -- the exact
 # pattern confirmed (against this project's pinned Textual version) to
@@ -353,6 +415,60 @@ async def _select_run_group(pilot, group_id: str) -> ResultsGrid:
 # ---------------------------------------------------------------------------
 # Pure-function unit tests: no Textual app needed at all.
 # ---------------------------------------------------------------------------
+
+
+def test_ever_observed_helpers_share_one_scan_and_hold_the_right_axis_fixed():
+    """TASK-861 item 1: ``_ever_observed_active_probe`` (one probe, every
+    target) and ``_ever_observed_all_probes`` (one target, every probe)
+    used to each carry their own copy of the identical nested scan (the
+    second's own docstring admitted as much). Folded into a shared
+    module-level ``_probe_observed_in_target(snippets, cells, target_id,
+    probe)``.
+
+    Monkeypatches that shared helper and asserts BOTH methods route
+    through it -- proving neither kept a private copy of the scan -- and
+    asserts the EXACT (target, probe) pairs each one calls it with, which
+    pins that each call site still holds its own axis fixed rather than
+    the fold accidentally making the single-active-probe call site pay for
+    every configured probe (or vice versa)."""
+    from tldw_chatbook.UI.Evals import results_grid as results_grid_module
+
+    grid = ResultsGrid(view_model=None, run_group_id="g")
+    calls: list[tuple[str, str]] = []
+
+    def _fake_observed(snippets, cells, target_id, probe):
+        calls.append((target_id, probe))
+        return target_id == "t1"
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(results_grid_module, "_probe_observed_in_target", _fake_observed)
+    try:
+        targets = [{"id": "t1", "name": "a"}, {"id": "t2", "name": "b"}]
+        snippets = [{"id": "s1", "text": "x"}]
+        cells: dict = {}
+
+        # One probe, every target -- probe held fixed.
+        result = grid._ever_observed_active_probe(targets, snippets, cells, " a")
+        assert result == {"t1": True, "t2": False}
+        assert calls == [("t1", " a"), ("t2", " a")], (
+            "must call the shared scan exactly once per target for the "
+            f"single active probe, not once per (target, probe) pair: {calls!r}"
+        )
+
+        # One target, every probe -- target held fixed.
+        calls.clear()
+        grid._grid = {
+            "snapshot": {"probes": (" a", " b"), "snippets": snippets},
+            "cells": cells,
+        }
+        result2 = grid._ever_observed_all_probes("t1")
+        assert result2 == {" a": True, " b": True}
+        assert calls == [("t1", " a"), ("t1", " b")], (
+            "must call the shared scan exactly once per configured probe "
+            f"for the single fixed target, not once per (target, probe) pair: {calls!r}"
+        )
+    finally:
+        monkeypatch.undo()
 
 
 def test_near_tie_threshold_is_a_named_constant_not_a_magic_number():
@@ -598,15 +714,20 @@ async def test_warned_column_header_carries_the_warning_the_clean_one_does_not(
 
 @pytest.mark.asyncio
 async def test_entropy_lens_states_effective_k_and_uses_it_for_every_cell(
-    evals_app, clean_run_group
+    evals_app, k_depth_matched_run_group
 ):
     """A K=20 cell and a K=5 cell holding the SAME underlying distribution
     (over the first 5 ranks) must read identical entropy once both are
     read at the shared effective K -- otherwise the K=20 column would look
-    "more confident" purely from its setting."""
+    "more confident" purely from its setting.
+
+    Uses ``k_depth_matched_run_group`` rather than ``clean_run_group``: see
+    that fixture's own docstring for why (``clean_run_group``'s s2/s3 rows
+    would drag a clamped ``effective_k`` down to their own tiny native
+    length)."""
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
-        grid = await _select_run_group(pilot, clean_run_group["group_id"])
+        grid = await _select_run_group(pilot, k_depth_matched_run_group["group_id"])
         select = grid.query_one("#evals-lens-selector", Select)
         select.value = "entropy"
         await pilot.pause()
@@ -616,8 +737,8 @@ async def test_entropy_lens_states_effective_k_and_uses_it_for_every_cell(
         assert "· K 5 ·" in meta, f"header must state the effective K (5), got {meta!r}"
 
         table = grid.query_one("#evals-grid-table", DataTable)
-        rich_text = str(table.get_cell("s1", clean_run_group["base_id"]))
-        poor_text = str(table.get_cell("s1", clean_run_group["poor_id"]))
+        rich_text = str(table.get_cell("s1", k_depth_matched_run_group["base_id"]))
+        poor_text = str(table.get_cell("s1", k_depth_matched_run_group["poor_id"]))
         assert rich_text == poor_text, (
             f"same distribution at a shared effective K must produce equal "
             f"entropy: rich={rich_text!r} poor={poor_text!r}"
@@ -1111,17 +1232,22 @@ async def test_unexpected_load_grid_failure_renders_error_state_without_crashing
 
 @pytest.mark.asyncio
 async def test_truncation_lens_uses_the_shared_k_the_header_states(
-    evals_app, clean_run_group
+    evals_app, k_depth_matched_run_group
 ):
     """Same misrepresentation the shared-K entropy rule exists to prevent,
     one lens over. s1's two cells hold the SAME distribution over the first
     5 ranks; base additionally has 15 real low-probability tokens beyond
     rank 5 (native K=20) while the capped target stops at 5. Read at each
     cell's own native K they show 1% vs 2% -- a 2x "difference" produced
-    purely by the requested K, under a header that says ``K 5``."""
+    purely by the requested K, under a header that says ``K 5``.
+
+    Uses ``k_depth_matched_run_group`` rather than ``clean_run_group``: see
+    that fixture's own docstring for why (``clean_run_group``'s s2/s3 rows
+    would drag a clamped ``effective_k`` down to their own tiny native
+    length)."""
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
-        grid = await _select_run_group(pilot, clean_run_group["group_id"])
+        grid = await _select_run_group(pilot, k_depth_matched_run_group["group_id"])
         grid.query_one("#evals-lens-selector", Select).value = "coverage"
         await pilot.pause()
 
@@ -1129,8 +1255,8 @@ async def test_truncation_lens_uses_the_shared_k_the_header_states(
         assert "· K 5 ·" in meta, meta
 
         table = grid.query_one("#evals-grid-table", DataTable)
-        rich_text = str(table.get_cell("s1", clean_run_group["base_id"]))
-        poor_text = str(table.get_cell("s1", clean_run_group["poor_id"]))
+        rich_text = str(table.get_cell("s1", k_depth_matched_run_group["base_id"]))
+        poor_text = str(table.get_cell("s1", k_depth_matched_run_group["poor_id"]))
         assert rich_text == poor_text, (
             f"same distribution at the shared K {5} must produce equal "
             f"truncation: rich={rich_text!r} poor={poor_text!r}"
@@ -1144,9 +1270,9 @@ async def test_truncation_lens_uses_the_shared_k_the_header_states(
         from tldw_chatbook.Evals.word_bench.storage import load_grid
 
         db = pilot.app.app_instance.evaluation_orchestrator.db
-        cells = load_grid(db, clean_run_group["group_id"])["cells"]
-        native_rich = cells[("s1", clean_run_group["base_id"])].truncated_mass
-        native_poor = cells[("s1", clean_run_group["poor_id"])].truncated_mass
+        cells = load_grid(db, k_depth_matched_run_group["group_id"])["cells"]
+        native_rich = cells[("s1", k_depth_matched_run_group["base_id"])].truncated_mass
+        native_poor = cells[("s1", k_depth_matched_run_group["poor_id"])].truncated_mass
         assert round(native_rich, 4) != round(native_poor, 4)
 
 

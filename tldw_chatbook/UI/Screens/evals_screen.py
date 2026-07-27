@@ -84,12 +84,14 @@ class EvalsScreen(BaseAppScreen):
         #: flag-set line) never runs.
         self._sample_bench_running: bool = False
         #: The active run's cooperative cancel token, or ``None`` when no
-        #: run is in flight. Not currently triggered by anything in this
-        #: screen (the running-guard above prevents the second-click race
-        #: that would otherwise need it) -- kept as a real, threaded
-        #: seam rather than a decorative parameter, since
-        #: ``WordBenchRunner.run`` already accepts one and a future cancel
-        #: affordance should not need a second plumbing pass.
+        #: run is in flight. NOTHING READS THIS TODAY (TASK-861 audited
+        #: it): the running-guard above prevents the second-click race
+        #: that would otherwise need it, and no Cancel affordance exists
+        #: yet in this screen. Kept as a real, threaded seam rather than a
+        #: decorative parameter, since ``WordBenchRunner.run`` already
+        #: accepts one and a future PR wiring an actual Cancel button (PR
+        #: 3c, per this program's own PR numbering) should not need a
+        #: second plumbing pass to reach it.
         self._sample_bench_cancel_token: Optional[CancelToken] = None
 
     def _current_app_config(self) -> dict[str, Any]:

@@ -1,10 +1,13 @@
 ---
 id: TASK-861
 title: >-
-  Evals results-grid polish: dedupe scans, unused params, and two unconfirmed robustness gaps
-status: To Do
-assignee: []
+  Evals results-grid polish: dedupe scans, unused params, and two unconfirmed
+  robustness gaps
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-27 03:00'
+updated_date: '2026-07-27 05:53'
 labels:
   - evals
   - polish
@@ -63,11 +66,36 @@ Reproduced, with the caveat that not every corruption shape triggers it:
 **Partly unresolved:** the CSV terminator was probed directly rather than reasoned about — on POSIX the bytes on disk are correct RFC-4180 `\r\n` with no doubling. The Windows `\r\r\n` risk follows from documented `io.TextIOWrapper` semantics but was NOT executed, as no Windows host was available. Passing `newline=""` is XS and removes the question either way.
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
-- [ ] The duplicated probe scan and the three `_notify` copies are each single-sourced
-- [ ] `combined_truncation`'s `k` parameter is either used or removed
-- [ ] The two unconfirmed robustness gaps are each verified, then fixed or closed with the evidence
-- [ ] The inspector's bare except either reports a reason or is narrowed
-- [ ] CSV line terminator is a deliberate, documented choice
+- [x] #1 The duplicated probe scan and the three `_notify` copies are each single-sourced
+- [x] #2 `combined_truncation`'s `k` parameter is either used or removed
+- [x] #3 The two unconfirmed robustness gaps are each verified, then fixed or closed with the evidence
+- [x] #4 The inspector's bare except either reports a reason or is narrowed
+- [x] #5 CSV line terminator is a deliberate, documented choice
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Cleared all 8 in-scope items from the investigation (item 2, the compose() broad-catch, was already merged and skipped per instruction).
+
+1. Folded probe scan: `_ever_observed_active_probe`/`_ever_observed_all_probes` now both call a new module-level `_probe_observed_in_target(snippets, cells, target_id, probe)` in results_grid.py, each still holding its own axis fixed (one probe/every target vs. one target/every probe), so neither call site pays for the other's cross-product. Test: `test_ever_observed_helpers_share_one_scan_and_hold_the_right_axis_fixed` monkeypatches the shared helper and asserts exact call counts/args per axis; reverted the fold and confirmed it fails (AssertionError on the dict content), then restored.
+
+2. `_notify` de-duplicated into `tldw_chatbook/UI/Evals/notify_mixin.py::NotifyMixin`, a plain mixin (no `@on` handlers, so no metaclass concerns) mixed into `ResultsGrid`, `LibraryRail`, `SnippetEditor`.
+
+3. Dropped `combined_truncation`'s dead `k` param rather than wiring it: its only caller (`_delta_reading`) never computes a shared k of its own before calling it (it gets `(jsd, is_bounded)` back from `divergence()`, no k), so wiring would mean re-deriving the same `min(...)` one level up for no benefit. Function now always recomputes internally, unchanged behaviour.
+
+4. Removed the redundant `len(top) > 1 and` half of the near-tie guard in `_render_top1`; `near_tie` already returns False below two tokens (tested).
+
+5. `EvalsInspector.compose`'s bare `except Exception: return` now logs via `logger.opt(exception=True).error` and yields a visible `Static(id="evals-inspector-error")`, mirroring ResultsGrid.compose; still narrowly `except Exception`, so CancelledError keeps propagating. Test: `test_inspector_reports_an_unexpected_load_bench_failure_instead_of_going_blank` (test_evals_screen.py) monkeypatches `load_bench` to raise `sqlite3.OperationalError` and asserts both the visible error Static and a captured loguru ERROR record naming the bench. Reverted to the bare except and confirmed the test fails (NoMatches on `#evals-inspector-error`), then restored.
+
+6. Added the defensive clamp to `analysis.effective_k` (`min(cap.k_returned, len(cap.top_k))` per cell), mirroring `divergence()`'s own two-way clamp. Purely defensive per the investigation -- not reachable on any live capture path. This broke 3 existing tests because several fixtures (`clean_run_group`'s s2/s3 rows in particular) deliberately abbreviate `top_k` below their claimed `k_returned` as a pre-existing test-writing shorthand, not corruption. Fixed WITHOUT touching `clean_run_group` (many other tests hard-code divergence/spread/group-mean values derived from its s2/s3/s4 cells, which padding would have shifted): padded the self-contained fixture in `test_effective_k_is_the_minimum_k_returned_across_cells`, and added a new dedicated single-snippet fixture `k_depth_matched_run_group` (a verbatim copy of clean_run_group's already-well-formed s1 cells) for the two UI tests that only ever asserted on s1. Test: new `test_effective_k_clamps_a_k_returned_that_exceeds_the_actual_top_k_length` constructs a CellCapture with k_returned=99 but 2 real tokens and asserts effective_k clamps to 2. Reverted the clamp and confirmed the test fails (99 != 2), then restored.
+
+7. CSV newline: `_export_csv_text`'s `io.StringIO()` -> `io.StringIO(newline="")` (confirmed a no-op byte-for-byte on this host -- StringIO's own default newline='\n' already means "no translation on write", same as ""). The change that actually matters for the documented Windows \r\r\n risk is in `_write_export_file`: the .csv branch's `write_text(...)` call now also passes `newline=""`, since Path.write_text's own default (newline=None) performs os.linesep translation-on-write, which would double an already-embedded \r\n into \r\r\n on a platform where os.linesep == "\r\n". POSIX output confirmed unchanged.
+
+8. `_sample_bench_cancel_token`'s comment in evals_screen.py updated to state plainly "NOTHING READS THIS TODAY" and name PR 3c as the PR expected to wire a Cancel affordance, matching this file's own PR-numbering convention used elsewhere.
+
+Modified: tldw_chatbook/UI/Evals/results_grid.py, tldw_chatbook/UI/Evals/inspector.py, tldw_chatbook/UI/Evals/library_rail.py, tldw_chatbook/UI/Evals/snippet_editor.py, tldw_chatbook/UI/Screens/evals_screen.py, tldw_chatbook/Evals/word_bench/analysis.py, Tests/UI/test_evals_results_grid.py, Tests/UI/test_evals_screen.py, Tests/Evals/word_bench/test_analysis.py. Added: tldw_chatbook/UI/Evals/notify_mixin.py.
+
+Full specified suite green: 207 passed (Tests/UI/test_evals_results_grid.py, test_evals_empty_states.py, test_evals_screen.py, Tests/Evals/word_bench). ruff clean on all touched files.
+<!-- SECTION:NOTES:END -->
