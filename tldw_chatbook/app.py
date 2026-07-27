@@ -5756,7 +5756,8 @@ class TldwCli(
                 from .RAG_Search.ingestion_indexing import install_media_ingest_hook
 
                 install_media_ingest_hook(
-                    failure_notifier=self._notify_rag_indexing_failure
+                    failure_notifier=self._notify_rag_indexing_failure,
+                    guidance_notifier=self._notify_rag_indexing_guidance,
                 )
             except Exception as e:
                 logger.warning(f"Could not install RAG ingestion-indexing hook: {e}")
@@ -5788,6 +5789,22 @@ class TldwCli(
             self.call_from_thread(self.notify, message, severity="warning", timeout=6)
         except Exception as e:
             logger.debug(f"Could not surface RAG indexing failure in UI: {e}")
+
+    def _notify_rag_indexing_guidance(self, message: str) -> None:
+        """Surface a RAG setup gap as information, not a warning.
+
+        A fresh install has no embedding model, so nothing can be indexed for
+        semantic search -- but the import itself succeeded, and presenting that
+        as a warning made a new user's first successful action look like a
+        failure (task-685). Same marshalling as the failure notifier: called
+        from the indexer's worker thread.
+        """
+        try:
+            self.call_from_thread(
+                self.notify, message, severity="information", timeout=8
+            )
+        except Exception as e:
+            logger.debug(f"Could not surface RAG indexing guidance in UI: {e}")
 
     def _init_worker_handlers(self) -> None:
         """Initialize the worker handler registry and register all handlers."""

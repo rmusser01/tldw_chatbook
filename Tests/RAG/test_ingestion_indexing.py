@@ -1190,3 +1190,109 @@ class TestSharedRagServiceLockDeadlock:
             resolve_may_return.set()
             getter.join(timeout=5)
             ingestion_indexing.reset_shared_rag_service()
+
+
+class TestFirstRunIndexingIsNotReportedAsFailure:
+    """A fresh install must not present its first successful ingest as a failure.
+
+    With the embeddings_rag deps installed but no embedding model downloaded,
+    every chunk fails to embed and the indexer reported "RAG indexing failed" as
+    a warning toast. The import itself succeeded, so the first thing a new user
+    saw after their first working action was a failure they did not cause and
+    could not act on (task-685).
+    """
+
+    def _indexer(self, tmp_path, notes):
+        idx = IngestionIndexer(
+            rag_service=None,
+            indexing_db=RAGIndexingDB(tmp_path / "rag_indexing.db"),
+        )
+        idx.set_failure_notifier(lambda m: notes.append(("failure", m)))
+        idx.set_guidance_notifier(lambda m: notes.append(("guidance", m)))
+        return idx
+
+    def test_embeddings_never_worked_is_guidance_not_a_failure(self, tmp_path):
+        notes: list[tuple[str, str]] = []
+        idx = self._indexer(tmp_path, notes)
+
+        idx._report_index_summary(
+            {
+                "indexed": 0,
+                "skipped": 0,
+                "failed": 2,
+                "errors": ["All chunks failed embedding generation"] * 2,
+            }
+        )
+
+        assert notes, "the user was told nothing at all"
+        kind, message = notes[-1]
+        assert kind == "guidance", f"still reported as a {kind}: {message}"
+        # AC#2: say what indexing gives and how to turn it on.
+        lowered = message.lower()
+        assert "search" in lowered
+        assert "embedding" in lowered
+        assert "failed" not in lowered, "guidance must not read as a failure"
+
+    def test_a_real_failure_on_a_working_install_still_surfaces(self, tmp_path):
+        """AC#3. Embeddings clearly work here -- something indexed -- so a
+        failure on one item is a genuine problem, not a first-run gap."""
+        notes: list[tuple[str, str]] = []
+        idx = self._indexer(tmp_path, notes)
+
+        idx._report_index_summary(
+            {
+                "indexed": 5,
+                "skipped": 0,
+                "failed": 1,
+                "errors": ["All chunks failed embedding generation"],
+            }
+        )
+
+        assert notes and notes[-1][0] == "failure", notes
+
+    def test_an_unrelated_error_always_surfaces(self, tmp_path):
+        """A vector-store or DB error is never a missing-model story."""
+        notes: list[tuple[str, str]] = []
+        idx = self._indexer(tmp_path, notes)
+
+        idx._report_index_summary(
+            {"indexed": 0, "skipped": 0, "failed": 1, "errors": ["disk I/O error"]}
+        )
+
+        assert notes and notes[-1][0] == "failure", notes
+
+    def test_a_failure_in_the_first_batch_after_a_restart_still_surfaces(
+        self, tmp_path
+    ):
+        """The in-process counter resets every run; indexing history does not.
+
+        On a configured install the first batch after any restart has
+        ``_stats["indexed"] == 0``, so relying on that alone downgraded a
+        genuine failure to guidance -- and the same error text is produced by
+        embeddings init errors and circuit breakers, not only by a missing
+        model. The indexing DB is the durable record that embeddings have worked
+        here before (task-685 review).
+        """
+        notes: list[tuple[str, str]] = []
+        indexing_db = RAGIndexingDB(tmp_path / "rag_indexing.db")
+        # A previous run indexed something on this install.
+        indexing_db.mark_item_indexed(
+            item_id="1", item_type="media", last_modified=datetime.now(), chunk_count=3
+        )
+
+        idx = IngestionIndexer(rag_service=None, indexing_db=indexing_db)
+        idx.set_failure_notifier(lambda m: notes.append(("failure", m)))
+        idx.set_guidance_notifier(lambda m: notes.append(("guidance", m)))
+
+        idx._report_index_summary(
+            {
+                "indexed": 0,
+                "skipped": 0,
+                "failed": 1,
+                "errors": ["All chunks failed embedding generation"],
+            }
+        )
+
+        assert notes and notes[-1][0] == "failure", (
+            f"a real failure was downgraded on a configured install: {notes}"
+        )
