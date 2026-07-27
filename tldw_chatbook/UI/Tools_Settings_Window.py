@@ -2,7 +2,7 @@
 #
 #
 # Imports
-from typing import TYPE_CHECKING, Optional, List, Dict
+from typing import TYPE_CHECKING, Optional, List, Dict, NamedTuple
 import asyncio
 import json
 import os
@@ -74,6 +74,15 @@ from ..Chat.provider_readiness import (
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
+
+
+class _BackupManifestPublication(NamedTuple):
+    """Immutable ownership token for one staged manifest publication."""
+
+    stage_path: Path
+    final_path: Path
+
+
 #
 #######################################################################################################################
 #
@@ -5836,13 +5845,17 @@ Thank you for using tldw-chatbook! 🎉
                 self._raise_if_backup_cancelled()
                 logger.warning("Database backup phase=tts_profiles failed")
 
+            manifest_publication: _BackupManifestPublication | None = None
             try:
+                manifest_publication = self._reserve_backup_manifest_publication(
+                    backup_dir
+                )
                 manifest_worker = self.run_worker(
                     partial(
                         self._write_backup_manifest,
                         timestamp,
-                        backup_dir,
                         tuple(backed_up),
+                        manifest_publication,
                     ),
                     name="backup_manifest_worker",
                     group="tts_profile_backup_all",
@@ -5851,12 +5864,26 @@ Thank you for using tldw-chatbook! 🎉
                     exclusive=True,
                     exit_on_error=False,
                 )
-                await self._wait_for_backup_worker(manifest_worker)
+                manifest_publication = await self._wait_for_backup_worker(
+                    manifest_worker
+                )
+                self._raise_if_backup_cancelled()
+                os.replace(
+                    manifest_publication.stage_path,
+                    manifest_publication.final_path,
+                )
+                manifest_publication = None
             except Exception:
                 self._raise_if_backup_cancelled()
                 logger.warning("Database backup phase=manifest failed")
                 self.app_instance.notify("Database backup failed.", severity="error")
                 return
+            finally:
+                if manifest_publication is not None:
+                    self._unlink_backup_artifact(
+                        manifest_publication.stage_path,
+                        "manifest",
+                    )
 
             if profile_backup_succeeded:
                 self.app_instance.notify(
@@ -5922,6 +5949,44 @@ Thank you for using tldw-chatbook! 🎉
             path.rmdir()
         except BaseException:
             logger.warning("Database backup phase=legacy cleanup=rmdir failed")
+
+    @staticmethod
+    def _reserve_backup_manifest_publication(
+        backup_dir: Path,
+    ) -> _BackupManifestPublication:
+        """Reserve a same-directory manifest stage owned by the caller."""
+
+        stage_path: Path | None = None
+        descriptor: int | None = None
+        completed = False
+        try:
+            descriptor, temporary_name = tempfile.mkstemp(
+                dir=backup_dir,
+                prefix=".backup_info.json.",
+                suffix=".tmp",
+                text=True,
+            )
+            stage_path = Path(temporary_name)
+            os.close(descriptor)
+            descriptor = None
+            completed = True
+            return _BackupManifestPublication(
+                stage_path=stage_path,
+                final_path=backup_dir / "backup_info.json",
+            )
+        finally:
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except BaseException:
+                    logger.warning(
+                        "Database backup phase=manifest cleanup=close failed"
+                    )
+            if not completed and stage_path is not None:
+                ToolsSettingsWindow._unlink_backup_artifact(
+                    stage_path,
+                    "manifest",
+                )
 
     def _backup_worker(self) -> tuple[str, Path, list[tuple[str, Path]]]:
         """Copy the legacy databases and return their backup entries."""
@@ -6016,50 +6081,32 @@ Thank you for using tldw-chatbook! 🎉
     @staticmethod
     def _write_backup_manifest(
         timestamp: str,
-        backup_dir: Path,
         backed_up: tuple[tuple[str, Path], ...],
-    ) -> None:
-        """Write the final manifest after every successful backup settles."""
+        publication: _BackupManifestPublication,
+    ) -> _BackupManifestPublication:
+        """Serialize and sync a staged manifest without publishing it."""
 
-        temporary_path: Path | None = None
-        descriptor: int | None = None
+        completed = False
         try:
-            info_path = backup_dir / "backup_info.json"
             backup_info = {
                 "timestamp": timestamp,
                 "databases": [
                     {"name": name, "path": str(path)} for name, path in backed_up
                 ],
             }
-            descriptor, temporary_name = tempfile.mkstemp(
-                dir=backup_dir,
-                prefix=f".{info_path.name}.",
-                suffix=".tmp",
-                text=True,
-            )
-            temporary_path = Path(temporary_name)
-            info_file = os.fdopen(descriptor, "w", encoding="utf-8")
-            descriptor = None
-            with info_file:
+            with publication.stage_path.open("w", encoding="utf-8") as info_file:
                 json.dump(backup_info, info_file, indent=2)
                 info_file.flush()
                 os.fsync(info_file.fileno())
             ToolsSettingsWindow._raise_if_textual_worker_cancelled()
-            os.replace(temporary_path, info_path)
-            temporary_path = None
+            completed = True
+            return publication
         except Exception:
             raise RuntimeError("backup_manifest_write_failed") from None
         finally:
-            if descriptor is not None:
-                try:
-                    os.close(descriptor)
-                except BaseException:
-                    logger.warning(
-                        "Database backup phase=manifest cleanup=close failed"
-                    )
-            if temporary_path is not None:
+            if not completed:
                 ToolsSettingsWindow._unlink_backup_artifact(
-                    temporary_path,
+                    publication.stage_path,
                     "manifest",
                 )
 

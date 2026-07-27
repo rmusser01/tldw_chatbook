@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import ast
 import json
+import os
 import shutil
 import sqlite3
 import threading
@@ -467,6 +468,8 @@ async def test_real_worker_cancellation_before_manifest_publication_leaves_no_ma
     release_dump = threading.Event()
     dump_finished = threading.Event()
     real_dump = json.dump
+    real_replace = os.replace
+    manifest_replace_threads: list[int] = []
 
     def blocking_dump(*args: Any, **kwargs: Any) -> None:
         real_dump(*args, **kwargs)
@@ -474,7 +477,13 @@ async def test_real_worker_cancellation_before_manifest_publication_leaves_no_ma
         release_dump.wait(timeout=2)
         dump_finished.set()
 
+    def recording_replace(source: Path, destination: Path) -> None:
+        if Path(destination).name == "backup_info.json":
+            manifest_replace_threads.append(threading.get_ident())
+        real_replace(source, destination)
+
     monkeypatch.setattr(tools_settings_module.json, "dump", blocking_dump)
+    monkeypatch.setattr(tools_settings_module.os, "replace", recording_replace)
 
     async with app.run_test() as pilot:
         backup_task = asyncio.create_task(app.settings_window._backup_databases())
@@ -492,8 +501,164 @@ async def test_real_worker_cancellation_before_manifest_publication_leaves_no_ma
     backup_root = tmp_path / ".local" / "share" / "tldw_cli" / "backups"
     assert tuple(backup_root.rglob("backup_info.json")) == ()
     assert tuple(backup_root.rglob("*.tmp")) == ()
+    assert manifest_replace_threads == []
     assert _terminal_notifications(app) == []
     assert app.settings_window._backup_all_in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_real_manifest_replace_and_terminal_notice_run_in_owner_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repository = _RecordingProfileRepository()
+    app, _ = _prepare_real_backup_app(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        repository=repository,
+    )
+    owner_thread = threading.get_ident()
+    publication_events: list[tuple[str, int, asyncio.Task[Any] | None]] = []
+    real_replace = os.replace
+    real_notify = app.notify
+
+    def recording_replace(source: Path, destination: Path) -> None:
+        if Path(destination).name == "backup_info.json":
+            try:
+                active_task = asyncio.current_task()
+            except RuntimeError:
+                active_task = None
+            publication_events.append(("replace", threading.get_ident(), active_task))
+        real_replace(source, destination)
+
+    def recording_notify(message: str, **kwargs: Any) -> None:
+        if kwargs.get("severity") in {"success", "warning", "error"}:
+            publication_events.append(
+                ("terminal_notice", threading.get_ident(), asyncio.current_task())
+            )
+        real_notify(message, **kwargs)
+
+    monkeypatch.setattr(tools_settings_module.os, "replace", recording_replace)
+    monkeypatch.setattr(app, "notify", recording_notify)
+
+    async with app.run_test():
+        owner_task = asyncio.current_task()
+        await app.settings_window._backup_databases()
+
+    assert publication_events == [
+        ("replace", owner_thread, owner_task),
+        ("terminal_notice", owner_thread, owner_task),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_real_manifest_replace_failure_cleans_stage_and_keeps_values_private(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repository = _RecordingProfileRepository()
+    app, _ = _prepare_real_backup_app(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        repository=repository,
+    )
+    private_error = f"replace failed at {tmp_path / 'private-manifest.json'}"
+    real_replace = os.replace
+
+    def failing_manifest_replace(source: Path, destination: Path) -> None:
+        if Path(destination).name == "backup_info.json":
+            raise OSError(private_error)
+        real_replace(source, destination)
+
+    monkeypatch.setattr(
+        tools_settings_module.os,
+        "replace",
+        failing_manifest_replace,
+    )
+    log_messages: list[str] = []
+    sink_id = logger.add(log_messages.append, level="DEBUG", format="{message}")
+
+    try:
+        async with app.run_test():
+            await app.settings_window._backup_databases()
+    finally:
+        logger.remove(sink_id)
+
+    backup_root = tmp_path / ".local" / "share" / "tldw_cli" / "backups"
+    assert tuple(backup_root.rglob("backup_info.json")) == ()
+    assert tuple(backup_root.rglob("*.tmp")) == ()
+    assert _terminal_notifications(app) == [
+        ("Database backup failed.", {"severity": "error"})
+    ]
+    public_copy = "\n".join(
+        [message for message, _ in app.notifications] + log_messages
+    )
+    assert private_error not in public_copy
+    assert str(tmp_path) not in public_copy
+    assert app.settings_window._backup_all_in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_real_manifest_replace_base_exception_preserves_control_flow(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class ManifestCommitAbort(BaseException):
+        pass
+
+    repository = _RecordingProfileRepository()
+    app, _ = _prepare_real_backup_app(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        repository=repository,
+    )
+    real_replace = os.replace
+
+    def interrupt_manifest_replace(source: Path, destination: Path) -> None:
+        if Path(destination).name == "backup_info.json":
+            raise ManifestCommitAbort("manifest commit interrupted")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(
+        tools_settings_module.os,
+        "replace",
+        interrupt_manifest_replace,
+    )
+
+    async with app.run_test():
+        with pytest.raises(
+            ManifestCommitAbort,
+            match="manifest commit interrupted",
+        ):
+            await app.settings_window._backup_databases()
+
+    backup_root = tmp_path / ".local" / "share" / "tldw_cli" / "backups"
+    assert tuple(backup_root.rglob("backup_info.json")) == ()
+    assert tuple(backup_root.rglob("*.tmp")) == ()
+    assert _terminal_notifications(app) == []
+    assert app.settings_window._backup_all_in_progress is False
+
+
+def test_manifest_worker_returns_immutable_unpublished_stage(
+    tmp_path: Path,
+) -> None:
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+    publication = ToolsSettingsWindow._reserve_backup_manifest_publication(backup_dir)
+
+    result = ToolsSettingsWindow._write_backup_manifest(
+        "20260727_010203",
+        (),
+        publication,
+    )
+
+    assert result == publication
+    assert publication.stage_path.exists()
+    assert not publication.final_path.exists()
+    with pytest.raises(AttributeError):
+        result.stage_path = tmp_path / "mutated"
+
+    publication.stage_path.unlink()
 
 
 def test_manifest_mid_write_failure_preserves_previous_file_and_cleans_stage(
@@ -505,6 +670,7 @@ def test_manifest_mid_write_failure_preserves_previous_file_and_cleans_stage(
     manifest_path = backup_dir / "backup_info.json"
     previous_manifest = {"timestamp": "previous", "databases": []}
     manifest_path.write_text(json.dumps(previous_manifest), encoding="utf-8")
+    publication = ToolsSettingsWindow._reserve_backup_manifest_publication(backup_dir)
 
     def fail_mid_dump(
         value: Any,
@@ -521,8 +687,8 @@ def test_manifest_mid_write_failure_preserves_previous_file_and_cleans_stage(
     with pytest.raises(RuntimeError, match="backup_manifest_write_failed"):
         ToolsSettingsWindow._write_backup_manifest(
             "20260727_010203",
-            backup_dir,
             (),
+            publication,
         )
 
     assert json.loads(manifest_path.read_text(encoding="utf-8")) == previous_manifest
@@ -537,6 +703,7 @@ def test_manifest_cleanup_failure_does_not_mask_base_exception_or_expose_values(
     backup_dir = tmp_path / "private-backup-directory"
     backup_dir.mkdir()
     private_error = f"cleanup failed at {backup_dir / 'private-stage.tmp'}"
+    publication = ToolsSettingsWindow._reserve_backup_manifest_publication(backup_dir)
 
     def interrupt_mid_dump(
         value: Any,
@@ -567,8 +734,8 @@ def test_manifest_cleanup_failure_does_not_mask_base_exception_or_expose_values(
         with pytest.raises(KeyboardInterrupt, match="original manifest interruption"):
             ToolsSettingsWindow._write_backup_manifest(
                 "20260727_010203",
-                backup_dir,
                 (),
+                publication,
             )
     finally:
         logger.remove(sink_id)
