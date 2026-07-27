@@ -19,6 +19,7 @@ from tldw_chatbook.Agents.agent_models import (
     RunOutcome,
 )
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
+from tldw_chatbook.Chat.citation_repair import CitationRepairContract
 from tldw_chatbook.Chat.citation_trace_builder import (
     CitationTraceBuilder,
     LocalPromptEvidenceCapture,
@@ -30,6 +31,7 @@ from tldw_chatbook.Chat.citation_trace_identity import (
     LocalCitationIdentityContext,
 )
 from tldw_chatbook.Chat.citation_trace_models import (
+    MarkerNamespace,
     PolicyCapability,
     RetrievalScoreKind,
     RetrievalScoreScale,
@@ -270,7 +272,7 @@ async def test_capture_provider_failure_logs_only_structural_context():
     finally:
         loguru_logger.remove(sink_id)
 
-    assert captured == (None, None, None)
+    assert captured == (None, None, None, None)
     rendered_logs = "".join(str(message) for message in captured_logs)
     assert "reason=capture_provider_failure" in rendered_logs
     assert f"draft_length={len(_PRIVATE_QUERY)}" in rendered_logs
@@ -336,7 +338,66 @@ async def test_console_canonical_evidence_is_added_after_prompt_transforms_and_b
 
 
 @pytest.mark.asyncio
-async def test_console_without_builder_keeps_compatibility_transform_order():
+async def test_repair_contract_exact_context_order_follows_all_prompt_transforms():
+    ordinary_prompt = "ORDINARY_PROMPT_REPAIR_CONTRACT_ORDER"
+    dictionary_prompt = "DICTIONARY_PROMPT_REPAIR_CONTRACT_ORDER"
+    world_prompt = "WORLD_PROMPT_REPAIR_CONTRACT_ORDER"
+    canonical_context = (
+        "[S1] MEDIA — EVIDENCE_TITLE_REPAIR_CONTRACT_ORDER\n"
+        "EVIDENCE_BODY_REPAIR_CONTRACT_ORDER"
+    )
+    contract = CitationRepairContract(
+        schema_version=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        allowed_ordinals=(1,),
+        evidence_context=canonical_context,
+    )
+
+    async def capture(_draft):
+        return SimpleNamespace(
+            context=canonical_context,
+            citation_builder=None,
+            prompt_evidence_set_id=None,
+            citation_repair_contract=contract,
+        )
+
+    def apply_dictionary(_conversation_id, text):
+        return (
+            text.replace(ordinary_prompt, dictionary_prompt)
+            .replace("EVIDENCE_TITLE_REPAIR_CONTRACT_ORDER", "MUTATED_DICT_TITLE")
+            .replace("EVIDENCE_BODY_REPAIR_CONTRACT_ORDER", "MUTATED_DICT_BODY")
+        )
+
+    def apply_world_info(_conversation_id, text, _history):
+        return (
+            text.replace(dictionary_prompt, world_prompt)
+            .replace("EVIDENCE_TITLE_REPAIR_CONTRACT_ORDER", "MUTATED_WORLD_TITLE")
+            .replace("EVIDENCE_BODY_REPAIR_CONTRACT_ORDER", "MUTATED_WORLD_BODY")
+        )
+
+    store = _persisted_store()
+    gateway = _RecordingGateway()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        chat_dictionary_applier=apply_dictionary,
+        world_info_applier=apply_world_info,
+        rag_capture_provider=capture,
+        agent_runtime_enabled=False,
+    )
+
+    result = await controller.submit_draft(ordinary_prompt)
+
+    assert result.accepted is True
+    provider_user = _final_user_content(gateway.messages_seen)
+    assert provider_user == f"Evidence: {canonical_context}\n\n---\n\n{world_prompt}"
+    assert contract.evidence_context.encode("utf-8") in provider_user.encode("utf-8")
+    assert "MUTATED_DICT" not in provider_user
+    assert "MUTATED_WORLD" not in provider_user
+
+
+@pytest.mark.asyncio
+async def test_legacy_raw_without_repair_contract_keeps_early_transform_order():
     context = "[S1] MEDIA — LEGACY_EVIDENCE_TITLE\nlegacy evidence body"
 
     async def capture(_draft):

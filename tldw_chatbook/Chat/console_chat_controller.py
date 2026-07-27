@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     derive_console_session_title,
     is_default_console_session_title,
 )
+from tldw_chatbook.Chat.citation_repair import CitationRepairContract
 from tldw_chatbook.Chat.citation_trace_builder import (
     CitationTraceBuilder,
     CitationTraceBuildUnavailable,
@@ -781,6 +782,7 @@ class ConsoleChatController:
         citation_context: str | None = None
         citation_trace_builder: CitationTraceBuilder | None = None
         prompt_evidence_set_id: str | None = None
+        citation_repair_contract: CitationRepairContract | None = None
         terminal_citation_finalizer: TerminalCitationFinalizer | None = None
         try:
             provider_messages = self._provider_messages_for_session(
@@ -809,8 +811,13 @@ class ConsoleChatController:
                 citation_context,
                 citation_trace_builder,
                 prompt_evidence_set_id,
+                citation_repair_contract,
             ) = await self._capture_rag_context(clean_draft)
-            if citation_context and citation_trace_builder is None:
+            has_exact_citation_context = (
+                citation_trace_builder is not None
+                or citation_repair_contract is not None
+            )
+            if citation_context and not has_exact_citation_context:
                 provider_messages = self._prepend_evidence_context(
                     provider_messages,
                     citation_context,
@@ -821,7 +828,7 @@ class ConsoleChatController:
             provider_messages = await self._apply_world_info(
                 provider_messages, session.id
             )
-            if citation_context and citation_trace_builder is not None:
+            if citation_context and has_exact_citation_context:
                 provider_messages = self._prepend_evidence_context(
                     provider_messages,
                     citation_context,
@@ -3376,12 +3383,17 @@ class ConsoleChatController:
     async def _capture_rag_context(
         self,
         draft: str,
-    ) -> tuple[str | None, CitationTraceBuilder | None, str | None]:
+    ) -> tuple[
+        str | None,
+        CitationTraceBuilder | None,
+        str | None,
+        CitationRepairContract | None,
+    ]:
         """Resolve optional staged RAG context without exposing request state."""
 
         provider = self._rag_capture_provider
         if provider is None:
-            return None, None, None
+            return None, None, None, None
         try:
             captured = await provider(draft)
         except asyncio.CancelledError:
@@ -3391,7 +3403,7 @@ class ConsoleChatController:
                 "Console RAG capture unavailable; "
                 f"reason=capture_provider_failure; draft_length={len(draft)}"
             )
-            return None, None, None
+            return None, None, None, None
         captured_context = getattr(captured, "context", None)
         context = (
             captured_context
@@ -3410,7 +3422,17 @@ class ConsoleChatController:
             if isinstance(captured_prompt_id, str) and captured_prompt_id.strip()
             else None
         )
-        return context, builder, prompt_evidence_set_id
+        captured_repair_contract = getattr(
+            captured,
+            "citation_repair_contract",
+            None,
+        )
+        repair_contract = (
+            captured_repair_contract
+            if isinstance(captured_repair_contract, CitationRepairContract)
+            else None
+        )
+        return context, builder, prompt_evidence_set_id, repair_contract
 
     @staticmethod
     def _build_terminal_citation_finalizer(
