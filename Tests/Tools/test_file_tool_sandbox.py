@@ -112,15 +112,25 @@ def test_read_file_refuses_sensitive_file_even_when_sandbox_root_contains_it(
 ):
     """CRITICAL fix: read_file must not read config.toml just because a
     widened sandbox root happens to contain it.
+
+    Written directly to the REAL effective config path
+    (``config._get_effective_config_path()``, which honors
+    ``TLDW_CONFIG_PATH``) rather than a hardcoded
+    ``~/.config/tldw_cli/config.toml`` literal -- that literal is not
+    necessarily where config.toml actually lives (Finding 3, substrate
+    review); this project's own test suite is a live example, since
+    ``Tests/conftest.py`` sets ``TLDW_CONFIG_PATH`` to a per-test path
+    elsewhere entirely.
     """
-    home = Path(os.environ["HOME"])
-    sandbox = home / ".config" / "tldw_cli"
-    sandbox.mkdir(parents=True, exist_ok=True)
-    (sandbox / "config.toml").write_text("api_key = 'super-secret'\n")
+    from tldw_chatbook import config as app_config
 
-    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+    config_path = app_config._get_effective_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("api_key = 'super-secret'\n")
 
-    result = asyncio.run(fot.ReadFileTool().execute(file_path="config.toml"))
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: config_path.parent.resolve())
+
+    result = asyncio.run(fot.ReadFileTool().execute(file_path=config_path.name))
 
     assert "error" in result
     assert "super-secret" not in str(result)
@@ -130,14 +140,22 @@ def test_write_file_refuses_to_overwrite_sensitive_file(monkeypatch):
     """CRITICAL fix: write_file must not overwrite mcp_permissions.json --
     that would be a one-step bypass of the whole permission gate -- just
     because the configured sandbox root contains it.
+
+    Written to the REAL resolved location
+    (``get_user_data_dir() / "mcp_permissions.json"``), not the
+    ``~/.config/tldw_cli/`` literal the app never actually used (Finding 1,
+    substrate review): the permission store is built under
+    ``get_user_data_dir()`` (see ``MCP.unified_control_plane_service``'s
+    ``permission_store`` property and ``app.py``'s ``LocalMCPStore``
+    construction).
     """
-    home = Path(os.environ["HOME"])
-    sandbox = home / ".config" / "tldw_cli"
-    sandbox.mkdir(parents=True, exist_ok=True)
-    target = sandbox / "mcp_permissions.json"
+    from tldw_chatbook import config as app_config
+
+    user_data_dir = app_config.get_user_data_dir()
+    target = user_data_dir / "mcp_permissions.json"
     target.write_text('{"version": 1}')
 
-    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: user_data_dir.resolve())
 
     result = asyncio.run(
         fot.WriteFileTool().execute(
@@ -196,19 +214,25 @@ def test_list_directory_filters_sensitive_entries_from_recursive_listing(monkeyp
     DESCEND into a sensitive directory (~/.ssh, ~/.aws), but individual
     sensitive FILES sitting inside an otherwise-ordinary, listable ancestor
     were still emitted by name and size -- this app's own
-    ``mcp_permissions.json`` under ``~/.config/tldw_cli`` and the
-    ChaChaNotes DB (plus its ``-wal`` sidecar) under
-    ``~/.local/share/tldw_cli/<user>``. Contents never leaked, only the
-    listing row itself; this closes that.
+    ``mcp_permissions.json`` (under ``get_user_data_dir()``, its REAL
+    location -- see Finding 1, substrate review) and the ChaChaNotes DB
+    (plus its ``-wal`` sidecar), also under ``get_user_data_dir()``.
+    Contents never leaked, only the listing row itself; this closes that.
     """
     home = Path(os.environ["HOME"])
 
+    # A non-sensitive sibling directory, NOT get_user_data_dir(), so it
+    # stays unaffected by Finding 2's "direct child of the user data dir"
+    # rule and keeps testing what it always did: an ordinary file must
+    # still be listed alongside sensitive ones.
     config_dir = home / ".config" / "tldw_cli"
     config_dir.mkdir(parents=True, exist_ok=True)
-    (config_dir / "mcp_permissions.json").write_text('{"version": 1}')
     (config_dir / "ordinary.toml").write_text("fine = true\n")
 
     from tldw_chatbook import config as app_config
+
+    user_data_dir = app_config.get_user_data_dir()
+    (user_data_dir / "mcp_permissions.json").write_text('{"version": 1}')
 
     db_path = app_config.get_chachanotes_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -256,3 +280,48 @@ def test_read_file_refuses_wal_sidecar_of_this_apps_own_sqlite_db(monkeypatch):
 
     assert "error" in result
     assert "recent-uncommitted-row-marker" not in str(result)
+
+
+# ---------------------------------------------------------------------------
+# Finding 2's guardrail must not break the shipped DEFAULT configuration:
+# the default sandbox root is `get_user_data_dir() / "tool_sandbox"`, a
+# DIRECTORY nested directly inside the same user data directory whose other
+# direct children are now refused. Every test above monkeypatches
+# `_tool_sandbox_root` or `_resolve_sandbox_config`; this one does neither,
+# so it exercises the REAL default resolution path end to end.
+# ---------------------------------------------------------------------------
+
+
+def test_default_sandbox_configuration_still_works_end_to_end():
+    """No monkeypatching of the sandbox root/config at all -- proves the
+    real shipped default (``get_user_data_dir() / "tool_sandbox"``) is
+    still fully usable after Finding 2's "refuse direct-child files of the
+    user data directory" rule. If that rule accidentally caught the
+    sandbox root itself (a directory, not a file, so it should not), every
+    one of these calls would fail instead.
+    """
+    from tldw_chatbook import config as app_config
+
+    expected_root = (app_config.get_user_data_dir() / "tool_sandbox").resolve()
+
+    write_result = asyncio.run(
+        fot.WriteFileTool().execute(file_path="hello.txt", content="hi there")
+    )
+    assert "error" not in write_result, write_result
+    assert write_result["file_path"] == str(expected_root / "hello.txt")
+
+    read_result = asyncio.run(fot.ReadFileTool().execute(file_path="hello.txt"))
+    assert "error" not in read_result, read_result
+    assert read_result["content"] == "hi there"
+
+    list_result = asyncio.run(fot.ListDirectoryTool().execute(directory_path="."))
+    assert "error" not in list_result, list_result
+    assert any(e["name"] == "hello.txt" for e in list_result["entries"])
+
+    glob_result = asyncio.run(fot.GlobFiles().execute(pattern="*.txt"))
+    assert "error" not in glob_result, glob_result
+    assert any(Path(p).name == "hello.txt" for p in glob_result["matches"])
+
+    grep_result = asyncio.run(fot.GrepFiles().execute(pattern="hi there"))
+    assert "error" not in grep_result, grep_result
+    assert any(m["path"].endswith("hello.txt") for m in grep_result["matches"])

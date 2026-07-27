@@ -26,6 +26,30 @@ Two distinct reasons a path lands here:
    corrupt every conversation, note and credential-adjacent record they
    hold, bypassing the application layer entirely.
 
+Every one of those is resolved through the app's OWN accessors at call
+time, never a hardcoded literal: ``config.toml``'s location honors the
+``TLDW_CONFIG_PATH`` override (``config._get_effective_config_path()``),
+the MCP permission store and its companions live under
+``config.get_user_data_dir()`` (never under the ``~/.config/tldw_cli/``
+literal a first look at ``app.py`` might suggest -- see
+``_sensitive_single_file_paths()``), and the SQLite DB paths honor
+``[database]`` overrides and the active user folder (see
+``_sensitive_db_paths()``). A literal here would drift the moment any of
+those is overridden -- which is exactly how the permission-store literal
+went stale (Finding 1) and how a ``TLDW_CONFIG_PATH`` override defeated the
+``config.toml`` entry (Finding 3).
+
+Every file this app creates directly under ``get_user_data_dir()`` is also
+refused, as a RULE rather than an enumeration (see the
+``resolved.parent == ctx.user_data_dir`` check in ``is_sensitive_path``):
+new state files land there constantly (agent-run logs, eval/RAG-indexing/
+search-history/event/kanban/sync-state DBs, ...) without ever touching
+``config.py``, so an accessor-name enumeration permanently trails reality.
+Existing DIRECTORIES nested there -- most importantly the default file-tool
+sandbox root, ``get_user_data_dir() / "tool_sandbox"`` -- are excluded from
+that rule and stay fully reachable; see that check's own comment for why a
+directory/file distinction, not a name, is what exempts them.
+
 This is a guardrail, not a security boundary: it stops accidents and naive
 injected payloads, not a determined ``python -c``. The sandbox/workspace-root
 track is the real answer for shell execution.
@@ -49,11 +73,18 @@ _SENSITIVE_DIRS = (
     "~/.local/share/keyrings",
 )
 
-#: Individual files that are refused.
-_SENSITIVE_FILES = (
-    "~/.config/tldw_cli/config.toml",
-    "~/.config/tldw_cli/mcp_permissions.json",
-)
+#: NOTE: this app's own ``config.toml`` and the MCP-permission-store family
+#: used to be listed here as static literals (``~/.config/tldw_cli/
+#: config.toml``, ``~/.config/tldw_cli/mcp_permissions.json``). Both can
+#: move at runtime -- ``config.toml`` honors the ``TLDW_CONFIG_PATH``
+#: override, and the permission store's REAL location was never actually
+#: ``~/.config/tldw_cli/`` at all; the app builds it under
+#: ``get_user_data_dir()`` (see ``_sensitive_single_file_paths()`` below for
+#: exactly how). A literal here would silently stop matching the moment
+#: either moved -- which is precisely how the permission-store entry went
+#: stale (Finding 1) and the ``config.toml`` entry missed a
+#: ``TLDW_CONFIG_PATH`` override (Finding 3). Both are now resolved lazily,
+#: the same way the DB paths are, by ``_sensitive_single_file_paths()``.
 
 #: Names of the ``config`` accessors for this app's own SQLite databases.
 #: Called lazily (see ``_sensitive_db_paths``) rather than imported at module
@@ -102,11 +133,11 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
 
     These databases live under ``config.get_user_data_dir()`` -- by default
     a sibling of ``~/.config/tldw_cli`` (e.g. ``~/.local/share/tldw_cli/...``),
-    not beneath it, so the static ``_SENSITIVE_FILES``/``_SENSITIVE_DIRS``
-    tuples above cannot express their location. Each path is resolved via
-    the app's own accessor (which also honors ``[database]`` path
-    overrides and the active user folder) rather than hardcoded, since
-    neither the user folder nor an override is known statically.
+    not beneath it, so the static ``_SENSITIVE_DIRS`` tuple above cannot
+    express their location. Each path is resolved via the app's own
+    accessor (which also honors ``[database]`` path overrides and the
+    active user folder) rather than hardcoded, since neither the user
+    folder nor an override is known statically.
 
     Returns:
         Resolved paths to every database whose accessor could be called.
@@ -126,6 +157,59 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
             logger.debug(
                 f"sensitive_paths: could not resolve {accessor_name}: {exc}"
             )
+    return tuple(resolved)
+
+
+def _sensitive_single_file_paths() -> tuple[Path, ...]:
+    """Resolve this app's own non-DB sensitive single files, lazily.
+
+    Two families, each resolved through the same accessor the app itself
+    uses to build the real path -- never a literal -- because both can move
+    at runtime:
+
+    1. **config.toml.** ``config._get_effective_config_path()`` honors the
+       ``TLDW_CONFIG_PATH`` override (set throughout this project's own
+       test suite, and by any deployment that relocates the config file).
+       A literal default-path check misses the file actually holding the
+       user's API keys whenever that override is set (Finding 3).
+    2. **The MCP permission store and its companions.** The store's real
+       path is ``get_user_data_dir() / "mcp_permissions.json"`` -- built by
+       ``MCP.unified_control_plane_service``'s ``permission_store`` property
+       as ``Path(store.path).with_name("mcp_permissions.json")``, where
+       ``store.path`` is the ``LocalMCPStore`` path ``app.py`` constructs as
+       ``get_user_data_dir() / "local_mcp_store.json"``. A tool able to
+       rewrite this file can turn every ``ask`` into ``allow`` -- the
+       CRITICAL one-step permission-gate bypass this module exists to
+       prevent (Finding 1; see the module docstring). Two companions built
+       the exact same ``Path(...).with_name(...)`` way from that same base
+       path carry the same class of gate-relevant state:
+       ``local_mcp_store.json`` itself (server definitions and their env)
+       and ``mcp_execution_log.jsonl`` (the execution audit trail).
+
+    Returns:
+        Resolved paths for every file above whose accessor could be
+        called. An accessor that raises is skipped rather than failing the
+        whole check -- additional coverage, not the primary guarantee (see
+        ``_sensitive_db_paths``, which does the same for the DB paths).
+    """
+    from .. import config as _config
+
+    resolved: list[Path] = []
+
+    try:
+        resolved.append(_config._get_effective_config_path())
+    except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        logger.debug(f"sensitive_paths: could not resolve config.toml path: {exc}")
+
+    try:
+        user_data_dir = _config.get_user_data_dir()
+    except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        logger.debug(f"sensitive_paths: could not resolve user data dir: {exc}")
+    else:
+        resolved.append(user_data_dir / "mcp_permissions.json")
+        resolved.append(user_data_dir / "local_mcp_store.json")
+        resolved.append(user_data_dir / "mcp_execution_log.jsonl")
+
     return tuple(resolved)
 
 
@@ -166,6 +250,13 @@ class SensitivePathContext(NamedTuple):
     files: tuple[Path, ...]
     dirs: tuple[Path, ...]
     db_paths: tuple[Path, ...]
+    #: Resolved ``config.get_user_data_dir()``, or ``None`` if it could not
+    #: be resolved. Backs the Finding-2 rule in ``is_sensitive_path``: every
+    #: FILE sitting directly (non-recursively) inside this directory is
+    #: refused, regardless of whether it is one of the enumerated DBs above.
+    #: ``None`` simply means that rule does not fire for this context --
+    #: ``files``/``dirs``/``db_paths`` coverage is unaffected either way.
+    user_data_dir: Path | None
 
 
 def resolve_sensitive_context() -> SensitivePathContext:
@@ -182,12 +273,23 @@ def resolve_sensitive_context() -> SensitivePathContext:
 
     Returns:
         A ``SensitivePathContext`` snapshotting the currently configured
-        sensitive files, directories, and database paths (entries that
-        failed to resolve are dropped).
+        sensitive files, directories, database paths, and user data
+        directory (entries that failed to resolve are dropped; the user
+        data directory is ``None`` if it could not be resolved).
     """
+    from .. import config as _config
+
+    try:
+        user_data_dir = _resolved(str(_config.get_user_data_dir()))
+    except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        logger.debug(f"sensitive_paths: could not resolve user data dir: {exc}")
+        user_data_dir = None
+
     return SensitivePathContext(
         files=tuple(
-            p for p in (_resolved(entry) for entry in _SENSITIVE_FILES) if p is not None
+            p
+            for p in (_resolved(str(raw)) for raw in _sensitive_single_file_paths())
+            if p is not None
         ),
         dirs=tuple(
             p for p in (_resolved(entry) for entry in _SENSITIVE_DIRS) if p is not None
@@ -197,13 +299,14 @@ def resolve_sensitive_context() -> SensitivePathContext:
             for p in (_resolved(str(raw)) for raw in _sensitive_db_paths())
             if p is not None
         ),
+        user_data_dir=user_data_dir,
     )
 
 
 def is_sensitive_path(
     candidate: Path, context: SensitivePathContext | None = None
 ) -> bool:
-    """Whether ``candidate`` is a credential, gate-state, or app-database path.
+    """Whether ``candidate`` is a credential, gate-state, or app-state path.
 
     Comparison is by RESOLVED ancestry, never by string prefix, so
     ``~/.sshfoo`` is not mistaken for ``~/.ssh`` and a symlink cannot
@@ -252,6 +355,29 @@ def is_sensitive_path(
 
     for root in ctx.dirs:
         if resolved == root or root in resolved.parents:
+            return True
+
+    # Finding 2 (substrate review): refuse every FILE sitting directly
+    # (non-recursively) inside `get_user_data_dir()`, as a RULE rather than
+    # an enumeration. New state files land there constantly without ever
+    # touching config.py -- agent-run logs, eval/RAG-indexing/search-
+    # history/event/kanban/sync-state DBs, the MCP local-store/context JSON
+    # files, the rotating app log -- and an accessor-name enumeration
+    # (`_DB_PATH_ACCESSOR_NAMES` above) permanently trails whatever the app
+    # actually creates there next.
+    #
+    # Checked by "is it a directory", never by name: every legitimate use
+    # of this directory as a CONTAINER creates a named subdirectory instead
+    # of a loose file directly inside it -- `tool_sandbox` (the default
+    # file-tool sandbox root itself), `chat_dicts`, `chromadb`, `exports`,
+    # `rag_profiles`, `skills`. Excluding "is an existing directory" rather
+    # than hardcoding any of those names keeps every one of them reachable,
+    # including ones added later, without needing this rule to be updated
+    # in lockstep -- while a candidate that does not exist yet (e.g. a
+    # `write_file` target for a brand-new file) is NOT a directory either,
+    # so it still fails closed and is refused.
+    if ctx.user_data_dir is not None and resolved.parent == ctx.user_data_dir:
+        if not resolved.is_dir():
             return True
 
     return False
