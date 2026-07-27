@@ -34,6 +34,9 @@ RAIL_SECTION_TOGGLE_PREFIX = "console-rail-section-toggle-"
 #: Default collapse/expand affordance glyphs. Literals rather than an import
 #: from ``Chat.console_glyphs`` so this module stays free of the Chat layer;
 #: the values match that module exactly.
+#: Disclosure glyphs, owned here because this is the widget that renders
+#: them. `Chat/console_glyphs.py` re-exports both; non-Console destinations
+#: import them from here. See ADR-034.
 GLYPH_EXPANDED = "▾"
 GLYPH_COLLAPSED = "▸"
 

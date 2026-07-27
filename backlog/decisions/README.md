@@ -28,6 +28,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-031](031-bounded-evaluation-and-tool-worker-execution.md) | Accepted | Adapt synchronous eval providers off-loop, make eval failure and cancellation terminal states truthful, and record the retired ToolExecutor contract as superseded. |
 | [ADR-032](032-immutable-installed-distribution-assets.md) | Accepted | Treat installed distributions as immutable, package explicit runtime assets and vendored notices, and verify built artifacts outside the source checkout. |
 | [ADR-033](033-application-session-state-ownership.md) | Accepted | Keep runtime authority, screen snapshots, and revisioned single-slot handoffs behind explicit application-scoped owners. |
+| [ADR-034](034-shared-rail-disclosure-glyphs.md) | Accepted | Give the rail disclosure glyphs a single owner in `Widgets/destination_rail.py`, re-exported by `Chat/console_glyphs.py`, replacing a two-file duplication held together by a test in a third. |
 
 ## Historical Decision Material
 

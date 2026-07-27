@@ -51,7 +51,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Static
 
-from ...Chat.console_glyphs import GLYPH_COLLAPSED, GLYPH_EXPANDED
+from ...Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
 from ...Constants import TAB_SETTINGS
 from ...Third_Party.textual_fspicker import FileOpen, Filters
 from ...Utils.path_validation import validate_path_simple
