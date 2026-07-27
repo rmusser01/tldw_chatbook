@@ -42,6 +42,18 @@ def _sanitise(value: str) -> str:
     return cleaned or _PLACEHOLDER
 
 
+def _placeholder_to_empty(value: str) -> str:
+    """Map the wire placeholder back to empty string for optional fields.
+
+    Args:
+        value: Field value from the wire (e.g., "-").
+
+    Returns:
+        Empty string if ``value`` is the placeholder, else ``value``.
+    """
+    return "" if value == _PLACEHOLDER else value
+
+
 @dataclass(frozen=True)
 class RunLogRecord:
     """One appended record: a model turn, tool call, tool result, or spawn."""
@@ -126,18 +138,37 @@ def iter_records(data: bytes) -> Iterator[RunLogRecord]:
             return
         fields = _parse_header(data[position:newline].decode("utf-8", "replace"))
         if fields is None:
-            return
+            # Malformed header: resync to next anchor instead of discarding all.
+            nxt = data.find(b"\n" + _ANCHOR_BYTES, position + 1)
+            if nxt == -1:
+                return
+            position = nxt + 1
+            continue
         try:
             size = int(fields.get("bytes", "0"))
             number = int(fields["number"])
         except (KeyError, ValueError):
-            return
+            # Unparseable bytes or number: resync instead of losing all records.
+            nxt = data.find(b"\n" + _ANCHOR_BYTES, position + 1)
+            if nxt == -1:
+                return
+            position = nxt + 1
+            continue
         start = newline + 1
         end = start + size
         # end + 1 covers the terminating newline: only fully-terminated
         # records are yielded, so a record still being written is skipped.
         if size < 0 or end + 1 > length:
             return
+        # Integrity check: the byte at the slice end MUST be the terminating newline.
+        # If not, this record is torn (declared byte count overran real content);
+        # resync instead of yielding stitched content.
+        if data[end:end + 1] != b"\n":
+            nxt = data.find(b"\n" + _ANCHOR_BYTES, position + 1)
+            if nxt == -1:
+                return
+            position = nxt + 1
+            continue
         yield RunLogRecord(
             number=number,
             run_id=fields.get("run", _PLACEHOLDER),
@@ -145,9 +176,9 @@ def iter_records(data: bytes) -> Iterator[RunLogRecord]:
             type=fields.get("type", _PLACEHOLDER),
             ts=fields.get("ts", _PLACEHOLDER),
             content=data[start:end].decode("utf-8", "replace"),
-            tool=fields.get("tool", _PLACEHOLDER),
-            status=fields.get("status", _PLACEHOLDER),
-            call_id=fields.get("call", _PLACEHOLDER),
+            tool=_placeholder_to_empty(fields.get("tool", _PLACEHOLDER)),
+            status=_placeholder_to_empty(fields.get("status", _PLACEHOLDER)),
+            call_id=_placeholder_to_empty(fields.get("call", _PLACEHOLDER)),
             truncated_from=int(fields.get("truncated", "0") or 0),
         )
         position = end + 1
