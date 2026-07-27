@@ -89,3 +89,27 @@ def test_chatbook_surfaces_do_not_embed_database_defaults(
     assert "chachanotes_db_path" not in source
     assert "prompts_db_path" not in source
     assert "media_db_path" not in source
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "tldw_chatbook/UI/Wizards/ChatbookCreationWizard.py",
+        "tldw_chatbook/UI/ChatbookExportManagementWindow.py",
+        "tldw_chatbook/UI/Chatbooks_Window_Improved.py",
+        "tldw_chatbook/UI/ChatbookCreationWindow.py",
+    ],
+)
+def test_chatbook_export_directory_surfaces_use_private_chatbooks_dir_accessor(
+    relative_path: str,
+) -> None:
+    """The four Chatbook windows default the export dir via the accessor.
+
+    Regression guard for task-984: reconciles the export directory default
+    across all four windows onto ``get_private_chatbooks_dir()`` instead of
+    the hardcoded ``~/Documents/Chatbooks`` literal.
+    """
+    source = (Path(__file__).parents[2] / relative_path).read_text(encoding="utf-8")
+
+    assert "get_private_chatbooks_dir" in source
+    assert '"Documents" / "Chatbooks"' not in source
