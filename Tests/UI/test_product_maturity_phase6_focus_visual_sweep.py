@@ -58,7 +58,7 @@ DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "workflows": ("#workflows-shell",),
     "mcp": ("#mcp-shell", "#mcp-hub-workbench"),
     "acp": ("#acp-shell",),
-    "lab": ("#llm-destination-header",),
+    "lab": ("#lab-destination-header",),
     "logs": ("#logs-destination-header",),
     "settings": ("#settings-shell",),
 }

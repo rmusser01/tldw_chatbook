@@ -76,13 +76,7 @@ class LLMManagementWindow(Container):
         color: $ds-focus-fg;
         text-style: bold underline;
     }
-    
-    .sidebar-title {
-        text-style: bold;
-        margin: 0 0 1 0;
-        color: $text;
-    }
-    
+
     .llm-view {
         display: none;
         height: 100%;
