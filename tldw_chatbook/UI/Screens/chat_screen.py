@@ -3489,6 +3489,13 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_controller.park_pending_approval = (
             self._park_console_approval
         )
+        # Task 10 (background completion toasts): UI-thread bridge target
+        # for a NON-active session's run finishing/failing -- the one-per-
+        # run toast, invoked directly (never via call_from_thread) from
+        # `_set_run_state`'s once-guarded non-active terminal branch.
+        self._console_chat_controller.notify_run_outcome = (
+            self._notify_console_run_outcome
+        )
         self._console_chat_controller.set_pending_skill_install = (
             self._set_console_pending_skill_install
         )
@@ -15338,6 +15345,47 @@ class ChatScreen(BaseAppScreen):
                     "Unable to resolve Console workspace name for approval toast"
                 )
         return str(workspace_id)
+
+    def _notify_console_run_outcome(
+        self, session_id: str, status: ConsoleRunStatus
+    ) -> None:
+        """Task 10 (background completion toasts): one toast for a
+        NON-viewed session's run finishing (COMPLETED) or failing (FAILED).
+
+        UI-thread bridge target for ``ConsoleChatController.
+        notify_run_outcome``, invoked DIRECTLY (never via ``app_instance.
+        call_from_thread``, unlike ``_park_console_approval`` above) from
+        ``_set_run_state``'s once-guarded non-active terminal branch --
+        every terminal ``_set_run_state`` call already runs on the main
+        event-loop thread (worker-thread agent runs resume here only after
+        ``await asyncio.to_thread(...)`` returns in ``_run_agent_reply``),
+        so no thread marshaling is needed. Reuses ``_park_console_
+        approval``'s exact session-title/workspace lookup and
+        ``_console_workspace_display_name`` resolver -- no second resolver.
+        The viewed session's own terminal transition is visible live in its
+        transcript and never reaches this method (``_set_run_state`` only
+        calls it from the non-active branch).
+
+        Args:
+            session_id: The run's OWNING session (non-active at call time).
+            status: ``ConsoleRunStatus.COMPLETED`` or ``.FAILED`` -- the
+                only two statuses ``_set_run_state`` ever calls this with.
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            return
+        session_title = session_id
+        workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
+        for session in controller.store.sessions():
+            if session.id == session_id:
+                session_title = session.title
+                workspace_id = session.workspace_id
+                break
+        workspace_name = self._console_workspace_display_name(workspace_id)
+        verb = "finished" if status is ConsoleRunStatus.COMPLETED else "failed"
+        self.app_instance.notify(
+            f"Agent in {session_title} ({workspace_name}) {verb}."
+        )
 
     def _set_console_pending_skill_install(
         self, payload: Dict[str, Any] | None

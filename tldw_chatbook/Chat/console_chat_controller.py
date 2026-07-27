@@ -749,6 +749,21 @@ class ConsoleChatController:
         #: wiring. ``None`` in most controller-only tests, matching every
         #: other UI bridge slot here.
         self.park_pending_approval: Callable[[str], None] | None = None
+        #: Task 10 (background completion toasts): UI-thread callback
+        #: invoked DIRECTLY (never via ``self.app.call_from_thread`` --
+        #: unlike the two bridges above, every terminal ``_set_run_state``
+        #: call already runs on the main event-loop thread: worker-thread
+        #: agent runs resume here only after ``await asyncio.to_thread(...)``
+        #: returns in ``_run_agent_reply``) from ``_set_run_state``'s
+        #: non-active COMPLETED/FAILED branch, once per transition INTO a
+        #: terminal state. Wired to ``ChatScreen._notify_console_run_
+        #: outcome`` by ``_ensure_console_chat_controller``, mirroring
+        #: ``park_pending_approval``'s wiring and reusing its exact
+        #: session-title/workspace-name resolution
+        #: (``ChatScreen._console_workspace_display_name``). ``None`` in
+        #: most controller-only tests, matching every other UI bridge slot
+        #: here.
+        self.notify_run_outcome: Callable[[str, ConsoleRunStatus], None] | None = None
         #: Optional override for how long ``request_mcp_approvals`` waits
         #: for a human decision before failing every undecided call to
         #: ``"timeout"``. Defaults to reading ``[mcp] approval_timeout_
@@ -6181,6 +6196,13 @@ class ConsoleChatController:
         target = session_id if session_id is not None else (
             self.store.active_session_id or ""
         )
+        # Task 10 (background completion toasts): captured BEFORE the
+        # overwrite below so the once-guard downstream can tell a genuine
+        # transition INTO a terminal outcome (toast) apart from a
+        # defensive re-stamp of the SAME terminal status onto an already-
+        # terminal session (no toast -- the brief's own re-set test pins
+        # this).
+        previous_status = self.run_state_for(target).status
         self._run_states[target] = run_state
         self.run_state_history_for(target).append(run_state.status)
         # Task 9 finding #2 (deferred from Task 7 review): a terminal run
@@ -6213,6 +6235,27 @@ class ConsoleChatController:
                 self._unvisited_outcomes[target] = ConsoleRunMarker.FINISHED_OK
             elif run_state.status is ConsoleRunStatus.FAILED:
                 self._unvisited_outcomes[target] = ConsoleRunMarker.FINISHED_FAILED
+            # Task 10 (background completion toasts, parallel-agents spec):
+            # ONE toast on a non-active session's run finishing/failing --
+            # the viewed session's own terminal transition is visible live
+            # in its transcript and gets none (same "user is watching" rule
+            # as the unvisited-outcome stamp just above). Once-guarded on
+            # the transition INTO a terminal state: `previous_status` was
+            # NOT already one of the four terminal statuses, so re-setting
+            # the same COMPLETED/FAILED status again (e.g. a defensive
+            # re-stamp) does not re-toast.
+            if (
+                run_state.status in (ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED)
+                and previous_status
+                not in {
+                    ConsoleRunStatus.BLOCKED,
+                    ConsoleRunStatus.COMPLETED,
+                    ConsoleRunStatus.FAILED,
+                    ConsoleRunStatus.STOPPED,
+                }
+                and self.notify_run_outcome is not None
+            ):
+                self.notify_run_outcome(target, run_state.status)
 
     def _clear_terminal_run_state(self, session_id: str | None = None) -> None:
         """Clear stale terminal status copy for ``session_id`` (default: active).

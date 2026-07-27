@@ -509,3 +509,44 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
         assert len(
             [n for n in notifications if "needs approval" in n]
         ) == 1
+
+
+@pytest.mark.asyncio
+async def test_background_completion_fires_single_toast() -> None:
+    """Task 10 (background completion toasts, parallel-agents spec): a
+    NON-viewed session's run finishing (COMPLETED) or failing (FAILED)
+    fires exactly one toast -- the viewed session's own terminal
+    transition is visible live in its transcript and gets none (spec's
+    "the user is watching" rule). Real interface names, mirroring the
+    Task 9 approval toast test above (the brief's illustrative
+    ``store.set_active_session`` does not exist -- ``switch_session`` is
+    the real activation API, on both ``store`` and ``controller``).
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        viewed = controller.store.active_session_id
+        background = controller.new_session().id
+        controller.store.switch_session(viewed)  # keep viewing the first session
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg"), session_id=background
+        )
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"), session_id=background
+        )
+        finished = [n for n in notifications if "finished" in n]
+        assert len(finished) == 1
+
+        # Re-setting the same terminal state must not double-toast.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"), session_id=background
+        )
+        assert len([n for n in notifications if "finished" in n]) == 1
