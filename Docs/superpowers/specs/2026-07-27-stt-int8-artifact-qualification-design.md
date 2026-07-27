@@ -340,15 +340,38 @@ Every artifact, matrix cell, and language receives one of:
 - `incomplete`: required evidence, provenance, pairing, or capability was
   absent or invalid.
 
-Each non-English language also receives
-`routing_candidate: pass|fail|incomplete`. The derived candidate-language set
-contains only languages whose complete v3 INT8 matrix and comparisons pass.
-Failed and incomplete languages are excluded explicitly and continue to route
-to faster-whisper if the semantic gate is later considered.
+Each non-English language first receives
+`routing_candidate: pass|fail|incomplete` from its own complete v3 INT8/F32 and
+faster-whisper comparisons. A language-level INT8 failure excludes only that
+language and never selects F32 as a substitute. Incomplete language evidence
+also excludes that language, but because every proposed language is a required
+matrix cell, it keeps TASK-593 incomplete rather than producing a final
+qualification result.
 
-An INT8 artifact receives `artifact_candidate=pass` only when every required
-matrix cell passes. `fail` or `incomplete` blocks INT8 promotion and never
-selects F32 as a substitute. F32 remains comparison evidence only.
+The provisional candidate-language set contains only languages whose individual
+quality gates pass. The v3 macro-family point estimate and confidence interval
+are then calculated over that explicitly recorded provisional set. A failed
+macro-family gate is an artifact-global failure; it does not trigger repeated
+language removal until the macro happens to pass.
+
+The v3 artifact decision is evaluated in this order:
+
+1. Any incomplete required cell produces `artifact_candidate=incomplete`.
+2. Complete per-language failures are recorded as excluded languages without
+   failing the artifact for the remaining languages.
+3. Global model/runtime, silence, long-form, memory, throughput, batch-reuse,
+   or surviving-set macro failure produces `artifact_candidate=fail` and blocks
+   every v3 language.
+4. When all global gates pass and at least one language survives,
+   `artifact_candidate=pass` contains the final candidate-language set plus the
+   explicitly excluded failed languages.
+
+The v2 artifact has no per-language subset: incomplete English/global evidence
+is incomplete, and any complete English or global failure produces
+`artifact_candidate=fail`.
+
+An artifact-global INT8 failure blocks all promotion for that artifact and
+never selects F32 as a substitute. F32 remains comparison evidence only.
 
 The top-level report never uses `default_promoted`. It records
 `semantic_default_eligible=false` and lists the outstanding artifact-core,
