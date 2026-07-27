@@ -32,6 +32,50 @@ SCREEN_STATE_STORE_PATH = (
 )
 HANDOFF_STORE_PATH = PRODUCTION_ROOT / "UI" / "Navigation" / "pending_handoff_store.py"
 CHAT_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen.py"
+CHAT_SCREEN_STATE_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "chat_screen_state.py"
+LEGACY_CHAT_ROOT_NAMES = (
+    "rag_expansion_provider_value",
+    "chat_sidebar_collapsed",
+    "chat_right_sidebar_collapsed",
+    "chat_right_sidebar_width",
+    "chat_sidebar_selected_prompt_id",
+    "chat_sidebar_selected_prompt_system",
+    "chat_sidebar_selected_prompt_user",
+    "current_chat_is_ephemeral",
+    "current_chat_conversation_id",
+    "current_chat_active_character_data",
+    "active_chat_tab_id",
+    "chat_sessions",
+    "chat_sidebar_loaded_prompt_id",
+    "chat_sidebar_loaded_prompt_title_text",
+    "chat_sidebar_loaded_prompt_system_text",
+    "chat_sidebar_loaded_prompt_user_text",
+    "chat_sidebar_loaded_prompt_keywords_text",
+    "chat_sidebar_prompt_display_visible",
+    "chat_settings_mode",
+    "chat_settings_search_query",
+    "_chat_state_lock",
+    "current_ai_message_widget",
+    "current_chat_worker",
+    "current_chat_is_streaming",
+    "current_chat_note_id",
+    "current_chat_note_version",
+    "_conversation_search_timer",
+    "_chat_sidebar_prompt_search_timer",
+    "_media_sidebar_search_timer",
+    "media_search_current_page",
+    "media_search_total_pages",
+    "current_sidebar_media_item",
+)
+LEGACY_CHAT_ROOT_METHOD_NAMES = (
+    "get_current_ai_message_widget",
+    "set_current_ai_message_widget",
+    "get_current_chat_worker",
+    "set_current_chat_worker",
+    "get_current_chat_is_streaming",
+    "set_current_chat_is_streaming",
+    *(f"watch_{name}" for name in LEGACY_CHAT_ROOT_NAMES),
+)
 LEGACY_CHAT_COMPOSITION_PATHS = (
     PRODUCTION_ROOT / "UI" / "Chat_Window.py",
     PRODUCTION_ROOT / "UI" / "Chat_Window_Enhanced.py",
@@ -44,6 +88,21 @@ LEGACY_CHAT_COMPOSITION_CLASSES = {
     "ChatWindow",
     "ChatWindowEnhanced",
 }
+LEGACY_CHAT_ROOT_MODULE_PATHS = (
+    PRODUCTION_ROOT / "Event_Handlers" / "Chat_Events" / "chat_events.py",
+    PRODUCTION_ROOT / "Event_Handlers" / "Chat_Events" / "chat_events_sidebar.py",
+    PRODUCTION_ROOT
+    / "Event_Handlers"
+    / "Chat_Events"
+    / "chat_events_sidebar_resize.py",
+    PRODUCTION_ROOT / "Event_Handlers" / "Chat_Events" / "chat_events_tabs.py",
+    PRODUCTION_ROOT / "Event_Handlers" / "Chat_Events" / "chat_events_worldbooks.py",
+    PRODUCTION_ROOT / "Event_Handlers" / "Chat_Events" / "chat_streaming_events.py",
+    PRODUCTION_ROOT / "Event_Handlers" / "sidebar_events.py",
+    PRODUCTION_ROOT / "Event_Handlers" / "tab_initializers" / "chat_tab_initializer.py",
+    PRODUCTION_ROOT / "Event_Handlers" / "worker_handlers" / "chat_worker_handler.py",
+)
+WORKER_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "worker_events.py"
 STUDY_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "study_screen.py"
 ARTIFACTS_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "artifacts_screen.py"
 ACP_SCREEN_PATH = PRODUCTION_ROOT / "UI" / "Screens" / "acp_screen.py"
@@ -208,6 +267,48 @@ def _production_occurrences(
     return found
 
 
+def _is_root_app_expression(node: ast.AST) -> bool:
+    """Return whether an expression denotes the production app root."""
+    chain = _chain(node)
+    return chain in {"app", "app_instance", "self.app", "self.app_instance"}
+
+
+def _root_app_occurrences(
+    path: Path,
+    target: str,
+) -> list[tuple[str, str, int]]:
+    """Collect exact root-app access without rejecting destination-owned names."""
+    relative = str(path.relative_to(PROJECT_ROOT))
+    found: list[tuple[str, str, int]] = []
+    for node in ast.walk(_parse(path)):
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == target
+            and _is_root_app_expression(node.value)
+        ):
+            found.append(
+                (relative, f"attribute_{type(node.ctx).__name__.lower()}", node.lineno)
+            )
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"getattr", "setattr", "delattr", "hasattr"}
+            and len(node.args) >= 2
+            and _is_root_app_expression(node.args[0])
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == target
+        ):
+            found.append((relative, f"dynamic_{node.func.id}", node.lineno))
+        elif (
+            isinstance(node, ast.Subscript)
+            and _is_root_app_expression(node.value)
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == target
+        ):
+            found.append((relative, "subscript", node.lineno))
+    return found
+
+
 def _class_definition(path: Path, name: str) -> ast.ClassDef:
     return next(
         node
@@ -352,6 +453,19 @@ def test_legacy_chat_composition_modules_imports_and_classes_are_absent() -> Non
     assert violations == []
 
 
+def test_legacy_chat_root_handler_modules_and_stream_messages_are_absent() -> None:
+    assert [
+        str(path.relative_to(PROJECT_ROOT))
+        for path in LEGACY_CHAT_ROOT_MODULE_PATHS
+        if path.exists()
+    ] == []
+
+    worker_source = WORKER_EVENTS_PATH.read_text(encoding="utf-8")
+    assert "class StreamingChunk" not in worker_source
+    assert "class StreamDone" not in worker_source
+    assert "STREAMING_HANDLED_BY_EVENTS" not in worker_source
+
+
 def test_chat_screen_has_no_legacy_composition_field_or_adapter() -> None:
     violations = {
         target: _occurrences(CHAT_SCREEN_PATH, target)
@@ -361,6 +475,37 @@ def test_chat_screen_has_no_legacy_composition_field_or_adapter() -> None:
 
     assert violations == {}
     assert "#chat-window" not in CHAT_SCREEN_PATH.read_text(encoding="utf-8")
+
+
+def test_chat_screen_state_module_contains_only_native_task_resume_state() -> None:
+    violations = {
+        target: _occurrences(CHAT_SCREEN_STATE_PATH, target)
+        for target in ("MessageData", "TabState", "ChatScreenState")
+        if _occurrences(CHAT_SCREEN_STATE_PATH, target)
+    }
+    assert violations == {}
+
+
+def test_legacy_chat_root_state_and_accessors_are_absent() -> None:
+    """Reject root mirrors while allowing same-named destination-owner fields."""
+    violations: dict[
+        str, list[tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]]
+    ] = {}
+    for name in LEGACY_CHAT_ROOT_NAMES:
+        occurrences = _occurrences(APP_PATH, name)
+        for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+            if path == APP_PATH:
+                continue
+            occurrences.extend(_root_app_occurrences(path, name))
+        if occurrences:
+            violations[name] = occurrences
+
+    for method_name in LEGACY_CHAT_ROOT_METHOD_NAMES:
+        occurrences = _production_occurrences(method_name)
+        if occurrences:
+            violations[method_name] = occurrences
+
+    assert violations == {}
 
 
 def test_tldw_cli_neither_imports_nor_instantiates_app_state() -> None:

@@ -34,6 +34,7 @@ from rich.text import Text  # For displaying messages if needed
 #
 # Local Imports
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
+from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from ..Third_Party.textual_fspicker import Filters  # For file filtering
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..Character_Chat import Chat_Dictionary_Lib as cdl
@@ -42,8 +43,6 @@ from ..DB.ChaChaNotes_DB import (
     ConflictError,
     CharactersRAGDBError,
 )  # For specific error handling
-from ..Widgets.Chat_Widgets.chat_message import ChatMessage
-
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
@@ -59,6 +58,99 @@ if TYPE_CHECKING:
 # Helper Functions (specific to CCP tab logic, moved from app.py)
 #
 ########################################################################################################################
+
+
+async def load_branched_conversation_history_ui(
+    app: "TldwCli", target_conversation_id: str, chat_log_widget: VerticalScroll
+) -> None:
+    """Load a CCP conversation's inherited branch history into its real view."""
+    if not app.notes_service:
+        loguru_logger.error(
+            "Notes service not available for loading branched history."
+        )
+        await chat_log_widget.mount(
+            ChatMessage(
+                "Error: Notes service unavailable.", role="System", classes="-error"
+            )
+        )
+        return
+
+    db = app.notes_service._get_db(app.notes_user_id)
+    await chat_log_widget.remove_children()
+    loguru_logger.debug(
+        "Loading branched history for target_conversation_id: {}",
+        target_conversation_id,
+    )
+
+    path_segments: list[dict[str, Any]] = []
+    current_conversation_id: str | None = target_conversation_id
+    while current_conversation_id:
+        conversation = db.get_conversation_by_id(current_conversation_id)
+        if not conversation:
+            loguru_logger.error(
+                "Path tracing failed: Conversation {} not found.",
+                current_conversation_id,
+            )
+            await chat_log_widget.mount(
+                ChatMessage(
+                    f"Error: Conversation segment {current_conversation_id} not found.",
+                    role="System",
+                    classes="-error",
+                )
+            )
+            return
+        path_segments.append(
+            {
+                "id": conversation["id"],
+                "forked_from_message_id": conversation.get(
+                    "forked_from_message_id"
+                ),
+                "parent_conversation_id": conversation.get(
+                    "parent_conversation_id"
+                ),
+            }
+        )
+        current_conversation_id = conversation.get("parent_conversation_id")
+
+    path_segments.reverse()
+    messages_to_display: list[dict[str, Any]] = []
+    for index, segment in enumerate(path_segments):
+        messages = db.get_messages_for_conversation(
+            segment["id"],
+            order_by_timestamp="ASC",
+            limit=10_000,
+        )
+        fork_message_id = (
+            path_segments[index + 1]["forked_from_message_id"]
+            if index + 1 < len(path_segments)
+            else None
+        )
+        for message in messages:
+            messages_to_display.append(message)
+            if fork_message_id and message["id"] == fork_message_id:
+                break
+
+    for message in messages_to_display:
+        await chat_log_widget.mount(
+            ChatMessage(
+                message=message["content"],
+                role=message["sender"],
+                timestamp=message.get("timestamp"),
+                image_data=message.get("image_data"),
+                image_mime_type=message.get("image_mime_type"),
+                message_id=message["id"],
+                message_version=message.get("version"),
+                feedback=message.get("feedback"),
+            )
+        )
+
+    if chat_log_widget.is_mounted:
+        chat_log_widget.scroll_end(animate=False)
+    loguru_logger.info(
+        "Loaded {} messages for conversation {} (including history).",
+        len(messages_to_display),
+        target_conversation_id,
+    )
 
 
 async def populate_ccp_character_select(app: "TldwCli") -> None:

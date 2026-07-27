@@ -1,204 +1,7 @@
-"""Chat screen state management following Textual best practices.
+"""Serializable native Console task-resume state."""
 
-This module provides centralized state management for the chat screen,
-ensuring that user conversations, typed messages, and UI state are
-preserved when navigating between screens.
-"""
-
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Dict, List, Optional, Any
-from loguru import logger
-
-from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
-
-logger = logger.bind(module="ChatScreenState")
-
-
-@dataclass
-class MessageData:
-    """Cached message data for quick restoration."""
-
-    message_id: str
-    role: str  # 'user', 'assistant', 'system'
-    content: str
-    timestamp: Optional[datetime]
-    attachments: List[Dict[str, Any]] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    is_streaming: bool = False
-    is_edited: bool = False
-    parent_message_id: Optional[str] = None
-    variant_of: Optional[str] = None
-    variant_number: Optional[int] = None
-    is_selected_variant: bool = False
-    total_variants: Optional[int] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for serialization."""
-        return {
-            "message_id": self.message_id,
-            "role": self.role,
-            "content": self.content,
-            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
-            "attachments": self.attachments,
-            "metadata": self.metadata,
-            "is_streaming": self.is_streaming,
-            "is_edited": self.is_edited,
-            "parent_message_id": self.parent_message_id,
-            "variant_of": self.variant_of,
-            "variant_number": self.variant_number,
-            "is_selected_variant": self.is_selected_variant,
-            "total_variants": self.total_variants,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MessageData":
-        """Create from dictionary."""
-        timestamp = data.get("timestamp")
-        if timestamp and isinstance(timestamp, str):
-            timestamp = datetime.fromisoformat(timestamp)
-
-        return cls(
-            message_id=data.get("message_id", ""),
-            role=data.get("role", "user"),
-            content=data.get("content", ""),
-            timestamp=timestamp,
-            attachments=data.get("attachments", []),
-            metadata=data.get("metadata", {}),
-            is_streaming=data.get("is_streaming", False),
-            is_edited=data.get("is_edited", False),
-            parent_message_id=data.get("parent_message_id"),
-            variant_of=data.get("variant_of"),
-            variant_number=data.get("variant_number"),
-            is_selected_variant=data.get("is_selected_variant", False),
-            total_variants=data.get("total_variants"),
-        )
-
-
-@dataclass
-class TabState:
-    """State for a single chat tab."""
-
-    tab_id: str
-    title: str
-    conversation_id: Optional[str] = None
-    runtime_backend: str = "local"
-    discovery_owner: str = "general_chat"
-    discovery_entity_id: Optional[str] = None
-    character_id: Optional[int] = None
-    character_name: Optional[str] = None
-    assistant_kind: Optional[str] = None
-    assistant_id: Optional[str] = None
-    persona_memory_mode: Optional[str] = None
-    scope_type: Optional[str] = None
-    workspace_id: Optional[str] = None
-    handoff_payload: Optional[ChatHandoffPayload] = None
-
-    # Input state
-    input_text: str = ""
-    cursor_position: int = 0
-
-    # UI state
-    scroll_position: int = 0
-    is_active: bool = False
-
-    # Attachments
-    pending_attachments: List[Dict[str, Any]] = field(default_factory=list)
-
-    # Message cache
-    messages: List[MessageData] = field(default_factory=list)
-
-    # Session metadata
-    is_ephemeral: bool = True
-    has_unsaved_changes: bool = False
-    created_at: Optional[datetime] = None
-    last_activity: Optional[datetime] = None
-
-    # Settings overrides
-    system_prompt_override: Optional[str] = None
-    temperature_override: Optional[float] = None
-    max_tokens_override: Optional[int] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for serialization."""
-        return {
-            "tab_id": self.tab_id,
-            "title": self.title,
-            "conversation_id": self.conversation_id,
-            "runtime_backend": self.runtime_backend,
-            "discovery_owner": self.discovery_owner,
-            "discovery_entity_id": self.discovery_entity_id,
-            "character_id": self.character_id,
-            "character_name": self.character_name,
-            "assistant_kind": self.assistant_kind,
-            "assistant_id": self.assistant_id,
-            "persona_memory_mode": self.persona_memory_mode,
-            "scope_type": self.scope_type,
-            "workspace_id": self.workspace_id,
-            "handoff_payload": self.handoff_payload.to_dict()
-            if self.handoff_payload
-            else None,
-            "input_text": self.input_text,
-            "cursor_position": self.cursor_position,
-            "scroll_position": self.scroll_position,
-            "is_active": self.is_active,
-            "pending_attachments": self.pending_attachments,
-            "messages": [msg.to_dict() for msg in self.messages],
-            "is_ephemeral": self.is_ephemeral,
-            "has_unsaved_changes": self.has_unsaved_changes,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "last_activity": self.last_activity.isoformat()
-            if self.last_activity
-            else None,
-            "system_prompt_override": self.system_prompt_override,
-            "temperature_override": self.temperature_override,
-            "max_tokens_override": self.max_tokens_override,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "TabState":
-        """Create from dictionary."""
-        created_at = data.get("created_at")
-        if created_at and isinstance(created_at, str):
-            created_at = datetime.fromisoformat(created_at)
-
-        last_activity = data.get("last_activity")
-        if last_activity and isinstance(last_activity, str):
-            last_activity = datetime.fromisoformat(last_activity)
-
-        messages = [MessageData.from_dict(msg) for msg in data.get("messages", [])]
-        scope_type = data.get("scope_type") or "global"
-        workspace_id = data.get("workspace_id") if scope_type == "workspace" else None
-
-        return cls(
-            tab_id=data.get("tab_id", ""),
-            title=data.get("title", "New Chat"),
-            conversation_id=data.get("conversation_id"),
-            runtime_backend=data.get("runtime_backend", "local"),
-            discovery_owner=data.get("discovery_owner", "general_chat"),
-            discovery_entity_id=data.get("discovery_entity_id"),
-            character_id=data.get("character_id"),
-            character_name=data.get("character_name"),
-            assistant_kind=data.get("assistant_kind"),
-            assistant_id=data.get("assistant_id"),
-            persona_memory_mode=data.get("persona_memory_mode"),
-            scope_type=scope_type,
-            workspace_id=workspace_id,
-            handoff_payload=ChatHandoffPayload.from_dict(data.get("handoff_payload")),
-            input_text=data.get("input_text", ""),
-            cursor_position=data.get("cursor_position", 0),
-            scroll_position=data.get("scroll_position", 0),
-            is_active=data.get("is_active", False),
-            pending_attachments=data.get("pending_attachments", []),
-            messages=messages,
-            is_ephemeral=data.get("is_ephemeral", True),
-            has_unsaved_changes=data.get("has_unsaved_changes", False),
-            created_at=created_at,
-            last_activity=last_activity,
-            system_prompt_override=data.get("system_prompt_override"),
-            temperature_override=data.get("temperature_override"),
-            max_tokens_override=data.get("max_tokens_override"),
-        )
+from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -207,45 +10,43 @@ class TaskResumeState:
 
     summary: str = ""
     last_step: str = ""
-    pending_approval: Optional[Dict[str, Any]] = None
-    pending_skill_install: Optional[Dict[str, Any]] = None
-    pending_skill_script: Optional[Dict[str, Any]] = None
+    pending_approval: dict[str, Any] | None = None
+    pending_skill_install: dict[str, Any] | None = None
+    pending_skill_script: dict[str, Any] | None = None
     diff_summary: str = ""
     next_action: str = ""
 
     def has_resume_content(self) -> bool:
-        """Return True when the resume panel should be visible."""
+        """Return whether the resume panel should be visible.
+
+        Returns:
+            ``True`` when at least one valid text field contains content.
+        """
         return any(
-            (
-                self.summary.strip(),
-                self.last_step.strip(),
-                self.diff_summary.strip(),
-                self.next_action.strip(),
+            value.strip()
+            for value in (
+                self.summary,
+                self.last_step,
+                self.diff_summary,
+                self.next_action,
             )
+            if isinstance(value, str)
         )
 
     def has_pending_approval(self) -> bool:
-        """Return True when an approval prompt should be shown."""
+        """Return whether an approval prompt should be shown."""
         return bool(self.pending_approval)
 
     def has_pending_skill_install(self) -> bool:
-        """Return True when a skill-install confirm should be shown.
-
-        Returns:
-            True when a skill-install confirm should be shown.
-        """
+        """Return whether a skill-install confirmation should be shown."""
         return bool(self.pending_skill_install)
 
     def has_pending_skill_script(self) -> bool:
-        """Return True when a skill-script confirm should be shown.
-
-        Returns:
-            True when a skill-script confirm should be shown.
-        """
+        """Return whether a skill-script confirmation should be shown."""
         return bool(self.pending_skill_script)
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for serialization."""
+    def to_dict(self) -> dict[str, Any]:
+        """Return the serializable task-resume payload."""
         return {
             "summary": self.summary,
             "last_step": self.last_step,
@@ -257,207 +58,32 @@ class TaskResumeState:
         }
 
     @classmethod
-    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "TaskResumeState":
-        """Create from dictionary, deliberately DROPPING a pending script.
-
-        ``pending_skill_script`` is round-trip-asymmetric on purpose.
-        ``to_dict`` still records it so a saved snapshot stays a faithful
-        picture of what was on screen, but restoring it as an ACTIONABLE card
-        would be a lie: the confirm it belongs to is a live, blocked worker
-        round keyed by ``request_id``, and
-        ``ConsoleChatController.resolve_pending_skill_script`` strict-matches
-        that id against the currently-armed round. A round that survived a
-        save/restore is by definition no longer armed, so every button on a
-        restored card would be silently dropped -- a dead card the user can
-        click forever with no effect, and one that misrepresents an
-        already-abandoned request as still awaiting them. Dropping it means
-        the card simply does not reappear.
+    def from_dict(cls, data: object | None) -> "TaskResumeState":
+        """Restore validated state while dropping an unresolvable script round.
 
         Args:
-            data: Previously serialized state, or None.
+            data: Untrusted value read from a persisted Console snapshot.
 
         Returns:
-            The restored state, with ``pending_skill_script`` always None.
+            A resume state containing only correctly typed snapshot fields.
         """
-        if not data:
+        if not isinstance(data, dict):
             return cls()
 
+        def _text(key: str) -> str:
+            value = data.get(key)
+            return value if isinstance(value, str) else ""
+
+        def _payload(key: str) -> dict[str, Any] | None:
+            value = data.get(key)
+            return dict(value) if isinstance(value, dict) else None
+
         return cls(
-            summary=data.get("summary", ""),
-            last_step=data.get("last_step", ""),
-            pending_approval=data.get("pending_approval"),
-            pending_skill_install=data.get("pending_skill_install"),
+            summary=_text("summary"),
+            last_step=_text("last_step"),
+            pending_approval=_payload("pending_approval"),
+            pending_skill_install=_payload("pending_skill_install"),
             pending_skill_script=None,
-            diff_summary=data.get("diff_summary", ""),
-            next_action=data.get("next_action", ""),
+            diff_summary=_text("diff_summary"),
+            next_action=_text("next_action"),
         )
-
-
-@dataclass
-class ChatScreenState:
-    """
-    Complete state for the chat screen.
-
-    This dataclass encapsulates all state needed to fully restore
-    the chat screen when returning from another screen, following
-    Textual's best practices for state management.
-    """
-
-    # Tab management
-    tabs: List[TabState] = field(default_factory=list)
-    active_tab_id: Optional[str] = None
-    tab_order: List[str] = field(default_factory=list)  # Order of tabs in UI
-
-    # UI state
-    left_sidebar_collapsed: bool = False
-    right_sidebar_collapsed: bool = False
-    settings_sidebar_visible: bool = False
-
-    # Voice input state
-    voice_input_active: bool = False
-    voice_input_language: str = "en-US"
-
-    # Global attachments (shared across tabs)
-    global_attachments: Dict[str, Any] = field(default_factory=dict)
-
-    # Preferences
-    show_timestamps: bool = True
-    show_avatars: bool = True
-    compact_mode: bool = False
-    task_resume_state: TaskResumeState = field(default_factory=TaskResumeState)
-
-    # Metadata
-    last_saved: Optional[datetime] = None
-    version: str = "1.0"
-
-    def get_active_tab(self) -> Optional[TabState]:
-        """Get the currently active tab."""
-        if not self.active_tab_id:
-            return None
-
-        for tab in self.tabs:
-            if tab.tab_id == self.active_tab_id:
-                return tab
-        return None
-
-    def get_tab_by_id(self, tab_id: str) -> Optional[TabState]:
-        """Get a tab by its ID."""
-        for tab in self.tabs:
-            if tab.tab_id == tab_id:
-                return tab
-        return None
-
-    def add_tab(self, tab: TabState) -> None:
-        """Add a new tab to the state."""
-        self.tabs.append(tab)
-        self.tab_order.append(tab.tab_id)
-        logger.debug(f"Added tab {tab.tab_id} to state")
-
-    def remove_tab(self, tab_id: str) -> bool:
-        """Remove a tab from the state."""
-        tab = self.get_tab_by_id(tab_id)
-        if tab:
-            self.tabs.remove(tab)
-            if tab_id in self.tab_order:
-                self.tab_order.remove(tab_id)
-            if self.active_tab_id == tab_id:
-                # Switch to next available tab
-                self.active_tab_id = self.tab_order[0] if self.tab_order else None
-            logger.debug(f"Removed tab {tab_id} from state")
-            return True
-        return False
-
-    def update_tab_order(self, new_order: List[str]) -> None:
-        """Update the order of tabs."""
-        # Validate that all tab IDs exist
-        existing_ids = {tab.tab_id for tab in self.tabs}
-        if set(new_order) == existing_ids:
-            self.tab_order = new_order
-            logger.debug(f"Updated tab order: {new_order}")
-
-    def validate(self) -> bool:
-        """Validate the state for consistency."""
-        # Check that active tab exists
-        if self.active_tab_id and not self.get_tab_by_id(self.active_tab_id):
-            logger.warning(f"Active tab {self.active_tab_id} not found in tabs")
-            return False
-
-        # Check tab order consistency (but allow empty tab_order for single tabs)
-        tab_ids = {tab.tab_id for tab in self.tabs}
-        order_ids = set(self.tab_order) if self.tab_order else set()
-
-        # If tab_order is empty but we have tabs, populate it
-        if not self.tab_order and self.tabs:
-            self.tab_order = [tab.tab_id for tab in self.tabs]
-            logger.debug(f"Auto-populated tab_order: {self.tab_order}")
-            return True
-
-        # Only fail if tab_order has entries but they don't match
-        if self.tab_order and tab_ids != order_ids:
-            logger.warning(
-                f"Tab order doesn't match tab list. Tab IDs: {tab_ids}, Order IDs: {order_ids}"
-            )
-            return False
-
-        # Check for duplicate tab IDs
-        seen_ids = set()
-        for tab in self.tabs:
-            if tab.tab_id in seen_ids:
-                logger.warning(f"Duplicate tab ID: {tab.tab_id}")
-                return False
-            seen_ids.add(tab.tab_id)
-
-        return True
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for serialization."""
-        return {
-            "tabs": [tab.to_dict() for tab in self.tabs],
-            "active_tab_id": self.active_tab_id,
-            "tab_order": self.tab_order,
-            "left_sidebar_collapsed": self.left_sidebar_collapsed,
-            "right_sidebar_collapsed": self.right_sidebar_collapsed,
-            "settings_sidebar_visible": self.settings_sidebar_visible,
-            "voice_input_active": self.voice_input_active,
-            "voice_input_language": self.voice_input_language,
-            "global_attachments": self.global_attachments,
-            "show_timestamps": self.show_timestamps,
-            "show_avatars": self.show_avatars,
-            "compact_mode": self.compact_mode,
-            "task_resume_state": self.task_resume_state.to_dict(),
-            "last_saved": self.last_saved.isoformat() if self.last_saved else None,
-            "version": self.version,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ChatScreenState":
-        """Create from dictionary."""
-        last_saved = data.get("last_saved")
-        if last_saved and isinstance(last_saved, str):
-            last_saved = datetime.fromisoformat(last_saved)
-
-        tabs = [TabState.from_dict(tab_data) for tab_data in data.get("tabs", [])]
-
-        return cls(
-            tabs=tabs,
-            active_tab_id=data.get("active_tab_id"),
-            tab_order=data.get("tab_order", []),
-            left_sidebar_collapsed=data.get("left_sidebar_collapsed", False),
-            right_sidebar_collapsed=data.get("right_sidebar_collapsed", False),
-            settings_sidebar_visible=data.get("settings_sidebar_visible", False),
-            voice_input_active=data.get("voice_input_active", False),
-            voice_input_language=data.get("voice_input_language", "en-US"),
-            global_attachments=data.get("global_attachments", {}),
-            show_timestamps=data.get("show_timestamps", True),
-            show_avatars=data.get("show_avatars", True),
-            compact_mode=data.get("compact_mode", False),
-            task_resume_state=TaskResumeState.from_dict(data.get("task_resume_state")),
-            last_saved=last_saved,
-            version=data.get("version", "1.0"),
-        )
-
-    def create_snapshot(self) -> "ChatScreenState":
-        """Create a deep copy snapshot of the current state."""
-        import copy
-
-        return copy.deepcopy(self)
