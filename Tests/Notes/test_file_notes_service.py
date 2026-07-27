@@ -5,7 +5,9 @@ import os
 import stat
 import sys
 import types
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -103,6 +105,68 @@ def test_open_and_save_preserve_bom_frontmatter_crlf_final_newline_and_mode(
     assert [(change.action, change.relative_path) for change in service.session_changes] == [
         ("modified", "note.md")
     ]
+
+
+@pytest.mark.parametrize("operation", ["save", "create", "restore"])
+def test_post_publication_stat_failure_still_records_success(
+    operation: str,
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    service = FileNotesService(root, replica)
+    target = root / f"{operation}.md"
+    if operation == "save":
+        target.write_bytes(b"before")
+        opened = service.open_file(target.name)
+        expected = b"after"
+        action = "modified"
+    elif operation == "restore":
+        target.write_bytes(b"restore me")
+        opened = service.open_file(target.name)
+        assert (
+            service.delete_file(
+                target.name,
+                expected_hash=opened.content_hash,
+            ).status
+            == "ok"
+        )
+        expected = b"restore me"
+        action = "restored"
+    else:
+        expected = b"created"
+        action = "created"
+
+    real_stat = Path.stat
+
+    def fail_published_stat(
+        candidate: Path,
+        *args: object,
+        **kwargs: object,
+    ) -> os.stat_result:
+        if candidate == target:
+            raise FileNotFoundError("forced post-publication race")
+        return real_stat(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fail_published_stat)
+    if operation == "save":
+        result = service.save_file(opened, "after", session_key="post-publish")
+    elif operation == "restore":
+        result = service.restore_file(target.name)
+    else:
+        result = service.create_file(target.name, "created")
+    monkeypatch.setattr(Path, "stat", real_stat)
+
+    assert result.status == "ok"
+    assert result.content_hash == _digest(expected)
+    assert result.replica_warning
+    assert target.read_bytes() == expected
+    assert service.session_changes[-1].action == action
+
+    service.reconcile()
+    assert replica.get_bytes(str(root.resolve()), target.name) == expected
 
 
 def test_open_keeps_unclosed_frontmatter_in_body_and_marks_unsafe_text_read_only(
@@ -384,6 +448,57 @@ def test_delete_clears_tombstone_when_final_reread_becomes_non_regular(
     assert replica.list_deleted(str(root.resolve())) == []
 
 
+def test_public_operations_and_session_changes_share_one_service_lock(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    path = root / "locked.md"
+    path.write_text("locked", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    opened = service.open_file("locked.md")
+    prepared = Event()
+    release_delete = Event()
+    reconcile_entered = Event()
+    real_prepare = replica.prepare_deletion
+    real_list_active = replica.list_active_files
+
+    def block_after_prepare(*args: object, **kwargs: object) -> None:
+        real_prepare(*args, **kwargs)
+        prepared.set()
+        assert release_delete.wait(timeout=2)
+
+    def record_reconcile_entry(*args: object, **kwargs: object) -> object:
+        reconcile_entered.set()
+        return real_list_active(*args, **kwargs)
+
+    monkeypatch.setattr(replica, "prepare_deletion", block_after_prepare)
+    monkeypatch.setattr(replica, "list_active_files", record_reconcile_entry)
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        deletion = executor.submit(
+            service.delete_file,
+            "locked.md",
+            expected_hash=opened.content_hash,
+        )
+        assert prepared.wait(timeout=1)
+        reconciliation = executor.submit(service.reconcile)
+        session_read = executor.submit(lambda: service.session_changes)
+        try:
+            assert not reconcile_entered.wait(timeout=0.1)
+            assert not session_read.done()
+        finally:
+            release_delete.set()
+
+        assert deletion.result(timeout=1).status == "ok"
+        assert reconciliation.result(timeout=1).status == "ok"
+        assert session_read.result(timeout=1)[-1].action == "deleted"
+
+    assert replica.list_deleted(str(root.resolve())) == ["locked.md"]
+
+
 def test_double_dot_filename_is_safe_for_file_mutations(
     tmp_path: Path,
     replica: FileNotesReplica,
@@ -410,6 +525,26 @@ def test_double_dot_filename_is_safe_for_file_mutations(
     )
     assert service.restore_file("meeting..final.md").status == "ok"
     assert (root / "meeting..final.md").read_text(encoding="utf-8") == "edited"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Backslash is a separator on Windows")
+def test_paths_require_canonical_posix_spelling_but_allow_backslash_filename(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    root = tmp_path / "notes"
+    (root / "folder").mkdir(parents=True)
+    (root / "folder" / "note.md").write_text("note", encoding="utf-8")
+    service = FileNotesService(root, replica)
+
+    with pytest.raises(ValueError, match="canonical"):
+        service.open_file("folder//note.md")
+    assert service.create_file("./new.md", "nope").status == "unsafe"
+
+    backslash_name = r"meeting\notes.md"
+    assert service.create_file(backslash_name, "legal").status == "ok"
+    opened = service.open_file(backslash_name)
+    assert opened.body == "legal"
 
 
 def test_reconcile_projects_external_changes_without_session_changes(

@@ -7,9 +7,12 @@ import hashlib
 import os
 import stat
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import wraps
 from pathlib import Path
-from typing import Literal
+from threading import RLock
+from typing import Literal, TypeVar, cast
 
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica, ReplicaFileInfo
 
@@ -30,6 +33,20 @@ OperationStatus = Literal[
     "replica-error",
     "error",
 ]
+_ServiceMethod = TypeVar("_ServiceMethod", bound=Callable[..., object])
+
+
+def _serialized(method: _ServiceMethod) -> _ServiceMethod:
+    @wraps(method)
+    def wrapper(
+        service: FileNotesService,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        with service._operation_lock:
+            return method(service, *args, **kwargs)
+
+    return cast(_ServiceMethod, wrapper)
 
 
 @dataclass(frozen=True)
@@ -132,14 +149,17 @@ class FileNotesService:
         self.root = Path(root).expanduser().resolve(strict=False)
         self.root_key = str(self.root)
         self._replica = replica
+        self._operation_lock = RLock()
         self._session_changes: list[SessionChange] = []
         self._entry_cache: dict[str, FileNoteEntry] = {}
 
     @property
+    @_serialized
     def session_changes(self) -> tuple[SessionChange, ...]:
         """Return Chatbook-only changes made by this service instance."""
         return tuple(self._session_changes)
 
+    @_serialized
     def scan(self) -> ScanResult:
         """Scan supported regular files without following symlinks."""
         if not self._root_is_online():
@@ -179,6 +199,7 @@ class FileNotesService:
             replica_warning=warning,
         )
 
+    @_serialized
     def open_file(self, relative_path: str) -> OpenedFileNote:
         """Read a supported file from disk and record its exact-byte replica."""
         if not self._root_is_online():
@@ -201,6 +222,7 @@ class FileNotesService:
             replica_warning=warning,
         )
 
+    @_serialized
     def save_file(
         self,
         opened: OpenedFileNote,
@@ -308,23 +330,17 @@ class FileNotesService:
                 except OSError:
                     pass
 
-        new_stat = path.stat()
         new_hash = _digest(new_bytes)
-        replica_warning = self._upsert_bytes(
+        return self._finish_published_file(
+            "modified",
             relative_path,
+            path,
             new_bytes,
             content_hash=new_hash,
-            file_stat=new_stat,
-        )
-        warning = _merge_warnings(warning, replica_warning)
-        self._session_changes.append(SessionChange("modified", relative_path))
-        return OperationResult(
-            status="ok",
-            relative_path=relative_path,
-            content_hash=new_hash,
-            replica_warning=warning,
+            warning=warning,
         )
 
+    @_serialized
     def create_file(self, relative_path: str, body: str = "") -> OperationResult:
         """Create one supported UTF-8 file with an exclusive filesystem open."""
         if not self._root_is_online():
@@ -359,22 +375,16 @@ class FileNotesService:
                 pass
             return _result("error", relative_path, str(error))
 
-        file_stat = path.stat()
         content_hash = _digest(raw_bytes)
-        warning = self._upsert_bytes(
+        return self._finish_published_file(
+            "created",
             relative_path,
+            path,
             raw_bytes,
             content_hash=content_hash,
-            file_stat=file_stat,
-        )
-        self._session_changes.append(SessionChange("created", relative_path))
-        return OperationResult(
-            status="ok",
-            relative_path=relative_path,
-            content_hash=content_hash,
-            replica_warning=warning,
         )
 
+    @_serialized
     def move_file(
         self,
         relative_path: str,
@@ -468,6 +478,7 @@ class FileNotesService:
             replica_warning=warning,
         )
 
+    @_serialized
     def delete_file(
         self,
         relative_path: str,
@@ -563,6 +574,7 @@ class FileNotesService:
             content_hash=content_hash,
         )
 
+    @_serialized
     def restore_file(self, relative_path: str) -> OperationResult:
         """Restore exact tombstoned bytes with an exclusive filesystem create."""
         if not self._root_is_online():
@@ -614,22 +626,16 @@ class FileNotesService:
                 pass
             return _result("error", relative_path, str(error))
 
-        file_stat = path.stat()
         content_hash = _digest(raw_bytes)
-        warning = self._upsert_bytes(
+        return self._finish_published_file(
+            "restored",
             relative_path,
+            path,
             raw_bytes,
             content_hash=content_hash,
-            file_stat=file_stat,
-        )
-        self._session_changes.append(SessionChange("restored", relative_path))
-        return OperationResult(
-            status="ok",
-            relative_path=relative_path,
-            content_hash=content_hash,
-            replica_warning=warning,
         )
 
+    @_serialized
     def reconcile(self) -> ReconcileResult:
         """Project external create/modify/delete changes into the replica."""
         if not self._root_is_online():
@@ -739,6 +745,7 @@ class FileNotesService:
             replica_warning=warning,
         )
 
+    @_serialized
     def protect_path(
         self,
         relative_path: str,
@@ -766,6 +773,7 @@ class FileNotesService:
             )
         return OperationResult(status="ok", relative_path=relative_path)
 
+    @_serialized
     def unprotect_path(
         self,
         relative_path: str,
@@ -852,9 +860,11 @@ class FileNotesService:
     def _safe_path(self, relative_path: str) -> Path:
         if not isinstance(relative_path, str) or not relative_path:
             raise ValueError("unsafe empty relative path")
-        if "\x00" in relative_path or "\\" in relative_path:
+        if "\x00" in relative_path:
             raise ValueError("unsafe relative path")
         candidate_path = Path(relative_path)
+        if candidate_path.as_posix() != relative_path:
+            raise ValueError(f"unsafe non-canonical path: {relative_path}")
         if candidate_path.is_absolute():
             raise ValueError("unsafe absolute path")
         parts = candidate_path.parts
@@ -893,6 +903,41 @@ class FileNotesService:
     @staticmethod
     def _is_supported(path: Path) -> bool:
         return path.suffix.lower() in SUPPORTED_EXTENSIONS
+
+    def _finish_published_file(
+        self,
+        action: Literal["created", "modified", "restored"],
+        relative_path: str,
+        path: Path,
+        raw_bytes: bytes,
+        *,
+        content_hash: str,
+        warning: str | None = None,
+    ) -> OperationResult:
+        self._session_changes.append(SessionChange(action, relative_path))
+        try:
+            file_stat = path.stat()
+        except OSError as error:
+            warning = _merge_warnings(
+                warning,
+                f"Replica update deferred: {error}",
+            )
+        else:
+            warning = _merge_warnings(
+                warning,
+                self._upsert_bytes(
+                    relative_path,
+                    raw_bytes,
+                    content_hash=content_hash,
+                    file_stat=file_stat,
+                ),
+            )
+        return OperationResult(
+            status="ok",
+            relative_path=relative_path,
+            content_hash=content_hash,
+            replica_warning=warning,
+        )
 
     def _upsert_opened(self, opened: OpenedFileNote) -> str | None:
         return self._upsert_bytes(
