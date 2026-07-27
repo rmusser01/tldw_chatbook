@@ -23,7 +23,10 @@ import time
 
 import pytest
 
-from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_chat_controller import (
+    _MCP_APPROVAL_POLL_SECONDS,
+    ConsoleChatController,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
@@ -325,40 +328,95 @@ def test_shutdown_denies_every_armed_round_with_real_session_ids(controller):
     assert controller.pending_skill_install_ids() == []
 
 
-def test_bare_shutdown_flag_alone_does_not_deny_a_real_session_round(controller):
-    """Fix round 2 finding (evidence, not a desired-behavior pin): the bare
-    `_shutdown_requested` flag alone -- WITHOUT the per-session
-    `_signal_stop` fanout `shutdown()` normally performs -- does NOT deny a
-    round armed with a real `session_id`. This is a pre-existing property
-    of `_is_session_cancelled` shared by all three approval/confirm bridges
-    (MCP, skill-install, skill-script) -- not introduced by TASK-910's
-    install-bridge conversion, and not exercised by the sibling
-    `test_shutdown_denies_every_armed_round` tests (both MCP's and
-    script's use `session_id=None`, whose fallback branch DOES read
-    `_shutdown_requested` directly -- see `_is_session_cancelled`'s
-    docstring). A real production `shutdown()` call still correctly
-    reaches a real-session round via its per-session `_signal_stop` fanout
-    (see the sibling test above) as long as that session is already present
-    in `_active_stream_tasks` at the moment `shutdown()` snapshots it --
-    the narrow gap this test documents is the (pre-existing, cross-bridge)
-    race window where it is not yet. Still fails CLOSED, never open: the
-    round is never auto-approved, only left waiting until its own confirm
-    timeout -- proven below with a shortened timeout so this stays fast.
+def test_bare_shutdown_flag_alone_denies_a_real_session_round_within_one_poll_interval(
+    controller,
+):
+    """TASK-1052 (was Fix round 2's `test_bare_shutdown_flag_alone_does_not_
+    deny_a_real_session_round`, pinning the GAP as evidence -- see git
+    history for that version and its own docstring for the pre-fix
+    reasoning). Contract, now closed: the bare `_shutdown_requested` flag
+    alone -- WITHOUT the per-session `_signal_stop` fanout `shutdown()`
+    normally performs -- DOES deny a round armed with a real `session_id`,
+    within one `_MCP_APPROVAL_POLL_SECONDS` poll interval.
+
+    `shutdown()`'s per-session `_signal_stop` fanout only reaches sessions
+    already present in its `_active_stream_tasks` snapshot at the moment it
+    runs (the "shutdown-snapshot race": TASK-1052) -- a round armed for a
+    session before that session is registered there was previously
+    invisible to that fanout and fell back to its own confirm/approval
+    timeout (up to ~120s in production) to fail closed. Since real process
+    teardown is global by definition, `_is_session_cancelled`'s real-
+    `session_id` branch now ALSO ORs in `_shutdown_requested` directly (in
+    addition to that session's own `_active_cancel_events` entry), so every
+    armed round observes teardown within one poll interval regardless of
+    registration timing -- not just the `session_id=None` legacy fallback,
+    which already read the flag (see the sibling `test_shutdown_denies_
+    every_armed_round_with_real_session_ids` above, which drives the real
+    per-session fanout; this test isolates the bare-flag-alone case that
+    fanout doesn't reach).
+
+    Uses a timeout far longer than the poll interval so an early
+    resolution can only be attributed to the shutdown signal, never the
+    round's own deadline -- still fails CLOSED either way, never open.
     """
-    controller.skill_install_confirm_timeout_seconds = lambda: 0.3
+    controller.skill_install_confirm_timeout_seconds = lambda: 30.0
     results = {}
     t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
     assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
 
     controller._shutdown_requested.set()  # global flag only -- no per-session fanout
-    time.sleep(0.1)
-    assert t1.is_alive(), (
-        "a real-session round was denied by the bare _shutdown_requested "
-        "flag alone with no per-session _signal_stop fanout -- if this now "
-        "fails, _is_session_cancelled's real-session branch changed to "
-        "read the shared flag; update this test (and its docstring) to "
-        "match the new, presumably-safer, behavior"
+    t1.join(timeout=_MCP_APPROVAL_POLL_SECONDS + 3.0)
+    assert not t1.is_alive(), (
+        "a real-session round with no matching _active_cancel_events entry "
+        "did not observe the bare _shutdown_requested flag within one poll "
+        "interval -- if this now fails, _is_session_cancelled's "
+        "real-session branch stopped ORing in the shared flag; that is the "
+        "TASK-1052 regression this test guards against"
     )
-
-    t1.join(timeout=2.0)  # released by its own shortened confirm timeout
     assert results["one"] is False  # still fails closed, never auto-approved
+    assert controller.pending_skill_install_ids() == []  # round's own accounting cleaned up
+
+
+def test_shutdown_flag_alone_denies_both_unregistered_sessions_rounds_and_cleans_accounting(
+    controller,
+):
+    """TASK-1052 x TASK-1050 interplay: two rounds armed for DIFFERENT
+    sessions, NEITHER registered in `_active_cancel_events` (so
+    `shutdown()`'s own per-session `_signal_stop` fanout could never reach
+    either one even if driven for real -- see `test_shutdown_denies_every_
+    armed_round_with_real_session_ids` above, which pre-registers both
+    sessions' cancel events specifically so that fanout DOES reach them;
+    this test deliberately skips that setup). Setting the bare
+    `_shutdown_requested` flag alone must still deny BOTH rounds within one
+    poll interval, and each round's own `finally` -- TASK-1050's
+    round-keyed `discard_pending_round` plus its guarded
+    `_parked_skill_install_payloads` pop -- must still run cleanly for
+    both: no stale pending-approval accounting or retained payload left
+    behind for either session, and no cross-talk between the two (each
+    session's own entries clear independently).
+    """
+    results = {}
+    t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
+    t2 = _arm(controller, "https://x/two", controller.session_b, results, "two")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 2)
+
+    assert controller.session_a not in controller._active_cancel_events
+    assert controller.session_b not in controller._active_cancel_events
+
+    controller._shutdown_requested.set()  # global flag only -- no per-session fanout
+    t1.join(timeout=_MCP_APPROVAL_POLL_SECONDS + 3.0)
+    t2.join(timeout=_MCP_APPROVAL_POLL_SECONDS + 3.0)
+
+    assert not t1.is_alive() and not t2.is_alive(), (
+        "both real-session rounds, neither registered in "
+        "_active_cancel_events, must observe the bare _shutdown_requested "
+        "flag within one poll interval"
+    )
+    assert results["one"] is False
+    assert results["two"] is False
+    assert controller.pending_skill_install_ids() == []
+    assert controller.session_a not in controller._pending_approvals
+    assert controller.session_b not in controller._pending_approvals
+    assert controller.session_a not in controller._parked_skill_install_payloads
+    assert controller.session_b not in controller._parked_skill_install_payloads

@@ -2007,8 +2007,32 @@ class ConsoleChatController:
         (real process teardown) where that is actually correct, without
         reintroducing cross-session poisoning for everyday per-session
         Stop/Close.
+
+        TASK-1052 fix: the ``session_id is not None`` branch now ALSO ORs
+        in ``_shutdown_requested``. Previously it checked ONLY that
+        session's own ``_active_cancel_events`` entry, relying entirely on
+        ``shutdown()``'s per-session ``_signal_stop`` fanout (see the
+        docstring paragraph above) to ever reach a real-session round --
+        but that fanout walks a SNAPSHOT of ``_active_stream_tasks`` taken
+        when ``shutdown()``/``close_session`` runs. A round armed for a
+        session BEFORE that session is registered there is invisible to
+        the snapshot and was previously left to fail closed only via its
+        own (up to ~120s) confirm/approval timeout -- promptness, not
+        correctness, but still a real gap for a signal (real process
+        teardown) that is global by definition. ``_shutdown_requested`` is
+        set exactly once, only by ``shutdown()``, and never reset (see
+        ``shutdown()``'s own docstring and its ``self._shutdown_requested
+        .set()`` call), so ORing it in here for a real ``session_id`` can
+        never wrongly deny a live round during normal operation -- it can
+        only ever fire during/after actual teardown. This does NOT widen
+        scoping for everyday per-session Stop/Close: ``_signal_stop``
+        still only touches the ONE session's own cancel event; an
+        unrelated session's Stop still leaves both this branch's checks
+        unset.
         """
         if session_id is not None:
+            if self._shutdown_requested.is_set():
+                return True
             cancel_event = self._active_cancel_events.get(session_id)
             return cancel_event is not None and cancel_event.is_set()
         return self._shutdown_requested.is_set() or self._is_active_session_cancelled()
@@ -3110,7 +3134,18 @@ class ConsoleChatController:
         and FIRST -- before the no-tasks early return below -- so a
         worker-thread approval/confirm bridge polling on behalf of a run
         this method doesn't (yet) see in ``_active_stream_tasks`` still
-        observes real process teardown.
+        observes real process teardown. TASK-1052: this was true
+        immediately only for a legacy ``session_id=None`` caller (whose
+        fallback branch in ``_is_session_cancelled`` already OR'd in this
+        flag); a round armed with a REAL ``session_id`` before its session
+        reached ``_active_stream_tasks`` -- exactly the case this
+        docstring describes -- previously still had to fall through to
+        its own confirm/approval timeout, since the per-session
+        ``_signal_stop`` fanout below only reaches sessions present in
+        this method's ``tasks`` snapshot. ``_is_session_cancelled``'s
+        real-``session_id`` branch now also ORs in ``_shutdown_requested``
+        directly, closing that gap so this paragraph is accurate for
+        every caller.
         """
         self._shutdown_requested.set()
         for message_id in tuple(self._original_attempts):
