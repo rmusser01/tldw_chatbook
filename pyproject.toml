@@ -108,6 +108,9 @@ local_mlx = ["mlx-lm"]
 transcription_faster_whisper = [
     "faster-whisper",  # CPU/CUDA optimized Whisper
 ]
+transcription_parakeet_onnx = [
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
+]
 transcription_lightning_whisper = [
     "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
 ]
@@ -321,6 +324,7 @@ all-tools = [
     
     # === Transcription and Audio ===
     "faster-whisper",  # CPU/CUDA optimized Whisper
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
     "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
     "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
     
