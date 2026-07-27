@@ -143,7 +143,6 @@ class TldwMCPServer:
             from ..DB.ChaChaNotes_DB import CharactersRAGDB
             from ..DB.Client_Media_DB_v2 import MediaDatabase
             from ..Notes.Notes_Library import NotesInteropService
-            from ..Character_Chat.Character_Chat_Lib import CharacterInteropService
 
             # Initialize character/chat/notes database
             self.chachanotes_db = CharactersRAGDB(
@@ -160,9 +159,20 @@ class TldwMCPServer:
                 db_path=media_db_path, client_id=CLI_APP_CLIENT_ID
             )
 
-            # Initialize services
+            # Initialize services. There is deliberately no
+            # ``self.character_service`` here: this used to construct a
+            # ``CharacterInteropService`` that does not exist anywhere in the
+            # codebase (Character_Chat_Lib.py is a free-function module, not
+            # a service class), so the server could never actually be
+            # constructed (see TASK-968). The attribute was never read by
+            # anything else in this module either -- the character-related
+            # tools below (``chat_with_character``, ``list_characters``)
+            # already go through ``self.tools``, which reads character rows
+            # directly off ``self.chachanotes_db``
+            # (``get_character_card_by_id`` / ``list_character_cards``) --
+            # so the dead reference was removed rather than resolved to a
+            # real service.
             self.notes_service = NotesInteropService(self.chachanotes_db)
-            self.character_service = CharacterInteropService(self.chachanotes_db)
 
             logger.info("Databases initialized successfully")
         except Exception as e:
@@ -171,7 +181,7 @@ class TldwMCPServer:
 
     def _register_tools(self):
         """Register MCP tools."""
-        from ..config import get_cli_setting
+        from ..config import get_api_key
         from ..Chat.Chat_Functions import chat_api_call, extract_response_content
 
         # Basic chat tool
@@ -188,7 +198,13 @@ class TldwMCPServer:
             """Send a message to an LLM and get a response."""
             # For basic chat, we'll implement directly here
             try:
-                api_key = get_cli_setting("API", f"{provider.lower()}_api_key", "")
+                # get_api_key() is the declared accessor: it checks the
+                # newer api_settings.<provider> structure, then the legacy
+                # [API] section, then a bare env var -- a direct
+                # get_cli_setting("API", ...) lookup only covers the middle
+                # tier and silently misses a key configured either of the
+                # other two ways.
+                api_key = get_api_key(provider)
                 if not api_key:
                     return {"error": f"No API key configured for {provider}"}
 

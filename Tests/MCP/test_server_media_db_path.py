@@ -11,15 +11,16 @@ per-profile data directory -- and outside ``Utils.sensitive_paths``'
 denylist coverage, since that denylists ``get_media_db_path()``'s result,
 not a CWD-relative file.
 
-``_init_databases()`` also constructs ``NotesInteropService`` and
-``CharacterInteropService`` with call signatures that don't match either
-class (``CharacterInteropService`` does not exist anywhere in the
-codebase at all -- see ``test_no_other_undeclared_database_config_keys``'s
-module docstring reference and this task's Implementation Notes for the
-grep). Both are unrelated, pre-existing defects out of this task's scope;
-the tests below stub just enough of them (permissive fakes swapped in at
-their *source* modules, so ``_init_databases``'s own local imports pick
-them up) to drive the real, unmodified method far enough to construct
+``_init_databases()`` also used to construct a ``CharacterInteropService``
+that does not exist anywhere in the codebase at all -- that dead reference
+was removed by TASK-968 (it was never consumed by anything else in the MCP
+package either; character-related tools already read ``chachanotes_db``
+directly). ``NotesInteropService`` is still constructed with a call
+signature that doesn't match the real class -- an unrelated, pre-existing
+defect out of this task's scope (see TASK-968's Implementation Notes) --
+so the tests below still stub it (a permissive fake swapped in at its
+*source* module, so ``_init_databases``'s own local import picks it up)
+to drive the real, unmodified method far enough to construct
 ``self.media_db`` -- proving the fix through the actual code path rather
 than by re-implementing its logic in the test.
 """
@@ -47,20 +48,10 @@ def _build_server_with_databases(monkeypatch):
     directly -- exercising the actual fixed code path.
     """
     import tldw_chatbook.Notes.Notes_Library as notes_library_module
-    import tldw_chatbook.Character_Chat.Character_Chat_Lib as character_chat_lib_module
     from tldw_chatbook.MCP import server as mcp_server_module
 
     monkeypatch.setattr(
         notes_library_module, "NotesInteropService", _PermissiveFakeService
-    )
-    # CharacterInteropService does not exist in this module at all (see
-    # docstring) -- raising=False allows creating the attribute rather than
-    # requiring one already be there.
-    monkeypatch.setattr(
-        character_chat_lib_module,
-        "CharacterInteropService",
-        _PermissiveFakeService,
-        raising=False,
     )
 
     instance = mcp_server_module.TldwMCPServer.__new__(mcp_server_module.TldwMCPServer)
