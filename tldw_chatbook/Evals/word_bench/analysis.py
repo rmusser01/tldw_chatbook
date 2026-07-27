@@ -32,7 +32,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterable, Literal, Optional, Sequence
 
-from .models import CellCapture
+from .models import CellCapture, TokenProb
 
 #: Combined truncated mass above which a divergence is flagged as resting on
 #: a material amount of extrapolation. 0.25 is a judgment call, not derived:
@@ -40,6 +40,26 @@ from .models import CellCapture
 #: estimate too little to change which cell a reader would flag; above it,
 #: the estimate rests on enough guesswork to need an explicit caveat.
 TRUNCATION_WARN_THRESHOLD: float = 0.25
+
+#: Rank 1 and rank 2 are a near-tie when their logprob GAP is below this
+#: many nats. Chosen from an observed instability, not derived: two
+#: identical requests to the same server, seconds apart, at the same
+#: neutral sampler settings, returned the top two tokens in OPPOSITE rank
+#: order while each token's own logprob held stable to ~0.002 nats
+#: (-0.698/-0.794 one call, -0.697/-0.792 the next). The committed fixture
+#: this was captured from (``Tests/Evals/fixtures/word_bench/
+#: llamacpp_raw_completions.json``) carries a ~0.095-0.096 nat gap between
+#: those two tokens, and this codebase already has one considered judgment
+#: call about where "near-tie" starts for that exact fixture:
+#: ``Tests/Evals/word_bench/test_normalizer.py::
+#: test_a_near_tie_between_the_top_two_is_visible_in_the_fixture`` asserts
+#: ``abs(gap) < 0.15`` as the boundary for calling it a near-tie. 0.15 nats
+#: is reused here for the same phenomenon: it comfortably covers the
+#: observed ~0.095-0.096 nat gap that already produced a rank flip, while
+#: sitting roughly two orders of magnitude above the ~0.002 nat run-to-run
+#: noise floor, so it will not fire on ordinary sampling jitter far from a
+#: real tie.
+NEAR_TIE_LOGPROB_GAP_NATS: float = 0.15
 
 ProbeState = Literal["observed", "bounded", "never_observed"]
 
@@ -54,11 +74,21 @@ class ProbeReading:
     run -- most likely it is not a single token in that model's vocabulary,
     and rendering it as a bound would invite a cross-model comparison that
     means nothing.
+
+    ``matched`` is the ``TokenProb`` ``resolve_probe`` actually matched --
+    carried here rather than discarded so that no caller has to re-derive
+    it with a hand-copied predicate. Two did (the Probe lens and the
+    focused-cell inspector), which meant a change to the matching rule --
+    most obviously moving it to the bytes-based ``TokenProb.identity()``
+    the rest of this module aligns on -- would silently not reach them,
+    detaching the displayed probability from the state that labelled it.
+    ``None`` in every state but ``observed``.
     """
 
     probe: str
     state: ProbeState
     logprob: Optional[float]
+    matched: Optional[TokenProb] = None
 
 
 def _distribution(cap: CellCapture, k: Optional[int] = None) -> list[float]:
@@ -86,6 +116,31 @@ def entropy(cap: CellCapture, k: Optional[int] = None) -> float:
             entropy across cells or targets with different K.
     """
     return -sum(p * math.log(p) for p in _distribution(cap, k) if p > 0.0)
+
+
+def truncated_mass(cap: CellCapture, k: Optional[int] = None) -> float:
+    """Unobserved ("other") probability mass, truncated to a shared ``k``.
+
+    ``CellCapture.truncated_mass`` is the same quantity over each cell's
+    FULL native top-K, which makes it incomparable across cells requested
+    at different K -- exactly the bias ``divergence()`` cuts to ``min(K)``
+    for and ``entropy()`` takes a shared ``k`` for. A Truncation column
+    reading each cell's native figure while its header states the shared
+    effective K reports two cells with provably identical behaviour at
+    that K (a K=20 and a K=5 cell holding the same distribution over the
+    first 5 ranks) as 1% against 2% -- the "one target looks artificially
+    more/less measured with no behavioural difference" failure the shared-K
+    discipline exists to prevent.
+
+    Args:
+        k: Truncate to this many top-ranked tokens first (see
+            ``effective_k``). ``None`` reproduces the cell's own native
+            ``truncated_mass``.
+
+    Returns:
+        The unobserved probability mass at ``k``, in ``[0.0, 1.0]``.
+    """
+    return _distribution(cap, k)[-1]
 
 
 def effective_k(caps: Sequence[CellCapture]) -> int:
@@ -154,6 +209,63 @@ def divergence(a: CellCapture, b: CellCapture) -> tuple[float, bool]:
     return max(0.0, jsd), combined_truncation > TRUNCATION_WARN_THRESHOLD
 
 
+def near_tie(cap: CellCapture) -> bool:
+    """Whether ``cap``'s top two ranked tokens are a near-tie -- see
+    ``NEAR_TIE_LOGPROB_GAP_NATS`` for the threshold and its rationale.
+
+    A caller that renders a bare Top-1 winner without checking this first
+    risks showing a spurious difference between two cells that are
+    statistically identical (the exact failure this predicate exists to
+    let a caller avoid -- see ``NEAR_TIE_LOGPROB_GAP_NATS``'s own
+    docstring for the observed evidence).
+
+    Returns:
+        ``False`` when ``cap`` has fewer than two ranked tokens (nothing to
+        compare rank 1 against).
+    """
+    if len(cap.top_k) < 2:
+        return False
+    gap = cap.top_k[0].logprob - cap.top_k[1].logprob
+    return abs(gap) < NEAR_TIE_LOGPROB_GAP_NATS
+
+
+def combined_truncation(a: CellCapture, b: CellCapture, k: Optional[int] = None) -> float:
+    """The combined truncated mass ``divergence()`` uses internally to
+    decide ``is_bounded`` -- exposed separately so a caller that already
+    has ``(jsd, is_bounded)`` can also explain WHY a comparison was
+    flagged (e.g. "combined truncated mass is 31%, above the 25% warn
+    threshold") without recomputing the token alignment itself, and
+    without risking a caller-side reimplementation silently disagreeing
+    with what ``divergence()`` actually used.
+
+    Deliberately NOT ``a.truncated_mass + b.truncated_mass``: each cell's
+    own ``truncated_mass`` property is computed over its FULL native
+    ``top_k``, but ``divergence()`` truncates both cells to a shared
+    ``min(k_returned)`` first (see its own docstring) -- when one cell's
+    native K exceeds the shared K, its truncated-at-k "other" bucket is
+    larger than its full-native ``truncated_mass``. Naively summing the
+    two cells' own properties would report a different number than the
+    one that actually decided ``is_bounded``, which is precisely the kind
+    of UI-reconstructed-number risk this module's methodology exists to
+    avoid.
+
+    Args:
+        k: Shared truncation point. ``None`` (the default) recomputes it
+            the same way ``divergence()`` does, from ``a``/``b`` alone; a
+            caller that already knows the ``k`` a run's ``divergence()``
+            call used may pass it explicitly to guarantee agreement.
+
+    Returns:
+        The combined "other" bucket mass at the shared ``k`` -- the same
+        value ``divergence()`` compares against ``TRUNCATION_WARN_
+        THRESHOLD`` to set ``is_bounded``.
+    """
+    if k is None:
+        k = min(a.k_returned, b.k_returned, len(a.top_k), len(b.top_k))
+    pa, pb = _aligned(a, b, k)
+    return pa[-1] + pb[-1]
+
+
 def resolve_probe(
     cap: CellCapture, probe: str, *, ever_observed: bool
 ) -> ProbeReading:
@@ -163,10 +275,18 @@ def resolve_probe(
         ever_observed: whether this probe appeared in top-K in ANY cell for
             this target across the run. Distinguishes "unlikely here" from
             "not a token in this vocabulary".
+
+    Returns:
+        A ``ProbeReading`` carrying the matched ``TokenProb`` itself (see
+        ``ProbeReading.matched``), so a caller rendering the probe's
+        probability reads the token THIS function matched rather than
+        re-running the match rule with its own copy of the predicate.
     """
     for tok in cap.top_k:
         if tok.token == probe:
-            return ProbeReading(probe=probe, state="observed", logprob=tok.logprob)
+            return ProbeReading(
+                probe=probe, state="observed", logprob=tok.logprob, matched=tok
+            )
     if not ever_observed:
         return ProbeReading(probe=probe, state="never_observed", logprob=None)
     bound = cap.top_k[-1].logprob if cap.top_k else None

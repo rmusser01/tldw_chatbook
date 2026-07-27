@@ -22,8 +22,10 @@ never a ``Screen``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+import asyncio
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
+from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -31,10 +33,14 @@ from textual.widgets import Button, Static
 
 from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.models import PreflightResult
+from ...Evals.word_bench.models import Target as WordBenchTarget
+from ...Evals.word_bench.runner import CancelToken, CaptureClientLike
+from ..Evals import sample_bench
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
-from ..Evals.inspector import EvalsInspector
+from ..Evals.inspector import EvalsCellInspector, EvalsInspector
 from ..Evals.library_rail import RAIL_SECTIONS, LibraryRail
+from ..Evals.results_grid import ResultsGrid
 from ..Evals.snippet_editor import SnippetEditor
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState
@@ -58,6 +64,39 @@ class EvalsScreen(BaseAppScreen):
         self._rail_open_sections: dict[str, bool] = {
             section_id: True for section_id in RAIL_SECTIONS
         }
+        #: DI seam for tests only -- overrides sample_bench.py's default
+        #: (real ``WordBenchCaptureClient``) with a fake, mirroring
+        #: ``WordBenchRunner``'s own client_factory parameter. ``None`` in
+        #: production.
+        self._sample_bench_client_factory: Optional[
+            Callable[[WordBenchTarget], CaptureClientLike]
+        ] = None
+        #: True for the duration of one create-and-run flow. Guards against
+        #: a second click starting a second worker once a run is genuinely
+        #: in flight -- the button is also disabled live (see
+        #: ``_set_sample_bench_running_ui``), but a disabled widget not yet
+        #: re-rendered, or a message posted directly as this screen's own
+        #: tests do, must not be able to race past it. For the tighter
+        #: race -- two requests already queued before either dispatches --
+        #: it is ``exclusive=True`` on the worker (below), not this flag,
+        #: that actually protects: Textual cancels the second worker's Task
+        #: before its first step, so the first worker's body (including its
+        #: flag-set line) never runs.
+        self._sample_bench_running: bool = False
+        #: The active run's cooperative cancel token, or ``None`` when no
+        #: run is in flight. Not currently triggered by anything in this
+        #: screen (the running-guard above prevents the second-click race
+        #: that would otherwise need it) -- kept as a real, threaded
+        #: seam rather than a decorative parameter, since
+        #: ``WordBenchRunner.run`` already accepts one and a future cancel
+        #: affordance should not need a second plumbing pass.
+        self._sample_bench_cancel_token: Optional[CancelToken] = None
+
+    def _current_app_config(self) -> dict[str, Any]:
+        """The app's loaded settings, read fresh on every recompose (not
+        cached in ``__init__``) so a provider configured in Settings after
+        this screen first mounted is picked up without a restart."""
+        return dict(getattr(self.app_instance, "app_config", None) or {})
 
     @staticmethod
     def _resolve_db(app_instance: object) -> Optional[EvalsDB]:
@@ -98,8 +137,35 @@ class EvalsScreen(BaseAppScreen):
                 "none"``, or a caller clearing the selection).
         """
         self._selection = EvalsSelection(kind=kind, id=id)
+        self._register_grid_shortcuts()
         if self.is_mounted:
             self.refresh(recompose=True)
+
+    def _register_grid_shortcuts(self) -> None:
+        """Advertises the results grid's `l`/`b`/`s`/`e` keys (see
+        ``results_grid.ResultsGrid.BINDINGS``) through the shared
+        ``ShortcutContext`` machinery only while a run group is selected --
+        the only selection kind that mounts a ``ResultsGrid`` at all -- so
+        the footer never advertises a grid shortcut with no grid on
+        screen. `e` (export) is Task 2's addition -- Task 1 deliberately
+        left it unbound and unadvertised so this task could claim it
+        without a collision.
+
+        Mirrors ``library_screen.py``'s ``_register_footer_shortcuts``: a
+        static hint set, re-registered on every selection change rather
+        than driven from inside the grid widget itself, since the grid
+        does not know when it stops being the active selection (its own
+        unmount does not fire a footer-clearing hook).
+        """
+        if self._selection.kind == "run_group" and self._selection.id:
+            self.register_footer_shortcuts(
+                source="evals-grid",
+                shortcuts=(
+                    ("l", "lens"), ("b", "baseline"), ("s", "sort"), ("e", "export"),
+                ),
+            )
+        else:
+            self.clear_footer_shortcuts(source="evals-grid")
 
     @on(LibraryRail.EvalsSelectionChanged)
     def _on_library_selection_changed(
@@ -107,6 +173,142 @@ class EvalsScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         self.select(kind=event.selection.kind, id=event.selection.id)
+
+    @on(LibraryRail.SampleBenchRequested)
+    def _on_sample_bench_requested(
+        self, event: LibraryRail.SampleBenchRequested
+    ) -> None:
+        """Creates and runs the one-click sample bench (see
+        ``sample_bench.py``). Real DB writes plus a real HTTP call (in
+        production) -- run as a worker, never inline in a message handler,
+        per CLAUDE.md's "Workers for operations >100ms" rule.
+
+        Two guards cover two different race windows. If two requests are
+        already queued before either dispatches, both see
+        ``_sample_bench_running`` as ``False`` and both reach
+        ``run_worker(exclusive=True, ...)``; it is ``exclusive=True`` that
+        protects there, cancelling the second worker's Task before it takes
+        its first step, so only one worker body (and one flag-set) ever
+        runs. Once a worker IS running and has set the flag, THIS check is
+        what stops a later request from calling ``run_worker`` again --
+        without it, that call would cancel the already-running worker via
+        the same ``exclusive`` group after it has done real work, abandoning
+        its in-flight DB rows (see
+        ``sample_bench._mark_orphaned_runs_cancelled`` for the cleanup that
+        path needs).
+
+        The worker is handed as a CALLABLE, not a pre-built coroutine:
+        ``exclusive=True`` cancels the superseded worker's Task before its
+        first step, and a coroutine object constructed at the call site is
+        then never awaited at all (``RuntimeWarning: coroutine ... was
+        never awaited``). Textual only calls the callable when the worker
+        actually starts, so in the very race this docstring describes no
+        orphan coroutine is created.
+        """
+        event.stop()
+        if self._sample_bench_running:
+            return
+        self.run_worker(
+            self._create_sample_bench_worker,
+            exclusive=True,
+            group="evals-sample-bench",
+        )
+
+    async def _create_sample_bench_worker(self) -> None:
+        app_config = self._current_app_config()
+        cancel_token = CancelToken()
+        self._sample_bench_running = True
+        self._sample_bench_cancel_token = cancel_token
+        self._set_sample_bench_running_ui()
+        result = None
+        try:
+            result = await sample_bench.create_and_run_sample_bench(
+                self._view_model,
+                app_config,
+                client_factory=self._sample_bench_client_factory,
+                progress=self._on_sample_bench_progress,
+                cancel_token=cancel_token,
+            )
+        except asyncio.CancelledError:
+            # sample_bench.py's own except-and-re-raise already marked any
+            # created run rows "cancelled" before this propagated here --
+            # log and let it continue propagating; swallowing a
+            # CancelledError is its own bug (Textual's worker bookkeeping
+            # needs to observe the real cancellation).
+            logger.info("Sample bench worker was cancelled.")
+            raise
+        except Exception as exc:
+            logger.opt(exception=True).warning("Sample bench creation failed.")
+            self.app_instance.notify(
+                f"Could not create the sample bench: {exc}", severity="error"
+            )
+        finally:
+            self._sample_bench_running = False
+            self._sample_bench_cancel_token = None
+            self._reset_sample_bench_running_ui()
+        if result is not None:
+            self.app_instance.notify(
+                "Sample bench created and run.", severity="information"
+            )
+            self.select(kind="run_group", id=result.run_group_id)
+
+    def _on_sample_bench_progress(self, done: int, total: int) -> None:
+        """``sample_bench.ProgressFn`` -- called synchronously from within
+        ``WordBenchRunner.run``'s own coroutine (this worker's, not a
+        separate OS thread), so mutating widgets directly here is safe,
+        the same way ``_on_grid_cell_focused`` mutates the inspector
+        directly rather than needing ``call_from_thread``."""
+        self._set_sample_bench_running_ui(done=done, total=total)
+
+    def _set_sample_bench_running_ui(self, *, done: int = 0, total: int = 0) -> None:
+        """Disables the "Create sample bench" button and gives it a live
+        running label for as long as a run is in flight -- see the class
+        docstring note above on why a disabled-but-not-yet-rerendered
+        button is not by itself a sufficient guard against a second click,
+        only a visible signal that one is already running.
+        """
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            button = self.query_one("#evals-create-sample-bench", Button)
+        except QueryError:
+            return
+        button.disabled = True
+        button.label = (
+            f"Running sample bench… ({done}/{total})" if total else "Creating sample bench…"
+        )
+
+    def _reset_sample_bench_running_ui(self) -> None:
+        """Restores the button after a run ends. A no-op (via the same
+        ``QueryError`` guard) on the success path, where ``self.select(...)``
+        immediately recomposes the rail and replaces this button with the
+        bench's own row anyway -- this only matters on the failure path,
+        where the SAME ``LibraryRail`` instance survives and must not be
+        left permanently disabled."""
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            button = self.query_one("#evals-create-sample-bench", Button)
+        except QueryError:
+            return
+        button.disabled = False
+        button.label = "Create sample bench"
+
+    @on(ResultsGrid.CellFocused)
+    def _on_grid_cell_focused(self, event: ResultsGrid.CellFocused) -> None:
+        """Forwards a focused grid cell to the inspector pane's
+        ``EvalsCellInspector`` -- a targeted ``show_cell()`` call against
+        an already-mounted widget, never a screen recompose (see
+        ``results_grid.py``'s module docstring for why that distinction
+        matters on every arrow-key press)."""
+        event.stop()
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches _footer_status's own local import
+
+        try:
+            inspector = self.query_one(EvalsCellInspector)
+        except QueryError:
+            return
+        inspector.show_cell(event)
 
     # No `#evals-primary-action` press handler: `_primary_action_state`
     # below keeps the button disabled unconditionally (even for a found,
@@ -133,6 +335,7 @@ class EvalsScreen(BaseAppScreen):
                     self._view_model,
                     selection=self._selection,
                     open_sections=self._rail_open_sections,
+                    app_config=self._current_app_config(),
                     id="evals-library-pane",
                     classes="destination-workbench-pane",
                 )
@@ -221,14 +424,16 @@ class EvalsScreen(BaseAppScreen):
                     id="evals-detail-missing",
                 )
                 return
-            yield Static(
-                str(group.get("task_name") or "Untitled run"),
-                id="evals-detail-run-name",
-                classes="evals-pane-heading",
-            )
-            yield Static(
-                f"Targets run: {group.get('run_count', 0)}",
-                id="evals-detail-run-count",
+            # ResultsGrid renders its own header (bench name, prompt mode,
+            # effective K, cell/failure counts) -- see results_grid.py's
+            # _render_header -- so no separate name/count Statics are
+            # yielded here; that would restate the same facts from a
+            # SECOND, unsynchronized source (this pane reads `group` from
+            # `EvalsViewModel.run_groups()`'s pivot, the grid reads its own
+            # `load_grid` snapshot -- two reads of related but distinct
+            # data that must not drift against each other in the UI).
+            yield ResultsGrid(
+                self._view_model, selection.id, id="evals-results-grid"
             )
             return
 
@@ -264,6 +469,22 @@ class EvalsScreen(BaseAppScreen):
             # one; `_primary_action_state()` is never consulted for this
             # kind.
             return
+
+        if selection.kind == "run_group":
+            group = (
+                self._view_model.run_group_by_id(selection.id)
+                if selection.id
+                else None
+            )
+            if group is not None:
+                # Focused-cell detail (full top-K + probe table), updated
+                # by `_on_grid_cell_focused` as the grid's cell cursor
+                # moves -- see that handler and results_grid.py's module
+                # docstring for why this is a targeted `show_cell()` call,
+                # never a recompose. The primary action button below still
+                # renders (with its existing "already completed" reason,
+                # unchanged from Task 3) beneath it.
+                yield EvalsCellInspector(id="evals-cell-inspector")
 
         label, disabled, tooltip = self._primary_action_state()
         yield Button(

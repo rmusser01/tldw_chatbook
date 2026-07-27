@@ -51,9 +51,13 @@ class _FakeAppInstance:
     populate.
     """
 
-    def __init__(self, db: EvalsDB) -> None:
+    def __init__(self, db: EvalsDB, app_config: dict | None = None) -> None:
         self.evaluation_orchestrator = _FakeOrchestrator(db)
         self.notifications: list[tuple[str, str]] = []
+        #: Read by EvalsScreen._current_app_config for
+        #: sample_bench.provider_is_configured's gate -- see
+        #: test_evals_empty_states.py for scenarios that set this.
+        self.app_config: dict = app_config or {}
 
     def notify(self, message: str, *, severity: str = "information", **kwargs) -> None:
         self.notifications.append((message, severity))

@@ -20,16 +20,21 @@ no ``DEFAULT_CSS`` here at all, deliberately.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
 from ...config import LOCAL_PROVIDERS
-from ...Evals.word_bench.models import PreflightResult
+from ...Evals.word_bench import analysis
+from ...Evals.word_bench.models import CellError, PreflightResult
 from ...Evals.word_bench.storage import load_bench
 from .evals_state import EvalsViewModel
+from .results_grid import render_probe_reading, render_token
+
+if TYPE_CHECKING:
+    from .results_grid import ResultsGrid
 
 #: Case-insensitive: `eval_models.provider` values in this codebase's own
 #: fixtures and the design spec's examples are lowercase ("llama_cpp")
@@ -223,3 +228,115 @@ class EvalsInspector(Vertical):
         else:
             cost_text = "local · no cost"
         yield Static(cost_text, id="evals-inspector-estimate-cost", markup=False)
+
+
+class EvalsCellInspector(Vertical):
+    """Inspector-pane content for a ``"run_group"`` selection: a focused
+    grid cell's full top-K and probe table.
+
+    Mounted by ``evals_screen.py``'s ``_compose_inspector_pane`` alongside
+    the (disabled, already-completed-run) primary action button. Updated by
+    ``EvalsScreen._on_grid_cell_focused`` calling ``show_cell()`` directly
+    against this already-mounted widget whenever ``results_grid.ResultsGrid``
+    posts a ``CellFocused`` message -- NEVER by a screen-level
+    ``refresh(recompose=True)``. Arrow-key movement in the grid fires one of
+    these per keystroke; recomposing the screen on every keystroke would
+    tear down and rebuild the grid's own ``DataTable``, losing cursor
+    position and re-reading the run group from the database each time (see
+    ``results_grid.py``'s module docstring).
+
+    Renders no arithmetic of its own -- every value it prints is read
+    directly off a ``CellCapture``/``ProbeReading`` the engine already
+    computed, mirroring ``results_grid.py``'s own rule.
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "Focused cell", classes="destination-section evals-pane-title"
+        )
+        yield Static(
+            "Focus a cell in the grid to see its full top-K and probe "
+            "table here.",
+            id="evals-cell-inspector-body",
+            markup=False,
+        )
+
+    def show_cell(self, event: "ResultsGrid.CellFocused") -> None:
+        """Renders one focused cell. ``event`` is a
+        ``results_grid.ResultsGrid.CellFocused`` message -- typed as a
+        string annotation (see the ``TYPE_CHECKING`` import above) so this
+        module has no runtime dependency on ``results_grid.py``, only the
+        other way around.
+        """
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches evals_screen.py's own local import
+
+        try:
+            body = self.query_one("#evals-cell-inspector-body", Static)
+        except QueryError:
+            return
+
+        lines = [f"{event.snippet_text!r} × {event.target_name}"]
+        cell = event.cell
+
+        if cell is None:
+            lines.append("")
+            lines.append("Not yet run.")
+        elif isinstance(cell, CellError):
+            lines.append("")
+            lines.append(f"Failed: {cell.reason}")
+            if cell.detail:
+                lines.append(cell.detail)
+        else:
+            lines.append("")
+            lines.append(
+                f"K requested {cell.k_requested} · K returned {cell.k_returned} · "
+                f"canary {cell.canary}"
+            )
+            lines.append(f"Truncated mass: {cell.truncated_mass * 100:.1f}%")
+            if event.delta is not None:
+                lines.append("")
+                lines.append(
+                    f"Δ baseline: {event.delta.jsd:.2f}"
+                    + (" !" if event.delta.is_bounded else "")
+                )
+                if event.delta.is_bounded:
+                    # The "!" marker on the grid IS this sentence -- the
+                    # grid's entire substitute for the "≥" PR 2's review
+                    # disproved. This cell's OWN truncated mass (printed
+                    # just above) is NOT what triggered it; the COMBINED
+                    # mass across both compared cells is -- see
+                    # analysis.combined_truncation's own docstring for why
+                    # it can exceed the simple sum of the two cells' own
+                    # truncated_mass at mixed K.
+                    lines.append(
+                        f"Combined truncated mass (this cell + baseline): "
+                        f"{event.delta.combined_truncated_mass * 100:.1f}% "
+                        f"-- above the "
+                        f"{analysis.TRUNCATION_WARN_THRESHOLD * 100:.0f}% "
+                        f"warn threshold, so this reading rests on a "
+                        f"larger-than-usual amount of extrapolation."
+                    )
+            lines.append("")
+            lines.append("Top-K:")
+            for index, tok in enumerate(cell.top_k, start=1):
+                lines.append(
+                    f"  {index}. {render_token(tok.token)}  "
+                    f"{tok.logprob:.2f}  {tok.prob * 100:.1f}%"
+                )
+            if event.probes:
+                lines.append("")
+                lines.append("Probes:")
+                for probe in event.probes:
+                    # The matched TokenProb rides on the reading itself
+                    # (analysis.ProbeReading.matched) -- never re-derived
+                    # here with a second copy of resolve_probe's match
+                    # rule, which would silently keep the old rule if the
+                    # engine's ever changed.
+                    reading = analysis.resolve_probe(
+                        cell, probe, ever_observed=event.ever_observed.get(probe, False)
+                    )
+                    lines.append(
+                        f"  {render_token(probe)}: {render_probe_reading(reading)}"
+                    )
+
+        body.update("\n".join(lines))
