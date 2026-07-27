@@ -137,20 +137,69 @@ def test_open_keeps_unclosed_frontmatter_in_body_and_marks_unsafe_text_read_only
 
     monkeypatch.setattr(service_module, "MAX_FILE_BYTES", 4)
 
-    def reject_large_read(path: Path) -> tuple[bytes, os.stat_result]:
-        if path.name == "bytes.text":
-            raise AssertionError("over-limit file must not be read")
-        return real_read(path)
-
-    real_read = service_module._read_regular_file
-    monkeypatch.setattr(service_module, "_read_regular_file", reject_large_read)
     large = service.open_file("bytes.text")
     assert large.read_only_reason == "too-many-bytes"
-    assert large.raw_bytes == b""
-    assert service.delete_file("bytes.text").status == "readonly"
+    assert large.raw_bytes == b"12345"
     monkeypatch.setattr(service_module, "MAX_FILE_BYTES", 8_000_000)
     monkeypatch.setattr(service_module, "MAX_FILE_CHARS", 3)
     assert service.open_file("chars.markdown").read_only_reason == "too-many-chars"
+
+
+def test_oversized_file_keeps_exact_replica_and_can_delete_and_restore(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    large_path = root / "large.md"
+    grows_path = root / "grows.md"
+    large_path.write_bytes(b"12345")
+    grows_path.write_bytes(b"old")
+    monkeypatch.setattr(service_module, "MAX_FILE_BYTES", 4)
+    service = FileNotesService(root, replica)
+
+    scanned = service.scan()
+
+    scanned_by_path = {entry.relative_path: entry for entry in scanned.entries}
+    assert scanned_by_path["large.md"].read_only_reason == "too-many-bytes"
+    assert replica.get_bytes(str(root.resolve()), "large.md") == b"12345"
+    replica_by_path = {
+        item.relative_path: item
+        for item in replica.list_active_files(str(root.resolve()))
+    }
+    assert replica_by_path["large.md"].content_hash == _digest(b"12345")
+
+    upsert_calls = 0
+    real_upsert = replica.upsert_file
+
+    def record_upsert(*args: object, **kwargs: object) -> None:
+        nonlocal upsert_calls
+        upsert_calls += 1
+        real_upsert(*args, **kwargs)
+
+    monkeypatch.setattr(replica, "upsert_file", record_upsert)
+    assert service.reconcile().modified == ()
+    assert upsert_calls == 0
+
+    assert replica.search(str(root.resolve()), "old") == ["grows.md"]
+    grows_path.write_bytes(b"changed")
+    reconciled = service.reconcile()
+    assert reconciled.modified == ("grows.md",)
+    assert upsert_calls == 1
+    assert replica.get_bytes(str(root.resolve()), "grows.md") == b"changed"
+    assert replica.search(str(root.resolve()), "old") == []
+
+    opened = service.open_file("large.md")
+    assert opened.content_hash == _digest(b"12345")
+    deleted = service.delete_file("large.md", expected_hash=opened.content_hash)
+    assert deleted.status == "ok"
+    assert not large_path.exists()
+    assert replica.get_restore_bytes(str(root.resolve()), "large.md") == b"12345"
+
+    restored = service.restore_file("large.md")
+    assert restored.status == "ok"
+    assert large_path.read_bytes() == b"12345"
 
 
 def test_save_conflict_and_protected_checkpoint_failure_never_write(
@@ -301,6 +350,66 @@ def test_delete_clears_tombstone_when_unlink_fails(
     assert result.status == "error"
     assert path.exists()
     assert replica.list_deleted(str(root.resolve())) == []
+
+
+def test_delete_clears_tombstone_when_final_reread_becomes_non_regular(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    path = root / "changed-kind.md"
+    path.write_text("keep", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    opened = service.open_file("changed-kind.md")
+    real_read = service_module._read_regular_file
+    read_count = 0
+
+    def fail_final_read(candidate: Path) -> tuple[bytes, os.stat_result]:
+        nonlocal read_count
+        read_count += 1
+        if read_count == 2:
+            raise ValueError("unsafe non-regular file")
+        return real_read(candidate)
+
+    monkeypatch.setattr(service_module, "_read_regular_file", fail_final_read)
+    result = service.delete_file(
+        "changed-kind.md",
+        expected_hash=opened.content_hash,
+    )
+
+    assert result.status in {"conflict", "error"}
+    assert path.exists()
+    assert replica.list_deleted(str(root.resolve())) == []
+
+
+def test_double_dot_filename_is_safe_for_file_mutations(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    service = FileNotesService(root, replica)
+
+    created = service.create_file("meeting..draft.md", "draft")
+    assert created.status == "ok"
+    opened = service.open_file("meeting..draft.md")
+    assert service.save_file(opened, "edited", session_key="double-dot").status == "ok"
+    assert (
+        service.move_file("meeting..draft.md", "meeting..final.md").status
+        == "ok"
+    )
+    moved = service.open_file("meeting..final.md")
+    assert (
+        service.delete_file(
+            "meeting..final.md",
+            expected_hash=moved.content_hash,
+        ).status
+        == "ok"
+    )
+    assert service.restore_file("meeting..final.md").status == "ok"
+    assert (root / "meeting..final.md").read_text(encoding="utf-8") == "edited"
 
 
 def test_reconcile_projects_external_changes_without_session_changes(

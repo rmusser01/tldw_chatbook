@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Literal
 
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica, ReplicaFileInfo
-from tldw_chatbook.Utils.path_validation import validate_filename
 
 MAX_FILE_BYTES = 8_000_000
 MAX_FILE_CHARS = 2_000_000
@@ -117,15 +116,8 @@ class ReconcileResult:
 @dataclass(frozen=True)
 class _ObservedFile:
     relative_path: str
-    path: Path
     size: int
     mtime_ns: int
-
-
-class _FileTooLargeError(OSError):
-    def __init__(self, file_stat: os.stat_result) -> None:
-        super().__init__("File exceeds the File Notes byte limit")
-        self.file_stat = file_stat
 
 
 class FileNotesService:
@@ -157,9 +149,6 @@ class FileNotesService:
         warning: str | None = None
         observed, uncertain_paths, _ = self._walk_candidates()
         for relative_path, observed_file in observed.items():
-            if observed_file.size > MAX_FILE_BYTES:
-                entries.append(_oversize_entry(observed_file))
-                continue
             try:
                 opened = self._load_file(relative_path)
             except (OSError, ValueError):
@@ -205,8 +194,7 @@ class FileNotesService:
                 )
             except Exception as error:
                 warning = _replica_warning(error)
-        if opened.read_only_reason != "too-many-bytes":
-            warning = _merge_warnings(warning, self._upsert_opened(opened))
+        warning = _merge_warnings(warning, self._upsert_opened(opened))
         return _replace_opened(
             opened,
             protected=protected,
@@ -233,8 +221,6 @@ class FileNotesService:
             current_bytes, current_stat = _read_regular_file(path)
         except ValueError as error:
             return _result("unsafe", relative_path, str(error))
-        except _FileTooLargeError:
-            return _result("conflict", relative_path, "Disk bytes changed")
         except FileNotFoundError:
             return _result("missing", relative_path)
         except OSError as error:
@@ -462,10 +448,7 @@ class FileNotesService:
         warning: str | None = None
         try:
             moved = self._load_file(destination_path)
-            if moved.read_only_reason == "too-many-bytes":
-                warning = "Replica not updated: file exceeds the byte limit"
-            else:
-                warning = self._upsert_opened(moved)
+            warning = self._upsert_opened(moved)
         except (OSError, ValueError) as error:
             warning = f"Replica refresh failed: {error}"
         if self._replica is not None:
@@ -501,12 +484,6 @@ class FileNotesService:
             observed_stat = os.lstat(path)
             if not stat.S_ISREG(observed_stat.st_mode):
                 return _result("unsafe", relative_path, "Not a regular file")
-            if observed_stat.st_size > MAX_FILE_BYTES:
-                return _result(
-                    "readonly",
-                    relative_path,
-                    "File is too large to snapshot safely",
-                )
             if self._replica is None:
                 return _result(
                     "replica-error",
@@ -516,12 +493,6 @@ class FileNotesService:
             raw_bytes, file_stat = _read_regular_file(path)
         except ValueError as error:
             return _result("unsafe", relative_path, str(error))
-        except _FileTooLargeError:
-            return _result(
-                "readonly",
-                relative_path,
-                "File is too large to snapshot safely",
-            )
         except FileNotFoundError:
             return _result("missing", relative_path)
         except OSError as error:
@@ -558,7 +529,7 @@ class FileNotesService:
 
         try:
             rechecked_bytes, _ = _read_regular_file(path)
-        except OSError as error:
+        except (OSError, ValueError) as error:
             warning = self._clear_tombstone(relative_path)
             return _result(
                 "error",
@@ -684,44 +655,38 @@ class FileNotesService:
         for relative_path, observed_file in observed.items():
             previous = None if old_files is None else old_files.get(relative_path)
             cached = self._entry_cache.get(relative_path)
-            unchanged = (
+            replica_matches = (
                 previous is not None
                 and previous.size == observed_file.size
                 and previous.mtime_ns == observed_file.mtime_ns
-            ) or (
-                old_files is None
-                and cached is not None
+            )
+            cache_matches = (
+                cached is not None
                 and cached.size == observed_file.size
                 and cached.mtime_ns == observed_file.mtime_ns
             )
+            unchanged = replica_matches or (old_files is None and cache_matches)
             if unchanged:
-                if (
-                    cached is not None
-                    and cached.size == observed_file.size
-                    and cached.mtime_ns == observed_file.mtime_ns
-                ):
+                if cache_matches:
+                    assert cached is not None
                     entries.append(cached)
-                elif observed_file.size > MAX_FILE_BYTES:
-                    entries.append(_oversize_entry(observed_file))
                 else:
+                    assert previous is not None
+                    oversized = observed_file.size > MAX_FILE_BYTES
                     entries.append(
                         FileNoteEntry(
                             relative_path=relative_path,
                             size=observed_file.size,
                             mtime_ns=observed_file.mtime_ns,
                             content_hash=previous.content_hash,
-                            editable=True,
+                            editable=not oversized,
+                            read_only_reason=(
+                                "too-many-bytes" if oversized else None
+                            ),
                         )
                     )
                 continue
 
-            if observed_file.size > MAX_FILE_BYTES:
-                entries.append(_oversize_entry(observed_file))
-                if previous is None:
-                    created.append(relative_path)
-                else:
-                    modified.append(relative_path)
-                continue
             try:
                 opened = self._load_file(relative_path)
             except (OSError, ValueError):
@@ -864,7 +829,6 @@ class FileNotesService:
                     continue
                 observed[relative_path] = _ObservedFile(
                     relative_path=relative_path,
-                    path=path,
                     size=file_stat.st_size,
                     mtime_ns=file_stat.st_mtime_ns,
                 )
@@ -877,20 +841,7 @@ class FileNotesService:
         file_stat = os.lstat(path)
         if not stat.S_ISREG(file_stat.st_mode):
             raise ValueError(f"unsafe non-regular file: {relative_path}")
-        if file_stat.st_size > MAX_FILE_BYTES:
-            return _oversize_opened(
-                self.root_key,
-                relative_path,
-                file_stat,
-            )
-        try:
-            raw_bytes, file_stat = _read_regular_file(path)
-        except _FileTooLargeError as error:
-            return _oversize_opened(
-                self.root_key,
-                relative_path,
-                error.file_stat,
-            )
+        raw_bytes, file_stat = _read_regular_file(path)
         return _parse_opened(
             self.root_key,
             relative_path,
@@ -914,7 +865,6 @@ class FileNotesService:
         for part in parts:
             if part == ".git":
                 raise ValueError("unsafe .git path")
-            validate_filename(part)
             current = current / part
             try:
                 file_stat = os.lstat(current)
@@ -989,39 +939,6 @@ class FileNotesService:
         except Exception as error:
             return _replica_warning(error)
         return None
-
-
-def _oversize_opened(
-    root: str,
-    relative_path: str,
-    file_stat: os.stat_result,
-) -> OpenedFileNote:
-    return OpenedFileNote(
-        root=root,
-        relative_path=relative_path,
-        body="",
-        preserved_prefix=b"",
-        content_hash="",
-        newline="\n",
-        has_final_newline=False,
-        size=file_stat.st_size,
-        mtime_ns=file_stat.st_mtime_ns,
-        editable=False,
-        read_only_reason="too-many-bytes",
-        protected=False,
-        raw_bytes=b"",
-    )
-
-
-def _oversize_entry(observed: _ObservedFile) -> FileNoteEntry:
-    return FileNoteEntry(
-        relative_path=observed.relative_path,
-        size=observed.size,
-        mtime_ns=observed.mtime_ns,
-        content_hash="",
-        editable=False,
-        read_only_reason="too-many-bytes",
-    )
 
 
 def _unreadable_entry(observed: _ObservedFile) -> FileNoteEntry:
@@ -1151,8 +1068,6 @@ def _read_regular_file(path: Path) -> tuple[bytes, os.stat_result]:
         file_stat = os.fstat(descriptor)
         if not stat.S_ISREG(file_stat.st_mode):
             raise ValueError(f"unsafe non-regular file: {path}")
-        if file_stat.st_size > MAX_FILE_BYTES:
-            raise _FileTooLargeError(file_stat)
         with os.fdopen(descriptor, "rb") as source:
             descriptor = -1
             return source.read(), file_stat
