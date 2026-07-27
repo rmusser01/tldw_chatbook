@@ -1586,20 +1586,25 @@ class CitationTraceRepository:
         message_id: str,
         current_body: str,
     ) -> ActiveCitationTraceResult:
-        """Return the active trace for an exact current persisted message body."""
+        """Return the active trace for an exact current persisted message body.
 
-        row = (
-            self.db.get_connection()
-            .execute(
+        Args:
+            message_id: Persisted message identifier owned by the trace.
+            current_body: Exact assistant body currently rendered by Console.
+
+        Returns:
+            The verified active-trace lookup result for the persisted revision.
+        """
+
+        with self.db.transaction() as connection:
+            row = connection.execute(
                 """
                 SELECT version, content
                 FROM messages
                 WHERE id = ? AND deleted = 0
                 """,
                 (message_id,),
-            )
-            .fetchone()
-        )
+            ).fetchone()
         if row is None:
             return ActiveCitationTraceResult(state=ActiveCitationTraceState.NOT_FOUND)
         if row["content"] != current_body:

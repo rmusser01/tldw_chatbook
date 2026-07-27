@@ -8,6 +8,7 @@ import hmac
 import json
 import sqlite3
 import traceback
+from unittest.mock import Mock
 import weakref
 
 import pytest
@@ -2284,6 +2285,24 @@ def test_active_trace_for_current_message_uses_persisted_revision(
     assert not hasattr(repository, "fingerprint_codec")
 
 
+def test_active_trace_for_current_message_reads_under_db_transaction(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    transaction = Mock(wraps=db.transaction)
+    monkeypatch.setattr(db, "transaction", transaction)
+
+    active = repository.get_active_trace_for_current_message(
+        "message-1",
+        "Answer [S1].",
+    )
+
+    assert active.state is ActiveCitationTraceState.ACTIVE
+    transaction.assert_called()
+
+
 def test_active_trace_for_current_message_rejects_missing_or_mismatched_body(
     db: CharactersRAGDB,
 ) -> None:
@@ -2303,18 +2322,15 @@ def test_active_trace_for_current_message_rejects_missing_or_mismatched_body(
     assert missing.summary is None
     assert mismatched.state is ActiveCitationTraceState.UNVERIFIABLE
     assert mismatched.summary is None
-    assert (
-        db.get_connection()
-        .execute(
+    with db.transaction() as connection:
+        owner_state = connection.execute(
             """
             SELECT state
             FROM rag_message_trace_owners
             WHERE message_id = 'message-1'
             """
-        )
-        .fetchone()[0]
-        == "active"
-    )
+        ).fetchone()[0]
+    assert owner_state == "active"
 
     db.soft_delete_message("message-1", expected_version=1)
     deleted = repository.get_active_trace_for_current_message(

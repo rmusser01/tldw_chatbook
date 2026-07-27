@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from io import StringIO
 from threading import Event
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from rich.console import Console as RichConsole
@@ -64,6 +65,7 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
     ConsoleCitationSourceRow,
@@ -566,6 +568,38 @@ def test_citation_count_read_hides_verified_active_revoked_trace(tmp_path) -> No
         db.close_connection()
 
 
+def test_citation_count_read_logs_unexpected_lookup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_body = "caller body must not be logged"
+
+    def fail_lookup() -> None:
+        raise RuntimeError("lookup failed")
+
+    repository = _FakeRepository(
+        _active_result(_trace()),
+        on_lookup=fail_lookup,
+    )
+    log_exception = Mock()
+    monkeypatch.setattr(
+        chat_screen_module,
+        "logger",
+        SimpleNamespace(exception=log_exception),
+    )
+
+    counts = ChatScreen._read_console_citation_counts(
+        repository,
+        (("assistant-native", "message-1", current_body, "complete"),),
+    )
+
+    assert counts == {"assistant-native": 0}
+    log_exception.assert_called_once()
+    logged_call = repr(log_exception.call_args)
+    assert "assistant-native" in logged_call
+    assert "message-1" in logged_call
+    assert current_body not in logged_call
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("state", "has_summary", "verified"),
@@ -894,6 +928,57 @@ async def test_zero_result_is_cached_and_not_requeried_on_unrelated_changes() ->
         if row.kind == "citations" and row.message is not None
     }
     assert citation_row_ids == {"assistant-2", "assistant-3"}
+
+
+@pytest.mark.asyncio
+async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> None:
+    message = _message("assistant-uncited", persisted_message_id="persisted-uncited")
+    screen = _bare_screen(
+        [message],
+        _FakeRepository(_active_result(_trace())),
+    )
+    screen._console_chat_controller = None
+    screen._console_original_attempt_previews = {}
+    screen._pending_console_swipe_selection = None
+    screen._sync_console_citation_count_discovery = lambda _messages: None
+    screen._console_chat_store.session_context_summary = lambda _session_id: (
+        None,
+        None,
+    )
+    screen._current_console_run_status_value = lambda: "idle"
+    screen._build_console_image_specs = lambda _messages: {}
+    screen._build_generation_card_specs = lambda _messages: {}
+    screen._ensure_console_image_view = lambda: (
+        None,
+        SimpleNamespace(pending_ids=lambda _message_ids: ()),
+    )
+    screen._recent_console_image_messages = lambda _messages: ()
+    screen._pending_console_generation_card_images = (
+        lambda _messages, _card_specs: ()
+    )
+    screen._console_image_preparing = set()
+    screen._native_console_transcript_fingerprint = lambda _messages: ("stable",)
+    screen._sync_console_transcript_guidance = lambda: None
+
+    transcript = SimpleNamespace(
+        pending_selection_id=None,
+        set_messages=Mock(),
+        set_citation_counts=Mock(),
+        set_original_attempt_previews=Mock(),
+        set_summary_boundary=Mock(),
+        sync_jump_indicator=Mock(),
+        set_image_specs=Mock(),
+        set_generation_card_specs=Mock(),
+        refresh_messages=AsyncMock(),
+    )
+    screen.query_one = Mock(return_value=transcript)
+
+    await screen._sync_native_console_transcript()
+    screen._console_citation_counts = {"assistant-uncited": 0}
+    await screen._sync_native_console_transcript()
+
+    assert transcript.refresh_messages.await_count == 1
+    assert transcript.set_citation_counts.call_args_list[-1].args == ({},)
 
 
 @pytest.mark.asyncio

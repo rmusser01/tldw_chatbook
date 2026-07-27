@@ -55,7 +55,14 @@ class ConsoleCitationSourceRow:
 
 
 def selected_valid_evidence_ordinals(trace: CitationTrace) -> tuple[int, ...]:
-    """Return selected-attempt valid evidence ordinals in first-citation order."""
+    """Return selected-attempt valid evidence ordinals in first-citation order.
+
+    Args:
+        trace: Citation trace containing the selected answer attempt.
+
+    Returns:
+        Deduplicated valid evidence ordinals in first-citation order.
+    """
 
     selected_attempt = next(
         (
@@ -113,6 +120,13 @@ def build_console_citation_source_rows(
     ``None`` is the single unavailable outcome. A missing selected attempt,
     prompt set, prompt entry, snapshot payload, or exact snapshot body rejects
     the whole graph so the caller can never render a misleading partial list.
+
+    Args:
+        hydration: Authorized, all-or-nothing citation hydration result.
+
+    Returns:
+        Complete cited-source rows, or ``None`` when any required data is
+        unavailable or inconsistent.
     """
 
     if (

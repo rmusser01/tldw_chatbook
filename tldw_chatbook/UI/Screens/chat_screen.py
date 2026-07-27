@@ -11280,6 +11280,12 @@ class ChatScreen(BaseAppScreen):
                     continue
                 evidence_ordinals = selected_valid_evidence_ordinals(summary.trace)
             except Exception:
+                logger.exception(
+                    "Unable to read Console citation count: "
+                    "native_message_id={} persisted_message_id={}",
+                    native_message_id,
+                    persisted_message_id,
+                )
                 continue
             if evidence_ordinals:
                 counts[native_message_id] = len(evidence_ordinals)
@@ -11421,7 +11427,12 @@ class ChatScreen(BaseAppScreen):
                 )
                 self._pending_console_swipe_selection = None
             transcript.set_messages(messages)
-            transcript.set_citation_counts(self._console_citation_counts.copy())
+            visible_citation_counts = {
+                message_id: count
+                for message_id, count in self._console_citation_counts.items()
+                if type(count) is int and count > 0
+            }
+            transcript.set_citation_counts(visible_citation_counts)
             transcript.set_original_attempt_previews(
                 self._console_original_attempt_previews.copy()
             )
@@ -11501,7 +11512,7 @@ class ChatScreen(BaseAppScreen):
                 # or clears even when the message set is otherwise unchanged.
                 summary_boundary_id,
                 tuple(sorted(self._console_original_attempt_previews.items())),
-                tuple(sorted(self._console_citation_counts.items())),
+                tuple(sorted(visible_citation_counts.items())),
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
