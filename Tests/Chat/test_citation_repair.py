@@ -177,6 +177,18 @@ def test_structural_decision_is_unavailable_for_oversized_answer() -> None:
     )
 
 
+def test_structural_decision_accepts_exact_answer_body_byte_limit() -> None:
+    answer = ("a" * (REPAIR_ANSWER_BODY_UTF8_BYTES_MAX - len("[S1]"))) + "[S1]"
+
+    assert decide_citation_repair(answer, _contract()) is CitationRepairDecision.VALID
+
+
+def test_structural_decision_accepts_exact_eligible_marker_limit() -> None:
+    answer = " ".join("[S1]" for _ in range(REPAIR_MARKERS_MAX))
+
+    assert decide_citation_repair(answer, _contract()) is CitationRepairDecision.VALID
+
+
 def test_structural_decision_is_unavailable_for_eligible_marker_flood() -> None:
     answer = " ".join("[S1]" for _ in range(REPAIR_MARKERS_MAX + 1))
 
@@ -199,6 +211,18 @@ def test_markdown_even_backslash_marker_is_eligible() -> None:
     answer = r"Two literal backslashes precede \\[S1]."
 
     assert decide_citation_repair(answer, _contract()) is CitationRepairDecision.VALID
+
+
+def test_markdown_candidate_normalization_cannot_close_an_invalid_fence() -> None:
+    answer = "```\ntext\n``` S\n[S1]"
+
+    assert (
+        decide_citation_repair(answer, _contract()),
+        claim_preservation_projection(answer),
+    ) == (
+        CitationRepairDecision.REPAIR_REQUIRED_MISSING,
+        answer,
+    )
 
 
 def test_integer_conversion_is_not_used_for_body_sized_digit_sequence() -> None:
@@ -437,11 +461,11 @@ def test_repair_prompt_literal_overhead_fits_allocation() -> None:
     assert overhead <= REPAIR_FIXED_OVERHEAD_UTF8_BYTES_MAX
 
 
-def test_repair_request_accepts_exact_overhead_and_total_request_limits(
+def test_repair_request_accepts_exact_fixed_overhead_with_small_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = "e" * REPAIR_EVIDENCE_CONTEXT_UTF8_BYTES_MAX
-    initial = "a" * REPAIR_ANSWER_BODY_UTF8_BYTES_MAX
+    context = "e"
+    initial = "a"
     contract = _contract(context=context)
     monkeypatch.setattr(citation_repair_module, "_REPAIR_SYSTEM_INSTRUCTION", "")
     without_system = build_citation_repair_messages(contract, initial)
@@ -459,14 +483,18 @@ def test_repair_request_accepts_exact_overhead_and_total_request_limits(
     exact = build_citation_repair_messages(contract, initial)
 
     assert exact is not None
-    assert _request_content_bytes(exact) == REPAIR_REQUEST_UTF8_BYTES_MAX
+    assert (
+        _request_content_bytes(exact) - len(context) - len(initial)
+        == REPAIR_FIXED_OVERHEAD_UTF8_BYTES_MAX
+    )
+    assert _request_content_bytes(exact) < REPAIR_REQUEST_UTF8_BYTES_MAX
 
 
-def test_repair_request_rejects_overhead_and_total_request_one_byte_over(
+def test_repair_request_rejects_fixed_overhead_one_byte_over_with_small_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = "e" * REPAIR_EVIDENCE_CONTEXT_UTF8_BYTES_MAX
-    initial = "a" * REPAIR_ANSWER_BODY_UTF8_BYTES_MAX
+    context = "e"
+    initial = "a"
     contract = _contract(context=context)
     monkeypatch.setattr(citation_repair_module, "_REPAIR_SYSTEM_INSTRUCTION", "")
     without_system = build_citation_repair_messages(contract, initial)
@@ -479,6 +507,47 @@ def test_repair_request_rejects_overhead_and_total_request_one_byte_over(
         citation_repair_module,
         "_REPAIR_SYSTEM_INSTRUCTION",
         "x" * (system_size + 1),
+    )
+
+    assert (
+        len(context) + len(initial) + REPAIR_FIXED_OVERHEAD_UTF8_BYTES_MAX + 1
+        < REPAIR_REQUEST_UTF8_BYTES_MAX
+    )
+    assert build_citation_repair_messages(contract, initial) is None
+
+
+def test_repair_request_accepts_exact_total_request_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = _contract(context="evidence")
+    initial = "answer"
+    canonical = build_citation_repair_messages(contract, initial)
+    assert canonical is not None
+    canonical_size = _request_content_bytes(canonical)
+    monkeypatch.setattr(
+        citation_repair_module,
+        "REPAIR_REQUEST_UTF8_BYTES_MAX",
+        canonical_size,
+    )
+
+    exact = build_citation_repair_messages(contract, initial)
+
+    assert exact is not None
+    assert _request_content_bytes(exact) == canonical_size
+
+
+def test_repair_request_rejects_total_request_one_byte_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = _contract(context="evidence")
+    initial = "answer"
+    canonical = build_citation_repair_messages(contract, initial)
+    assert canonical is not None
+    canonical_size = _request_content_bytes(canonical)
+    monkeypatch.setattr(
+        citation_repair_module,
+        "REPAIR_REQUEST_UTF8_BYTES_MAX",
+        canonical_size - 1,
     )
 
     assert build_citation_repair_messages(contract, initial) is None
@@ -636,6 +705,29 @@ def test_repair_window_invalid_model_window_fails_closed(window: object) -> None
         max_tokens=None,
         count_fn=_fixed_token_counter(prompt_tokens=1, answer_tokens=1),
         window_fn=lambda _model, _provider: window,  # type: ignore[return-value]
+    )
+
+
+@pytest.mark.parametrize("invalid_count", (-1, True, "bad", 1.5))
+@pytest.mark.parametrize("count_target", ("prompt", "initial_answer"))
+def test_repair_window_invalid_token_count_fails_closed(
+    invalid_count: object,
+    count_target: str,
+) -> None:
+    def count(messages: list[dict[str, str]], _model: str) -> object:
+        is_initial_answer = messages[0].get("role") == "assistant"
+        if (count_target == "initial_answer") == is_initial_answer:
+            return invalid_count
+        return 1
+
+    assert not repair_request_fits_model_window(
+        [{"role": "user", "content": "request"}],
+        initial_answer="initial",
+        model="model",
+        provider="provider",
+        max_tokens=None,
+        count_fn=count,  # type: ignore[arg-type]
+        window_fn=lambda _model, _provider: 2_000,
     )
 
 

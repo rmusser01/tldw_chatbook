@@ -37,6 +37,7 @@ REPAIR_REQUEST_UTF8_BYTES_MAX = (
 
 _CITATION_LIKE_TOKEN = re.compile(r"\[S[0-9,\t ]+\]")
 _WELL_FORMED_TOKEN = re.compile(r"\[S([1-9][0-9]*)\]\Z")
+_GROUPED_CANDIDATE_CHARACTERS = frozenset("0123456789S,\t ")
 
 _REPAIR_SYSTEM_INSTRUCTION = (
     "Repair citation markers in the supplied existing answer.\n"
@@ -116,9 +117,27 @@ class CitationRepairSelection:
 def _repair_token_matches(
     answer_body: str,
 ) -> tuple[tuple[int, int, str], ...] | None:
-    scan_body = (
-        answer_body.replace(",S", ", ").replace("\tS", "\t ").replace(" S", "  ")
-    )
+    scan_characters: list[str] | None = None
+    candidate_start: int | None = None
+    cursor = 0
+    while cursor < len(answer_body):
+        if answer_body.startswith("[S", cursor):
+            candidate_start = cursor
+            cursor += 2
+            continue
+        if answer_body[cursor] == "]" and candidate_start is not None:
+            candidate = answer_body[candidate_start + 2 : cursor]
+            if candidate and all(
+                character in _GROUPED_CANDIDATE_CHARACTERS for character in candidate
+            ):
+                for index in range(candidate_start + 2, cursor):
+                    if answer_body[index] == "S":
+                        if scan_characters is None:
+                            scan_characters = list(answer_body)
+                        scan_characters[index] = " "
+            candidate_start = None
+        cursor += 1
+    scan_body = answer_body if scan_characters is None else "".join(scan_characters)
     try:
         return tuple(
             (match.start(), match.end(), answer_body[match.start() : match.end()])
