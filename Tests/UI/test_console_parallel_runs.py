@@ -782,3 +782,135 @@ async def test_new_session_clears_a_mounted_card_from_the_session_being_left() -
         decisions = await asyncio.wait_for(decisions_task, timeout=2.0)
         assert decisions == {"mcp__srv__tool": "deny"}
         assert new_session.id != session_a
+
+
+@pytest.mark.asyncio
+async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_on_visit() -> None:
+    """TASK-910: `request_skill_install_confirm` now gets the SAME park/
+    badge/toast/re-mount treatment as `request_mcp_approvals` -- see
+    `test_background_approval_parks_with_badge_and_single_toast` above,
+    which this mirrors, but through the REAL controller bridge (a genuine
+    worker thread via `asyncio.to_thread`) rather than a seeded payload,
+    exercising the full seam end-to-end: park -> badge -> one toast ->
+    mount on visit -> re-mount on revisit -> resolve.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        # See `test_mounted_round_survives_switch_away_and_switch_back` for
+        # why this must be `host` (the actually-running App), not
+        # `app_instance`: `call_from_thread` needs a real running loop to
+        # marshal the worker thread's widget mutations onto.
+        controller.app = host
+        controller.skill_install_confirm_timeout_seconds = lambda: 30.0
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # keep viewing the first session
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        decision_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_skill_install_confirm,
+                "https://github.com/o/r",
+                session_id=background,
+            )
+        )
+        await pilot.pause(0.3)
+
+        install_card = console.query_one("#chat-skill-install-card")
+        assert not install_card.display  # parked: never mounted over the viewed tab
+        approval_toasts = [n for n in notifications if "needs approval" in n]
+        assert len(approval_toasts) == 1
+        assert (
+            controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+        )
+
+        # Visiting mounts the card through the existing mount path.
+        controller.switch_session(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert console.query_one("#chat-skill-install-card").display
+
+        # Switch-away-and-back re-mounts the SAME round without a second toast.
+        controller.switch_session(viewed)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+        assert not console.query_one("#chat-skill-install-card").display
+        controller.switch_session(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+        assert console.query_one("#chat-skill-install-card").display
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        request_id = controller._parked_skill_install_payloads[background]["request_id"]
+        controller.resolve_pending_skill_install(True, request_id=request_id)
+        allowed = await asyncio.wait_for(decision_task, timeout=2.0)
+        assert allowed is True
+        assert background not in controller._pending_approvals
+
+
+@pytest.mark.asyncio
+async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on_visit() -> None:
+    """TASK-910: `request_skill_script_confirm` gets the identical
+    treatment -- see the sibling skill-install test above."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        controller.app = host
+        controller.skill_script_confirm_timeout_seconds = lambda: 30.0
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # keep viewing the first session
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        decision_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_skill_script_confirm,
+                {"skill_name": "demo", "script_path": "scripts/hello.py"},
+                session_id=background,
+            )
+        )
+        await pilot.pause(0.3)
+
+        script_card = console.query_one("#chat-skill-script-card")
+        assert not script_card.display  # parked: never mounted over the viewed tab
+        approval_toasts = [n for n in notifications if "needs approval" in n]
+        assert len(approval_toasts) == 1
+        assert (
+            controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+        )
+
+        controller.switch_session(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert console.query_one("#chat-skill-script-card").display
+
+        controller.switch_session(viewed)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+        assert not console.query_one("#chat-skill-script-card").display
+        controller.switch_session(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+        assert console.query_one("#chat-skill-script-card").display
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        request_id = controller._parked_skill_script_payloads[background]["request_id"]
+        controller.resolve_pending_skill_script(True, False, request_id=request_id)
+        decision = await asyncio.wait_for(decision_task, timeout=2.0)
+        assert decision == {"allow": True, "remember": False}
+        assert background not in controller._pending_approvals

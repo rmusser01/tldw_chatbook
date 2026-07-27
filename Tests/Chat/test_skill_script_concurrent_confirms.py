@@ -104,15 +104,19 @@ def test_teardown_of_one_round_leaves_the_other_armed(controller):
     assert results["two"]["allow"] is False
 
 
-def test_context_change_denies_every_armed_round(controller):
-    """A conversation switch must release all of them, not just the newest."""
+def test_shutdown_denies_every_armed_round(controller):
+    """TASK-910: `_deny_pending_skill_script_on_context_change` was removed
+    (a plain context change/conversation switch no longer denies -- see
+    ``Tests/Chat/test_console_skill_script_confirm.py``'s park tests).
+    Real process teardown (`_shutdown_requested`) still releases every
+    armed round at once, not just the newest."""
     results = {}
     t1 = _arm(controller, "skill-one", results, "one")
     assert _wait_until(lambda: len(controller.pending_skill_script_ids()) == 1)
     t2 = _arm(controller, "skill-two", results, "two")
     assert _wait_until(lambda: len(controller.pending_skill_script_ids()) == 2)
 
-    controller._deny_pending_skill_script_on_context_change()
+    controller._shutdown_requested.set()
     t1.join(timeout=5)
     t2.join(timeout=5)
     assert results["one"]["allow"] is False

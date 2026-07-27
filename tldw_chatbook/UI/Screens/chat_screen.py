@@ -15753,20 +15753,29 @@ class ChatScreen(BaseAppScreen):
         request_mcp_approvals``' park branch (invoked via ``app_instance.
         call_from_thread`` exactly once per parked round -- the round's
         session differs from the store's active session at round-start).
+
+        TASK-910: also the shared UI-thread bridge target for
+        ``request_skill_install_confirm``'s and ``request_skill_script_
+        confirm``'s OWN park branches -- one badge/toast seam for all three
+        approval-like bridges, per the train's "same marker/toast
+        machinery" convention, rather than a bespoke copy per bridge.
         Deliberately does NOT touch ``task_resume_state``/``set_task_
         resume_state`` -- that slot is reserved for whichever session is
-        actually being viewed (``_set_console_pending_approval`` above);
-        parking must never steal the mounted card out from under the
-        session the user is currently looking at. The controller's own
-        ``_parked_approval_payloads`` map (populated by ``request_mcp_
-        approvals`` before this fires) is what ``ConsoleChatController.
-        switch_session`` later reads to mount the SAME payload once the
+        actually being viewed (``_set_console_pending_approval``/
+        ``_set_console_pending_skill_install``/``_set_console_pending_
+        skill_script`` above); parking must never steal the mounted card
+        out from under the session the user is currently looking at. The
+        controller's own ``_parked_approval_payloads``/``_parked_skill_
+        install_payloads``/``_parked_skill_script_payloads`` maps
+        (populated by each bridge before this fires) are what
+        ``ConsoleChatController.switch_session``/``new_session``/
+        ``close_session`` later read to mount the SAME payload once the
         user actually visits ``session_id``.
 
         Also usable directly as a test seam to drive the park path without
         a live worker thread/round -- setting the badge flag itself here
-        (in addition to ``request_mcp_approvals`` also setting it directly)
-        is what makes that safe: this method is fully self-contained.
+        (in addition to each bridge also setting it directly) is what makes
+        that safe: this method is fully self-contained.
 
         Args:
             session_id: The parked round's OWNING session.
@@ -15908,11 +15917,20 @@ class ChatScreen(BaseAppScreen):
     def handle_console_skill_install_decided(
         self, event: SkillInstallConfirmCard.InstallDecided
     ) -> None:
-        """Forward the user's install decision to the controller's worker thread."""
+        """Forward the user's install decision to the controller's worker thread.
+
+        TASK-910: ``event.request_id`` MUST be threaded through unchanged --
+        ``ConsoleChatController.resolve_pending_skill_install`` silently
+        drops a resolve whose id doesn't match the currently-armed round,
+        mirroring ``handle_console_skill_script_decided``'s identical
+        contract below.
+        """
         event.stop()
         controller = self._console_chat_controller
         if controller is not None:
-            controller.resolve_pending_skill_install(event.allow)
+            controller.resolve_pending_skill_install(
+                event.allow, request_id=event.request_id
+            )
 
     @on(SkillScriptConfirmCard.ScriptDecided)
     def handle_console_skill_script_decided(
