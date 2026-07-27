@@ -38,6 +38,7 @@ except ImportError:
 
 # Local imports
 from ..config import get_cli_setting
+from ..Utils.path_validation import validate_path_simple
 from .parakeet_v2_installer import (
     PARAKEET_V2_REPOSITORY,
     PARAKEET_V2_REVISION,
@@ -54,8 +55,11 @@ _VERIFICATION_RECEIPT_MAX_BYTES = 64 * 1024
 
 def _has_known_parakeet_v2_receipt(model_dir: Path) -> bool:
     """Return whether bounded receipt metadata claims the curated v2 identity."""
-    receipt_path = model_dir / VERIFICATION_RECEIPT
     try:
+        receipt_path = validate_path_simple(
+            model_dir / VERIFICATION_RECEIPT,
+            probe_existing=False,
+        )
         if receipt_path.is_symlink() or not receipt_path.is_file():
             return False
         if receipt_path.stat().st_size > _VERIFICATION_RECEIPT_MAX_BYTES:
@@ -781,13 +785,25 @@ class TranscriptionService:
             )
 
         model_dir = model_dir or self.config["parakeet_onnx_model_dir"]
-        if not model_dir or not Path(model_dir).is_dir():
+        if not model_dir:
             raise TranscriptionError(
                 "parakeet-onnx requires an explicit existing local model directory "
                 "via model_dir or transcription.parakeet_onnx_model_dir; "
                 "no model will be downloaded automatically."
             )
-        model_root = Path(model_dir)
+        try:
+            model_root = validate_path_simple(model_dir, require_exists=True)
+        except ValueError as exc:
+            raise TranscriptionError(
+                "parakeet-onnx invalid local model directory; choose an existing "
+                "local model folder. No model will be downloaded automatically."
+            ) from exc
+        if not model_root.is_dir():
+            raise TranscriptionError(
+                "parakeet-onnx requires an explicit existing local model directory "
+                "via model_dir or transcription.parakeet_onnx_model_dir; "
+                "no model will be downloaded automatically."
+            )
         if selected_model == PARAKEET_V3_MODEL and _has_known_parakeet_v2_receipt(
             model_root
         ):
@@ -813,7 +829,7 @@ class TranscriptionService:
                 + ", ".join(missing_files)
             )
 
-        cache_key = ("parakeet-onnx", selected_model, str(model_dir), "int8")
+        cache_key = ("parakeet-onnx", selected_model, str(model_root), "int8")
         with self._model_cache_lock:
             parakeet_model = self._model_cache.get(cache_key)
             if parakeet_model is None:
@@ -821,7 +837,7 @@ class TranscriptionService:
 
                 parakeet_model = load_model(
                     selected_model,
-                    path=str(model_dir),
+                    path=str(model_root),
                     quantization="int8",
                     providers=["CPUExecutionProvider"],
                     preprocessor_config={

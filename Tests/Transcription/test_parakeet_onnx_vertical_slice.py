@@ -466,6 +466,36 @@ def test_parakeet_onnx_rejects_incomplete_model_directory_before_loading(
         )
 
 
+def test_parakeet_onnx_rejects_model_directory_that_fails_central_path_validation(
+    tmp_path, monkeypatch
+) -> None:
+    audio_path = tmp_path / "speech.wav"
+    model_dir = tmp_path / "model$(unsafe)"
+    _write_model_bundle(model_dir)
+    _write_silent_wav(audio_path)
+    load_calls = []
+
+    def unexpected_load(*args, **kwargs):
+        load_calls.append((args, kwargs))
+        raise AssertionError("load_model must not run for an invalid model path")
+
+    monkeypatch.setattr(service_module, "ONNX_ASR_AVAILABLE", True, raising=False)
+    monkeypatch.setitem(
+        sys.modules, "onnx_asr", SimpleNamespace(load_model=unexpected_load)
+    )
+
+    with pytest.raises(TranscriptionError, match="invalid local model directory"):
+        TranscriptionService().transcribe(
+            str(audio_path),
+            provider="parakeet-onnx",
+            model=PARAKEET_V2_MODEL,
+            language="en",
+            model_dir=str(model_dir),
+        )
+
+    assert load_calls == []
+
+
 def test_parakeet_onnx_transcribes_pcm_buffer_without_staging_a_file(
     tmp_path, monkeypatch
 ) -> None:

@@ -2435,9 +2435,16 @@ class LibraryIngestQueueMixin:
                 options = self._ingest_job_options(claimed)
             except BatchSTTRoutingError as exc:
                 error_text = _sanitize_library_ingest_error_text(str(exc))
+                failure_text = error_text or "Batch transcription routing failed."
+                logger.warning(
+                    "Library ingest batch STT routing failed "
+                    f"(job_id={claimed.job_id}, "
+                    f"detected_type={claimed.detected_type}, "
+                    f"error={failure_text})."
+                )
                 self.library_ingest_jobs.mark_failed(
                     claimed.job_id,
-                    error=error_text or "Batch transcription routing failed.",
+                    error=failure_text,
                     permanent=False,
                 )
                 parsing_count -= 1

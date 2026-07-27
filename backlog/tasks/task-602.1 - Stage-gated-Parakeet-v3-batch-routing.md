@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-27 17:47'
-updated_date: '2026-07-27 20:05'
+updated_date: '2026-07-27 20:25'
 labels:
   - stt
   - onnx
@@ -70,7 +70,7 @@ Reason: ADR-025 already governs routing, v3 language transparency, INT8, explici
   UI and Console dictation test modules. User documentation is in
   `Docs/Features/TRANSCRIPTION.md` and
   `Docs/Features/TRANSCRIPTION_PROVIDERS.md`.
-- Fresh post-rebase expanded verification command: 253 passed, 11 skipped, and
+- Fresh post-rebase expanded verification command: 254 passed, 11 skipped, and
   3 warnings.
   Ruff lint passed on all cumulative changed runtime/test files; compileall
   passed on changed runtime modules; routing mypy reported no issues;
@@ -92,4 +92,8 @@ Reason: ADR-025 already governs routing, v3 language transparency, INT8, explici
   faster-whisper picker, translate `auto` source requests to English with
   detection metadata, keep canonical Parakeet buffer alias precedence, and
   retain the legacy positional `process_audio_files` API.
+- PR review follow-up validates user-selected Parakeet model paths through the
+  central path validator before filesystem access and logs sanitized batch
+  routing failures with job/type context. Exact provider matching and the
+  dependency-free routing core remain intentional contract requirements.
 <!-- SECTION:NOTES:END -->

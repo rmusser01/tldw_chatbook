@@ -504,6 +504,7 @@ def test_ingest_job_options_detects_type_group(
 def test_invalid_audio_request_allows_next_job_to_dispatch(
     invalid_audio_options: dict[str, Any],
     error_fragment: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = object.__new__(TldwCli)
     app.library_ingest_jobs = LibraryIngestJobRegistry()
@@ -512,6 +513,11 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
     app._ingest_heavy_lane_max_workers = lambda: 1  # type: ignore[method-assign]
     app._ingest_parse_pool_generation = 1
     app._ingest_parse_jobs_by_generation = {1: set()}
+    warning_messages: list[str] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.app.logger.warning",
+        lambda message: warning_messages.append(str(message)),
+    )
 
     invalid = app.library_ingest_jobs.submit(
         source_path="/tmp/invalid.mp3",
@@ -564,3 +570,12 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
     _, (source_path, options), _, _ = pool.calls[0]
     assert source_path == valid.source_path
     assert options["transcription_provider"] == "faster-whisper"
+    routing_warnings = [
+        message
+        for message in warning_messages
+        if "batch STT routing failed" in message
+    ]
+    assert len(routing_warnings) == 1
+    assert invalid.job_id in routing_warnings[0]
+    assert "detected_type=audio" in routing_warnings[0]
+    assert error_fragment in routing_warnings[0]
