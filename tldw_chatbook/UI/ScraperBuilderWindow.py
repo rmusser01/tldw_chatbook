@@ -440,7 +440,7 @@ class ScraperBuilderWindow(Screen):
     def fetch_page_content(self, url: str):
         """Fetch page content in background."""
         try:
-            self.call_from_thread(self.update_status, "Fetching page...", "info")
+            self.app.call_from_thread(self.update_status, "Fetching page...", "info")
             self.is_loading = True
 
             # Use existing article extractor
@@ -450,21 +450,21 @@ class ScraperBuilderWindow(Screen):
                 self.page_html = result.get("raw_html", "")
                 self.page_text = result.get("extracted_text", "")
 
-                self.call_from_thread(self.display_page_content)
-                self.call_from_thread(
+                self.app.call_from_thread(self.display_page_content)
+                self.app.call_from_thread(
                     self.update_status,
                     f"Page loaded successfully ({len(self.page_html)} bytes)",
                     "success",
                 )
             else:
                 error = result.get("error", "Unknown error")
-                self.call_from_thread(
+                self.app.call_from_thread(
                     self.update_status, f"Failed to fetch page: {error}", "error"
                 )
 
         except Exception as e:
             logger.error(f"Error fetching page: {str(e)}")
-            self.call_from_thread(self.update_status, f"Error: {str(e)}", "error")
+            self.app.call_from_thread(self.update_status, f"Error: {str(e)}", "error")
         finally:
             self.is_loading = False
 
@@ -513,11 +513,11 @@ class ScraperBuilderWindow(Screen):
                     {"index": i + 1, "tag": tag_name, "attrs": attrs, "text": text}
                 )
 
-            self.call_from_thread(self.display_selector_results, results, len(elements))
+            self.app.call_from_thread(self.display_selector_results, results, len(elements))
 
         except Exception as e:
             logger.error(f"Error testing selector: {str(e)}")
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.update_status, f"Invalid selector: {str(e)}", "error"
             )
 
@@ -697,11 +697,11 @@ class ScraperBuilderWindow(Screen):
                 except Exception as e:
                     results[field] = f"Error: {str(e)}"
 
-            self.call_from_thread(self.display_extraction_results, results)
+            self.app.call_from_thread(self.display_extraction_results, results)
 
         except Exception as e:
             logger.error(f"Error testing rules: {str(e)}")
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.update_status, f"Error testing rules: {str(e)}", "error"
             )
 

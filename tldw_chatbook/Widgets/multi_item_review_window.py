@@ -397,8 +397,8 @@ class MultiItemReviewWindow(Container):
             title = item.get("title", "Untitled")
 
             # Update progress
-            self.call_from_thread(progress_bar.update, completed=index)
-            self.call_from_thread(
+            self.app.call_from_thread(progress_bar.update, completed=index)
+            self.app.call_from_thread(
                 progress_label.update,
                 f"Analyzing {index + 1}/{total_items}: {title[:50]}...",
             )
@@ -456,11 +456,11 @@ class MultiItemReviewWindow(Container):
             await asyncio.sleep(0.5)
 
         # Update final progress
-        self.call_from_thread(progress_bar.update, completed=total_items)
-        self.call_from_thread(progress_label.update, "Analysis generation complete!")
+        self.app.call_from_thread(progress_bar.update, completed=total_items)
+        self.app.call_from_thread(progress_label.update, "Analysis generation complete!")
 
         # Reset UI state
-        self.call_from_thread(self._reset_generation_ui)
+        self.app.call_from_thread(self._reset_generation_ui)
 
     async def _generate_single_analysis(
         self, item: Dict[str, Any], prompt: str
