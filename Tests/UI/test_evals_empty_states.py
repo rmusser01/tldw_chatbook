@@ -11,6 +11,7 @@ that export writes what it claims to.
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
@@ -18,9 +19,10 @@ from pathlib import Path
 
 import pytest
 from textual import on
-from textual.widgets import DataTable
+from textual.widgets import Button, DataTable
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
+from tldw_chatbook.Evals.word_bench.capture_client import NEUTRAL_SAMPLER
 from tldw_chatbook.Evals.word_bench.models import CellCapture, PreflightResult, TokenProb
 from tldw_chatbook.Evals.word_bench.storage import load_grid
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
@@ -190,6 +192,87 @@ async def test_create_and_run_sample_bench_raises_when_db_is_unavailable():
         await sample_bench.create_and_run_sample_bench(view_model, app_config)
 
 
+@pytest.mark.asyncio
+async def test_create_and_run_sample_bench_reports_progress(db, view_model):
+    """WordBenchRunner.run accepts a progress callback for exactly this --
+    this is the app's only live execution path today, so a caller wanting
+    a visible "N/M" running state has nowhere else to get it from. Pins
+    that `progress` is actually threaded through, not just accepted and
+    silently dropped."""
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    calls: list = []
+    progress_calls: list[tuple[int, int]] = []
+    await sample_bench.create_and_run_sample_bench(
+        view_model, app_config,
+        client_factory=lambda t: _FakeCaptureClient(calls),
+        progress=lambda done, total: progress_calls.append((done, total)),
+    )
+    assert progress_calls[0] == (1, 4)
+    assert progress_calls[-1] == (4, 4)
+
+
+@pytest.mark.asyncio
+async def test_create_and_run_sample_bench_honors_a_pre_cancelled_token(db, view_model):
+    """A caller-supplied, already-cancelled CancelToken must stop the run
+    before any cell is captured and mark every created run row
+    "cancelled" -- WordBenchRunner's own COOPERATIVE path (checked once
+    per snippet/target), confirmed here to be genuinely reachable through
+    this module rather than silently unused."""
+    from tldw_chatbook.Evals.word_bench.runner import CancelToken
+
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    token = CancelToken()
+    token.cancel()
+    calls: list = []
+    await sample_bench.create_and_run_sample_bench(
+        view_model, app_config,
+        client_factory=lambda t: _FakeCaptureClient(calls),
+        cancel_token=token,
+    )
+    assert calls == []
+    runs = db.list_runs(limit=100)
+    assert runs
+    assert all(run["status"] == "cancelled" for run in runs)
+
+
+class _CancellingCaptureClient:
+    """Raises asyncio.CancelledError on its first capture -- simulates a
+    HARD cancellation (e.g. Textual's exclusive=True worker mechanism
+    superseding an in-flight worker) landing mid-``await``, which bypasses
+    WordBenchRunner's own cooperative cancel_token path entirely (that
+    path is a per-iteration check, not something that can intercept an
+    in-flight coroutine)."""
+
+    async def preflight(self, target, mode, top_k):
+        return PreflightResult(state="ok", k_returned=5, canary="pass")
+
+    async def capture(self, snippet, target, mode, top_k):
+        raise asyncio.CancelledError()
+
+
+@pytest.mark.asyncio
+async def test_a_hard_cancellation_marks_its_run_rows_cancelled_not_abandoned(
+    db, view_model
+):
+    """The regression this pins: a run interrupted mid-capture by a HARD
+    asyncio.CancelledError (not the cooperative cancel_token path) must
+    not leave its eval_runs row stuck at "running" forever -- a permanent
+    ghost in the rail's Runs list. create_and_run_sample_bench must catch
+    CancelledError, mark the row "cancelled", and RE-RAISE (never swallow
+    it -- Textual's own worker bookkeeping needs to observe the real
+    cancellation)."""
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    with pytest.raises(asyncio.CancelledError):
+        await sample_bench.create_and_run_sample_bench(
+            view_model, app_config,
+            client_factory=lambda t: _CancellingCaptureClient(),
+        )
+    runs = db.list_runs(limit=100)
+    assert runs
+    assert all(run["status"] == "cancelled" for run in runs)
+    assert not any(run["status"] == "running" for run in runs)
+
+
 # ---------------------------------------------------------------------------
 # The library rail's empty states -- mounted through the real EvalsScreen.
 # ---------------------------------------------------------------------------
@@ -251,13 +334,7 @@ async def test_no_providers_routes_the_benches_section_to_settings(no_provider_a
 
 
 @pytest.mark.asyncio
-async def test_classic_tasks_stay_reachable_with_no_provider_configured(
-    no_provider_app, evals_db: EvalsDB
-):
-    """Classic (non-word-bench) tasks are read-only history with no target
-    concept -- they must stay reachable even when no word-bench provider is
-    configured (this is exactly the regression the section-scoped gate
-    above exists to avoid)."""
+def _seed_classic_task(evals_db: EvalsDB) -> None:
     dataset_id = evals_db.create_dataset(
         name="mmlu-500", format="custom", source_path="inline:mmlu-500"
     )
@@ -265,18 +342,61 @@ async def test_classic_tasks_stay_reachable_with_no_provider_configured(
         name="mmlu-subset", task_type="question_answer", config_format="custom",
         config_data={}, dataset_id=dataset_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_classic_tasks_stay_reachable_with_no_provider_configured(
+    no_provider_app, evals_db: EvalsDB
+):
+    """Classic (non-word-bench) tasks are read-only history with no target
+    concept -- they must stay reachable even when no word-bench provider is
+    configured. **And** the "no benches" affordance -- here, the Settings
+    route -- must ALSO stay reachable alongside them: an earlier version of
+    the gate suppressed BOTH whenever a classic task was present, which
+    left a user with a pre-existing classic task and no word benches (the
+    exact population upgrading from the old Evals screen) with no way
+    forward regardless of their provider setup. This test could not have
+    caught that on its own (it only ever ran under `no_provider_app`, where
+    suppressing the sample-bench offer is separately correct) -- see the
+    companion test below, which pins the OTHER half: a classic task
+    alongside a CONFIGURED provider.
+    """
+    _seed_classic_task(evals_db)
     async with no_provider_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         screen = pilot.app.screen
         assert screen.query(".evals-rail-classic-separator")
         assert screen.query_one("#evals-rail-row-benches-classic-0")
-        # Pre-existing convention (unchanged by this task): the "No benches
-        # yet."/no-providers empty copy only ever appears when the section
-        # is FULLY empty (no word benches AND no classic tasks) -- with a
-        # classic task present, neither renders, and the sample-bench offer
-        # correctly stays absent too (there is still no word bench provider).
+        # The full "No local llama.cpp provider..." explanatory copy is
+        # reserved for a FULLY empty section (no classic tasks either) --
+        # see library_rail.py's _benches_section_body -- but the actionable
+        # Settings route must still be there.
         assert not screen.query("#evals-rail-no-providers")
         assert not screen.query("#evals-create-sample-bench")
+        settings_button = screen.query_one("#evals-rail-open-settings")
+        rail = screen.query_one("#evals-library-pane")
+        assert rail.region.contains_region(settings_button.region)
+
+
+@pytest.mark.asyncio
+async def test_sample_bench_offer_is_reachable_alongside_a_classic_task(
+    configured_app, evals_db: EvalsDB
+):
+    """The other half of the regression above: a classic task must not
+    suppress the sample-bench offer either, once a provider IS configured.
+    `configured_app` is defined further below (a fixture, so pytest
+    resolves it fine referenced here) -- a real, clickable target."""
+    _seed_classic_task(evals_db)
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        assert screen.query(".evals-rail-classic-separator")
+        assert screen.query_one("#evals-rail-row-benches-classic-0")
+        assert not screen.query("#evals-rail-no-providers")
+        assert not screen.query("#evals-rail-open-settings")
+        button = screen.query_one("#evals-create-sample-bench")
+        rail = screen.query_one("#evals-library-pane")
+        assert rail.region.contains_region(button.region)
 
 
 @pytest.mark.asyncio
@@ -367,6 +487,96 @@ async def test_no_benches_offers_a_genuinely_clickable_sample_bench(configured_a
             screen.query_one("#evals-detail-bench-name").renderable
         )
         assert screen.query_one("#evals-bench-target-0")
+
+
+class _PausableFakeCaptureClient:
+    """Blocks on ``release_event`` inside ``capture`` (never inside
+    ``preflight``) -- gives a test a controllable window in which a run is
+    genuinely IN FLIGHT, real async suspension and all, to inspect the
+    running-state UI against, rather than a client that completes so fast
+    the running window is unobservable."""
+
+    def __init__(self, calls: list, release_event: "asyncio.Event") -> None:
+        self._calls = calls
+        self._release_event = release_event
+
+    async def preflight(self, target, mode, top_k):
+        return PreflightResult(state="ok", k_returned=5, canary="pass")
+
+    async def capture(self, snippet, target, mode, top_k):
+        await self._release_event.wait()
+        self._calls.append((snippet, target.name))
+        return CellCapture(
+            prompt_mode=mode, k_requested=top_k, k_returned=1, content_offset=0,
+            top_k=(TokenProb(token=" a", logprob=-0.3, token_id=1),),
+            canary="unchecked", captured_at="2026-07-26T00:00:00Z",
+        )
+
+
+@pytest.mark.asyncio
+async def test_sample_bench_button_disables_with_a_running_state_while_in_flight(
+    configured_app,
+):
+    """The button must not sit there looking untouched for the run's
+    whole duration (1 preflight + N captures, each with a real timeout) --
+    it disables and shows a live state as soon as the run starts, proven
+    against a client that genuinely suspends mid-run, not one that
+    completes before this test could ever observe the in-between state."""
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-create-sample-bench")
+        await _wait_until(pilot, lambda: screen._sample_bench_running)
+        await pilot.pause()
+
+        button = screen.query_one("#evals-create-sample-bench", Button)
+        assert button.disabled is True
+        assert "…" in str(button.label) or "..." in str(button.label)
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._sample_bench_running)
+        await pilot.pause()
+        assert len(calls) == 4
+        assert len(screen._view_model.benches()) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_second_click_while_running_does_not_start_a_second_run(configured_app):
+    """The disabled button (previous test) is the primary defence; this
+    pins the SECOND line of defence -- _sample_bench_running -- by posting
+    the request message directly (simulating whatever might get past a
+    disabled widget, e.g. a race before the disable renders) and proving
+    it is a genuine no-op: exactly one bench, one run group, one set of
+    captures results, never two."""
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        release = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: _PausableFakeCaptureClient(
+            calls, release
+        )
+
+        await pilot.click("#evals-create-sample-bench")
+        await _wait_until(pilot, lambda: screen._sample_bench_running)
+        await pilot.pause()
+
+        screen.post_message(LibraryRail.SampleBenchRequested())
+        await pilot.pause()
+
+        release.set()
+        await _wait_until(pilot, lambda: not screen._sample_bench_running)
+        await pilot.pause()
+
+        assert len(calls) == 4  # not 8 -- the second request was a no-op
+        assert len(screen._view_model.benches()) == 1
+        assert len(screen._view_model.run_groups()) == 1
 
 
 @pytest.mark.asyncio
@@ -514,6 +724,15 @@ async def test_json_export_contains_snapshot_top_k_and_resolved_probes(
 
         snapshot = payload["snapshot"]
         assert snapshot["bench_name"] == "loaded-nouns v1"
+        # These three are what makes the export claim to "reproduce a run
+        # outside the app" true: prompt_mode/top_k are the request shape,
+        # sampler is the exact neutral-sampling params every capture used
+        # (capture_client.NEUTRAL_SAMPLER) -- without them, a re-issued
+        # request could silently use different settings and measure a
+        # different distribution while looking like the "same" export.
+        assert snapshot["prompt_mode"] == "raw"
+        assert snapshot["top_k"] == 20
+        assert snapshot["sampler"] == NEUTRAL_SAMPLER
         assert len(snapshot["snippets"]) == 3
         assert len(snapshot["targets"]) == 2
 

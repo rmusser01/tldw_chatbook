@@ -40,15 +40,19 @@ invented mapping.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
 
+from loguru import logger
+
 from ...Chat.provider_readiness import is_valid_provider_api_key
+from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.capture_client import WordBenchCaptureClient
 from ...Evals.word_bench.models import BenchConfig, Snippet, Target
-from ...Evals.word_bench.runner import CaptureClientLike, WordBenchRunner
+from ...Evals.word_bench.runner import CancelToken, CaptureClientLike, ProgressFn, WordBenchRunner
 from ...Evals.word_bench.storage import save_bench
 from .evals_state import EvalsViewModel
 from .snippet_editor import import_snippets_into_dataset
@@ -197,11 +201,47 @@ def _default_client_factory(
     return _factory
 
 
+def _mark_orphaned_runs_cancelled(db: EvalsDB, task_id: str) -> None:
+    """Best-effort cleanup after a HARD cancellation interrupts
+    ``runner.run`` mid-``await`` (e.g. Textual's ``exclusive=True`` worker
+    mechanism cancelling an in-flight worker at an arbitrary suspension
+    point) -- as opposed to ``WordBenchRunner``'s own COOPERATIVE
+    ``cancel_token`` path, which already marks its rows ``"cancelled"``
+    cleanly whenever it is the one to observe the cancellation (checked
+    once per snippet/target iteration). A hard cancellation can land
+    between that check and the row being marked, or inside the network
+    call itself, leaving a run row stuck at ``"running"`` forever -- a
+    permanent ghost in the rail's Runs list that never completes or fails.
+
+    Scoped to THIS ``task_id`` only, and only rows still ``"running"`` --
+    a run that already finished (``"completed"``) or was already marked
+    cancelled by the cooperative path is left untouched.
+    """
+    try:
+        runs = db.list_runs(task_id=task_id, limit=10_000)
+    except Exception:
+        logger.opt(exception=True).warning(
+            f"Could not list runs for task {task_id!r} during cancellation cleanup."
+        )
+        return
+    for run in runs:
+        if run.get("status") != "running":
+            continue
+        try:
+            db.update_run_status(run["id"], "cancelled")
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not mark orphaned run {run.get('id')!r} cancelled."
+            )
+
+
 async def create_and_run_sample_bench(
     view_model: EvalsViewModel,
     app_config: Optional[Mapping[str, Any]],
     *,
     client_factory: Optional[Callable[[Target], CaptureClientLike]] = None,
+    progress: Optional[ProgressFn] = None,
+    cancel_token: Optional[CancelToken] = None,
 ) -> SampleBenchResult:
     """Creates the sample dataset, bench, and (if needed) target, then runs
     it -- the full one-click flow.
@@ -220,6 +260,17 @@ async def create_and_run_sample_bench(
             real network call under test. ``None`` (the default, production
             path) builds a real ``WordBenchCaptureClient`` against the
             configured llama.cpp endpoint.
+        progress: Forwarded verbatim to ``WordBenchRunner.run`` -- this is
+            the ONLY execution path in the app today (nothing else calls
+            the runner in production), so a caller driving a visible
+            "N/M" running state has nowhere else to get it from.
+        cancel_token: Forwarded verbatim to ``WordBenchRunner.run`` -- lets
+            a caller request COOPERATIVE cancellation (checked once per
+            cell; the runner itself then marks its rows ``"cancelled"`` and
+            returns normally). A caller relying on a HARD cancellation
+            instead (e.g. an exclusive Textual worker being superseded)
+            should not expect this token to help -- see
+            ``_mark_orphaned_runs_cancelled``, used below for that case.
 
     Returns:
         The created bench/dataset/target ids and the resulting run group id
@@ -232,6 +283,13 @@ async def create_and_run_sample_bench(
             target could be resolved (callers should have already checked
             ``provider_is_configured`` and hidden the offer in that case;
             this is a defensive re-check, not the primary gate).
+        asyncio.CancelledError: If this coroutine itself is hard-cancelled
+            (e.g. by Textual's ``exclusive=True`` worker mechanism) while
+            ``runner.run`` is in flight. Re-raised after marking any
+            already-created run rows for this bench ``"cancelled"`` (see
+            ``_mark_orphaned_runs_cancelled``) -- never swallowed, since a
+            caller (and Textual's own worker bookkeeping) needs to see the
+            real cancellation.
     """
     db = view_model.db
     if db is None:
@@ -274,7 +332,14 @@ async def create_and_run_sample_bench(
     ]
     factory = client_factory or _default_client_factory(app_config)
     runner = WordBenchRunner(db, factory)
-    outcome = await runner.run(config, [target], snippets, task_id)
+    try:
+        outcome = await runner.run(
+            config, [target], snippets, task_id,
+            progress=progress, cancel_token=cancel_token,
+        )
+    except asyncio.CancelledError:
+        _mark_orphaned_runs_cancelled(db, task_id)
+        raise
 
     return SampleBenchResult(
         task_id=task_id,

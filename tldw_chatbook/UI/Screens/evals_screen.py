@@ -22,6 +22,7 @@ never a ``Screen``.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from loguru import logger
@@ -33,7 +34,7 @@ from textual.widgets import Button, Static
 from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.models import Target as WordBenchTarget
-from ...Evals.word_bench.runner import CaptureClientLike
+from ...Evals.word_bench.runner import CancelToken, CaptureClientLike
 from ..Evals import sample_bench
 from ..Evals.bench_editor import BenchEditor, ClassicTaskDetail
 from ..Evals.evals_state import EvalsSelection, EvalsViewModel, SelectionKind
@@ -70,6 +71,21 @@ class EvalsScreen(BaseAppScreen):
         self._sample_bench_client_factory: Optional[
             Callable[[WordBenchTarget], CaptureClientLike]
         ] = None
+        #: True for the duration of one create-and-run flow. The PRIMARY
+        #: guard against a second click starting a second worker (the
+        #: button is also disabled live -- see ``_set_sample_bench_
+        #: running_ui`` -- but a disabled widget not yet re-rendered, or a
+        #: message posted directly as this screen's own tests do, must not
+        #: be able to race past a disabled button and start two runs).
+        self._sample_bench_running: bool = False
+        #: The active run's cooperative cancel token, or ``None`` when no
+        #: run is in flight. Not currently triggered by anything in this
+        #: screen (the running-guard above prevents the second-click race
+        #: that would otherwise need it) -- kept as a real, threaded
+        #: seam rather than a decorative parameter, since
+        #: ``WordBenchRunner.run`` already accepts one and a future cancel
+        #: affordance should not need a second plumbing pass.
+        self._sample_bench_cancel_token: Optional[CancelToken] = None
 
     def _current_app_config(self) -> dict[str, Any]:
         """The app's loaded settings, read fresh on every recompose (not
@@ -161,8 +177,23 @@ class EvalsScreen(BaseAppScreen):
         ``sample_bench.py``). Real DB writes plus a real HTTP call (in
         production) -- run as a worker, never inline in a message handler,
         per CLAUDE.md's "Workers for operations >100ms" rule.
+
+        ``_sample_bench_running`` is checked FIRST and unconditionally: the
+        button is disabled for the run's duration (``_set_sample_bench_
+        running_ui``), but a disabled widget mid-recompose, or a message
+        posted directly (as this screen's own tests do to simulate a race),
+        must not be able to start a SECOND worker in the same
+        ``exclusive=True`` group -- that is exactly what previously let a
+        second click hard-cancel the first run via ``asyncio.
+        CancelledError`` and abandon its DB rows mid-flight (see
+        ``sample_bench._mark_orphaned_runs_cancelled`` for the cleanup this
+        guard makes almost always unnecessary in practice, kept anyway as a
+        second line of defence for whatever OTHER path might cancel this
+        worker, e.g. the screen itself unmounting mid-run).
         """
         event.stop()
+        if self._sample_bench_running:
+            return
         self.run_worker(
             self._create_sample_bench_worker(),
             exclusive=True,
@@ -171,22 +202,83 @@ class EvalsScreen(BaseAppScreen):
 
     async def _create_sample_bench_worker(self) -> None:
         app_config = self._current_app_config()
+        cancel_token = CancelToken()
+        self._sample_bench_running = True
+        self._sample_bench_cancel_token = cancel_token
+        self._set_sample_bench_running_ui()
+        result = None
         try:
             result = await sample_bench.create_and_run_sample_bench(
                 self._view_model,
                 app_config,
                 client_factory=self._sample_bench_client_factory,
+                progress=self._on_sample_bench_progress,
+                cancel_token=cancel_token,
             )
+        except asyncio.CancelledError:
+            # sample_bench.py's own except-and-re-raise already marked any
+            # created run rows "cancelled" before this propagated here --
+            # log and let it continue propagating; swallowing a
+            # CancelledError is its own bug (Textual's worker bookkeeping
+            # needs to observe the real cancellation).
+            logger.info("Sample bench worker was cancelled.")
+            raise
         except Exception as exc:
             logger.opt(exception=True).warning("Sample bench creation failed.")
             self.app_instance.notify(
                 f"Could not create the sample bench: {exc}", severity="error"
             )
+        finally:
+            self._sample_bench_running = False
+            self._sample_bench_cancel_token = None
+            self._reset_sample_bench_running_ui()
+        if result is not None:
+            self.app_instance.notify(
+                "Sample bench created and run.", severity="information"
+            )
+            self.select(kind="run_group", id=result.run_group_id)
+
+    def _on_sample_bench_progress(self, done: int, total: int) -> None:
+        """``sample_bench.ProgressFn`` -- called synchronously from within
+        ``WordBenchRunner.run``'s own coroutine (this worker's, not a
+        separate OS thread), so mutating widgets directly here is safe,
+        the same way ``_on_grid_cell_focused`` mutates the inspector
+        directly rather than needing ``call_from_thread``."""
+        self._set_sample_bench_running_ui(done=done, total=total)
+
+    def _set_sample_bench_running_ui(self, *, done: int = 0, total: int = 0) -> None:
+        """Disables the "Create sample bench" button and gives it a live
+        running label for as long as a run is in flight -- see the class
+        docstring note above on why a disabled-but-not-yet-rerendered
+        button is not by itself a sufficient guard against a second click,
+        only a visible signal that one is already running.
+        """
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            button = self.query_one("#evals-create-sample-bench", Button)
+        except QueryError:
             return
-        self.app_instance.notify(
-            "Sample bench created and run.", severity="information"
+        button.disabled = True
+        button.label = (
+            f"Running sample bench… ({done}/{total})" if total else "Creating sample bench…"
         )
-        self.select(kind="run_group", id=result.run_group_id)
+
+    def _reset_sample_bench_running_ui(self) -> None:
+        """Restores the button after a run ends. A no-op (via the same
+        ``QueryError`` guard) on the success path, where ``self.select(...)``
+        immediately recomposes the rail and replaces this button with the
+        bench's own row anyway -- this only matters on the failure path,
+        where the SAME ``LibraryRail`` instance survives and must not be
+        left permanently disabled."""
+        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
+
+        try:
+            button = self.query_one("#evals-create-sample-bench", Button)
+        except QueryError:
+            return
+        button.disabled = False
+        button.label = "Create sample bench"
 
     @on(ResultsGrid.CellFocused)
     def _on_grid_cell_focused(self, event: ResultsGrid.CellFocused) -> None:

@@ -13,18 +13,26 @@ module docstring for why that distinction is the entire point of this PR.
 install's most common condition is zero benches, zero datasets, zero runs,
 and possibly zero configured providers:
 
-- No provider configured (``sample_bench.provider_is_configured`` is
-  ``False``) AND no word benches exist -> the Benches section's empty copy
-  becomes a Settings-routing message instead of the sample-bench offer. No
-  target list, no wall of preflight failures -- a user with no providers
-  cannot act on either. Scoped to the Benches section only: Datasets/Runs
-  never showed a target list or preflight results to begin with, and
-  classic (non-word-bench) tasks need no provider at all -- their labelled
-  subgroup stays reachable under Benches regardless.
-- Providers configured but no benches -> the Benches section's empty copy
-  gains a one-click "Create sample bench" button (see ``sample_bench.py``).
-  Never shown when providers aren't configured -- see ``Do not fabricate``
-  in ``sample_bench.py``'s own module docstring.
+- No word benches exist -> the Benches section offers either "Create
+  sample bench" (``sample_bench.provider_is_configured`` is ``True``) or
+  "Open Settings" (it is ``False``) -- **independent of whether classic
+  tasks exist**. An earlier version of this gate also required `not
+  classic_tasks`, which meant a user with a pre-existing classic task and
+  no word benches (exactly this rebuild's upgrading population) saw
+  NEITHER offer, whatever providers they had configured -- a real
+  regression caught by review, not by this file's own tests. The full
+  explanatory copy (``_no_providers_message``/"No benches yet.") is still
+  reserved for a FULLY empty section (no classic tasks either), since
+  otherwise it would be a redundant wall of text above a real list; the
+  actionable button always renders regardless. Scoped to the Benches
+  section only, never the whole rail: Datasets/Runs never showed a target
+  list or preflight results to begin with, and classic (non-word-bench)
+  tasks need no provider at all.
+- The "no provider" copy names llama.cpp specifically ("No local
+  llama.cpp provider is configured"), not "a provider" in general --
+  ``provider_is_configured`` only ever asks whether a ``llama_cpp`` target
+  resolves (see ``sample_bench.py``), so a user with e.g. OpenAI
+  configured is not missing "a provider" by any honest reading.
 - No datasets -> the Datasets section's empty copy gains "+ New dataset"
   and "Import…" side by side, handled locally here (dataset creation and
   import are plain DB/file operations, not provider calls, mirroring
@@ -178,33 +186,47 @@ class LibraryRail(Vertical):
             row_label=_run_group_row_label,
         )
 
-    def _no_providers_state(self) -> ComposeResult:
-        """Replaces the Benches section's usual "No benches yet." + sample-
-        bench offer when NO provider is configured -- per requirement 1: no
-        target list, no wall of preflight failures, just a route to where a
-        provider gets set up.
+    def _no_providers_message(self) -> ComposeResult:
+        """The two-line explanation for the Benches section's empty copy
+        when NO provider is configured -- per requirement 1: no target
+        list, no wall of preflight failures.
 
-        Scoped to the Benches section specifically (not the whole rail):
-        Datasets and Runs never rendered a target list or preflight results
-        to begin with, and classic (non-word-bench) tasks need no provider
-        at all -- their own read-only subgroup must stay reachable
-        regardless (see ``test_classic_task_subgroup_is_reachable_by_
-        clicking_its_rail_row``, which this scoping keeps passing).
+        Only yielded when the section is otherwise FULLY empty (see
+        ``_benches_section_body`` -- with a classic task also present, this
+        would just be a redundant wall of text above a real list; the
+        actionable ``_open_settings_button`` below still renders either
+        way, which is the part that actually matters).
+
+        The copy names llama.cpp specifically, not "a provider" in
+        general: ``provider_is_configured`` only ever asks whether a
+        ``llama_cpp`` target resolves (see ``sample_bench.py``'s own "Why
+        the target resolution is narrow" note) -- a user with, say, OpenAI
+        configured is NOT missing "a provider" by any honest reading, and
+        the old, broader wording made a claim about their setup that
+        wasn't true. This is the same do-not-fabricate principle applied
+        to copy instead of data.
         """
         yield Static(
-            "No providers are configured yet.",
+            "No local llama.cpp provider is configured.",
             id="evals-rail-no-providers",
             classes="evals-pane-heading",
             markup=False,
         )
         yield Static(
-            "Configure a provider (a local server or an API key) in "
-            "Settings, then come back here to build or run a bench.",
+            "Configure a local llama.cpp server in Settings, then come "
+            "back here to build or run a bench.",
             id="evals-rail-no-providers-detail",
             classes="evals-rail-empty-copy",
             markup=False,
         )
-        yield Button("Open Settings", id="evals-rail-open-settings")
+
+    @staticmethod
+    def _open_settings_button() -> Button:
+        return Button(
+            "Open Settings",
+            id="evals-rail-open-settings",
+            tooltip="No local llama.cpp provider is configured yet.",
+        )
 
     def _section(
         self,
@@ -347,13 +369,36 @@ class LibraryRail(Vertical):
                         label=_bench_row_label(row),
                     )
                 )
-        elif not classic_tasks:
-            if sample_bench.provider_is_configured(self.view_model, self.app_config):
-                children.append(
-                    Static(
-                        "No benches yet.", classes="evals-rail-empty-copy", markup=False
+        else:
+            # No word benches -- offer sample-bench creation (if a
+            # provider is configured) or a Settings route, REGARDLESS of
+            # whether classic tasks exist. Gating this on `not
+            # classic_tasks` too was a real regression (caught by review,
+            # not by this file's own tests -- see Tests/UI/test_evals_
+            # empty_states.py's test_sample_bench_offer_is_reachable_
+            # alongside_a_classic_task): it left a user with a
+            # pre-existing classic task and no word benches -- exactly
+            # this rebuild's upgrading population -- with NEITHER offer,
+            # no matter what providers they had configured.
+            provider_ready = sample_bench.provider_is_configured(
+                self.view_model, self.app_config
+            )
+            if not classic_tasks:
+                # Fully empty section -- the full explanatory copy. With a
+                # classic task also present, this text would just be a
+                # redundant wall above a real list; the actionable button
+                # below still renders either way.
+                if provider_ready:
+                    children.append(
+                        Static(
+                            "No benches yet.",
+                            classes="evals-rail-empty-copy",
+                            markup=False,
+                        )
                     )
-                )
+                else:
+                    children.extend(self._no_providers_message())
+            if provider_ready:
                 # A real target IS resolvable here -- the button never
                 # appears pointing at nothing (see sample_bench.py's "Do
                 # not fabricate" note).
@@ -368,7 +413,7 @@ class LibraryRail(Vertical):
                     )
                 )
             else:
-                children.extend(self._no_providers_state())
+                children.append(self._open_settings_button())
 
         if classic_tasks:
             # Inert -- never registered in `_row_targets`, so a press on
