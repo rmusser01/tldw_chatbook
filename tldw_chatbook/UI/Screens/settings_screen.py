@@ -3866,7 +3866,7 @@ class SettingsScreen(BaseAppScreen):
             else None
         )
         resolved = resolve_effective_provider_model(
-            self.app_instance,
+            self._chat_defaults(),
             settings_provider=settings_provider,
             settings_model=settings_model,
         )
@@ -3884,7 +3884,7 @@ class SettingsScreen(BaseAppScreen):
         return resolved
 
     def _provider_loaded_setting_values(self) -> dict[str, object]:
-        resolved = resolve_effective_provider_model(self.app_instance)
+        resolved = resolve_effective_provider_model(self._chat_defaults())
         provider = str(resolved.provider or "").strip()
         model = str(resolved.model or "").strip()
         profile = self._provider_model_profile(provider, model)
@@ -4563,15 +4563,6 @@ class SettingsScreen(BaseAppScreen):
         key_required = sum(1 for entry in entries if entry.requires_api_key)
         keyless = sum(1 for entry in entries if not entry.requires_api_key)
         return f"Credential policy: {key_required} require keys; {keyless} local/keyless providers"
-
-    def _sync_provider_runtime_defaults(self, provider: str, model: str) -> None:
-        """Keep Console-facing app defaults aligned after a Settings save."""
-        if hasattr(self.app_instance, "chat_api_provider_value"):
-            self.app_instance.chat_api_provider_value = provider
-        if hasattr(self.app_instance, "chat_api_model_value"):
-            self.app_instance.chat_api_model_value = model
-        if hasattr(self.app_instance, "chat_model_value"):
-            self.app_instance.chat_model_value = model
 
     def _provider_model_defaults(self, provider: str) -> Mapping[str, object]:
         model_defaults = self._provider_config(provider).get("model_defaults", {})
@@ -9370,11 +9361,6 @@ class SettingsScreen(BaseAppScreen):
             if saved:
                 defaults = self._chat_defaults()
                 defaults.update(dirty_values)
-                if dirty_values:
-                    self._sync_provider_runtime_defaults(
-                        str(values.get("provider") or "").strip(),
-                        str(values.get("model") or "").strip(),
-                    )
                 if (
                     endpoint_dirty
                     or credential_dirty

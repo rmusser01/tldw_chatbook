@@ -820,6 +820,14 @@ def test_tldw_cli_has_no_retired_llm_destination_state_or_dispatcher() -> None:
     assert violations == {}
 
 
+def test_tldw_cli_has_no_root_provider_descriptor_or_access() -> None:
+    app_class = _class_definition(APP_PATH, "TldwCli")
+    collector = _NamedOccurrenceCollector(APP_PATH, "chat_api_provider_value")
+    collector.visit(app_class)
+
+    assert collector.occurrences == []
+
+
 def test_tldw_cli_has_no_constant_reactive_attribute_dispatch() -> None:
     app_class = _class_definition(APP_PATH, "TldwCli")
     violations = [
@@ -983,6 +991,13 @@ def test_handoff_exception_logs_are_metadata_only() -> None:
         (
             CHAT_SCREEN_PATH,
             _method_definition(chat_class, "_stage_handoff_as_console_live_work"),
+        ),
+        (
+            CHAT_SCREEN_PATH,
+            _method_definition(
+                chat_class,
+                "consume_pending_console_provider_intent",
+            ),
         ),
         (
             STUDY_SCREEN_PATH,

@@ -6,12 +6,14 @@ from collections.abc import Mapping
 import copy
 from dataclasses import dataclass, field
 from enum import StrEnum
+import re
 import threading
 from typing import Any, Generic, TypeVar
 
 from ...ACP_Interop.runtime_session import ACP_SESSION_RECORD_PREFIX
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
+from ...Chat.provider_readiness import provider_config_key
 from ..Screens.study_scope_models import (
     STUDY_INITIAL_SECTIONS,
     StudyScopeContext,
@@ -19,6 +21,24 @@ from ..Screens.study_scope_models import (
 
 
 ARTIFACT_CHATBOOK_RECORD_PREFIX = "local:chatbook:"
+_PROVIDER_IDENTIFIER_PATTERN = re.compile(r"[a-z0-9][a-z0-9_]{0,127}")
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleProviderIntent:
+    """Memory-only request to select one normalized Console provider."""
+
+    provider: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.provider, str):
+            raise TypeError("Console provider must be text")
+        normalized = provider_config_key(self.provider)
+        if not normalized:
+            raise ValueError("Console provider must be non-empty")
+        if _PROVIDER_IDENTIFIER_PATTERN.fullmatch(normalized) is None:
+            raise ValueError("Console provider identifier is invalid")
+        object.__setattr__(self, "provider", normalized)
 
 
 class HandoffChannel(StrEnum):
@@ -27,6 +47,7 @@ class HandoffChannel(StrEnum):
     CHAT = "chat"
     CONSOLE_LIVE_WORK = "console_live_work"
     CONSOLE_PROMPT_INSERT = "console_prompt_insert"
+    CONSOLE_PROVIDER = "console_provider"
     STUDY_SCOPE = "study_scope"
     STUDY_INITIAL_SECTION = "study_initial_section"
     ARTIFACT_CHATBOOK_TARGET = "artifact_chatbook_target"
@@ -176,6 +197,10 @@ class PendingHandoffStore:
             if not value.strip():
                 raise ValueError("Console prompt must be non-empty text")
             return value
+        if channel is HandoffChannel.CONSOLE_PROVIDER:
+            if not isinstance(value, ConsoleProviderIntent):
+                raise TypeError("Console provider handoff must be typed")
+            return ConsoleProviderIntent(provider=value.provider)
         if channel is HandoffChannel.STUDY_SCOPE:
             if not isinstance(value, StudyScopeContext):
                 raise TypeError("Study scope must be a StudyScopeContext")

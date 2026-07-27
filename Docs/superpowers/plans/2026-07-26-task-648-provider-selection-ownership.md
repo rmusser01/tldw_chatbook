@@ -34,12 +34,15 @@ provider resolution.
 ## File Structure
 
 - Modify `tldw_chatbook/UI/Navigation/pending_handoff_store.py`: add the typed provider-selection channel and normalization.
+- Modify `tldw_chatbook/UI/Navigation/__init__.py`: export the typed provider-selection intent.
 - Modify `tldw_chatbook/UI/Screens/provider_model_resolution.py`: replace implicit app reads with explicit configuration/default/session inputs.
 - Modify `tldw_chatbook/UI/Screens/chat_screen.py`: apply and consume provider selections against the exact active session.
 - Modify `tldw_chatbook/UI/Screens/settings_screen.py`: persist/reload defaults without writing runtime provider/model fields.
+- Modify `tldw_chatbook/Widgets/model_search_picker.py`: pass explicit provider/model mappings and the catalog scope service to the resolver.
 - Modify `tldw_chatbook/app.py`: update command-palette behavior and remove the root descriptor, initializer, and watcher.
 - Move `Tests/UI/test_pending_handoff_store.py` to `Tests/State/test_pending_handoff_store.py`: keep the app-independent protocol suite outside the UI surrogate-harness tree.
 - Replace `Tests/UI/test_provider_model_resolution.py` with `Tests/Provider/test_provider_model_resolution.py`: pass explicit mappings and a narrow catalog-service collaborator, never a fake app.
+- Delete `Tests/Widgets/test_model_search_picker.py`: replace the simplified host apps with direct resolver coverage and a real Console popover path in the production-app suite.
 - Create `Tests/ProductionApp/test_provider_selection_ownership.py`.
 - Modify `Tests/test_application_state_ownership.py`.
 
@@ -73,6 +76,7 @@ Expected: FAIL before the channel exists, then PASS after its implementation.
     model-option merging.
 - [ ] Remove `_chat_default(app_instance, ...)`, `getattr(...chat_api_provider_value...)`, and app-reactive source labels. Preserve precedence: Settings draft, active Console selection, persisted default.
 - [ ] Replace `ChatScreen._console_resolution_view()` and its `SimpleNamespace` with a direct immutable/default mapping passed to the resolver.
+- [ ] Update `ModelSearchPicker` to read the production app's mappings and narrow catalog service explicitly at the resolver boundary; it must not restore an app-shaped resolver argument.
 - [ ] Convert legitimate app-independent resolver tests to mappings/value objects. Delete or rewrite cases that depend on a fake application rather than retaining a compatibility argument.
 - [ ] Run:
 
@@ -95,6 +99,7 @@ Expected: PASS using direct explicit inputs and no app surrogate.
 - [ ] Claim the provider intent only after the Console store/session is ready. A valid selection acknowledges; an invalid/unsupported provider notifies bounded recovery and acknowledges; a transient readiness failure releases the exact claim.
 - [ ] Use the same handoff path when Console is already active: stage, then ask the mounted real `ChatScreen` to consume. Away from Console, stage once and honestly notify that the next Console entry will apply it.
 - [ ] Add mounted production tests for active-session application, away-from-Console fresh navigation, replacement races, invalid terminal rejection, transient release/retry, and preservation of a user session across a Settings save.
+- [ ] Exercise model search through the real `ConsoleModelPopover` mounted by the production `ChatScreen`; do not retain a simplified picker host application.
 
 ## Task 4: Remove the Root Cache and Settings Mirror
 
@@ -116,11 +121,11 @@ Expected: PASS.
 - [ ] Run:
 
 ```bash
-python -m compileall -q tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/provider_model_resolution.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/settings_screen.py tldw_chatbook/app.py
-python -m ruff check tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/provider_model_resolution.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/app.py Tests/State/test_pending_handoff_store.py Tests/Provider/test_provider_model_resolution.py Tests/ProductionApp/test_provider_selection_ownership.py Tests/test_application_state_ownership.py
+python -m compileall -q tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/UI/Screens/provider_model_resolution.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/settings_screen.py tldw_chatbook/Widgets/model_search_picker.py tldw_chatbook/app.py
+python -m ruff check tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/UI/Screens/provider_model_resolution.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/model_search_picker.py tldw_chatbook/app.py Tests/State/test_pending_handoff_store.py Tests/Provider/test_provider_model_resolution.py Tests/ProductionApp/test_provider_selection_ownership.py Tests/test_application_state_ownership.py
 python -m ruff check --ignore F841 tldw_chatbook/UI/Screens/settings_screen.py
 python -c 'import json, subprocess, sys; p = subprocess.run([sys.executable, "-m", "ruff", "check", "--select", "F841", "--output-format", "json", "tldw_chatbook/UI/Screens/settings_screen.py"], capture_output=True, text=True); findings = json.loads(p.stdout); assert len(findings) == 2 and all(item["code"] == "F841" and "`config_path`" in item["message"] for item in findings), findings'
-python -m ruff format --check tldw_chatbook/UI/Navigation/pending_handoff_store.py Tests/State/test_pending_handoff_store.py Tests/Provider/test_provider_model_resolution.py Tests/ProductionApp/test_provider_selection_ownership.py Tests/test_application_state_ownership.py
+python -m ruff format --check tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/Widgets/model_search_picker.py Tests/State/test_pending_handoff_store.py Tests/Provider/test_provider_model_resolution.py Tests/ProductionApp/test_provider_selection_ownership.py Tests/test_application_state_ownership.py
 git diff --check
 ```
 
@@ -133,8 +138,8 @@ git diff --check
 - [ ] Commit implementation:
 
 ```bash
-git add tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/provider_model_resolution.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/settings_screen.py tldw_chatbook/app.py Tests/State/test_pending_handoff_store.py Tests/Provider/test_provider_model_resolution.py Tests/ProductionApp/test_provider_selection_ownership.py Tests/test_application_state_ownership.py
-git add -u Tests/UI/test_pending_handoff_store.py Tests/UI/test_provider_model_resolution.py
+git add tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Navigation/__init__.py tldw_chatbook/UI/Screens/provider_model_resolution.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/settings_screen.py tldw_chatbook/Widgets/model_search_picker.py tldw_chatbook/app.py Tests/State/test_pending_handoff_store.py Tests/Provider/test_provider_model_resolution.py Tests/ProductionApp/test_provider_selection_ownership.py Tests/test_application_state_ownership.py
+git add -u Tests/UI/test_pending_handoff_store.py Tests/UI/test_provider_model_resolution.py Tests/Widgets/test_model_search_picker.py
 git commit -m "refactor(console): own provider selection by lifetime (task-648)"
 ```
 

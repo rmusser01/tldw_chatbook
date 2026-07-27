@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import re
 import time
-from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
 import uuid
 
@@ -29,7 +28,10 @@ from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
-from ..Navigation.pending_handoff_store import HandoffChannel
+from ..Navigation.pending_handoff_store import (
+    ConsoleProviderIntent,
+    HandoffChannel,
+)
 from .chat_screen_state import ChatScreenState, TabState, MessageData, TaskResumeState
 from .provider_model_resolution import (
     ResolvedProviderModelOption,
@@ -663,7 +665,14 @@ class ChatScreen(BaseAppScreen):
             return
         try:
             options = await resolve_provider_model_options(
-                self.app, provider=provider, current_model=current_model,
+                self._providers_models(),
+                getattr(
+                    self.app_instance,
+                    "llm_provider_catalog_scope_service",
+                    None,
+                ),
+                provider=provider,
+                current_model=current_model,
             )
         except Exception:
             logger.opt(exception=True).warning(f"Could not resolve model options for {provider}")
@@ -1828,76 +1837,19 @@ class ChatScreen(BaseAppScreen):
             control labels and run-inspector readiness.
         """
         effective = resolve_effective_provider_model(
-            self._console_resolution_view(),
+            self._persisted_chat_defaults(),
             console_provider=self._console_control_provider,
             console_model=self._console_control_model,
         )
         return effective.provider, effective.model
 
-    def _console_resolution_view(self) -> Any:
-        """Return resolution inputs backed by the freshest config.
-
-        ``resolve_effective_provider_model`` reads ``app_config`` chat defaults
-        and the app-level provider/model reactives. Both are boot-time
-        snapshots: after a Settings save the reactives still echo the template
-        defaults (e.g. ``OpenAI``/``gpt-4o``) and would keep winning over the
-        freshly saved ``chat_defaults`` (task-177 live regression). This view
-        substitutes the fresh config and suppresses reactive values that are
-        mere echoes of the boot defaults when the fresh defaults changed;
-        genuinely user-chosen reactive values (which differ from the boot
-        defaults) still win.
-        """
-        fresh_config = self._provider_readiness_app_config()
-        boot_config = getattr(self.app_instance, "app_config", {}) or {}
-        reactive_provider = getattr(self.app_instance, "chat_api_provider_value", None)
-        reactive_model = getattr(
-            self.app_instance, "chat_api_model_value", None
-        ) or getattr(self.app_instance, "chat_model_value", None)
-        if fresh_config is not boot_config:
-            boot_defaults = (
-                boot_config.get("chat_defaults", {})
-                if isinstance(boot_config, Mapping)
-                else {}
-            )
-            fresh_defaults = (
-                fresh_config.get("chat_defaults", {})
-                if isinstance(fresh_config, Mapping)
-                else {}
-            )
-            if not isinstance(boot_defaults, Mapping):
-                boot_defaults = {}
-            if not isinstance(fresh_defaults, Mapping):
-                fresh_defaults = {}
-            boot_provider = provider_config_key(
-                str(boot_defaults.get("provider") or "")
-            )
-            fresh_provider = provider_config_key(
-                str(fresh_defaults.get("provider") or "")
-            )
-            reactive_provider_key = provider_config_key(str(reactive_provider or ""))
-            if (
-                reactive_provider_key
-                and reactive_provider_key == boot_provider
-                and fresh_provider
-                and fresh_provider != boot_provider
-            ):
-                reactive_provider = None
-            boot_model = str(boot_defaults.get("model") or "").strip()
-            fresh_model = str(fresh_defaults.get("model") or "").strip()
-            reactive_model_text = str(reactive_model or "").strip()
-            if (
-                reactive_model_text
-                and reactive_model_text == boot_model
-                and fresh_model
-                and fresh_model != boot_model
-            ):
-                reactive_model = None
-        return SimpleNamespace(
-            app_config=fresh_config,
-            chat_api_provider_value=reactive_provider,
-            chat_api_model_value=reactive_model,
-            chat_model_value=None,
-        )
+    def _persisted_chat_defaults(self) -> Mapping[str, Any]:
+        """Return the freshest persisted provider/model defaults."""
+        config = self._provider_readiness_app_config()
+        if not isinstance(config, Mapping):
+            return {}
+        defaults = config.get("chat_defaults", {})
+        return defaults if isinstance(defaults, Mapping) else {}
 
     @staticmethod
     def _normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -1949,7 +1901,12 @@ class ChatScreen(BaseAppScreen):
             return providers_models
         try:
             model_options = await resolve_provider_model_options(
-                self.app_instance,
+                providers_models,
+                getattr(
+                    self.app_instance,
+                    "llm_provider_catalog_scope_service",
+                    None,
+                ),
                 provider=provider_key,
                 current_model=current_model,
             )
@@ -2112,6 +2069,157 @@ class ChatScreen(BaseAppScreen):
         store.replace_session_settings(session.id, settings)
         self._sync_console_chat_core_state()
         self._sync_console_settings_summary()
+
+    def _configured_console_provider(
+        self,
+        provider: str,
+    ) -> tuple[str, list[str]] | None:
+        """Resolve a normalized intent against configured provider identities."""
+        requested_key = provider_config_key(provider)
+        for configured_provider, configured_models in self._providers_models().items():
+            if provider_config_key(configured_provider) != requested_key:
+                continue
+            models = [
+                str(model).strip()
+                for model in configured_models
+                if str(model or "").strip()
+                and str(model).strip().lower() not in {"none", "null"}
+            ]
+            return requested_key, models
+        return None
+
+    def _configured_console_provider_default_model(
+        self,
+        provider: str,
+        models: list[str],
+    ) -> str | None:
+        """Return a valid configured default model for one provider."""
+        config = self._provider_readiness_app_config()
+        api_settings = (
+            config.get("api_settings", {}) if isinstance(config, Mapping) else {}
+        )
+        provider_settings: Mapping[str, Any] = {}
+        if isinstance(api_settings, Mapping):
+            for configured_provider, configured_settings in api_settings.items():
+                if provider_config_key(str(configured_provider)) != provider:
+                    continue
+                if isinstance(configured_settings, Mapping):
+                    provider_settings = configured_settings
+                break
+        candidates = (
+            provider_settings.get("model"),
+            provider_settings.get("api_model"),
+            provider_settings.get("default_model"),
+        )
+        for candidate in candidates:
+            model = str(candidate or "").strip()
+            if model and model in models:
+                return model
+
+        defaults = self._persisted_chat_defaults()
+        if provider_config_key(str(defaults.get("provider") or "")) == provider:
+            default_model = str(defaults.get("model") or "").strip()
+            if default_model and default_model in models:
+                return default_model
+        return models[0] if models else None
+
+    def _apply_console_provider_intent(
+        self,
+        intent: ConsoleProviderIntent,
+        *,
+        store: ConsoleChatStore,
+        session_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> bool:
+        """Apply one validated intent to the session captured by its consumer."""
+        configured = self._configured_console_provider(intent.provider)
+        if configured is None:
+            self.app_instance.notify(
+                "That provider is unavailable. Choose a configured provider in Settings.",
+                severity="warning",
+            )
+            return False
+
+        provider, models = configured
+        model = self._configured_console_provider_default_model(provider, models)
+        derived = build_default_console_session_settings(
+            self._provider_readiness_app_config(),
+            provider,
+            model,
+        )
+        next_settings = replace(
+            settings,
+            provider=provider,
+            model=model,
+            base_url=derived.base_url,
+            source="user",
+        )
+        store.replace_session_settings(session_id, next_settings)
+        if store.active_session_id == session_id:
+            self._console_control_provider = next_settings.provider
+            self._console_control_model = next_settings.model
+            self._sync_console_chat_core_state()
+            self._sync_console_settings_summary()
+            self._sync_console_control_bar()
+        self.app_instance.notify(
+            f"Console provider set to {provider} for this session.",
+            severity="information",
+        )
+        return True
+
+    def consume_pending_console_provider_intent(self) -> bool:
+        """Consume one typed provider intent after the Console session is ready."""
+        try:
+            store = self._ensure_console_chat_store()
+            settings = self._ensure_active_console_session_settings()
+            session_id = store.active_session_id
+            if session_id is None:
+                return False
+        except Exception as exc:
+            logger.warning(
+                "Console provider handoff is not ready "
+                "(exception_category={})",
+                type(exc).__name__,
+            )
+            return False
+
+        claim = self.app_instance.pending_handoffs.claim(
+            HandoffChannel.CONSOLE_PROVIDER
+        )
+        if claim is None:
+            return False
+        try:
+            if not isinstance(claim.value, ConsoleProviderIntent):
+                raise TypeError("Console provider handoff was not typed")
+            self._apply_console_provider_intent(
+                claim.value,
+                store=store,
+                session_id=session_id,
+                settings=settings,
+            )
+        except Exception as exc:
+            self.app_instance.pending_handoffs.release(claim)
+            logger.warning(
+                "Console provider handoff will retry "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(exc).__name__,
+            )
+            self.app_instance.notify(
+                "Console provider selection could not be applied yet; it will retry.",
+                severity="warning",
+            )
+            return False
+        self.app_instance.pending_handoffs.acknowledge(claim)
+        return True
+
+    def current_console_provider_for_command(self) -> str | None:
+        """Return the active session provider without creating a session."""
+        settings = self._active_console_session_settings()
+        if settings is None:
+            return None
+        return str(settings.provider or "").strip() or None
 
     def _active_console_settings_context_estimate(
         self,
@@ -7661,6 +7769,7 @@ class ChatScreen(BaseAppScreen):
         # a failed early attempt releases its claim for this screen's
         # existing resume/user-triggered retry paths.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
+        self.set_timer(0.15, self.consume_pending_console_provider_intent)
         self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
@@ -12550,6 +12659,7 @@ class ChatScreen(BaseAppScreen):
         # immediately before inserting, so the insert is self-guarding
         # regardless of which lifecycle hook scheduled it.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
+        self.set_timer(0.15, self.consume_pending_console_provider_intent)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call

@@ -319,6 +319,7 @@ from tldw_chatbook.config import (
 )
 from .UI.Navigation.main_navigation import NavigateToScreen
 from .UI.Navigation.pending_handoff_store import (
+    ConsoleProviderIntent,
     HandoffChannel,
     HandoffValueError,
     PendingHandoffStore,
@@ -916,26 +917,58 @@ class LLMProviderProvider(Provider):
                 help=f"Switch to {provider} provider",
             )
 
-    def handle_llm_command(self, provider_id: str, command: str) -> None:
+    def handle_llm_command(self, provider_id: str | None, command: str) -> None:
         """Handle LLM provider commands."""
         try:
             if provider_id is None or "show_current" in command:
-                # Show current provider (the app-level chat provider reactive)
-                current = (
-                    getattr(self.app, "chat_api_provider_value", None) or "Unknown"
-                )
+                current = self._current_provider()
                 self.app.notify(
                     f"Current LLM provider: {current}", severity="information"
                 )
             else:
-                # Switch provider for real: same reactive the Settings screen and
-                # Console model popover drive, whose watcher refreshes model selects.
-                self.app.chat_api_provider_value = provider_id
-                self.app.notify(
-                    f"Switched LLM provider to {provider_id}", severity="information"
+                self.app.pending_handoffs.stage(
+                    HandoffChannel.CONSOLE_PROVIDER,
+                    ConsoleProviderIntent(provider=provider_id),
                 )
+                chat_screen = self._mounted_chat_screen()
+                if chat_screen is not None:
+                    chat_screen.consume_pending_console_provider_intent()
+                else:
+                    self.app.notify(
+                        "Provider selection queued for the next Console entry.",
+                        severity="information",
+                    )
         except Exception as e:
-            self.app.notify(f"Failed to execute LLM command: {e}", severity="error")
+            self.app.notify(
+                f"Failed to execute LLM command ({type(e).__name__}).",
+                severity="error",
+            )
+
+    def _mounted_chat_screen(self):
+        """Return the active production Console screen beneath any modal."""
+        if getattr(self.app, "current_tab", None) != TAB_CHAT:
+            return None
+        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+        for screen in reversed(tuple(getattr(self.app, "screen_stack", ()))):
+            if isinstance(screen, ChatScreen):
+                return screen
+        return None
+
+    def _current_provider(self) -> str:
+        """Resolve current provider from its lifetime owner."""
+        chat_screen = self._mounted_chat_screen()
+        if chat_screen is not None:
+            provider = chat_screen.current_console_provider_for_command()
+            if provider:
+                return provider
+        config = getattr(self.app, "app_config", {})
+        defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
+        if isinstance(defaults, dict):
+            provider = str(defaults.get("provider") or "").strip()
+            if provider:
+                return provider
+        return "Unknown"
 
 
 class QuickActionsProvider(Provider):
@@ -2766,14 +2799,13 @@ class TldwCli(
     # Initialize with a dummy value or fetch default from config here
     # Ensure the initial value matches what's set in compose/settings_sidebar
     # Fetching default provider from config:
-    _default_chat_provider = APP_CONFIG.get("chat_defaults", {}).get(
+    _default_rag_expansion_provider = APP_CONFIG.get("chat_defaults", {}).get(
         "provider", "OpenAI"
     )
     _default_ccp_provider = APP_CONFIG.get("character_defaults", {}).get(
         "provider", "Anthropic"
     )  # Changed from character_defaults
 
-    chat_api_provider_value: reactive[Optional[str]] = reactive(_default_chat_provider)
     # Renamed character_api_provider_value to ccp_api_provider_value for clarity with TAB_CCP
     ccp_api_provider_value: reactive[Optional[str]] = reactive(_default_ccp_provider)
 
@@ -2790,7 +2822,7 @@ class TldwCli(
 
     # RAG expansion provider reactive
     rag_expansion_provider_value: reactive[Optional[str]] = reactive(
-        _default_chat_provider
+        _default_rag_expansion_provider
     )
 
     # --- Reactives for CCP Character EDITOR (Center Pane) ---
@@ -6631,11 +6663,6 @@ class TldwCli(
             )
 
     # --- Add explicit methods to update reactives from Select changes ---
-    def update_chat_provider_reactive(self, new_value: Optional[str]) -> None:
-        self.chat_api_provider_value = (
-            new_value  # Watcher will call _update_model_select
-        )
-
     def update_ccp_provider_reactive(self, new_value: Optional[str]) -> None:  # Renamed
         self.ccp_api_provider_value = (
             new_value  # Watcher will call _update_model_select
@@ -7026,23 +7053,6 @@ class TldwCli(
 
         # Widget binding
         phase_start = time.perf_counter()
-        try:
-            chat_select = self.query_one(f"#{TAB_CHAT}-api-provider", Select)
-            self.watch(
-                chat_select, "value", self.update_chat_provider_reactive, init=False
-            )
-            self.loguru_logger.debug(f"Bound chat provider Select ({chat_select.id})")
-        except QueryError:
-            # Legacy selector is absent in the master-shell UI; this lookup is expected to
-            # fail on every modern boot, so log at DEBUG rather than ERROR.
-            self.loguru_logger.debug(
-                f"_post_mount_setup: Failed to find chat provider select: #{TAB_CHAT}-api-provider"
-            )
-        except Exception as e:
-            self.loguru_logger.opt(exception=True).error(
-                f"_post_mount_setup: Error binding chat provider select: {e}"
-            )
-
         # try:
         #     ccp_select = self.query_one(f"#{TAB_CCP}-api-provider", Select)
         #     #self.watch(ccp_select, "value", self.update_ccp_provider_reactive, init=False)
@@ -9516,20 +9526,6 @@ class TldwCli(
     def _clear_chat_sidebar_prompt_display(self) -> None:
         """Clears the prompt display TextAreas in the chat sidebar."""
         UIHelpers.clear_chat_sidebar_prompt_display(self)
-
-    def watch_chat_api_provider_value(self, new_value: Optional[str]) -> None:
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        self.loguru_logger.debug(
-            f"Watcher: chat_api_provider_value changed to {new_value}"
-        )
-        if new_value is None or new_value == Select.BLANK:
-            self._update_model_select(TAB_CHAT, [])
-            return
-        models = self.providers_models.get(new_value, [])
-        self._update_model_select(TAB_CHAT, models)
 
     def watch_ccp_api_provider_value(
         self, new_value: Optional[str]
