@@ -142,8 +142,9 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     parse_local_file_for_ingest(
         str(source),
         {
-            "transcription_model": "small",
-            "language": "es",
+            "transcription_provider": "parakeet-onnx",
+            "transcription_model": "nemo-parakeet-tdt-0.6b-v2",
+            "language": "en",
             "timestamps": False,
             "diarization": True,
         },
@@ -151,8 +152,9 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
 
     assert len(calls) == 1
     call = calls[0]
-    assert call["transcription_model"] == "small"
-    assert call["transcription_language"] == "es"
+    assert call["transcription_provider"] == "parakeet-onnx"
+    assert call["transcription_model"] == "nemo-parakeet-tdt-0.6b-v2"
+    assert call["transcription_language"] == "en"
     assert call["timestamp_option"] is False
     assert call["diarize"] is True
 
@@ -189,6 +191,7 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     parse_local_file_for_ingest(
         str(source),
         {
+            "transcription_provider": "faster-whisper",
             "transcription_model": "medium",
             "language": "fr",
             "timestamps": True,
@@ -198,6 +201,7 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
 
     assert len(calls) == 1
     call = calls[0]
+    assert call["transcription_provider"] == "faster-whisper"
     assert call["transcription_model"] == "medium"
     assert call["transcription_language"] == "fr"
     assert call["timestamp_option"] is True
