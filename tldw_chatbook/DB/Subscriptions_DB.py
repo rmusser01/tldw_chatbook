@@ -314,6 +314,24 @@ class SubscriptionsDB(BaseDB):
                 FOREIGN KEY (source_id) REFERENCES subscriptions(id) ON DELETE CASCADE
             );
 
+            -- Local watchlist alert rules. Same reasoning as
+            -- local_watchlist_runs above: owned here rather than created
+            -- lazily by LocalWatchlistsService, so a lazily-created table can
+            -- never race an additive migration that needs it to already
+            -- exist.
+            CREATE TABLE IF NOT EXISTS local_watchlist_alert_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                condition_type TEXT NOT NULL,
+                condition_value_json TEXT NOT NULL DEFAULT '{}',
+                severity TEXT NOT NULL DEFAULT 'warning',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (job_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+            );
+
             -- Create indices
             CREATE INDEX IF NOT EXISTS idx_subscriptions_priority_active ON subscriptions(priority DESC, is_active, is_paused);
             CREATE INDEX IF NOT EXISTS idx_subscriptions_tags ON subscriptions(tags);
