@@ -14905,28 +14905,39 @@ CodingWindow {
  * let that list grow without limit and push ITEMS/CONTENT clean out of the
  * viewport -- the opposite failure from the one this rebalance fixed.
  *
- * `max-height: 10` + `overflow-y: auto` (Task 6, fix round 1) caps it
- * instead: FEEDS grows to fit small lists, stops at the cap, and scrolls
- * internally past it -- verified scrollable, not clipped, with 40
- * synthetic rows (Tests/Watchlists/test_watchlists_workbench.py).
+ * `max-height: 13` + `overflow-y: auto` caps it instead: FEEDS grows to fit
+ * small lists, stops at the cap, and scrolls internally past it -- verified
+ * scrollable, not clipped, with 40 synthetic rows
+ * (Tests/Watchlists/test_watchlists_workbench.py).
  *
- * Why 10, not the true empty-state need (measured at 11 rows: the tab
- * strip, the "Sources" title, "No sources yet.", and the Create/Import
- * button row, inside the pane's own border): at the guard suite's 160x42
- * viewport, FEEDS and ITEMS/CONTENT are drawing from one fixed vertical
- * budget (measured 34 rows total for the three centre regions combined).
- * FEEDS=11 (uncapped, i.e. what `height: auto` alone produces) leaves 23
- * rows for ITEMS+CONTENT's `1fr`/`1fr` split -- 11/12 -- which TIES ITEMS
- * against FEEDS instead of leaving it taller
- * (`test_watchlists_items_region_is_taller_than_feeds_region_when_expanded`).
- * 10 is the smallest integer reduction off that measured 11 that breaks the
- * tie (confirmed empirically: feeds=10, items=12 at 160x42; feeds=10,
- * items=17 at the app's real 235x52, where the uncapped split already gives
- * ITEMS much more headroom). The cost is one row of the true empty state's
- * content (11 rows of real content into a 10-row cap) reachable only by
- * scrolling rather than fully in view -- accepted per the ruling: the
- * ITEMS-stays-the-reading-area invariant holds at ANY dataset size,
- * including the empty one, not just larger ones.
+ * Fix round 1 shipped `max-height: 10`, one row BELOW the measured true
+ * empty-state need of 11 (the tab strip, the "Sources" title, "No sources
+ * yet.", and the Create/Import button row, inside the pane's own border) --
+ * so even zero sources scrolled. That was wrong: a ceiling below the
+ * content's own minimum is a clip with a scrollbar, not the intended
+ * "grows to fit, caps, then scrolls" behaviour. Fix round 2 corrects it by
+ * also giving ITEMS a bigger share than CONTENT (below: `2fr` vs `1fr`,
+ * CONTENT is still the Phase-D placeholder stub and does not need equal
+ * billing with the real list pane yet) rather than shrinking FEEDS further.
+ *
+ * With ITEMS/CONTENT at `2fr`/`1fr`, the invariant
+ * (`test_watchlists_items_region_is_taller_than_feeds_region_when_expanded`,
+ * unedited) needs `items > feeds` where, once FEEDS is forced to its cap by
+ * overflowing content, `items ~= (budget - cap) * 2/3` for a fixed
+ * `budget = feeds + items + content` (constant per viewport: measured 34
+ * rows at the guard suite's 160x42, 44 at the app's real 235x52 -- both
+ * confirmed by direct region-height measurement in a temporary pytest
+ * addition, not assumed). Solving for the tightest viewport (160x42):
+ * `items > cap` holds through `cap = 13` (`items = 14`, margin 1) and
+ * breaks at `cap = 14` (`items = 13 < feeds = 14`) -- confirmed empirically
+ * by forcing FEEDS's real content to overflow 40 synthetic rows inside the
+ * full chrome-wrapped screen (not just the standalone-workbench harness,
+ * which has a different, more generous budget and would have understated
+ * how tight 160x42 actually is). 13 is therefore the highest cap that keeps
+ * the invariant true at the tightest viewport this app ships, and it clears
+ * the 11-row empty-state need with 2 rows of headroom -- zero sources no
+ * longer scrolls (`Tests/UI/test_destination_visual_parity_correction.py::
+ * test_watchlists_feeds_empty_state_fits_without_scrolling`).
  *
  * No `border` here (Task 6): `_build_list_pane`'s content is a
  * `.destination-workbench-pane` (the shared box every destination screen's
@@ -14937,7 +14948,7 @@ CodingWindow {
     width: 100%;
     height: auto;
     min-height: 0;
-    max-height: 10;
+    max-height: 13;
     overflow-y: auto;
 }
 
@@ -14969,10 +14980,22 @@ CodingWindow {
  * the region border -- it is still the Phase-D-placeholder stub with no
  * pane of its own to draw one instead (see `_region_widget`'s
  * factory-presence check).
+ *
+ * `2fr` (fix round 2, human-authorised lever change): previously an equal
+ * `1fr` with CONTENT, which is what forced FEEDS's cap down to a value
+ * below its own empty-state need in round 1 -- with an equal split, ITEMS
+ * only ever gets half of whatever FEEDS leaves, so at 160x42 (34-row
+ * budget) FEEDS=11 left 23, split 11/12, tying ITEMS instead of exceeding
+ * it. Giving ITEMS a bigger share fixes this at its root: CONTENT is still
+ * an inert placeholder stub (Phase D replaces it with the real article
+ * reader), so handing it equal billing with the real, working list pane
+ * wastes rows today regardless of FEEDS's cap. See the derivation on
+ * `.watchlists-region-feeds` above for the resulting cap value this split
+ * makes possible.
  */
 .watchlists-region-items {
     width: 100%;
-    height: 1fr;
+    height: 2fr;
     min-height: 0;
 }
 

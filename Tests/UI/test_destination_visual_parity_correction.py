@@ -1189,6 +1189,46 @@ async def test_watchlists_items_region_is_taller_than_feeds_region_when_expanded
         )
 
 
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_feeds_empty_state_fits_without_scrolling(size):
+    """Fix round 2, regression pin: round 1 shipped `max-height: 10`, one row
+    BELOW the real empty state's measured 11-row need (tab strip, "Sources"
+    title, "No sources yet.", Create/Import button row, inside the pane's
+    own border) -- so a watchlist with zero sources rendered a scrollbar.
+    That was a ceiling below its own minimum content, not the intended
+    "grows to fit, caps, then scrolls" behaviour.
+
+    `max-height` is now 13 (see `.watchlists-region-feeds` in
+    `_watchlists.tcss` for the full derivation), which clears the 11-row
+    need with headroom: FEEDS's resolved height must equal its unclamped
+    natural (pane) height -- the cap never engages -- and there must be
+    nothing left to scroll, at both the guard suite's 160x42 and the app's
+    real 235x52.
+    """
+    app = _build_test_app()
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        screen._apply_layout(RegionLayout())
+        await pilot.pause()
+
+        feeds = screen.query_one("#wl-region-feeds")
+        pane = screen.query_one("#watchlists-list-pane")
+
+        assert feeds.region.height == pane.region.height, (
+            f"the empty state's real content should fit inside FEEDS's cap "
+            f"without being clipped: feeds={feeds.region} pane={pane.region}"
+        )
+        assert feeds.max_scroll_y == 0, (
+            f"the empty state should have nothing left to scroll: "
+            f"max_scroll_y={feeds.max_scroll_y} feeds={feeds.region}"
+        )
+
+
 @pytest.mark.parametrize("size", [(235, 52), (160, 42)])
 @pytest.mark.asyncio
 async def test_watchlists_right_rail_does_not_clip_action_labels(size):

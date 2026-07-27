@@ -195,9 +195,17 @@ async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
     FEEDS the real, scope-driven feeds list -- potentially dozens of
     sources -- which would push ITEMS/CONTENT clean off the bottom of the
     viewport. `_watchlists.tcss` now caps `.watchlists-region-feeds` at
-    `max-height: 10` with `overflow-y: auto`: it grows to fit small lists,
+    `max-height: 13` with `overflow-y: auto`: it grows to fit small lists,
     stops at the cap, and scrolls past it rather than either clipping
     silently or displacing its neighbours.
+
+    (Fix round 2 raised the cap from round 1's `10` to `13` -- round 1's
+    value sat one row BELOW the real empty state's own 11-row need, so even
+    zero sources scrolled. See
+    `Tests/UI/test_destination_visual_parity_correction.py::
+    test_watchlists_feeds_empty_state_fits_without_scrolling` (which checks
+    this against the real production screen, not synthetic content) and the
+    derivation comment on `.watchlists-region-feeds` in `_watchlists.tcss`.)
 
     Unlike this file's other tests, this one loads the REAL production
     stylesheet (`CSS_PATH`) -- a bare `App` with no CSS at all would never
@@ -245,7 +253,7 @@ async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
         feeds = app.query_one("#wl-region-feeds")
         items = app.query_one("#wl-region-items")
 
-        assert feeds.region.height <= 10, (
+        assert feeds.region.height <= 13, (
             f"FEEDS should stop growing at the cap once its content "
             f"overflows it: {feeds.region}"
         )
