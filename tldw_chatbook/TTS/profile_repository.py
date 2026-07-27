@@ -75,6 +75,14 @@ class _OperationAdmission(Generic[_T]):
     future: Future[_T]
 
 
+@dataclass(slots=True)
+class _IntegrityEvidence:
+    """Exact schema-owned values permitted to support one conflict."""
+
+    profile_id: UUID | None
+    normalized_name: str | None = None
+
+
 def _repository_error(code: str) -> ProfileRepositoryError:
     return ProfileRepositoryError(code)
 
@@ -203,34 +211,94 @@ def _read_sqlite_errorcode(error: sqlite3.IntegrityError) -> int | None:
     return cast(int, code)
 
 
+def _profile_conflict_evidence(
+    connection: sqlite3.Connection,
+    operation_kind: _TransactionOperation,
+    profile_id: UUID | None,
+    normalized_name: str | None,
+) -> bool | None:
+    """Check exact create/update conflict rows inside the failed transaction."""
+
+    inspection_error: BaseException | None = None
+    conflict_exists: bool | None = None
+    try:
+        if type(profile_id) is not UUID or type(normalized_name) is not str:
+            raise ValueError
+        encoded_profile_id = encode_uuid(profile_id)
+        if operation_kind == "create":
+            row = connection.execute(
+                """
+                SELECT profile_id, normalized_name
+                FROM tts_generation_profiles
+                WHERE profile_id = ? OR normalized_name = ?
+                LIMIT 1
+                """,
+                (encoded_profile_id, normalized_name),
+            ).fetchone()
+        elif operation_kind == "update":
+            row = connection.execute(
+                """
+                SELECT profile_id, normalized_name
+                FROM tts_generation_profiles
+                WHERE profile_id != ? AND normalized_name = ?
+                LIMIT 1
+                """,
+                (encoded_profile_id, normalized_name),
+            ).fetchone()
+        else:
+            raise ValueError
+
+        if row is None:
+            conflict_exists = False
+        elif len(row) == 2 and type(row[0]) is str and type(row[1]) is str:
+            stored_profile_id = cast(str, row[0])
+            stored_normalized_name = cast(str, row[1])
+            if operation_kind == "create" and (
+                stored_profile_id == encoded_profile_id
+                or stored_normalized_name == normalized_name
+            ):
+                conflict_exists = True
+            elif (
+                operation_kind == "update"
+                and stored_profile_id != encoded_profile_id
+                and stored_normalized_name == normalized_name
+            ):
+                conflict_exists = True
+    except BaseException as error:
+        inspection_error = error
+
+    if inspection_error is not None:
+        if not isinstance(inspection_error, Exception):
+            raise inspection_error
+        return None
+    return conflict_exists
+
+
 def _profile_has_assignment(
     connection: sqlite3.Connection,
     profile_id: UUID | None,
 ) -> bool | None:
-    """Check one schema-owned delete restriction, failing closed."""
+    """Check one exact schema-owned delete restriction, failing closed."""
 
     inspection_error: BaseException | None = None
     assignment_exists: bool | None = None
     try:
         if type(profile_id) is not UUID:
             raise ValueError
+        encoded_profile_id = encode_uuid(profile_id)
         row = connection.execute(
             """
-            SELECT EXISTS(
-                SELECT 1
-                FROM character_tts_assignments
-                WHERE profile_id = ?
-            )
+            SELECT profile_id
+            FROM character_tts_assignments
+            WHERE profile_id = ?
+            LIMIT 1
             """,
-            (encode_uuid(profile_id),),
+            (encoded_profile_id,),
         ).fetchone()
-        if (
-            row is not None
-            and len(row) == 1
-            and type(row[0]) is int
-            and row[0] in (0, 1)
-        ):
-            assignment_exists = row[0] == 1
+        if row is None:
+            assignment_exists = False
+        elif len(row) == 1 and type(row[0]) is str and row[0] == encoded_profile_id:
+            assignment_exists = True
     except BaseException as error:
         inspection_error = error
 
@@ -239,6 +307,38 @@ def _profile_has_assignment(
             raise inspection_error
         return None
     return assignment_exists
+
+
+def _has_integrity_conflict_evidence(
+    connection: sqlite3.Connection,
+    error: sqlite3.IntegrityError,
+    operation_kind: _TransactionOperation,
+    evidence: _IntegrityEvidence | None,
+) -> bool:
+    """Require an exact extended code and matching row under the held lock."""
+
+    sqlite_errorcode = _read_sqlite_errorcode(error)
+    if not connection.in_transaction or evidence is None:
+        return False
+    if operation_kind in ("create", "update") and sqlite_errorcode in (
+        _SQLITE_CONSTRAINT_PRIMARYKEY,
+        _SQLITE_CONSTRAINT_UNIQUE,
+    ):
+        return (
+            _profile_conflict_evidence(
+                connection,
+                operation_kind,
+                evidence.profile_id,
+                evidence.normalized_name,
+            )
+            is True
+        )
+    if operation_kind == "delete" and sqlite_errorcode in (
+        _SQLITE_CONSTRAINT_FOREIGNKEY,
+        _SQLITE_CONSTRAINT_TRIGGER,
+    ):
+        return _profile_has_assignment(connection, evidence.profile_id) is True
+    return False
 
 
 def _fresh_repository_error(
@@ -716,10 +816,16 @@ class TTSProfileRepository:
         draft: TTSProfileDraft,
         profile_id: UUID | None,
     ) -> TTSGenerationProfile:
+        evidence = _IntegrityEvidence(
+            profile_id=profile_id,
+            normalized_name=draft.normalized_name,
+        )
+
         def create() -> TTSGenerationProfile:
             persisted_id = (
                 profile_id if profile_id is not None else self._worker_new_uuid()
             )
+            evidence.profile_id = persisted_id
             timestamp = self._clock()
             profile = TTSGenerationProfile(
                 profile_id=persisted_id,
@@ -778,6 +884,7 @@ class TTSProfileRepository:
             create,
             operation_kind="create",
             immediate=True,
+            integrity_evidence=evidence,
         )
 
     def _worker_get_profile(
@@ -897,6 +1004,10 @@ class TTSProfileRepository:
             update,
             operation_kind="update",
             immediate=True,
+            integrity_evidence=_IntegrityEvidence(
+                profile_id=profile_id,
+                normalized_name=draft.normalized_name,
+            ),
         )
 
     def _worker_delete_profile(
@@ -920,7 +1031,7 @@ class TTSProfileRepository:
             delete,
             operation_kind="delete",
             immediate=True,
-            delete_profile_id=profile_id,
+            integrity_evidence=_IntegrityEvidence(profile_id=profile_id),
         )
 
     def _worker_require_round_trip(
@@ -947,7 +1058,7 @@ class TTSProfileRepository:
         *,
         operation_kind: _TransactionOperation,
         immediate: bool,
-        delete_profile_id: UUID | None = None,
+        integrity_evidence: _IntegrityEvidence | None = None,
     ) -> _T:
         body_error: BaseException | None = None
         value: _T | None = None
@@ -960,6 +1071,19 @@ class TTSProfileRepository:
 
         if body_error is None:
             return cast(_T, value)
+
+        integrity_conflict = False
+        classification_error: BaseException | None = None
+        if isinstance(body_error, sqlite3.IntegrityError):
+            try:
+                integrity_conflict = _has_integrity_conflict_evidence(
+                    connection,
+                    body_error,
+                    operation_kind,
+                    integrity_evidence,
+                )
+            except BaseException as error:
+                classification_error = error
 
         rollback_error: BaseException | None = None
         try:
@@ -980,42 +1104,11 @@ class TTSProfileRepository:
                 cleanup_error = error
 
         if isinstance(body_error, sqlite3.IntegrityError):
-            classification_error: BaseException | None = None
-            sqlite_errorcode: int | None = None
-            try:
-                sqlite_errorcode = _read_sqlite_errorcode(body_error)
-                expected_conflict = (
-                    operation_kind in ("create", "update")
-                    and sqlite_errorcode
-                    in (
-                        _SQLITE_CONSTRAINT_PRIMARYKEY,
-                        _SQLITE_CONSTRAINT_UNIQUE,
-                    )
-                ) or (
-                    operation_kind == "delete"
-                    and sqlite_errorcode == _SQLITE_CONSTRAINT_FOREIGNKEY
-                )
-                if (
-                    not expected_conflict
-                    and operation_kind == "delete"
-                    and sqlite_errorcode == _SQLITE_CONSTRAINT_TRIGGER
-                    and rollback_error is None
-                ):
-                    expected_conflict = (
-                        _profile_has_assignment(
-                            connection,
-                            delete_profile_id,
-                        )
-                        is True
-                    )
-            except BaseException as error:
-                classification_error = error
-
             if classification_error is not None:
                 body_error = classification_error
             else:
                 body_error = _repository_error(
-                    "conflict" if expected_conflict else "operation_failed"
+                    "conflict" if integrity_conflict else "operation_failed"
                 )
         _raise_with_cleanup_precedence(
             body_error,

@@ -166,6 +166,42 @@ def _external_execute(
         connection.close()
 
 
+def _external_insert_assignment(
+    database_path: Path,
+    profile_id: UUID,
+    character_id: str,
+) -> None:
+    assignment = CharacterTTSAssignment(
+        character_ref=CharacterRef(
+            source="local",
+            authority_id="barrier-authority",
+            character_id=character_id,
+        ),
+        profile_id=profile_id,
+    )
+    encoded = encode_assignment(
+        assignment,
+        created_at=CREATED_AT,
+        updated_at=CREATED_AT,
+    )
+    _external_execute(
+        database_path,
+        """
+        INSERT INTO character_tts_assignments (
+            source, authority_id, character_id, profile_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            encoded["source"],
+            encoded["authority_id"],
+            encoded["character_id"],
+            encoded["profile_id"],
+            encoded["created_at"],
+            encoded["updated_at"],
+        ),
+    )
+
+
 def _install_insert_constraint_trigger(
     database_path: Path,
     constraint_kind: str,
@@ -234,6 +270,38 @@ def _install_insert_constraint_trigger(
         connection.close()
 
 
+def _install_unrelated_uniqueness_trigger(
+    database_path: Path,
+    operation: str,
+    constraint_kind: str,
+) -> None:
+    trigger_operation = {"create": "INSERT", "update": "UPDATE"}[operation]
+    if constraint_kind == "unique":
+        probe_schema = "value TEXT UNIQUE"
+        seed = "INSERT INTO unrelated_conflict_probe(value) VALUES ('occupied');"
+        violation = "INSERT INTO unrelated_conflict_probe(value) VALUES ('occupied');"
+    else:
+        probe_schema = "id INTEGER PRIMARY KEY"
+        seed = "INSERT INTO unrelated_conflict_probe(id) VALUES (1);"
+        violation = "INSERT INTO unrelated_conflict_probe(id) VALUES (1);"
+
+    connection = sqlite3.connect(database_path, isolation_level=None)
+    try:
+        connection.executescript(
+            f"""
+            CREATE TABLE unrelated_conflict_probe({probe_schema});
+            {seed}
+            CREATE TRIGGER force_unrelated_profile_constraint
+            BEFORE {trigger_operation} ON tts_generation_profiles
+            BEGIN
+                {violation}
+            END;
+            """
+        )
+    finally:
+        connection.close()
+
+
 def _assert_real_insert_constraint_code(
     database_path: Path,
     expected_code: int,
@@ -273,6 +341,27 @@ def _assert_real_insert_constraint_code(
                     CREATED_AT.isoformat(),
                     CREATED_AT.isoformat(),
                 ),
+            )
+        assert caught.value.sqlite_errorcode == expected_code
+    finally:
+        connection.close()
+
+
+def _assert_real_update_constraint_code(
+    database_path: Path,
+    profile_id: UUID,
+    expected_code: int,
+) -> None:
+    connection = sqlite3.connect(database_path, isolation_level=None)
+    try:
+        with pytest.raises(sqlite3.IntegrityError) as caught:
+            connection.execute(
+                """
+                UPDATE tts_generation_profiles
+                SET display_name = display_name
+                WHERE profile_id = ?
+                """,
+                (str(profile_id),),
             )
         assert caught.value.sqlite_errorcode == expected_code
     finally:
@@ -413,6 +502,33 @@ def _fail_next_commit(
 
     monkeypatch.setattr(repository, "_commit_transaction", fail_once)
     return attempted
+
+
+def _pause_next_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+    repository: profile_repository.TTSProfileRepository,
+) -> tuple[threading.Event, threading.Event]:
+    original_rollback = repository._rollback_transaction
+    rolled_back = threading.Event()
+    resume = threading.Event()
+    paused = False
+
+    def pause_after_rollback(connection: sqlite3.Connection) -> None:
+        nonlocal paused
+        original_rollback(connection)
+        if paused:
+            return
+        paused = True
+        rolled_back.set()
+        if not resume.wait(10.0):
+            raise RuntimeError("test did not resume rollback")
+
+    monkeypatch.setattr(
+        repository,
+        "_rollback_transaction",
+        pause_after_rollback,
+    )
+    return rolled_back, resume
 
 
 def test_private_clock_and_uuid_seams_remain_constructor_pure(
@@ -888,29 +1004,115 @@ async def test_create_maps_real_unexpected_extended_constraints_to_operation_fai
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "update"])
 @pytest.mark.parametrize(
-    ("operation", "sqlite_errorcode", "expected_repository_code"),
+    ("constraint_kind", "expected_sqlite_code"),
+    [("unique", 2067), ("primarykey", 1555)],
+)
+async def test_unrelated_expected_extended_code_without_owned_row_evidence_fails(
+    tmp_path: Path,
+    operation: str,
+    constraint_kind: str,
+    expected_sqlite_code: int,
+) -> None:
+    database_path = tmp_path / (
+        f"secret-{operation}-{constraint_kind}-false-conflict.sqlite3"
+    )
+    profile_id = UUID("f0500000-0000-4000-8000-00000000000f")
+    raw_name = "Evidence ' OR 1=1 -- secret-evidence-name"
+    draft = _draft(raw_name)
+
+    async with _opened_repository(database_path) as repository:
+        original: TTSGenerationProfile | None = None
+        if operation == "update":
+            original = (
+                await repository.create_profile(
+                    _draft("Original Evidence Target"),
+                    profile_id=profile_id,
+                )
+            ).value
+
+        await asyncio.to_thread(
+            _install_unrelated_uniqueness_trigger,
+            database_path,
+            operation,
+            constraint_kind,
+        )
+        if operation == "create":
+            await asyncio.to_thread(
+                _assert_real_insert_constraint_code,
+                database_path,
+                expected_sqlite_code,
+            )
+        else:
+            await asyncio.to_thread(
+                _assert_real_update_constraint_code,
+                database_path,
+                profile_id,
+                expected_sqlite_code,
+            )
+
+        with pytest.raises(ProfileRepositoryError) as failed:
+            if operation == "create":
+                await repository.create_profile(draft, profile_id=profile_id)
+            else:
+                await repository.update_profile(profile_id, 1, draft)
+
+        _assert_safe_error(
+            failed.value,
+            "operation_failed",
+            raw_name,
+            str(database_path),
+        )
+        page = (await repository.list_profiles()).value
+        if operation == "create":
+            assert page.total == 0
+        else:
+            assert original is not None
+            assert page.profiles == (original,)
+
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            "DROP TRIGGER force_unrelated_profile_constraint",
+        )
+        if operation == "create":
+            recovered = await repository.create_profile(
+                draft,
+                profile_id=profile_id,
+            )
+        else:
+            recovered = await repository.update_profile(
+                profile_id,
+                1,
+                draft,
+            )
+        assert recovered.value.normalized_name == draft.normalized_name
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "sqlite_errorcode"),
     [
-        ("create", 2067, "conflict"),
-        ("create", 1555, "conflict"),
-        ("create", 787, "operation_failed"),
-        ("update", 2067, "conflict"),
-        ("update", 1555, "conflict"),
-        ("update", 787, "operation_failed"),
-        ("delete", 787, "conflict"),
-        ("delete", 2067, "operation_failed"),
-        ("delete", 1555, "operation_failed"),
-        ("create", 19, "operation_failed"),
-        ("create", 25363, "operation_failed"),
-        ("create", None, "operation_failed"),
+        ("create", 2067),
+        ("create", 1555),
+        ("create", 787),
+        ("update", 2067),
+        ("update", 1555),
+        ("update", 787),
+        ("delete", 787),
+        ("delete", 2067),
+        ("delete", 1555),
+        ("create", 19),
+        ("create", 25363),
+        ("create", None),
     ],
 )
-async def test_integrity_extended_code_classification_is_operation_specific(
+async def test_integrity_extended_code_without_owned_evidence_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
     sqlite_errorcode: int | None,
-    expected_repository_code: str,
 ) -> None:
     database_path = tmp_path / "secret-constructed-constraint.sqlite3"
     profile_id = UUID("f1000000-0000-4000-8000-00000000000f")
@@ -958,7 +1160,7 @@ async def test_integrity_extended_code_classification_is_operation_specific(
 
         _assert_safe_error(
             caught.value,
-            expected_repository_code,
+            "operation_failed",
             secret,
             str(database_path),
         )
@@ -1443,7 +1645,104 @@ async def test_foreign_key_restricted_delete_trigger_maps_to_conflict_for_assign
 
 
 @pytest.mark.asyncio
-async def test_foreign_key_no_action_delete_maps_to_conflict(
+@pytest.mark.parametrize("attempt", range(5))
+async def test_delete_captures_assignment_conflict_before_post_rollback_removal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    attempt: int,
+) -> None:
+    database_path = tmp_path / f"remove-assignment-barrier-{attempt}.sqlite3"
+    profile_id = UUID("92100000-0000-4000-8000-000000000009")
+
+    async with _opened_repository(database_path) as repository:
+        profile = (
+            await repository.create_profile(
+                _draft("Barrier Assigned"),
+                profile_id=profile_id,
+            )
+        ).value
+        await asyncio.to_thread(
+            _external_insert_assignment,
+            database_path,
+            profile_id,
+            f"remove-{attempt}",
+        )
+        rolled_back, resume = _pause_next_rollback(monkeypatch, repository)
+        deletion = asyncio.create_task(repository.delete_profile(profile_id))
+        try:
+            assert await asyncio.to_thread(rolled_back.wait, 10.0)
+            await asyncio.to_thread(
+                _external_execute,
+                database_path,
+                "DELETE FROM character_tts_assignments WHERE profile_id = ?",
+                (str(profile_id),),
+            )
+        finally:
+            resume.set()
+
+        with pytest.raises(ProfileRepositoryError) as conflict:
+            await deletion
+
+        _assert_safe_error(conflict.value, "conflict")
+        assert (await repository.get_profile(profile_id)).value == profile
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attempt", range(5))
+async def test_delete_captures_missing_assignment_before_post_rollback_addition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    attempt: int,
+) -> None:
+    database_path = tmp_path / f"add-assignment-barrier-{attempt}.sqlite3"
+    profile_id = UUID("92200000-0000-4000-8000-000000000009")
+    secret = f"secret-addition-trigger-{attempt}"
+
+    async with _opened_repository(database_path) as repository:
+        profile = (
+            await repository.create_profile(
+                _draft("Barrier Unassigned"),
+                profile_id=profile_id,
+            )
+        ).value
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            f"""
+            CREATE TRIGGER force_profile_delete_constraint
+            BEFORE DELETE ON tts_generation_profiles
+            BEGIN
+                SELECT RAISE(ABORT, '{secret}');
+            END
+            """,
+        )
+        rolled_back, resume = _pause_next_rollback(monkeypatch, repository)
+        deletion = asyncio.create_task(repository.delete_profile(profile_id))
+        try:
+            assert await asyncio.to_thread(rolled_back.wait, 10.0)
+            await asyncio.to_thread(
+                _external_insert_assignment,
+                database_path,
+                profile_id,
+                f"add-{attempt}",
+            )
+        finally:
+            resume.set()
+
+        with pytest.raises(ProfileRepositoryError) as failed:
+            await deletion
+
+        _assert_safe_error(
+            failed.value,
+            "operation_failed",
+            secret,
+            str(database_path),
+        )
+        assert (await repository.get_profile(profile_id)).value == profile
+
+
+@pytest.mark.asyncio
+async def test_unrelated_foreign_key_no_action_delete_maps_to_operation_failed(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "profiles.sqlite3"
@@ -1468,10 +1767,10 @@ async def test_foreign_key_no_action_delete_maps_to_conflict(
             787,
         )
 
-        with pytest.raises(ProfileRepositoryError) as conflict:
+        with pytest.raises(ProfileRepositoryError) as failed:
             await repository.delete_profile(profile_id)
 
-        _assert_safe_error(conflict.value, "conflict")
+        _assert_safe_error(failed.value, "operation_failed")
         assert (await repository.get_profile(profile_id)).value == profile
 
         await asyncio.to_thread(
