@@ -37,6 +37,31 @@ Residual Minor findings from the PR 3b whole-branch review. The Critical and all
 - `_export_csv_text` (`results_grid.py:553`) writes through `csv.writer` into a `StringIO` without `newline=""`, then `write_text`, producing `\r\n` terminators. RFC-correct, but it should be a decision rather than a default.
 <!-- SECTION:DESCRIPTION:END -->
 
+## Investigation (2026-07-27)
+
+Each item was verified by reading the code and running probes, not by inference. One item is a severity upgrade and one is closed.
+
+**UPGRADE — `ResultsGrid.compose` catching only `ValueError` is not Minor; it can exit the whole app.** Textual's `Widget._compose` (`textual/widget.py:4716-4725`) catches `Exception` and hands it to `App._handle_exception`, whose docstring states "Always results in the app exiting" and which sets `_return_code = 1`. So an escaping exception is not a localized `MountError` as the review supposed — the process terminates.
+
+Reproduced, with the caveat that not every corruption shape triggers it:
+- a missing run group raises `ValueError` and *is* correctly caught;
+- a stored snapshot with a dropped key was tolerated, no error;
+- a DB-level failure after the run group resolves (probe: `DROP TABLE eval_results`) raises `sqlite3.OperationalError`, which escapes.
+
+`Evals_DB.list_runs`/`get_run_results` have no exception wrapping, so any sqlite-level fault — a locked database, a disk error, a schema mismatch from opening an older profile — reaches `compose()` unconverted. Treat as Important. Fix: catch broadly, log the reason, render the existing error state. Size S.
+
+**CLOSED — the `effective_k` clamp is not reachable.** `capture_client.py:132` sets `k_returned=len(tokens)` from the same list that becomes `top_k`, so `k_returned == len(top_k)` holds by construction on every live path; it is a tautology, not an accident. It can only be broken by corrupting the stored JSON, since `storage.py:233` reads the two fields independently. When broken that way the code does not crash — `entropy()` silently falls back to the cell's own unclamped entropy while the header still advertises a shared K. Adding the same clamp `divergence()` already applies (`analysis.py:160`) is XS and purely defensive; the original correctness worry does not stand.
+
+**Confirmed real, unchanged severity:**
+- The duplicated probe scan is genuine (one has since been renamed to `_ever_observed_active_probe`, and a stale docstring cross-reference came with it). Foldable into one helper over target x probe sequences without losing either performance profile. S.
+- The three `_notify` copies are byte-identical and self-acknowledged in their own docstrings. No shared base class exists; a small `NotifyMixin` in `UI/Evals` is the natural home. S.
+- `combined_truncation`'s `k` is 100% dead. It is NOT a latent correctness gap: `_delta_reading` never computes k itself, and the recomputation it would replace is provably identical to `divergence()`'s. Drop the parameter or wire it; either is fine. S.
+- The redundant `len(top) > 1` guard is a provable no-op — `near_tie` already returns `False` below two tokens and is tested for it. XS.
+- `EvalsInspector.compose`'s bare `except Exception: return` yields zero widgets from a generator, so the user gets a blank pane with no message and no log line — nothing to diagnose from. S.
+- `_sample_bench_cancel_token` is dead today but self-documented as a seam for the next PR. Reasonable to keep as-is.
+
+**Partly unresolved:** the CSV terminator was probed directly rather than reasoned about — on POSIX the bytes on disk are correct RFC-4180 `\r\n` with no doubling. The Windows `\r\r\n` risk follows from documented `io.TextIOWrapper` semantics but was NOT executed, as no Windows host was available. Passing `newline=""` is XS and removes the question either way.
+
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
