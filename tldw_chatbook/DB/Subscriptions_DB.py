@@ -530,15 +530,6 @@ class SubscriptionsDB(BaseDB):
                 UPDATE watchlists SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END
         """)
-        # Per-migration markers. schema_version cannot be reused: it is a single
-        # INTEGER PRIMARY KEY column with no room for keys.
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS watchlist_migration_state (
-                key TEXT PRIMARY KEY,
-                applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
         # local_watchlist_runs is guaranteed to exist: BaseDB.__init__ runs
         # _initialize_schema (base_db.py:76), which creates it and then calls
         # this method. Only the column needs checking, for databases created

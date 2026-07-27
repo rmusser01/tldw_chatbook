@@ -25,7 +25,6 @@ def test_watchlist_tables_created(db):
     tables = _tables(db)
     assert "watchlists" in tables
     assert "watchlist_sources" in tables
-    assert "watchlist_migration_state" in tables
 
 
 def test_item_content_columns_created(db):
