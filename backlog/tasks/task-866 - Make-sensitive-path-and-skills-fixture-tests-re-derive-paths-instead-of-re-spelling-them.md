@@ -1,5 +1,5 @@
 ---
-id: TASK-862
+id: TASK-866
 title: >-
   Make sensitive-path and skills-fixture tests re-derive paths instead of
   re-spelling them

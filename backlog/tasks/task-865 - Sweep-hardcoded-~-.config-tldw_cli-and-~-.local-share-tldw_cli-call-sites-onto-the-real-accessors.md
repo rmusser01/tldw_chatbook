@@ -1,5 +1,5 @@
 ---
-id: TASK-861
+id: TASK-865
 title: >-
   Sweep hardcoded ~/.config/tldw_cli and ~/.local/share/tldw_cli call sites onto
   the real accessors

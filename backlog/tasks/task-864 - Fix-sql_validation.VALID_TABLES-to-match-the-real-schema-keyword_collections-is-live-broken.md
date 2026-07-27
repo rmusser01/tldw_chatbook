@@ -1,5 +1,5 @@
 ---
-id: TASK-860
+id: TASK-864
 title: >-
   Fix sql_validation.VALID_TABLES to match the real schema (keyword_collections
   is live-broken)
