@@ -586,3 +586,235 @@ Keywords: test, sample"""
         assert manifest_obj.include_media is True
         assert manifest_obj.media_quality == "original"
         assert manifest_obj.include_embeddings is True
+
+
+# ---------------------------------------------------------------------------
+# TASK-928: ChatbookImporter's internal db_paths key casing
+# ("ChaChaNotes"/"Prompts"/"Media") must agree with
+# Chatbooks.database_paths.get_chatbook_database_paths() -- the single
+# helper every real UI call site (Tools_Settings_Window._import_chatbook,
+# the import/creation wizards, the export management window; see
+# Tests/Chatbooks/test_chatbook_database_paths.py) uses to build the
+# db_paths dict handed to ChatbookImporter. A casing mismatch between the
+# two sides is invisible to type checking and to any test that stubs one
+# side out from under the other.
+# ---------------------------------------------------------------------------
+
+
+def test_chatbook_importer_key_lookups_match_get_chatbook_database_paths():
+    """The importer's actual `self.db_paths.get("...")` lookups (scanned via
+    AST, not a hardcoded duplicate list and not a source-text/comment match)
+    must all be keys `get_chatbook_database_paths()` actually produces.
+
+    This is deliberately AST-based rather than a plain substring check: a
+    substring/text scan would pass even if the string only appeared in a
+    comment or docstring, proving nothing about the real lookup contract.
+    """
+    import ast
+    import inspect
+
+    from tldw_chatbook.Chatbooks import chatbook_importer as importer_module
+    from tldw_chatbook.Chatbooks.database_paths import get_chatbook_database_paths
+
+    tree = ast.parse(inspect.getsource(importer_module))
+    looked_up_keys: set[str] = set()
+
+    class _DbPathsGetVisitor(ast.NodeVisitor):
+        def visit_Call(self, node: ast.Call) -> None:  # noqa: N802 - ast API
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "get"
+                and isinstance(func.value, ast.Attribute)
+                and func.value.attr == "db_paths"
+                and isinstance(func.value.value, ast.Name)
+                and func.value.value.id == "self"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                looked_up_keys.add(node.args[0].value)
+            self.generic_visit(node)
+
+    _DbPathsGetVisitor().visit(tree)
+
+    assert looked_up_keys, (
+        "Expected to find self.db_paths.get(<string literal>) lookups in "
+        "chatbook_importer.py -- if this fails, the importer's lookup "
+        "pattern changed and this scan needs updating, not deleting."
+    )
+
+    produced_keys = set(get_chatbook_database_paths().keys())
+    missing = looked_up_keys - produced_keys
+    assert not missing, (
+        f"ChatbookImporter looks up db_paths key(s) {sorted(missing)} that "
+        f"get_chatbook_database_paths() does not produce (it produces "
+        f"{sorted(produced_keys)}). The importer's key contract and the "
+        "canonical path-resolution helper every real caller uses have "
+        "drifted apart -- see TASK-928."
+    )
+
+
+class TestChatbookImporterKeyCasingMismatch:
+    """Documents the real, verified behaviour of a db_paths key-casing
+    mismatch (TASK-928 AC: "The real behaviour of the current mismatch is
+    established and recorded"), and guards against it recurring silently.
+
+    Established live (see task-928's Implementation Notes): a mismatch does
+    not raise, and does not silently "succeed" while importing nothing --
+    every db_paths.get(...) lookup returns None, each content-type import
+    method records a "<Name> database path not configured" error and skips
+    that type, and the overall import reports success=False with that error
+    surfaced as the failure message.
+    """
+
+    @pytest.fixture(autouse=True)
+    def stub_citation_composition(self, monkeypatch):
+        """Pins the key-casing contract between ChatbookImporter and get_chatbook_database_paths().
+
+        Stubs the citation conversation service builder to keep these tests isolated
+        at the mocked database seam. This fixture exists in both TestChatbookImporter
+        and TestChatbookImporterKeyCasingMismatch: the former tests the happy path
+        where db_paths keys match the importer's literal lookups, the latter tests
+        what happens when key casing diverges (TASK-928).
+
+        Args:
+            monkeypatch: pytest monkeypatch fixture for replacing build_local_citation_conversation_service.
+        """
+        from tldw_chatbook.Chat.chat_conversation_service import (
+            ChatConversationService,
+        )
+
+        def build_local(db, *, sidecar_path):
+            return (
+                ChatConversationService(db, rag_context_store_path=sidecar_path),
+                None,
+                None,
+            )
+
+        monkeypatch.setattr(
+            "tldw_chatbook.Chatbooks.chatbook_importer.build_local_citation_conversation_service",
+            build_local,
+        )
+
+    @pytest.fixture
+    def sample_chatbook_path(self, tmp_path):
+        """Create and return a temporary chatbook ZIP file with valid structure.
+
+        Generates a minimal but complete chatbook archive with manifest and one
+        conversation, suitable for testing ChatbookImporter behavior.
+
+        Args:
+            tmp_path: pytest fixture providing a temporary directory.
+
+        Returns:
+            Path object pointing to the created sample.zip file.
+        """
+        chatbook_path = tmp_path / "sample.zip"
+        manifest = {
+            "version": "1.0",
+            "name": "Sample",
+            "description": "A sample chatbook for testing",
+            "author": "Test Author",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "content_items": [
+                {
+                    "id": "1",
+                    "type": "conversation",
+                    "title": "Test Conversation",
+                    "created_at": datetime.now().isoformat(),
+                    "file_path": "content/conversations/conversation_1.json",
+                },
+            ],
+            "relationships": [],
+            "include_media": False,
+            "include_embeddings": False,
+            "media_quality": "thumbnail",
+            "statistics": {
+                "total_conversations": 1,
+                "total_notes": 0,
+                "total_characters": 0,
+                "total_media_items": 0,
+                "total_size_bytes": 1,
+            },
+            "tags": [],
+            "categories": [],
+            "language": "en",
+            "license": None,
+        }
+        conversation_content = {
+            "id": 1,
+            "name": "Test Conversation",
+            "title": "Test Conversation",
+            "created_at": datetime.now().isoformat(),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Hello",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            ],
+            "character_id": None,
+        }
+        with zipfile.ZipFile(chatbook_path, "w") as zf:
+            zf.writestr("manifest.json", json.dumps(manifest))
+            zf.writestr(
+                "content/conversations/conversation_1.json",
+                json.dumps(conversation_content),
+            )
+        return chatbook_path
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
+    def test_correctly_cased_keys_import_successfully(
+        self, mock_chacha_db, sample_chatbook_path
+    ):
+        """Control case: get_chatbook_database_paths()'s actual casing
+        imports cleanly, proving the failure below is caused by casing
+        alone."""
+        mock_db_instance = MagicMock()
+        mock_chacha_db.return_value = mock_db_instance
+        mock_db_instance.add_conversation.return_value = 1
+        mock_db_instance.add_message.return_value = True
+        mock_db_instance.get_conversation_by_name.return_value = []
+
+        importer = ChatbookImporter(
+            db_paths={"ChaChaNotes": "unused", "Prompts": "unused", "Media": "unused"}
+        )
+        status = ImportStatus()
+        success, message = importer.import_chatbook(
+            chatbook_path=sample_chatbook_path,
+            conflict_resolution=ConflictResolution.SKIP,
+            import_status=status,
+        )
+
+        assert success is True
+        assert status.successful_items == 1
+        assert status.errors == []
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
+    def test_mismatched_lowercase_keys_fail_cleanly_not_silently_not_crashing(
+        self, mock_chacha_db, sample_chatbook_path
+    ):
+        """The pre-consolidation bug shape: db_paths built with lowercase
+        keys ("chachanotes"/"prompts"/"media"), as _import_chatbook used to
+        before dev's get_chatbook_database_paths() consolidation."""
+        mock_chacha_db.return_value = MagicMock()
+
+        importer = ChatbookImporter(
+            db_paths={"chachanotes": "unused", "prompts": "unused", "media": "unused"}
+        )
+        status = ImportStatus()
+        success, message = importer.import_chatbook(
+            chatbook_path=sample_chatbook_path,
+            conflict_resolution=ConflictResolution.SKIP,
+            import_status=status,
+        )
+
+        # Not silent: reports failure with a specific, actionable message.
+        assert success is False
+        assert message == "Failed to import any items from chatbook"
+        # Not a crash: import_chatbook returns its normal (bool, str)
+        # contract rather than raising.
+        assert status.successful_items == 0
+        assert status.errors == ["ChaChaNotes database path not configured"]

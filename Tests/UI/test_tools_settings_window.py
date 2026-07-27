@@ -61,9 +61,26 @@ class _ToolsSettingsHostApp(App):
 
 @asynccontextmanager
 async def mount_settings_window(config_dict: dict, temp_config_path: Path, monkeypatch):
-    """Write config_dict to temp_config_path, patch DEFAULT_CONFIG_PATH, and yield a live-mounted ToolsSettingsWindow driven by a real pilot."""
+    """Context manager that mounts a live ToolsSettingsWindow with both config-path patches applied.
+
+    Writes config_dict to temp_config_path, patches DEFAULT_CONFIG_PATH, and sets
+    the TLDW_CONFIG_PATH environment variable. Both are required: app code resolves
+    the effective config path via config._get_effective_config_path(), which prefers
+    the TLDW_CONFIG_PATH environment variable. Tests/conftest.py autouse fixture
+    sets TLDW_CONFIG_PATH per-test to a separate bootstrap file; patching only
+    DEFAULT_CONFIG_PATH meant the widget read a config the test never wrote.
+
+    Args:
+        config_dict: Dictionary of configuration to write to the temporary config file.
+        temp_config_path: Path where the temporary config.toml file will be written.
+        monkeypatch: pytest monkeypatch fixture for patching DEFAULT_CONFIG_PATH and environment.
+
+    Yields:
+        Tuple of (ToolsSettingsWindow, pilot) where pilot is the AppTest pilot for driving the widget.
+    """
     create_dummy_config(temp_config_path, config_dict)
     monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(temp_config_path))
 
     app = _ToolsSettingsHostApp()
     async with app.run_test() as pilot:
@@ -263,6 +280,126 @@ async def test_save_io_error(settings_window: ToolsSettingsWindow, mock_app_inst
 
     # mock_app_instance.notify.assert_called_with("Error: Could not write to configuration file.", severity="error")
     pass
+
+
+# ===========================================
+# TASK-962: raw-TOML save must resolve the effective config path and
+# write atomically, matching TASK-851's three encryption entry points.
+# ===========================================
+
+@pytest.mark.asyncio
+async def test_save_raw_toml_config_writes_effective_path_not_default_decoy(
+    monkeypatch, tmp_path
+):
+    """Regression test for TASK-962 AC#3.
+
+    _save_raw_toml_config must resolve its write target through
+    config._get_effective_config_path() (which honors a TLDW_CONFIG_PATH
+    profile override), not the hardcoded DEFAULT_CONFIG_PATH literal.
+    Simulates a user running with an active profile: TLDW_CONFIG_PATH
+    points at the profile file, DEFAULT_CONFIG_PATH is a distinct decoy
+    that a correct fix must never touch.
+    """
+    profile_path = tmp_path / "profile" / "config.toml"
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    decoy_path = tmp_path / "default_home" / "config.toml"
+    create_dummy_config(profile_path, {"initial": "value"})
+
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile_path))
+    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", decoy_path)
+
+    app = _ToolsSettingsHostApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(ToolsSettingsWindow)
+
+        config_text_area = window.query_one("#config-text-area", TextArea)
+        new_config_dict = {"user": {"name": "profile_user"}}
+        config_text_area.text = toml.dumps(new_config_dict)
+
+        await window._save_raw_toml_config()
+
+    # The change landed in the file config._get_effective_config_path()
+    # resolves to (derived via that accessor, not a re-spelled literal).
+    assert tldw_chatbook.config._get_effective_config_path() == (
+        tldw_chatbook.config.lexical_path(profile_path)
+    )
+    saved = toml.load(profile_path)
+    assert saved == new_config_dict
+
+    # The decoy DEFAULT_CONFIG_PATH was never created or touched.
+    assert not decoy_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_save_raw_toml_config_is_atomic_on_serialization_failure(
+    monkeypatch, temp_config_path
+):
+    """Regression test for TASK-962 AC#4.
+
+    A failure partway through serializing the new config (crash, kill -9
+    equivalent) must never truncate the on-disk config file: the write must
+    go through a write-temp-then-replace helper, not a plain
+    open(path, 'w') + toml.dump (which truncates on open, before any new
+    content -- or a raised exception -- ever reaches the file).
+    """
+    initial_config = {"initial": "value", "user": {"name": "before"}}
+    async with mount_settings_window(
+        initial_config, temp_config_path, monkeypatch
+    ) as (window, pilot):
+        original_bytes = temp_config_path.read_bytes()
+
+        config_text_area = window.query_one("#config-text-area", TextArea)
+        config_text_area.text = toml.dumps({"user": {"name": "after-crash"}})
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("simulated crash while serializing config")
+
+        # Patch both the string-returning and file-writing serializers --
+        # which one a given implementation calls is deliberately treated as
+        # an implementation detail here (a plain open(path, "w")+toml.dump
+        # writer uses toml.dump; the atomic write-temp-then-replace helper
+        # used today calls toml.dumps first). Not toml.loads -- parsing the
+        # user's edited text must still succeed so the failure is isolated
+        # to the write step itself.
+        monkeypatch.setattr(tldw_chatbook.config.toml, "dumps", _boom)
+        monkeypatch.setattr(tldw_chatbook.config.toml, "dump", _boom)
+
+        await window._save_raw_toml_config()
+
+    # The file must be byte-for-byte unchanged: a plain open(path, "w")
+    # would have already truncated it before toml.dumps ever ran.
+    assert temp_config_path.read_bytes() == original_bytes
+
+
+@pytest.mark.asyncio
+async def test_save_raw_toml_config_roundtrips_with_no_profile_override(
+    monkeypatch, tmp_path
+):
+    """Regression test for TASK-962 AC#5.
+
+    With no TLDW_CONFIG_PATH override active, saving raw TOML config must
+    still round-trip correctly through DEFAULT_CONFIG_PATH -- the fix for
+    AC#1/AC#2 must not regress the no-profile case.
+    """
+    monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
+    config_path = tmp_path / "config.toml"
+    create_dummy_config(config_path, {"initial": "value"})
+    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", config_path)
+
+    app = _ToolsSettingsHostApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(ToolsSettingsWindow)
+
+        config_text_area = window.query_one("#config-text-area", TextArea)
+        new_config_dict = {"user": {"name": "default_user"}}
+        config_text_area.text = toml.dumps(new_config_dict)
+
+        await window._save_raw_toml_config()
+
+    saved = toml.load(config_path)
+    assert saved == new_config_dict
 
 
 # ===========================================
