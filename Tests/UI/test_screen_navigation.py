@@ -181,7 +181,7 @@ from tldw_chatbook.Voice_Assistant_Interop import (
     ServerVoiceAssistantService,
     VoiceAssistantScopeService,
 )
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT
+from tldw_chatbook.Constants import ALL_TABS
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -323,55 +323,6 @@ def test_ccp_default_tab_initializes_before_reactive_watcher_runs():
 
     assert app._initial_tab_value == "conversations_characters_prompts"
     assert app._ui_ready is False
-
-
-@pytest.mark.asyncio
-async def test_ccp_character_select_change_dispatches_once(monkeypatch):
-    app = _build_test_app()
-    app.current_tab = TAB_CCP
-    calls = []
-
-    async def fake_character_select_changed(_app, value):
-        calls.append(value)
-
-    monkeypatch.setattr(
-        "tldw_chatbook.app.ccp_handlers.handle_ccp_character_select_changed",
-        fake_character_select_changed,
-    )
-
-    await app.on_select_changed(
-        SimpleNamespace(
-            select=SimpleNamespace(id="conv-char-character-select"),
-            value="character-1",
-        )
-    )
-
-    assert calls == ["character-1"]
-
-
-@pytest.mark.asyncio
-async def test_chat_select_change_before_ui_ready_skips_token_counter(monkeypatch):
-    app = _build_test_app()
-    app.current_tab = TAB_CHAT
-    app._ui_ready = False
-    calls = []
-
-    async def fake_update_token_counter(_app):
-        calls.append("updated")
-
-    monkeypatch.setattr(
-        "tldw_chatbook.Event_Handlers.Chat_Events.chat_token_events.update_chat_token_counter",
-        fake_update_token_counter,
-    )
-
-    await app.on_select_changed(
-        SimpleNamespace(
-            select=SimpleNamespace(id="chat-api-provider"),
-            value="OpenAI",
-        )
-    )
-
-    assert calls == []
 
 
 def test_notes_is_not_a_navigable_tab():

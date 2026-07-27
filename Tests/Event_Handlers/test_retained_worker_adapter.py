@@ -9,13 +9,9 @@ from tldw_chatbook.Event_Handlers import worker_events
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_ROOT = PROJECT_ROOT / "tldw_chatbook"
-RETAINED_CALLER_PATHS = (
-    PROJECT_ROOT / "tldw_chatbook" / "Event_Handlers" / "conv_char_events.py",
-    PROJECT_ROOT / "tldw_chatbook" / "UI" / "MediaWindow_v2.py",
-)
+RETAINED_CALLER_PATHS = (PROJECT_ROOT / "tldw_chatbook" / "UI" / "MediaWindow_v2.py",)
 EXPECTED_CALLS_BY_PATH = {
-    RETAINED_CALLER_PATHS[0]: 6,
-    RETAINED_CALLER_PATHS[1]: 1,
+    RETAINED_CALLER_PATHS[0]: 1,
 }
 
 

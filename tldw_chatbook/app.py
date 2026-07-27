@@ -36,7 +36,6 @@ from textual.widget import Widget
 #
 # 3rd-Party Libraries
 import asyncio
-from PIL import Image
 from loguru import logger as loguru_logger, logger
 from rich.markup import escape as escape_markup
 from textual import on, work
@@ -46,11 +45,7 @@ from textual.widgets import (
     Button,
     Input,
     RichLog,
-    TextArea,
-    Select,
     ListView,
-    Checkbox,
-    Collapsible,
     Switch,
     Markdown,
 )
@@ -213,7 +208,6 @@ from tldw_chatbook.Utils.Emoji_Handling import (
     FALLBACK_TITLE_BRAIN,
     supports_emoji,
 )
-from tldw_chatbook.Utils.ui_helpers import UIHelpers
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
@@ -227,7 +221,6 @@ from tldw_chatbook.TTS.TTS_Generation import (
 )
 from tldw_chatbook.Event_Handlers.worker_handlers import (
     WorkerHandlerRegistry,
-    AIGenerationHandler,
     MiscWorkerHandler,
 )
 from .config import (
@@ -240,11 +233,7 @@ from .config import (
     persist_cli_config_for_shutdown,
     set_encryption_password,
 )
-from .Event_Handlers import (
-    conv_char_events as ccp_handlers,
-    worker_events,
-    media_events,
-)
+from .Event_Handlers import worker_events, media_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSRequestEvent,
     TTSCompleteEvent,
@@ -3440,7 +3429,6 @@ class TldwCli(
 
     # Define reactive at class level with a placeholder default and type hint
     current_tab: reactive[str] = reactive("")
-    ccp_active_view: reactive[str] = reactive("conversation_details_view")
 
     # Splash screen state
     splash_screen_active: reactive[bool] = reactive(False)
@@ -3453,13 +3441,6 @@ class TldwCli(
     _default_rag_expansion_provider = APP_CONFIG.get("chat_defaults", {}).get(
         "provider", "OpenAI"
     )
-    _default_ccp_provider = APP_CONFIG.get("character_defaults", {}).get(
-        "provider", "Anthropic"
-    )  # Changed from character_defaults
-
-    # Renamed character_api_provider_value to ccp_api_provider_value for clarity with TAB_CCP
-    ccp_api_provider_value: reactive[Optional[str]] = reactive(_default_ccp_provider)
-
     def query_one(self, selector, expect_type=None):
         """Resolve legacy app-level queries against the active pushed screen when needed."""
         try:
@@ -3471,10 +3452,6 @@ class TldwCli(
                 raise screen_error from error
             return active_screen.query_one(selector, expect_type)
 
-    # --- Reactives for CCP Character EDITOR (Center Pane) ---
-    current_editing_character_id: reactive[Optional[str]] = reactive(None)
-    current_editing_character_data: reactive[Optional[Dict[str, Any]]] = reactive(None)
-
     # DB size/token status updates go to the per-screen shell status line;
     # the DBStatusManager resolves the visible widget on the active screen.
     # DB Size checker - now using AppFooterStatus
@@ -3485,8 +3462,6 @@ class TldwCli(
     _ui_responsiveness_heartbeat_timer: Optional[Timer] = None
 
     # Reactives for retained destination sidebars
-    conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
-    conv_char_sidebar_right_collapsed: reactive[bool] = reactive(False)
     media_active_view: reactive[Optional[str]] = reactive(
         None
     )  # Added for Media tab navigation
@@ -3516,27 +3491,6 @@ class TldwCli(
     notes_last_save_time: reactive[Optional[float]] = reactive(
         None
     )  # Timestamp of last save
-
-    # Reactive variable for current conversation loaded in the Conversations, Characters & Prompts tab
-    current_conv_char_tab_conversation_id: reactive[Optional[str]] = reactive(None)
-    current_ccp_character_details: reactive[Optional[Dict[str, Any]]] = reactive(None)
-    current_ccp_character_image: Optional[Image.Image] = None
-
-    # Prompts
-    current_prompt_id: reactive[Optional[int]] = reactive(None)
-    current_prompt_uuid: reactive[Optional[str]] = reactive(None)
-    current_prompt_name: reactive[Optional[str]] = reactive(None)
-    current_prompt_author: reactive[Optional[str]] = reactive(None)
-    current_prompt_details: reactive[Optional[str]] = reactive(None)
-    current_prompt_system: reactive[Optional[str]] = reactive(None)
-    current_prompt_user: reactive[Optional[str]] = reactive(None)
-    current_prompt_keywords_str: reactive[Optional[str]] = reactive(
-        ""
-    )  # Store as comma-sep string for UI
-    current_prompt_version: reactive[Optional[int]] = reactive(
-        None
-    )  # If DB provides it and you need it
-    # is_new_prompt can be inferred from current_prompt_id being None
 
     # Media Tab
     _media_types_for_ui: List[str] = []
@@ -3577,9 +3531,6 @@ class TldwCli(
     # Ingest Tab
     ingest_active_view: reactive[Optional[str]] = reactive("ingest-view-prompts")
     _initial_ingest_view: Optional[str] = "ingest-view-prompts"
-    selected_prompt_files_for_import: List[Path] = []
-    parsed_prompts_for_preview: List[Dict[str, Any]] = []
-    last_prompt_import_dir: Optional[Path] = None
     selected_note_files_for_import: List[Path] = []
     parsed_notes_for_preview: List[Dict[str, Any]] = []
     last_note_import_dir: Optional[Path] = None
@@ -3603,11 +3554,6 @@ class TldwCli(
     onnx_server_process: Optional[subprocess.Popen] = None
 
     # De-Bouncers
-    _conv_char_search_timer: Optional[Timer] = None
-    # task-283 (B4): staleness generation for the CCP conversation search --
-    # see _media_search_generation for why this is needed now that the DB
-    # work runs via asyncio.to_thread.
-    _ccp_conversation_search_generation: int = 0
     _notes_search_timer: Optional[Timer] = None
 
     # Make API_IMPORTS_SUCCESSFUL accessible if needed by old methods or directly
@@ -3702,16 +3648,7 @@ class TldwCli(
         phase_start = time.perf_counter()
         # Initialize screen navigation flag early to prevent AttributeError
         self._use_screen_navigation = True  # ALWAYS use screen-based navigation now
-        self.parsed_prompts_for_preview = []  # <<< INITIALIZATION for prompts
-        self.last_prompt_import_dir = None
-
-        self.selected_character_files_for_import = []
-        self.parsed_characters_for_preview = []  # <<< INITIALIZATION for characters
-        self.last_character_import_dir = None
-        # Initialize Ingest Tab related attributes
-        self.selected_prompt_files_for_import = []
-        self.parsed_prompts_for_preview = []
-        self.last_prompt_import_dir = Path.home()  # Or Path(".")
+        # Initialize retained Notes ingest attributes.
         self.selected_notes_files_for_import = []
         self.parsed_notes_for_preview = []  # <<< INITIALIZATION for notes
         self.last_notes_import_dir = None
@@ -3847,14 +3784,6 @@ class TldwCli(
 
         self._ui_ready = False  # Track if UI is fully composed
         self._shutting_down = False  # Track if app is shutting down
-
-        # --- Setup Default view for CCP tab ---
-        # Initialize self.ccp_active_view based on initial tab or default state if needed
-        if self._initial_tab_value == TAB_CCP:
-            self.ccp_active_view = (
-                "conversation_details_view"  # Default view for CCP tab
-            )
-        # else: it will default to "conversation_details_view" anyway
 
         # --- Assign DB instances for event handlers ---
         if self.prompts_service_initialized:
@@ -5899,7 +5828,6 @@ class TldwCli(
         self.worker_handler_registry = WorkerHandlerRegistry(self)
 
         # Native Console owns Chat runs; these handlers serve retained app workers.
-        self.worker_handler_registry.register(AIGenerationHandler(self))
         self.worker_handler_registry.register(MiscWorkerHandler(self))
 
         self.loguru_logger.info("Worker handler registry initialized with all handlers")
@@ -6608,453 +6536,6 @@ class TldwCli(
         if handler:
             await handler.handle_audiobook_generate(event)
 
-    def switch_ccp_center_view(self, view_name: str) -> None:
-        """Switch the center pane view in the CCP tab."""
-        valid_views = {
-            "conversations": "conversation_messages_view",
-            "character": "character_card_view",
-            "character_editor": "character_editor_view",
-            "prompt_editor": "prompt_editor_view",
-            "dictionary": "dictionary_view",
-            "dictionary_editor": "dictionary_editor_view",
-        }
-
-        if view_name not in valid_views:
-            self.loguru_logger.warning(f"Invalid CCP view name: {view_name}")
-            return
-
-        # Map to the actual view name used by the watcher
-        actual_view = valid_views[view_name]
-
-        # Update the reactive which will trigger the watcher
-        self.ccp_active_view = actual_view
-        self.loguru_logger.info(f"Switched CCP center view to: {view_name}")
-
-    # --- Watcher for CCP Active View ---
-    def watch_ccp_active_view(self, old_view: Optional[str], new_view: str) -> None:
-        loguru_logger.debug(
-            f"CCP active view changing from '{old_view}' to: '{new_view}'"
-        )
-        if not getattr(self, "_ui_ready", False):
-            loguru_logger.debug("watch_ccp_active_view: UI not ready, returning.")
-            return
-        try:
-            conversation_messages_view = self.query_one(
-                "#ccp-conversation-messages-view"
-            )
-            prompt_editor_view = self.query_one("#ccp-prompt-editor-view")
-            character_card_view = self.query_one("#ccp-character-card-view")
-            character_editor_view = self.query_one("#ccp-character-editor-view")
-            dictionary_view = self.query_one("#ccp-dictionary-view")
-            dictionary_editor_view = self.query_one("#ccp-dictionary-editor-view")
-
-            # Default all to hidden, then enable the correct one
-            conversation_messages_view.display = False
-            prompt_editor_view.display = False
-            character_card_view.display = False
-            character_editor_view.display = False
-            dictionary_view.display = False
-            dictionary_editor_view.display = False
-
-            # REMOVE or COMMENT OUT the query for llm_settings_container_right:
-            # llm_settings_container_right = self.query_one("#ccp-right-pane-llm-settings-container")
-            # conv_details_collapsible_right = self.query_one("#ccp-conversation-details-collapsible", Collapsible) # Keep if you manipulate its collapsed state
-
-            if new_view == "prompt_editor_view":
-                # Center Pane: Show Prompt Editor
-                prompt_editor_view.display = True
-                # LLM settings container is gone, no need to hide it.
-                # llm_settings_container_right.display = False
-
-                # Optionally, manage collapsed state of other sidebars
-                self.query_one(
-                    "#ccp-conversation-details-collapsible", Collapsible
-                ).collapsed = True
-                self.query_one(
-                    "#ccp-prompt-details-collapsible", Collapsible
-                ).collapsed = False
-
-                # Focus an element in prompt editor
-                try:
-                    self.query_one("#ccp-editor-prompt-name-input", Input).focus()
-                except QueryError:
-                    loguru_logger.warning(
-                        "Could not focus prompt name input in editor view."
-                    )
-
-            elif new_view == "character_editor_view":
-                # Center Pane: Show Character Editor
-                character_editor_view.display = True
-                # Optionally manage right-pane collapsibles
-                self.query_one(
-                    "#ccp-conversation-details-collapsible", Collapsible
-                ).collapsed = True
-                self.query_one(
-                    "#ccp-prompt-details-collapsible", Collapsible
-                ).collapsed = True
-                loguru_logger.info(
-                    "Character editor view activated. Focus pending specific input fields."
-                )
-
-            elif new_view == "character_card_view":
-                # Center Pane: Show Character Card Display
-                character_card_view.display = True
-                character_editor_view.display = False
-                # Optionally manage right-pane collapsibles
-                self.query_one(
-                    "#ccp-conversation-details-collapsible", Collapsible
-                ).collapsed = True
-                self.query_one(
-                    "#ccp-prompt-details-collapsible", Collapsible
-                ).collapsed = True
-                loguru_logger.info("Character card display view activated.")
-
-                if self.current_ccp_character_details:
-                    details = self.current_ccp_character_details
-                    loguru_logger.info(
-                        f"Populating character card with details for: {details.get('name', 'Unknown')}"
-                    )
-                    try:
-                        self.query_one("#ccp-card-name-display", Static).update(
-                            details.get("name", "N/A")
-                        )
-                        self.query_one(
-                            "#ccp-card-description-display", TextArea
-                        ).text = details.get("description", "")
-                        self.query_one(
-                            "#ccp-card-personality-display", TextArea
-                        ).text = details.get("personality", "")
-                        self.query_one(
-                            "#ccp-card-scenario-display", TextArea
-                        ).text = details.get("scenario", "")
-                        self.query_one(
-                            "#ccp-card-first-message-display", TextArea
-                        ).text = details.get("first_message", "")
-
-                        # Populate V2 Character Card fields
-                        self.query_one(
-                            "#ccp-card-creator-notes-display", TextArea
-                        ).text = details.get("creator_notes") or ""
-                        self.query_one(
-                            "#ccp-card-system-prompt-display", TextArea
-                        ).text = details.get("system_prompt") or ""
-                        self.query_one(
-                            "#ccp-card-post-history-instructions-display", TextArea
-                        ).text = details.get("post_history_instructions") or ""
-
-                        # Handle alternate greetings (array to text)
-                        alternate_greetings = details.get("alternate_greetings", [])
-                        self.query_one(
-                            "#ccp-card-alternate-greetings-display", TextArea
-                        ).text = (
-                            "\n".join(alternate_greetings)
-                            if alternate_greetings
-                            else ""
-                        )
-
-                        # Handle tags (array to comma-separated)
-                        tags = details.get("tags", [])
-                        self.query_one("#ccp-card-tags-display", Static).update(
-                            ", ".join(tags) if tags else "None"
-                        )
-
-                        self.query_one("#ccp-card-creator-display", Static).update(
-                            details.get("creator") or "N/A"
-                        )
-                        self.query_one("#ccp-card-version-display", Static).update(
-                            details.get("character_version") or "N/A"
-                        )
-
-                        # Handle keywords (array to comma-separated)
-                        keywords = details.get("keywords", [])
-                        self.query_one("#ccp-card-keywords-display", Static).update(
-                            ", ".join(keywords) if keywords else "None"
-                        )
-
-                        image_placeholder = self.query_one(
-                            "#ccp-card-image-placeholder", Static
-                        )
-                        # Check if the character has an image in the database
-                        if details.get("image"):
-                            try:
-                                # Convert image bytes to PIL Image for display
-                                from PIL import Image
-                                import io
-
-                                image_bytes = details["image"]
-                                img = Image.open(io.BytesIO(image_bytes))
-
-                                # For now, just show image info until we implement proper image display
-                                # In a real implementation, you'd convert to a displayable format
-                                image_info = (
-                                    f"PNG Image: {img.width}x{img.height} pixels"
-                                )
-                                image_placeholder.update(image_info)
-
-                                # Store the PIL image for potential future use
-                                self.current_ccp_character_image = img
-                            except Exception as e:
-                                loguru_logger.error(
-                                    f"Error processing character image: {e}"
-                                )
-                                image_placeholder.update("Error loading image")
-                        else:
-                            image_placeholder.update("No image available")
-                            self.current_ccp_character_image = None
-                        loguru_logger.debug("Character card widgets populated.")
-                    except QueryError as qe:
-                        loguru_logger.opt(exception=True).error(
-                            f"QueryError populating character card: {qe}"
-                        )
-                else:
-                    loguru_logger.info(
-                        "No character details available to populate card view."
-                    )
-                    try:
-                        self.query_one("#ccp-card-name-display", Static).update("N/A")
-                        self.query_one(
-                            "#ccp-card-description-display", TextArea
-                        ).text = ""
-                        self.query_one(
-                            "#ccp-card-personality-display", TextArea
-                        ).text = ""
-                        self.query_one("#ccp-card-scenario-display", TextArea).text = ""
-                        self.query_one(
-                            "#ccp-card-first-message-display", TextArea
-                        ).text = ""
-
-                        # Clear V2 Character Card fields
-                        self.query_one(
-                            "#ccp-card-creator-notes-display", TextArea
-                        ).text = ""
-                        self.query_one(
-                            "#ccp-card-system-prompt-display", TextArea
-                        ).text = ""
-                        self.query_one(
-                            "#ccp-card-post-history-instructions-display", TextArea
-                        ).text = ""
-                        self.query_one(
-                            "#ccp-card-alternate-greetings-display", TextArea
-                        ).text = ""
-                        self.query_one("#ccp-card-tags-display", Static).update("None")
-                        self.query_one("#ccp-card-creator-display", Static).update(
-                            "N/A"
-                        )
-                        self.query_one("#ccp-card-version-display", Static).update(
-                            "N/A"
-                        )
-                        self.query_one("#ccp-card-keywords-display", Static).update(
-                            "None"
-                        )
-
-                        self.query_one("#ccp-card-image-placeholder", Static).update(
-                            "No character loaded"
-                        )
-                        self.current_ccp_character_image = None
-                        loguru_logger.debug("Character card widgets cleared.")
-                    except QueryError as qe:
-                        loguru_logger.opt(exception=True).error(
-                            f"QueryError clearing character card: {qe}"
-                        )
-
-            elif new_view == "dictionary_view":
-                # Center Pane: Show Dictionary Display
-                dictionary_view.display = True
-                # Optionally manage right-pane collapsibles
-                self.query_one(
-                    "#ccp-conversation-details-collapsible", Collapsible
-                ).collapsed = True
-                self.query_one(
-                    "#ccp-prompt-details-collapsible", Collapsible
-                ).collapsed = True
-                self.query_one(
-                    "#ccp-dictionary-details-collapsible", Collapsible
-                ).collapsed = False
-                loguru_logger.info("Dictionary display view activated.")
-
-            elif new_view == "dictionary_editor_view":
-                # Center Pane: Show Dictionary Editor
-                dictionary_editor_view.display = True
-                # Optionally manage right-pane collapsibles
-                self.query_one(
-                    "#ccp-conversation-details-collapsible", Collapsible
-                ).collapsed = True
-                self.query_one(
-                    "#ccp-prompt-details-collapsible", Collapsible
-                ).collapsed = True
-                self.query_one(
-                    "#ccp-dictionary-details-collapsible", Collapsible
-                ).collapsed = False
-                loguru_logger.info("Dictionary editor view activated.")
-                # Focus on dictionary name input
-                try:
-                    self.query_one("#ccp-editor-dict-name-input", Input).focus()
-                except QueryError:
-                    loguru_logger.warning(
-                        "Could not focus dictionary name input in editor view."
-                    )
-
-            elif (
-                new_view == "conversation_details_view"
-                or new_view == "conversation_messages_view"
-            ):
-                # Center Pane: Show Conversation Messages
-                conversation_messages_view.display = True
-                # LLM settings container is gone, no need to show it.
-                # llm_settings_container_right.display = True
-                self.query_one(
-                    "#ccp-conversation-details-collapsible", Collapsible
-                ).collapsed = False
-                self.query_one(
-                    "#ccp-prompt-details-collapsible", Collapsible
-                ).collapsed = True
-
-                try:
-                    # If a conversation is loaded, maybe focus its title in right pane
-                    if self.current_conv_char_tab_conversation_id:
-                        self.query_one("#conv-char-title-input", Input).focus()
-                    else:  # Otherwise, maybe focus the search in left pane
-                        self.query_one("#conv-char-search-input", Input).focus()
-                except QueryError:
-                    loguru_logger.warning(
-                        "Could not focus default element in conversation details view."
-                    )
-            else:  # Default or unknown view (treat as conversation_details_view)
-                # Center Pane: Show Conversation Messages (default)
-                conversation_messages_view.display = True
-                loguru_logger.warning(
-                    f"Unknown ccp_active_view: {new_view}, defaulting to conversation_details_view."
-                )
-
-        except QueryError as e:
-            loguru_logger.exception(
-                f"UI component not found during CCP view switch: {e}"
-            )
-        except Exception as e_watch:
-            loguru_logger.exception(
-                f"Unexpected error in watch_ccp_active_view: {e_watch}"
-            )
-
-    # --- Watcher for Right Sidebar in CCP Tab ---
-    def watch_conv_char_sidebar_right_collapsed(self, collapsed: bool) -> None:
-        """Hide or show the Conversations, Characters & Prompts right sidebar pane."""
-        if not self._ui_ready:
-            loguru_logger.debug(
-                "watch_conv_char_sidebar_right_collapsed: UI not ready."
-            )
-            return
-        try:
-            sidebar_pane = self.query_one("#conv-char-right-pane")
-            sidebar_pane.set_class(
-                collapsed, "collapsed"
-            )  # Add if true, remove if false
-            loguru_logger.debug(
-                f"CCP right pane collapsed state: {collapsed}, class set."
-            )
-        except QueryError:
-            loguru_logger.error(
-                "CCP right pane (#conv-char-right-pane) not found for collapse toggle."
-            )
-        except Exception as e:
-            loguru_logger.opt(exception=True).error(
-                f"Error toggling CCP right pane: {e}"
-            )
-
-    # --- Modify _clear_prompt_fields and _load_prompt_for_editing ---
-    def _clear_prompt_fields(self) -> None:
-        """Clears prompt input fields in the CENTER PANE editor."""
-        UIHelpers.clear_prompt_editor_fields(self)
-
-    # --- Thread-safe chat state helpers ---
-
-
-
-
-
-    # NOTE: Removed query_one and query overrides - screens should handle their own queries
-    # This follows Textual best practices for screen-based navigation
-    # Each screen is responsible for querying its own widgets
-
-    async def _load_prompt_for_editing(
-        self, prompt_id: Optional[int], prompt_uuid: Optional[str] = None
-    ) -> None:
-        if not self.prompts_service_initialized:
-            self.notify("Prompts service not available.", severity="error")
-            return
-
-        # Switch to prompt editor view
-        self.ccp_active_view = "prompt_editor_view"  # This will trigger the watcher
-
-        identifier_to_fetch = prompt_id if prompt_id is not None else prompt_uuid
-        if identifier_to_fetch is None:
-            self._clear_prompt_fields()
-            self.current_prompt_id = None  # Reset all reactive prompt states
-            self.current_prompt_uuid = None
-            self.current_prompt_name = None
-            # ... etc. for other prompt reactives
-            loguru_logger.warning(
-                "_load_prompt_for_editing called with no ID/UUID after view switch."
-            )
-            return
-
-        try:
-            prompt_details = prompts_interop.fetch_prompt_details(identifier_to_fetch)
-
-            if prompt_details:
-                self.current_prompt_id = prompt_details.get("id")
-                self.current_prompt_uuid = prompt_details.get("uuid")
-                self.current_prompt_name = prompt_details.get("name", "")
-                self.current_prompt_author = prompt_details.get("author", "")
-                self.current_prompt_details = prompt_details.get("details", "")
-                self.current_prompt_system = prompt_details.get("system_prompt", "")
-                self.current_prompt_user = prompt_details.get("user_prompt", "")
-                self.current_prompt_keywords_str = ", ".join(
-                    prompt_details.get("keywords", [])
-                )
-                self.current_prompt_version = prompt_details.get("version")
-
-                # Populate UI in the CENTER PANE editor
-                self.query_one(
-                    "#ccp-editor-prompt-name-input", Input
-                ).value = self.current_prompt_name
-                self.query_one(
-                    "#ccp-editor-prompt-author-input", Input
-                ).value = self.current_prompt_author
-                self.query_one(
-                    "#ccp-editor-prompt-description-textarea", TextArea
-                ).text = self.current_prompt_details
-                self.query_one(
-                    "#ccp-editor-prompt-system-textarea", TextArea
-                ).text = self.current_prompt_system
-                self.query_one(
-                    "#ccp-editor-prompt-user-textarea", TextArea
-                ).text = self.current_prompt_user
-                self.query_one(
-                    "#ccp-editor-prompt-keywords-textarea", TextArea
-                ).text = self.current_prompt_keywords_str
-
-                self.query_one(
-                    "#ccp-editor-prompt-name-input", Input
-                ).focus()  # Focus after loading
-                self.notify(
-                    f"Prompt '{self.current_prompt_name}' loaded for editing.",
-                    severity="information",
-                )
-            else:
-                self.notify(
-                    f"Failed to load prompt (ID/UUID: {identifier_to_fetch}).",
-                    severity="error",
-                )
-                self._clear_prompt_fields()  # Clear editor if load fails
-                self.current_prompt_id = None  # Reset reactives
-        except Exception as e:
-            loguru_logger.opt(exception=True).error(
-                f"Error loading prompt for editing: {e}"
-            )
-            self.notify(f"Error loading prompt: {type(e).__name__}", severity="error")
-            self._clear_prompt_fields()
-            self.current_prompt_id = None  # Reset reactives
-
     # ##################################################
     # --- Watcher for Search Tab Active Sub-View ---
     # ##################################################
@@ -7295,12 +6776,6 @@ class TldwCli(
             self.loguru_logger.opt(exception=True).error(
                 f"Unexpected error in watch_tools_settings_active_view: {e_watch}"
             )
-
-    # --- Add explicit methods to update reactives from Select changes ---
-    def update_ccp_provider_reactive(self, new_value: Optional[str]) -> None:  # Renamed
-        self.ccp_api_provider_value = (
-            new_value  # Watcher will call _update_model_select
-        )
 
     def _bind_tts_service(self) -> None:
         """Bind the single TTS service owned by this application."""
@@ -7852,14 +7327,6 @@ class TldwCli(
 
         # Widget binding
         phase_start = time.perf_counter()
-        # try:
-        #     ccp_select = self.query_one(f"#{TAB_CCP}-api-provider", Select)
-        #     #self.watch(ccp_select, "value", self.update_ccp_provider_reactive, init=False)
-        #     #self.loguru_logger.debug(f"Bound CCP provider Select ({ccp_select.id})")
-        # except QueryError:
-        #     self.loguru_logger.error(f"_post_mount_setup: Failed to find CCP provider select: #{TAB_CCP}-api-provider")
-        # except Exception as e:
-        #     self.loguru_logger.error(f"_post_mount_setup: Error binding CCP provider select: {e}", exc_info=True)
         log_histogram(
             "app_post_mount_phase_duration_seconds",
             time.perf_counter() - phase_start,
@@ -7889,8 +7356,6 @@ class TldwCli(
             # conflict with RAG search operations using asyncio.to_thread, causing the app to hang.
             # Instead, let the conversation search UI populate when it's actually visible/needed.
             pass
-        # Don't populate CCP widgets here - let watch_current_tab handle it when the tab is actually shown
-        # This prevents errors when the window isn't fully initialized yet
         log_histogram(
             "app_post_mount_phase_duration_seconds",
             time.perf_counter() - phase_start,
@@ -8747,34 +8212,6 @@ class TldwCli(
                 f"Ingest active view already set to '{self.ingest_active_view}'. No change made by _activate_initial_ingest_view."
             )
 
-    # Watchers for sidebar collapsed states (keep as is)
-
-    def watch_conv_char_sidebar_left_collapsed(self, collapsed: bool) -> None:
-        """Hide or show the Conversations, Characters & Prompts left sidebar pane."""
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        try:
-            sidebar_pane = self.query_one(
-                "#conv-char-left-pane"
-            )  # The ID of the VerticalScroll
-            sidebar_pane.display = (
-                not collapsed
-            )  # True means visible, False means hidden
-            logging.debug(
-                f"Conversations, Characters & Prompts left pane display set to {not collapsed}"
-            )
-        except QueryError:
-            logging.error(
-                "Conversations, Characters & Prompts left sidebar pane (#conv-char-left-pane) not found."
-            )
-        except Exception as e:
-            logging.error(
-                f"Error toggling Conversations, Characters & Prompts left sidebar pane: {e}",
-                exc_info=True,
-            )
-
     def watch_media_active_view(
         self, old_view: Optional[str], new_view: Optional[str]
     ) -> None:
@@ -8800,18 +8237,6 @@ class TldwCli(
         #         self.loguru_logger.error(f"Error updating MediaWindow view: {e}", exc_info=True)
 
 
-    @on(Collapsible.Toggled, "#conv-char-conversations-collapsible")
-    async def on_ccp_conversations_collapsible_toggle(
-        self, event: Collapsible.Toggled
-    ) -> None:
-        """Handles the expansion/collapse of the Conversations collapsible section in the CCP tab."""
-        if not event.collapsible.collapsed:  # If the collapsible was just expanded
-            self.loguru_logger.info("Conversations collapsible opened in CCP tab.")
-            # Trigger initial search to populate the list
-            await ccp_handlers.perform_ccp_conversation_search(self)
-        else:
-            self.loguru_logger.info("Conversations collapsible closed in CCP tab.")
-
     ########################################################################
     #
     # --- EVENT DISPATCHERS ---
@@ -8824,26 +8249,7 @@ class TldwCli(
         input_id = event.input.id
         current_active_tab = self.current_tab
         # --- Notes input events are handled inside the Library screen, not here ---
-        if input_id == "conv-char-search-input" and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_conversation_search_input_changed(self, event)
-        elif (
-            input_id == "conv-char-keyword-search-input"
-            and current_active_tab == TAB_CCP
-        ):
-            await ccp_handlers.handle_ccp_conversation_keyword_search_input_changed(
-                self, event
-            )
-        elif (
-            input_id == "conv-char-tags-search-input" and current_active_tab == TAB_CCP
-        ):
-            await ccp_handlers.handle_ccp_conversation_tags_search_input_changed(
-                self, event
-            )
-        elif input_id == "ccp-prompt-search-input" and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_prompt_search_input_changed(self, event)
-        elif input_id == "ccp-worldbook-search-input" and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_worldbook_search_input_changed(self, event)
-        elif (
+        if (
             input_id
             and input_id.startswith("media-search-input-")
             and current_active_tab == TAB_MEDIA
@@ -8866,30 +8272,12 @@ class TldwCli(
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Route retained root-level list selections to destination owners."""
         list_view_id = event.list_view.id
-        current_active_tab = self.current_tab
-
         if (
             list_view_id
             and list_view_id.startswith("media-list-view-")
-            and current_active_tab == TAB_MEDIA
+            and self.current_tab == TAB_MEDIA
         ):
             await media_events.handle_media_list_item_selected(self, event)
-        elif list_view_id == "ccp-prompts-listview" and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_prompts_list_view_selected(
-                self, list_view_id, event.item
-            )
-
-    async def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        """Route retained root-level checkbox events to destination owners."""
-        checkbox_id = event.checkbox.id
-        if (
-            checkbox_id.startswith("conv-char-search-")
-            and self.current_tab == TAB_CCP
-        ):
-            await ccp_handlers.handle_ccp_search_checkbox_changed(
-                self, checkbox_id, event.value
-            )
-        # Add handlers for checkboxes in other tabs if any
 
     async def on_switch_changed(self, event: Switch.Changed) -> None:
         """Handles changes in Switch widgets."""
@@ -8898,14 +8286,6 @@ class TldwCli(
 
         if switch_id == "notes-auto-save-toggle":
             await self.handle_notes_auto_save_toggle(event)
-
-    async def on_select_changed(self, event: Select.Changed) -> None:
-        """Route retained root-level select events to destination owners."""
-        select_id = event.select.id
-        current_active_tab = self.current_tab
-
-        if select_id == "conv-char-character-select" and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_character_select_changed(self, event.value)
 
     @on(media_events.MediaMetadataUpdateEvent)
     async def on_media_metadata_update(
@@ -9017,31 +8397,8 @@ class TldwCli(
                 f"No handler found for worker '{worker_name}' (Group: {worker_group})"
             )
 
-    def watch_ccp_api_provider_value(
-        self, new_value: Optional[str]
-    ) -> None:  # Renamed from watch_character_...
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        self.loguru_logger.debug(
-            f"Watcher: ccp_api_provider_value changed to {new_value}"
-        )
-        if new_value is None or new_value == Select.BLANK:
-            self._update_model_select(TAB_CCP, [])
-            return
-        models = self.providers_models.get(new_value, [])
-        self._update_model_select(TAB_CCP, models)
-
-
-    def _update_model_select(self, id_prefix: str, models: list[str]) -> None:
-        if not self._ui_ready:  # Add guard
-            return
-        UIHelpers.update_model_select(self, id_prefix, models)
-
-
     def chat_wrapper(self, strip_thinking_tags: bool = True, **kwargs: Any) -> Any:
-        """Delegate a retained non-streaming CCP or media call.
+        """Delegate a retained non-streaming media call.
 
         Args:
             strip_thinking_tags: Whether the core chat call removes thinking

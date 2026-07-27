@@ -24,9 +24,9 @@ def test_dead_junction_functions_removed():
     assert not hasattr(cdl, "get_conversation_dictionaries")
 
 
-def test_app_and_conv_char_events_still_import():
-    # The wiring removal didn't break the modules that referenced the dead handlers.
-    importlib.import_module("tldw_chatbook.Event_Handlers.conv_char_events")
+def test_app_imports_without_retired_conv_char_events():
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("tldw_chatbook.Event_Handlers.conv_char_events")
     importlib.import_module("tldw_chatbook.app")
 
 
