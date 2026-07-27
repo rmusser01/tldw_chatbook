@@ -122,6 +122,30 @@ the state that implies it.
 
 ---
 
+## A text scan for "is this method called?" passes vacuously
+
+**What happened.** TASK-895 needed a guard proving every `WatchlistBundleService`
+method has a production caller. The first version grepped the tree for `.create(`,
+`.rename(`, `.delete(` and friends. It passed — against code where the methods were
+still unwired.
+
+`.create(` matches `completions.create(` in the OCR backends. `.rename(` matches
+`os.rename(`. The guard was measuring the existence of unrelated method names on
+unrelated objects. It was caught only by mutation: unwiring a call and watching the
+guard stay green.
+
+Rewritten as an AST walk that resolves the receiver before counting a call.
+
+**What to do.** A guard that asserts "X is used" must resolve *what* X is, not match its
+name. Bare-name greps are fine for finding candidates and useless as evidence, because
+method names are not unique across a codebase — the more generic the verb (`create`,
+`delete`, `run`, `send`), the more certainly the grep is counting something else.
+
+And whatever the guard is: **mutate the thing it claims to protect and watch it fail.**
+This one looked authoritative, ran green, and proved nothing.
+
+---
+
 ## Related
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects
