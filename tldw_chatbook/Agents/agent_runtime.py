@@ -254,12 +254,46 @@ class LoopDeps:
     # `None` (the default) means the run is not wired for it and a call by
     # that name falls through to the generic deps.invoke_tool path.
     run_skill_script: Callable[[str, str, list[str]], ToolResult] | None = None
+    # on_record: full-fidelity capture for the run log (run_log.py). Called
+    # with (record_type, payload) at the two points where the COMPLETE value
+    # exists -- which the step log does not carry, since `add()` truncates
+    # model turns to 200 chars and tool results to 2000. Captured in the
+    # loop rather than in service wrappers because the loop assembles
+    # `content` for EVERY dispatch branch at one point: a wrapper around
+    # deps.invoke_tool would silently miss find_tools, load_tools,
+    # spawn_subagent, skill_file, install_skill and run_skill_script.
+    # `None` (the default) is a no-op: behavior is byte-identical to
+    # pre-run-log runs.
+    on_record: Callable[[str, dict], None] | None = None
 
 
 def _catalog_lines(entries: list) -> str:
     if not entries:
         return "No matching tools."
     return "\n".join(f"{e.id} — {e.name}: {e.one_line_description}" for e in entries)
+
+
+def _emit_record(deps: "LoopDeps", record_type: str, **payload) -> int | None:
+    """Best-effort run-log capture; a failing writer never aborts a run.
+
+    Args:
+        deps: The run's injected dependencies.
+        record_type: ``model``, ``tool_call``, or ``tool_result``.
+        **payload: ``content``, ``tool``, ``status``, ``call_id``.
+
+    Returns:
+        The assigned record number, or ``None`` when logging is off or the
+        write failed. Task 7 threads this into the truncation trailer.
+    """
+    if deps.on_record is None:
+        return None
+    try:
+        return deps.on_record(record_type, payload)
+    except Exception:  # noqa: BLE001 — logging is never load-bearing
+        logger.opt(exception=True).warning(
+            f"on_record hook raised for a {record_type} record; continuing"
+        )
+        return None
 
 
 def _truncate_tool_result(content: str, max_chars: int, tool_name: str) -> str:
@@ -423,6 +457,14 @@ def run_agent_loop(
         model_turns += 1
         total_tokens += turn.tokens
         add(STEP_MODEL, summary=turn.text[:200])
+        _emit_record(
+            deps,
+            "model",
+            content=turn.text,
+            tool="",
+            status="",
+            call_id="",
+        )
 
         calls = list(turn.tool_calls)
         if not calls:
@@ -640,6 +682,27 @@ def run_agent_loop(
                     result = deps.invoke_tool(call)
 
                 content = result.content if result.ok else f"ERROR: {result.error}"
+
+            # Capture BEFORE _truncate_tool_result below: the log is the
+            # lossless record, history is the capped view of it. This single
+            # point covers every dispatch branch above -- builtin, MCP,
+            # skill, runtime tools -- and the review-hook refusal path.
+            _emit_record(
+                deps,
+                "tool_call",
+                content=json.dumps(call.args, sort_keys=True, default=str),
+                tool=call.name,
+                status="",
+                call_id=call.call_id,
+            )
+            _emit_record(
+                deps,
+                "tool_result",
+                content=content,
+                tool=call.name,
+                status="ok" if verdict == "proceed" else "refused",
+                call_id=call.call_id,
+            )
 
             # Truncate once, unconditionally, regardless of which branch set
             # `content` above -- the review-hook refusal string (verdict !=
