@@ -1,29 +1,46 @@
 import pytest
 
-from textual.app import App, ComposeResult
+from textual.app import App
 from textual.widgets import Static
 
-from tldw_chatbook.UI.STTS_Window import STTSWindow
+from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
+from Tests.UI.test_screen_navigation import _build_test_app
+
+# The capability line moved out of STTSWindow's sidebar and into the Lab
+# frame's rail when Speech adopted the frame, so these mount the SCREEN now.
+# Its id and the recovery-taxonomy copy are unchanged -- that is the point of
+# asserting it here rather than deleting the coverage with the sidebar.
+# `check_*_deps` is patched on lab_speech_status, which is where the probes
+# are called from now.
+
+
+class _SpeechHarness(App):
+    def __init__(self, app_instance):
+        super().__init__()
+        self._app_instance = app_instance
+
+    async def on_mount(self) -> None:
+        await self.push_screen(STTSScreen(self._app_instance))
 
 
 @pytest.mark.asyncio
 async def test_stts_window_explains_missing_local_speech_dependencies(monkeypatch):
     monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "tts_processing", False)
     monkeypatch.setitem(DEPENDENCIES_AVAILABLE, "stt_processing", False)
-    monkeypatch.setattr("tldw_chatbook.UI.STTS_Window.check_tts_deps", lambda: False)
-    monkeypatch.setattr("tldw_chatbook.UI.STTS_Window.check_stt_deps", lambda: False)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.check_tts_deps", lambda: False
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.check_stt_deps", lambda: False
+    )
 
-    class STTSCapabilityApp(App):
-        def compose(self) -> ComposeResult:
-            yield STTSWindow(self)
-
-    app = STTSCapabilityApp()
+    app = _SpeechHarness(_build_test_app())
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
-        status = app.query_one("#speech-capability-status", Static)
+        status = app.screen.query_one("#speech-capability-status", Static)
         rendered_status = str(status.render())
 
         # The status now uses the phase-5 recovery taxonomy copy
@@ -51,21 +68,23 @@ async def test_stts_window_refreshes_local_speech_dependency_flags(monkeypatch):
         return True
 
     monkeypatch.setattr(
-        "tldw_chatbook.UI.STTS_Window.check_tts_deps", mark_tts_available
+        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.check_tts_deps",
+        mark_tts_available,
     )
     monkeypatch.setattr(
-        "tldw_chatbook.UI.STTS_Window.check_stt_deps", mark_stt_available
+        "tldw_chatbook.UI.Lab_Modules.lab_speech_status.check_stt_deps",
+        mark_stt_available,
     )
 
-    class STTSCapabilityApp(App):
-        def compose(self) -> ComposeResult:
-            yield STTSWindow(self)
-
-    app = STTSCapabilityApp()
+    app = _SpeechHarness(_build_test_app())
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
-        status = app.query_one("#speech-capability-status", Static)
+        # Two widgets now: the rail's one-line summary, and the inspector's
+        # recovery detail carrying the stable selector. Both must flip.
+        summary = app.screen.query_one("#speech-capability-summary", Static)
+        assert str(summary.render()) == "Local speech: ready"
 
-        assert str(status.render()) == "Local speech: ready"
+        detail = app.screen.query_one("#speech-capability-status", Static)
+        assert str(detail.render()) == "Local TTS and STT dependencies are available."

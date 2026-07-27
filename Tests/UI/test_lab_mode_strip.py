@@ -55,8 +55,17 @@ _LAB_SCREENS = (
 # The other three async tests below (_StripHarness-based, or exercising the
 # real shell) still parametrize/exercise all of _LAB_SCREENS including evals
 # and llm -- they never call compose_content() directly.
+#
+# "stts" joins them with the Speech adoption: STTSScreen now extends
+# LabScreen too, so its compose_content() is the frame's -- which always
+# enters `with Horizontal(id="lab-header-row"): ...`, and Speech's own
+# capability chip is composed inside it. Same NoActiveAppError, same
+# remedy. That leaves this subset EMPTY, which is the honest outcome: all
+# three Lab modes are on the frame now, and no Lab screen composes flat any
+# more. Kept rather than deleted so the next flat-composing mode (if one is
+# ever added) lands here instead of silently skipping the check.
 _LAB_SCREENS_FLAT_COMPOSE = tuple(
-    entry for entry in _LAB_SCREENS if entry[0] not in ("evals", "llm")
+    entry for entry in _LAB_SCREENS if entry[0] not in ("evals", "llm", "stts")
 )
 
 
