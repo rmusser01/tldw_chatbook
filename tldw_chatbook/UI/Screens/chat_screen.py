@@ -2082,7 +2082,7 @@ class ChatScreen(BaseAppScreen):
         # (skip Static.update()/style work when the computed payload hasn't
         # changed since the last successful apply).
         self._console_agent_section_last: (
-            tuple[str, str, str, str, bool] | None
+            tuple[str, str, str, str, bool, bool] | None
         ) = None
         self._console_rail_system_line_last: tuple[str, bool] | None = None
         self._console_rail_prune_dispatched = False
@@ -2910,11 +2910,44 @@ class ChatScreen(BaseAppScreen):
         payload -- the 0.2s tick called this unconditionally, forcing three
         ``Static.update()`` calls plus a style write per tick even when
         nothing agent-related had changed.
+
+        Fix round 2 (parallel-agents spec §6 live-smoke finding): also
+        tracks and applies the Agent section's own open/collapsed state
+        (header chevron + body ``display``). Compose-time already applies
+        ``_apply_fleet_agent_section_auto_open`` once at mount, but that is
+        a one-shot snapshot -- a background session's run starting or
+        ending *after* mount (the overwhelmingly common case) must reopen
+        or release the section on this same periodic sync, or the fleet
+        line would only ever be reachable for whichever fleet state
+        happened to exist at the moment the screen was first composed.
         """
         status_line, steps_text, subagents_text = self._console_agent_section_lines()
         fleet_line = self._console_agent_fleet_summary_line()
         back_visible = bool(self._console_agent_drilldown_run_id)
-        payload = (status_line, steps_text, subagents_text, fleet_line, back_visible)
+        try:
+            section_open = self._current_console_rail_state().agent_open
+        except (AttributeError, NoActiveAppError):
+            # A bare/unmounted screen (several tests construct
+            # `ChatScreen(app)` directly with no active Textual app
+            # context -- e.g. `test_console_provider_selection_carries_
+            # active_session_system_prompt`) has no real rail width to
+            # derive responsive state from: `_console_rail_available_
+            # columns` reads `self.size`, which raises here rather than
+            # returning `None` (`Screen.size` needs `self.app`). Same
+            # guard idiom `_provider_readiness_app_config` already uses
+            # for this exact failure mode. Fall back to the persisted
+            # default (collapsed) -- the Statics-only updates below are
+            # still worth applying even when the section's own open state
+            # cannot be derived.
+            section_open = False
+        payload = (
+            status_line,
+            steps_text,
+            subagents_text,
+            fleet_line,
+            back_visible,
+            section_open,
+        )
         if payload == self._console_agent_section_last:
             return
         try:
@@ -2928,6 +2961,12 @@ class ChatScreen(BaseAppScreen):
             fleet_summary.styles.display = "block" if fleet_line else "none"
             back_button = self.query_one("#console-agent-drilldown-back", Button)
             back_button.styles.display = "block" if back_visible else "none"
+            agent_body = self.query_one("#console-rail-section-body-agent")
+            agent_body.styles.display = "block" if section_open else "none"
+            agent_header = self.query_one(
+                "#console-rail-section-header-agent", ConsoleRailSectionHeader
+            )
+            agent_header.sync_open(section_open)
         except (NoMatches, QueryError):
             return
         self._console_agent_section_last = payload
@@ -7155,9 +7194,39 @@ class ChatScreen(BaseAppScreen):
             inspector_state=inspector_state,
             workspace_context_state=workspace_context_state,
         )
-        return self._apply_pending_launch_inspector_auto_open(
+        rail_state = self._apply_pending_launch_inspector_auto_open(
             rail_state, pending_launch
         )
+        return self._apply_fleet_agent_section_auto_open(rail_state)
+
+    def _apply_fleet_agent_section_auto_open(
+        self, rail_state: ConsoleRailState
+    ) -> ConsoleRailState:
+        """Force the Agent rail section open while the fleet has anything to report.
+
+        Parallel-agents spec §6, fix round 2 (live-smoke finding): the Agent
+        section's persisted preference defaults collapsed (``agent_open=
+        False``, see ``ConsoleRailPreferences``) and nothing previously
+        reopened it, so its BODY -- where the fleet summary line
+        (``#console-agent-fleet-summary``) lives -- stayed ``display: none``
+        even while another session was running or parked on an approval.
+        Scrolling the rail only ever reached the still-collapsed header; the
+        line itself was unreachable regardless of scroll position.
+
+        Mirrors ``_apply_pending_launch_inspector_auto_open``: an ephemeral
+        override applied to the RENDERED rail state only, never written back
+        to the persisted preference, so a user's own explicit collapse still
+        takes effect the moment the fleet goes quiet (``fleet_summary_
+        counts()`` returns to ``(0, 0)``). Uses ``_console_agent_fleet_
+        summary_line()`` -- the exact same non-empty-string signal the
+        fleet Static's own ``display`` toggles on -- so "must render open"
+        and "has a line to show" can never disagree.
+        """
+        if rail_state.agent_open:
+            return rail_state
+        if not self._console_agent_fleet_summary_line():
+            return rail_state
+        return replace(rail_state, agent_open=True)
 
     def _set_console_rail_preference(
         self,
@@ -9184,6 +9253,7 @@ class ChatScreen(BaseAppScreen):
             rail_state,
             pending_launch,
         )
+        rail_state = self._apply_fleet_agent_section_auto_open(rail_state)
         workbench_state = self._build_console_workbench_state(control_state)
         shell_classes = (
             f"workbench-frame console-workbench-frame density-{workbench_state.density}"

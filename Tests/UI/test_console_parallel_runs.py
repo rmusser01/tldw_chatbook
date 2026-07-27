@@ -550,3 +550,93 @@ async def test_background_completion_fires_single_toast() -> None:
             ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"), session_id=background
         )
         assert len([n for n in notifications if "finished" in n]) == 1
+
+
+def _assert_widget_and_ancestors_displayed(widget) -> None:
+    """Walk `widget`'s own ancestor chain and assert every node up to the
+    screen is displayed and occupies real screen space.
+
+    Fix round 2 (live-smoke finding): Textual's ``Widget.display`` is a
+    PER-WIDGET property (``self.styles.display != "none"``), never
+    ancestor-aggregated -- a widget can report ``display=True`` while an
+    ancestor's own ``display=False`` hides it from the live surface
+    entirely. `_visible_text` (used by the sibling fleet-line test above)
+    collects text from every ``Static`` regardless of whether an ancestor
+    section is mounted/displayed; that gap is exactly what let Task 8's
+    original tests pass while the real TUI rendered nothing (the Agent
+    rail section defaults collapsed, and nothing reopened it, so its
+    body -- where the fleet Static lives -- stayed `display: none`
+    permanently). This walks the real chain, the same bar a user's
+    rendered terminal must clear.
+    """
+    node = widget
+    while node is not None:
+        assert node.display, (
+            f"{getattr(node, 'id', None) or node!r} is not displayed "
+            "(display=False) -- an ancestor collapse/display:none hides "
+            "it from the live surface even though it is mounted"
+        )
+        node = node.parent
+    assert widget.region.width > 0 and widget.region.height > 0, (
+        f"{widget!r} has an empty rendered region {widget.region!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fleet_summary_line_is_reachable_on_the_live_rendered_surface() -> None:
+    """Fix round 2 (parallel-agents spec §6 live-smoke finding): the Agent
+    rail section's persisted preference defaults COLLAPSED (`agent_open=
+    False`) and nothing previously reopened it, so `#console-agent-fleet-
+    summary` -- though always mounted -- lived inside a body whose
+    `display` stayed `none` regardless of fleet state. A live reviewer
+    scrolling the whole rail with a background session parked (fleet
+    counts (0, 1)) found no Agent header/fleet line anywhere on screen.
+
+    `test_tab_and_sidebar_show_run_markers_and_fleet_line` above already
+    covers the TEXT/copy contract via `_visible_text`, which structurally
+    cannot catch an ancestor-hidden widget (see `_assert_widget_and_
+    ancestors_displayed`'s docstring) -- this test is the one that would
+    have caught the live-smoke finding: same idle-viewer/busy-background
+    setup, but it walks the actual mounted ancestor chain instead.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # viewed idle; background stays non-active
+
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg"),
+            session_id=background,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.3)
+
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+        _assert_widget_and_ancestors_displayed(fleet_summary)
+        assert (
+            getattr(fleet_summary.renderable, "plain", str(fleet_summary.renderable))
+            == "1 other agents running, 0 waiting for approval."
+        )
+
+        # Quiet fleet -- the section (and the line specifically) may
+        # release back to the user's actual (collapsed) preference; the
+        # line's own content must go empty either way (never a stale
+        # count once nothing is left to report).
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"),
+            session_id=background,
+        )
+        controller.mark_session_visited(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.3)
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+        assert not fleet_summary.display or str(
+            getattr(fleet_summary.renderable, "plain", fleet_summary.renderable)
+        ) == ""
