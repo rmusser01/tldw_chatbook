@@ -368,12 +368,12 @@ async def test_late_discovery_is_discarded_after_signature_or_generation_change(
     stale_change: str,
 ) -> None:
     message = _message("assistant", persisted_message_id="persisted")
-    screen = _bare_screen([message], None)
-    signature = screen._console_citation_signature([message])
-    screen._console_citation_input_signature = signature
-    screen._console_citation_request_generation = 1
+    app_db = object()
+    stale_applied = False
 
     def make_stale() -> None:
+        nonlocal stale_applied
+        stale_applied = True
         if stale_change == "body":
             message.content = "Edited answer [S1]."
         elif stale_change == "persisted-id":
@@ -383,10 +383,20 @@ async def test_late_discovery_is_discarded_after_signature_or_generation_change(
         else:
             screen._console_citation_request_generation += 1
 
-    repository = _FakeRepository(_active_result(_trace()), on_lookup=make_stale)
+    repository = _FakeRepository(
+        _active_result(_trace()),
+        on_lookup=make_stale,
+        db=app_db,
+    )
+    screen = _bare_screen([message], repository, app_db=app_db)
+    signature = screen._console_citation_signature([message])
+    screen._console_citation_input_signature = signature
+    screen._console_citation_request_generation = 1
 
     await screen._discover_console_citation_counts(repository, signature, 1)
 
+    assert repository.calls == [("persisted", "Answer [S1].")]
+    assert stale_applied
     assert screen._console_citation_counts == {}
 
 
