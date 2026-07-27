@@ -36,6 +36,7 @@ from tldw_chatbook.TTS.profile_types import (
 CREATED_AT = datetime(2026, 7, 26, 12, 0, 0, 123456, tzinfo=UTC)
 UPDATED_AT = datetime(2026, 7, 26, 13, 30, 0, 654321, tzinfo=UTC)
 LATER_AT = datetime(2026, 7, 26, 14, 45, 0, 111111, tzinfo=UTC)
+FUTURE_AT = datetime(2099, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
 GENERATED_ID = UUID("10000000-0000-4000-8000-000000000001")
 CALLER_ID = UUID("20000000-0000-0000-8000-000000000002")
 
@@ -2858,6 +2859,146 @@ async def test_assignments_are_exactly_authority_scoped_and_replace_one_target(
         assert after is not None
         assert after[0] == before[0]
         assert after[1] > before[1]
+
+
+@pytest.mark.asyncio
+async def test_assignment_replacement_is_monotonic_when_clock_moves_backward(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "backward-clock.sqlite3"
+    first_profile_id = UUID("f2100000-0000-4000-8000-000000000001")
+    second_profile_id = UUID("f2200000-0000-4000-8000-000000000002")
+    character_ref = CharacterRef(
+        "local",
+        "future-restored-authority",
+        "future-restored-character",
+    )
+    clock = _SequenceCallable(iter((CREATED_AT, UPDATED_AT, FUTURE_AT, CREATED_AT)))
+    future_text = FUTURE_AT.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    async with _opened_repository(
+        database_path,
+        clock=cast(Callable[[], datetime], clock),
+    ) as repository:
+        await repository.create_profile(
+            _draft("Backward First"),
+            profile_id=first_profile_id,
+        )
+        await repository.create_profile(
+            _draft("Backward Second"),
+            profile_id=second_profile_id,
+        )
+        await repository.set_assignment(character_ref, first_profile_id)
+
+        replaced = await repository.set_assignment(character_ref, second_profile_id)
+
+        assert replaced.value == CharacterTTSAssignment(
+            character_ref,
+            second_profile_id,
+        )
+        connection = sqlite3.connect(database_path)
+        try:
+            timestamps = connection.execute(
+                """
+                SELECT created_at, updated_at
+                FROM character_tts_assignments
+                WHERE source = ? AND authority_id = ? AND character_id = ?
+                """,
+                (
+                    character_ref.source,
+                    character_ref.authority_id,
+                    character_ref.character_id,
+                ),
+            ).fetchone()
+        finally:
+            connection.close()
+        assert timestamps == (future_text, future_text)
+        snapshot = (await repository.get_assigned_profile(character_ref)).value
+        assert snapshot is not None
+        assert snapshot.assignment.profile_id == second_profile_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["insert", "replace"])
+async def test_assignment_timestamp_rewrite_trigger_rolls_back_and_recovers(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    database_path = tmp_path / f"secret-{operation}-timestamp-trigger.sqlite3"
+    first_profile_id = UUID("f2300000-0000-4000-8000-000000000003")
+    second_profile_id = UUID("f2400000-0000-4000-8000-000000000004")
+    character_ref = CharacterRef(
+        "server",
+        f"secret-{operation}-trigger-authority",
+        f"secret-{operation}-trigger-character",
+    )
+    future_text = FUTURE_AT.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    async with _opened_repository(database_path) as repository:
+        await repository.create_profile(
+            _draft("Trigger First"),
+            profile_id=first_profile_id,
+        )
+        await repository.create_profile(
+            _draft("Trigger Second"),
+            profile_id=second_profile_id,
+        )
+        if operation == "replace":
+            await repository.set_assignment(character_ref, first_profile_id)
+
+        trigger_operation = {"insert": "INSERT", "replace": "UPDATE"}[operation]
+        connection = sqlite3.connect(database_path, isolation_level=None)
+        try:
+            connection.execute(
+                f"""
+                CREATE TRIGGER rewrite_assignment_timestamps
+                AFTER {trigger_operation} ON character_tts_assignments
+                BEGIN
+                    UPDATE character_tts_assignments
+                    SET created_at = '{future_text}', updated_at = '{future_text}'
+                    WHERE source = NEW.source
+                        AND authority_id = NEW.authority_id
+                        AND character_id = NEW.character_id;
+                END
+                """
+            )
+        finally:
+            connection.close()
+
+        target_profile_id = (
+            first_profile_id if operation == "insert" else second_profile_id
+        )
+        with pytest.raises(ProfileRepositoryError) as failed:
+            await repository.set_assignment(character_ref, target_profile_id)
+        _assert_safe_error(
+            failed.value,
+            "corrupt_data",
+            future_text,
+            str(target_profile_id),
+            character_ref.authority_id,
+            character_ref.character_id,
+            "Trigger First",
+            "rewrite_assignment_timestamps",
+            str(database_path),
+        )
+
+        snapshot = (await repository.get_assigned_profile(character_ref)).value
+        if operation == "insert":
+            assert snapshot is None
+        else:
+            assert snapshot is not None
+            assert snapshot.assignment.profile_id == first_profile_id
+
+        await asyncio.to_thread(
+            _external_execute,
+            database_path,
+            "DROP TRIGGER rewrite_assignment_timestamps",
+        )
+        recovered = await repository.set_assignment(
+            character_ref,
+            target_profile_id,
+        )
+        assert recovered.value.profile_id == target_profile_id
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,7 @@ from tldw_chatbook.TTS.profile_schema import (
     decode_assigned_snapshot,
     decode_assignment,
     decode_profile,
+    decode_utc_datetime,
     encode_assignment,
     encode_profile,
     encode_uuid,
@@ -107,6 +108,15 @@ class _IntegrityEvidence:
     profile_id: UUID | None
     normalized_name: str | None = None
     statement_error: sqlite3.IntegrityError | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _PersistedAssignment:
+    """One fully decoded assignment row including persistence timestamps."""
+
+    assignment: CharacterTTSAssignment
+    created_at: datetime
+    updated_at: datetime
 
 
 def _repository_error(code: str) -> ProfileRepositoryError:
@@ -1263,15 +1273,28 @@ class TTSProfileRepository:
     ) -> CharacterTTSAssignment:
         def set_exact() -> CharacterTTSAssignment:
             self._worker_get_profile(connection, profile_id)
+            existing = self._worker_get_persisted_assignment(
+                connection,
+                character_ref,
+            )
             assignment = CharacterTTSAssignment(
                 character_ref=character_ref,
                 profile_id=profile_id,
             )
             timestamp = self._clock()
+            created_at = timestamp if existing is None else existing.created_at
+            updated_at = (
+                timestamp if existing is None else max(existing.updated_at, timestamp)
+            )
+            expected = _PersistedAssignment(
+                assignment=assignment,
+                created_at=created_at,
+                updated_at=updated_at,
+            )
             parameters = encode_assignment(
                 assignment,
-                created_at=timestamp,
-                updated_at=timestamp,
+                created_at=created_at,
+                updated_at=updated_at,
             )
             cursor = connection.execute(
                 """
@@ -1299,10 +1322,13 @@ class TTSProfileRepository:
             )
             if cursor.rowcount != 1:
                 raise _repository_error("corrupt_data")
-            persisted = self._worker_get_assignment(connection, character_ref)
-            if persisted != assignment:
+            persisted = self._worker_get_persisted_assignment(
+                connection,
+                character_ref,
+            )
+            if persisted != expected:
                 raise _repository_error("corrupt_data")
-            return persisted
+            return persisted.assignment
 
         return self._worker_transaction(
             connection,
@@ -1338,11 +1364,11 @@ class TTSProfileRepository:
             immediate=True,
         )
 
-    def _worker_get_assignment(
+    def _worker_get_persisted_assignment(
         self,
         connection: sqlite3.Connection,
         character_ref: CharacterRef,
-    ) -> CharacterTTSAssignment | None:
+    ) -> _PersistedAssignment | None:
         row = connection.execute(
             (
                 f"{_ASSIGNMENT_SELECT} "
@@ -1359,7 +1385,15 @@ class TTSProfileRepository:
         assignment = decode_assignment(row)
         if assignment.character_ref != character_ref:
             raise _repository_error("corrupt_data")
-        return assignment
+        created_at = decode_utc_datetime(row["created_at"])
+        updated_at = decode_utc_datetime(row["updated_at"])
+        if created_at > updated_at:
+            raise _repository_error("corrupt_data")
+        return _PersistedAssignment(
+            assignment=assignment,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
 
     def _worker_get_assigned_profile(
         self,
