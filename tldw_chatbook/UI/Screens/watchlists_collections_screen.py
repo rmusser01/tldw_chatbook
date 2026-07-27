@@ -82,7 +82,13 @@ from ..Watchlists_Modules.sources_pane import (
     SourceSelected,
     SourcesPane,
 )
-from ..Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged, WatchlistTree
+from ..Watchlists_Modules.watchlist_tree import (
+    TreeExpansionChanged,
+    TreeScope,
+    TreeScopeChanged,
+    TreeTagFilterChanged,
+    WatchlistTree,
+)
 from ..Watchlists_Modules.watchlists_backend_controller import WatchlistsBackendController
 from ..Watchlists_Modules.watchlists_console_handoff import WatchlistsConsoleHandoff
 from ..Watchlists_Modules.watchlists_tab_strip import SectionSelected, WatchlistsTabStrip
@@ -206,6 +212,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # never one per node -- see that method's docstring.
         self._tree_watchlists: list[dict[str, Any]] = []
         self._tree_counts: dict[int, dict[str, int]] = {}
+        # Which watchlists are expanded in the rail, and the rail's tag
+        # filter (whole-branch review, Finding 2). Held here, not on
+        # `WatchlistTree`, for exactly the reason the create-form draft and
+        # `tree_scope` already are: `_build_tree_pane` is a factory the
+        # workbench calls on every full recompose, and `watch_active_section`
+        # -- the screen's PRIMARY interaction -- does a full
+        # `refresh(recompose=True)`. A brand new `WatchlistTree` starts both
+        # of its own reactives at their class defaults, so clicking a section
+        # tab used to collapse the rail and drop the tag filter, leaving the
+        # node the centre is scoped to no longer in the DOM. Plain attributes
+        # rather than screen reactives: nothing on the screen needs to watch
+        # them, and `_breadcrumb_labels`/`_source_create_draft` already
+        # establish that shape for screen-mirrored pane state.
+        self._tree_expanded: frozenset[int] = frozenset()
+        self._tree_active_tag: str | None = None
         # Breadcrumb display names for `selected_scope` (Task 5 fix round 1):
         # resolved once in `_on_tree_scope_changed`, not on every Inspector
         # render, and held here for the same reason `selected_scope` itself
@@ -675,11 +696,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         any collapse/solo/rail toggle rebuilds every region, and a widget
         instance can only be mounted once (see the factory note on
         `WatchlistsWorkbench.__init__`).
+
+        Seeds `expanded`/`active_tag` from screen state (whole-branch review,
+        Finding 2) the same way `_build_detail_pane` seeds the panes' rows
+        and `_build_inspector_pane` seeds scope and breadcrumbs -- otherwise
+        the rail collapses on every section switch.
         """
         return WatchlistTree(
             watchlists=self._tree_watchlists,
             counts=self._tree_counts,
             source_rows_loader=self._load_source_rows_for_tree,
+            expanded=self._tree_expanded,
+            active_tag=self._tree_active_tag,
             id="wl-tree",
         )
 
@@ -841,10 +869,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `WatchlistsWorkbench` as a content factory instead of being mounted
         directly by `compose_content`. The tab strip is prepended here
         (rather than left unwired) so section-switching by click is not lost
-        now that the navigator is retired — `Region.LEFT_RAIL` will take over
-        the tree once Task 4 wires it in, at which point this stays the
-        strip's permanent home per the design (a one-row strip at the top of
-        the centre).
+        now that the navigator is retired — `Region.LEFT_RAIL` hosts the
+        watchlist tree (`_build_tree_pane`), and this is the strip's
+        permanent home per the design (a one-row strip at the top of the
+        centre).
 
         This is called fresh on every region rebuild (see
         `WatchlistsWorkbench.__init__`'s docstring on why `content` holds
@@ -1300,8 +1328,67 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self.selected_source = None
         self.selected_run = None
         self.selected_notification = None
+        self._clear_pane_selections()
         self.selected_scope = scope
         self.tree_scope = scope
+
+    def _clear_pane_selections(self) -> None:
+        """Clear the mounted panes' OWN selection copies, not just the
+        screen's mirrors of them (whole-branch review, Finding 1).
+
+        The three mirrors `_apply_tree_scope` clears above live on the
+        screen; each pane keeps a second copy of the same selection so a
+        highlighted row survives that pane's own reactive-recompose. Clearing
+        only the screen half leaves the pane half live, and a pane's live
+        selection is not inert:
+
+        * `RunsPane.run_poll` re-posts `RunSelected(self.selected_run)` once a
+          second for sixty ticks while that run's status is `running`. A tick
+          landing after a tree move re-selects the pre-move run, which routes
+          through `_select_entity` and snaps `selected_scope` back to "all"
+          with an empty breadcrumb -- with no user action, and again every
+          second, so the user cannot hold the new scope at all.
+        * `SourcesPane`'s Preview/Check-now and `RunsPane`'s Cancel/Re-run
+          stay armed against the pre-move row and post messages naming a
+          selection the screen believes is gone.
+
+        Setting each pane's reactive to `None` fixes both: the poll's own
+        `current is None` guard returns on its next tick, and each pane's
+        watcher disarms its own buttons.
+
+        Degrades quietly when a pane is absent -- only the active section's
+        pane is mounted at all, the workbench recomposes, and regions
+        collapse -- matching how the rest of this screen reaches its panes.
+        """
+        for selector, pane_type, attribute in (
+            ("#watchlists-sources-pane", SourcesPane, "selected_source"),
+            ("#watchlists-runs-pane", RunsPane, "selected_run"),
+            (
+                "#watchlists-notifications-pane",
+                NotificationsPane,
+                "selected_notification",
+            ),
+        ):
+            try:
+                setattr(self.query_one(selector, pane_type), attribute, None)
+            except Exception:
+                continue
+
+    @on(TreeExpansionChanged)
+    def handle_tree_expansion_changed(self, event: TreeExpansionChanged) -> None:
+        """Mirror the rail's expansion onto the screen (Finding 2).
+
+        See `_tree_expanded` in `__init__` for why this cannot live on the
+        tree widget, and `_build_tree_pane` for where it is seeded back.
+        """
+        event.stop()
+        self._tree_expanded = event.expanded
+
+    @on(TreeTagFilterChanged)
+    def handle_tree_tag_filter_changed(self, event: TreeTagFilterChanged) -> None:
+        """Mirror the rail's tag filter onto the screen (Finding 2)."""
+        event.stop()
+        self._tree_active_tag = event.tag
 
     @on(TreeScopeChanged)
     def _on_tree_scope_changed(self, event: TreeScopeChanged) -> None:

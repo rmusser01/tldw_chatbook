@@ -925,8 +925,14 @@ SOURCE_PREP_WORKBENCHES = {
             "#watchlists-detail-pane",
             "#watchlists-inspector-pane",
         ),
+        # `#nav-overview` was the retired left-rail navigator's Overview
+        # button; the rail now hosts the watchlist tree and the section
+        # buttons live in the centre tab strip as `#wl-tab-*`.
+        # `_assert_any_action_visible` skips selectors with no matches, so
+        # the dead id silently shrank this guard by one action rather than
+        # failing.
         "actions": (
-            "#nav-overview",
+            "#wl-tab-overview",
             "#wc-empty-create-source",
             "#wc-open-watchlists",
             "#wc-attach-to-console",
@@ -2530,8 +2536,10 @@ COMPACT_DESTINATION_CONTRACTS = {
         "workbench": "#wl-workbench",
         "object": "#watchlists-list-pane",
         "detail": "#watchlists-detail-pane",
+        # `#nav-overview` retired with the left-rail navigator -- see the
+        # note on the same key in SOURCE_PREP_WORKBENCHES above.
         "actions": (
-            "#nav-overview",
+            "#wl-tab-overview",
             "#wc-empty-create-source",
             "#wc-open-watchlists",
             "#watchlists-follow-in-console",

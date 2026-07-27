@@ -98,11 +98,11 @@ class BreadcrumbScopeSelected(Message):
 
     Carries the `TreeScope` that breadcrumb level corresponds to, so the
     screen can promote it back to the tree's current selection -- swapping
-    the Inspector's detail and actions together, not just the label. Nothing
-    on the screen consumes this yet (`scope`/`breadcrumb_labels` are not
-    wired into the live tree selection in this slice); it is here so the
-    click half of "clicking a breadcrumb promotes it" is not left undone
-    inside the one file this task owns.
+    the Inspector's detail and actions together, not just the label.
+    `WatchlistsCollectionsScreen.handle_breadcrumb_scope_selected` consumes
+    it and routes straight into `_apply_tree_scope`, the same reconciliation
+    a real tree click uses -- promoting a breadcrumb IS navigating the tree
+    to that node.
     """
 
     def __init__(self, scope: TreeScope) -> None:

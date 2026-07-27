@@ -41,6 +41,32 @@ class TreeScopeChanged(Message):
         super().__init__()
 
 
+class TreeExpansionChanged(Message):
+    """Posted when the user expands or collapses a watchlist node.
+
+    The owning screen mirrors this, for the same reason `SourcesPane` posts
+    `CreateFormDraftChanged`: this widget is built by a factory the screen
+    calls on every full recompose (a section switch, a tree-data reload, a
+    local-snapshot apply), so a brand new `WatchlistTree` is constructed and
+    pane-local expansion would silently collapse under the user.
+    """
+
+    def __init__(self, expanded: frozenset[int]) -> None:
+        self.expanded = expanded
+        super().__init__()
+
+
+class TreeTagFilterChanged(Message):
+    """Posted when the user sets or clears the rail's tag filter.
+
+    Screen-mirrored for the identical reason as `TreeExpansionChanged`.
+    """
+
+    def __init__(self, tag: str | None) -> None:
+        self.tag = tag
+        super().__init__()
+
+
 class WatchlistTree(Vertical):
     """Roots, watchlists with counts, lazily-expanded sources, tag filters."""
 
@@ -52,6 +78,8 @@ class WatchlistTree(Vertical):
         watchlists: Sequence[Mapping[str, Any]],
         counts: Mapping[int, Mapping[str, int]],
         source_rows_loader: Callable[[int], Sequence[Mapping[str, Any]]],
+        expanded: frozenset[int] | Sequence[int] = (),
+        active_tag: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -60,6 +88,16 @@ class WatchlistTree(Vertical):
         self._counts = dict(counts)
         self._load_source_rows = source_rows_loader
         self._source_cache: dict[int, list[Mapping[str, Any]]] = {}
+        # `set_reactive`, not plain assignment: both reactives are
+        # `recompose=True`, so assigning here would queue a recompose of a
+        # widget that has not composed once yet -- rebuilding identical
+        # children a tick after mount -- and would fire the watchers below,
+        # bouncing the seeded value straight back at the screen as if the
+        # user had just expanded something. `set_reactive` sets the value
+        # without validators or watchers, and `compose()` reads it on the
+        # FIRST render because it runs after this constructor.
+        self.set_reactive(WatchlistTree.expanded, frozenset(expanded))
+        self.set_reactive(WatchlistTree.active_tag, active_tag)
 
     # --- rendering ---
 
@@ -171,6 +209,16 @@ class WatchlistTree(Vertical):
         return self._source_cache[watchlist_id]
 
     # --- interaction ---
+
+    def watch_expanded(self, expanded: frozenset[int]) -> None:
+        """Tell the owning screen what is open, so it survives a recompose."""
+        if self.is_mounted:
+            self.post_message(TreeExpansionChanged(expanded))
+
+    def watch_active_tag(self, tag: str | None) -> None:
+        """Tell the owning screen the tag filter, for the same reason."""
+        if self.is_mounted:
+            self.post_message(TreeTagFilterChanged(tag))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
