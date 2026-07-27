@@ -117,6 +117,68 @@ async def test_wizard_preview_confirm_default_export_path_uses_private_chatbooks
     assert str(expected_dir) in rendered_path
 
 
+@pytest.mark.asyncio
+async def test_wizard_preview_confirm_server_mode_never_touches_local_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Server-mode preview must not resolve or create the local chatbooks dir.
+
+    Regression guard: `_update_preview()` used to call
+    `get_private_chatbooks_dir()` -- which hardens and *creates* the
+    directory -- before checking `execution_mode`, then discarded the
+    result for server-mode exports. That made merely opening the preview
+    step mutate the filesystem (and able to raise) even though server mode
+    never needs a local directory.
+    """
+    from tldw_chatbook.UI.Wizards import ChatbookCreationWizard as wizard_module
+
+    user_data_dir = tmp_path / "runtime-data"
+    monkeypatch.setattr(
+        database_paths.config, "get_user_data_dir", lambda: user_data_dir
+    )
+
+    call_count = 0
+    real_get_private_chatbooks_dir = wizard_module.get_private_chatbooks_dir
+
+    def _counting_get_private_chatbooks_dir():
+        nonlocal call_count
+        call_count += 1
+        return real_get_private_chatbooks_dir()
+
+    monkeypatch.setattr(
+        wizard_module, "get_private_chatbooks_dir", _counting_get_private_chatbooks_dir
+    )
+
+    fake_wizard = _FakeWizard()
+    fake_wizard.wizard_data["export-options"] = {"execution_mode": "server"}
+    step = PreviewConfirmStep(
+        wizard=fake_wizard,
+        config=WizardStepConfig(
+            id="preview-confirm",
+            title="Preview & Confirm",
+            description="Review your chatbook",
+            step_number=4,
+        ),
+    )
+
+    class WizardStepApp(App):
+        def compose(self) -> ComposeResult:
+            yield step
+
+    app = WizardStepApp()
+    async with app.run_test():
+        step._update_preview()
+        rendered_path = str(step.query_one("#export-path", Static).content)
+
+    assert call_count == 0, "server mode must not resolve the local directory at all"
+    assert not user_data_dir.exists(), (
+        "server mode must not create the local chatbooks directory as a side effect"
+    )
+    assert fake_wizard.wizard_data["export_path"] == ""
+    assert "Server-side export" in rendered_path
+
+
 @pytest.mark.parametrize(
     "window_factory",
     [

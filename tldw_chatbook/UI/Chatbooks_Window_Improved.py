@@ -382,6 +382,11 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
     search_query = reactive("")
 
     def __init__(self, app_instance: "TldwCli", **kwargs):
+        """Store the owning app and resolve the default export directory.
+
+        Args:
+            app_instance: The running TldwCli app instance.
+        """
         super().__init__(**kwargs)
         self.app_instance = app_instance
         # Default to the app's private, hardened data directory rather than

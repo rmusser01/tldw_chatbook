@@ -615,22 +615,26 @@ class PreviewConfirmStep(WizardStep):
                 notes_node.add("...")
 
         # Update export path
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_name = "".join(c for c in title if c.isalnum() or c in " -_").strip()
-        export_format = export_options.get("format", "zip")
-        filename = f"{safe_name}_{timestamp}.{export_format}"
-        # Default to the app's private, hardened data directory rather than
-        # the hardcoded ~/Documents/Chatbooks literal (task-984); existing
-        # exports at the old location are left in place.
-        export_path = get_private_chatbooks_dir() / filename
         execution_mode = export_options.get("execution_mode", "local")
 
         if execution_mode == "server":
+            # Server-mode exports never touch a local directory, so don't
+            # resolve one -- get_private_chatbooks_dir() hardens and *creates*
+            # the directory as a side effect, which would otherwise make
+            # merely previewing a server-mode export mutate the filesystem.
             self.query_one("#export-path", Static).update(
                 "Server-side export via configured TLDW API"
             )
             self.wizard.wizard_data["export_path"] = ""
         else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_name = "".join(c for c in title if c.isalnum() or c in " -_").strip()
+            export_format = export_options.get("format", "zip")
+            filename = f"{safe_name}_{timestamp}.{export_format}"
+            # Default to the app's private, hardened data directory rather than
+            # the hardcoded ~/Documents/Chatbooks literal (task-984); existing
+            # exports at the old location are left in place.
+            export_path = get_private_chatbooks_dir() / filename
             self.query_one("#export-path", Static).update(str(export_path))
             self.wizard.wizard_data["export_path"] = str(export_path)
 
