@@ -206,10 +206,13 @@ def _openai_use_responses_api(
     normalized_reasoning_effort: Optional[str],
     reasoning_summary: object,
     verbosity: object,
+    is_gpt_5_6_model: bool,
 ) -> bool:
     return (
-        normalized_reasoning_effort not in {None, "none"}
-        or _is_present_setting(reasoning_summary)
+        normalized_reasoning_effort is not None
+        and (normalized_reasoning_effort != "none" or not is_gpt_5_6_model)
+    ) or (
+        _is_present_setting(reasoning_summary)
         or _is_present_setting(verbosity)
     )
 
@@ -506,7 +509,9 @@ def chat_with_openai(
         tools: A list of tools the model may call.
         tool_choice: Controls which (if any) function is called by the model.
         user: A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
-        reasoning_effort: Responses API reasoning effort for supported models.
+        reasoning_effort: Uses the Responses API for supported models; GPT-5.6
+            keeps an explicit ``none`` effort on Chat Completions for
+            non-reasoning compatibility.
         reasoning_summary: Responses API reasoning summary detail for supported models.
         verbosity: Responses API text verbosity for GPT-5-style models.
         custom_prompt_arg: Legacy, largely ignored.
@@ -566,12 +571,13 @@ def chat_with_openai(
     normalized_reasoning_effort = _normalize_openai_reasoning_effort(
         reasoning_effort
     )
+    is_gpt_5_6_model = _is_openai_gpt_5_6_model(final_model)
     use_responses_api = _openai_use_responses_api(
         normalized_reasoning_effort,
         reasoning_summary,
         verbosity,
+        is_gpt_5_6_model,
     )
-    is_gpt_5_6_model = _is_openai_gpt_5_6_model(final_model)
     payload = {
         "model": final_model,
         "stream": final_streaming,

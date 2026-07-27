@@ -600,6 +600,38 @@ class TestProviderRequestPayloads:
         assert "max_tokens" not in captured["json"]
         assert "max_output_tokens" not in captured["json"]
 
+    @pytest.mark.parametrize("model", ["o3", "openai/gpt-5.6-terra"])
+    def test_openai_reasoning_none_for_non_gpt_5_6_uses_responses_api(
+        self, monkeypatch, model
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, {"output_text": "OK"}),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model=model,
+            streaming=False,
+            max_tokens=512,
+            reasoning_effort="none",
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/responses"
+        assert captured["json"]["max_output_tokens"] == 512
+        assert "max_tokens" not in captured["json"]
+        assert "max_completion_tokens" not in captured["json"]
+
     def test_gpt_5_6_non_none_reasoning_effort_uses_responses_api(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
