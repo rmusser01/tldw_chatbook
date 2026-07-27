@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-27 03:58'
-updated_date: '2026-07-27 06:01'
+updated_date: '2026-07-27 06:14'
 labels: []
 dependencies: []
 ---
@@ -46,5 +46,7 @@ Changed production/test/doc files: tldw_chatbook/config.py; tldw_chatbook/LLM_Ca
 
 ADR required: no. Existing ADR: backlog/decisions/020-automatic-model-catalog-refresh.md (ADR-020). Approved design: Docs/superpowers/specs/2026-07-26-provider-default-model-refresh-design.md. Implementation plan: Docs/superpowers/plans/2026-07-26-provider-default-model-refresh.md.
 
-Verification (2026-07-26): .venv/bin/python -m pytest Tests/test_config_model_catalog_defaults.py Tests/Chat/test_chat_functions.py Tests/test_model_capabilities.py -q -> 89 passed in 4.18s. Ruff fatal lint (E9,F63,F7,F82) -> All checks passed. Ruff format check -> 5 files already formatted. compileall -> exit 0. git diff --check -> exit 0. Final whole-change review approved with no Critical or Important issues.
+Verification scope (2026-07-26): the approved focused suite, .venv/bin/python -m pytest Tests/test_config_model_catalog_defaults.py Tests/Chat/test_chat_functions.py Tests/test_model_capabilities.py -q, passed 89 tests. Fatal Ruff rules (E9,F63,F7,F82) passed on all six touched files. Ruff format passed for the five formatter-clean files; config.py remains excluded because of its pre-existing formatting baseline. compileall and git diff --check passed. Broad default Ruff is baseline-failing with 452 existing findings. A broader serial suite attempt was manually interrupted after 448 passed, 1 skipped, and 0 observed failures at 3% in 140.83s because its projected runtime was impractical; xdist was also attempted but is unsuitable because this repository tests share state. This was not a full-suite pass.
+
+Approved scoped exception: TASK-519 remains Done because its acceptance criteria and approved implementation plan require the focused 89-test suite, not a full-suite pass; the broader-suite limitation is documented here transparently.
 <!-- SECTION:NOTES:END -->

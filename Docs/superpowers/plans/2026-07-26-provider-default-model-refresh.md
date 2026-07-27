@@ -632,3 +632,13 @@ git status --short
 ```
 
 Expected: tests and static checks pass; `git status --short` is empty.
+
+Verification scope note: the approved focused suite passed 89 tests. Fatal Ruff
+rules passed on all six touched files; the formatter passed on the five
+formatter-clean files, while `config.py` retains its pre-existing formatting
+baseline. Broad default Ruff remains baseline-failing (452 existing findings).
+A broader serial suite attempt was manually interrupted after 448 passed, 1
+skipped, and 0 observed failures at 3% in 140.83s because its projected runtime
+was impractical; xdist is unsuitable because repository tests share state. This
+is not a full-suite pass. The approved scoped exception keeps TASK-519 Done
+because its acceptance criteria require the focused suite.
