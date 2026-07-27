@@ -700,15 +700,26 @@ class LocalAudioProcessor:
         language: str = "en",
     ) -> List[Dict[str, Any]]:
         """Chunk text using the chunking service."""
-        chunk_options = {
-            "method": method,
-            "max_size": max_size,
-            "overlap": overlap,
-            "language": language,
-        }
-
-        chunks = self.chunking_service.chunk_text(text, chunk_options)
-        return [{"text": chunk, "metadata": {"method": method}} for chunk in chunks]
+        # ChunkingService.chunk_text takes flat keyword arguments
+        # (content, chunk_size, chunk_overlap, method) -- NOT an options dict.
+        # Passing one positionally put a dict where chunk_size is expected and
+        # every audio/video ingest died in chunking with
+        # "'<=' not supported between instances of 'dict' and 'int'" (task-840).
+        chunks = self.chunking_service.chunk_text(
+            text,
+            chunk_size=max_size,
+            chunk_overlap=overlap,
+            method=method,
+        )
+        # It returns dicts carrying 'text' plus offsets, not bare strings; the
+        # previous wrapping nested the whole dict under another "text" key.
+        return [
+            {
+                "text": chunk["text"] if isinstance(chunk, dict) else str(chunk),
+                "metadata": {"method": method, "language": language},
+            }
+            for chunk in chunks
+        ]
 
     def _analyze_content(
         self,
