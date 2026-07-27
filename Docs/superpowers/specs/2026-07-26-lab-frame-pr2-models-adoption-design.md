@@ -80,7 +80,7 @@ LabWorkbench             1fr
 | `compose_lab_rail()` | generator | compose |
 | `build_lab_body()` | **factory returning a Widget** | after first paint |
 | `compose_lab_inspector()` | generator | compose |
-| `lab_footer_shortcuts()` | returns shortcut pairs | mount |
+| `LAB_FOOTER_SHORTCUTS` (class constant) | `((key, label), …)` | mount |
 | `on_lab_body_ready()` | callback | after the body mounts |
 
 `build_lab_body` is a factory rather than a `ComposeResult` generator for two reasons: the body is
@@ -103,7 +103,11 @@ recomposes the status row: recomposing on a timer churns widgets and can steal f
 whose `chip_id`s change between calls is a programming error — the frame logs and ignores unknown
 ids rather than silently mounting new widgets on a 2-second timer.
 
-`lab_footer_shortcuts()` returns `((key, label), …)` pairs for
+**As built, this is a class constant `LAB_FOOTER_SHORTCUTS`, not a hook method.** No Lab mode has
+mode-specific shortcuts, and an overridable hook nobody overrides is dead API; a mode that later
+needs its own overrides the constant, which is the same extension point with less machinery.
+
+The constant holds `((key, label), …)` pairs for
 `BaseAppScreen.register_footer_shortcuts`. The frame supplies the mode-navigation defaults
 (`[` / `]` cycle, `Enter` commit); Models adds nothing of its own in PR2, so it does not override
 the hook.
@@ -119,9 +123,16 @@ The frame depends on `on_screen_resume` for its modal-pop refresh. `STTSScreen.o
 PR3, it will silently kill that refresh. This is the same defect class the parent spec records for
 `on_mount`, on a second hook, and it is recorded here because PR2 is what introduces the dependency.
 
-The frame therefore routes its own resume work through a private method that subclasses are not
-expected to override, and PR3 must fix `STTSScreen`'s two `super()`-less overrides
-(`on_screen_suspend` at `:61` and `on_screen_resume` at `:72`) as part of adoption.
+**As built, the frame did NOT achieve this.** `LLMScreen` defines `on_screen_resume` as a public
+override (`llm_screen.py`), so the hazard is live rather than designed around: when Speech adopts in
+PR3 and keeps its own `super()`-less `on_screen_resume`, the refresh dies silently.
+
+PR3 must therefore do two things as part of adoption: fix `STTSScreen`'s two `super()`-less
+overrides (`on_screen_suspend` at `:61`, `on_screen_resume` at `:72`), **and** move the frame's
+resume work behind a private method the subclasses call, so the next adopter cannot repeat it.
+
+Also note the refresh this protects is close to redundant: Textual does not pause a screen's timers
+on suspend, so the 2-second poll keeps running under a modal anyway.
 
 ### Carried constraints
 

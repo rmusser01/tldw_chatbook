@@ -2224,6 +2224,45 @@ commit — say so rather than inventing a commit.
 
 ---
 
+## Follow-ups surfaced during execution (not done here, not yet filed)
+
+None block this branch. Two are pre-existing product bugs found while verifying it.
+
+**(a) The Ollama "Start Service" button cannot work at all.** `handle_ollama_start_service_button_pressed`
+(`Event_Handlers/LLM_Management_Events/llm_management_events_ollama.py:161-210`) calls
+`stream_worker_output_to_log` one positional argument short, and its `run_worker(...)` passes the
+command positionally into `run_worker`'s own `name` slot, then supplies `name=` as well —
+reproduced independently as `TypeError: got multiple values for argument 'name'`. Confirmed
+pre-existing (`git diff origin/dev...HEAD` on that file is empty). This is why Ollama was dropped
+from `LAB_SERVER_SOURCES` rather than wired up: a status row that can never be true is worse than no
+row. Restore the row once the handler works.
+
+**(b) Every visit to Models fires a live HuggingFace request.** `ModelSearchWidget.on_mount` →
+`call_after_refresh(_initial_browse)` → `perform_search()` → `HuggingFaceAPI().search_models(...)`,
+and that widget sits inside `llm-view-download-models`, which `LLMManagementWindow.compose()` builds
+eagerly. So unrequested outbound network happens even for users who never open Download Models. Two
+test files in this branch had to stub `HuggingFaceAPI.search_models` to get determinism — that is
+the evidence. The fix is the same thesis as this branch's deferred body mount, one level down: defer
+the auto-browse until the view is actually activated. It changes user-visible behaviour (an empty
+list on first open), so it is a product decision, not a drive-by.
+
+**(c) `ModelSearchWidget`'s guards ship without a direct test.** The only evidence they work is that
+two audit suites stopped flaking. A test that unmounts the widget mid-worker would lock the
+behaviour in.
+
+**(d) `browse_recent` / `browse_popular` retain a pre-existing bare `except Exception: pass`** around
+a sort-select query, so that file now carries two contradictory conventions side by side.
+
+**(e) `LabScreen` is not recompose-safe.** `_populate_regions` / `_mount_lab_body` run only from
+`on_mount`, so any future `self.refresh(recompose=True)` on a Lab screen empties the workbench
+permanently — the Task 5 bug, still reachable from a subclass. `toggle_lab_rail` no longer does
+this, but nothing enforces it for the next author.
+
+**(f) Smaller items:** `test_lab_server_status`'s row-order test asserts against
+`LAB_SERVER_SOURCES` itself and so cannot catch a reorder of that tuple; `save_rail_layout` discards
+`save_setting_to_cli_config`'s bool return, so a failed write is silent; `refresh_lab_status` calls
+`Static.update` unconditionally every 2 s, forcing a layout pass even when the text is unchanged.
+
 ## Self-Review
 
 **Spec coverage.** Frame anatomy and all seven hooks → Task 5. Rail collapse state and persistence →
