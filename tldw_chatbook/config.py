@@ -922,7 +922,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "anthropic_api": {
             "api_key": anthropic_api_key,
             "model": api_section_legacy.get(
-                "anthropic_model", "claude-sonnet-4-20250514"
+                "anthropic_model", "claude-sonnet-5"
             ),
             "streaming": api_section_legacy.get("anthropic_streaming", False),
             "temperature": api_section_legacy.get("anthropic_temperature", 0.7),
@@ -951,7 +951,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         },
         "deepseek_api": {
             "api_key": deepseek_api_key,
-            "model": api_section_legacy.get("deepseek_model", "deepseek-chat"),
+            "model": api_section_legacy.get("deepseek_model", "deepseek-v4-flash"),
             "streaming": api_section_legacy.get("deepseek_streaming", False),
             "temperature": api_section_legacy.get("deepseek_temperature", 0.7),
             "top_p": api_section_legacy.get("deepseek_top_p", 0.95),
@@ -1039,7 +1039,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         },
         "openai_api": {  # OpenAI specific model params, API key is separate
             "api_key": openai_api_key,  # This is now the primary OpenAI API key
-            "model": api_section_legacy.get("openai_model", "gpt-4o"),
+            "model": api_section_legacy.get("openai_model", "gpt-5.6-terra"),
             "streaming": api_section_legacy.get("openai_streaming", False),
             "temperature": api_section_legacy.get("openai_temperature", 0.7),
             "top_p": api_section_legacy.get("openai_top_p", 0.95),
@@ -1997,6 +1997,9 @@ def load_settings(force_reload: bool = False) -> Dict:
 # (Keep your existing API_MODELS_BY_PROVIDER and LOCAL_PROVIDERS dictionaries)
 API_MODELS_BY_PROVIDER = {
     "OpenAI": [
+        "gpt-5.6-terra",
+        "gpt-5.6-sol",
+        "gpt-5.6-luna",
         "gpt-4.1-2025-04-14",
         "o4-mini-2025-04-16",
         "o3-2025-04-16",
@@ -2010,6 +2013,10 @@ API_MODELS_BY_PROVIDER = {
         "gpt-4o-mini-2024-07-18",
     ],
     "Anthropic": [
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-haiku-4-5",
         "claude-opus-4-20250514",
         "claude-sonnet-4-20250514",
         "claude-3-7-sonnet-20250219",
@@ -2034,7 +2041,7 @@ API_MODELS_BY_PROVIDER = {
         "command-light",
         "command-light-nightly",
     ],
-    "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
+    "DeepSeek": ["deepseek-v4-flash", "deepseek-v4-pro"],
     "Groq": [
         "gemma2-9b-it",
         "mmeta-llama/Llama-Guard-4-12B",
@@ -2286,10 +2293,10 @@ Custom_6 = "http://localhost:5678/v1"
 [providers]
 # This section primarily lists providers and their *available* models for the UI dropdown.
 # Actual default model/settings used for calls are defined in [api_settings.*] or [chat_defaults]/[character_defaults].
-OpenAI = ["gpt-4.1-2025-04-14", "o4-mini-2025-04-16", "o3-2025-04-16", "o3-mini-2025-01-31", "o1-2024-12-17", "chatgpt-4o-latest", "gpt-4o-2024-11-20", "gpt-4o-2024-08-06", "gpt-4.1-mini-2025-04-14", "gpt-4.1-nano-2025-04-14", "gpt-4o-mini-2024-07-18", ]
-Anthropic = ["claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20240620", "claude-3-haiku-20240307", "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-2.1", "claude-2.0"]
+OpenAI = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-4.1-2025-04-14", "o4-mini-2025-04-16", "o3-2025-04-16", "o3-mini-2025-01-31", "o1-2024-12-17", "chatgpt-4o-latest", "gpt-4o-2024-11-20", "gpt-4o-2024-08-06", "gpt-4.1-mini-2025-04-14", "gpt-4.1-nano-2025-04-14", "gpt-4o-mini-2024-07-18", ]
+Anthropic = ["claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-haiku-4-5", "claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-5-sonnet-20240620", "claude-3-haiku-20240307", "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-2.1", "claude-2.0"]
 Cohere = ["command-a-03-2025", "command-r7b-12-2024", "command-r-plus-04-2024", "command-r-plus", "command-r-08-2024", "command-r-03-2024", "command", "command-nightly", "command-light", "command-light-nightly"]
-DeepSeek = ["deepseek-chat", "deepseek-reasoner"]
+DeepSeek = ["deepseek-v4-flash", "deepseek-v4-pro"]
 Groq = ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-70b-8192", "llama3-70b-8192", "llama3-8b-8192",]
 Google = ["gemini-2.5-flash", "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ]
 HuggingFace = ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
@@ -2329,7 +2336,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     [api_settings.openai]
     api_key_env_var = "OPENAI_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "gpt-4o" # Default model for direct calls (if not overridden)
+    model = "gpt-5.6-terra" # Default model for direct calls (if not overridden)
     temperature = 0.7
     top_p = 1.0 # OpenAI uses top_p (represented as maxp sometimes in UI)
     max_tokens = 4096
@@ -2341,7 +2348,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     [api_settings.anthropic]
     api_key_env_var = "ANTHROPIC_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "claude-sonnet-4-20250514"
+    model = "claude-sonnet-5"
     temperature = 0.7
     top_p = 1.0 # Anthropic uses top_p (represented as topp in UI)
     top_k = 0 # Anthropic specific, 0 or -1 usually disables it
@@ -2367,7 +2374,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     [api_settings.deepseek]
     api_key_env_var = "DEEPSEEK_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "deepseek-chat"
+    model = "deepseek-v4-flash"
     temperature = 0.7
     top_p = 1.0 # Deepseek uses top_p (represented as topp in UI)
     max_tokens = 4096
@@ -2727,7 +2734,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
 [chat_defaults]
 # Default settings specifically for the 'Chat' tab
 provider = "OpenAI"
-model = "gpt-4o"
+model = "gpt-5.6-terra"
 system_prompt = "You are a helpful AI assistant."
 temperature = 0.6
 top_p = 0.95
@@ -3178,6 +3185,7 @@ llm_context_document_limit = 10
 "gpt-4-turbo-2024-04-09" = { vision = true, max_images = 10 }
 "gpt-4o" = { vision = true, max_images = 10 }
 "gpt-4o-mini" = { vision = true, max_images = 10 }
+"gpt-5.6-terra" = { vision = true, max_images = 10 }
 
 # Anthropic models
 "claude-3-opus-20240229" = { vision = true, max_images = 5 }
@@ -3185,6 +3193,7 @@ llm_context_document_limit = 10
 "claude-3-haiku-20240307" = { vision = true, max_images = 5 }
 "claude-3-5-sonnet-20240620" = { vision = true, max_images = 5 }
 "claude-3-5-sonnet-20241022" = { vision = true, max_images = 5 }
+"claude-sonnet-5" = { vision = true, max_images = 5 }
 
 # Google models
 "gemini-pro-vision" = { vision = true, max_images = 1 }
@@ -4958,7 +4967,7 @@ if (
     logger.warning(
         "No providers found in CONFIG_TOML_CONTENT's [providers] section. Using hardcoded fallbacks for API_MODELS_BY_PROVIDER and LOCAL_PROVIDERS."
     )
-    API_MODELS_BY_PROVIDER = {"OpenAI": ["gpt-4o"]}  # Minimal fallback
+    API_MODELS_BY_PROVIDER = {"OpenAI": ["gpt-5.6-terra"]}  # Minimal fallback
     LOCAL_PROVIDERS = {"Ollama": ["llama3"]}  # Minimal fallback
 
 

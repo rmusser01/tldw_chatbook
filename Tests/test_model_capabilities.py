@@ -235,6 +235,10 @@ class TestDefaultModels:
         assert (
             model_capabilities_empty.is_vision_capable("OpenAI", "gpt-4o-mini") is True
         )
+        assert (
+            model_capabilities_empty.is_vision_capable("OpenAI", "gpt-5.6-terra")
+            is True
+        )
 
         # Pattern matching
         assert (
@@ -265,6 +269,10 @@ class TestDefaultModels:
             model_capabilities_empty.is_vision_capable(
                 "Anthropic", "claude-3-sonnet-20240229"
             )
+            is True
+        )
+        assert (
+            model_capabilities_empty.is_vision_capable("Anthropic", "claude-sonnet-5")
             is True
         )
 

@@ -526,6 +526,213 @@ class TestChatFunction:
 
 @pytest.mark.unit
 class TestProviderRequestPayloads:
+    def test_deepseek_uses_refreshed_handler_fallback_model(self, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(
+            llm_api_calls_module,
+            "settings",
+            {
+                "api_settings": {
+                    "deepseek": {
+                        "api_key": DUMMY_OPENAI_API_KEY,
+                        "api_base_url": "https://api.deepseek.test",
+                    }
+                }
+            },
+        )
+        monkeypatch.setattr(
+            llm_api_calls_module.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ),
+        )
+
+        llm_api_calls_module.chat_with_deepseek(
+            input_data=[{"role": "user", "content": "test"}],
+            model=None,
+            streaming=False,
+            max_tokens=128,
+        )
+
+        assert captured["url"] == "https://api.deepseek.test/chat/completions"
+        assert captured["json"]["model"] == "deepseek-v4-flash"
+        assert captured["json"]["messages"] == [{"role": "user", "content": "test"}]
+        assert captured["json"]["max_tokens"] == 128
+
+    def test_gpt_5_6_defaults_to_chat_completions_with_function_tools(
+        self, monkeypatch
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Gets the weather.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model=None,
+            streaming=False,
+            max_tokens=512,
+            tools=[tool],
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/chat/completions"
+        assert captured["json"]["model"] == "gpt-5.6-terra"
+        assert captured["json"]["reasoning_effort"] == "none"
+        assert captured["json"]["max_completion_tokens"] == 512
+        assert "max_tokens" not in captured["json"]
+        assert "max_output_tokens" not in captured["json"]
+        assert captured["json"]["tools"] == [tool]
+
+    def test_gpt_5_6_none_reasoning_effort_uses_chat_completions(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model="gpt-5.6-terra",
+            streaming=False,
+            max_tokens=512,
+            reasoning_effort="none",
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/chat/completions"
+        assert captured["json"]["reasoning_effort"] == "none"
+        assert captured["json"]["max_completion_tokens"] == 512
+        assert "max_tokens" not in captured["json"]
+        assert "max_output_tokens" not in captured["json"]
+
+    @pytest.mark.parametrize("model", ["o3", "openai/gpt-5.6-terra"])
+    def test_openai_reasoning_none_for_non_gpt_5_6_uses_responses_api(
+        self, monkeypatch, model
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, {"output_text": "OK"}),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model=model,
+            streaming=False,
+            max_tokens=512,
+            reasoning_effort="none",
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/responses"
+        assert captured["json"]["max_output_tokens"] == 512
+        assert "max_tokens" not in captured["json"]
+        assert "max_completion_tokens" not in captured["json"]
+
+    def test_gpt_5_6_non_none_reasoning_effort_uses_responses_api(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, {"output_text": "OK"}),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model="gpt-5.6-terra",
+            streaming=False,
+            max_tokens=512,
+            reasoning_effort="high",
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/responses"
+        assert captured["json"]["max_output_tokens"] == 512
+        assert "max_completion_tokens" not in captured["json"]
+        assert captured["json"]["reasoning"] == {"effort": "high"}
+
+    @pytest.mark.parametrize(
+        ("reasoning_summary", "verbosity"),
+        [("auto", None), (None, "medium")],
+    )
+    def test_gpt_5_6_none_effort_with_responses_controls_uses_responses_api(
+        self, monkeypatch, reasoning_summary, verbosity
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, {"output_text": "OK"}),
+        )
+
+        LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model="gpt-5.6-terra",
+            streaming=False,
+            max_tokens=512,
+            reasoning_effort="none",
+            reasoning_summary=reasoning_summary,
+            verbosity=verbosity,
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/responses"
+        assert captured["json"]["max_output_tokens"] == 512
+        assert "max_completion_tokens" not in captured["json"]
+
     def test_openai_reasoning_uses_responses_api_and_normalizes_output(
         self, monkeypatch
     ):
@@ -922,7 +1129,8 @@ class TestProviderRequestPayloads:
             thinking_budget_tokens=4096,
         )
 
-        assert captured["json"]["thinking"] == {"type": "adaptive", "effort": "xhigh"}
+        assert captured["json"]["thinking"] == {"type": "adaptive"}
+        assert captured["json"]["output_config"] == {"effort": "xhigh"}
 
     def test_anthropic_current_opus_uses_adaptive_thinking_effort(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
@@ -959,7 +1167,200 @@ class TestProviderRequestPayloads:
             thinking_effort="high",
         )
 
-        assert captured["json"]["thinking"] == {"type": "adaptive", "effort": "high"}
+        assert captured["json"]["thinking"] == {"type": "adaptive"}
+        assert captured["json"]["output_config"] == {"effort": "high"}
+
+    def test_anthropic_sonnet_5_default_omits_thinking_effort_and_sampling(
+        self, monkeypatch
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        warnings = []
+        monkeypatch.setattr(LLM_API_Calls.logger, "warning", warnings.append)
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "anthropic_api": {
+                    "api_base_url": "https://api.anthropic.test/v1",
+                    "temperature": 0.7,
+                    "top_p": 0.9,
+                    "top_k": 40,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "Sonnet 5 answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            streaming=False,
+            temp=0.2,
+            topp=0.8,
+            topk=20,
+        )
+
+        payload = captured["json"]
+        assert payload["model"] == "claude-sonnet-5"
+        assert "thinking" not in payload
+        assert "output_config" not in payload
+        assert "temperature" not in payload
+        assert "top_p" not in payload
+        assert "top_k" not in payload
+        assert warnings == [
+            "Anthropic: omitting temperature/top_p/top_k because Claude Sonnet 5 "
+            "requires default sampling."
+        ]
+
+    @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
+    def test_anthropic_sonnet_5_effort_uses_output_config_without_sampling(
+        self, monkeypatch, effort
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "Sonnet 5 answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            model="claude-sonnet-5",
+            streaming=False,
+            temp=0.2,
+            topp=0.8,
+            topk=20,
+            thinking_effort=effort,
+            thinking_budget_tokens=4096,
+        )
+
+        payload = captured["json"]
+        assert payload["output_config"] == {"effort": effort}
+        assert "thinking" not in payload
+        assert "budget_tokens" not in json.dumps(payload)
+        assert "temperature" not in payload
+        assert "top_p" not in payload
+        assert "top_k" not in payload
+
+    def test_anthropic_sonnet_5_off_disables_thinking_without_sampling(
+        self, monkeypatch
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "Sonnet 5 answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            model="claude-sonnet-5",
+            streaming=False,
+            temp=0.2,
+            topp=0.8,
+            topk=20,
+            thinking_effort="off",
+        )
+
+        payload = captured["json"]
+        assert payload["thinking"] == {"type": "disabled"}
+        assert "output_config" not in payload
+        assert "temperature" not in payload
+        assert "top_p" not in payload
+        assert "top_k" not in payload
+
+    def test_anthropic_adaptive_model_effort_uses_split_thinking_config(
+        self, monkeypatch
+    ):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-opus-4-8",
+                    "content": [{"type": "text", "text": "adaptive answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            model="claude-opus-4-8",
+            streaming=False,
+            thinking_effort="high",
+        )
+
+        payload = captured["json"]
+        assert payload["thinking"] == {"type": "adaptive"}
+        assert payload["output_config"] == {"effort": "high"}
+        assert "effort" not in payload["thinking"]
 
     def test_huggingface_legacy_router_base_uses_openai_compatible_router_url(
         self, monkeypatch

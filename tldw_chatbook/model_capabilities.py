@@ -91,6 +91,7 @@ DEFAULT_MODEL_CAPABILITIES = {
     "gpt-4-turbo-2024-04-09": {"vision": True, "max_images": 10, "context_window": 128000},
     "gpt-4o": {"vision": True, "max_images": 10, "context_window": 128000},
     "gpt-4o-mini": {"vision": True, "max_images": 10, "context_window": 128000},
+    "gpt-5.6-terra": {"vision": True, "max_images": 10},
     "gpt-4.1-2025-04-14": {"vision": True, "max_images": 10, "context_window": 1047576},
     "o4-mini-2025-04-16": {"vision": True, "max_images": 10, "context_window": 200000},
     "o3-2025-04-16": {"vision": True, "max_images": 10, "context_window": 200000},
@@ -103,6 +104,7 @@ DEFAULT_MODEL_CAPABILITIES = {
     "claude-3-haiku-20240307": {"vision": True, "max_images": 5, "context_window": 200000},
     "claude-3-5-sonnet-20240620": {"vision": True, "max_images": 5, "context_window": 200000},
     "claude-3-5-sonnet-20241022": {"vision": True, "max_images": 5, "context_window": 200000},
+    "claude-sonnet-5": {"vision": True, "max_images": 5},
     # Google
     "gemini-pro-vision": {"vision": True, "max_images": 1, "context_window": 12288},
     "gemini-1.5-pro": {"vision": True, "max_images": 10, "context_window": 2097152},
