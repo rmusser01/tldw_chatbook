@@ -123,6 +123,17 @@ _ENCRYPTION_PASSWORD = None  # Cached password for the session
 _ENCRYPTION_MODULE = None  # Lazily loaded encryption module
 _CONFIG_GENERATION = 0
 
+#: Permission mode used the first time an encryption-related rewrite of the
+#: config file creates it from scratch (no pre-existing file whose mode can
+#: be preserved). The config file can hold plaintext API keys and the
+#: encryption password verifier, so a freshly created one gets a
+#: user-only-readable mode rather than ``atomic_write_text``'s generic
+#: 0o644 default. Every encryption entry point passes this alongside
+#: ``preserve_existing_mode=True`` so an already-existing file's mode
+#: (e.g. a user-tightened 0o600) is never widened by the rewrite -- see
+#: task-851 review finding 2.
+CONFIG_SECRETS_FILE_MODE = 0o600
+
 # --- Chunking Settings (Default, can be overridden by TOML) ---
 global_default_chunk_language = "en"
 

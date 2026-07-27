@@ -156,9 +156,24 @@ class FileSkillTrustGenerationMarkerStore:
         _atomic_write_json(self.marker_path, payload, base_dir=self.store_dir)
 
     def clear(self) -> None:
-        """Remove the on-disk marker file (missing-ok, no raise)."""
+        """Remove the on-disk marker file (missing-ok, no raise).
+
+        Validates ``marker_path`` against ``store_dir`` the same way
+        ``load_marker``/``save_marker`` do before touching disk, so an
+        unsafe or misconfigured path (symlink escape, path outside the
+        trust store) is refused rather than unlinked -- see task-851
+        review finding 4. Invalid paths are treated the same as "nothing
+        to clear": this method stays non-raising by contract.
+        """
         try:
-            self.marker_path.unlink(missing_ok=True)
+            marker_path = _validated_trust_file_path(
+                self.marker_path,
+                base_dir=self.store_dir,
+            )
+        except ValueError:
+            return
+        try:
+            marker_path.unlink(missing_ok=True)
         except OSError:
             pass
 

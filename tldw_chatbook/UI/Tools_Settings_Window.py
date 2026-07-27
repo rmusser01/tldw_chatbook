@@ -3884,12 +3884,22 @@ Thank you for using tldw-chatbook! 🎉
                             severity="information",
                         )
 
-                    # Get password from user
+                    # Get password from user. Note: this toggle path saves
+                    # directly (unlike _setup_encryption()'s EncryptionSetupDialog
+                    # detour), so the comment-loss caveat has to live in this
+                    # dialog's own message instead -- see task-851 review
+                    # finding 3.
                     password = await self.app_instance.push_screen(
                         PasswordDialog(
                             mode="setup",
                             title="Setup Config Encryption",
-                            message="Create a master password to encrypt your configuration file:",
+                            message=(
+                                "Create a master password to encrypt your "
+                                "configuration file.\n\n"
+                                "Note: saving will rewrite config.toml -- any "
+                                "comments or custom formatting in it will be "
+                                "lost (all values are preserved)."
+                            ),
                             on_submit=lambda p: None,
                             on_cancel=lambda: None,
                         ),

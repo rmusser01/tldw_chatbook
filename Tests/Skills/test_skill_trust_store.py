@@ -265,6 +265,48 @@ def test_file_marker_store_rejects_marker_outside_store_dir(tmp_path):
     assert legit.load_marker() == {"generation": 1, "manifest_digest": "digest"}
 
 
+def test_file_marker_store_clear_rejects_marker_outside_store_dir(tmp_path):
+    """Regression test for task-851 review finding 4.
+
+    ``load_marker``/``save_marker`` both validate ``marker_path`` against
+    ``store_dir`` via ``_validated_trust_file_path`` (see the two tests
+    above). ``clear()`` skipped that check entirely and unlinked
+    ``self.marker_path`` unconditionally -- not reachable through today's
+    constructors (which always co-locate the marker under the store dir),
+    but the same invariant the other two methods enforce should hold here
+    too. This plants a file at a path outside ``store_dir`` (standing in
+    for a misconfigured or attacker-influenced marker path) and asserts
+    ``clear()`` refuses to remove it.
+    """
+    store_dir = tmp_path / "trust"
+    store_dir.mkdir()
+    outside_dir = tmp_path / "totally-unrelated-elsewhere"
+    outside_dir.mkdir()
+    marker_path = outside_dir / "marker.json"
+    marker_path.write_text(json.dumps({"generation": 1, "manifest_digest": "d"}))
+
+    marker = FileSkillTrustGenerationMarkerStore(marker_path, store_dir=store_dir)
+
+    # clear() stays non-raising by contract, but must not delete the file.
+    marker.clear()
+
+    assert marker_path.exists()
+
+
+def test_file_marker_store_clear_removes_legitimate_marker(tmp_path):
+    """A marker co-located with the store must still be cleared normally."""
+    store_dir = tmp_path / "trust"
+    store_dir.mkdir()
+    marker_path = store_dir / "marker.json"
+    marker = FileSkillTrustGenerationMarkerStore(marker_path, store_dir=store_dir)
+    marker.save_marker(generation=1, manifest_digest="digest")
+    assert marker_path.exists()
+
+    marker.clear()
+
+    assert not marker_path.exists()
+
+
 def test_marker_store_builder_falls_back_to_reduced_protection_file_marker(tmp_path):
     trust_store_dir = tmp_path / "trust"
     marker_store, reduced = build_skill_trust_marker_store_with_fallback(

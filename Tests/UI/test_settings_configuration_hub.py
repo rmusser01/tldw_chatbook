@@ -6794,6 +6794,28 @@ def test_settings_config_path_validates_env_override(monkeypatch):
         screen._config_path()
 
 
+def test_settings_config_path_delegates_to_shared_accessor(monkeypatch, tmp_path):
+    """Regression test for task-851 review finding 5.
+
+    ``SettingsScreen._config_path()`` used to re-spell
+    ``config._get_effective_config_path()``'s override/validate logic
+    verbatim instead of calling it -- the exact re-spelled-accessor drift
+    shape this whole audit is about. Monkeypatching the shared accessor
+    must change what ``_config_path()`` returns; a re-implementation
+    would not react to that patch (it would keep resolving the override
+    itself instead).
+    """
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+
+    sentinel = tmp_path / "sentinel-config.toml"
+    monkeypatch.setattr(
+        settings_screen_module, "_get_effective_config_path", lambda: sentinel
+    )
+
+    assert screen._config_path() == sentinel
+
+
 def test_settings_overview_config_path_label_hides_local_directory(
     monkeypatch, tmp_path
 ):
