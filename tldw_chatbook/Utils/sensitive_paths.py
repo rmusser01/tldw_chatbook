@@ -574,3 +574,62 @@ def is_sensitive_path(
             return True
 
     return False
+
+
+def refuses_new_directory_chain(
+    target_dir: Path, context: SensitivePathContext | None = None
+) -> bool:
+    """Whether creating ``target_dir`` (or any not-yet-existing parent of it)
+    would plant a directory where this app expects a plain state file.
+
+    ``is_sensitive_path``'s direct-child-file rule is deliberately gated on
+    "does this candidate already exist as a directory", so a pre-existing
+    container (``tool_sandbox``, ``chromadb``, ``skills``, ...) stays fully
+    reachable. That same gate means a candidate that does NOT yet exist is
+    judged as if it were a plain file -- correctly refused. But
+    ``WriteFileTool``'s ``create_directories=True`` path only ever validates
+    the FINAL file being written, never the new directory levels
+    ``Path.mkdir(parents=True)`` creates on the way there: a target like
+    ``search_history.db/note.txt`` has a parent (``.../search_history.db``)
+    that is never itself checked, so nothing stopped an agent from planting
+    a directory at that exact name before this app ever created
+    ``search_history.db`` as a SQLite file (TASK-849, verified reachable
+    end to end through ``WriteFileTool`` under a widened sandbox root). The
+    app's own later ``sqlite3.connect(...)`` (or equivalent open) then fails
+    outright -- a denial of service, not a disclosure: the collision itself
+    carries no credential and grants no elevated access.
+
+    Walking upward from ``target_dir`` while each level still does not
+    exist mirrors exactly what ``Path.mkdir(parents=True)`` is about to
+    create, and checks each such level with ``is_sensitive_path`` --
+    reusing the exact same direct-child-file rule, never a separate check.
+    Any level found to already exist ends the walk immediately: an existing
+    ancestor is never touched by ``mkdir(parents=True)``, so nothing new
+    needs checking above it -- which is what keeps every legitimate
+    container directory (created by the app itself before an agent tool
+    ever runs) fully reachable.
+
+    Args:
+        target_dir: The directory ``mkdir(parents=True)`` is about to
+            create -- typically a write target's parent directory.
+        context: Optional pre-resolved ``SensitivePathContext``; see
+            ``resolve_sensitive_context``.
+
+    Returns:
+        True if ``target_dir`` or any of its not-yet-existing ancestors
+        would be a sensitive path once created.
+    """
+    ctx = context if context is not None else resolve_sensitive_context()
+    node = target_dir
+    while True:
+        resolved = _resolved(str(node))
+        if resolved is None:
+            return True
+        if resolved.exists():
+            return False
+        if is_sensitive_path(resolved, context=ctx):
+            return True
+        parent = node.parent
+        if parent == node:
+            return False
+        node = parent

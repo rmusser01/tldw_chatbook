@@ -15,6 +15,7 @@ from ..Utils.path_validation import validate_path_multi
 from ..Utils.sensitive_paths import (
     SensitivePathContext,
     is_sensitive_path,
+    refuses_new_directory_chain,
     resolve_sensitive_context,
 )
 from .workspace_file_roots import allowed_file_roots
@@ -500,6 +501,28 @@ class WriteFileTool(Tool):
 
             # Create parent directories if requested
             if create_directories and not path.parent.exists():
+                # TASK-849: `is_sensitive_path(path)` just above only ever
+                # validated the FINAL file being written, never the new
+                # directory levels `mkdir(parents=True)` is about to create
+                # on the way there -- so nothing stopped an agent from
+                # planting a directory at a name this app expects to use
+                # for its own state file later (e.g. `search_history.db/`,
+                # created here as a side effect of writing
+                # `search_history.db/note.txt`, before the app ever
+                # creates `search_history.db` itself as a SQLite file).
+                # This app's later attempt to open it then fails outright --
+                # a denial of service. See
+                # `Utils.sensitive_paths.refuses_new_directory_chain` for
+                # why this walks every not-yet-existing ancestor rather
+                # than just `path.parent` itself.
+                if refuses_new_directory_chain(path.parent):
+                    return {
+                        "file_path": file_path,
+                        "error": (
+                            f"Refused: creating '{path.parent}' would collide "
+                            "with a protected path"
+                        ),
+                    }
                 path.parent.mkdir(parents=True, exist_ok=True)
                 logger.info(f"Created directories: {path.parent}")
 

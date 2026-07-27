@@ -2,7 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Utils.sensitive_paths import is_sensitive_path
+from tldw_chatbook.Utils.sensitive_paths import (
+    is_sensitive_path,
+    refuses_new_directory_chain,
+)
 
 
 @pytest.mark.parametrize(
@@ -466,3 +469,77 @@ def test_rag_profile_file_is_refused():
 
     assert is_sensitive_path(profile_file)
     assert not is_sensitive_path(profiles_dir)
+
+
+# ---------------------------------------------------------------------------
+# TASK-849: an agent-created directory must not shadow a not-yet-created
+# state file.
+# ---------------------------------------------------------------------------
+
+
+def test_an_already_existing_directory_still_reads_as_an_ordinary_container():
+    """Documents the deliberate boundary of this fix, so it isn't mistaken
+    for a regression later: ``is_sensitive_path``'s "is this an existing
+    directory" gate is UNCHANGED -- an ALREADY-EXISTING directory named
+    ``search_history.db`` (e.g. one that predates this fix, or was created
+    by some other means) still reads as an ordinary reachable container,
+    exactly like ``tool_sandbox``/``chromadb``/etc. There is no way to
+    distinguish "this existing directory is a legitimate container" from
+    "this existing directory is an illegitimate collision" by name alone
+    without reintroducing the enumeration this rule deliberately avoids
+    (see the module docstring). The actual fix is at CREATION time instead
+    -- see ``test_refuses_new_directory_chain_blocks_the_collision`` below
+    and ``test_write_file_refuses_to_plant_a_directory_shadowing_a_state_file``
+    in ``Tests/Tools/test_file_tool_sandbox.py`` for the reachable
+    end-to-end path an agent could otherwise use to create one.
+    """
+    from tldw_chatbook import config as app_config
+
+    user_data_dir = app_config.get_user_data_dir()
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+    shadow_dir = user_data_dir / "search_history.db"
+    shadow_dir.mkdir(parents=True, exist_ok=True)
+
+    assert not is_sensitive_path(shadow_dir)
+
+
+def test_refuses_new_directory_chain_blocks_the_collision():
+    """``refuses_new_directory_chain`` is the guard ``WriteFileTool``
+    consults BEFORE calling ``Path.mkdir(parents=True)`` -- unlike
+    ``is_sensitive_path`` on the shadow directory itself (which only helps
+    once the collision already exists on disk), this must refuse it before
+    it is ever created, walking every not-yet-existing ancestor.
+    """
+    from tldw_chatbook import config as app_config
+
+    user_data_dir = app_config.get_user_data_dir()
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+
+    # A brand-new, multi-level target: neither `search_history.db` nor
+    # `sub` exists yet. The collision is at `search_history.db` (one level
+    # deep), not at the leaf `sub` -- the walk must catch it there, not
+    # only when the leaf itself happens to be the direct child.
+    target = user_data_dir / "search_history.db" / "sub" / "note.txt"
+
+    assert refuses_new_directory_chain(target.parent)
+    assert not (user_data_dir / "search_history.db").exists()
+
+
+def test_refuses_new_directory_chain_allows_existing_containers():
+    """Existing container subdirectories under the user data dir (and any
+    brand-new subdirectory nested inside one of them) must stay reachable
+    -- the whole point of gating on "does this already exist", not a name.
+    """
+    from tldw_chatbook import config as app_config
+
+    user_data_dir = app_config.get_user_data_dir()
+    sandbox_root = user_data_dir / "tool_sandbox"
+    sandbox_root.mkdir(parents=True, exist_ok=True)
+
+    # The container itself already exists.
+    assert not refuses_new_directory_chain(sandbox_root)
+
+    # A brand-new subdirectory nested inside an EXISTING container is not
+    # itself a direct child of the user data dir, so it must stay allowed.
+    new_nested_dir = sandbox_root / "brand_new_subdir"
+    assert not refuses_new_directory_chain(new_nested_dir)
