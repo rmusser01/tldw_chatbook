@@ -51,6 +51,8 @@ from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
+from .private_sqlite import backup_connection_to_private, connect_private_sqlite
+from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 #
 ########################################################################################################################
 #
@@ -110,7 +112,7 @@ class DateTimeEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-# --- Post-ingest hook registry (task-247) ---
+# --- Post-commit media lifecycle hook registries (tasks 247, 495) ---
 # Module-level, so every MediaDatabase instance (app, workers, importers)
 # dispatches through the same registry. Callbacks fire *after* the ingest
 # transaction commits, on the ingesting thread, and receive
@@ -119,11 +121,14 @@ class DateTimeEncoder(json.JSONEncoder):
 # (e.g. RAG indexing, see RAG_Search/ingestion_indexing.py).
 MediaPostIngestCallback = Callable[["MediaDatabase", int, Optional[str]], None]
 _MEDIA_POST_INGEST_CALLBACKS: List[MediaPostIngestCallback] = []
+MediaPostDeleteCallback = Callable[["MediaDatabase", int, Optional[str]], None]
+_MEDIA_POST_DELETE_CALLBACKS: List[MediaPostDeleteCallback] = []
 # Registration can happen on init/UI threads while ingest worker threads
 # dispatch concurrently; the lock keeps the compound check-then-append /
 # remove operations atomic. Dispatch snapshots the list under the lock but
 # invokes callbacks outside it, so a slow callback never blocks registration.
 _MEDIA_POST_INGEST_CALLBACKS_LOCK = threading.Lock()
+_MEDIA_POST_DELETE_CALLBACKS_LOCK = threading.Lock()
 
 #: search_media_db's media_ids_filter switches from one SQL placeholder per
 #: id to a single json_each-bound JSON array above this many ids (PR #734
@@ -157,7 +162,7 @@ def unregister_media_post_ingest_callback(callback: MediaPostIngestCallback) -> 
             pass
 
 
-def _dispatch_media_post_ingest(
+def dispatch_media_post_ingest(
     db: "MediaDatabase", media_id: int, media_uuid: Optional[str]
 ) -> None:
     """Invoke all registered post-ingest callbacks, guarding each one."""
@@ -169,6 +174,42 @@ def _dispatch_media_post_ingest(
         except Exception as e:
             logger.warning(
                 f"Media post-ingest callback {callback!r} failed for media_id={media_id}: {e}"
+            )
+
+
+def register_media_post_delete_callback(callback: MediaPostDeleteCallback) -> None:
+    """Register a callback invoked after soft or hard media deletion commits.
+
+    Args:
+        callback: Callable receiving ``(media_db, media_id, media_uuid)``.
+            Observer failures are contained and never change source deletion.
+    """
+    with _MEDIA_POST_DELETE_CALLBACKS_LOCK:
+        if callback not in _MEDIA_POST_DELETE_CALLBACKS:
+            _MEDIA_POST_DELETE_CALLBACKS.append(callback)
+
+
+def unregister_media_post_delete_callback(callback: MediaPostDeleteCallback) -> None:
+    """Remove a registered post-delete callback (no-op if absent)."""
+    with _MEDIA_POST_DELETE_CALLBACKS_LOCK:
+        try:
+            _MEDIA_POST_DELETE_CALLBACKS.remove(callback)
+        except ValueError:
+            pass
+
+
+def dispatch_media_post_delete(
+    db: "MediaDatabase", media_id: int, media_uuid: Optional[str]
+) -> None:
+    """Invoke post-delete observers after the authoritative commit."""
+    with _MEDIA_POST_DELETE_CALLBACKS_LOCK:
+        callbacks = list(_MEDIA_POST_DELETE_CALLBACKS)
+    for callback in callbacks:
+        try:
+            callback(db, media_id, media_uuid)
+        except Exception as e:
+            logger.warning(
+                f"Media post-delete callback {callback!r} failed for media_id={media_id}: {e}"
             )
 
 
@@ -554,14 +595,14 @@ class MediaDatabase:
             ValueError: If client_id is empty or None.
             DatabaseError: If database initialization or schema setup fails.
         """
-        # Determine if it's an in-memory DB and resolve the path
+        # Determine if it's an in-memory DB and normalize the path lexically.
         if isinstance(db_path, Path):
             self.is_memory_db = False
-            self.db_path = db_path.resolve()
+            self.db_path = lexical_path(db_path)
         else:  # Treat as string
             self.is_memory_db = db_path == ":memory:"
             if not self.is_memory_db:
-                self.db_path = Path(db_path).resolve()
+                self.db_path = lexical_path(db_path)
             else:
                 # Even for memory, Path object can be useful internally, though str is ':memory:'
                 self.db_path = Path(":memory:")  # Represent in-memory path consistently
@@ -573,16 +614,6 @@ class MediaDatabase:
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
-
-        # Ensure parent directory exists if it's a file-based DB
-        if not self.is_memory_db:
-            try:
-                self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                # Catch potential errors creating the directory (e.g., permissions)
-                raise DatabaseError(
-                    f"Failed to create database directory {self.db_path.parent}: {e}"
-                ) from e
 
         logging.info(
             f"Initializing Database object for path: {self.db_path_str} [Client ID: {self.client_id}]"
@@ -687,7 +718,8 @@ class MediaDatabase:
 
         if is_closed:
             try:
-                conn = sqlite3.connect(
+                conn = connect_private_sqlite(
+                    "db.media.primary",
                     self.db_path_str,
                     detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                     check_same_thread=False,
@@ -701,7 +733,7 @@ class MediaDatabase:
                 logging.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} [Client: {self.client_id}, Thread: {threading.current_thread().name}]"
                 )
-            except sqlite3.Error as e:
+            except (sqlite3.Error, PrivatePathError) as e:
                 logging.error(
                     f"Failed to connect to database at {self.db_path_str}: {e}",
                     exc_info=True,
@@ -893,6 +925,47 @@ class MediaDatabase:
                     logging.error(f"Rollback FAILED: {rb_err}", exc_info=True)
             raise e
 
+    @staticmethod
+    def _execute_transactional_script(
+        conn: sqlite3.Connection, script: str
+    ) -> None:
+        """Execute a multi-statement SQL script without implicit commits.
+
+        ``sqlite3.Connection.executescript`` commits a pending transaction
+        before running its script. Versioned schema transitions instead pass
+        each SQLite-complete statement through ``execute`` so the caller's
+        transaction owns every DDL, seed-data, validation, and version change.
+
+        Args:
+            conn: Connection already managed by ``transaction()``.
+            script: SQL statements, including trigger bodies when needed.
+
+        Raises:
+            SchemaError: If the script ends with an incomplete SQL statement.
+            sqlite3.Error: If SQLite rejects any complete statement.
+        """
+        if not conn.in_transaction:
+            raise SchemaError(
+                "Transactional SQL script requires an active transaction"
+            )
+        statement = ""
+        for character in script:
+            statement += character
+            if character == ";" and sqlite3.complete_statement(statement):
+                if statement.strip():
+                    conn.execute(statement)
+                statement = ""
+
+        remainder = statement.strip()
+        if remainder:
+            non_comment_lines = [
+                line
+                for line in remainder.splitlines()
+                if line.strip() and not line.lstrip().startswith("--")
+            ]
+            if non_comment_lines:
+                raise SchemaError("Migration script ended with incomplete SQL")
+
     # --- Schema Initialization and Migration ---
     def _get_db_version(self, conn: sqlite3.Connection) -> int:
         """Internal helper to get the current schema version."""
@@ -931,7 +1004,9 @@ class MediaDatabase:
             # --- Transaction for Core Schema + Version Update ---
             with self.transaction():  # Use the transaction context manager
                 logging.debug("[Schema V1] Applying Core Schema + Version Update...")
-                conn.executescript(core_schema_script_with_version_update)
+                self._execute_transactional_script(
+                    conn, core_schema_script_with_version_update
+                )
                 logging.debug(
                     "[Schema V1] Core Schema script (incl. version update) executed."
                 )
@@ -1211,7 +1286,7 @@ class MediaDatabase:
                 logging.debug(
                     "[Migration v1->v2] Applying chunking configuration migration..."
                 )
-                conn.executescript(migration_sql)
+                self._execute_transactional_script(conn, migration_sql)
 
                 # Insert default templates using parameterized queries
                 insert_sql = "INSERT INTO ChunkingTemplates (name, description, template_json, is_system) VALUES (?, ?, ?, ?)"
@@ -1255,7 +1330,7 @@ class MediaDatabase:
 
             with self.transaction():
                 logging.debug("[Migration v2->v3] Creating ReadingProgress table...")
-                conn.executescript(migration_sql)
+                self._execute_transactional_script(conn, migration_sql)
                 logging.info(
                     "[Migration v2->v3] ReadingProgress migration applied successfully."
                 )
@@ -1286,7 +1361,7 @@ class MediaDatabase:
                 logging.debug(
                     "[Migration v3->v4] Creating MediaReadItLaterState table..."
                 )
-                conn.executescript(migration_sql)
+                self._execute_transactional_script(conn, migration_sql)
                 logging.info(
                     "[Migration v3->v4] MediaReadItLaterState migration applied successfully."
                 )
@@ -3006,6 +3081,9 @@ class MediaDatabase:
                             f"Cascade deleted {processed_children_count}/{len(children)} records in {table}."
                         )
 
+            # The source transaction is authoritative. Derived projections are
+            # notified only after commit and callback failures are contained.
+            dispatch_media_post_delete(self, media_id, media_uuid)
             logger.info(f"Soft delete successful for Media ID: {media_id}.")
 
             # Log success metrics
@@ -3082,13 +3160,13 @@ class MediaDatabase:
         """
         Undeletes a soft-deleted Media item by setting its 'deleted' flag to 0.
 
-        Increments the version number, updates `last_modified`, logs an 'undelete'
-        sync event for the Media item, and restores its FTS entry.
+        Increments the version number, updates `last_modified`, logs an update
+        sync event with ``deleted = 0``, and restores its FTS entry.
         If `cascade` is True (default), it also performs the following within
         the same transaction:
         - Restores soft-deleted child records (Transcripts, MediaChunks,
-          UnvectorizedMediaChunks, DocumentVersions), logging 'undelete' events
-          for each child.
+          UnvectorizedMediaChunks, DocumentVersions), logging update events
+          with ``deleted = 0`` for each child.
 
         Args:
             media_id (int): The ID of the Media item to undelete.
@@ -3147,6 +3225,8 @@ class MediaDatabase:
                 # Payload reflects the state after the update
                 undelete_payload = {
                     "uuid": media_uuid,
+                    "title": title,
+                    "content": content,
                     "last_modified": current_time,
                     "version": new_media_version,
                     "client_id": client_id,
@@ -3156,7 +3236,7 @@ class MediaDatabase:
                     conn,
                     "Media",
                     media_uuid,
-                    "undelete",
+                    "update",
                     new_media_version,
                     undelete_payload,
                 )
@@ -3211,7 +3291,7 @@ class MediaDatabase:
                                     conn,
                                     table,
                                     item["uuid"],
-                                    "undelete",
+                                    "update",
                                     new_item_version,
                                     undelete_item_payload,
                                 )
@@ -3225,6 +3305,9 @@ class MediaDatabase:
             else:
                 raise DatabaseError(f"Error undeleting Media ID {media_id}: {e}") from e
 
+        # Reuse the normal post-ingest projection path after the undelete
+        # transaction commits, so document construction has one owner.
+        dispatch_media_post_ingest(self, media_id, media_uuid)
         logger.info(f"Successfully undeleted Media ID: {media_id} and related records.")
         return True
 
@@ -3245,16 +3328,19 @@ class MediaDatabase:
         Raises:
             DatabaseError: If there's an error during the deletion process
         """
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         # Calculate cutoff date
-        cutoff_date = datetime.utcnow() - timedelta(days=days_old)
+        cutoff_date = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+            days=days_old
+        )
         cutoff_str = cutoff_date.strftime("%Y-%m-%d %H:%M:%S")
 
         logger.info(
             f"Starting hard deletion of media soft-deleted before {cutoff_str} (>{days_old} days old)"
         )
 
+        deleted_items: List[tuple[int, Optional[str]]] = []
         try:
             with self.transaction() as conn:
                 cursor = conn.cursor()
@@ -3273,8 +3359,6 @@ class MediaDatabase:
                     logger.info("No media items found for hard deletion")
                     return 0
 
-                deleted_count = 0
-
                 # Process each item for deletion
                 for item in items_to_delete:
                     media_id = item["id"]
@@ -3282,84 +3366,64 @@ class MediaDatabase:
                     title = item["title"]
                     media_type = item["type"]
 
-                    try:
-                        # Delete from FTS if it exists (shouldn't, but just in case)
-                        self._delete_fts_media(conn, media_id)
+                    # Delete related records in order of dependencies.
+                    cursor.execute(
+                        "DELETE FROM MediaKeywords WHERE media_id = ?", (media_id,)
+                    )
+                    keywords_deleted = cursor.rowcount
+                    cursor.execute(
+                        "DELETE FROM Transcripts WHERE media_id = ?", (media_id,)
+                    )
+                    transcripts_deleted = cursor.rowcount
+                    cursor.execute(
+                        "DELETE FROM MediaChunks WHERE media_id = ?", (media_id,)
+                    )
+                    chunks_deleted = cursor.rowcount
+                    cursor.execute(
+                        "DELETE FROM UnvectorizedMediaChunks WHERE media_id = ?",
+                        (media_id,),
+                    )
+                    unvectorized_chunks_deleted = cursor.rowcount
+                    cursor.execute(
+                        "DELETE FROM DocumentVersions WHERE media_id = ?", (media_id,)
+                    )
+                    doc_versions_deleted = cursor.rowcount
 
-                        # Delete related records in order of dependencies
-                        # 1. Delete MediaKeywords links
-                        cursor.execute(
-                            "DELETE FROM MediaKeywords WHERE media_id = ?", (media_id,)
+                    # Delete the source last. Any failure in the batch bubbles
+                    # out so the enclosing transaction rolls every item back.
+                    cursor.execute("DELETE FROM Media WHERE id = ?", (media_id,))
+                    if cursor.rowcount != 1:
+                        raise DatabaseError(
+                            f"Hard-delete source disappeared for media ID {media_id}"
                         )
-                        keywords_deleted = cursor.rowcount
 
-                        # 2. Delete Transcripts
-                        cursor.execute(
-                            "DELETE FROM Transcripts WHERE media_id = ?", (media_id,)
-                        )
-                        transcripts_deleted = cursor.rowcount
-
-                        # 3. Delete MediaChunks
-                        cursor.execute(
-                            "DELETE FROM MediaChunks WHERE media_id = ?", (media_id,)
-                        )
-                        chunks_deleted = cursor.rowcount
-
-                        # 4. Delete UnvectorizedMediaChunks
-                        cursor.execute(
-                            "DELETE FROM UnvectorizedMediaChunks WHERE media_id = ?",
-                            (media_id,),
-                        )
-                        unvectorized_chunks_deleted = cursor.rowcount
-
-                        # 5. Delete DocumentVersions
-                        cursor.execute(
-                            "DELETE FROM DocumentVersions WHERE media_id = ?",
-                            (media_id,),
-                        )
-                        doc_versions_deleted = cursor.rowcount
-
-                        # 6. Finally delete the Media record itself
-                        cursor.execute("DELETE FROM Media WHERE id = ?", (media_id,))
-
-                        if cursor.rowcount > 0:
-                            deleted_count += 1
-                            logger.info(
-                                f"Hard deleted media '{title}' (ID: {media_id}, UUID: {media_uuid}, Type: {media_type}). "
-                                f"Cascade deleted: {keywords_deleted} keywords, {transcripts_deleted} transcripts, "
-                                f"{chunks_deleted} chunks, {unvectorized_chunks_deleted} unvectorized chunks, "
-                                f"{doc_versions_deleted} document versions"
-                            )
-
-                            # Log final deletion event (for audit purposes if sync log is being monitored)
-                            self._log_sync_event(
-                                conn,
-                                "Media",
-                                media_uuid,
-                                "hard_delete",
-                                0,
-                                {"uuid": media_uuid, "title": title, "permanent": True},
-                            )
-                        else:
-                            logger.warning(
-                                f"Failed to delete media ID {media_id} - may have been deleted already"
-                            )
-
-                    except Exception as e:
-                        logger.opt(exception=True).error(
-                            f"Error hard deleting media ID {media_id}: {e}"
-                        )
-                        # Continue with other deletions rather than failing entirely
-                        continue
+                    self._log_sync_event(
+                        conn,
+                        "Media",
+                        media_uuid,
+                        "delete",
+                        0,
+                        {"uuid": media_uuid, "title": title, "permanent": True},
+                    )
+                    deleted_items.append((media_id, media_uuid))
+                    logger.info(
+                        f"Hard deleted media '{title}' (ID: {media_id}, UUID: {media_uuid}, Type: {media_type}). "
+                        f"Cascade deleted: {keywords_deleted} keywords, {transcripts_deleted} transcripts, "
+                        f"{chunks_deleted} chunks, {unvectorized_chunks_deleted} unvectorized chunks, "
+                        f"{doc_versions_deleted} document versions"
+                    )
 
                 logger.info(
-                    f"Hard deletion complete. Permanently deleted {deleted_count} media items."
+                    f"Hard deletion complete. Permanently deleted {len(deleted_items)} media items."
                 )
-                return deleted_count
 
         except Exception as e:
             logger.opt(exception=True).error(f"Error during hard deletion process: {e}")
             raise DatabaseError(f"Failed to perform hard deletion: {e}") from e
+
+        for media_id, media_uuid in deleted_items:
+            dispatch_media_post_delete(self, media_id, media_uuid)
+        return len(deleted_items)
 
     def get_deletion_candidates(self, days_old: int = 30) -> List[Dict[str, Any]]:
         """
@@ -3431,7 +3495,7 @@ class MediaDatabase:
             chunks=chunks,
         )
         if media_id is not None:
-            _dispatch_media_post_ingest(self, media_id, media_uuid)
+            dispatch_media_post_ingest(self, media_id, media_uuid)
         return media_id, media_uuid, message
 
     def _add_media_with_keywords_impl(
@@ -5087,7 +5151,8 @@ class MediaDatabase:
                 )
                 # No FTS change needed for trash status itself
                 logger.info(f"Media {media_id} marked as trash. New ver: {new_version}")
-                return True
+            dispatch_media_post_delete(self, media_id, media_uuid)
+            return True
         except (ConflictError, DatabaseError, sqlite3.Error) as e:
             logger.opt(exception=True).error(
                 f"Error marking media {media_id} as trash: {e}"
@@ -5161,7 +5226,8 @@ class MediaDatabase:
                 logger.info(
                     f"Media {media_id} restored from trash. New ver: {new_version}"
                 )
-                return True
+            dispatch_media_post_ingest(self, media_id, media_uuid)
+            return True
         except (ConflictError, DatabaseError, sqlite3.Error) as e:
             logger.opt(exception=True).error(
                 f"Error restoring media {media_id} trash: {e}"
@@ -6290,41 +6356,14 @@ class MediaDatabase:
         logger.info(
             f"Starting database backup from '{self.db_path_str}' to '{backup_file_path}'"
         )
-        src_conn = None
-        backup_conn = None
         try:
-            # Ensure the backup file path is not the same as the source, unless it's an in-memory DB
-            if (
-                not self.is_memory_db
-                and Path(self.db_path_str).resolve() == Path(backup_file_path).resolve()
-            ):
-                logger.error(
-                    "Backup path cannot be the same as the source database path."
-                )
-                raise ValueError(
-                    "Backup path cannot be the same as the source database path."
-                )
-
-            # Get connection to the source database
-            src_conn = (
-                self.get_connection()
-            )  # This uses the existing thread-local connection or creates one
-
-            # Create a connection to the backup database file
-            # Ensure parent directory for backup_file_path exists
-            backup_db_path = Path(backup_file_path)
-            backup_db_path.parent.mkdir(parents=True, exist_ok=True)
-
-            backup_conn = sqlite3.connect(backup_file_path)
-
-            logger.debug(f"Source DB connection: {src_conn}")
-            logger.debug(
-                f"Backup DB connection: {backup_conn} to file {backup_file_path}"
+            src_conn = self.get_connection()
+            backup_connection_to_private(
+                "db.media.backup",
+                src_conn,
+                self.db_path_str,
+                backup_file_path,
             )
-
-            # Perform the backup
-            # pages=0 means all pages will be copied
-            src_conn.backup(backup_conn, pages=0, progress=None)
 
             logger.info(
                 f"Database backup successful from '{self.db_path_str}' to '{backup_file_path}'"
@@ -6343,20 +6382,6 @@ class MediaDatabase:
                 f"Unexpected error during database backup: {e}"
             )
             return False
-        finally:
-            if backup_conn:
-                try:
-                    backup_conn.close()
-                    logger.debug("Closed backup database connection.")
-                except sqlite3.Error as e:
-                    logger.warning(f"Error closing backup database connection: {e}")
-            # Do not close src_conn here if it's managed by _get_thread_connection / close_connection
-            # self.close_connection() might close the main connection pool which might not be desired.
-            # The source connection is managed by the class's connection pooling.
-            # If this backup is a one-off, the connection will be closed when the thread context ends
-            # or if explicitly closed by the caller of this instance.
-            # For safety, if this method obtained a new connection not from the pool, it should close it.
-            # However, self.get_connection() reuses pooled connections.
 
     def get_distinct_media_types(
         self, include_deleted=False, include_trash=False
@@ -7384,7 +7409,11 @@ def check_database_integrity(db_path):  # Standalone check is fine
     logger.info(f"Checking integrity of database: {db_path}")
     conn = None
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)  # Read-only mode
+        conn = connect_private_sqlite(
+            "db.media.integrity",
+            db_path,
+            read_only=True,
+        )
         cursor = conn.execute("PRAGMA integrity_check;")
         result = cursor.fetchone()
         if result and result[0].lower() == "ok":
@@ -7393,7 +7422,7 @@ def check_database_integrity(db_path):  # Standalone check is fine
         else:
             logger.error(f"Integrity check FAILED for {db_path}: {result}")
         return False
-    except sqlite3.Error as e:
+    except (sqlite3.Error, PrivatePathError, ValueError) as e:
         logger.opt(exception=True).error(
             f"Error during integrity check for {db_path}: {e}"
         )

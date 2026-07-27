@@ -24,7 +24,9 @@ from textual.widgets import Static, Button, DataTable, OptionList, Footer
 from textual.reactive import reactive
 from loguru import logger
 
+from ..Utils.private_paths import secure_private_directory
 from ..Chatbooks.chatbook_importer import ChatbookImporter
+from ..Chatbooks.database_paths import get_chatbook_database_paths
 from ..Chatbooks.chatbook_models import ChatbookManifest
 from ..Chatbooks.server_chatbook_service import (
     get_server_job_records,
@@ -312,7 +314,11 @@ class ChatbookExportManagementWindow(ModalScreen):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self.chatbooks_dir = Path.home() / "Documents" / "Chatbooks"
+        self.chatbooks_dir = secure_private_directory(
+            Path.home() / "Documents" / "Chatbooks",
+            create=True,
+            application_owned=True,
+        ).lexical_path
         self.chatbook_files: List[Dict[str, Any]] = []
         self.current_manifest: Optional[ChatbookManifest] = None
         self.server_job_records: List[Dict[str, Any]] = []
@@ -953,31 +959,7 @@ class ChatbookExportManagementWindow(ModalScreen):
         # Try to load manifest
         try:
             # Create importer to preview
-            db_config = self.app_instance.config_data.get("database", {})
-            db_paths = {
-                "ChaChaNotes": str(
-                    Path(
-                        db_config.get(
-                            "chachanotes_db_path",
-                            "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                        )
-                    ).expanduser()
-                ),
-                "Prompts": str(
-                    Path(
-                        db_config.get(
-                            "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts.db"
-                        )
-                    ).expanduser()
-                ),
-                "Media": str(
-                    Path(
-                        db_config.get(
-                            "media_db_path", "~/.local/share/tldw_cli/media_db_v2.db"
-                        )
-                    ).expanduser()
-                ),
-            }
+            db_paths = get_chatbook_database_paths()
 
             importer = ChatbookImporter(db_paths)
             manifest, error = importer.preview_chatbook(chatbook["path"])

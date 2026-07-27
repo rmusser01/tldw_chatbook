@@ -9,8 +9,6 @@ including schema creation, CRUD operations, and data integrity.
 """
 
 import pytest
-import tempfile
-import shutil
 import sqlite3
 from pathlib import Path
 
@@ -29,12 +27,9 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def temp_db_path():
+def temp_db_path(tmp_path):
     """Create a temporary database path."""
-    temp_dir = tempfile.mkdtemp()
-    db_path = Path(temp_dir) / "test_prompts.db"
-    yield str(db_path)
-    shutil.rmtree(temp_dir, ignore_errors=True)
+    yield str(tmp_path / "test_prompts.db")
 
 
 @pytest.fixture

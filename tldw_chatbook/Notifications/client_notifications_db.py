@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..DB.base_db import BaseDB
+from ..DB.private_sqlite import connect_private_sqlite
 
 
 DEFAULT_NOTIFICATION_SETTINGS = {
@@ -38,7 +39,10 @@ class ClientNotificationsDB(BaseDB):
     def _get_connection(self) -> sqlite3.Connection:
         if getattr(self, "is_memory_db", False):
             if self._memory_conn is None:
-                self._memory_conn = sqlite3.connect(":memory:")
+                self._memory_conn = connect_private_sqlite(
+                    "notifications.client",
+                    ":memory:",
+                )
                 self._memory_conn.row_factory = sqlite3.Row
             return self._memory_conn
         return super()._get_connection()

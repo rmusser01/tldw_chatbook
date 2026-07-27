@@ -23,7 +23,7 @@ class ServicePolicyEnforcer:
     @classmethod
     def from_runtime_policy_context(cls, context: Any) -> "ServicePolicyEnforcer":
         return cls(
-            state_provider=lambda: getattr(context, "state", None),
+            state_provider=lambda: context.state,
         )
 
     def current_state(self) -> RuntimeSourceState | None:

@@ -31,7 +31,9 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 def _cheap_app_init_patches():
     """Patch heavy ``TldwCli.__init__`` collaborators, mirroring the proven
     ``_build_test_app`` recipe in ``Tests/UI/test_screen_navigation.py``."""
-    user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-rag254-test-"))
+    user_data_dir = Path(
+        tempfile.mkdtemp(prefix="tldw-chatbook-rag254-test-")
+    ).resolve()
 
     def fake_runtime_policy(app):
         context = SimpleNamespace(

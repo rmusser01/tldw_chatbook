@@ -1,26 +1,112 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.runtime_policy.bootstrap import (
+    RuntimePolicyContext,
+    set_authoritative_runtime_source,
+)
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.state.app_state import AppState
 
 
-def _make_app_like(
-    *, base_url: str = "https://Example.COM:8443/api/"
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        app_config={
-            "tldw_api": {
-                "base_url": base_url,
-            }
-        },
-        app_state=AppState(),
-        # handle_runtime_backend_changed invalidates the screen cache.
+def _prepare_context(**kwargs):
+    import tldw_chatbook.runtime_policy.bootstrap as bootstrap
+
+    prepare = getattr(bootstrap, "_prepare_runtime_policy_context", None)
+    assert callable(prepare), (
+        "bootstrap must expose an app-independent runtime-policy preparation boundary"
     )
+    return prepare(**kwargs)
+
+
+def test_default_policy_path_follows_effective_config_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    import tldw_chatbook.runtime_policy.bootstrap as bootstrap
+    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+
+    config_path = tmp_path / "custom" / "config.toml"
+    config_path.parent.mkdir()
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    constructed: list[RuntimeSourceStateStore] = []
+    real_store_type = RuntimeSourceStateStore
+
+    def capture_store(path, **kwargs):
+        store = real_store_type(path, **kwargs)
+        constructed.append(store)
+        return store
+
+    monkeypatch.setattr(bootstrap, "RuntimeSourceStateStore", capture_store)
+
+    _prepare_context(app_config={}, publish=lambda _state: None)
+
+    assert constructed[0].path == config_path.parent / "runtime_policy.json"
+
+
+def test_config_override_does_not_read_fallback_or_migrate_default_runtime_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    import tldw_chatbook.config as config
+    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+
+    default_config_path = tmp_path / "default" / "config.toml"
+    default_config_path.parent.mkdir()
+    default_policy_path = default_config_path.parent / "runtime_policy.json"
+    RuntimeSourceStateStore(default_policy_path).save(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="DEFAULT-POLICY-SENTINEL",
+            server_configured=True,
+        )
+    )
+    override_config_path = tmp_path / "custom" / "config.toml"
+    override_config_path.parent.mkdir()
+    override_policy_path = override_config_path.parent / "runtime_policy.json"
+    monkeypatch.setattr(config, "DEFAULT_CONFIG_PATH", default_config_path)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(override_config_path))
+    context = _prepare_context(app_config={}, publish=lambda _state: None)
+
+    assert context.state == RuntimeSourceState()
+    assert not override_policy_path.exists()
+    assert RuntimeSourceStateStore(default_policy_path).load().active_server_id == (
+        "DEFAULT-POLICY-SENTINEL"
+    )
+
+
+@pytest.mark.skipif(
+    __import__("os").name != "posix",
+    reason="POSIX namespace contract",
+)
+def test_explicit_runtime_policy_path_never_gains_default_directory_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    import tldw_chatbook.config as config
+    from tldw_chatbook.Utils.private_paths import PrivatePathError
+
+    default_config_path = tmp_path / "default" / "config.toml"
+    explicit_policy_path = default_config_path.parent / "runtime_policy.json"
+    monkeypatch.setattr(config, "DEFAULT_CONFIG_PATH", default_config_path)
+    monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
+    app_config = {
+        "tldw_api": {
+            "base_url": "https://explicit-path.example.test/api",
+        }
+    }
+
+    with pytest.raises(PrivatePathError):
+        _prepare_context(
+            app_config=app_config,
+            publish=lambda _state: None,
+            path=explicit_policy_path,
+        )
+
+    assert not explicit_policy_path.parent.exists()
 
 
 def test_app_state_round_trips_runtime_source_state():
@@ -228,27 +314,197 @@ def test_build_server_chatbook_service_can_return_disconnected_service_when_unco
     assert service.policy_enforcer is policy_enforcer
 
 
-def test_load_runtime_policy_for_app_derives_and_persists_authoritative_server_binding_from_app_config(
+def test_prepare_runtime_policy_context_derives_and_persists_authoritative_server_binding(
     tmp_path,
 ):
-    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
     from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 
     store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
-    app_like = _make_app_like()
+    published: list[RuntimeSourceState] = []
+    app_config = {
+        "tldw_api": {
+            "base_url": "https://Example.COM:8443/api/",
+        }
+    }
 
-    context = load_runtime_policy_for_app(app_like, store=store)
+    context = _prepare_context(
+        app_config=app_config,
+        publish=published.append,
+        store=store,
+    )
 
     assert context.state.active_source == "local"
     assert context.state.active_server_id == "https://example.com:8443/api"
     assert context.state.server_configured is True
     assert context.state.last_known_server_label == "example.com:8443"
     assert store.load() == context.state
-    assert app_like.current_runtime_backend == "local"
-    assert app_like.runtime_backend == "local"
+    assert published == [context.state]
 
 
-def test_load_runtime_policy_for_app_supports_legacy_url_alias_and_provider_resolution(
+def test_prepare_runtime_policy_context_commits_synchronized_state_as_revision_one():
+    loaded = RuntimeSourceState(
+        active_source="server",
+        active_server_id="https://old.example.test/api",
+        server_configured=True,
+    )
+
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.saved_states: list[RuntimeSourceState] = []
+
+        def load(self) -> RuntimeSourceState:
+            return loaded
+
+        def save(self, state: RuntimeSourceState) -> None:
+            self.saved_states.append(state)
+
+    store = RecordingStore()
+    published: list[RuntimeSourceState] = []
+    app_config = {
+        "tldw_api": {
+            "base_url": "https://new.example.test/v1",
+        }
+    }
+
+    context = _prepare_context(
+        app_config=app_config,
+        publish=published.append,
+        store=store,
+    )
+
+    state, revision = context.snapshot()
+    assert revision == 1
+    assert state.active_server_id == "https://new.example.test/v1"
+    assert store.saved_states == [state]
+    assert published == [state]
+
+
+def test_prepare_runtime_policy_context_publishes_unchanged_loaded_state_without_save():
+    loaded = RuntimeSourceState()
+
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.saved_states: list[RuntimeSourceState] = []
+
+        def load(self) -> RuntimeSourceState:
+            return loaded
+
+        def save(self, state: RuntimeSourceState) -> None:
+            self.saved_states.append(state)
+
+    store = RecordingStore()
+    published: list[RuntimeSourceState] = []
+
+    context = _prepare_context(
+        app_config={},
+        publish=published.append,
+        store=store,
+    )
+
+    assert context.snapshot() == (loaded, 0)
+    assert store.saved_states == []
+    assert published == [loaded]
+
+
+def test_prepare_runtime_policy_context_propagates_load_failure():
+    load_sentinel = "RUNTIME-POLICY-LOAD-SENTINEL"
+
+    class RaisingLoadStore:
+        def load(self) -> RuntimeSourceState:
+            raise OSError(load_sentinel)
+
+        def save(self, state: RuntimeSourceState) -> None:
+            raise AssertionError("save must not run after load failure")
+
+    with pytest.raises(OSError, match=load_sentinel):
+        _prepare_context(
+            app_config={},
+            publish=lambda _state: None,
+            store=RaisingLoadStore(),
+        )
+
+
+def test_prepare_runtime_policy_context_propagates_synchronization_save_failure():
+    save_sentinel = "RUNTIME-POLICY-SAVE-SENTINEL"
+    loaded = RuntimeSourceState()
+    published: list[RuntimeSourceState] = []
+
+    class RaisingSaveStore:
+        def load(self) -> RuntimeSourceState:
+            return loaded
+
+        def save(self, state: RuntimeSourceState) -> None:
+            raise OSError(save_sentinel)
+
+    with pytest.raises(OSError, match=save_sentinel):
+        _prepare_context(
+            app_config={
+                "tldw_api": {
+                    "base_url": "https://save-failure.example.test/api",
+                }
+            },
+            publish=published.append,
+            store=RaisingSaveStore(),
+        )
+
+    assert published == []
+
+
+def test_prepare_runtime_policy_context_propagates_initial_publication_failure():
+    publish_sentinel = "RUNTIME-POLICY-PUBLISH-SENTINEL"
+
+    class LoadedStateStore:
+        def load(self) -> RuntimeSourceState:
+            return RuntimeSourceState()
+
+        def save(self, state: RuntimeSourceState) -> None:
+            raise AssertionError("unchanged state must not be saved")
+
+    def raise_on_publish(_state: RuntimeSourceState) -> None:
+        raise RuntimeError(publish_sentinel)
+
+    with pytest.raises(RuntimeError, match=publish_sentinel):
+        _prepare_context(
+            app_config={},
+            publish=raise_on_publish,
+            store=LoadedStateStore(),
+        )
+
+
+def test_prepare_runtime_policy_context_contains_post_commit_publication_failure():
+    loaded = RuntimeSourceState()
+
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.saved_states: list[RuntimeSourceState] = []
+
+        def load(self) -> RuntimeSourceState:
+            return loaded
+
+        def save(self, state: RuntimeSourceState) -> None:
+            self.saved_states.append(state)
+
+    def raise_on_publish(_state: RuntimeSourceState) -> None:
+        raise RuntimeError("POST-COMMIT-PUBLISH-SENTINEL")
+
+    store = RecordingStore()
+    context = _prepare_context(
+        app_config={
+            "tldw_api": {
+                "base_url": "https://new.example.test/v1",
+            }
+        },
+        publish=raise_on_publish,
+        store=store,
+    )
+
+    state, revision = context.snapshot()
+    assert revision == 1
+    assert state.active_server_id == "https://new.example.test/v1"
+    assert store.saved_states == [state]
+
+
+def test_prepare_runtime_policy_context_supports_legacy_url_alias_and_provider_resolution(
     tmp_path,
 ):
     from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
@@ -256,7 +512,6 @@ def test_load_runtime_policy_for_app_supports_legacy_url_alias_and_provider_reso
     from tldw_chatbook.runtime_policy.server_credentials import (
         InMemoryServerCredentialStore,
     )
-    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
     from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 
     app_config = {
@@ -275,9 +530,11 @@ def test_load_runtime_policy_for_app_supports_legacy_url_alias_and_provider_reso
             last_known_server_label="old.example.com",
         )
     )
-    app_like = SimpleNamespace(app_config=app_config, app_state=AppState())
-
-    context = load_runtime_policy_for_app(app_like, store=store)
+    context = _prepare_context(
+        app_config=app_config,
+        publish=lambda _state: None,
+        store=store,
+    )
 
     assert context.state.active_source == "server"
     assert context.state.active_server_id == "https://alias.example.com:8443/api"
@@ -306,81 +563,11 @@ def test_load_runtime_policy_for_app_supports_legacy_url_alias_and_provider_reso
     assert active_context.credential_source == "credential_store:bearer_token"
 
 
-def test_wire_server_context_provider_exposes_provider_and_credential_store(
-    tmp_path, monkeypatch
-):
-    from tldw_chatbook.app import TldwCli
-
-    class FakeServerCredentialStore:
-        pass
-
-    fake_store = FakeServerCredentialStore()
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
-    monkeypatch.setattr(
-        "tldw_chatbook.app.build_default_server_credential_store",
-        lambda: fake_store,
-    )
-    app_like = SimpleNamespace(
-        app_config={"tldw_api": {"base_url": "https://example.com/api/"}},
-        runtime_policy=SimpleNamespace(state=RuntimeSourceState()),
-    )
-
-    TldwCli._wire_server_context_provider(app_like)
-
-    assert app_like.server_credential_store is fake_store
-    assert app_like.server_context_provider is not None
-    assert app_like.server_context_provider.runtime_context is app_like.runtime_policy
-    assert (
-        app_like.server_context_provider.target_store
-        is app_like.unified_mcp_target_store
-    )
-    assert (
-        app_like.server_context_provider.credential_store
-        is app_like.server_credential_store
-    )
-
-
-def test_wire_server_context_provider_uses_unavailable_store_when_secure_store_missing(
-    tmp_path, monkeypatch
-):
-    from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.runtime_policy.server_credentials import (
-        CredentialStoreUnavailable,
-        UnavailableServerCredentialStore,
-    )
-
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
-
-    def raise_unavailable():
-        raise CredentialStoreUnavailable(
-            "No secure OS-backed credential store is available."
-        )
-
-    monkeypatch.setattr(
-        "tldw_chatbook.app.build_default_server_credential_store", raise_unavailable
-    )
-    app_like = SimpleNamespace(
-        app_config={"tldw_api": {"base_url": "https://example.com/api/"}},
-        runtime_policy=SimpleNamespace(state=RuntimeSourceState()),
-    )
-
-    TldwCli._wire_server_context_provider(app_like)
-
-    assert isinstance(
-        app_like.server_credential_store, UnavailableServerCredentialStore
-    )
-    assert (
-        app_like.server_context_provider.credential_store
-        is app_like.server_credential_store
-    )
-
-
 def test_auth_scope_updates_and_clears_legacy_imported_effective_bearer_token(tmp_path):
     from tldw_chatbook.Auth_Account_Interop.auth_account_scope_service import (
         AuthAccountScopeService,
     )
     from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
-    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
     from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
     from tldw_chatbook.runtime_policy.server_credentials import (
         SERVER_CREDENTIAL_BEARER_TOKEN,
@@ -404,8 +591,11 @@ def test_auth_scope_updates_and_clears_legacy_imported_effective_bearer_token(tm
             last_known_server_label="old.example.com",
         )
     )
-    app_like = SimpleNamespace(app_config=app_config, app_state=AppState())
-    context = load_runtime_policy_for_app(app_like, store=store)
+    context = _prepare_context(
+        app_config=app_config,
+        publish=lambda _state: None,
+        store=store,
+    )
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.upsert_legacy_config_target(app_config)
     credential_store = InMemoryServerCredentialStore()
@@ -448,10 +638,9 @@ def test_auth_scope_updates_and_clears_legacy_imported_effective_bearer_token(tm
     )
 
 
-def test_load_runtime_policy_for_app_rebinds_persisted_runtime_state_to_configured_server_identity(
+def test_prepare_runtime_policy_context_rebinds_persisted_state_to_configured_server_identity(
     tmp_path,
 ):
-    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
     from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 
     store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
@@ -463,9 +652,15 @@ def test_load_runtime_policy_for_app_rebinds_persisted_runtime_state_to_configur
             last_known_server_label="old.example.com",
         )
     )
-    app_like = _make_app_like(base_url="https://new.example.com/v1/")
-
-    context = load_runtime_policy_for_app(app_like, store=store)
+    context = _prepare_context(
+        app_config={
+            "tldw_api": {
+                "base_url": "https://new.example.com/v1/",
+            }
+        },
+        publish=lambda _state: None,
+        store=store,
+    )
 
     assert context.state.active_source == "server"
     assert context.state.active_server_id == "https://new.example.com/v1"
@@ -474,10 +669,9 @@ def test_load_runtime_policy_for_app_rebinds_persisted_runtime_state_to_configur
     assert store.load() == context.state
 
 
-def test_load_runtime_policy_for_app_clears_stale_capability_state_when_server_identity_changes(
+def test_prepare_runtime_policy_context_clears_stale_capability_state_on_binding_change(
     tmp_path,
 ):
-    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
     from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 
     store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
@@ -495,9 +689,15 @@ def test_load_runtime_policy_for_app_clears_stale_capability_state_when_server_i
             last_known_server_label="old.example.com",
         )
     )
-    app_like = _make_app_like(base_url="https://new.example.com/v1/")
-
-    context = load_runtime_policy_for_app(app_like, store=store)
+    context = _prepare_context(
+        app_config={
+            "tldw_api": {
+                "base_url": "https://new.example.com/v1/",
+            }
+        },
+        publish=lambda _state: None,
+        store=store,
+    )
 
     assert context.state.active_source == "server"
     assert context.state.active_server_id == "https://new.example.com/v1"
@@ -508,47 +708,9 @@ def test_load_runtime_policy_for_app_clears_stale_capability_state_when_server_i
     assert store.load() == context.state
 
 
-def test_set_authoritative_runtime_source_clears_probe_state_on_server_identity_change(
+def test_prepare_runtime_policy_context_downgrades_server_mode_without_server_config(
     tmp_path,
 ):
-    from tldw_chatbook.runtime_policy.bootstrap import (
-        RuntimePolicyContext,
-        set_authoritative_runtime_source,
-    )
-    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
-
-    store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
-    app_like = _make_app_like(base_url="https://new.example.com/v1/")
-    old_state = RuntimeSourceState(
-        active_source="server",
-        active_server_id="https://old.example.com/api",
-        server_configured=True,
-        server_reachability="reachable",
-        server_reachability_checked_at=datetime(
-            2026, 4, 21, 12, 0, tzinfo=timezone.utc
-        ),
-        server_auth_state="authenticated",
-        server_auth_checked_at=datetime(2026, 4, 21, 12, 5, tzinfo=timezone.utc),
-        last_known_server_label="old.example.com",
-    )
-    app_like.runtime_policy = RuntimePolicyContext(state=old_state, store=store)
-
-    updated_state = set_authoritative_runtime_source(app_like, "server")
-
-    assert updated_state.active_source == "server"
-    assert updated_state.active_server_id == "https://new.example.com/v1"
-    assert updated_state.server_configured is True
-    assert updated_state.server_reachability == "unknown"
-    assert updated_state.server_reachability_checked_at is None
-    assert updated_state.server_auth_state == "unknown"
-    assert updated_state.server_auth_checked_at is None
-    assert store.load() == updated_state
-
-
-def test_load_runtime_policy_for_app_downgrades_stale_server_mode_when_server_config_is_missing(
-    tmp_path,
-):
-    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
     from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 
     store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
@@ -560,12 +722,11 @@ def test_load_runtime_policy_for_app_downgrades_stale_server_mode_when_server_co
             last_known_server_label="server.example.com",
         )
     )
-    app_like = SimpleNamespace(
+    context = _prepare_context(
         app_config={},
-        app_state=AppState(),
+        publish=lambda _state: None,
+        store=store,
     )
-
-    context = load_runtime_policy_for_app(app_like, store=store)
 
     assert context.state.active_source == "local"
     assert context.state.active_server_id is None
@@ -573,149 +734,130 @@ def test_load_runtime_policy_for_app_downgrades_stale_server_mode_when_server_co
     assert store.load() == context.state
 
 
-def test_reconcile_saved_screen_state_drops_wrong_server_snapshot_against_bootstrapped_authority(
-    tmp_path,
-):
-    from tldw_chatbook.runtime_policy.bootstrap import (
-        load_runtime_policy_for_app,
-        reconcile_saved_screen_state,
-    )
-    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
-
-    store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
-    app_like = _make_app_like(base_url="https://server-b.example.com/api/")
-    context = load_runtime_policy_for_app(app_like, store=store)
-    context.state = RuntimeSourceState(
+def test_authoritative_source_derives_binding_only_from_supplied_config():
+    initial_state = RuntimeSourceState(
         active_source="server",
-        active_server_id=context.state.active_server_id,
-        server_configured=context.state.server_configured,
-        last_known_server_label=context.state.last_known_server_label,
+        active_server_id="https://old.example.test/api",
+        server_configured=True,
+        last_known_server_label="old.example.test",
     )
-    saved_state = {
-        "chat_state": {
-            "tabs": [
-                {
-                    "tab_id": "tab-1",
-                    "title": "Server Chat",
-                    "runtime_backend": "server",
-                }
-            ]
-        },
-        "runtime_policy_snapshot": {
-            "active_source": "server",
-            "active_server_id": "https://server-a.example.com/api",
-        },
+
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.saved_states: list[RuntimeSourceState] = []
+
+        def save(self, state: RuntimeSourceState) -> None:
+            self.saved_states.append(state)
+
+    store = RecordingStore()
+    context = RuntimePolicyContext(initial_state, store)
+    supplied_config = {
+        "tldw_api": {
+            "base_url": "https://new.example.test/v1/",
+        }
     }
 
-    assert reconcile_saved_screen_state(saved_state, context.state) is None
-
-
-@pytest.mark.asyncio
-async def test_handle_runtime_backend_changed_routes_server_identity_change_through_provider_hook(
-    tmp_path,
-):
-    from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
-    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
-
-    forwarded = []
-
-    async def screen_callback(runtime_backend: str) -> None:
-        forwarded.append(runtime_backend)
-
-    class RecordingServerContextProvider:
-        def __init__(self) -> None:
-            self.invalidations: list[tuple[str | None, str | None]] = []
-
-        def invalidate_for_server_switch(
-            self,
-            previous_server_id: str | None,
-            next_server_id: str | None,
-        ) -> None:
-            self.invalidations.append((previous_server_id, next_server_id))
-
-    store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
-    app_like = _make_app_like(base_url="https://server-a.example.com/api/")
-    app_like.screen = SimpleNamespace(handle_runtime_backend_changed=screen_callback)
-    provider = RecordingServerContextProvider()
-    app_like.server_context_provider = provider
-    load_runtime_policy_for_app(app_like, store=store)
-    app_like.app_config["tldw_api"]["base_url"] = "https://server-b.example.com/api/"
-
-    await TldwCli.handle_runtime_backend_changed(app_like, "server")
-
-    assert provider.invalidations == [
-        ("https://server-a.example.com/api", "https://server-b.example.com/api")
-    ]
-    assert app_like.runtime_policy.state.active_source == "server"
-    assert (
-        app_like.runtime_policy.state.active_server_id
-        == "https://server-b.example.com/api"
+    updated_state = set_authoritative_runtime_source(
+        context,
+        "server",
+        app_config=supplied_config,
     )
-    assert forwarded == ["server"]
+
+    assert updated_state.active_source == "server"
+    assert updated_state.active_server_id == "https://new.example.test/v1"
+    assert updated_state.server_configured is True
+    assert updated_state.last_known_server_label == "new.example.test"
+    assert store.saved_states == [updated_state]
+    assert context.snapshot() == (updated_state, 1)
 
 
-@pytest.mark.asyncio
-async def test_handle_runtime_backend_changed_updates_authoritative_runtime_policy_and_persists(
-    tmp_path,
-):
-    from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
-    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
-
-    forwarded = []
-
-    async def screen_callback(runtime_backend: str) -> None:
-        forwarded.append(runtime_backend)
-
-    store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
-    app_like = _make_app_like(base_url="https://Server.EXAMPLE.com/api/")
-    app_like.screen = SimpleNamespace(handle_runtime_backend_changed=screen_callback)
-    context = load_runtime_policy_for_app(app_like, store=store)
-
-    assert context.state.active_source == "local"
-    assert context.state.active_server_id == "https://server.example.com/api"
-
-    await TldwCli.handle_runtime_backend_changed(app_like, "server")
-    await TldwCli.handle_runtime_backend_changed(app_like, "local")
-
-    persisted = store.load()
-
-    assert app_like.current_runtime_backend == "local"
-    assert app_like.runtime_backend == "local"
-    assert app_like.runtime_policy.state.active_source == "local"
-    assert persisted.active_source == "local"
-    assert persisted.active_server_id == "https://server.example.com/api"
-    assert persisted.server_configured is True
-    assert persisted.last_known_server_label == "server.example.com"
-    assert forwarded == ["server", "local"]
-
-
-@pytest.mark.asyncio
-async def test_handle_runtime_backend_changed_forwards_resolved_authoritative_backend_to_screen(
-    tmp_path,
-):
-    from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
-    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
-
-    forwarded = []
-
-    async def screen_callback(runtime_backend: str) -> None:
-        forwarded.append(runtime_backend)
-
-    store = RuntimeSourceStateStore(tmp_path / "runtime_policy.json")
-    app_like = SimpleNamespace(
-        app_config={},
-        app_state=AppState(),
-        screen=SimpleNamespace(handle_runtime_backend_changed=screen_callback),
+def test_authoritative_source_invalid_input_returns_unchanged_without_save():
+    initial_state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="https://old.example.test/api",
+        server_configured=True,
     )
-    context = load_runtime_policy_for_app(app_like, store=store)
 
-    assert context.state.active_source == "local"
+    class NeverSaveStore:
+        def save(self, state: RuntimeSourceState) -> None:
+            raise AssertionError("invalid source must not be saved")
 
-    await TldwCli.handle_runtime_backend_changed(app_like, "server")
+    context = RuntimePolicyContext(initial_state, NeverSaveStore())
 
+    returned_state = set_authoritative_runtime_source(
+        context,
+        "invalid-source",
+        app_config={
+            "tldw_api": {
+                "base_url": "https://unused.example.test/api",
+            }
+        },
+    )
+
+    assert returned_state is initial_state
+    assert context.snapshot() == (initial_state, 0)
+
+
+def test_authoritative_source_persistence_failure_leaves_snapshot_unchanged():
+    save_sentinel = "AUTHORITATIVE-SAVE-SENTINEL"
+    initial_state = RuntimeSourceState()
+
+    class RaisingSaveStore:
+        def save(self, state: RuntimeSourceState) -> None:
+            raise OSError(save_sentinel)
+
+    context = RuntimePolicyContext(initial_state, RaisingSaveStore())
+
+    with pytest.raises(OSError, match=save_sentinel):
+        set_authoritative_runtime_source(
+            context,
+            "server",
+            app_config={
+                "tldw_api": {
+                    "base_url": "https://candidate.example.test/api",
+                }
+            },
+        )
+
+    assert context.snapshot() == (initial_state, 0)
+
+
+def test_authoritative_source_cas_rejection_raises_bounded_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    initial_state = RuntimeSourceState()
+
+    class NeverSaveStore:
+        def save(self, state: RuntimeSourceState) -> None:
+            raise AssertionError("rejected CAS must not save")
+
+    context = RuntimePolicyContext(initial_state, NeverSaveStore())
+
+    def reject_commit(
+        self,
+        candidate: RuntimeSourceState,
+        *,
+        expected_revision: int,
+    ) -> bool:
+        assert self is context
+        assert candidate.active_server_id == "https://candidate.example.test/api"
+        assert expected_revision == 0
+        return False
+
+    monkeypatch.setattr(RuntimePolicyContext, "commit_state", reject_commit)
+
+    with pytest.raises(RuntimeError, match="commit was rejected"):
+        set_authoritative_runtime_source(
+            context,
+            "server",
+            app_config={
+                "tldw_api": {
+                    "base_url": "https://candidate.example.test/api",
+                }
+            },
+        )
+
+    assert context.snapshot() == (initial_state, 0)
     assert app_like.runtime_policy.state.active_source == "local"
     assert forwarded == ["local"]
 

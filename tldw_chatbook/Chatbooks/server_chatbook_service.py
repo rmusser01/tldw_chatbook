@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, 
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+from ..Utils.atomic_file_ops import atomic_write_bytes
 from .chatbook_models import ChatbookManifest, ContentType
 
 if TYPE_CHECKING:
@@ -567,8 +568,7 @@ class ServerChatbookService:
         if isinstance(content, str):
             content = content.encode("utf-8")
         destination_path = Path(destination)
-        destination_path.parent.mkdir(parents=True, exist_ok=True)
-        destination_path.write_bytes(content)
+        atomic_write_bytes(destination_path, content, mode=0o600)
         return destination_path
 
     async def cleanup_expired_exports(self) -> Dict[str, Any]:

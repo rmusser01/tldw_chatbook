@@ -22,6 +22,12 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-018](018-watchlists-tui-screen.md) | Proposed | Replace the placeholder Watchlists destination shell with a full three-pane TUI screen reusing the local/server scope service and mirroring `tldw_server` Watchlists IA. |
 | [ADR-022](022-textual-8-runtime-floor.md) | Accepted | Support Textual 8.x, test MCP against exactly 8.0.0, and fail closed on unreviewed future major versions. |
 | [ADR-025](025-shared-stt-artifacts-and-runtime-routing.md) | Accepted | Use Parakeet ONNX for explicit supported languages, faster-whisper for automatic/broad routing, transcribe.cpp for curated optional breadth, and a shared verified model-artifact core. |
+| [ADR-021](021-file-backed-notes-disk-authority-and-recovery.md) | Proposed | Keep linked note files disk-authoritative, project them locally, and store journaled safety plus opt-in recovery replicas in an independent recovery database. |
+| [ADR-029](029-local-private-data-boundary.md) | Accepted | Enforce owner-only POSIX storage for local private artifacts, make config persistence single-owner, keep persistent logs payload-free, and contain legacy Notes sync paths. |
+| [ADR-030](030-derived-index-lifecycle-and-atomic-media-migrations.md) | Accepted | Keep media SQLite authoritative, reconcile derived semantic-index deletion asynchronously, and make versioned media migrations genuinely atomic. |
+| [ADR-031](031-bounded-evaluation-and-tool-worker-execution.md) | Accepted | Adapt synchronous eval providers off-loop, make eval failure and cancellation terminal states truthful, and record the retired ToolExecutor contract as superseded. |
+| [ADR-032](032-immutable-installed-distribution-assets.md) | Accepted | Treat installed distributions as immutable, package explicit runtime assets and vendored notices, and verify built artifacts outside the source checkout. |
+| [ADR-033](033-application-session-state-ownership.md) | Accepted | Keep runtime authority, screen snapshots, and revisioned single-slot handoffs behind explicit application-scoped owners. |
 
 ## Historical Decision Material
 

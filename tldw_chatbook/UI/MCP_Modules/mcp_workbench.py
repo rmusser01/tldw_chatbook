@@ -90,6 +90,12 @@ def _target_id_from_server_key(key: str | None) -> str | None:
 MAX_MCP_IMPORT_FILE_BYTES = 1024 * 1024  # 1MB cap for an imported config JSON
 
 
+def _mcp_import_home() -> str:
+    """Return the user-selected import containment root."""
+
+    return os.path.expanduser("~")
+
+
 def _hub_lifecycle_timeout_seconds() -> float:
     """Read `[mcp] hub_lifecycle_timeout_seconds`, falling back to 45s.
 
@@ -3448,7 +3454,7 @@ class MCPWorkbench(Container):
         file()`'s `is_safe_path(file_path, home_dir)` + size-cap pattern)
         before this ever touches the filesystem.
         """
-        if not is_safe_path(file_path, os.path.expanduser("~")):
+        if not is_safe_path(file_path, _mcp_import_home()):
             self.app.notify("Import file path failed validation.", severity="error")
             return
         try:

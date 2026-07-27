@@ -10,7 +10,7 @@ This ensures consistent behavior across all DB classes for:
 - Path type handling (str vs Path)
 - Memory database special case (':memory:')
 - Client ID handling
-- Directory creation for file-based databases
+- Private file connection enforcement
 """
 
 import sqlite3
@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import Union
 from abc import ABC, abstractmethod
 from loguru import logger
+
+from .private_sqlite import connect_private_sqlite
+from tldw_chatbook.Utils.private_paths import lexical_path
 
 
 class BaseDB(ABC):
@@ -28,7 +31,7 @@ class BaseDB(ABC):
     - Union[str, Path] type for db_path
     - Special ':memory:' case for in-memory databases
     - Client ID for multi-client support
-    - Automatic directory creation
+    - Private file connection enforcement
     """
 
     def __init__(
@@ -48,29 +51,19 @@ class BaseDB(ABC):
         # Standardized path handling
         if isinstance(db_path, Path):
             self.is_memory_db = False
-            self.db_path = db_path.resolve()
+            self.db_path = lexical_path(db_path)
         else:
             self.is_memory_db = db_path == ":memory:"
             if self.is_memory_db:
                 self.db_path = Path(":memory:")  # Symbolic Path for consistency
             else:
-                self.db_path = Path(db_path).resolve()
+                self.db_path = lexical_path(db_path)
 
         # Store string representation for SQLite connection
         self.db_path_str = ":memory:" if self.is_memory_db else str(self.db_path)
 
         # Store client ID
         self.client_id = client_id
-
-        # Create directory for file-based databases
-        if not self.is_memory_db:
-            try:
-                self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                logger.error(
-                    f"Failed to create database directory {self.db_path.parent}: {e}"
-                )
-                raise
 
         # Initialize schema (implemented by subclasses)
         self._initialize_schema()
@@ -106,7 +99,7 @@ class BaseDB(ABC):
         Get a database connection with row factory.
         Can be overridden by subclasses for custom connection handling.
         """
-        conn = sqlite3.connect(self.db_path_str)
+        conn = connect_private_sqlite("db.base", self.db_path_str)
         conn.row_factory = sqlite3.Row
         return conn
 

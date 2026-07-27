@@ -18,7 +18,11 @@ else:
 
 from ...config import (
     delete_settings_from_cli_config,
+    get_cli_config_path,
     load_cli_config_and_ensure_existence,
+    read_cli_config_backup_serialized,
+    read_cli_config_serialized,
+    replace_cli_config_serialized,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
@@ -57,6 +61,29 @@ class SettingsConfigAdapter:
     def load(self, *, force_reload: bool = False) -> dict[str, Any]:
         """Load CLI config through the existing config helper."""
         return deepcopy(load_cli_config_and_ensure_existence(force_reload=force_reload))
+
+    def config_path(self) -> Path:
+        """Return the config owner's effective lexical path."""
+
+        return get_cli_config_path()
+
+    def read_serialized(self) -> str:
+        """Read the exact serialized effective config."""
+
+        return read_cli_config_serialized()
+
+    def replace_serialized(
+        self,
+        text: str,
+    ) -> tuple[dict[str, Any], Path | None]:
+        """Replace validated raw TOML through the config owner."""
+
+        return replace_cli_config_serialized(text, create_backup=True)
+
+    def read_backup_serialized(self) -> str:
+        """Read the exact serialized advanced-editor backup."""
+
+        return read_cli_config_backup_serialized()
 
     def save_values(self, section: str, values: Mapping[str, Any]) -> bool:
         """Persist a group of values to one config section."""

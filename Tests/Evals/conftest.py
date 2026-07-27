@@ -14,8 +14,6 @@ Provides common fixtures for testing evaluation components:
 
 import asyncio
 import json
-import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,19 +21,14 @@ import pytest
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.task_loader import TaskConfig, TaskLoader
 from tldw_chatbook.Evals.eval_runner import EvalRunner, EvalSampleResult
-from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 
 # --- Database Fixtures ---
 
 
 @pytest.fixture
-def temp_db_path():
+def temp_db_path(tmp_path):
     """Create a temporary database file path."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        temp_path = f.name
-    yield temp_path
-    # Cleanup
-    Path(temp_path).unlink(missing_ok=True)
+    yield str(tmp_path / "evals.db")
 
 
 @pytest.fixture
@@ -260,16 +253,6 @@ def eval_runner(sample_task_config, mock_llm_interface):
         "max_tokens": 100,
     }
     return EvalRunner(sample_task_config, model_config)
-
-
-@pytest.fixture
-def eval_orchestrator(temp_db):
-    """Create an EvaluationOrchestrator instance with temporary database."""
-    # Override the default db with our temp db
-    orchestrator = EvaluationOrchestrator.__new__(EvaluationOrchestrator)
-    orchestrator.db = temp_db
-    orchestrator.task_loader = TaskLoader()
-    return orchestrator
 
 
 # --- Async Test Utilities ---

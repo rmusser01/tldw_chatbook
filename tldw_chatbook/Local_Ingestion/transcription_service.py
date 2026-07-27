@@ -51,6 +51,11 @@ except ImportError:
     )
 
 try:
+    ONNX_ASR_AVAILABLE = importlib.util.find_spec("onnx_asr") is not None
+except (ImportError, ValueError, ModuleNotFoundError):
+    ONNX_ASR_AVAILABLE = False
+
+try:
     if sys.platform == "darwin":
         from lightning_whisper_mlx import LightningWhisperMLX
 
@@ -270,6 +275,10 @@ class TranscriptionService:
             "device": get_cli_setting("transcription.device", "cpu") or "cpu",
             "compute_type": get_cli_setting("transcription.compute_type", "int8")
             or "int8",
+            "parakeet_onnx_model_dir": get_cli_setting(
+                "transcription.parakeet_onnx_model_dir", ""
+            )
+            or "",
             "chunk_length_seconds": get_cli_setting(
                 "transcription.chunk_length_seconds", 40.0
             )
@@ -412,7 +421,9 @@ class TranscriptionService:
 
         # Handle provider-specific default models
         if not model:
-            if provider == "parakeet-mlx":
+            if provider == "parakeet-onnx":
+                model = "nemo-parakeet-tdt-0.6b-v2"
+            elif provider == "parakeet-mlx":
                 model = "mlx-community/parakeet-tdt-0.6b-v2"
             elif provider == "qwen2audio":
                 model = "Qwen2-Audio-7B-Instruct"
@@ -448,7 +459,15 @@ class TranscriptionService:
             logger.info(f"Starting transcription with {provider} provider")
             transcription_start_time = time.time()
 
-            if provider == "parakeet-mlx":
+            if provider == "parakeet-onnx":
+                result = self._transcribe_with_parakeet_onnx(
+                    wav_path,
+                    model,
+                    source_lang,
+                    progress_callback=progress_callback,
+                    **kwargs,
+                )
+            elif provider == "parakeet-mlx":
                 if not PARAKEET_MLX_AVAILABLE:
                     if sys.platform != "darwin":
                         logger.error(
@@ -635,6 +654,99 @@ class TranscriptionService:
                     logger.warning(
                         f"Failed to clean up temporary WAV file {wav_path}: {e}"
                     )
+
+    def _transcribe_with_parakeet_onnx(
+        self,
+        audio_path: str,
+        model: str,
+        language: str,
+        progress_callback: Optional[
+            Callable[[float, str, Optional[Dict]], None]
+        ] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Transcribe English audio with a local Parakeet v2 INT8 model."""
+        if not ONNX_ASR_AVAILABLE:
+            raise TranscriptionError(
+                "parakeet-onnx is not installed. Install with: "
+                "pip install 'onnx-asr[cpu]==0.12.0'"
+            )
+        if language != "en":
+            raise TranscriptionError(
+                "parakeet-onnx v2 supports explicit English only. "
+                "Retry with faster-whisper for automatic or non-English transcription."
+            )
+
+        model_dir = kwargs.get("model_dir") or self.config["parakeet_onnx_model_dir"]
+        if not model_dir or not Path(model_dir).is_dir():
+            raise TranscriptionError(
+                "parakeet-onnx requires an explicit existing local model directory "
+                "via model_dir or transcription.parakeet_onnx_model_dir; "
+                "no model will be downloaded automatically."
+            )
+        required_files = {
+            "config.json",
+            "vocab.txt",
+            "encoder-model.int8.onnx",
+            "decoder_joint-model.int8.onnx",
+        }
+        missing_files = sorted(
+            filename
+            for filename in required_files
+            if not (Path(model_dir) / filename).is_file()
+        )
+        if missing_files:
+            raise TranscriptionError(
+                "parakeet-onnx model directory is missing required files: "
+                + ", ".join(missing_files)
+            )
+
+        cache_key = ("parakeet-onnx", model, str(model_dir), "int8")
+        with self._model_cache_lock:
+            parakeet_model = self._model_cache.get(cache_key)
+            if parakeet_model is None:
+                from onnx_asr import load_model
+
+                parakeet_model = load_model(
+                    model,
+                    path=str(model_dir),
+                    quantization="int8",
+                    providers=["CPUExecutionProvider"],
+                    preprocessor_config={
+                        "use_numpy_preprocessors": True,
+                        "max_concurrent_workers": 1,
+                    },
+                )
+                self._model_cache[cache_key] = parakeet_model
+
+        if progress_callback:
+            progress_callback(10, "Transcribing with Parakeet ONNX", None)
+
+        text = parakeet_model.recognize(audio_path).strip()
+        with wave.open(audio_path, "rb") as wav_file:
+            duration = wav_file.getnframes() / wav_file.getframerate()
+
+        if progress_callback:
+            progress_callback(100, "Transcription complete", None)
+
+        return {
+            "text": text,
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": duration,
+                    "text": text,
+                    "Time_Start": 0.0,
+                    "Time_End": duration,
+                    "Text": text,
+                }
+            ]
+            if text
+            else [],
+            "language": "en",
+            "provider": "parakeet-onnx",
+            "model": model,
+        }
 
     def transcribe_buffer(
         self,
@@ -2872,6 +2984,10 @@ class TranscriptionService:
         logger.debug("Checking available transcription providers...")
         providers = []
 
+        if ONNX_ASR_AVAILABLE:
+            providers.append("parakeet-onnx")
+            logger.debug("parakeet-onnx is available")
+
         if PARAKEET_MLX_AVAILABLE:
             providers.append("parakeet-mlx")
             logger.debug("parakeet-mlx is available (Real-time ASR for Apple Silicon)")
@@ -2906,6 +3022,9 @@ class TranscriptionService:
         logger.debug(f"Listing available models for provider: {provider or 'all'}")
 
         models = {}
+
+        if ONNX_ASR_AVAILABLE:
+            models["parakeet-onnx"] = ["nemo-parakeet-tdt-0.6b-v2"]
 
         if PARAKEET_MLX_AVAILABLE:
             models["parakeet-mlx"] = [

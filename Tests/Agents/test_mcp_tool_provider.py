@@ -934,6 +934,8 @@ def test_invoke_execute_exception_from_coroutine_returns_error(running_loop):
     assert "boom from execute_hub_tool" in result.error
 
 
+@pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
+@pytest.mark.filterwarnings("error::RuntimeWarning")
 def test_invoke_execute_on_closed_loop_returns_error_never_raises():
     """Also covers F3: a closed loop makes `run_coroutine_threadsafe`
     raise BEFORE `future` is ever assigned -- the except path must not
@@ -964,6 +966,98 @@ def test_invoke_execute_on_closed_loop_returns_error_never_raises():
     )
     error = service.record_tool_decision_calls[-1][4]
     assert error is not None and error.startswith("bridge execution failed:")
+
+
+class _TrackingCoroutine:
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+class _TrackingSubmissionService(FakeMCPService):
+    def __init__(self) -> None:
+        super().__init__(
+            catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
+            states={
+                ("local:srv", "run"): EffectiveToolState(
+                    state="allow", origin="tool_override"
+                )
+            },
+        )
+        self.execution_coroutine = _TrackingCoroutine()
+
+    def execute_hub_tool(
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict | None = None,
+        *,
+        initiator: str = "test",
+        decision: str = "allowed",
+        timeout_seconds: float | None = None,
+    ):
+        return self.execution_coroutine
+
+
+def test_execute_closes_coroutine_once_when_submission_rejects(monkeypatch):
+    service = _TrackingSubmissionService()
+    loop = asyncio.new_event_loop()
+    provider = MCPToolProvider(service=service, main_loop=loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    def reject_submission(coroutine, target_loop):
+        assert coroutine is service.execution_coroutine
+        assert target_loop is loop
+        raise RuntimeError("submission rejected")
+
+    monkeypatch.setattr(
+        mcp_tool_provider_module.asyncio,
+        "run_coroutine_threadsafe",
+        reject_submission,
+    )
+    try:
+        result = provider.invoke(tool_id, {})
+    finally:
+        loop.close()
+
+    assert result.ok is False
+    assert service.execution_coroutine.close_calls == 1
+
+
+def test_execute_does_not_close_coroutine_after_submission_transfers(monkeypatch):
+    service = _TrackingSubmissionService()
+    loop = asyncio.new_event_loop()
+    provider = MCPToolProvider(service=service, main_loop=loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    class SubmittedFuture:
+        def result(self, *, timeout):
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+        def cancel(self):
+            raise AssertionError("successful submitted future must not be cancelled")
+
+    def accept_submission(coroutine, target_loop):
+        assert coroutine is service.execution_coroutine
+        assert target_loop is loop
+        return SubmittedFuture()
+
+    monkeypatch.setattr(
+        mcp_tool_provider_module.asyncio,
+        "run_coroutine_threadsafe",
+        accept_submission,
+    )
+    try:
+        result = provider.invoke(tool_id, {})
+    finally:
+        loop.close()
+
+    assert result.ok is True
+    assert service.execution_coroutine.close_calls == 0
 
 
 # ---------------------------------------------------------------------------

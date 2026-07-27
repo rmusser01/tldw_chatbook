@@ -185,7 +185,7 @@ class AuthAccountScopeService:
                 return credential_store, str(resolved_server_id)
 
         runtime_context = getattr(provider, "runtime_context", None)
-        state = getattr(runtime_context, "state", None)
+        state = runtime_context.state if runtime_context is not None else None
         resolved_server_id = getattr(state, "active_server_id", None)
         if resolved_server_id:
             return credential_store, str(resolved_server_id)

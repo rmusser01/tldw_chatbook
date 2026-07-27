@@ -8,6 +8,7 @@ from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Input, OptionList, Select, Static, Switch
@@ -161,7 +162,17 @@ class SettingsSplashScreenViewer(Vertical):
             )
 
     def on_mount(self) -> None:
-        card_list = self.query_one("#settings-splash-card-list", OptionList)
+        """Initialize after composed descendants are mounted."""
+        self.call_after_refresh(self._initialize_card_list)
+
+    def _initialize_card_list(self) -> None:
+        """Select the first available splash card."""
+        try:
+            card_list = self.query_one("#settings-splash-card-list", OptionList)
+        except QueryError:
+            # Settings can recompose while this callback is queued. A stale,
+            # detached viewer must not fail the replacement screen.
+            return
         if self._cards:
             card_list.highlighted = 0
 

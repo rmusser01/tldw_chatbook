@@ -61,6 +61,7 @@ from tldw_chatbook.Widgets.Home.home_rail import HOME_RAIL_ROW_PREFIX, HomeRail
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.screen_state_store import RuntimeIdentity
 from .settings_config_models import SettingsCategoryId
 
 
@@ -496,7 +497,12 @@ class HomeScreen(BaseAppScreen):
             return test_override
 
         providers = getattr(self.app_instance, "providers_models", {}) or {}
-        has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
+        runtime_identity = RuntimeIdentity.from_state(
+            self.app_instance.runtime_policy.state
+        )
+        has_recent_work = self.app_instance.screen_state_store.has_snapshots(
+            runtime_identity
+        )
         dashboard_input = (
             self.app_instance.home_active_work_adapter.build_dashboard_input(
                 providers_models=providers,

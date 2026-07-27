@@ -15,6 +15,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, DataTable, Static, TabbedContent, TabPane
 
 from ...Navigation.base_app_screen import BaseAppScreen
+from ...Navigation.screen_state_store import RuntimeIdentity
 from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.events import (
     DeleteTaskRequested,
@@ -80,9 +81,8 @@ class SchedulesWorkbench(BaseAppScreen):
         self._latest_console_context_loaded = False
 
     def _active_server_id(self) -> str | None:
-        runtime_state = getattr(
-            getattr(self.app_instance, "runtime_policy", None), "state", None
-        )
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
         return getattr(runtime_state, "active_server_id", None)
 
     @staticmethod
@@ -243,7 +243,12 @@ class SchedulesWorkbench(BaseAppScreen):
             return None
         try:
             providers = getattr(self.app_instance, "providers_models", {}) or {}
-            has_recent_work = bool(getattr(self.app_instance, "_screen_states", {}))
+            runtime_identity = RuntimeIdentity.from_state(
+                self.app_instance.runtime_policy.state
+            )
+            has_recent_work = self.app_instance.screen_state_store.has_snapshots(
+                runtime_identity
+            )
             dashboard_input = build_dashboard_input(
                 providers_models=providers,
                 has_recent_work=has_recent_work,
@@ -544,7 +549,11 @@ class SchedulesWorkbench(BaseAppScreen):
             return
         service.set_owner(new_owner)
         runtime_source = "server" if new_owner.startswith("server:") else "local"
-        set_authoritative_runtime_source(self.app_instance, runtime_source)
+        set_authoritative_runtime_source(
+            self.app_instance.runtime_policy,
+            runtime_source,
+            app_config=self.app_instance.app_config,
+        )
         self._refresh_owner_select()
         self.run_worker(self.load_tasks, exclusive=True)
         self._refresh_conflicts_tab()

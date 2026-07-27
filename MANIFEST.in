@@ -1,0 +1,36 @@
+# Include project metadata and documentation
+include LICENSE
+include README.md
+include CLAUDE.md
+include CHANGELOG.md
+include MANIFEST.in
+include pyproject.toml
+include requirements.txt
+
+# Include explicit runtime and source-distribution data
+recursive-include tldw_chatbook/Config_Files *.json *.md rag_pipelines.toml
+recursive-include tldw_chatbook/Chunking/templates *.json
+recursive-include tldw_chatbook/Evals/config *.yaml
+recursive-include tldw_chatbook/css *.tcss *.css
+include tldw_chatbook/Third_Party/aider/LICENSE.txt
+include tldw_chatbook/Third_Party/textual_fspicker/LICENSE
+
+# Exclude tests and development artifacts
+recursive-exclude Tests *
+recursive-exclude tests *
+recursive-exclude STests *
+exclude .gitignore
+exclude .env
+exclude .env.example
+exclude .pypirc.template
+prune .venv
+prune .git
+prune __pycache__
+prune *.egg-info
+
+# Exclude OS-specific and generated Python files
+exclude .DS_Store
+recursive-exclude * .DS_Store
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude __pycache__

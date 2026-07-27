@@ -1,6 +1,6 @@
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,7 +12,8 @@ authors = [
 description = "A Textual TUI for chatting with LLMs, and interacting with the tldw server."
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "AGPL-3.0-or-later"}
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 keywords = ["tui", "cli", "llm", "textual", "ai", "chat", "rag", "embeddings", "terminal"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -107,6 +108,9 @@ local_mlx = ["mlx-lm"]
 # Individual transcription providers
 transcription_faster_whisper = [
     "faster-whisper",  # CPU/CUDA optimized Whisper
+]
+transcription_parakeet_onnx = [
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
 ]
 transcription_lightning_whisper = [
     "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
@@ -321,6 +325,7 @@ all-tools = [
     
     # === Transcription and Audio ===
     "faster-whisper",  # CPU/CUDA optimized Whisper
+    "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
     "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
     "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
     
@@ -407,19 +412,32 @@ tldw-cli = "tldw_chatbook.cli:main_cli_runner"
 # Direct web server entry point
 tldw-serve = "tldw_chatbook.Web_Server.serve:main"
 
+[tool.setuptools]
+include-package-data = false
+
 [tool.setuptools.packages.find]
 where = ["."]  # Look for packages in the current directory (where pyproject.toml is)
 # Include the 'tldw_chatbook' package and its submodules
 include = ["tldw_chatbook*"]
-exclude = ["Tests*", ".venv*"]
+exclude = [
+    "Tests*",
+    ".venv*",
+    "tldw_chatbook.Chunking.templates*",
+]
 
 [tool.setuptools.package-data]
 # Include all .tcss files in css directory and subdirectories
 "tldw_chatbook.css" = ["*.tcss", "**/*.tcss"]
 # Include theme files
 "tldw_chatbook.css.Themes" = ["*.tcss"]
-# Include JSON template files and guides
-"tldw_chatbook.Config_Files" = ["*.json", "*.md"]
+# Include JSON configuration, guides, and the RAG pipeline defaults
+"tldw_chatbook.Config_Files" = ["*.json", "*.md", "rag_pipelines.toml"]
+# Include runtime chunking templates and evaluator defaults
+"tldw_chatbook.Chunking" = ["templates/*.json"]
+"tldw_chatbook.Evals" = ["config/*.yaml"]
+# Preserve the licenses for vendored packages
+"tldw_chatbook.Third_Party.aider" = ["LICENSE.txt"]
+"tldw_chatbook.Third_Party.textual_fspicker" = ["LICENSE"]
 # Include CSS files in subdirectories
 "tldw_chatbook.css.core" = ["*.tcss"]
 "tldw_chatbook.css.features" = ["*.tcss"]

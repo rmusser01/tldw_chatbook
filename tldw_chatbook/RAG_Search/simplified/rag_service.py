@@ -39,7 +39,7 @@ from .config import RAGConfig
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
 from ..fusion import reciprocal_rank_fusion, resolve_hybrid_alpha, DEFAULT_RRF_K
 from ..chunking_service import ChunkingService
-from .simple_cache import get_rag_cache
+from .simple_cache import SimpleRAGCache
 from .db_connection_pool import get_connection_pool
 from .indexing_helpers import (
     chunk_documents_batch,
@@ -166,7 +166,10 @@ class RAGService:
         if hasattr(config.search, "hybrid_cache_ttl"):
             ttl_by_search_type["hybrid"] = config.search.hybrid_cache_ttl
 
-        self.cache = get_rag_cache(
+        # Search results belong to this service's vector-store/profile state.
+        # A process-global cache can return documents from another collection
+        # and cannot be invalidated reliably when one service mutates.
+        self.cache = SimpleRAGCache(
             max_size=cache_size,
             ttl_seconds=cache_ttl,
             enabled=cache_enabled,

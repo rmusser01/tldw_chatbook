@@ -6,6 +6,8 @@ import asyncio
 import logging
 import sys
 import traceback
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 #
 # 3rd-Party Imports
@@ -18,6 +20,14 @@ from textual.widgets import RichLog
 #
 # Local Imports
 from tldw_chatbook.config import get_cli_log_file_path, get_cli_setting
+from tldw_chatbook.Utils.private_paths import (
+    PrivatePathError,
+    lexical_path,
+    open_private_binary,
+    open_private_text_append_stream,
+    secure_private_directory,
+)
+from tldw_chatbook.Utils.persistent_diagnostics import PersistentDiagnosticFilter
 #
 ########################################################################################################################
 #
@@ -176,6 +186,173 @@ class RichLogHandler(logging.Handler):
             traceback.print_exc(file=sys.stderr)
 
 
+class PrivateRotatingFileHandler(RotatingFileHandler):
+    """A rotating handler whose files stay inside the private-path boundary."""
+
+    def __init__(
+        self,
+        filename: str | Path,
+        mode: str = "a",
+        maxBytes: int = 0,
+        backupCount: int = 0,
+        encoding: str | None = None,
+        delay: bool = False,
+        errors: str | None = None,
+    ) -> None:
+        selected = lexical_path(filename)
+        self._private_parent = selected.parent
+        self._configured_backup_count = backupCount
+        secure_private_directory(
+            self._private_parent,
+            create=True,
+            application_owned=True,
+        )
+        self._harden_existing_generations(selected)
+        super().__init__(
+            selected,
+            mode=mode,
+            maxBytes=maxBytes,
+            backupCount=backupCount,
+            encoding=encoding,
+            delay=delay,
+            errors=errors,
+        )
+        try:
+            self._harden_existing_generations(selected)
+        except BaseException:
+            self.close()
+            raise
+
+    def _generation_paths(self, active: Path) -> list[Path]:
+        return [
+            active,
+            *(
+                active.with_name(f"{active.name}.{index}")
+                for index in range(1, self._configured_backup_count + 1)
+            ),
+        ]
+
+    def _harden_existing_generations(self, active: Path | None = None) -> None:
+        selected = active or lexical_path(self.baseFilename)
+        for generation in self._generation_paths(selected):
+            try:
+                generation.lstat()
+            except FileNotFoundError:
+                continue
+            with open_private_binary(generation):
+                pass
+
+    def _open(self):
+        self._harden_existing_generations()
+        return open_private_text_append_stream(
+            self.baseFilename,
+            application_owned_directory=self._private_parent,
+            encoding=self.encoding or "utf-8",
+            errors=self.errors,
+        )
+
+    def doRollover(self) -> None:
+        """Rotate only after every existing generation passes private checks."""
+
+        self._harden_existing_generations()
+        super().doRollover()
+        self._harden_existing_generations()
+
+
+def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
+    """Install the private file sink, leaving existing handlers on failure."""
+
+    try:
+        log_file_path = get_cli_log_file_path()
+        existing_handler = next(
+            (
+                handler
+                for handler in root_logger.handlers
+                if isinstance(handler, PrivateRotatingFileHandler)
+                and handler.baseFilename == str(log_file_path)
+            ),
+            None,
+        )
+        if existing_handler is not None:
+            if not any(
+                isinstance(item, PersistentDiagnosticFilter)
+                for item in existing_handler.filters
+            ):
+                existing_handler.addFilter(PersistentDiagnosticFilter())
+            root_logger.info("Private rotating file logging is already installed.")
+            return True
+
+        max_bytes = int(get_cli_setting("logging", "log_max_bytes", 10485760))
+        backup_count = int(get_cli_setting("logging", "log_backup_count", 5))
+        file_log_level_name = str(
+            get_cli_setting("logging", "file_log_level", "INFO")
+        ).upper()
+        file_log_level = getattr(logging, file_log_level_name, logging.INFO)
+        file_handler = PrivateRotatingFileHandler(
+            log_file_path,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+            encoding="utf-8",
+        )
+        file_handler.setLevel(file_log_level)
+        file_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+        file_handler.addFilter(PersistentDiagnosticFilter())
+        root_logger.addHandler(file_handler)
+        root_logger.info(
+            "Private rotating file logging installed at level %s.",
+            logging.getLevelName(file_log_level),
+        )
+        return True
+    except PrivatePathError as exc:
+        root_logger.warning(
+            "File logging disabled: unsafe persistent target (%s).",
+            exc.result.status.value,
+        )
+    except Exception as exc:
+        root_logger.warning(
+            "File logging disabled: persistent sink setup failed (%s).",
+            type(exc).__name__,
+        )
+    return False
+
+
+def _forward_loguru_to_standard(message) -> None:
+    """Forward a Loguru record while preserving its original ownership.
+
+    The source path is attached for the persistent handler's admission filter.
+    Non-persistent handlers continue to receive the original message and
+    exception details.
+    """
+
+    record = message.record
+    level_mapping = {
+        "TRACE": logging.DEBUG,
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "SUCCESS": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    std_level = level_mapping.get(record["level"].name, logging.INFO)
+    std_logger = logging.getLogger(record["name"])
+    extra = {"_tldw_source_path": str(record["file"].path)}
+    if record["exception"]:
+        std_logger.log(
+            std_level,
+            record["message"],
+            exc_info=record["exception"],
+            extra=extra,
+        )
+    else:
+        std_logger.log(std_level, record["message"], extra=extra)
+
+
 def configure_application_logging(app_instance):
     """Sets up all logging handlers, including Loguru integration."""
     # FIXME - LOGGING MAY BRING BACK BLINKING
@@ -193,29 +370,8 @@ def configure_application_logging(app_instance):
         loguru_logger.remove()  # Good: removes Loguru's default stderr sink
         logging.info("Loguru: All pre-existing sinks removed.")
 
-        def sink_to_standard_logging(message):
-            # ... (your existing sink_to_standard_logging function)
-            record = message.record
-            level_mapping = {
-                "TRACE": logging.DEBUG,
-                "DEBUG": logging.DEBUG,
-                "INFO": logging.INFO,
-                "SUCCESS": logging.INFO,
-                "WARNING": logging.WARNING,
-                "ERROR": logging.ERROR,
-                "CRITICAL": logging.CRITICAL,
-            }
-            std_level = level_mapping.get(record["level"].name, logging.INFO)
-            std_logger = logging.getLogger(record["name"])
-            if record["exception"]:
-                std_logger.log(
-                    std_level, record["message"], exc_info=record["exception"]
-                )
-            else:
-                std_logger.log(std_level, record["message"])
-
         loguru_logger.add(
-            sink_to_standard_logging,
+            _forward_loguru_to_standard,
             format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
             level="TRACE",
         )
@@ -340,57 +496,8 @@ def configure_application_logging(app_instance):
         logging.error(f"!!! ERROR setting up RichLogHandler: {e}", exc_info=True)
         app_instance._rich_log_handler = None
 
-    # --- Setup File Logging (to standard logging) ---
-    # (Your existing FileHandler setup code is fine, ensure it's added AFTER clearing)
-    # ... (your existing code to add file_handler to root_logger) ...
-    try:
-        log_file_path = get_cli_log_file_path()
-        log_dir = log_file_path.parent
-        log_dir.mkdir(parents=True, exist_ok=True)
-
-        has_file_handler = any(
-            isinstance(h, logging.handlers.RotatingFileHandler)
-            and h.baseFilename == str(log_file_path)
-            for h in root_logger.handlers
-        )
-
-        if not has_file_handler:
-            max_bytes_default = 10485760
-            backup_count_default = 5
-            file_log_level_default_str = "INFO"
-            max_bytes = int(
-                get_cli_setting("logging", "log_max_bytes", max_bytes_default)
-            )
-            backup_count = int(
-                get_cli_setting("logging", "log_backup_count", backup_count_default)
-            )
-            file_log_level_str = get_cli_setting(
-                "logging", "file_log_level", file_log_level_default_str
-            ).upper()
-            file_log_level = getattr(logging, file_log_level_str, logging.INFO)
-
-            file_handler = logging.handlers.RotatingFileHandler(
-                log_file_path,
-                maxBytes=max_bytes,
-                backupCount=backup_count,
-                encoding="utf-8",
-            )
-            file_handler.setLevel(file_log_level)
-            file_formatter = logging.Formatter(
-                "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
-            file_handler.setFormatter(file_formatter)
-            root_logger.addHandler(file_handler)
-            logging.info(
-                f"Standard Logging: Added RotatingFileHandler (File: '{log_file_path}', Level: {logging.getLevelName(file_log_level)})."
-            )
-        else:
-            logging.info(
-                "Standard Logging: RotatingFileHandler already exists for this file path."
-            )
-    except Exception as e:
-        logging.warning(f"!!! ERROR setting up file logging: {e}", exc_info=True)
+    # File logging is isolated so an unsafe target cannot remove terminal/UI sinks.
+    _configure_private_file_logging(root_logger)
 
     # Re-evaluate lowest level for standard logging root logger
     # (Your existing logic for this is fine)

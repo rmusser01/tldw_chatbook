@@ -2,7 +2,7 @@ import ast
 import shutil
 import sqlite3
 import tempfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock, call
@@ -1053,3 +1053,381 @@ async def test_chat_api_key_save_pushes_decrypted_key_to_live_config_when_encryp
         live_key = window.app_instance.app_config["api_settings"]["openai"]["api_key"]
         assert live_key == "test-secret-live-key"
         assert not enc_mod.is_encrypted(live_key)
+
+
+# ---------------------------------------------------------------------------
+# TASK-899: DB maintenance panel must resolve real, profile-aware database
+# paths (not hardcoded, profile-unaware literals) and must fail loudly
+# instead of silently doing nothing when a path can't be resolved.
+# ---------------------------------------------------------------------------
+
+_ALL_MAINTENANCE_DB_NAMES = [
+    "chachanotes",
+    "media",
+    "prompts",
+    "evals",
+    "rag",
+    "subscriptions",
+]
+
+
+def _notify_calls_with_severity(mock_notify, severity: str):
+    return [
+        c for c in mock_notify.call_args_list if c.kwargs.get("severity") == severity
+    ]
+
+
+def test_db_path_resolvers_cover_exactly_the_known_databases():
+    """Guard against a resolver silently disappearing (or a stale one being
+    left behind) from the single source-of-truth map."""
+    assert set(ToolsSettingsWindow._DB_PATH_RESOLVERS.keys()) == set(
+        _ALL_MAINTENANCE_DB_NAMES
+    )
+
+
+def test_import_chatbook_paths_reuse_the_single_source_of_truth():
+    """AC: 'The duplicated, disagreeing per-key defaults inside the file are
+    gone.' _import_chatbook() used to hardcode its own second copy of the
+    per-database default paths, disagreeing with _get_database_path()'s copy
+    on the very same keys (TASK-899)."""
+    import inspect
+
+    source = inspect.getsource(ToolsSettingsWindow._import_chatbook)
+
+    disagreeing_literals = [
+        "tldw_cli_media_v2.db",
+        "tldw_cli_prompts.db",
+        "tldw_media_db.db",
+        "tldw_prompts_db.db",
+        "tldw_evals_db.db",
+        "tldw_rag_db.db",
+    ]
+    for literal in disagreeing_literals:
+        assert literal not in source, (
+            f"stale duplicate default {literal!r} still hardcoded in _import_chatbook"
+        )
+
+    assert "_get_database_path" in source or "_DB_PATH_RESOLVERS" in source
+
+
+def test_no_bare_call_from_thread_calls_in_tools_settings_window():
+    """Guard against this bug class recurring anywhere in the file.
+
+    ToolsSettingsWindow extends Container, and Container (like Widget in
+    general) has no ``call_from_thread`` of its own -- only App does. A bare
+    ``self.call_from_thread(...)`` inside a ``@work(thread=True)`` worker
+    therefore raises AttributeError instead of reaching the UI, silently
+    swallowing both success and error notifications. This was found twice in
+    this file (the four single-db maintenance workers, then
+    _import_chatbook_worker) -- always use ``self.app.call_from_thread(...)``.
+    """
+    import inspect
+    import re
+
+    import tldw_chatbook.UI.Tools_Settings_Window as module
+    from textual.app import App
+    from textual.containers import Container
+
+    source = inspect.getsource(module)
+    bare_calls = re.findall(r"self\.call_from_thread\(", source)
+    assert not bare_calls, (
+        f"found {len(bare_calls)} bare 'self.call_from_thread(' call(s) in "
+        "Tools_Settings_Window.py -- use 'self.app.call_from_thread(' instead"
+    )
+
+    # Documents WHY the bare form is wrong: Container (ToolsSettingsWindow's
+    # base) genuinely has no call_from_thread of its own -- only App does. If
+    # this ever stops holding (e.g. Textual adds it to Widget), the source
+    # scan above is still the operative guard.
+    assert not hasattr(Container, "call_from_thread")
+    assert hasattr(App, "call_from_thread")
+    assert not hasattr(ToolsSettingsWindow, "call_from_thread")
+
+
+@pytest.mark.asyncio
+async def test_get_database_path_resolves_via_config_resolvers_and_honours_profile(
+    monkeypatch, temp_config_path
+):
+    """_get_database_path must delegate to config.py's real, profile-aware
+    resolvers for every known database, and an unknown name must resolve to
+    None rather than a hardcoded guess (TASK-899)."""
+    from tldw_chatbook.config import (
+        get_chachanotes_db_path,
+        get_media_db_path,
+        get_prompts_db_path,
+        get_evals_db_path,
+        get_rag_indexing_db_path,
+        get_subscriptions_db_path,
+        get_user_folder_name,
+    )
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
+        expected = {
+            "chachanotes": get_chachanotes_db_path(),
+            "media": get_media_db_path(),
+            "prompts": get_prompts_db_path(),
+            "evals": get_evals_db_path(),
+            "rag": get_rag_indexing_db_path(),
+            "subscriptions": get_subscriptions_db_path(),
+        }
+        profile = get_user_folder_name()
+        for db_name, expected_path in expected.items():
+            resolved = window._get_database_path(db_name, {})
+            assert resolved == expected_path, db_name
+            # Every real database must live under the configured profile
+            # directory, not directly under ~/.local/share/tldw_cli.
+            assert resolved.parent.name == profile, resolved
+
+        # An unknown database name must resolve to None, not a hardcoded guess.
+        assert window._get_database_path("not-a-real-database", {}) is None
+
+
+def test_evals_db_path_matches_orchestrator_resolution():
+    """config.get_evals_db_path() must agree exactly with where
+    EvaluationOrchestrator actually opens the Evals DB, or the maintenance
+    panel would operate on a different file than the app uses (TASK-899)."""
+    from tldw_chatbook.config import get_evals_db_path
+    from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
+
+    orchestrator = EvaluationOrchestrator(client_id="test_evals_path_agreement")
+    orchestrator_path = Path(orchestrator.db.db_path)
+
+    resolved_path = get_evals_db_path()
+
+    assert resolved_path == orchestrator_path
+    assert resolved_path.name == "evals.db"
+
+
+def test_rag_indexing_db_path_matches_ingestion_module_resolution():
+    """config.get_rag_indexing_db_path() must agree exactly with where
+    ingestion_indexing._default_indexing_db() actually opens the RAG
+    indexing-state database (TASK-899)."""
+    from tldw_chatbook.config import get_rag_indexing_db_path
+    from tldw_chatbook.RAG_Search.ingestion_indexing import _default_indexing_db
+
+    indexing_db = _default_indexing_db()
+    assert indexing_db is not None
+
+    resolved_path = get_rag_indexing_db_path()
+
+    assert Path(indexing_db.db_path) == resolved_path
+    assert resolved_path.name == "rag_indexing.db"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("db_name", _ALL_MAINTENANCE_DB_NAMES)
+async def test_backup_then_restore_round_trips_at_the_real_resolved_path(
+    db_name, monkeypatch, temp_config_path
+):
+    """Backup followed by restore must round-trip against the REAL database
+    file the application actually uses (TASK-899) -- proven by creating a
+    real sqlite database at the resolved path, corrupting it, and asserting
+    the original content comes back at that exact same path."""
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
+        db_path = window._get_database_path(db_name, {})
+        assert db_path is not None, f"{db_name} did not resolve to a path"
+
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.execute("CREATE TABLE marker (value TEXT)")
+            conn.execute("INSERT INTO marker VALUES ('original')")
+            conn.commit()
+
+        # --- Backup ---
+        backup_worker = window._backup_single_worker(db_name)
+        await backup_worker.wait()
+
+        assert _notify_calls_with_severity(window.app_instance.notify, "success"), (
+            f"backup did not report success for {db_name}: "
+            f"{window.app_instance.notify.call_args_list}"
+        )
+        window.app_instance.notify.reset_mock()
+
+        backup_dir = Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
+        backup_files = sorted(backup_dir.glob(f"{db_name}_backup_*.db"))
+        assert backup_files, f"no backup file was written for {db_name} at {backup_dir}"
+        backup_path = backup_files[-1]
+
+        # --- Simulate data loss on the live database ---
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.execute("DELETE FROM marker")
+            conn.execute("INSERT INTO marker VALUES ('corrupted')")
+            conn.commit()
+
+        # --- Restore ---
+        restore_worker = window._restore_single_worker(db_name, backup_path)
+        await restore_worker.wait()
+
+        assert _notify_calls_with_severity(window.app_instance.notify, "success"), (
+            f"restore did not report success for {db_name}: "
+            f"{window.app_instance.notify.call_args_list}"
+        )
+
+        # The content must be back at the SAME path the application actually
+        # resolves for this database -- not some other, phantom location.
+        with closing(sqlite3.connect(str(db_path))) as restored_conn:
+            value = restored_conn.execute("SELECT value FROM marker").fetchone()[0]
+        assert value == "original"
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_database_fails_loudly_instead_of_silently_succeeding(
+    monkeypatch, temp_config_path
+):
+    """A database name with no resolver must produce an error notification
+    from every maintenance worker -- never a silent no-op and never a false
+    'success' (TASK-899)."""
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
+        assert window._get_database_path("not-a-real-database", {}) is None
+
+        for worker_name, extra_args in (
+            ("_vacuum_single_worker", ()),
+            ("_backup_single_worker", ()),
+            ("_check_single_worker", ()),
+            ("_restore_single_worker", (Path("/nonexistent/backup.db"),)),
+        ):
+            window.app_instance.notify.reset_mock()
+            worker = getattr(window, worker_name)("not-a-real-database", *extra_args)
+            await worker.wait()
+
+            calls = window.app_instance.notify.call_args_list
+            assert calls, f"{worker_name} produced no notification at all"
+            assert _notify_calls_with_severity(window.app_instance.notify, "error"), (
+                f"{worker_name} did not report an error for an unresolvable database: {calls}"
+            )
+            assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
+                f"{worker_name} falsely reported success for an unresolvable database: {calls}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_missing_database_file_fails_loudly_instead_of_silently_succeeding(
+    monkeypatch, temp_config_path
+):
+    """A resolvable path whose file doesn't exist yet (e.g. RAG never used in
+    this profile) must not be reported as a silent success either -- it must
+    say something, and that something must not be 'success' (TASK-899)."""
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
+        db_path = window._get_database_path("rag", {})
+        assert db_path is not None
+        assert not db_path.exists()
+
+        for worker_name in (
+            "_vacuum_single_worker",
+            "_backup_single_worker",
+            "_check_single_worker",
+        ):
+            window.app_instance.notify.reset_mock()
+            worker = getattr(window, worker_name)("rag")
+            await worker.wait()
+
+            calls = window.app_instance.notify.call_args_list
+            assert calls, f"{worker_name} produced no notification for a missing database"
+            assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
+                f"{worker_name} falsely reported success for a missing database file: {calls}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_restore_creates_missing_target_directory_for_a_custom_db_path(
+    monkeypatch, temp_config_path, tmp_path
+):
+    """A configured custom database path is a legitimate restore target even
+    when its directory has never been created yet -- DB/base_db.py creates a
+    database's parent directory as a side effect of opening it, and restore
+    must behave consistently rather than refusing outright (TASK-899 finding
+    4 fix). Regression guard for the since-fixed bug where
+    _restore_single_worker treated a merely-missing directory the same as an
+    unresolvable/phantom path."""
+    custom_db_path = tmp_path / "not_created_yet" / "custom_chachanotes.db"
+    assert not custom_db_path.parent.exists()
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
+        # Stand in for a user-configured custom database path by overriding
+        # the resolver map directly (an instance-level shadow of the class
+        # attribute, so it can't leak to other tests) rather than the config
+        # file: this test app's TLDW_CONFIG_PATH (set by the autouse
+        # isolate_test_environment fixture) always wins over the
+        # monkeypatched DEFAULT_CONFIG_PATH that mount_settings_window
+        # writes to, so a config-file-based override wouldn't actually be
+        # read here. This still exercises exactly the code
+        # _restore_single_worker calls.
+        window._DB_PATH_RESOLVERS = dict(window._DB_PATH_RESOLVERS)
+        window._DB_PATH_RESOLVERS["chachanotes"] = lambda: custom_db_path
+
+        resolved = window._get_database_path("chachanotes", {})
+        assert resolved == custom_db_path
+        assert not resolved.parent.exists()
+
+        # A standalone backup file the "user" is restoring from, independent
+        # of the app's own backup machinery.
+        backup_path = tmp_path / "external_backup.db"
+        with closing(sqlite3.connect(str(backup_path))) as conn:
+            conn.execute("CREATE TABLE marker (value TEXT)")
+            conn.execute("INSERT INTO marker VALUES ('restored')")
+            conn.commit()
+
+        worker = window._restore_single_worker("chachanotes", backup_path)
+        await worker.wait()
+
+        calls = window.app_instance.notify.call_args_list
+        assert _notify_calls_with_severity(window.app_instance.notify, "success"), (
+            f"restore to a not-yet-created custom directory must succeed: {calls}"
+        )
+        assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
+            f"restore to a not-yet-created custom directory must not error: {calls}"
+        )
+
+        assert resolved.parent.exists()
+        with closing(sqlite3.connect(str(resolved))) as restored_conn:
+            value = restored_conn.execute("SELECT value FROM marker").fetchone()[0]
+        assert value == "restored"
+
+
+@pytest.mark.asyncio
+async def test_restore_refuses_a_dangerous_backup_path_via_path_validation(
+    monkeypatch, temp_config_path
+):
+    """The user-selected backup_path must be routed through
+    Utils/path_validation.py before it reaches shutil.copy2 -- a path
+    containing a dangerous pattern must be refused with a clear,
+    actionable error naming the offending path, never silently ignored and
+    never an unhandled exception out of the worker thread (TASK-899 finding
+    1).
+
+    The dangerous-named file is created for real so that, without the
+    validation call, the restore would otherwise succeed (proving this test
+    exercises path validation itself, not an incidental FileNotFoundError
+    from shutil.copy2 -- a real file at the same path would only produce
+    that error if it were missing)."""
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
+        db_path = window._get_database_path("chachanotes", {})
+        assert db_path is not None
+        assert not db_path.exists()
+
+        dangerous_backup_path = db_path.parent / "evil;rm -rf.db"
+        dangerous_backup_path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(str(dangerous_backup_path))) as conn:
+            conn.execute("CREATE TABLE marker (value TEXT)")
+            conn.execute("INSERT INTO marker VALUES ('should not be restored')")
+            conn.commit()
+
+        worker = window._restore_single_worker("chachanotes", dangerous_backup_path)
+        await worker.wait()
+
+        calls = window.app_instance.notify.call_args_list
+        assert calls, "no notification at all for a rejected backup path"
+        error_calls = _notify_calls_with_severity(window.app_instance.notify, "error")
+        assert error_calls, f"dangerous backup path was not refused: {calls}"
+        assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
+            f"dangerous backup path falsely reported success: {calls}"
+        )
+        # The error must specifically be path-validation's rejection (not a
+        # generic failure), and must name the offending path so the user can
+        # tell which file-picker selection was refused.
+        assert any("dangerous pattern" in str(c) for c in error_calls), error_calls
+        assert any(str(dangerous_backup_path) in str(c) for c in error_calls), error_calls
+
+        # No partial/failed write occurred against the live database -- the
+        # rejected source file's content must never have reached it.
+        assert not db_path.exists()

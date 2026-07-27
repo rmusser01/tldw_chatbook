@@ -20,6 +20,7 @@ import yaml
 from unittest.mock import AsyncMock, patch
 
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
+from tldw_chatbook.Evals.eval_errors import EvaluationError
 from tldw_chatbook.Evals.task_loader import TaskConfig
 from tldw_chatbook.Evals.eval_runner import EvalSample
 
@@ -992,40 +993,30 @@ class TestConcurrentEvaluations:
             EvalSample(id="sample_2", input_text="Test 2", expected_output="Answer 2"),
         ]
 
-        # Run evaluations concurrently
-        async def run_evaluation_with_mock(model_id, provider_idx):
-            with patch(
-                "tldw_chatbook.Evals.eval_runner.DatasetLoader.load_dataset_samples",
-                return_value=eval_samples,
-            ):
-                # Create runner and mock _call_llm
-                from tldw_chatbook.Evals.task_loader import TaskConfig
+        async def run_evaluation_with_mock(model_id):
+            return await orchestrator.run_evaluation(
+                task_id=task_id,
+                model_id=model_id,
+                max_samples=len(eval_samples),
+            )
 
-                TaskConfig(
-                    name="Concurrent Test Task",
-                    description="Task for concurrent evaluation",
-                    task_type="question_answer",
-                    dataset_name="test_dataset",
-                    metric="exact_match",
-                )
-
-                # Mock at the runner level
-                with patch(
-                    "tldw_chatbook.Evals.eval_runner.QuestionAnswerRunner._call_llm"
-                ) as mock_llm:
-                    # Return correct answers for each sample
-                    mock_llm.side_effect = ["Answer 1", "Answer 2"]
-
-                    return await orchestrator.run_evaluation(
-                        task_id=task_id,
-                        model_id=model_id,
-                        max_samples=len(eval_samples),
-                    )
+        async def answer_for_prompt(prompt, **_):
+            return "Answer 1" if "Test 1" in prompt else "Answer 2"
 
         # Execute concurrent evaluations
-        tasks = [run_evaluation_with_mock(model_ids[i], i) for i in range(3)]
-
-        run_ids = await asyncio.gather(*tasks)
+        with (
+            patch(
+                "tldw_chatbook.Evals.eval_runner.DatasetLoader.load_dataset_samples",
+                return_value=eval_samples,
+            ),
+            patch(
+                "tldw_chatbook.Evals.eval_runner.QuestionAnswerRunner._call_llm",
+                side_effect=answer_for_prompt,
+            ),
+        ):
+            run_ids = await asyncio.gather(
+                *(run_evaluation_with_mock(model_id) for model_id in model_ids)
+            )
 
         # Verify all runs completed successfully
         assert len(run_ids) == 3
@@ -1142,7 +1133,7 @@ class TestErrorRecoveryIntegration:
             name="Unreliable Model",
             provider="openai",
             model_id="gpt-3.5-turbo",
-            config={"api_key": "test-key"},
+            config={"api_key": "test-key", "retry_attempts": 0},
         )
 
         # Samples where some will fail
@@ -1223,10 +1214,10 @@ class TestErrorRecoveryIntegration:
         assert len(successful_results) == 3
         assert len(failed_results) == 2
 
-        # Run should be marked as completed (errors are tracked in individual results)
+        # Retained sample errors make the durable run truthfully failed.
         run_info = orchestrator.db.get_run(run_id)
-        # The actual status is likely 'completed' even with errors, as errors are tracked per-sample
-        assert run_info["status"] in ["completed", "completed_with_errors"]
+        assert run_info["status"] == "failed"
+        assert "2 of 5 evaluation samples failed" in run_info["error_message"]
 
     @pytest.mark.asyncio
     async def test_database_recovery_integration(self, temp_db_path):
@@ -1288,24 +1279,24 @@ class TestErrorRecoveryIntegration:
                 ) as mock_llm:
                     mock_llm.return_value = "Test"
 
-                    # Should handle the database error
-                    run_id = await orchestrator.run_evaluation(
-                        task_id=task_id,
-                        model_id=model_id,
-                        max_samples=len(eval_samples),
-                    )
+                    with pytest.raises(EvaluationError):
+                        await orchestrator.run_evaluation(
+                            task_id=task_id,
+                            model_id=model_id,
+                            max_samples=len(eval_samples),
+                        )
 
-        # Verify evaluation completes but with errors
-        assert run_id is not None
+        run_id = orchestrator.db.list_runs(limit=1)[0]["id"]
 
         # The first sample's result storage failed, so no results are stored
         # The evaluation continues but the failed result is not retried
         results = orchestrator.db.get_results_for_run(run_id)
         assert len(results) == 0  # No results stored due to database error
 
-        # Verify the run completed despite the database error
+        # Storage failure fails the pipeline and remains inspectable.
         run_info = orchestrator.db.get_run(run_id)
-        assert run_info["status"] in ["failed", "completed_with_errors"]
+        assert run_info["status"] == "failed"
+        assert "Database locked" in run_info["error_message"]
 
 
 class TestPerformanceIntegration:

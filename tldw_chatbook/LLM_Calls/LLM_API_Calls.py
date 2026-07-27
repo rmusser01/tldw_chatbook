@@ -44,7 +44,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
     ChatConfigurationError,
 )
-from tldw_chatbook.config import load_settings, settings
+from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.input_validation import validate_url
 #
@@ -1787,7 +1787,7 @@ def chat_with_cohere(
     logger.debug(
         f"Cohere Chat: Request process starting for model '{model}' (Streaming: {streaming})"
     )
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cohere_config = cli_api_settings.get(
         "cohere", {}
     )  # Get the [api_settings.cohere] sub-table
@@ -2466,7 +2466,7 @@ def chat_with_deepseek(
     custom_prompt_arg: Optional[str] = None,  # Legacy
 ):
     start_time = time.time()
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     deepseek_config = cli_api_settings.get(
         "deepseek", {}
     )  # Get the [api_settings.deepseek] sub-table
@@ -2778,7 +2778,7 @@ def chat_with_google(
     custom_prompt_arg: Optional[str] = None,
 ):
     start_time = time.time()
-    loaded_config_data = settings.get("api_settings", {})
+    loaded_config_data = get_runtime_config_snapshot().values.get("api_settings", {})
     google_config = loaded_config_data.get("google_api", {})
     final_api_key = api_key or google_config.get("api_key")
     if not final_api_key:
@@ -3447,7 +3447,7 @@ def chat_with_groq(
     custom_prompt_arg: Optional[str] = None,  # Legacy
 ):
     start_time = time.time()
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     groq_config = cli_api_settings.get(
         "groq", {}
     )  # Get the [api_settings.cohere] sub-table
@@ -4170,7 +4170,7 @@ def chat_with_mistral(
     custom_prompt_arg: Optional[str] = None,
 ):
     start_time = time.time()
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     mistral_config = cli_api_settings.get(
         "mistral", {}
     )  # Get the [api_settings.mistral] sub-table
@@ -4413,7 +4413,7 @@ def chat_with_openrouter(
     custom_prompt_arg: Optional[str] = None,
 ):
     start_time = time.time()
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     openrouter_config = cli_api_settings.get(
         "openrouter", {}
     )  # Get the [api_settings.cohere] sub-table
@@ -5094,7 +5094,7 @@ def chat_with_zai(
         request_id: Optional request ID for tracking.
         custom_prompt_arg: Legacy, largely ignored.
     """
-    cli_api_settings = settings.get("api_settings", {})
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     zai_config = cli_api_settings.get("zai", {})
 
     final_api_key = api_key or zai_config.get("api_key")

@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import re
 import time
-from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
 import uuid
 
@@ -31,6 +30,10 @@ from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.pending_handoff_store import (
+    ConsoleProviderIntent,
+    HandoffChannel,
+)
 from .chat_screen_state import ChatScreenState, TabState, TaskResumeState
 from .provider_model_resolution import (
     ResolvedProviderModelOption,
@@ -2301,13 +2304,24 @@ class ChatScreen(BaseAppScreen):
         if self._pending_console_launch_context is not None:
             return self._pending_console_launch_context
 
-        pending_launch = getattr(self.app_instance, "pending_console_launch", None)
-        if (
-            normalized_launch := ConsoleLiveWorkLaunch.from_pending(pending_launch)
-        ) is not None:
-            self._pending_console_launch_context = normalized_launch
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+        if claim is None:
+            return self._pending_console_launch_context
+        try:
+            self._pending_console_launch_context = claim.value
             self._pending_console_launch_auto_open_inspector = True
-            self.app_instance.pending_console_launch = None
+        except Exception as exc:
+            store.release(claim)
+            logger.warning(
+                "Console live-work handoff transfer failed "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(exc).__name__,
+            )
+            return self._pending_console_launch_context
+        store.acknowledge(claim)
         return self._pending_console_launch_context
 
     def _chat_default_value(self, key: str) -> Any:
@@ -2338,76 +2352,19 @@ class ChatScreen(BaseAppScreen):
             control labels and run-inspector readiness.
         """
         effective = resolve_effective_provider_model(
-            self._console_resolution_view(),
+            self._persisted_chat_defaults(),
             console_provider=self._console_control_provider,
             console_model=self._console_control_model,
         )
         return effective.provider, effective.model
 
-    def _console_resolution_view(self) -> Any:
-        """Return resolution inputs backed by the freshest config.
-
-        ``resolve_effective_provider_model`` reads ``app_config`` chat defaults
-        and the app-level provider/model reactives. Both are boot-time
-        snapshots: after a Settings save the reactives still echo the template
-        defaults (e.g. ``OpenAI``/``gpt-4o``) and would keep winning over the
-        freshly saved ``chat_defaults`` (task-177 live regression). This view
-        substitutes the fresh config and suppresses reactive values that are
-        mere echoes of the boot defaults when the fresh defaults changed;
-        genuinely user-chosen reactive values (which differ from the boot
-        defaults) still win.
-        """
-        fresh_config = self._provider_readiness_app_config()
-        boot_config = getattr(self.app_instance, "app_config", {}) or {}
-        reactive_provider = getattr(self.app_instance, "chat_api_provider_value", None)
-        reactive_model = getattr(
-            self.app_instance, "chat_api_model_value", None
-        ) or getattr(self.app_instance, "chat_model_value", None)
-        if fresh_config is not boot_config:
-            boot_defaults = (
-                boot_config.get("chat_defaults", {})
-                if isinstance(boot_config, Mapping)
-                else {}
-            )
-            fresh_defaults = (
-                fresh_config.get("chat_defaults", {})
-                if isinstance(fresh_config, Mapping)
-                else {}
-            )
-            if not isinstance(boot_defaults, Mapping):
-                boot_defaults = {}
-            if not isinstance(fresh_defaults, Mapping):
-                fresh_defaults = {}
-            boot_provider = provider_config_key(
-                str(boot_defaults.get("provider") or "")
-            )
-            fresh_provider = provider_config_key(
-                str(fresh_defaults.get("provider") or "")
-            )
-            reactive_provider_key = provider_config_key(str(reactive_provider or ""))
-            if (
-                reactive_provider_key
-                and reactive_provider_key == boot_provider
-                and fresh_provider
-                and fresh_provider != boot_provider
-            ):
-                reactive_provider = None
-            boot_model = str(boot_defaults.get("model") or "").strip()
-            fresh_model = str(fresh_defaults.get("model") or "").strip()
-            reactive_model_text = str(reactive_model or "").strip()
-            if (
-                reactive_model_text
-                and reactive_model_text == boot_model
-                and fresh_model
-                and fresh_model != boot_model
-            ):
-                reactive_model = None
-        return SimpleNamespace(
-            app_config=fresh_config,
-            chat_api_provider_value=reactive_provider,
-            chat_api_model_value=reactive_model,
-            chat_model_value=None,
-        )
+    def _persisted_chat_defaults(self) -> Mapping[str, Any]:
+        """Return the freshest persisted provider/model defaults."""
+        config = self._provider_readiness_app_config()
+        if not isinstance(config, Mapping):
+            return {}
+        defaults = config.get("chat_defaults", {})
+        return defaults if isinstance(defaults, Mapping) else {}
 
     @staticmethod
     def _normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -2459,7 +2416,12 @@ class ChatScreen(BaseAppScreen):
             return providers_models
         try:
             model_options = await resolve_provider_model_options(
-                self.app_instance,
+                providers_models,
+                getattr(
+                    self.app_instance,
+                    "llm_provider_catalog_scope_service",
+                    None,
+                ),
                 provider=provider_key,
                 current_model=current_model,
             )
@@ -2622,6 +2584,157 @@ class ChatScreen(BaseAppScreen):
         store.replace_session_settings(session.id, settings)
         self._sync_console_chat_core_state()
         self._sync_console_settings_summary()
+
+    def _configured_console_provider(
+        self,
+        provider: str,
+    ) -> tuple[str, list[str]] | None:
+        """Resolve a normalized intent against configured provider identities."""
+        requested_key = provider_config_key(provider)
+        for configured_provider, configured_models in self._providers_models().items():
+            if provider_config_key(configured_provider) != requested_key:
+                continue
+            models = [
+                str(model).strip()
+                for model in configured_models
+                if str(model or "").strip()
+                and str(model).strip().lower() not in {"none", "null"}
+            ]
+            return requested_key, models
+        return None
+
+    def _configured_console_provider_default_model(
+        self,
+        provider: str,
+        models: list[str],
+    ) -> str | None:
+        """Return a valid configured default model for one provider."""
+        config = self._provider_readiness_app_config()
+        api_settings = (
+            config.get("api_settings", {}) if isinstance(config, Mapping) else {}
+        )
+        provider_settings: Mapping[str, Any] = {}
+        if isinstance(api_settings, Mapping):
+            for configured_provider, configured_settings in api_settings.items():
+                if provider_config_key(str(configured_provider)) != provider:
+                    continue
+                if isinstance(configured_settings, Mapping):
+                    provider_settings = configured_settings
+                break
+        candidates = (
+            provider_settings.get("model"),
+            provider_settings.get("api_model"),
+            provider_settings.get("default_model"),
+        )
+        for candidate in candidates:
+            model = str(candidate or "").strip()
+            if model and model in models:
+                return model
+
+        defaults = self._persisted_chat_defaults()
+        if provider_config_key(str(defaults.get("provider") or "")) == provider:
+            default_model = str(defaults.get("model") or "").strip()
+            if default_model and default_model in models:
+                return default_model
+        return models[0] if models else None
+
+    def _apply_console_provider_intent(
+        self,
+        intent: ConsoleProviderIntent,
+        *,
+        store: ConsoleChatStore,
+        session_id: str,
+        settings: ConsoleSessionSettings,
+    ) -> bool:
+        """Apply one validated intent to the session captured by its consumer."""
+        configured = self._configured_console_provider(intent.provider)
+        if configured is None:
+            self.app_instance.notify(
+                "That provider is unavailable. Choose a configured provider in Settings.",
+                severity="warning",
+            )
+            return False
+
+        provider, models = configured
+        model = self._configured_console_provider_default_model(provider, models)
+        derived = build_default_console_session_settings(
+            self._provider_readiness_app_config(),
+            provider,
+            model,
+        )
+        next_settings = replace(
+            settings,
+            provider=provider,
+            model=model,
+            base_url=derived.base_url,
+            source="user",
+        )
+        store.replace_session_settings(session_id, next_settings)
+        if store.active_session_id == session_id:
+            self._console_control_provider = next_settings.provider
+            self._console_control_model = next_settings.model
+            self._sync_console_chat_core_state()
+            self._sync_console_settings_summary()
+            self._sync_console_control_bar()
+        self.app_instance.notify(
+            f"Console provider set to {provider} for this session.",
+            severity="information",
+        )
+        return True
+
+    def consume_pending_console_provider_intent(self) -> bool:
+        """Consume one typed provider intent after the Console session is ready."""
+        try:
+            store = self._ensure_console_chat_store()
+            settings = self._ensure_active_console_session_settings()
+            session_id = store.active_session_id
+            if session_id is None:
+                return False
+        except Exception as exc:
+            logger.warning(
+                "Console provider handoff is not ready "
+                "(exception_category={})",
+                type(exc).__name__,
+            )
+            return False
+
+        claim = self.app_instance.pending_handoffs.claim(
+            HandoffChannel.CONSOLE_PROVIDER
+        )
+        if claim is None:
+            return False
+        try:
+            if not isinstance(claim.value, ConsoleProviderIntent):
+                raise TypeError("Console provider handoff was not typed")
+            self._apply_console_provider_intent(
+                claim.value,
+                store=store,
+                session_id=session_id,
+                settings=settings,
+            )
+        except Exception as exc:
+            self.app_instance.pending_handoffs.release(claim)
+            logger.warning(
+                "Console provider handoff will retry "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(exc).__name__,
+            )
+            self.app_instance.notify(
+                "Console provider selection could not be applied yet; it will retry.",
+                severity="warning",
+            )
+            return False
+        self.app_instance.pending_handoffs.acknowledge(claim)
+        return True
+
+    def current_console_provider_for_command(self) -> str | None:
+        """Return the active session provider without creating a session."""
+        settings = self._active_console_session_settings()
+        if settings is None:
+            return None
+        return str(settings.provider or "").strip() or None
 
     def _active_console_settings_context_estimate(
         self,
@@ -2911,7 +3024,9 @@ class ChatScreen(BaseAppScreen):
         self._console_agent_drilldown_run_id = next_run_id
         self._console_agent_drilldown_conversation_id = conversation_id
         self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+            self._sync_native_console_chat_ui,
+            exclusive=True,
+            group="console-sync",
         )
 
     def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
@@ -9173,7 +9288,7 @@ class ChatScreen(BaseAppScreen):
                     control_state,
                     self.app_instance,
                     actions=workbench_state.actions,
-                    on_sidebar_toggle_requested=self._toggle_console_chat_sidebar,
+                    on_sidebar_toggle_requested=self._open_console_settings,
                     id="console-control-bar",
                     classes="console-control-bar",
                 ),
@@ -9692,8 +9807,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     def on_mount(self) -> None:
-        """Run diagnostics when first mounted (only once)."""
-        # Call parent's on_mount
+        """Initialize the native Console screen."""
         super().on_mount()
 
         # Restore collapsible states after mount
@@ -9704,10 +9818,10 @@ class ChatScreen(BaseAppScreen):
         # guaranteed to exist in the DOM yet at this exact point (it can
         # still be settling in immediately after mount, same reason every
         # composer-touching test here awaits `_wait_for_selector` first) --
-        # firing this immediately risked a silent, unrecoverable miss (the
-        # pending field is cleared on first read, so a `QueryError` here
-        # would have thrown the staged text away with nothing left to retry).
+        # a failed early attempt releases its claim for this screen's
+        # existing resume/user-triggered retry paths.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
+        self.set_timer(0.15, self.consume_pending_console_provider_intent)
         self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
@@ -10519,18 +10633,17 @@ class ChatScreen(BaseAppScreen):
         return True
 
     async def _consume_pending_chat_handoff(self) -> None:
-        payload = getattr(self.app_instance, "pending_chat_handoff", None)
-        if payload is None:
+        if self._handoff_consumption_in_progress:
             return
 
-        if self._handoff_consumption_in_progress:
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.CHAT)
+        if claim is None:
             return
 
         self._handoff_consumption_in_progress = True
         try:
-            payload = ChatHandoffPayload.from_dict(payload)
-            if payload is None:
-                return
+            payload = claim.value
 
             # The native Console composes no legacy tab surface. A
             # Personas Start-Chat character handoff gets a dedicated
@@ -10540,10 +10653,23 @@ class ChatScreen(BaseAppScreen):
             # so the context lands in Staged Context instead of being
             # dropped with a warning.
             if await self._start_character_console_session(payload):
-                self.app_instance.pending_chat_handoff = None
+                store.acknowledge(claim)
                 return
             self._stage_handoff_as_console_live_work(payload)
-            self.app_instance.pending_chat_handoff = None
+            store.acknowledge(claim)
+        except asyncio.CancelledError:
+            store.release(claim)
+            raise
+        except Exception as exc:
+            store.release(claim)
+            logger.warning(
+                "Chat handoff transfer failed "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(exc).__name__,
+            )
+            raise
         finally:
             self._handoff_consumption_in_progress = False
 
@@ -10597,9 +10723,11 @@ class ChatScreen(BaseAppScreen):
                         ),
                     ),
                 ).to_payload()
-            except (TypeError, ValueError, ValidationError):
-                logger.opt(exception=True).warning(
-                    "Could not build evidence bundle for handoff"
+            except (TypeError, ValueError, ValidationError) as exc:
+                logger.warning(
+                    "Could not build evidence bundle for handoff "
+                    "(exception_category={})",
+                    type(exc).__name__,
                 )
 
         self._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
@@ -10657,7 +10785,9 @@ class ChatScreen(BaseAppScreen):
                         composer.load_draft(suggested_prompt)
 
         self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+            self._sync_native_console_chat_ui,
+            exclusive=True,
+            group="console-sync",
         )
 
     def _native_console_messages(self) -> list[Any]:
@@ -11623,18 +11753,19 @@ class ChatScreen(BaseAppScreen):
         insert -- the draft is left untouched and nothing about the source
         Library prompt is touched either.
         """
-        pending = getattr(self.app_instance, "pending_console_prompt_insert", None)
-        if pending is None:
+        store = self.app_instance.pending_handoffs
+        claim = store.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
+        if claim is None:
             return
-        text = pending if isinstance(pending, str) else str(pending)
+        text = claim.value
         if not text.strip():
-            self.app_instance.pending_console_prompt_insert = None
+            store.acknowledge(claim)
             return
         if self._console_setup_blocked_reason():
             # A persistent state, not a mount-timing race -- always safe to
             # consume+notify here regardless of whether the composer widget
             # itself has finished mounting yet.
-            self.app_instance.pending_console_prompt_insert = None
+            store.acknowledge(claim)
             self.app_instance.notify(
                 self._LIBRARY_PROMPT_INSERT_BLOCKED_COPY,
                 severity="warning",
@@ -11655,15 +11786,29 @@ class ChatScreen(BaseAppScreen):
         # current active session first, so any subsequent sync pass takes
         # the no-op fast path instead of clobbering what we're about to
         # insert.
-        self._sync_console_session_draft()
-        # Only clear the staged field once the insert has actually landed --
-        # if the native composer has not finished mounting yet (a transient
-        # race the 0.15s mount-time delay above should normally avoid), leave
-        # it pending for a later mount/resume to retry rather than silently
-        # discarding it.
-        if self._insert_prompt_text_into_composer(text, replace=False):
-            self.app_instance.pending_console_prompt_insert = None
-            self._focus_console_composer_if_needed(force=True)
+        try:
+            self._sync_console_session_draft()
+            inserted = self._insert_prompt_text_into_composer(text, replace=False)
+        except asyncio.CancelledError:
+            store.release(claim)
+            raise
+        except Exception as exc:
+            store.release(claim)
+            logger.warning(
+                "Console prompt handoff transfer failed "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(exc).__name__,
+            )
+            return
+        # A missing composer is transient. Release the exact claim so a later
+        # mount/resume can retry without disturbing any newer replacement.
+        if not inserted:
+            store.release(claim)
+            return
+        store.acknowledge(claim)
+        self._focus_console_composer_if_needed(force=True)
 
     async def _console_command_apply_system(self, parse: CommandParse) -> None:
         """Resolve and apply a saved prompt's ``system_prompt`` for `/system`.
@@ -14198,22 +14343,10 @@ class ChatScreen(BaseAppScreen):
         return None
 
     def _get_compact_model_bar(self) -> Optional[CompactModelBar]:
-        """Get the embedded compact control bar from the mounted shell bar."""
+        """Get the native Console compact control bar."""
         try:
             return self.query_one("#console-compact-model-bar", CompactModelBar)
         except QueryError:
-            pass
-
-        shell_bar = self._get_shell_bar()
-        if not shell_bar:
-            return None
-
-        try:
-            return shell_bar.query_one(CompactModelBar)
-        except QueryError:
-            return None
-        except Exception as e:
-            logger.debug(f"Legacy compact model bar unavailable: {e}")
             return None
 
     def _sync_console_control_bar(
@@ -14971,12 +15104,11 @@ class ChatScreen(BaseAppScreen):
     # NOTE (task-247, perf): there used to be an on_screen_suspend() override
     # here that called self.save_state() again and discarded the result.
     # app.py already calls save_state() explicitly before switching screens
-    # away from Console (see the pre-navigation save in switch_screen /
-    # _screen_states bookkeeping) and stores that return value -- the second
-    # call here was pure waste (a full O(sessions x messages) native-console
-    # serialization) on every tab switch away from Console. Removed rather
-    # than left as a no-op so it doesn't shadow a future base-class
-    # implementation.
+    # away from Console and offers that return value to ScreenStateStore; the
+    # second call here was pure waste (a full O(sessions x messages)
+    # native-console serialization) on every tab switch away from Console.
+    # Removed rather than left as a no-op so it doesn't shadow a future
+    # base-class implementation.
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
@@ -15002,6 +15134,7 @@ class ChatScreen(BaseAppScreen):
         # immediately before inserting, so the insert is self-guarding
         # regardless of which lifecycle hook scheduled it.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
+        self.set_timer(0.15, self.consume_pending_console_provider_intent)
         self.call_after_refresh(self._restore_console_workbench_focus)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
@@ -15011,7 +15144,7 @@ class ChatScreen(BaseAppScreen):
         self.sync_task_resume_state()
 
     def sync_task_resume_state(self) -> None:
-        """Push the current task resume state into the chat window when available."""
+        """Push the current task resume state into native Console task cards."""
         try:
             task_cards = self.query_one("#console-task-surface", ChatTaskCards)
             task_cards.sync_state(self.chat_state.task_resume_state)

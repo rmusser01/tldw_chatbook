@@ -790,6 +790,41 @@ async def test_mounting_option_panels_posts_no_option_changes():
 
 
 @pytest.mark.asyncio
+async def test_audio_video_defaults_to_parakeet_onnx_without_whisper_models():
+    state = build_library_ingest_state(
+        (),
+        form=_default_form(),
+        preflight=PreflightResult(
+            type_groups={"audio_video": ["/tmp/a.mp3"]},
+            warnings=[],
+            errors=[],
+            total_size=0,
+            truncated=False,
+            total_files=1,
+        ),
+    )
+    app = _CanvasHost(state)
+    with patch(
+        "tldw_chatbook.Widgets.Library.library_ingest_canvas._is_installed",
+        return_value=True,
+    ):
+        async with app.run_test() as pilot:
+            provider = pilot.app.query_one(
+                "#opt-audio_video-transcription_provider", Select
+            )
+            model = pilot.app.query_one(
+                "#opt-audio_video-transcription_model", Select
+            )
+            model_dir = pilot.app.query_one(
+                "#opt-audio_video-transcription_model_dir", Input
+            )
+            assert provider.value == "parakeet-onnx"
+            assert model.disabled is True
+            assert model_dir.disabled is False
+            assert model_dir.value == ""
+
+
+@pytest.mark.asyncio
 async def test_chunk_size_enabled_when_chunk_checked():
     """Chunk size and overlap become editable once Chunk is on.
 

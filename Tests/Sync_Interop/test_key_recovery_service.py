@@ -58,6 +58,7 @@ def _repo_with_profile(
     device_id: str | None = "device-1",
     dataset_id: str | None = "dataset-1",
 ) -> SyncStateRepository:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     repo.set_sync_v2_profile_state(
         server_profile_id="server-a",

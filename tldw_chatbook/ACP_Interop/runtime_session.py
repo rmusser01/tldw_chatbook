@@ -9,6 +9,9 @@ from typing import Any
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 
 
+ACP_SESSION_RECORD_PREFIX = "local:acp_session:"
+
+
 def _text(value: Any, fallback: str = "") -> str:
     if value is None:
         return fallback
@@ -20,6 +23,22 @@ def _mapping_value(value: Any, key: str) -> Any:
     if isinstance(value, Mapping):
         return value.get(key)
     return getattr(value, key, None)
+
+
+def acp_session_record_id(session_id: Any) -> str | None:
+    """Build the canonical local record ID for a bare ACP session ID."""
+    normalized = str(session_id or "").strip()
+    if not normalized:
+        return None
+    return f"{ACP_SESSION_RECORD_PREFIX}{normalized}"
+
+
+def is_current_acp_session_record(target_id: Any, session_id: Any) -> bool:
+    """Return whether a target is the exact canonical current-session record."""
+    if not isinstance(target_id, str):
+        return False
+    current_record_id = acp_session_record_id(session_id)
+    return current_record_id is not None and target_id == current_record_id
 
 
 @dataclass(frozen=True)
@@ -82,8 +101,11 @@ class ACPRuntimeSessionState:
     def to_console_live_work_launch(self) -> ConsoleLiveWorkLaunch | None:
         if not self.has_console_session_payload:
             return None
+        target_id = acp_session_record_id(self.session_id)
+        if target_id is None:
+            return None
         payload = {
-            "target_id": f"local:acp_session:{self.session_id}",
+            "target_id": target_id,
             "session_id": self.session_id,
             "runtime_id": self.runtime_id,
             "runtime_label": self.runtime_display_name,

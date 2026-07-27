@@ -139,15 +139,44 @@ def test_get_capabilities_audio_video() -> None:
     assert caps.required_features == ("audio_processing",)
     assert "faster_whisper" in caps.optional_features
     assert caps.field_names == (
+        "transcription_provider",
+        "transcription_model_dir",
         "transcription_model",
         "language",
         "timestamps",
         "diarization",
     )
 
+    provider_field = next(
+        f for f in caps.fields if f.name == "transcription_provider"
+    )
+    assert provider_field.options == ("parakeet-onnx", "faster-whisper")
+    assert provider_field.default == "parakeet-onnx"
+
+    model_dir_field = next(
+        f for f in caps.fields if f.name == "transcription_model_dir"
+    )
+    assert model_dir_field.default == ""
+    assert model_dir_field.enabled_when == "transcription_provider"
+    assert model_dir_field.enabled_when_values == ("parakeet-onnx",)
+
     model_field = next(f for f in caps.fields if f.name == "transcription_model")
     assert model_field.options == ("tiny", "base", "small", "medium", "large")
     assert model_field.default == "base"
+    assert model_field.enabled_when == "transcription_provider"
+    assert model_field.enabled_when_values == ("faster-whisper",)
+
+
+def test_parakeet_onnx_feature_probes_onnx_asr(monkeypatch) -> None:
+    probed = []
+    monkeypatch.setattr(
+        tldw_chatbook.Library.ingest_capabilities.importlib.util,
+        "find_spec",
+        lambda name: probed.append(name) or object(),
+    )
+
+    assert _is_installed("parakeet_onnx") is True
+    assert probed == ["onnx_asr"]
 
 
 def test_get_capabilities_ebook() -> None:

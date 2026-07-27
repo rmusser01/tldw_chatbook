@@ -1112,11 +1112,15 @@ def real_notes_app(tmp_path):
     """Real notes seam (NotesScopeService -> NotesInteropService -> FTS DB).
 
     File-backed on purpose: NotesInteropService re-opens the DB by path per
-    user, so an in-memory DB would hand it a blank schema.
+    user, so an in-memory DB would hand it a blank schema. The custom
+    per-user namespace is caller-owned and must exist before the service is
+    constructed.
     """
     notes_db = CharactersRAGDB(tmp_path / "library_notes_fts.db", client_id="notes-fts")
+    notes_user_dbs = tmp_path / "notes_user_dbs"
+    notes_user_dbs.mkdir(mode=0o700)
     interop = NotesInteropService(
-        base_db_directory=tmp_path / "notes_user_dbs",
+        base_db_directory=notes_user_dbs,
         api_client_id="library-notes-fts-test",
         global_db_to_use=notes_db,
     )

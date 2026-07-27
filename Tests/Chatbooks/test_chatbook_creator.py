@@ -3,6 +3,7 @@
 
 import pytest
 import json
+import os
 import zipfile
 from pathlib import Path
 from datetime import datetime
@@ -20,6 +21,7 @@ from tldw_chatbook.Chatbooks.chatbook_models import (
     ChatbookVersion,
 )
 from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
+import tldw_chatbook.Chatbooks.chatbook_creator as creator_module
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter
 
 
@@ -151,6 +153,53 @@ class TestChatbookCreator:
         assert chatbook_creator.temp_dir.exists()
         assert "chatbooks" in str(chatbook_creator.temp_dir)
 
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX temp privacy contract")
+    def test_creator_hardens_existing_temp_directory(
+        self,
+        temp_db_paths,
+        tmp_path,
+        monkeypatch,
+    ):
+        user_data_dir = tmp_path / "runtime-data"
+        user_data_dir.mkdir(mode=0o700)
+        temp_dir = user_data_dir / "temp" / "chatbooks"
+        temp_dir.mkdir(parents=True, mode=0o755)
+        monkeypatch.setattr(
+            creator_module,
+            "get_user_data_dir",
+            lambda: user_data_dir,
+        )
+
+        creator = ChatbookCreator(db_paths=temp_db_paths)
+
+        assert creator.temp_dir == temp_dir
+        assert creator.temp_dir.stat().st_mode & 0o777 == 0o700
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX fallback privacy contract")
+    def test_creator_uses_private_fallback_when_runtime_root_is_unavailable(
+        self,
+        temp_db_paths,
+        tmp_path,
+        monkeypatch,
+    ):
+        fallback = tmp_path / "fallback"
+
+        def create_fallback(*_args, **_kwargs):
+            fallback.mkdir(mode=0o700)
+            return str(fallback)
+
+        monkeypatch.setattr(
+            creator_module,
+            "get_user_data_dir",
+            lambda: (_ for _ in ()).throw(OSError("runtime root unavailable")),
+        )
+        monkeypatch.setattr(creator_module.tempfile, "mkdtemp", create_fallback)
+
+        creator = ChatbookCreator(db_paths=temp_db_paths)
+
+        assert creator.temp_dir == fallback
+        assert creator.temp_dir.stat().st_mode & 0o777 == 0o700
+
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
     def test_create_chatbook_minimal(
@@ -280,6 +329,38 @@ class TestChatbookCreator:
         assert output_path.exists() and zipfile.is_zipfile(output_path)
         assert not output_path.with_name(output_path.name + ".partial").exists()
 
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX archive privacy contract")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_create_chatbook_archive_is_private_under_umask_zero(
+        self,
+        mock_prompts_db,
+        mock_chacha_db,
+        chatbook_creator,
+        tmp_path,
+    ):
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_dir = tmp_path / "selected-output"
+        output_dir.mkdir(mode=0o755)
+        output_path = output_dir / "private.zip"
+
+        previous = os.umask(0)
+        try:
+            success, _message, _details = chatbook_creator.create_chatbook(
+                name="Private",
+                description="Sensitive",
+                content_selections={ContentType.CONVERSATION: []},
+                output_path=output_path,
+            )
+        finally:
+            os.umask(previous)
+
+        assert success is True
+        assert output_dir.stat().st_mode & 0o777 == 0o755
+        assert output_path.stat().st_mode & 0o777 == 0o600
+        assert not output_path.with_name(output_path.name + ".partial").exists()
+
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
     def test_stat_failure_after_finalize_still_reports_success(
@@ -333,6 +414,27 @@ class TestChatbookCreator:
         assert success is False
         assert partial_dir.is_dir()
         assert (partial_dir / "sentinel.txt").read_text(encoding="utf-8") == "keep me"
+
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
+    @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")
+    def test_existing_partial_file_is_not_overwritten_or_deleted(
+        self, mock_prompts_db, mock_chacha_db, chatbook_creator, tmp_path
+    ):
+        mock_chacha_db.return_value = MagicMock()
+        mock_prompts_db.return_value = MagicMock()
+        output_path = tmp_path / "cb.zip"
+        partial_path = output_path.with_name(output_path.name + ".partial")
+        partial_path.write_bytes(b"belongs-to-another-export")
+
+        success, _msg, _dep = chatbook_creator.create_chatbook(
+            name="C",
+            description="",
+            content_selections={ContentType.CONVERSATION: []},
+            output_path=output_path,
+        )
+
+        assert success is False
+        assert partial_path.read_bytes() == b"belongs-to-another-export"
 
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.CharactersRAGDB")
     @patch("tldw_chatbook.Chatbooks.chatbook_creator.PromptsDatabase")

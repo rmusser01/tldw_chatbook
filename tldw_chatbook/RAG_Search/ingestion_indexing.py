@@ -473,6 +473,15 @@ class IndexEntry:
     document: Dict[str, Any]
 
 
+@dataclass(frozen=True)
+class IndexRemoval:
+    """A post-commit request to remove one derived index projection."""
+
+    item_id: str
+    item_type: str
+    document_id: str
+
+
 def _coerce_timestamp(value: Any) -> datetime:
     """Coerce DB timestamp values (ISO strings / datetimes) to aware UTC datetimes.
 
@@ -712,6 +721,24 @@ async def index_entries(
     results_by_doc = {
         result.doc_id: result for result in results or [] if result is not None
     }
+    successful_entries = [
+        entry
+        for entry in to_index
+        if (
+            results_by_doc.get(entry.document["id"]) is not None
+            and results_by_doc[entry.document["id"]].success
+        )
+    ]
+    if successful_entries:
+        try:
+            await _clear_service_search_cache(service)
+        except Exception as e:
+            message = f"search-cache invalidation after indexing failed: {e}"
+            logger.warning(message)
+            summary["failed"] += len(to_index)
+            summary["errors"].append(message)
+            return summary
+
     for entry in to_index:
         result = results_by_doc.get(entry.document["id"])
         if result is not None and result.success:
@@ -735,6 +762,83 @@ async def index_entries(
             logger.error(
                 f"RAG indexing failed for {entry.item_type} {entry.item_id}: {error}"
             )
+
+    return summary
+
+
+async def _clear_service_search_cache(service: Any) -> None:
+    """Invalidate only query results, leaving the embedding cache intact."""
+    cache = getattr(service, "cache", None)
+    clear_async = getattr(cache, "clear_async", None)
+    if callable(clear_async):
+        await clear_async()
+        return
+    clear = getattr(cache, "clear", None)
+    if callable(clear):
+        clear()
+
+
+async def remove_entries(
+    service: Any,
+    indexing_db: Optional[Any],
+    removals: Sequence[IndexRemoval],
+) -> Dict[str, Any]:
+    """Remove derived vector documents and then their tracking records.
+
+    Tracking is deliberately retained when vector deletion fails so a later
+    backfill can reconcile the orphan. The source database has already
+    committed before this function is reached.
+    """
+    summary: Dict[str, Any] = {"removed": 0, "failed": 0, "errors": []}
+    delete_document = getattr(
+        getattr(service, "vector_store", None), "delete_document", None
+    )
+    if not callable(delete_document):
+        message = "vector store does not support document deletion"
+        summary["failed"] = len(removals)
+        summary["errors"].append(message)
+        return summary
+
+    deleted: List[IndexRemoval] = []
+    for removal in removals:
+        try:
+            delete_document(removal.document_id)
+        except Exception as e:
+            message = (
+                f"{removal.item_type} {removal.item_id} removal failed: {e}"
+            )
+            logger.warning(message)
+            summary["failed"] += 1
+            summary["errors"].append(message)
+            continue
+        deleted.append(removal)
+
+    if deleted:
+        try:
+            await _clear_service_search_cache(service)
+        except Exception as e:
+            message = f"search-cache invalidation after removal failed: {e}"
+            logger.warning(message)
+            summary["failed"] += len(deleted)
+            summary["errors"].append(message)
+            return summary
+
+    for removal in deleted:
+        if indexing_db is not None:
+            try:
+                indexing_db.remove_indexed_item(
+                    removal.item_id, removal.item_type
+                )
+            except Exception as e:
+                message = (
+                    f"{removal.item_type} {removal.item_id} tracking cleanup "
+                    f"failed after vector deletion: {e}"
+                )
+                logger.warning(message)
+                summary["failed"] += 1
+                summary["errors"].append(message)
+                continue
+        summary["removed"] += 1
 
     return summary
 
@@ -789,6 +893,7 @@ class IngestionIndexer:
         self._stats: Dict[str, Any] = {
             "submitted": 0,
             "indexed": 0,
+            "removed": 0,
             "skipped": 0,
             "failed": 0,
             "last_error": None,
@@ -817,6 +922,27 @@ class IngestionIndexer:
         except Exception as e:
             logger.error(
                 f"Failed to enqueue {getattr(entry, 'item_type', '?')} for indexing: {e}"
+            )
+            return False
+
+    def submit_removal(self, removal: Optional[IndexRemoval]) -> bool:
+        """Enqueue a derived-index removal. Never blocks or raises."""
+        if removal is None:
+            return False
+        try:
+            with self._thread_lock:
+                if self._stopped:
+                    return False
+                self._ensure_thread_locked()
+                with self._state_lock:
+                    self._stats["submitted"] += 1
+                    self._pending += 1
+                self._queue.put(removal)
+            return True
+        except Exception as e:
+            logger.error(
+                f"Failed to enqueue {removal.item_type} {removal.item_id} "
+                f"for index removal: {e}"
             )
             return False
 
@@ -921,7 +1047,7 @@ class IngestionIndexer:
                 item = self._queue.get()
                 if item is _STOP:
                     return
-                batch: List[IndexEntry] = [item]
+                batch: List[Any] = [item]
                 stop_after_batch = False
                 while len(batch) < self._batch_size:
                     try:
@@ -956,23 +1082,42 @@ class IngestionIndexer:
             asyncio.set_event_loop(None)
             loop.close()
 
-    async def _process_batch(self, batch: List[IndexEntry]) -> None:
+    async def _process_batch(self, batch: List[Any]) -> None:
         service = self._get_service()
         if service is None:
             self._record_batch_failure(batch, "RAG service unavailable for indexing")
             return
         indexing_db = self._get_indexing_db()
 
-        summary = await index_entries(service, indexing_db, batch)
+        position = 0
+        while position < len(batch):
+            is_removal = isinstance(batch[position], IndexRemoval)
+            end = position + 1
+            while end < len(batch) and (
+                isinstance(batch[end], IndexRemoval) == is_removal
+            ):
+                end += 1
+            work = batch[position:end]
+            if is_removal:
+                summary = await remove_entries(service, indexing_db, work)
+                indexed = skipped = 0
+                removed = summary["removed"]
+            else:
+                summary = await index_entries(service, indexing_db, work)
+                indexed = summary["indexed"]
+                skipped = summary["skipped"]
+                removed = 0
 
-        with self._state_lock:
-            self._stats["indexed"] += summary["indexed"]
-            self._stats["skipped"] += summary["skipped"]
-            self._stats["failed"] += summary["failed"]
+            with self._state_lock:
+                self._stats["indexed"] += indexed
+                self._stats["removed"] += removed
+                self._stats["skipped"] += skipped
+                self._stats["failed"] += summary["failed"]
+                if summary["errors"]:
+                    self._stats["last_error"] = summary["errors"][-1]
             if summary["errors"]:
-                self._stats["last_error"] = summary["errors"][-1]
-        if summary["errors"]:
-            self._report_index_summary(summary)
+                self._report_index_summary(summary)
+            position = end
 
 
     #: The error every item reports when embedding generation produced nothing.
@@ -1063,7 +1208,7 @@ class IngestionIndexer:
         except Exception as e:
             logger.debug(f"Indexing guidance notifier raised: {e}")
 
-    def _record_batch_failure(self, batch: Sequence[IndexEntry], message: str) -> None:
+    def _record_batch_failure(self, batch: Sequence[Any], message: str) -> None:
         logger.error(
             f"{message} (items: {[f'{e.item_type}:{e.item_id}' for e in batch]})"
         )
@@ -1137,6 +1282,25 @@ def _media_post_ingest_hook(db: Any, media_id: int, media_uuid: Optional[str]) -
         logger.warning(f"RAG post-ingest hook failed for media_id={media_id}: {e}")
 
 
+def _media_post_delete_hook(db: Any, media_id: int, media_uuid: Optional[str]) -> None:
+    """Queue post-commit removal without making source deletion depend on RAG."""
+    try:
+        # Do not initialize a disabled or unavailable RAG runtime solely for a
+        # deletion. Existing runtimes are still cleaned immediately; otherwise
+        # durable tracking lets the next enabled backfill reconcile the orphan.
+        if peek_shared_rag_service() is None and not semantic_indexing_available():
+            return
+        get_ingestion_indexer().submit_removal(
+            IndexRemoval(
+                item_id=str(media_id),
+                item_type=ITEM_TYPE_MEDIA,
+                document_id=f"media_{media_id}",
+            )
+        )
+    except Exception as e:
+        logger.warning(f"RAG post-delete hook failed for media_id={media_id}: {e}")
+
+
 def install_media_ingest_hook(
     failure_notifier: Optional[Callable[[str], None]] = None,
     guidance_notifier: Optional[Callable[[str], None]] = None,
@@ -1153,7 +1317,10 @@ def install_media_ingest_hook(
             failure channel rather than being lost.
     """
     global _hook_installed
-    from ..DB.Client_Media_DB_v2 import register_media_post_ingest_callback
+    from ..DB.Client_Media_DB_v2 import (
+        register_media_post_delete_callback,
+        register_media_post_ingest_callback,
+    )
 
     with _hook_lock:
         if failure_notifier is not None:
@@ -1169,17 +1336,22 @@ def install_media_ingest_hook(
         if _hook_installed:
             return
         register_media_post_ingest_callback(_media_post_ingest_hook)
+        register_media_post_delete_callback(_media_post_delete_hook)
         _hook_installed = True
-        logger.info("RAG ingestion-indexing hook installed on media DB")
+        logger.info("RAG lifecycle-indexing hooks installed on media DB")
 
 
 def uninstall_media_ingest_hook() -> None:
     """Remove the post-ingest indexing hook (primarily for tests)."""
     global _hook_installed
-    from ..DB.Client_Media_DB_v2 import unregister_media_post_ingest_callback
+    from ..DB.Client_Media_DB_v2 import (
+        unregister_media_post_delete_callback,
+        unregister_media_post_ingest_callback,
+    )
 
     with _hook_lock:
         unregister_media_post_ingest_callback(_media_post_ingest_hook)
+        unregister_media_post_delete_callback(_media_post_delete_hook)
         _hook_installed = False
 
 
@@ -1207,6 +1379,46 @@ def _iter_media_entries(media_db: Any, page_size: int) -> Iterator[IndexEntry]:
         if len(rows) < page_size:
             return
         offset += page_size
+
+
+def _active_media_ids(media_db: Any, page_size: int) -> set[str]:
+    """Return active media IDs for durable projection reconciliation."""
+    active: set[str] = set()
+    offset = 0
+    while True:
+        cursor = media_db.execute_query(
+            "SELECT id FROM Media WHERE deleted = 0 AND is_trash = 0 "
+            "ORDER BY id LIMIT ? OFFSET ?",
+            (page_size, offset),
+        )
+        rows = cursor.fetchall()
+        active.update(str(row["id"]) for row in rows)
+        if len(rows) < page_size:
+            return active
+        offset += page_size
+
+
+async def reconcile_media_index(
+    media_db: Any,
+    service: Any,
+    indexing_db: Optional[Any],
+    *,
+    page_size: int = 100,
+) -> Dict[str, Any]:
+    """Remove tracked media projections whose authoritative source is inactive."""
+    if indexing_db is None:
+        return {"removed": 0, "failed": 0, "errors": []}
+    tracked = indexing_db.get_indexed_items_by_type(ITEM_TYPE_MEDIA)
+    active_ids = _active_media_ids(media_db, page_size)
+    removals = [
+        IndexRemoval(
+            item_id=item_id,
+            item_type=ITEM_TYPE_MEDIA,
+            document_id=f"media_{item_id}",
+        )
+        for item_id in sorted(set(tracked) - active_ids)
+    ]
+    return await remove_entries(service, indexing_db, removals)
 
 
 def _iter_note_entries(chachanotes_db: Any, page_size: int) -> Iterator[IndexEntry]:
@@ -1307,6 +1519,7 @@ async def backfill_semantic_index(
     summary: Dict[str, Any] = {
         "status": "ok",
         "indexed": 0,
+        "removed": 0,
         "skipped": 0,
         "failed": 0,
         "errors": [],
@@ -1328,6 +1541,25 @@ async def backfill_semantic_index(
 
     if indexing_db is None:
         indexing_db = _default_indexing_db()
+
+    if ITEM_TYPE_MEDIA in item_types and media_db is not None:
+        try:
+            reconciliation = await reconcile_media_index(
+                media_db,
+                service,
+                indexing_db,
+                page_size=page_size,
+            )
+            summary["removed"] += reconciliation["removed"]
+            summary["failed"] += reconciliation["failed"]
+            summary["errors"].extend(reconciliation["errors"])
+            if reconciliation["failed"]:
+                summary["status"] = "partial"
+        except Exception as e:
+            message = f"media index reconciliation failed: {e}"
+            logger.opt(exception=True).error(message)
+            summary["errors"].append(message)
+            summary["status"] = "partial"
 
     sources: List[tuple] = []
     if ITEM_TYPE_MEDIA in item_types and media_db is not None:
@@ -1364,7 +1596,8 @@ async def backfill_semantic_index(
         summary["by_type"][item_type] = type_summary
 
     logger.info(
-        f"RAG backfill complete: indexed={summary['indexed']} skipped={summary['skipped']} "
+        f"RAG backfill complete: indexed={summary['indexed']} removed={summary['removed']} "
+        f"skipped={summary['skipped']} "
         f"failed={summary['failed']} status={summary['status']}"
     )
     return summary

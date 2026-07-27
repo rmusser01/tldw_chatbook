@@ -46,17 +46,6 @@ def _selected_text(value: Any) -> bool:
     return bool(text) and text != "None" and not text.startswith("Select.")
 
 
-def _chat_default(app_instance: Any, key: str) -> Any:
-    config = getattr(app_instance, "app_config", {}) or {}
-    defaults = config.get("chat_defaults", {}) if isinstance(config, dict) else {}
-    return defaults.get(key) if isinstance(defaults, dict) else None
-
-
-def _providers_models(app_instance: Any) -> Mapping[str, Sequence[str]]:
-    providers_models = getattr(app_instance, "providers_models", None)
-    return providers_models if isinstance(providers_models, Mapping) else {}
-
-
 def _saved_models_for_provider(
     providers_models: Mapping[str, Sequence[str]],
     provider: str,
@@ -122,12 +111,15 @@ async def _maybe_await(value: Any) -> Any:
 
 
 async def _merged_model_entries_from_scope(
-    app_instance: Any,
+    catalog_scope_service: Any | None,
     *,
     provider: str,
 ) -> tuple[MergedModelEntry, ...]:
-    scope_service = getattr(app_instance, "llm_provider_catalog_scope_service", None)
-    merge_models = getattr(scope_service, "merge_saved_and_discovered_models", None)
+    merge_models = getattr(
+        catalog_scope_service,
+        "merge_saved_and_discovered_models",
+        None,
+    )
     if not callable(merge_models):
         return ()
     result = await _maybe_await(
@@ -140,7 +132,8 @@ async def _merged_model_entries_from_scope(
 
 
 async def resolve_provider_model_options(
-    app_instance: Any,
+    providers_models: Mapping[str, Sequence[str]],
+    catalog_scope_service: Any | None,
     *,
     provider: str,
     current_model: str | None = None,
@@ -152,10 +145,10 @@ async def resolve_provider_model_options(
     at or below ``merge_cap`` (ADR-020); pass ``merge_cap=None`` for the uncapped
     list (search picker). Oversized catalogs stay saved-list-only in dropdowns.
     """
+    if not isinstance(providers_models, Mapping):
+        raise TypeError("providers_models must be a mapping")
     provider_key = provider_config_key(provider)
-    saved_models = _saved_models_for_provider(
-        _providers_models(app_instance), provider_key
-    )
+    saved_models = _saved_models_for_provider(providers_models, provider_key)
     options: list[ResolvedProviderModelOption] = []
     seen_model_ids: set[str] = set()
 
@@ -164,9 +157,12 @@ async def resolve_provider_model_options(
         seen_model_ids.add(model_id)
 
     merged_entries = await _merged_model_entries_from_scope(
-        app_instance, provider=provider_key
+        catalog_scope_service,
+        provider=provider_key,
     )
-    discovered_count = sum(1 for entry in merged_entries if str(entry.source) == "runtime_discovered")
+    discovered_count = sum(
+        1 for entry in merged_entries if str(entry.source) == "runtime_discovered"
+    )
     include_discovered = merge_cap is None or discovered_count <= merge_cap
     for entry in merged_entries:
         if str(entry.source) == "runtime_discovered" and not include_discovered:
@@ -183,7 +179,7 @@ async def resolve_provider_model_options(
 
 
 def resolve_effective_provider_model(
-    app_instance: Any,
+    persisted_defaults: Mapping[str, Any],
     *,
     console_provider: Any = None,
     console_model: Any = None,
@@ -193,7 +189,7 @@ def resolve_effective_provider_model(
     """Resolve the canonical provider/model pair for Console-adjacent UI.
 
     Args:
-        app_instance: Application object that may expose config and reactive provider/model values.
+        persisted_defaults: Persisted ``chat_defaults`` configuration mapping.
         console_provider: Provider selected by the Console control surface.
         console_model: Model selected by the Console control surface.
         settings_provider: Provider staged in Settings before save.
@@ -203,47 +199,30 @@ def resolve_effective_provider_model(
         Resolved provider/model values plus labels naming each selected source.
 
     Settings drafts win because they are what the user is evaluating before save.
-    Console controls win next because they are the active run surface. The default
-    OpenAI reactive value is ignored when config already names a non-OpenAI
-    provider, matching the existing Console readiness behavior.
+    Console controls win next because they are the active run surface.
     """
-    configured_provider = _chat_default(app_instance, "provider")
-    reactive_provider = getattr(app_instance, "chat_api_provider_value", None)
+    if not isinstance(persisted_defaults, Mapping):
+        raise TypeError("persisted_defaults must be a mapping")
+    configured_provider = persisted_defaults.get("provider")
 
     if _selected_text(settings_provider):
         provider = settings_provider
         provider_source = "settings_draft"
     elif _selected_text(console_provider):
         provider = console_provider
-        provider_source = "console_control"
-    elif (
-        _selected_text(configured_provider)
-        and str(reactive_provider or "").strip() == "OpenAI"
-        and str(configured_provider).strip() != "OpenAI"
-    ):
-        provider = configured_provider
-        provider_source = "chat_defaults"
-    elif _selected_text(reactive_provider):
-        provider = reactive_provider
-        provider_source = "app_reactive"
+        provider_source = "console_session"
     else:
         provider = configured_provider
         provider_source = "chat_defaults"
 
-    reactive_model = getattr(app_instance, "chat_api_model_value", None) or getattr(
-        app_instance, "chat_model_value", None
-    )
-    configured_model = _chat_default(app_instance, "model")
+    configured_model = persisted_defaults.get("model")
 
     if _selected_text(settings_model):
         model = settings_model
         model_source = "settings_draft"
     elif _selected_text(console_model):
         model = console_model
-        model_source = "console_control"
-    elif _selected_text(reactive_model):
-        model = reactive_model
-        model_source = "app_reactive"
+        model_source = "console_session"
     else:
         model = configured_model
         model_source = "chat_defaults"

@@ -28,6 +28,8 @@ from tldw_chatbook.Workspaces.display_state import (
 
 
 def _registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
+    # Custom database namespaces are caller-owned under ADR-029.
+    tmp_path.mkdir(mode=0o700, parents=True, exist_ok=True)
     return LocalWorkspaceRegistryService(
         WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
     )

@@ -3,9 +3,11 @@
 #
 # Imports
 import copy
+import importlib.util
 import json
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 
 if sys.version_info < (3, 11):
     import tomli as tomllib
@@ -14,7 +16,16 @@ else:
 import os
 from pathlib import Path
 import toml
-from typing import Any, Collection, Dict, List, Literal, Mapping, Optional
+from typing import (
+    Any,
+    Collection,
+    Dict,
+    List,
+    Literal,
+    Mapping,
+    NamedTuple,
+    Optional,
+)
 
 #
 # Third-Party Imports
@@ -25,11 +36,21 @@ from loguru import logger
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
-from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils.private_paths import (
+    PrivatePathError,
+    PrivatePathResult,
+    PrivatePathStatus,
+    atomic_private_write_text,
+    create_private_text,
+    lexical_path,
+    open_private_binary,
+    secure_private_directory,
+    verify_trusted_directory,
+)
 #
 #######################################################################################################################
 #
@@ -47,15 +68,59 @@ DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tldw_cli" / "config.toml"
 
 
 def _get_effective_config_path() -> Path:
-    """Return the active CLI config path, honoring test/runtime overrides."""
+    """Return the lexical active CLI config path."""
     override = os.environ.get("TLDW_CONFIG_PATH")
     candidate = Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
-    return validate_path_simple(candidate, require_exists=False).resolve()
+    return lexical_path(candidate)
+
+
+def get_cli_config_path() -> Path:
+    """Return the effective config path, including any environment override."""
+
+    return _get_effective_config_path()
+
+
+def _optional_package_available(module_name: str) -> bool:
+    """Return whether an optional top-level module is installed without importing it."""
+
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (AttributeError, ImportError, ValueError):
+        return False
+
+
+def application_owned_config_directory(config_path: Path) -> Path | None:
+    """Return the app-owned default config parent, never a custom parent."""
+
+    if os.environ.get("TLDW_CONFIG_PATH"):
+        return None
+    default_path = lexical_path(DEFAULT_CONFIG_PATH)
+    return (
+        default_path.parent
+        if lexical_path(config_path) == default_path
+        else None
+    )
+
+
+def _report_config_path_posture(
+    result: PrivatePathResult,
+    *,
+    target_kind: str = "file",
+) -> None:
+    if result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+        logger.warning(
+            f"Config {target_kind} permission posture is unverified on this platform."
+        )
+    elif result.status is PrivatePathStatus.HARDENED_PRIVATE:
+        logger.info(
+            f"Hardened the effective config {target_kind} to the private posture."
+        )
 
 
 # --- Encryption support ---
 _ENCRYPTION_PASSWORD = None  # Cached password for the session
 _ENCRYPTION_MODULE = None  # Lazily loaded encryption module
+_CONFIG_GENERATION = 0
 
 # --- Chunking Settings (Default, can be overridden by TOML) ---
 global_default_chunk_language = "en"
@@ -435,6 +500,39 @@ def clear_encryption_password():
     logger.info("Encryption password cleared from memory")
 
 
+class _ConfigDecryptionResult(NamedTuple):
+    config: Dict[str, Any]
+    succeeded: bool
+
+
+def _decrypt_config_section_with_status(
+    config_data: Dict[str, Any],
+    *,
+    strict: bool = False,
+) -> _ConfigDecryptionResult:
+    encryption_config = config_data.get("encryption", {})
+    if not encryption_config.get("enabled", False):
+        return _ConfigDecryptionResult(config_data, True)
+
+    password = get_encryption_password()
+    if not password:
+        logger.warning(
+            "Encryption is enabled but no password is set. Cannot decrypt config."
+        )
+        return _ConfigDecryptionResult(config_data, True)
+
+    try:
+        enc_module = get_encryption_module()
+        if strict:
+            decrypted_config = enc_module.decrypt_config_strict(config_data, password)
+        else:
+            decrypted_config = enc_module.decrypt_config(config_data, password)
+        return _ConfigDecryptionResult(decrypted_config, True)
+    except Exception as e:
+        logger.error(f"Failed to decrypt config: {e}")
+        return _ConfigDecryptionResult(config_data, False)
+
+
 def decrypt_config_section(config_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Decrypt encrypted values in the config if encryption is enabled.
@@ -445,28 +543,7 @@ def decrypt_config_section(config_data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Config dictionary with decrypted values
     """
-    # Check if encryption is enabled
-    encryption_config = config_data.get("encryption", {})
-    if not encryption_config.get("enabled", False):
-        return config_data
-
-    password = get_encryption_password()
-    if not password:
-        logger.warning(
-            "Encryption is enabled but no password is set. Cannot decrypt config."
-        )
-        return config_data
-
-    try:
-        enc_module = get_encryption_module()
-
-        # Decrypt all sections recursively
-        decrypted_config = enc_module.decrypt_config(config_data, password)
-
-        return decrypted_config
-    except Exception as e:
-        logger.error(f"Failed to decrypt config: {e}")
-        return config_data
+    return _decrypt_config_section_with_status(config_data).config
 
 
 def encrypt_api_keys_in_config(
@@ -695,6 +772,8 @@ def load_settings(force_reload: bool = False) -> Dict:
         ):
             logger.debug("load_settings: Returning cached configuration (cache hit)")
             return _SETTINGS_CACHE
+        _SETTINGS_CACHE = None
+        _SETTINGS_CACHE_SOURCE = None
 
     current_file_path = Path(__file__).resolve()
     # config.py is in project_root/tldw_server_api/app/core/config.py
@@ -715,9 +794,8 @@ def load_settings(force_reload: bool = False) -> Dict:
     # the packaged app (no installer/build step writes it, and pyproject.toml
     # only packages *.json/*.md from that directory) so merging it was always
     # a no-op; dropping the probe changes nothing observable.
-    toml_config_data = copy.deepcopy(
-        load_cli_config_and_ensure_existence(force_reload=force_reload)
-    )
+    bootstrap = _load_cli_config_bootstrap(force_reload=force_reload)
+    toml_config_data = copy.deepcopy(bootstrap.config)
     # Idempotent no-op when already decrypted (or encryption disabled) --
     # kept so a session password entered *after* the CLI cache above was
     # primed with ciphertext still yields plaintext here. Without this,
@@ -755,8 +833,6 @@ def load_settings(force_reload: bool = False) -> Dict:
     search_settings_section = get_toml_section('SearchSettings')
     web_scraper_section = get_toml_section('WebScraper')
     confluence_section = get_toml_section('Confluence')
-    file_validation_section = get_toml_section('FileValidation')
-    providers_section_from_toml = get_toml_section('providers')  # Get the [providers] table
     library_section = get_toml_section('library')
 
     final_api_settings = get_toml_section("api_settings")
@@ -863,26 +939,20 @@ def load_settings(force_reload: bool = False) -> Dict:
     # Determine platform-specific default STT provider
     default_stt_provider = "faster_whisper"
     if sys.platform == "darwin":
-        # Check if macOS-specific providers are available
-        try:
-            import parakeet_mlx  # noqa: F401
-
+        if _optional_package_available("parakeet_mlx"):
             default_stt_provider = "parakeet-mlx"
             logger.debug(
                 "Detected parakeet-mlx available on macOS, setting as default STT provider"
             )
-        except ImportError:
-            try:
-                from lightning_whisper_mlx import LightningWhisperMLX  # noqa: F401
-
-                default_stt_provider = "lightning-whisper-mlx"
-                logger.debug(
-                    "Detected lightning-whisper-mlx available on macOS, setting as default STT provider"
-                )
-            except ImportError:
-                logger.debug(
-                    "No macOS-specific STT providers found, using faster-whisper as default"
-                )
+        elif _optional_package_available("lightning_whisper_mlx"):
+            default_stt_provider = "lightning-whisper-mlx"
+            logger.debug(
+                "Detected lightning-whisper-mlx available on macOS, setting as default STT provider"
+            )
+        else:
+            logger.debug(
+                "No macOS-specific STT providers found, using faster-whisper as default"
+            )
 
     config_dict = {
         # General App
@@ -1943,32 +2013,6 @@ def load_settings(force_reload: bool = False) -> Dict:
                 chunking_section, f"{ctype}_language", default_language
             )
 
-    # --- Warnings ---
-
-    # Create necessary directories if they don't exist
-    # Ensure main SQLite database directory exists
-    db_url_server = config_dict.get("DATABASE_URL", "")
-    if db_url_server and db_url_server.startswith("sqlite:///"):
-        main_db_file_path_str_server = db_url_server.replace("sqlite:///", "")
-        main_db_file_path_server = Path(main_db_file_path_str_server)
-        if not main_db_file_path_server.is_absolute() and ACTUAL_PROJECT_ROOT:
-            main_db_file_path_server = ACTUAL_PROJECT_ROOT / main_db_file_path_server
-        try:
-            main_db_file_path_server.parent.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.error(
-                f"Could not create server database directory {main_db_file_path_server.parent}: {e}"
-            )
-
-    user_data_base_dir_server = config_dict.get("USER_DB_BASE_DIR")
-    if user_data_base_dir_server and isinstance(user_data_base_dir_server, Path):
-        try:
-            user_data_base_dir_server.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.error(
-                f"Could not create server user data base directory {user_data_base_dir_server}: {e}"
-            )
-
     # Set the chat dictionaries folder path dynamically
     from .Utils.paths import get_user_data_dir
 
@@ -1984,11 +2028,11 @@ def load_settings(force_reload: bool = False) -> Dict:
             f"Could not create chat dictionaries folder {chat_dicts_folder}: {e}"
         )
 
-    # Cache the configuration before returning
-    with _SETTINGS_CACHE_LOCK:
-        _SETTINGS_CACHE = config_dict
-        _SETTINGS_CACHE_SOURCE = active_config_path
-        logger.debug("load_settings: Configuration cached for future use")
+    if bootstrap.succeeded:
+        with _SETTINGS_CACHE_LOCK:
+            _SETTINGS_CACHE = config_dict
+            _SETTINGS_CACHE_SOURCE = active_config_path
+            logger.debug("load_settings: Configuration cached for future use")
 
     return config_dict
 
@@ -2232,6 +2276,7 @@ log_backup_count = 5
 
 [database]
 # scheduled_tasks_db_path = "/custom/path.db"  # optional override
+# tts_profiles_db_path = "/custom/path.db"  # optional override
 # Path to the ChaChaNotes (Character, Chat, Notes) database.
 chachanotes_db_path = "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
 # Path to the Prompts database.
@@ -3296,7 +3341,7 @@ temp_dir = ""  # Empty means use system temp
 
 [transcription]
 # Default transcription provider
-# Options: "faster-whisper", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx", "remote-whisper"
+# Options: "faster-whisper", "parakeet-onnx", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx", "remote-whisper"
 # Note: On macOS, defaults to parakeet-mlx or lightning-whisper-mlx if available
 default_provider = "faster-whisper"
 
@@ -3335,6 +3380,10 @@ device = "cpu"
 # Compute type for faster-whisper
 # Options: "int8", "float16", "float32"
 compute_type = "int8"
+
+# Explicit local directory containing the Parakeet v2 INT8 ONNX bundle.
+# parakeet-onnx never downloads model files implicitly.
+parakeet_onnx_model_dir = ""
 
 # Voice Activity Detection
 use_vad_by_default = false
@@ -3594,14 +3643,14 @@ _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
 
 
-def load_cli_config_and_ensure_existence(
+class _ConfigBootstrapResult(NamedTuple):
+    config: Dict[str, Any]
+    succeeded: bool
+
+
+def _load_cli_config_bootstrap_unlocked(
     force_reload: bool = False,
-) -> Dict[str, Any]:  # Renamed from load_cli_config
-    """
-    Loads settings for the CLI application from ~/.config/tldw_cli/config.toml.
-    If the file doesn't exist, it's created with default values from CONFIG_TOML_CONTENT.
-    Uses programmatic defaults (from CONFIG_TOML_CONTENT) as a base.
-    """
+) -> _ConfigBootstrapResult:
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE
     config_path = _get_effective_config_path()
     if (
@@ -3609,78 +3658,79 @@ def load_cli_config_and_ensure_existence(
         and _CONFIG_CACHE_SOURCE == config_path
         and not force_reload
     ):
-        return _CONFIG_CACHE
+        return _ConfigBootstrapResult(_CONFIG_CACHE, True)
+
+    _CONFIG_CACHE = None
+    _CONFIG_CACHE_SOURCE = None
 
     # Start with the programmatic defaults defined in CONFIG_TOML_CONTENT
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
-
-    if not config_path.exists():
+    bootstrap_succeeded = False
+    application_directory = application_owned_config_directory(config_path)
+    if application_directory is not None:
+        directory_result = secure_private_directory(
+            application_directory,
+            create=True,
+            application_owned=True,
+        )
+        _report_config_path_posture(directory_result, target_kind="directory")
+    logger.info(f"Attempting to load CLI config from: {config_path}")
+    try:
+        with open_private_binary(config_path) as opened:
+            _report_config_path_posture(opened.result)
+            user_config_from_file = tomllib.load(opened.stream)
+        loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
+        logger.info(f"Successfully loaded and merged CLI config from {config_path}")
+        decryption = _decrypt_config_section_with_status(loaded_config, strict=True)
+        if decryption.succeeded:
+            loaded_config = decryption.config
+            bootstrap_succeeded = True
+        else:
+            loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
+    except FileNotFoundError:
         logger.info(
             f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
         )
-        try:
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(config_path, "w", encoding="utf-8") as f:
-                f.write(CONFIG_TOML_CONTENT)  # Write the raw TOML string
+        created = create_private_text(
+            config_path,
+            CONFIG_TOML_CONTENT,
+            application_owned_directory=application_directory,
+        )
+        _report_config_path_posture(created)
+        logger.info(f"Created default CLI config file at {config_path}")
+        loaded_config["_first_run"] = True
+        bootstrap_succeeded = True
+    except PrivatePathError as exc:
+        if (
+            application_directory is not None
+            and exc.result.reason == "missing_parent"
+        ):
+            logger.info(
+                f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
+            )
+            created = create_private_text(
+                config_path,
+                CONFIG_TOML_CONTENT,
+                application_owned_directory=application_directory,
+            )
+            _report_config_path_posture(created)
             logger.info(f"Created default CLI config file at {config_path}")
-            # Set a flag to notify the user on first run
             loaded_config["_first_run"] = True
-            # loaded_config is already correct as it's from DEFAULT_CONFIG_FROM_TOML
-        except PermissionError as e:
-            # Try alternative location in user's home directory
-            logger.warning(f"Permission denied creating config at {config_path}: {e}")
-            alt_config_path = Path.home() / ".tldw_cli_config.toml"
-            logger.info(
-                f"Attempting to create config at alternative location: {alt_config_path}"
-            )
-            try:
-                with open(alt_config_path, "w", encoding="utf-8") as f:
-                    f.write(CONFIG_TOML_CONTENT)
-                logger.warning(
-                    f"Created config file at alternative location: {alt_config_path}"
-                )
-                logger.warning(
-                    "Please move this file to the standard location when possible."
-                )
-                # Note: We don't update the active config path here to maintain consistency
-            except Exception as alt_e:
-                logger.error(
-                    f"Could not create config file at alternative location either: {alt_e}"
-                )
-                logger.error("Application will use internal defaults only.")
-        except OSError as e:
-            logger.error(
-                f"Could not create default CLI config file {config_path}: {e}. Using internal defaults."
-            )
-            # Log more helpful information for the user
-            logger.info(
-                f"You may need to manually create the directory: {config_path.parent}"
-            )
-            logger.info("Or check that you have write permissions to this location.")
-    else:
-        logger.info(f"Attempting to load CLI config from: {config_path}")
-        try:
-            with open(config_path, "rb") as f:
-                user_config_from_file = tomllib.load(f)
-            # Merge user's file settings on top of the programmatic defaults
-            loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
-            logger.info(f"Successfully loaded and merged CLI config from {config_path}")
+            bootstrap_succeeded = True
+        else:
+            raise
+    except tomllib.TOMLDecodeError as e:
+        logger.opt(exception=True).error(
+            f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load."
+        )
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load."
+        )
 
-            # Decrypt config if encryption is enabled
-            loaded_config = decrypt_config_section(loaded_config)
-        except tomllib.TOMLDecodeError as e:
-            logger.opt(exception=True).error(
-                f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load."
-            )
-            # `loaded_config` remains the programmatic defaults in this case.
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load."
-            )
-            # `loaded_config` remains the programmatic defaults.
-
-    _CONFIG_CACHE = loaded_config
-    _CONFIG_CACHE_SOURCE = config_path
+    if bootstrap_succeeded:
+        _CONFIG_CACHE = loaded_config
+        _CONFIG_CACHE_SOURCE = config_path
     # Log the keys of the configuration being returned to verify its structure
     logger.debug(
         f"load_cli_config_and_ensure_existence returning config with top-level keys: {list(loaded_config.keys())}"
@@ -3694,7 +3744,18 @@ def load_cli_config_and_ensure_existence(
             "  'api_settings' key NOT FOUND in the loaded configuration for load_cli_config_and_ensure_existence."
         )
 
-    return _CONFIG_CACHE
+    return _ConfigBootstrapResult(loaded_config, bootstrap_succeeded)
+
+
+def load_cli_config_and_ensure_existence(
+    force_reload: bool = False,
+) -> Dict[str, Any]:  # Renamed from load_cli_config
+    """
+    Loads settings for the CLI application from ~/.config/tldw_cli/config.toml.
+    If the file doesn't exist, it's created with default values from CONFIG_TOML_CONTENT.
+    Uses programmatic defaults (from CONFIG_TOML_CONTENT) as a base.
+    """
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
 
 
 def _is_sensitive_setting_key(key: Any) -> bool:
@@ -3777,12 +3838,7 @@ def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[st
 # separate lock and defeat serialization on the first write.
 import threading as _threading  # noqa: E402
 
-_CONFIG_FILE_LOCK = _threading.Lock()
-
-# Fallback permissions for a config file that does not exist yet. config.toml
-# may hold plaintext secrets (when encryption is disabled), so it is created
-# owner-only rather than world-readable.
-_CONFIG_FILE_DEFAULT_MODE = 0o600
+_CONFIG_FILE_LOCK = _threading.RLock()
 
 
 def _config_file_lock():
@@ -3795,23 +3851,314 @@ def _config_file_lock():
     return _CONFIG_FILE_LOCK
 
 
-def _config_write_mode(config_path: Path) -> int:
-    """Choose the file mode to write a config file with.
+def _load_cli_config_bootstrap(
+    force_reload: bool = False,
+) -> _ConfigBootstrapResult:
+    """Load or create the config while serializing the file/cache lifecycle."""
 
-    Args:
-        config_path: Target config file path.
+    with _config_file_lock():
+        return _load_cli_config_bootstrap_unlocked(force_reload=force_reload)
 
-    Returns:
-        The existing file's permission bits when it already exists (so a
-        hardened ``0600`` config is never silently widened), otherwise the
-        owner-only default.
-    """
+
+def _prepare_config_parent(config_path: Path) -> Path | None:
+    """Secure the default config directory or verify a custom parent."""
+
+    application_directory = application_owned_config_directory(config_path)
+    if application_directory is not None:
+        result = secure_private_directory(
+            application_directory,
+            create=True,
+            application_owned=True,
+        )
+        _report_config_path_posture(result, target_kind="directory")
+    else:
+        verify_trusted_directory(
+            config_path.parent,
+            allow_shared_sticky=False,
+        )
+    return application_directory
+
+
+def _read_raw_cli_config_unlocked(config_path: Path) -> Dict[str, Any]:
+    """Read the on-disk config mapping while the config lock is held."""
+
     try:
-        if config_path.exists():
-            return config_path.stat().st_mode & 0o777
-    except OSError:
-        pass
-    return _CONFIG_FILE_DEFAULT_MODE
+        with open_private_binary(config_path) as opened:
+            _report_config_path_posture(opened.result)
+            loaded = tomllib.load(opened.stream)
+    except FileNotFoundError:
+        return {}
+    if not isinstance(loaded, dict):
+        raise TypeError("The CLI config must contain a top-level table")
+    return loaded
+
+
+def _invalidate_config_caches() -> None:
+    """Drop config/settings caches after a successful whole-file write."""
+
+    global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE
+    global _SETTINGS_CACHE, _SETTINGS_CACHE_SOURCE
+
+    _CONFIG_CACHE = None
+    _CONFIG_CACHE_SOURCE = None
+    _SETTINGS_CACHE = None
+    _SETTINGS_CACHE_SOURCE = None
+
+
+def _write_raw_cli_config_unlocked(
+    config_path: Path,
+    config_data: Mapping[str, Any],
+) -> None:
+    """Atomically write a private on-disk config while the lock is held."""
+
+    application_directory = _prepare_config_parent(config_path)
+    result = atomic_private_write_text(
+        config_path,
+        toml.dumps(dict(config_data)),
+        application_owned_directory=application_directory,
+    )
+    _report_config_path_posture(result)
+    _invalidate_config_caches()
+
+
+def _publish_runtime_config_unlocked() -> Dict[str, Any]:
+    """Reload caches and publish one complete in-process config generation."""
+
+    global settings, _CONFIG_GENERATION
+
+    loaded = _load_cli_config_bootstrap_unlocked(force_reload=True).config
+    settings = load_settings(force_reload=True)
+    _CONFIG_GENERATION += 1
+    return loaded
+
+
+class RuntimeConfigSnapshot(NamedTuple):
+    """A defensive normalized config view paired with its write generation."""
+
+    generation: int
+    values: Dict[str, Any]
+
+
+def get_runtime_config_snapshot(
+    *,
+    force_reload: bool = False,
+) -> RuntimeConfigSnapshot:
+    """Return a defensive current runtime config view."""
+
+    with _config_file_lock():
+        values = load_settings(force_reload=force_reload)
+        return RuntimeConfigSnapshot(
+            generation=_CONFIG_GENERATION,
+            values=copy.deepcopy(values),
+        )
+
+
+def _encryption_enabled(config_data: Mapping[str, Any]) -> bool:
+    encryption = config_data.get("encryption", {})
+    return isinstance(encryption, Mapping) and encryption.get("enabled", False) is True
+
+
+def _enforce_existing_encryption(
+    current_config: Mapping[str, Any],
+    replacement: Mapping[str, Any],
+) -> None:
+    if _encryption_enabled(current_config) and not _encryption_enabled(replacement):
+        raise ValueError(
+            "Encrypted config replacement must keep encryption enabled; "
+            "disable encryption explicitly"
+        )
+
+
+def _try_read_cli_config_serialized_unlocked(config_path: Path) -> str | None:
+    try:
+        with open_private_binary(config_path) as opened:
+            _report_config_path_posture(opened.result)
+            return opened.stream.read().decode("utf-8")
+    except FileNotFoundError:
+        return None
+
+
+def _read_cli_config_serialized_unlocked(config_path: Path) -> str:
+    serialized = _try_read_cli_config_serialized_unlocked(config_path)
+    if serialized is None:
+        _load_cli_config_bootstrap_unlocked(force_reload=True)
+        with open_private_binary(config_path) as opened:
+            _report_config_path_posture(opened.result)
+            return opened.stream.read().decode("utf-8")
+    return serialized
+
+
+def read_cli_config_serialized() -> str:
+    """Return the effective config's exact serialized on-disk representation."""
+
+    with _config_file_lock():
+        return _read_cli_config_serialized_unlocked(get_cli_config_path())
+
+
+def _advanced_backup_path(config_path: Path) -> Path:
+    return config_path.with_suffix(config_path.suffix + ".bak")
+
+
+def _write_serialized_config_artifact_unlocked(
+    path: Path,
+    serialized: str,
+    *,
+    config_path: Path,
+) -> Path:
+    application_directory = _prepare_config_parent(config_path)
+    result = atomic_private_write_text(
+        path,
+        serialized,
+        application_owned_directory=application_directory,
+    )
+    _report_config_path_posture(result, target_kind="snapshot")
+    return result.lexical_path
+
+
+def read_cli_config_backup_serialized() -> str:
+    """Return the exact serialized advanced-editor backup."""
+
+    with _config_file_lock():
+        config_path = get_cli_config_path()
+        backup_path = _advanced_backup_path(config_path)
+        with open_private_binary(backup_path) as opened:
+            _report_config_path_posture(opened.result, target_kind="snapshot")
+            return opened.stream.read().decode("utf-8")
+
+
+def replace_cli_config_serialized(
+    serialized: str,
+    *,
+    create_backup: bool = True,
+) -> tuple[Dict[str, Any], Path | None]:
+    """Validate and replace raw TOML without downgrading encryption."""
+
+    replacement = tomllib.loads(serialized)
+    if not isinstance(replacement, dict):
+        raise TypeError("The CLI config must contain a top-level table")
+
+    config_path = get_cli_config_path()
+    with _config_file_lock():
+        current_serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        if current_serialized is None:
+            current_config: Dict[str, Any] = {}
+        else:
+            current_config = tomllib.loads(current_serialized)
+        _enforce_existing_encryption(current_config, replacement)
+        persisted = _config_data_for_persistence(replacement)
+        backup_path: Path | None = None
+        if create_backup and current_serialized is not None:
+            backup_path = _write_serialized_config_artifact_unlocked(
+                _advanced_backup_path(config_path),
+                current_serialized,
+                config_path=config_path,
+            )
+        _write_raw_cli_config_unlocked(config_path, persisted)
+        return _publish_runtime_config_unlocked(), backup_path
+
+
+def persist_cli_config_for_shutdown() -> bool:
+    """Re-persist the effective config through the normal encrypted owner."""
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_file_lock():
+            current = _load_cli_config_bootstrap_unlocked().config
+            persisted = _config_data_for_persistence(current)
+            _write_raw_cli_config_unlocked(config_path, persisted)
+            _publish_runtime_config_unlocked()
+        return True
+    except (OSError, TypeError, ValueError, toml.TomlDecodeError) as exc:
+        logger.warning(
+            "Shutdown config persistence failed (error_type={}).",
+            type(exc).__name__,
+        )
+        return False
+
+
+def _contains_unencrypted_sensitive_value(config_data: Mapping[str, Any]) -> bool:
+    """Return whether an encrypted config mapping contains plaintext secrets."""
+
+    enc_module = get_encryption_module()
+    for key, value in config_data.items():
+        if key == "encryption":
+            continue
+        if isinstance(value, Mapping):
+            if _contains_unencrypted_sensitive_value(value):
+                return True
+            continue
+        if not (
+            _is_sensitive_setting_key(key)
+            and isinstance(value, str)
+            and value.strip()
+        ):
+            continue
+        if value.startswith("<") and value.endswith(">"):
+            continue
+        if not enc_module.is_encrypted(value):
+            return True
+    return False
+
+
+def _config_data_for_persistence(
+    config_data: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Preserve encryption-at-rest when persisting a decrypted config view."""
+
+    selected = copy.deepcopy(dict(config_data))
+    encryption = selected.get("encryption", {})
+    if not (
+        isinstance(encryption, Mapping)
+        and encryption.get("enabled", False)
+    ):
+        return selected
+
+    password = get_encryption_password()
+    if password:
+        return encrypt_api_keys_in_config(selected, password)
+    if _contains_unencrypted_sensitive_value(selected):
+        raise ValueError(
+            "Cannot persist plaintext secrets while config encryption is locked"
+        )
+    return selected
+
+
+def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
+    """Atomically replace the effective config and refresh all config caches."""
+
+    config_path = get_cli_config_path()
+    with _config_file_lock():
+        current = _read_raw_cli_config_unlocked(config_path)
+        _enforce_existing_encryption(current, config_data)
+        persisted = _config_data_for_persistence(config_data)
+        _write_raw_cli_config_unlocked(config_path, persisted)
+        return _publish_runtime_config_unlocked()
+
+
+def export_cli_config_snapshot(
+    config_data: Mapping[str, Any] | None = None,
+    *,
+    timestamp: str | None = None,
+) -> Path:
+    """Create an owner-only snapshot beside the effective config file."""
+
+    config_path = get_cli_config_path()
+    snapshot_timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+    snapshot_path = (
+        config_path.parent / f"config_backup_{snapshot_timestamp}.toml"
+    )
+    with _config_file_lock():
+        serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        if serialized is None:
+            if config_data is None:
+                raise FileNotFoundError(config_path)
+            serialized = toml.dumps(_config_data_for_persistence(config_data))
+        result_path = _write_serialized_config_artifact_unlocked(
+            snapshot_path,
+            serialized,
+            config_path=config_path,
+        )
+    return result_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -3853,7 +4200,6 @@ def _delete_config_keys(
             if current_level.pop(key, missing) is not missing:
                 changed = True
     return changed
-
 
 def _validate_config_mutation_targets(
     section_values: Mapping[str, Mapping[Any, Any]],
@@ -3922,29 +4268,42 @@ def apply_settings_mutation_to_cli_config(
                 "Attempting to apply settings mutation: "
                 f"sets={logged_keys!r}, deletes={logged_deletes!r}"
             )
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_data: Dict[str, Any] = {}
-            if config_path.exists():
-                with open(config_path, "rb") as f:
-                    config_data = tomllib.load(f)
-
-            deleted_any = _delete_config_keys(config_data, requested_deletes)
-            for section, values in section_values.items():
-                if not values:
-                    continue
-                current_level = _target_config_section(config_data, section)
-                for key, value in values.items():
-                    current_level[key] = _maybe_encrypt_setting_value(
-                        config_data, key, value
-                    )
-            set_any = any(bool(values) for values in section_values.values())
-            if not set_any and not deleted_any:
-                return ConfigMutationResult(False, False, None)
-
-            atomic_write_text(
+            config_data = _read_raw_cli_config_unlocked(config_path)
+        except tomllib.TOMLDecodeError as error:
+            logger.error(
+                "Configuration mutation failed "
+                "(phase=read, config_path={}, error_type={}).",
                 config_path,
-                toml.dumps(config_data),
-                mode=_config_write_mode(config_path),
+                type(error).__name__,
+            )
+            return ConfigMutationResult(False, False, "before_replace")
+        except Exception as error:
+            logger.opt(exception=True).error(
+                "Configuration mutation failed "
+                "(phase=read, config_path={}, error_type={}).",
+                config_path,
+                type(error).__name__,
+            )
+            return ConfigMutationResult(False, False, "before_replace")
+
+        deleted_any = _delete_config_keys(config_data, requested_deletes)
+        for section, values in section_values.items():
+            if not values:
+                continue
+            current_level = _target_config_section(config_data, section)
+            for key, value in values.items():
+                current_level[key] = _maybe_encrypt_setting_value(
+                    config_data, key, value
+                )
+        set_any = any(bool(values) for values in section_values.values())
+        if not set_any and not deleted_any:
+            return ConfigMutationResult(False, False, None)
+
+        try:
+            persisted = _config_data_for_persistence(config_data)
+            _write_raw_cli_config_unlocked(
+                config_path,
+                persisted,
             )
         except Exception as error:
             logger.error(
@@ -3959,9 +4318,7 @@ def apply_settings_mutation_to_cli_config(
         logger.success(f"Successfully replaced settings file at {config_path}")
 
         try:
-            _CONFIG_CACHE = None
-            _SETTINGS_CACHE = None
-            settings = load_settings(force_reload=True)
+            _publish_runtime_config_unlocked()
         except Exception as error:
             logger.error(
                 "Configuration mutation failed "
@@ -4326,26 +4683,13 @@ def enable_config_encryption(password: str) -> bool:
         True if encryption was enabled successfully
     """
     try:
-        # Load current config
-        config_data = {}
-        if DEFAULT_CONFIG_PATH.exists():
-            with open(DEFAULT_CONFIG_PATH, "rb") as f:
-                config_data = tomllib.load(f)
-
-        # Encrypt the config
-        encrypted_config = encrypt_api_keys_in_config(config_data, password)
-
-        # Save the encrypted config
-        with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
-            toml.dump(encrypted_config, f)
-
-        # Set the password for the current session
-        set_encryption_password(password)
-
-        # Clear and reload caches
-        global _CONFIG_CACHE, _SETTINGS_CACHE
-        _CONFIG_CACHE = None
-        _SETTINGS_CACHE = None
+        config_path = get_cli_config_path()
+        with _config_file_lock():
+            config_data = _read_raw_cli_config_unlocked(config_path)
+            encrypted_config = encrypt_api_keys_in_config(config_data, password)
+            _write_raw_cli_config_unlocked(config_path, encrypted_config)
+            set_encryption_password(password)
+            _publish_runtime_config_unlocked()
 
         logger.success("Config encryption enabled successfully")
         return True
@@ -4366,48 +4710,26 @@ def disable_config_encryption(password: str) -> bool:
         True if encryption was disabled successfully
     """
     try:
-        # Load current config
-        config_data = {}
-        if DEFAULT_CONFIG_PATH.exists():
-            with open(DEFAULT_CONFIG_PATH, "rb") as f:
-                config_data = tomllib.load(f)
+        config_path = get_cli_config_path()
+        with _config_file_lock():
+            config_data = _read_raw_cli_config_unlocked(config_path)
+            encryption_config = config_data.get("encryption", {})
+            if encryption_config.get("enabled", False):
+                enc_module = get_encryption_module()
+                password_verifier = encryption_config.get("password_verifier", "")
+                if not password_verifier:
+                    logger.error("No password verifier found in encryption config")
+                    return False
+                if not enc_module.verify_password(password, password_verifier):
+                    logger.error("Invalid password provided")
+                    return False
 
-        # Verify password
-        encryption_config = config_data.get("encryption", {})
-        if encryption_config.get("enabled", False):
-            enc_module = get_encryption_module()
-
-            # Verify using password verifier
-            password_verifier = encryption_config.get("password_verifier", "")
-            if not password_verifier:
-                logger.error("No password verifier found in encryption config")
-                return False
-
-            if not enc_module.verify_password(password, password_verifier):
-                logger.error("Invalid password provided")
-                return False
-
-        # Set password temporarily for decryption
-        set_encryption_password(password)
-
-        # Decrypt the config
-        decrypted_config = decrypt_config_section(config_data)
-
-        # Remove encryption metadata
-        if "encryption" in decrypted_config:
-            del decrypted_config["encryption"]
-
-        # Save the decrypted config
-        config_str = toml.dumps(decrypted_config)
-        atomic_write_text(DEFAULT_CONFIG_PATH, config_str, encoding="utf-8")
-
-        # Clear password
-        clear_encryption_password()
-
-        # Clear and reload caches
-        global _CONFIG_CACHE, _SETTINGS_CACHE
-        _CONFIG_CACHE = None
-        _SETTINGS_CACHE = None
+            set_encryption_password(password)
+            decrypted_config = decrypt_config_section(config_data)
+            decrypted_config.pop("encryption", None)
+            _write_raw_cli_config_unlocked(config_path, decrypted_config)
+            clear_encryption_password()
+            _publish_runtime_config_unlocked()
 
         logger.success("Config encryption disabled successfully")
         return True
@@ -4429,50 +4751,32 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
         True if password was changed successfully
     """
     try:
-        # Load current config
-        config_data = {}
-        if DEFAULT_CONFIG_PATH.exists():
-            with open(DEFAULT_CONFIG_PATH, "rb") as f:
-                config_data = tomllib.load(f)
+        config_path = get_cli_config_path()
+        with _config_file_lock():
+            config_data = _read_raw_cli_config_unlocked(config_path)
+            encryption_config = config_data.get("encryption", {})
+            if not encryption_config.get("enabled", False):
+                logger.error("Encryption is not enabled")
+                return False
 
-        # Verify old password
-        encryption_config = config_data.get("encryption", {})
-        if encryption_config.get("enabled", False):
             enc_module = get_encryption_module()
-
-            # Verify using password verifier
             password_verifier = encryption_config.get("password_verifier", "")
             if not password_verifier:
                 logger.error("No password verifier found in encryption config")
                 return False
-
             if not enc_module.verify_password(old_password, password_verifier):
                 logger.error("Invalid current password provided")
                 return False
-        else:
-            logger.error("Encryption is not enabled")
-            return False
 
-        # Set old password temporarily for decryption
-        set_encryption_password(old_password)
-
-        # Decrypt the config
-        decrypted_config = decrypt_config_section(config_data)
-
-        # Re-encrypt with new password
-        encrypted_config = encrypt_api_keys_in_config(decrypted_config, new_password)
-
-        # Save the re-encrypted config
-        config_str = toml.dumps(encrypted_config)
-        atomic_write_text(DEFAULT_CONFIG_PATH, config_str, encoding="utf-8")
-
-        # Set the new password for the current session
-        set_encryption_password(new_password)
-
-        # Clear and reload caches
-        global _CONFIG_CACHE, _SETTINGS_CACHE
-        _CONFIG_CACHE = None
-        _SETTINGS_CACHE = None
+            set_encryption_password(old_password)
+            decrypted_config = decrypt_config_section(config_data)
+            encrypted_config = encrypt_api_keys_in_config(
+                decrypted_config,
+                new_password,
+            )
+            _write_raw_cli_config_unlocked(config_path, encrypted_config)
+            set_encryption_password(new_password)
+            _publish_runtime_config_unlocked()
 
         logger.success("Encryption password changed successfully")
         return True
@@ -4582,185 +4886,156 @@ def get_user_folder_name() -> str:
 
 
 def get_user_data_dir() -> Path:
-    """Get the user-specific data directory."""
+    """Return the secured lexical user-specific data directory."""
     user_folder = get_user_folder_name()
     configured_data_dir = get_cli_setting("paths", "data_dir", None)
     if configured_data_dir is None:
         configured_data_dir = get_cli_setting("Paths", "data_dir", None)
-    base_data_dir = (
-        Path(configured_data_dir).expanduser()
-        if configured_data_dir
-        else _default_base_data_dir()
-    )
+    if configured_data_dir:
+        base_data_dir = lexical_path(configured_data_dir)
+        verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
+    else:
+        base_data_dir = secure_private_directory(
+            _default_base_data_dir(),
+            create=True,
+            application_owned=True,
+        ).lexical_path
     user_dir = base_data_dir / user_folder
-    # Create directory if it doesn't exist
-    user_dir.mkdir(parents=True, exist_ok=True)
-    return user_dir
+    return secure_private_directory(
+        user_dir,
+        create=True,
+        application_owned=True,
+    ).lexical_path
+
+
+def _get_custom_database_path(
+    setting_name: str,
+    *,
+    expand_before_validation: bool = True,
+) -> Path | None:
+    """Return a validated lexical custom DB path, if explicitly configured."""
+    custom_path = get_cli_setting("database", setting_name, None)
+    default_path = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(setting_name)
+    if not custom_path or custom_path == default_path:
+        return None
+    selected_input = Path(str(custom_path))
+    if expand_before_validation:
+        selected_input = selected_input.expanduser()
+    validated = validate_path_simple(
+        selected_input,
+        require_exists=False,
+        probe_existing=False,
+    )
+    return lexical_path(validated)
 
 
 def get_chachanotes_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "chachanotes_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "chachanotes_db_path"
-    ):
-        # Use custom path if explicitly configured
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        # Use user-specific folder
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_ChaChaNotes.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
+
+
+def get_tts_profiles_db_path() -> Path:
+    """Return the validated local TTS generation-profile database path."""
+    return _get_custom_database_path(
+        "tts_profiles_db_path"
+    ) or get_user_data_dir() / "tldw_chatbook_tts_profiles.db"
 
 
 def get_prompts_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "prompts_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "prompts_db_path"
-    ):
-        # Use custom path if explicitly configured
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        # Use user-specific folder
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_prompts.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_prompts.db"
 
 
 def get_media_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "media_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "media_db_path"
-    ):
-        # Use custom path if explicitly configured
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        # Use user-specific folder
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_media_v2.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_media_v2.db"
 
 
 def get_library_collections_db_path() -> Path:
-    custom_path = get_cli_setting("database", "library_collections_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "library_collections_db_path"
-    ):
-        db_path = validate_path_simple(
-            Path(str(custom_path)).expanduser(), require_exists=False
-        ).resolve()
-    else:
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_library_collections.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_library_collections.db"
 
 
 def get_library_ingest_jobs_db_path() -> Path:
-    custom_path = get_cli_setting("database", "library_ingest_jobs_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "library_ingest_jobs_db_path"
-    ):
-        db_path = validate_path_simple(
-            Path(str(custom_path)).expanduser(), require_exists=False
-        ).resolve()
-    else:
-        db_path = get_user_data_dir() / "tldw_chatbook_library_ingest_jobs.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_library_ingest_jobs.db"
 
 
 def get_workspaces_db_path() -> Path:
-    custom_path = get_cli_setting("database", "workspaces_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "workspaces_db_path"
-    ):
-        db_path = validate_path_simple(
-            Path(str(custom_path)).expanduser(), require_exists=False
-        ).resolve()
-    else:
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_workspaces.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_workspaces.db"
 
 
 def get_subscriptions_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "subscriptions_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "subscriptions_db_path"
-    ):
-        # Use custom path if explicitly configured
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        # Use user-specific folder
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_subscriptions.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_subscriptions.db"
+
+
+def get_evals_db_path() -> Path:
+    """Return the canonical path for the Evals database."""
+    return _get_custom_database_path(
+        "evals_db_path"
+    ) or get_user_data_dir() / "evals.db"
+
+
+def get_rag_indexing_db_path() -> Path:
+    """Return the canonical path for the RAG indexing-state database."""
+    return _get_custom_database_path(
+        "rag_indexing_db_path"
+    ) or get_user_data_dir() / "rag_indexing.db"
 
 
 def get_notifications_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "notifications_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "notifications_db_path"
-    ):
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_notifications.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_notifications.db"
 
 
 def get_research_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "research_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "research_db_path"
-    ):
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_research.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_research.db"
 
 
 def get_writing_db_path() -> Path:
-    custom_path = get_cli_setting("database", "writing_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "writing_db_path"
-    ):
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_writing.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_writing.db"
 
 
 def get_scheduled_tasks_db_path() -> Path:
-    custom_path = get_cli_setting("database", "scheduled_tasks_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
-        "scheduled_tasks_db_path"
-    ):
-        return validate_path_simple(custom_path)
-    return get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
+    return _get_custom_database_path(
+        "scheduled_tasks_db_path",
+        expand_before_validation=False,
+    ) or get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
 
 
 def get_cli_log_file_path() -> Path:
-    # Use user-specific folder for logs
+    """Return the configured log file beneath the secured user data directory."""
+
     user_dir = get_user_data_dir()
     default_log_filename = DEFAULT_CONFIG_FROM_TOML.get("logging", {}).get(
         "log_filename", "tldw_cli_app.log"
     )
     log_filename = get_cli_setting("logging", "log_filename", default_log_filename)
-    log_file_path = user_dir / log_filename
-    try:
-        log_file_path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        logger.opt(exception=True).error(
-            f"Could not create log directory {log_file_path.parent}: {e}"
-        )
-    return log_file_path
+    if (
+        not isinstance(log_filename, str)
+        or not log_filename.strip()
+        or log_filename in {".", ".."}
+        or "/" in log_filename
+        or "\\" in log_filename
+        or Path(log_filename).is_absolute()
+        or Path(log_filename).name != log_filename
+    ):
+        raise ValueError("Configured log filename must be a non-empty basename")
+    return user_dir / log_filename
 
 
 def get_cli_data_dir() -> Path:
@@ -4976,6 +5251,8 @@ if (
 # --- Global Settings Object ---
 load_cli_config_and_ensure_existence()
 settings = load_settings()
+if _CONFIG_GENERATION == 0:
+    _CONFIG_GENERATION = 1
 
 try:
     # Accessing deeply nested key safely

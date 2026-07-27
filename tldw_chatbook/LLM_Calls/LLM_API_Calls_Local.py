@@ -19,7 +19,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatConfigurationError,
 )
 from tldw_chatbook.Utils.Utils import logging
-from tldw_chatbook.config import load_settings, settings
+from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -506,11 +506,12 @@ def chat_with_local_llm(
     # preserve arbitrary top-level sections -- so the provider was unusable
     # from its own documented configuration and always failed with the
     # "API URL is required" error below.
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
-    cfg = cli_api_settings.get("local-llm", {})
     # `api_url` is the documented key (see the [api_settings.local-llm] example
     # in config.py); `api_ip` is what this function historically read, kept as a
-    # fallback so an existing working setup does not break.
+    # fallback so an existing working setup does not break. Read through the
+    # immutable runtime snapshot instead of the mutable module-level mapping.
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
+    cfg = cli_api_settings.get("local-llm", {})
     api_base_url = cfg.get("api_url") or cfg.get("api_ip")
     if not api_base_url:
         raise ChatConfigurationError(
@@ -642,7 +643,7 @@ def chat_with_llama(
     )
     provider_display_name = "Llama.cpp"
 
-    api_settings_table = settings.get(
+    api_settings_table = get_runtime_config_snapshot().values.get(
         "api_settings", {}
     )  # Safely get the api_settings table
     llama_config = api_settings_table.get(
@@ -793,7 +794,7 @@ def chat_with_kobold(
 
     # --- Settings Load for CLI config structure ---
     # The global 'settings' object is imported from tldw_app.config
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     # Use 'koboldcpp' (lowercase) as this is the key in CONFIG_TOML_CONTENT's [api_settings]
     cfg = cli_api_settings.get("koboldcpp", {})
 
@@ -1083,7 +1084,7 @@ def chat_with_oobabooga(
         model = None
 
     # --- Settings Load ---
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     # Use 'koboldcpp' (lowercase) as this is the key in CONFIG_TOML_CONTENT's [api_settings]
     cfg = cli_api_settings.get("ooba_api", {})
 
@@ -1198,7 +1199,7 @@ def chat_with_tabbyapi(
         model = None
 
     # --- Settings Load ---
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     # Use 'koboldcpp' (lowercase) as this is the key in CONFIG_TOML_CONTENT's [api_settings]
     cfg = cli_api_settings.get("tabby_api", {})
 
@@ -1307,7 +1308,7 @@ def chat_with_vllm(
     # --- Settings Load ---
     # Use provider_name if provided, otherwise default to 'vllm_api'
     vllm_config_key = provider_name if provider_name else "vllm_api"
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cfg = cli_api_settings.get(vllm_config_key, {})
 
     vllm_api_url = cfg.get("api_url")  # api_url passed via chat_api_call or from config
@@ -1435,7 +1436,7 @@ def chat_with_aphrodite(
         model = None
 
     # --- Settings Load ---
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cfg = cli_api_settings.get("aphrodite_api", {})
 
     api_base_url = cfg.get("api_url")  # api_url passed via chat_api_call or from config
@@ -1563,7 +1564,7 @@ def chat_with_ollama(
     # --- Settings Load for CLI config structure ---
     # Use provider_name if provided, otherwise default to 'ollama'
     ollama_config_key = provider_name if provider_name else "ollama"
-    cli_api_settings = settings.get("api_settings", {})  # Get the [api_settings] table
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cfg = cli_api_settings.get(
         ollama_config_key, {}
     )  # Get the config for the specific provider
@@ -1757,7 +1758,7 @@ def chat_with_custom_openai(
         model = None
 
     # --- Settings Load ---
-    cli_api_settings = settings.get("api_settings", {})
+    cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     cfg = cli_api_settings.get(
         "custom", {}
     )  # Key for custom_openai_api in CLI is 'custom'
@@ -2068,7 +2069,7 @@ def chat_with_mlx_lm(
     # --- Settings Load ---
     # Use provider_name if provided, otherwise default to 'mlx_lm'
     mlx_config_key = provider_name if provider_name else "mlx_lm"
-    api_settings_table = settings.get("api_settings", {})
+    api_settings_table = get_runtime_config_snapshot().values.get("api_settings", {})
     mlx_cfg = api_settings_table.get(mlx_config_key, {})
 
     current_model_path = model or mlx_cfg.get("model_path") or mlx_cfg.get("model")

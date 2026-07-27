@@ -64,6 +64,14 @@ class MediaScreen(BaseAppScreen):
                 )
             self._pending_media_restore = None
 
+    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+        """Forward runtime-source changes to the mounted production media window."""
+
+        if self.media_window is not None:
+            await self.media_window.handle_runtime_backend_changed(runtime_backend)
+        else:
+            self.media_runtime_state.reset_for_backend(runtime_backend)
+
     def save_state(self) -> Dict[str, Any]:
         """Save the Media window's user-facing view state.
 

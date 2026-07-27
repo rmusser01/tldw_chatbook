@@ -187,10 +187,9 @@ def test_effective_tool_states_fresh_mismatch_emits_exactly_one_downgraded_recor
     assert record["decision"] == "downgraded"
     assert record["ok"] is False
     assert record["duration_ms"] == 0
-    assert (
-        record["error"]
-        == "search definition changed since you allowed it — review and re-allow"
-    )
+    assert record["status"] == "blocked"
+    assert record["error_category"] == "definition_changed"
+    assert "definition changed since" not in repr(record)
 
     # The marker is now persisted -- a second resolution pass must not
     # append a second audit record.

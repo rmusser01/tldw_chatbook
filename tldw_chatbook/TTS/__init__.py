@@ -16,6 +16,24 @@ from tldw_chatbook.TTS.playground_types import (
     STTSPlaygroundRequest,
 )
 from tldw_chatbook.TTS.preferences import TTSConfigMutation, TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_errors import (
+    ProfileRepositoryError,
+    ProfileValidationError,
+)
+from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+from tldw_chatbook.TTS.profile_types import (
+    AssignedTTSProfileSnapshot,
+    CharacterRef,
+    CharacterTTSAssignment,
+    ProfileBackupReceipt,
+    ProfileRepositoryState,
+    ProfileRestoreReceipt,
+    ProfileStoreResult,
+    TTSGenerationProfile,
+    TTSProfileDraft,
+    TTSProfilePage,
+    canonical_json_options,
+)
 from tldw_chatbook.TTS.TTS_Generation import (
     TTSService,
     bind_tts_service,
@@ -27,6 +45,15 @@ from tldw_chatbook.TTS.TTS_Generation import (
 __all__ = [
     "NormalizationOptions",
     "OpenAISpeechRequest",
+    "AssignedTTSProfileSnapshot",
+    "CharacterRef",
+    "CharacterTTSAssignment",
+    "ProfileBackupReceipt",
+    "ProfileRepositoryError",
+    "ProfileRepositoryState",
+    "ProfileRestoreReceipt",
+    "ProfileStoreResult",
+    "ProfileValidationError",
     "ProgressSink",
     "ProviderHealth",
     "STTSGeneratedAudio",
@@ -36,6 +63,10 @@ __all__ = [
     "TTSOperationCode",
     "TTSOperationError",
     "TTSConfigMutation",
+    "TTSGenerationProfile",
+    "TTSProfileRepository",
+    "TTSProfileDraft",
+    "TTSProfilePage",
     "TTSPreferencesSnapshot",
     "TTSProgress",
     "TTSProviderCatalog",
@@ -44,6 +75,7 @@ __all__ = [
     "TTSService",
     "bind_tts_service",
     "close_tts_resources",
+    "canonical_json_options",
     "get_tts_service",
     "reset_tts_service_binding",
 ]

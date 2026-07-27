@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import copy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,7 +24,7 @@ def _clean_text(value: Any, fallback: str) -> str:
 
 def _copy_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     if isinstance(payload, Mapping):
-        return dict(payload)
+        return copy.deepcopy(dict(payload))
     return {}
 
 
@@ -74,7 +75,14 @@ class ConsoleLiveWorkLaunch:
     @classmethod
     def from_pending(cls, value: Any) -> "ConsoleLiveWorkLaunch | None":
         if isinstance(value, cls):
-            return value
+            return cls.from_values(
+                source=value.source,
+                title=value.title,
+                payload=value.payload,
+                status=value.status,
+                recovery=value.recovery,
+                action_label=value.action_label,
+            )
         if not isinstance(value, Mapping):
             return None
         return cls.from_values(
@@ -90,7 +98,7 @@ class ConsoleLiveWorkLaunch:
         return {
             "source": self.source,
             "title": self.title,
-            "payload": dict(self.payload),
+            "payload": copy.deepcopy(self.payload),
             "status": self.status,
             "recovery": self.recovery,
             "action_label": self.action_label,

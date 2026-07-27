@@ -96,6 +96,13 @@ def test_ci_installs_pytest_timeout_for_configured_test_timeouts() -> None:
     assert "pytest-timeout" in requirements
 
 
+def test_ci_installs_distribution_build_dependencies() -> None:
+    requirements = (PROJECT_ROOT / "requirements-test.txt").read_text()
+
+    assert "build" in requirements.splitlines()
+    assert "setuptools>=77" in requirements.splitlines()
+
+
 def test_pytest_ui_marker_is_registered_for_ci_marker_selection() -> None:
     pyproject = (PROJECT_ROOT / "pyproject.toml").read_text()
 

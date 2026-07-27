@@ -15,7 +15,9 @@ Handles dataset loading, prompt formatting, model inference, and metric calculat
 """
 
 import asyncio
+import inspect
 import json
+import math
 import re
 import time
 import traceback
@@ -55,6 +57,45 @@ from .eval_errors import (
     ErrorSeverity,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+
+
+def _positive_integer(name: str, value: object) -> int:
+    """Return a positive integer execution bound."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _non_negative_integer(name: str, value: object) -> int:
+    """Return a non-negative integer execution bound."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
+
+
+def _finite_number(name: str, value: object, *, positive: bool) -> float:
+    """Return a finite numeric execution bound."""
+    numeric_value = None
+    if not isinstance(value, bool) and isinstance(value, (int, float)):
+        try:
+            numeric_value = float(value)
+        except (OverflowError, ValueError):
+            pass
+    if numeric_value is None or not math.isfinite(numeric_value) or (
+        numeric_value <= 0 if positive else numeric_value < 0
+    ):
+        qualifier = "positive" if positive else "non-negative"
+        raise ValueError(f"{name} must be a {qualifier} finite number")
+    return numeric_value
+
+
+async def _invoke_callback(callback, *args) -> None:
+    """Invoke a callback and await an awaitable return value."""
+    if callback is None:
+        return
+    result = callback(*args)
+    if inspect.isawaitable(result):
+        await result
 
 
 class EvalError(Exception):
@@ -1062,10 +1103,12 @@ class ErrorHandler:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         backoff_factor: float = 2.0,
+        request_timeout: float = 30.0,
     ):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.backoff_factor = backoff_factor
+        self.request_timeout = request_timeout
         self.rate_limit_delays = {}  # Provider -> delay time
         self.error_handler = get_error_handler()
         self.consecutive_errors = {}  # Track consecutive errors per provider
@@ -1174,10 +1217,10 @@ class ErrorHandler:
                     await asyncio.sleep(delay)
                     retry_count += 1
                     last_exception = ExecutionError.timeout(
-                        sample_id, 30.0
-                    )  # Default timeout
+                        sample_id, self.request_timeout
+                    )
                 else:
-                    raise ExecutionError.timeout(sample_id, 30.0)
+                    raise ExecutionError.timeout(sample_id, self.request_timeout)
 
             except Exception as e:
                 logger.error(f"Unexpected error for sample {sample_id}: {e}")
@@ -1239,7 +1282,17 @@ class BaseEvalRunner(ABC):
 
         async def generate(self, prompt: str, **kwargs) -> str:
             """Generate text using the runner's LLM."""
-            return await self.runner._call_llm(prompt, **kwargs)
+            try:
+                result, _ = await self.runner.error_handler.with_retry(
+                    lambda: self.runner._call_llm(prompt, **kwargs),
+                    self.runner.task_config.name,
+                    self.runner.provider_name,
+                )
+                return result
+            except EvaluationError as error:
+                if error.original_error is not None:
+                    raise error.original_error
+                raise
 
     def __init__(self, task_config: TaskConfig, model_config: Dict[str, Any]):
         self.task_config = task_config
@@ -1247,10 +1300,16 @@ class BaseEvalRunner(ABC):
         self.provider_name = model_config["provider"].lower()
         self.model_id = model_config["model_id"]
         self.api_key = model_config.get("api_key")
+        self.request_timeout = model_config.get("request_timeout", 30.0)
 
         self.error_handler = ErrorHandler(
-            max_retries=task_config.metadata.get("max_retries", 3),
-            retry_delay=task_config.metadata.get("retry_delay", 1.0),
+            max_retries=model_config.get(
+                "retry_attempts", task_config.metadata.get("max_retries", 3)
+            ),
+            retry_delay=model_config.get(
+                "retry_delay", task_config.metadata.get("retry_delay", 1.0)
+            ),
+            request_timeout=self.request_timeout,
         )
 
         # Create llm_interface for compatibility with specialized runners
@@ -1312,8 +1371,16 @@ class BaseEvalRunner(ABC):
             if param in kwargs:
                 call_params[param] = kwargs[param]
 
-        # Use the existing chat_api_call function which already handles all providers
-        response = await chat_api_call(**call_params)
+        async def invoke_dispatcher():
+            response = await asyncio.to_thread(chat_api_call, **call_params)
+            if inspect.isawaitable(response):
+                response = await response
+            return response
+
+        # The production dispatcher is synchronous; keep it off the event loop.
+        response = await asyncio.wait_for(
+            invoke_dispatcher(), timeout=self.request_timeout
+        )
 
         # Handle response format based on provider
         if isinstance(response, tuple):
@@ -2523,12 +2590,36 @@ class EvalRunner:
 
     def __init__(self, task_config: TaskConfig, model_config: Dict[str, Any]):
         self.task_config = task_config
-        self.model_config = model_config
+        effective_config = dict(model_config)
+        effective_config["max_concurrent_requests"] = _positive_integer(
+            "max_concurrent_requests",
+            model_config.get("max_concurrent_requests", 10),
+        )
+        effective_config["request_timeout"] = _finite_number(
+            "request_timeout",
+            model_config.get("request_timeout", 30.0),
+            positive=True,
+        )
+        effective_config["retry_attempts"] = _non_negative_integer(
+            "retry_attempts",
+            model_config.get(
+                "retry_attempts", task_config.metadata.get("max_retries", 3)
+            ),
+        )
+        effective_config["retry_delay"] = _finite_number(
+            "retry_delay",
+            model_config.get(
+                "retry_delay", task_config.metadata.get("retry_delay", 1.0)
+            ),
+            positive=False,
+        )
+        self.model_config = effective_config
 
         # Expose configuration values as properties for tests
-        self.max_concurrent_requests = model_config.get("max_concurrent_requests", 10)
-        self.request_timeout = model_config.get("request_timeout", 30.0)
-        self.retry_attempts = model_config.get("retry_attempts", 3)
+        self.max_concurrent_requests = effective_config["max_concurrent_requests"]
+        self.request_timeout = effective_config["request_timeout"]
+        self.retry_attempts = effective_config["retry_attempts"]
+        self.retry_delay = effective_config["retry_delay"]
 
         # Store LLM interface for tests
         self.llm_interface = None
@@ -2557,25 +2648,27 @@ class EvalRunner:
                 "algorithms",
                 "code_completion",
             ]:
-                self.runner = CodeExecutionRunner(task_config, model_config)
+                self.runner = CodeExecutionRunner(task_config, effective_config)
             elif category == "safety" or subcategory in [
                 "harmfulness",
                 "bias",
                 "truthfulness",
             ]:
-                self.runner = SafetyEvaluationRunner(task_config, model_config)
+                self.runner = SafetyEvaluationRunner(task_config, effective_config)
             elif subcategory in ["translation", "cross_lingual_qa", "multilingual"]:
-                self.runner = MultilingualEvaluationRunner(task_config, model_config)
+                self.runner = MultilingualEvaluationRunner(
+                    task_config, effective_config
+                )
             elif category == "creative" or subcategory in [
                 "creative_writing",
                 "story_completion",
                 "dialogue_generation",
             ]:
-                self.runner = CreativeEvaluationRunner(task_config, model_config)
+                self.runner = CreativeEvaluationRunner(task_config, effective_config)
             else:
-                self.runner = self._create_basic_runner(task_config, model_config)
+                self.runner = self._create_basic_runner(task_config, effective_config)
         else:
-            self.runner = self._create_basic_runner(task_config, model_config)
+            self.runner = self._create_basic_runner(task_config, effective_config)
 
     async def run_single_sample(
         self, task_config: TaskConfig, sample: Any
@@ -2611,61 +2704,89 @@ class EvalRunner:
         )
         logger.info(f"Loaded {len(samples)} samples")
 
-        results = []
+        results: List[Optional[EvalSampleResult]] = [None] * len(samples)
         error_count = 0
         retry_count = 0
+        semaphore = asyncio.Semaphore(self.max_concurrent_requests)
 
-        for i, sample in enumerate(samples):
-            try:
-                result = await self.runner.run_sample(sample)
-                results.append(result)
+        async def run_indexed_sample(
+            index: int, sample: EvalSample
+        ) -> Tuple[int, EvalSampleResult]:
+            async with semaphore:
+                try:
+                    result = await self.runner.run_sample(sample)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    logger.error(
+                        f"Fatal error processing sample {sample.id}: {error}"
+                    )
+                    result = EvalSampleResult(
+                        sample_id=sample.id,
+                        input_text=sample.input_text,
+                        expected_output=sample.expected_output,
+                        actual_output=f"FATAL_ERROR: {str(error)}",
+                        metrics={"error": 1.0},
+                        error_info={
+                            "error_type": type(error).__name__,
+                            "error_message": str(error),
+                            "error_category": "fatal",
+                            "is_retryable": False,
+                        },
+                    )
+                return index, result
 
-                # Track retry statistics
-                if hasattr(result, "retry_count"):
-                    retry_count += result.retry_count
+        tasks = [
+            asyncio.create_task(
+                run_indexed_sample(index, sample),
+                name=f"eval-sample-{sample.id}",
+            )
+            for index, sample in enumerate(samples)
+        ]
 
-                # Track error statistics
-                if result.error_info:
+        completed = 0
+        try:
+            for settled in asyncio.as_completed(tasks):
+                index, result = await settled
+                results[index] = result
+                completed += 1
+
+                retry_count += result.retry_count
+                if result.error_info or "error" in result.metrics:
                     error_count += 1
                     logger.warning(
-                        f"Sample {sample.id} completed with errors: {result.error_info.get('error_category', 'unknown')}"
+                        f"Sample {result.sample_id} completed with errors: "
+                        f"{result.error_info.get('error_category', 'unknown')}"
                     )
 
-                if progress_callback:
-                    progress_callback(i + 1, len(samples), result)
-
-                # Log progress periodically with enhanced info
-                if (i + 1) % 10 == 0:
-                    success_rate = ((i + 1 - error_count) / (i + 1)) * 100
-                    logger.info(
-                        f"Processed {i + 1}/{len(samples)} samples | Success rate: {success_rate:.1f}% | Total retries: {retry_count}"
-                    )
-
-            except Exception as e:
-                logger.error(f"Fatal error processing sample {sample.id}: {e}")
-                error_count += 1
-
-                # Create error result
-                error_result = EvalSampleResult(
-                    sample_id=sample.id,
-                    input_text=sample.input_text,
-                    expected_output=sample.expected_output,
-                    actual_output=f"FATAL_ERROR: {str(e)}",
-                    metrics={"error": 1.0},
-                    error_info={
-                        "error_type": type(e).__name__,
-                        "error_message": str(e),
-                        "error_category": "fatal",
-                        "is_retryable": False,
-                    },
+                await _invoke_callback(
+                    progress_callback, completed, len(samples), result
                 )
-                results.append(error_result)
+
+                if completed % 10 == 0:
+                    success_rate = (
+                        (completed - error_count) / completed
+                    ) * 100
+                    logger.info(
+                        f"Processed {completed}/{len(samples)} samples | "
+                        f"Success rate: {success_rate:.1f}% | "
+                        f"Total retries: {retry_count}"
+                    )
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        ordered_results = [result for result in results if result is not None]
 
         # Log final statistics
         success_rate = (
-            ((len(results) - error_count) / len(results)) * 100 if results else 0
+            ((len(ordered_results) - error_count) / len(ordered_results)) * 100
+            if ordered_results
+            else 0
         )
-        logger.info(f"Evaluation completed: {len(results)} results")
+        logger.info(f"Evaluation completed: {len(ordered_results)} results")
         logger.info(
             f"Success rate: {success_rate:.1f}% | Errors: {error_count} | Total retries: {retry_count}"
         )
@@ -2692,7 +2813,7 @@ class EvalRunner:
         )
         log_histogram(
             "eval_runner_sample_count",
-            len(results),
+            len(ordered_results),
             labels={
                 "task_type": self.task_config.task_type,
                 "provider": self.model_config.get("provider", "unknown"),
@@ -2719,7 +2840,7 @@ class EvalRunner:
         )
 
         # Calculate and log success rate
-        if len(results) > 0:
+        if ordered_results:
             log_histogram(
                 "eval_runner_success_rate",
                 success_rate / 100.0,
@@ -2730,7 +2851,7 @@ class EvalRunner:
                 },
             )
 
-        return results
+        return ordered_results
 
     def calculate_aggregate_metrics(
         self, results: List[EvalSampleResult]

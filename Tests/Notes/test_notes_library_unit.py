@@ -1,5 +1,7 @@
 # tldw_Server_API/tests/Notes/test_notes_library_unit.py
 import unittest
+import os
+import stat
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 import tempfile
@@ -63,25 +65,35 @@ class TestNotesInteropService(unittest.TestCase):
     def test_initialization(self):
         self.assertTrue(self.base_db_dir.exists())
         self.assertEqual(self.service.api_client_id, self.api_client_id)
-        # Check for the actual log messages from the implementation
+        # The selected parent is verified in place rather than created.
         self.mock_notes_library_logger.info.assert_any_call(
-            f"NotesInteropService: Ensured base directory exists: {self.base_db_dir}"
+            f"NotesInteropService: Verified base directory: {self.base_db_dir}"
         )
 
-    @patch(f"{NOTES_LIBRARY_MODULE_PATH}.Path.mkdir")
-    def test_initialization_failure_os_error(self, mock_mkdir):
-        mock_mkdir.side_effect = OSError("Permission denied")
-        expected_msg_part = (
-            f"Failed to create base DB directory {self.base_db_dir}: Permission denied"
-        )
+    def test_initialization_requires_existing_base_directory(self):
+        missing_base = self.base_db_dir / "missing"
+        expected_msg_part = f"Failed to verify base DB directory {missing_base}:"
         with self.assertRaises(Actual_CharactersRAGDBError) as cm:
             NotesInteropService(
-                base_db_directory=str(self.base_db_dir), api_client_id="fail_client"
+                base_db_directory=str(missing_base),
+                api_client_id="fail_client",
+                global_db_to_use=self.mock_global_db,
             )
         self.assertIn(expected_msg_part, str(cm.exception))
-        self.mock_notes_library_logger.error.assert_called_with(
-            f"Failed to create base DB directory {self.base_db_dir}: Permission denied"
+        self.assertFalse(missing_base.exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX mode contract")
+    def test_initialization_does_not_mutate_existing_base_directory_mode(self):
+        self.base_db_dir.chmod(0o751)
+
+        service = NotesInteropService(
+            base_db_directory=self.base_db_dir,
+            api_client_id="mode-test",
+            global_db_to_use=self.mock_global_db,
         )
+
+        self.addCleanup(service.close_all_user_connections)
+        self.assertEqual(stat.S_IMODE(self.base_db_dir.stat().st_mode), 0o751)
 
     def test_get_db_new_instance(self):
         user_id = "user1"

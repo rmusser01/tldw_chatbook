@@ -196,7 +196,7 @@ def test_autouse_fixture_isolates_config_saves(tmp_path):
     default_config = config_module.DEFAULT_CONFIG_PATH
     default_contents = default_config.read_bytes() if default_config.exists() else None
 
-    assert config_module._get_effective_config_path() == isolated_config.resolve()
+    assert config_module._get_effective_config_path() == isolated_config.absolute()
     assert config_module.save_setting_to_cli_config(
         "console",
         "collapse_large_pastes",
