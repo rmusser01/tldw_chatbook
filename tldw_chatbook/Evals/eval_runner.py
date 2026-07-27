@@ -747,6 +747,18 @@ class MetricsCalculator:
         if not predicted or not expected:
             return 0.0
 
+        # Exact string equality guarantees cosine similarity of 1.0 by
+        # construction (a vector's similarity with itself is always 1),
+        # so short-circuit before touching the embedding model at all.
+        # This is NOT the same guarantee as "the model embeds these two
+        # (possibly different) strings identically" - computing that case
+        # through dot()/norm() at float64 lands short of 1.0 for a real
+        # fraction of embeddings (float32 rounding in the model output
+        # doesn't cancel exactly under sqrt-then-square), so it must not
+        # be special-cased here. Only a literal `==` match qualifies.
+        if predicted == expected:
+            return 1.0
+
         lexical_fallback = MetricsCalculator._calculate_lexical_semantic_fallback(
             predicted, expected
         )
@@ -775,8 +787,13 @@ class MetricsCalculator:
                 # float32 vectors, and computing the dot product / norms at
                 # float32 precision can make a vector's similarity with
                 # itself land a few ULPs short of 1.0 (e.g. 0.99999988
-                # instead of 1.0). Computing in double precision avoids that
-                # avoidable precision loss.
+                # instead of 1.0). Computing in double precision reduces
+                # that avoidable precision loss, but sqrt-then-square
+                # rounding still leaves a real fraction of embeddings a
+                # few ULPs off exact 1.0 even at float64 - this is a
+                # quality improvement, not an exactness guarantee. Exact
+                # equality of the *input strings* is handled separately
+                # above, before the embedding model is ever called.
                 pred_vec = asarray(pred_embedding, dtype=float64)
                 exp_vec = asarray(exp_embedding, dtype=float64)
                 norm_product = norm(pred_vec) * norm(exp_vec)
