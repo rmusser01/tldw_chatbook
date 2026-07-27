@@ -55,6 +55,11 @@ from tldw_chatbook.config import (
     get_encryption_password,
     get_cli_setting,
     get_prompts_db_path,
+    get_chachanotes_db_path,
+    get_media_db_path,
+    get_evals_db_path,
+    get_rag_indexing_db_path,
+    get_subscriptions_db_path,
 )
 from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
@@ -6433,52 +6438,21 @@ Thank you for using tldw-chatbook! 🎉
         )
 
     def _update_database_sizes(self) -> None:
-        """Update the displayed database sizes."""
-        try:
-            db_config = self.config_data.get("database", {})
-
-            # Update ChaChaNotes size
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
-                size = self._format_file_size(chachanotes_path.stat().st_size)
-                try:
-                    size_widget = self.query_one("#db-size-chachanotes")
-                    size_widget.update(f"Size: {size}")
-                except Exception:
-                    pass
-
-            # Update Prompts size
-            prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                size = self._format_file_size(prompts_path.stat().st_size)
-                try:
-                    size_widget = self.query_one("#db-size-prompts")
-                    size_widget.update(f"Size: {size}")
-                except Exception:
-                    pass
-
-            # Update Media size
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                )
-            ).expanduser()
-            if media_path.exists():
-                size = self._format_file_size(media_path.stat().st_size)
-                try:
-                    size_widget = self.query_one("#db-size-media")
-                    size_widget.update(f"Size: {size}")
-                except Exception:
-                    pass
-
-        except Exception:
-            # Silently fail - this is non-critical
-            pass
+        """Update the displayed database sizes for every known database."""
+        db_config = self.config_data.get("database", {})
+        for db_name in self._DB_PATH_RESOLVERS:
+            try:
+                db_path = self._get_database_path(db_name, db_config)
+                if db_path and db_path.exists():
+                    size = self._format_file_size(db_path.stat().st_size)
+                    try:
+                        size_widget = self.query_one(f"#db-size-{db_name}")
+                        size_widget.update(f"Size: {size}")
+                    except Exception:
+                        pass
+            except Exception:
+                # Silently fail per-database - this is non-critical UI polish
+                continue
 
     def _format_file_size(self, size_bytes: int) -> str:
         """Format file size in human-readable format."""
@@ -6511,27 +6485,42 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             db_path = self._get_database_path(db_name, db_config)
 
-            if db_path and db_path.exists():
-                conn = sqlite3.connect(str(db_path))
-                try:
-                    original_size = db_path.stat().st_size
-                    conn.execute("VACUUM")
-                    conn.commit()
-                    new_size = db_path.stat().st_size
+            if db_path is None:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"Cannot vacuum {db_name} database: no resolvable path is configured for it",
+                    severity="error",
+                )
+                return
 
-                    saved = original_size - new_size
-                    saved_mb = saved / (1024 * 1024)
+            if not db_path.exists():
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"{db_name.title()} database not found at {db_path}; nothing to vacuum",
+                    severity="warning",
+                )
+                return
 
-                    self.call_from_thread(
-                        self.app_instance.notify,
-                        f"{db_name.title()} database vacuumed successfully. Saved {saved_mb:.1f} MB",
-                        severity="success",
-                    )
-                finally:
-                    conn.close()
-                    self.call_from_thread(self._update_database_sizes)
+            conn = sqlite3.connect(str(db_path))
+            try:
+                original_size = db_path.stat().st_size
+                conn.execute("VACUUM")
+                conn.commit()
+                new_size = db_path.stat().st_size
+
+                saved = original_size - new_size
+                saved_mb = saved / (1024 * 1024)
+
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"{db_name.title()} database vacuumed successfully. Saved {saved_mb:.1f} MB",
+                    severity="success",
+                )
+            finally:
+                conn.close()
+                self.app.call_from_thread(self._update_database_sizes)
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error vacuuming {db_name} database: {e}",
                 severity="error",
@@ -6558,46 +6547,57 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             db_path = self._get_database_path(db_name, db_config)
 
-            if db_path and db_path.exists():
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_dir = (
-                    Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
-                )
-                backup_dir.mkdir(parents=True, exist_ok=True)
-
-                backup_path = backup_dir / f"{db_name}_backup_{timestamp}.db"
-
-                import shutil
-
-                shutil.copy2(db_path, backup_path)
-
-                # Create metadata file
-                metadata_path = backup_path.with_suffix(".json")
-                metadata = {
-                    "database": db_name,
-                    "original_path": str(db_path),
-                    "backup_time": datetime.now().isoformat(),
-                    "file_size": db_path.stat().st_size,
-                    "schema_version": self._get_schema_version(db_path),
-                }
-
-                import json
-
-                with open(metadata_path, "w") as f:
-                    json.dump(metadata, f, indent=2)
-
-                self.call_from_thread(
+            if db_path is None:
+                self.app.call_from_thread(
                     self.app_instance.notify,
-                    f"{db_name.title()} database backed up to {backup_path.name}",
-                    severity="success",
+                    f"Cannot back up {db_name} database: no resolvable path is configured for it",
+                    severity="error",
                 )
+                return
 
-                # Update last backup status
-                self.call_from_thread(
-                    self._update_last_backup_status, db_name, timestamp
+            if not db_path.exists():
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"{db_name.title()} database not found at {db_path}; nothing to back up",
+                    severity="warning",
                 )
+                return
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_dir = (
+                Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
+            )
+            backup_dir.mkdir(parents=True, exist_ok=True)
+
+            backup_path = backup_dir / f"{db_name}_backup_{timestamp}.db"
+
+            shutil.copy2(db_path, backup_path)
+
+            # Create metadata file
+            metadata_path = backup_path.with_suffix(".json")
+            metadata = {
+                "database": db_name,
+                "original_path": str(db_path),
+                "backup_time": datetime.now().isoformat(),
+                "file_size": db_path.stat().st_size,
+                "schema_version": self._get_schema_version(db_path),
+            }
+
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+
+            self.app.call_from_thread(
+                self.app_instance.notify,
+                f"{db_name.title()} database backed up to {backup_path.name}",
+                severity="success",
+            )
+
+            # Update last backup status
+            self.app.call_from_thread(
+                self._update_last_backup_status, db_name, timestamp
+            )
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error backing up {db_name} database: {e}",
                 severity="error",
@@ -6672,30 +6672,47 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             db_path = self._get_database_path(db_name, db_config)
 
-            if db_path:
-                # Create a backup of current database before restoring
-                if db_path.exists():
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    pre_restore_backup = (
-                        db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
-                    )
-
-                    import shutil
-
-                    shutil.copy2(db_path, pre_restore_backup)
-
-                # Restore the backup
-                shutil.copy2(backup_path, db_path)
-
-                self.call_from_thread(
+            if db_path is None:
+                self.app.call_from_thread(
                     self.app_instance.notify,
-                    f"{db_name.title()} database restored successfully",
-                    severity="success",
+                    f"Cannot restore {db_name} database: no resolvable path is configured for it",
+                    severity="error",
                 )
+                return
 
-                self.call_from_thread(self._update_database_sizes)
+            # Guard against writing to a location that was never a real
+            # database directory (e.g. a stale/unresolved parent). Every
+            # resolver in config.py creates the real profile directory as a
+            # side effect, so a missing parent here means db_path is not
+            # somewhere the application would ever actually look.
+            if not db_path.parent.exists():
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"Cannot restore {db_name} database: target directory {db_path.parent} does not exist",
+                    severity="error",
+                )
+                return
+
+            # Create a backup of current database before restoring
+            if db_path.exists():
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                pre_restore_backup = (
+                    db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
+                )
+                shutil.copy2(db_path, pre_restore_backup)
+
+            # Restore the backup
+            shutil.copy2(backup_path, db_path)
+
+            self.app.call_from_thread(
+                self.app_instance.notify,
+                f"{db_name.title()} database restored successfully",
+                severity="success",
+            )
+
+            self.app.call_from_thread(self._update_database_sizes)
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error restoring {db_name} database: {e}",
                 severity="error",
@@ -6722,61 +6739,85 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             db_path = self._get_database_path(db_name, db_config)
 
-            if db_path and db_path.exists():
-                conn = sqlite3.connect(str(db_path))
-                try:
-                    cursor = conn.execute("PRAGMA integrity_check")
-                    result = cursor.fetchone()
+            if db_path is None:
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"Cannot check {db_name} database: no resolvable path is configured for it",
+                    severity="error",
+                )
+                return
 
-                    if result and result[0] == "ok":
-                        self.call_from_thread(
-                            self.app_instance.notify,
-                            f"{db_name.title()} database integrity check passed ✓",
-                            severity="success",
-                        )
-                    else:
-                        self.call_from_thread(
-                            self.app_instance.notify,
-                            f"{db_name.title()} database has integrity issues!",
-                            severity="error",
-                        )
-                finally:
-                    conn.close()
+            if not db_path.exists():
+                self.app.call_from_thread(
+                    self.app_instance.notify,
+                    f"{db_name.title()} database not found at {db_path}; nothing to check",
+                    severity="warning",
+                )
+                return
+
+            conn = sqlite3.connect(str(db_path))
+            try:
+                cursor = conn.execute("PRAGMA integrity_check")
+                result = cursor.fetchone()
+
+                if result and result[0] == "ok":
+                    self.app.call_from_thread(
+                        self.app_instance.notify,
+                        f"{db_name.title()} database integrity check passed ✓",
+                        severity="success",
+                    )
+                else:
+                    self.app.call_from_thread(
+                        self.app_instance.notify,
+                        f"{db_name.title()} database has integrity issues!",
+                        severity="error",
+                    )
+            finally:
+                conn.close()
         except Exception as e:
-            self.call_from_thread(
+            self.app.call_from_thread(
                 self.app_instance.notify,
                 f"Error checking {db_name} database: {e}",
                 severity="error",
             )
 
-    def _get_database_path(self, db_name: str, db_config: dict) -> Optional[Path]:
-        """Get the path for a specific database."""
-        path_map = {
-            "chachanotes": db_config.get(
-                "chachanotes_db_path",
-                "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-            ),
-            "media": db_config.get(
-                "media_db_path", "~/.local/share/tldw_cli/tldw_media_db.db"
-            ),
-            "prompts": db_config.get(
-                "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts_db.db"
-            ),
-            "evals": db_config.get(
-                "evals_db_path", "~/.local/share/tldw_cli/tldw_evals_db.db"
-            ),
-            "rag": db_config.get(
-                "rag_db_path", "~/.local/share/tldw_cli/tldw_rag_db.db"
-            ),
-            "subscriptions": db_config.get(
-                "subscriptions_db_path",
-                "~/.local/share/tldw_cli/tldw_subscriptions_db.db",
-            ),
-        }
+    # Single source of truth mapping database-maintenance names to the
+    # project's canonical, profile-aware config.py resolvers -- the exact
+    # functions the application itself uses to open these databases. See
+    # TASK-899. "rag" resolves to the RAG indexing-state DB
+    # (rag_indexing.db); there is no separate "main" RAG database.
+    _DB_PATH_RESOLVERS = {
+        "chachanotes": get_chachanotes_db_path,
+        "media": get_media_db_path,
+        "prompts": get_prompts_db_path,
+        "evals": get_evals_db_path,
+        "rag": get_rag_indexing_db_path,
+        "subscriptions": get_subscriptions_db_path,
+    }
 
-        if db_name in path_map:
-            return Path(path_map[db_name]).expanduser()
-        return None
+    def _get_database_path(self, db_name: str, db_config: dict) -> Optional[Path]:
+        """Resolve the on-disk path for a specific database.
+
+        Delegates to ``_DB_PATH_RESOLVERS`` -- the project's canonical
+        resolvers in config.py -- instead of hardcoded, profile-unaware
+        literals (TASK-899). ``db_config`` is accepted for backward-compatible
+        call-site signatures but is not consulted directly: each resolver
+        already reads any custom override straight from the live config via
+        ``get_cli_setting()``.
+
+        Returns ``None`` when ``db_name`` has no resolver, or when the
+        resolver itself raises. Callers MUST treat ``None`` as "cannot
+        resolve" and fail loudly (notify an error) rather than silently
+        doing nothing.
+        """
+        resolver = self._DB_PATH_RESOLVERS.get(db_name)
+        if resolver is None:
+            return None
+        try:
+            return resolver()
+        except Exception as e:
+            logger.error("Could not resolve path for {} database: {}", db_name, e)
+            return None
 
     def _get_schema_version(self, db_path: Path) -> Optional[int]:
         """Get the schema version from a database."""
@@ -6898,30 +6939,20 @@ Thank you for using tldw-chatbook! 🎉
             )
 
             if file_path:
-                # Get database paths from config
+                # Get database paths from the single source of truth
+                # (_DB_PATH_RESOLVERS -> config.py) instead of a second,
+                # disagreeing copy of hardcoded defaults (TASK-899).
                 db_config = self.config_data.get("database", {})
-                db_paths = {
-                    "chachanotes": db_config.get(
-                        "chachanotes_db_path",
-                        "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                    ),
-                    "prompts": db_config.get(
-                        "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts_db.db"
-                    ),
-                    "media": db_config.get(
-                        "media_db_path", "~/.local/share/tldw_cli/tldw_media_db.db"
-                    ),
-                    "evals": db_config.get(
-                        "evals_db_path", "~/.local/share/tldw_cli/tldw_evals_db.db"
-                    ),
-                    "rag": db_config.get(
-                        "rag_db_path", "~/.local/share/tldw_cli/tldw_rag_db.db"
-                    ),
-                    "subscriptions": db_config.get(
-                        "subscriptions_db_path",
-                        "~/.local/share/tldw_cli/tldw_subscriptions_db.db",
-                    ),
-                }
+                db_paths: Dict[str, str] = {}
+                for name in self._DB_PATH_RESOLVERS:
+                    resolved = self._get_database_path(name, db_config)
+                    if resolved is not None:
+                        db_paths[name] = str(resolved)
+                    else:
+                        logger.warning(
+                            f"Could not resolve path for {name} database; "
+                            "omitting from chatbook import"
+                        )
 
                 # Initialize importer
                 importer = ChatbookImporter(db_paths)

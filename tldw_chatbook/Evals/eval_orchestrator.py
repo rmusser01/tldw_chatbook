@@ -87,10 +87,14 @@ class EvaluationOrchestrator:
             # load_settings() publishes the profile name as "USERS_NAME"
             # (not "user_id"/"username"), and it does not publish
             # "user_data_dir" at all, so both lookups used to silently miss.
-            from tldw_chatbook.config import get_user_data_dir
+            #
+            # get_evals_db_path() is the single source of truth for this path
+            # (TASK-899) -- other consumers (e.g. the Settings
+            # database-maintenance panel) resolve the Evals DB through it too,
+            # so they cannot drift from what the orchestrator actually opens.
+            from tldw_chatbook.config import get_evals_db_path
 
-            user_dir = get_user_data_dir()
-            resolved_path = user_dir / "evals.db"
+            resolved_path = get_evals_db_path()
 
             self._warn_if_legacy_data_exists(resolved_path)
 
