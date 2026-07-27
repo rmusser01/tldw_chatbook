@@ -138,7 +138,9 @@ def _require_finite_nonnegative(
     if type(value) not in (int, float):
         raise TypeError(f"{field_name} must be a number")
     number = cast("int | float", value)
-    if not math.isfinite(number) or number < 0:
+    if number < 0:
+        raise ValueError(f"{field_name} must be finite and nonnegative")
+    if type(number) is float and not math.isfinite(number):
         raise ValueError(f"{field_name} must be finite and nonnegative")
 
 
@@ -197,11 +199,12 @@ class BufferAudioSource:
     """A bounded, interleaved PCM audio buffer.
 
     ``audio`` must contain between 1 and ``MAX_BUFFER_AUDIO_BYTES`` bytes.
-    Positive sample rates and channel counts, and sample widths of 1, 2, 3, or
-    4 bytes, are accepted. Provider capability checks remain a separate layer.
+    It must end on a complete interleaved frame. Positive sample rates and
+    channel counts, and sample widths of 1, 2, 3, or 4 bytes, are accepted.
+    Provider capability checks remain a separate layer.
     """
 
-    audio: bytes
+    audio: bytes = field(repr=False)
     sample_rate: int
     channels: int = 1
     sample_width: int = 2
@@ -227,6 +230,8 @@ class BufferAudioSource:
             raise TypeError("sample_width must be an int")
         if self.sample_width not in _VALID_SAMPLE_WIDTHS:
             raise ValueError("sample_width must be one of 1, 2, 3, or 4")
+        if len(self.audio) % (self.channels * self.sample_width) != 0:
+            raise ValueError("audio must contain complete interleaved PCM frames")
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,12 +356,16 @@ class TranscriptionRequest:
         _require_bool(self.vad, "vad")
         if type(self.privacy) is not PrivacyRequirements:
             raise TypeError("privacy must be a PrivacyRequirements")
-        if self.cancellation is not None and not isinstance(
-            self.cancellation,
-            CancellationToken,
+        if self.cancellation is not None and (
+            not isinstance(self.cancellation, CancellationToken)
+            or not callable(self.cancellation.is_cancelled)
         ):
             raise TypeError("cancellation must implement CancellationToken")
-        if self.progress is not None and not isinstance(self.progress, ProgressSink):
+        if self.progress is not None and (
+            not isinstance(self.progress, ProgressSink)
+            or not callable(self.progress)
+            or not callable(getattr(self.progress, "__call__", None))
+        ):
             raise TypeError("progress must implement ProgressSink")
 
 

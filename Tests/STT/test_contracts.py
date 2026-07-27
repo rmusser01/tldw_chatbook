@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import FrozenInstanceError
+from enum import Enum
 from pathlib import Path
 
 import pytest
@@ -91,7 +92,7 @@ def _result(**overrides: object) -> TranscriptionResult:
 
 
 def test_enums_have_exact_stable_string_values() -> None:
-    expected = {
+    expected: dict[type[Enum], tuple[str, ...]] = {
         TranscriptionTask: ("transcribe", "translate"),
         InputKind: ("file", "buffer"),
         TimestampGranularity: ("none", "segment", "word"),
@@ -140,13 +141,13 @@ def test_file_audio_source_requires_a_path_and_is_frozen_and_slotted() -> None:
 
 def test_buffer_audio_source_accepts_bounded_pcm_metadata() -> None:
     source = BufferAudioSource(
-        audio=b"\x00\x01",
+        audio=b"\x00\x01\x02\x03",
         sample_rate=16_000,
         channels=2,
         sample_width=2,
     )
 
-    assert source.audio == b"\x00\x01"
+    assert source.audio == b"\x00\x01\x02\x03"
     assert MAX_BUFFER_AUDIO_BYTES > 0
     assert not hasattr(source, "__dict__")
     with pytest.raises(FrozenInstanceError):
@@ -199,6 +200,36 @@ def test_buffer_audio_source_rejects_invalid_integer_fields(
 
 
 @pytest.mark.parametrize(
+    ("audio", "channels", "sample_width"),
+    [
+        (b"\x00", 1, 2),
+        (b"\x00\x00", 3, 1),
+    ],
+)
+def test_buffer_audio_source_rejects_incomplete_interleaved_pcm_frames(
+    audio: bytes,
+    channels: int,
+    sample_width: int,
+) -> None:
+    with pytest.raises(ValueError):
+        BufferAudioSource(
+            audio=audio,
+            sample_rate=16_000,
+            channels=channels,
+            sample_width=sample_width,
+        )
+
+
+def test_buffer_audio_source_payload_is_excluded_from_representations() -> None:
+    marker = "PCM-SECRET-PAYLOAD"
+    source = BufferAudioSource(marker.encode(), 16_000)
+    request = TranscriptionRequest(attempt_id="attempt-1", source=source)
+
+    assert marker not in repr(source)
+    assert marker not in repr(request)
+
+
+@pytest.mark.parametrize(
     ("field_name", "value"),
     [
         ("allow_remote_processing", 0),
@@ -211,7 +242,7 @@ def test_privacy_requirements_reject_non_boolean_flags(
     field_name: str,
     value: object,
 ) -> None:
-    values = {
+    values: dict[str, object] = {
         "allow_remote_processing": False,
         "allow_disk_staging": True,
     }
@@ -232,6 +263,30 @@ def test_protocols_accept_structural_token_and_progress_sink() -> None:
 
     assert isinstance(Token(), CancellationToken)
     assert isinstance(Sink(), ProgressSink)
+
+
+def test_request_rejects_noncallable_cancellation_member() -> None:
+    class InvalidToken:
+        is_cancelled = 0
+
+    with pytest.raises(TypeError):
+        TranscriptionRequest(
+            attempt_id="attempt-1",
+            source=BufferAudioSource(b"\x00\x00", 16_000),
+            cancellation=InvalidToken(),  # type: ignore[arg-type]
+        )
+
+
+def test_request_rejects_noncallable_progress_member() -> None:
+    class InvalidSink:
+        __call__ = 0
+
+    with pytest.raises(TypeError):
+        TranscriptionRequest(
+            attempt_id="attempt-1",
+            source=BufferAudioSource(b"\x00\x00", 16_000),
+            progress=InvalidSink(),  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.parametrize("identifier", ["", " ", "\t"])
@@ -335,13 +390,13 @@ class _Sink:
 def test_request_excludes_callback_and_token_from_repr_and_comparison() -> None:
     first = TranscriptionRequest(
         attempt_id="attempt-1",
-        source=BufferAudioSource(b"x", 16_000),
+        source=BufferAudioSource(b"\x00\x00", 16_000),
         cancellation=_Token("TOKEN-SECRET"),
         progress=_Sink("CALLBACK-SECRET"),
     )
     second = TranscriptionRequest(
         attempt_id="attempt-1",
-        source=BufferAudioSource(b"x", 16_000),
+        source=BufferAudioSource(b"\x00\x00", 16_000),
         cancellation=_Token("OTHER-TOKEN"),
         progress=_Sink("OTHER-CALLBACK"),
     )
@@ -359,7 +414,7 @@ def test_request_excludes_callback_and_token_from_repr_and_comparison() -> None:
 def test_request_accepts_canonical_languages(language: str | None) -> None:
     request = TranscriptionRequest(
         attempt_id="attempt-1",
-        source=BufferAudioSource(b"x", 16_000),
+        source=BufferAudioSource(b"\x00\x00", 16_000),
         language=language,
     )
 
@@ -374,7 +429,7 @@ def test_request_rejects_noncanonical_languages(language: object) -> None:
     with pytest.raises((TypeError, ValueError)):
         TranscriptionRequest(
             attempt_id="attempt-1",
-            source=BufferAudioSource(b"x", 16_000),
+            source=BufferAudioSource(b"\x00\x00", 16_000),
             language=language,  # type: ignore[arg-type]
         )
 
@@ -398,7 +453,7 @@ def test_request_rejects_empty_identity_fields(
 ) -> None:
     values: dict[str, object] = {
         "attempt_id": "attempt-1",
-        "source": BufferAudioSource(b"x", 16_000),
+        "source": BufferAudioSource(b"\x00\x00", 16_000),
     }
     values[field_name] = value
 
@@ -426,7 +481,7 @@ def test_request_rejects_wrong_contract_types(
 ) -> None:
     values: dict[str, object] = {
         "attempt_id": "attempt-1",
-        "source": BufferAudioSource(b"x", 16_000),
+        "source": BufferAudioSource(b"\x00\x00", 16_000),
     }
     values[field_name] = value
 
@@ -463,6 +518,15 @@ def test_segment_rejects_invalid_values(field_name: str, value: object) -> None:
 def test_segment_rejects_end_before_start() -> None:
     with pytest.raises(ValueError):
         TranscriptionSegment(1.0, 0.9, "out of order")
+
+
+def test_segment_accepts_finite_nonnegative_arbitrary_precision_integers() -> None:
+    timestamp = 10**1000
+
+    segment = TranscriptionSegment(timestamp, timestamp, "far future")
+
+    assert segment.start_seconds == timestamp
+    assert segment.end_seconds == timestamp
 
 
 def test_provenance_preserves_complete_artifact_identity_in_tuples() -> None:
@@ -564,7 +628,7 @@ def test_pipeline_capabilities_are_frozen_and_use_an_immutable_set() -> None:
 )
 def test_pipeline_capabilities_require_strict_booleans(field_name: str) -> None:
     with pytest.raises(TypeError):
-        PipelineCapabilities(**{field_name: 1})
+        PipelineCapabilities(**{field_name: 1})  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -581,6 +645,14 @@ def test_pipeline_capabilities_require_strict_booleans(field_name: str) -> None:
 def test_timings_reject_invalid_values(field_name: str, value: object) -> None:
     with pytest.raises((TypeError, ValueError)):
         TranscriptionTimings(**{field_name: value})  # type: ignore[arg-type]
+
+
+def test_timings_accept_finite_nonnegative_arbitrary_precision_integer() -> None:
+    duration = 10**1000
+
+    timings = TranscriptionTimings(total_seconds=duration)
+
+    assert timings.total_seconds == duration
 
 
 def test_result_requires_ordered_immutable_segments_and_warning_tuple() -> None:
