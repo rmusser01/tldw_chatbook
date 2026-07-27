@@ -34,19 +34,24 @@ At first provider use:
 - Load the selected backend through one explicit loader per backend.
 - Cache the imported class/function in the existing module-level reference.
 - Reuse the cached reference on later calls.
-- If Python raises while importing the optional backend, mark that backend
-  unavailable and raise the existing bounded `TranscriptionError`.
+- Have every path that dereferences a backend symbol obtain it from the loader
+  first. For Parakeet this includes file, buffer, and streaming model loads.
+- If Python raises `Exception` while importing the optional backend, keep its
+  symbol unset, mark that backend unavailable for the process, and raise the
+  existing bounded `TranscriptionError` with the original exception chained.
 
 Only paths that actually execute Parakeet MLX or Lightning Whisper MLX call
 these loaders. Provider discovery, configuration loading, app startup, and
-unrelated tests never do.
+unrelated tests never do. Python's import lock and idempotent module cache are
+sufficient here; this task does not add another loader lock.
 
 ## Error Behavior
 
 Missing packages continue to appear unavailable through the existing flags.
 An installed package that raises a normal Python exception during its lazy
 import becomes unavailable for the process and produces a transcription error
-instead of leaking the backend exception through the application.
+instead of leaking the backend exception through the application. Later calls
+fail through the same availability boundary rather than retrying the import.
 
 This change does not add a subprocess runtime, retry policy, new dependency
 registry, or new provider abstraction. A native library that terminates the
@@ -58,14 +63,18 @@ from unrelated imports and test collection.
 
 Test-driven verification will:
 
-1. Prove in a subprocess that importing the production app does not import
+1. Prove in a subprocess that importing `transcription_service` does not import
    either MLX module even when both are discoverable.
-2. Prove each backend imports on first actual use and reuses its cached symbol.
-3. Prove ordinary lazy-import failures become bounded transcription errors.
-4. Remove the three ProductionApp `sys.modules` stubs and run those affected
-   modules without replacement stubs.
-5. Run the existing config provider-probe test plus touched-file Ruff and
-   `git diff --check`.
+2. Run the existing config provider probe to preserve installed-provider
+   selection without native imports.
+3. Prove each backend imports on first actual use, every direct model-load path
+   uses the loader, and later calls reuse the cached symbol.
+4. Prove ordinary lazy-import failures become bounded transcription errors and
+   disable later retries for that process.
+5. Remove the three ProductionApp `sys.modules` stubs and run those affected
+   modules without replacement stubs; these are the full app-import proof, so
+   no redundant app subprocess test is added.
+6. Run touched-file Ruff and `git diff --check`.
 
 No full repository test suite is part of this task.
 
