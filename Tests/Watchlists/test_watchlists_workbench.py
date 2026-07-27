@@ -188,6 +188,85 @@ async def test_a_region_with_supplied_content_does_not_double_title():
 
 
 @pytest.mark.asyncio
+async def test_left_rail_keeps_its_heading_when_its_content_supplies_none():
+    """Fix round 3, Finding 1: title suppression was keyed on
+    factory-presence, but the rule is "suppress it where the pane supplies
+    its own heading". LEFT_RAIL is where those two signals diverge — it
+    supplies content (`WatchlistTree`) that composes only navigation buttons
+    and no heading widget — so the expanded rail rendered as an unlabelled
+    bordered box while its collapsed header still read "▸ Watchlists".
+    `SELF_HEADED_REGIONS` now carries the real rule.
+    """
+    from textual.widgets import Label
+
+    class _App(App):
+        def compose(self) -> ComposeResult:
+            yield WatchlistsWorkbench(
+                RegionLayout(),
+                content={
+                    # Stands in for `WatchlistTree`: real content, no heading.
+                    Region.LEFT_RAIL: lambda: Label("All sources  0", id="headingless"),
+                    Region.FEEDS: lambda: Label("Sources", id="self-headed"),
+                },
+                id="wl-workbench",
+            )
+
+    app = _App()
+    async with app.run_test():
+        assert app.query("#headingless"), "supplied rail content should be mounted"
+        titles = [str(n.renderable) for n in app.query(".watchlists-region-title")]
+        assert "Watchlists" in titles, (
+            "the left rail's content supplies no heading of its own, so the "
+            f"region must still label it: {titles}"
+        )
+        assert "Feeds" not in titles, (
+            "a region whose pane DOES supply its own heading must not add a "
+            f"second one: {titles}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_soloed_centre_region_is_marked_for_css():
+    """Fix round 3, Finding 3: `RegionLayout.solo` only collapses the soloed
+    region's *siblings*, so nothing in the DOM distinguished a soloed region
+    from an ordinarily-expanded one — and FEEDS, the one capped region, stayed
+    pinned at its `max-height` with the rest of the centre blank. This class
+    is the hook `.watchlists-region-sole-centre` keys off (see
+    `_watchlists.tcss`); the geometry it produces is asserted against the real
+    stylesheet in
+    `Tests/UI/test_destination_visual_parity_correction.py::
+    test_watchlists_soloed_feeds_fills_the_centre`.
+    """
+    app = _WorkbenchApp(RegionLayout().solo(Region.FEEDS))
+    async with app.run_test():
+        feeds = app.query_one("#wl-region-feeds")
+        assert feeds.has_class("watchlists-region-sole-centre"), sorted(feeds.classes)
+        # The rails are still expanded, and solo never applies to them.
+        for rail in ("left_rail", "right_rail"):
+            rail_region = app.query_one(f"#wl-region-{rail}")
+            assert not rail_region.has_class("watchlists-region-sole-centre")
+
+    # Reaching the same DOM by hand must get the same treatment: `z` on ITEMS
+    # and CONTENT leaves FEEDS just as alone as `Z` on FEEDS does.
+    manual = _WorkbenchApp(
+        RegionLayout(collapsed=frozenset({Region.ITEMS, Region.CONTENT}))
+    )
+    async with manual.run_test():
+        assert manual.query_one("#wl-region-feeds").has_class(
+            "watchlists-region-sole-centre"
+        )
+
+    # ... and an ordinary expanded layout must NOT get it, or the cap never
+    # applies at all.
+    ordinary = _WorkbenchApp(RegionLayout())
+    async with ordinary.run_test():
+        for region in Region:
+            assert not ordinary.query_one(f"#wl-region-{region.value}").has_class(
+                "watchlists-region-sole-centre"
+            )
+
+
+@pytest.mark.asyncio
 async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
     """Fix round 1 (human-ruled): removing FEEDS's duplicate title (the test
     above) exposed a pre-existing bug where FEEDS's `height: auto` grew
@@ -265,20 +344,41 @@ async def test_feeds_height_is_capped_and_scrollable_when_content_overflows():
 
         # Confirm it SCROLLS rather than clips: all 40 supplied rows must
         # be reachable, not silently cut off past the cap.
-        strips = feeds.screen._compositor.render_strips()
-        top_row_text = "".join(segment.text for segment in strips[feeds.region.y])
-        assert "source-00" in top_row_text, (
-            f"expected the first supplied row on screen initially: {top_row_text!r}"
+        def painted_rows() -> list[str]:
+            strips = feeds.screen._compositor.render_strips()
+            region = feeds.region
+            return [
+                "".join(segment.text for segment in strips[y])[
+                    region.x : region.x + region.width
+                ]
+                for y in range(region.y, region.y + region.height)
+            ]
+
+        rows = painted_rows()
+        assert any("source-00" in row for row in rows), (
+            f"expected the first supplied row on screen initially: {rows!r}"
         )
+        # Fix round 3, Finding 2: the region owns the border AND the scroll,
+        # so the box must stay closed at both scroll extremes. When the pane
+        # inside owned the border instead, the border rows were part of the
+        # scrolled content — at scroll top the bottom edge was off-screen and
+        # at scroll end the top edge was.
+        assert rows[0].startswith("╭") and rows[0].endswith("╮"), rows[0]
+        assert rows[-1].startswith("╰") and rows[-1].endswith("╯"), rows[-1]
 
         feeds.scroll_end(animate=False)
         await pilot.pause()
         await pilot.pause()
 
-        strips = feeds.screen._compositor.render_strips()
-        bottom_y = feeds.region.y + feeds.region.height - 1
-        bottom_row_text = "".join(segment.text for segment in strips[bottom_y])
-        assert "source-39" in bottom_row_text, (
+        rows = painted_rows()
+        assert any("source-39" in row for row in rows), (
             f"the last supplied row should be reachable by scrolling, not "
-            f"lost past the cap: {bottom_row_text!r}"
+            f"lost past the cap: {rows!r}"
+        )
+        assert rows[0].startswith("╭") and rows[0].endswith("╮"), (
+            f"scrolling must not carry the region's own top border away: {rows[0]!r}"
+        )
+        assert rows[-1].startswith("╰") and rows[-1].endswith("╯"), (
+            f"scrolling must not carry the region's own bottom border away: "
+            f"{rows[-1]!r}"
         )

@@ -14857,17 +14857,16 @@ CodingWindow {
  * `Button` rule below wraps as a fallback for whatever still does not fit,
  * rather than clipping it.
  *
- * No `border` here (Task 6): the region's real content, the Inspector pane
- * built by `_build_inspector_pane`, is a `.destination-workbench-pane` --
- * the same shared box the Home/Personas/Schedules/etc. destinations use --
- * which already draws its own `border: round`. Drawing a second one here
- * nested a box-in-a-box. LEFT_RAIL below keeps its region border because
- * its content (`WatchlistTree`) draws none of its own.
+ * Keeps its region border (Task 6, fix round 3): the ONE box per region is
+ * drawn by the region wrapper, and the pane inside is stripped by ID below
+ * (`#watchlists-inspector-pane`). See that rule for why the region, not the
+ * pane, is the survivor.
  */
 .watchlists-region-right_rail {
     width: 34;
     min-width: 0;
     height: 100%;
+    border: round $ds-grid-line;
 }
 
 .watchlists-region-right_rail Button {
@@ -14939,10 +14938,28 @@ CodingWindow {
  * longer scrolls (`Tests/UI/test_destination_visual_parity_correction.py::
  * test_watchlists_feeds_empty_state_fits_without_scrolling`).
  *
- * No `border` here (Task 6): `_build_list_pane`'s content is a
- * `.destination-workbench-pane` (the shared box every destination screen's
- * list/detail/inspector panes use) and already draws one -- see the
- * matching note on `.watchlists-region-right_rail` above.
+ * Fix round 3 re-measured all of the above after moving the border from the
+ * pane to the region (below): the numbers are unchanged, because the region
+ * gains exactly the two rows the pane gives up. Re-swept at 160x42 with 40
+ * sources: cap=12 -> items=14, cap=13 -> items=14, cap=14 -> items=13
+ * (inverts). The margin at the cap is ONE row, and only at height >= 42: at
+ * 160x41 the budget drops to 33 and cap=13 ties (items=13). That constraint
+ * had no executable form until round 3 -- the empty state never reaches the
+ * cap, so the older guard could not exercise it. It is now pinned by
+ * `test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds`,
+ * which forces the overflow inside the real screen; anything that consumes
+ * another row above the workbench fails it rather than silently inverting.
+ *
+ * Keeps its region border (Task 6, fix round 3). Round 1 dropped it and let
+ * the pane's own border stand instead, which was wrong three ways, all
+ * measured: (a) region borders are `round` and pane borders are `solid`, so
+ * the screen drew round corners on LEFT_RAIL/CONTENT and square corners on
+ * FEEDS/ITEMS/RIGHT_RAIL; (b) `overflow-y: auto` scrolls this wrapper, and
+ * the pane's border rows were *inside* the scrolled content -- at scroll top
+ * the box's bottom edge was off-screen and at scroll end its top edge was,
+ * so the one surviving border was an open-ended box; (c) the wrapper's
+ * scrollbar painted in its own gutter, outside the box the pane drew. The
+ * border belongs on the widget that scrolls.
  */
 .watchlists-region-feeds {
     width: 100%;
@@ -14950,6 +14967,7 @@ CodingWindow {
     min-height: 0;
     max-height: 13;
     overflow-y: auto;
+    border: round $ds-grid-line;
 }
 
 /* Companion fix for the region title's removal above: `#watchlists-list-pane`
@@ -14975,11 +14993,33 @@ CodingWindow {
     height: auto;
 }
 
-/* No `border` here either: `_build_detail_pane`'s content is the same
- * `.destination-workbench-pane` box. CONTENT is split out below and keeps
- * the region border -- it is still the Phase-D-placeholder stub with no
- * pane of its own to draw one instead (see `_region_widget`'s
- * factory-presence check).
+/* Exactly one box per region (Task 6, fix round 3): the *region wrapper*
+ * draws it and the pane inside draws none, rather than the other way round.
+ *
+ * These three ids are declared in `components/_agentic_terminal.tcss` (the
+ * shared destination-pane block, ~line 3544) with `border: solid
+ * $ds-grid-line`. An ID selector here matches that block's specificity
+ * exactly and wins on source order -- `features/` loads after `components/`
+ * in `build_css.py` -- so this narrows to Watchlists' three panes and
+ * touches none of the other destinations that share that block. (The same
+ * lever the `#watchlists-list-pane` height rule above already uses; an
+ * earlier round wrongly believed stripping the border required editing the
+ * shared `.destination-workbench-pane` class and thus 13 other screens.)
+ *
+ * Suppressing the PANE rather than the REGION is what makes the five region
+ * boxes uniformly `round`, keeps FEEDS's border fixed while its content
+ * scrolls beneath it, and puts FEEDS's scrollbar inside the box that owns
+ * it -- see the note on `.watchlists-region-feeds` above for the three
+ * defects the other direction produced.
+ */
+#watchlists-list-pane,
+#watchlists-detail-pane,
+#watchlists-inspector-pane {
+    border: none;
+}
+
+/* ITEMS keeps its region border (Task 6, fix round 3) -- the pane inside is
+ * stripped by the rule above.
  *
  * `2fr` (fix round 2, human-authorised lever change): previously an equal
  * `1fr` with CONTENT, which is what forced FEEDS's cap down to a value
@@ -14997,6 +15037,7 @@ CodingWindow {
     width: 100%;
     height: 2fr;
     min-height: 0;
+    border: round $ds-grid-line;
 }
 
 .watchlists-region-content {
@@ -15004,6 +15045,33 @@ CodingWindow {
     height: 1fr;
     min-height: 0;
     border: round $ds-grid-line;
+}
+
+/* Solo must actually fill the centre (Task 6, fix round 3, Finding 3).
+ *
+ * `Z` (`action_solo_region` -> `RegionLayout.solo`) collapses the other two
+ * centre regions to one-line headers. FEEDS is the only capped region, so a
+ * soloed FEEDS stayed pinned at its `max-height` while the two collapsed
+ * headers took one row each -- measured at 100x40 with 40 sources:
+ * `feeds=13@y0, items=1@y13, content=1@y14`, leaving 25 of 40 centre rows
+ * blank under a 13-row window scrolling 44 rows of content. Solo-ITEMS and
+ * solo-CONTENT already filled correctly; only the capped region was
+ * degenerate.
+ *
+ * The cap exists so a long feeds list cannot crowd ITEMS/CONTENT. When they
+ * are collapsed there is nothing to crowd, so the cap is lifted (to the full
+ * centre height) and the region takes the remaining space. `_region_widget`
+ * adds `.watchlists-region-sole-centre` for exactly that state -- see its
+ * comment for why it keys on "only expanded centre region" rather than on
+ * `RegionLayout.solo_region`.
+ *
+ * Must stay AFTER `.watchlists-region-feeds` above: both are single-class
+ * selectors, so this only wins the `height`/`max-height` tie on source
+ * order.
+ */
+.watchlists-region-sole-centre {
+    height: 1fr;
+    max-height: 100%;
 }
 
 .watchlists-region-title {
@@ -15043,6 +15111,60 @@ CodingWindow {
     width: 16;
     min-width: 0;
     max-width: 16;
+}
+
+/* Section tab strip (Task 3, styled in Task 6 fix round 3 -- folded in by
+ * the reviewer because the active section was invisible).
+ *
+ * `WatchlistsTabStrip.__init__` pins the strip to `height: 1`, and
+ * `.watchlists-tab` carried no styling of its own, so the active tab picked
+ * up the global `.is-active { border: round $ds-action-focus }`
+ * (`components/_agentic_terminal.tcss`). A `round` border needs 2 lines
+ * before it has a content line at all, so inside a 1-row strip the button
+ * rendered as its own top border and nothing else: the active section's
+ * LABEL never painted, which is the one thing the strip exists to show.
+ *
+ * Fixed here rather than in the shared sheet: that global rule is used by
+ * many screens, and it is overridden the same way wherever a height-1
+ * control meets it -- `#mcp-hub-rail Button.mcp-rail-row.is-active` and
+ * `#mcp-mode-strip .mcp-mode-chip.is-active` in `_agentic_terminal.tcss`
+ * both carry exactly this `border: none` + `text-style: bold underline`
+ * pair. This mirrors the MCP mode strip, which is the same widget shape (a
+ * one-row strip of mode chips), rather than inventing a new active look.
+ */
+.watchlists-tab-strip Button.watchlists-tab {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+.watchlists-tab-strip .watchlists-tab.is-active {
+    border: none;
+    text-style: bold underline;
+}
+
+/* Focus must not impersonate the active tab (bold underline above), and the
+ * active tab must stay legible while focused -- same split the MCP mode
+ * strip uses.
+ */
+.watchlists-tab-strip .watchlists-tab:focus,
+.watchlists-tab-strip .watchlists-tab:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+    outline: none;
+    border: none;
+}
+
+.watchlists-tab-strip .watchlists-tab.is-active:focus,
+.watchlists-tab-strip .watchlists-tab.is-active:hover:focus {
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: bold underline;
+    outline: none;
+    border: none;
 }
 
 /* ===== MODULE: features/_lab.tcss ===== */
