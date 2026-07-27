@@ -251,15 +251,24 @@ class LLMManagementWindow(Container):
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.debug("LLMManagementWindow.on_mount called")
-        # Trigger the watcher to set up the initial view state
-        # This ensures buttons and views are properly initialized
+        # The child views don't exist until after this refresh (the window
+        # itself may be mounted lazily by its parent screen), so defer the
+        # initial activation until they do.
         self.call_after_refresh(self._initialize_view)
 
     def _initialize_view(self) -> None:
-        """Initialize the active view after mounting."""
-        # Force the watcher to run by setting the value
-        # Even though it's the same as the default, this ensures proper initialization
-        self.active_view = "llama-cpp"
+        """Activate the initial view now that the child views exist.
+
+        This does NOT assign ``self.active_view`` to its own default value.
+        Textual's reactive system skips the watcher when a value is set to
+        one that's already equal to the current value, so that assignment
+        would be a silent no-op whenever ``active_view`` still holds its
+        default -- which it does here, since nothing has changed it yet.
+        Call the activation logic directly instead, so the initial view is
+        actually marked ``-active`` regardless of whether the reactive
+        watcher would fire.
+        """
+        self.watch_active_view(self.active_view, self.active_view)
 
     def compose(self) -> ComposeResult:
         """Compose the LLM Management UI with sidebar navigation and content area."""

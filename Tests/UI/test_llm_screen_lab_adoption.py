@@ -2,12 +2,39 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from textual.widgets import Button, Static
 
+from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
+from tldw_chatbook.LLM_Calls.huggingface_api import HuggingFaceAPI
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from Tests.UI.test_screen_navigation import _build_test_app
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_models_mount(monkeypatch):
+    """Neutralise the splash race and live network call this file's
+    press/pause sequences can hit. Same rationale as the identically named
+    fixture in ``test_lab_frame_mode_keys.py``: ``SplashScreen`` starts a
+    real 1.5s timer that can push a competing screen mid-test, and
+    ``ModelSearchWidget`` (mounted eagerly inside the Download Models view)
+    fires a real ``HuggingFaceAPI.search_models`` HTTP request on mount.
+
+    Args:
+        monkeypatch: pytest's monkeypatch fixture; reverts both patches
+            automatically at the end of each test.
+    """
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return _real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
+    monkeypatch.setattr(HuggingFaceAPI, "search_models", AsyncMock(return_value=[]))
 
 
 async def _models_screen(pilot_app):
@@ -120,3 +147,33 @@ async def test_the_status_row_reports_running_servers():
         screen.refresh_lab_status()
         await pilot.pause()
         assert "Servers: 1 running" in str(chip.renderable)
+
+
+@pytest.mark.asyncio
+async def test_the_initial_view_is_marked_active_on_arrival_with_no_press():
+    """Regression test for the blank-body-on-arrival bug.
+
+    ``LLMManagementWindow`` now mounts from ``call_after_refresh`` (Models'
+    body costs 488-787 ms to compose), which changed *when* the window
+    mounts relative to ``active_view``'s reactive default-value watcher.
+    ``_initialize_view`` used to just assign
+    ``self.active_view = "llama-cpp"`` -- the reactive's own default -- and
+    Textual skips a watcher when a value is set to one already equal to the
+    current value, so no view was ever marked ``-active`` and the body
+    rendered blank.
+
+    This must assert the ARRIVAL state without pressing any rail row: a
+    press assigns a genuinely new value, which does fire the watcher and
+    would mask the bug entirely (as every other test in this file does,
+    intentionally or not).
+    """
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        await pilot.pause()
+        await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
+
+        active_views = [v for v in window.query(".llm-view") if "-active" in v.classes]
+        assert len(active_views) == 1, "exactly one .llm-view must carry -active"
+        assert active_views[0].id == "llm-view-llama-cpp"
