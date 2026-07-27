@@ -58,6 +58,38 @@ def test_tts_profiles_custom_db_path_uses_existing_validator(
 @pytest.mark.parametrize(
     "unsafe_path",
     (
+        "../profiles.sqlite",
+        "./../profiles.sqlite",
+    ),
+)
+def test_tts_profiles_custom_db_path_rejects_single_parent_component_before_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe_path: str,
+) -> None:
+    validator = Mock(wraps=config.validate_path_simple)
+    monkeypatch.setattr(
+        config,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            unsafe_path
+            if (section, key) == ("database", "tts_profiles_db_path")
+            else default
+        ),
+    )
+    monkeypatch.setattr(config, "validate_path_simple", validator)
+
+    with pytest.raises(
+        ValueError,
+        match="TTS profiles database path cannot contain parent traversal",
+    ):
+        config.get_tts_profiles_db_path()
+
+    validator.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    (
         "../../private/profiles.sqlite",
         "/tmp/profiles.sqlite;touch-payload",
         "/tmp/profiles\x00.sqlite",

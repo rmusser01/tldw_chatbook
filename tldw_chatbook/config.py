@@ -4623,7 +4623,12 @@ def get_tts_profiles_db_path() -> Path:
 
     custom_path = get_cli_setting("database", "tts_profiles_db_path", None)
     if custom_path:
-        candidate = Path(str(custom_path)).expanduser()
+        candidate = Path(str(custom_path))
+        if ".." in candidate.parts:
+            raise ValueError(
+                "TTS profiles database path cannot contain parent traversal"
+            )
+        candidate = candidate.expanduser()
         return validate_path_simple(candidate, require_exists=False).resolve()
     return get_user_data_dir() / "tldw_chatbook_tts_profiles.db"
 
