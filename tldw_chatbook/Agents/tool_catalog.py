@@ -328,6 +328,12 @@ class BuiltinToolProvider:
         """Return the built-in ``Tool`` registered under ``name``, if any."""
         return self._tools.get(name)
 
+    def timeout_for(self, tool_id: str) -> float | None:
+        """Return this tool's own timeout ceiling, if it declares one."""
+        tool = self._tools.get(tool_id.split(":", 1)[-1])
+        seconds = float(getattr(tool, "timeout_seconds", 0.0) or 0.0)
+        return seconds if seconds > 0 else None
+
     def _resolve_gate(self) -> Any:
         """Return the provider's gate, building one lazily on first use.
 
@@ -664,6 +670,26 @@ class ToolCatalogRegistry:
             # lets a `None` owner surface as an AttributeError either way.
             return ToolResult(ok=False, error=f"Tool provider not found for: {name}")
         return provider.invoke(tool_id, args)
+
+    def timeout_for(self, name: str) -> float | None:
+        """Resolve a tool's per-call timeout override by LLM-facing name.
+
+        Duck-typed like the rest of the provider interface: a provider that
+        does not implement ``timeout_for`` simply has no overrides, so MCP
+        and skill tools keep using the run budget unchanged.
+
+        Args:
+            name: The tool name the model called.
+
+        Returns:
+            A positive seconds value, or None to use the run default.
+        """
+        tool_id = self.resolve_name(name)
+        if tool_id is None:
+            return None
+        provider = self._owner_and_id(tool_id)
+        getter = getattr(provider, "timeout_for", None)
+        return getter(tool_id) if getter is not None else None
 
 
 def initial_disclosure(
