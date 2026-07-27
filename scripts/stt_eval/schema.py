@@ -13,6 +13,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StringConstraints,
     field_validator,
     model_validator,
@@ -155,7 +156,7 @@ class StrictModel(BaseModel):
 
 
 class ArtifactFile(StrictModel):
-    """One exact regular file belonging to an immutable artifact."""
+    """One exact regular file belonging to a content-addressed artifact."""
 
     filename: ArtifactFilename
     size_bytes: PositiveByteSize
@@ -219,7 +220,7 @@ class VadSettings(StrictModel):
 
 
 class VadVariant(StrictModel):
-    """Immutable VAD artifact and runtime provenance."""
+    """Pinned VAD artifact declaration and runtime provenance."""
 
     variant_id: Identifier
     precision: Precision
@@ -237,13 +238,13 @@ class ModelCapabilities(StrictModel):
     """Capabilities required to interpret qualification evidence."""
 
     language_scope: LanguageScope
-    supports_timestamps: bool
-    supports_long_form: bool
+    supports_timestamps: StrictBool
+    supports_long_form: StrictBool
     vad_mode: VadMode
 
 
 class ModelVariant(StrictModel):
-    """Immutable model artifact and local execution identity."""
+    """Pinned model artifact declaration and local execution identity."""
 
     variant_id: Identifier
     provider: Identifier
@@ -385,7 +386,7 @@ class CorpusSource(StrictModel):
 
 
 class CorpusSample(StrictModel):
-    """One immutable prepared sample and its evaluation identity."""
+    """One pinned prepared sample and its evaluation identity."""
 
     sample_id: Identifier
     source_id: Identifier

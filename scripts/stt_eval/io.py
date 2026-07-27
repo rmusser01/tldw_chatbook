@@ -23,7 +23,7 @@ DEFAULT_CHUNK_SIZE = 1024 * 1024
 
 @dataclass(frozen=True)
 class VerifiedFileIdentity:
-    """Immutable stat and content identity of one verified open file."""
+    """Frozen stat and content identity token from one open file."""
 
     device: int
     inode: int
@@ -35,7 +35,7 @@ class VerifiedFileIdentity:
 
 @dataclass(frozen=True)
 class VerifiedFile:
-    """A verified stream kept open for the context manager's lifetime."""
+    """A descriptor-pinned stream plus its pre-consumption identity token."""
 
     stream: BinaryIO
     identity: VerifiedFileIdentity
@@ -201,6 +201,62 @@ def _identity_from_stat(
     )
 
 
+def _same_descriptor_content(
+    left: VerifiedFileIdentity,
+    right: VerifiedFileIdentity,
+) -> bool:
+    """Compare content-relevant fields while allowing pathname rename ctime."""
+
+    return (
+        left.device,
+        left.inode,
+        left.size_bytes,
+        left.mtime_ns,
+        left.sha256,
+    ) == (
+        right.device,
+        right.inode,
+        right.size_bytes,
+        right.mtime_ns,
+        right.sha256,
+    )
+
+
+def _revalidate_consumed_stream(
+    stream: BinaryIO,
+    expected_identity: VerifiedFileIdentity,
+    expected_size: int,
+    expected_sha256: str,
+    chunk_size: int,
+) -> None:
+    """Detect content/stat changes on the same descriptor after consumption."""
+
+    stream.seek(0)
+    digest = hashlib.sha256()
+    byte_count = 0
+    before_metadata = os.fstat(stream.fileno())
+    while True:
+        chunk = stream.read(chunk_size)
+        if not chunk:
+            break
+        byte_count += len(chunk)
+        if byte_count > expected_size:
+            raise ValueError("artifact changed during consumption")
+        digest.update(chunk)
+
+    after_metadata = os.fstat(stream.fileno())
+    sha256 = digest.hexdigest()
+    before_identity = _identity_from_stat(before_metadata, sha256)
+    after_identity = _identity_from_stat(after_metadata, sha256)
+    if (
+        byte_count != expected_size
+        or sha256 != expected_sha256
+        or not _same_descriptor_content(before_identity, after_identity)
+        or not _same_descriptor_content(after_identity, expected_identity)
+    ):
+        raise ValueError("artifact changed during consumption")
+
+
 def stream_file_identity(
     path: Path,
     *,
@@ -242,11 +298,13 @@ def open_verified_file(
     expected_sha256: str,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> Iterator[VerifiedFile]:
-    """Verify and yield the exact open file descriptor for safe consumption.
+    """Verify and yield swap-resistant access through one open descriptor.
 
-    The yielded stream is rewound and remains open only inside this context.
-    Consumers that can accept a descriptor should read this stream instead of
-    reopening ``path``.
+    Path replacement cannot retarget the yielded stream, but writes through the
+    same inode can still change its bytes. On context exit, the stream is fully
+    rehashed and restatted; callers must invalidate the operation if that
+    post-consumption check raises. This is integrity-change detection, not path
+    authorization, a lease, or an immutable snapshot.
     """
 
     if (
@@ -308,7 +366,16 @@ def open_verified_file(
                 raise ValueError("artifact identity changed during verification")
 
             stream.seek(0)
-            yield VerifiedFile(stream=stream, identity=identity)
+            try:
+                yield VerifiedFile(stream=stream, identity=identity)
+            finally:
+                _revalidate_consumed_stream(
+                    stream,
+                    identity,
+                    expected_size,
+                    expected_sha256,
+                    chunk_size,
+                )
     finally:
         if descriptor >= 0:
             os.close(descriptor)

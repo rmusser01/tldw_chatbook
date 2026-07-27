@@ -492,8 +492,10 @@ git commit -m "feat(stt-eval): evaluate confidence-bound artifact gates"
 - [ ] **Step 1: Write failing local-artifact verification tests**
 
 Require every declared model and VAD file to be a regular non-symlink file with
-the exact size and SHA-256. Verify that neither adapter receives a repository
-ID or enables runtime downloads.
+the exact size and SHA-256 at each required verification boundary. Cover
+same-inode mutation during descriptor-backed consumption and path replacement
+around native path-only model loading. Verify that neither adapter receives a
+repository ID or enables runtime downloads.
 
 - [ ] **Step 2: Write failing worker-protocol tests**
 
@@ -538,29 +540,49 @@ class STTEvalAdapter(Protocol):
     def close(self) -> None: ...
 ```
 
-Construct `faster_whisper.WhisperModel` from the verified local directory with
+For any consumer API that accepts an open descriptor or binary stream, keep the
+swap-resistant verified-read context open for the complete consumption
+operation and accept its output only after the context's post-consumption
+content/stat validation finishes successfully. Native model loaders require
+paths, so retain each artifact's pre-load identity token, revalidate the exact
+artifact content after model load and again after the run, and mark the run
+incomplete if either check detects a change. These checks detect integrity
+changes; they are not path authorization or a lease. Do not add a snapshot
+service in this task.
+
+Construct `faster_whisper.WhisperModel` from the declared local directory with
 CPU, the manifest's thread count, `compute_type="int8"`, and
-`local_files_only=True`. Pass the already-decoded float32 waveform rather than a
-path, materialize all segments inside the timed boundary, and standardize
-segment timestamps.
+`local_files_only=True`. Retain and revalidate the model files' pre-load
+identity tokens at both required boundaries. Pass the already-decoded float32
+waveform rather than a path, materialize all segments inside the timed
+boundary, and standardize segment timestamps.
 
 - [ ] **Step 5: Implement the onnx-asr v2/v3 adapter**
 
-Call pinned `onnx_asr.load_model` with the verified local directory,
+Call pinned `onnx_asr.load_model` with the declared local directory,
 `quantization="int8"` or `None` for F32, CPU execution provider, and the exact
 thread/preprocessor settings from the manifest. For long-form records, create
-the pinned VAD wrapper with the verified VAD path and explicitly pass
-`batch_size=1`; record requested and observed effective values. Do not use a
-model name that can invoke the resolver when a local path is missing.
+the pinned VAD wrapper with the declared local VAD path and explicitly pass
+`batch_size=1`; record requested and observed effective values. Retain the
+pre-load identity tokens for every model and VAD file, revalidate their exact
+content after loading and after the run, and make any detected change
+incomplete. Do not use a model name that can invoke the resolver when a local
+path is missing.
 
 - [ ] **Step 6: Implement the JSONL child protocol**
 
-The parent sends one immutable run request file. The child loads one model,
-decodes each verified prepared WAV outside the recognition timing boundary,
-emits one raw sample record at a time, flushes it, then emits exactly one
-terminal record. On any exception it emits a sanitized terminal failure when
-possible and exits nonzero. The parent publishes only a complete validated
-temporary JSONL file.
+The parent sends one fixed run request file. The child loads one model and
+decodes each prepared WAV outside the recognition timing boundary. Descriptor-
+capable WAV consumers must remain inside the swap-resistant read context until
+its post-consumption validation succeeds. The worker retains path-only
+model/VAD identity tokens through loading and the full run, performs the
+required post-load and post-run exact-content revalidations, and emits
+`incomplete` instead of accepting observations if any identity changed. This
+detects integrity changes and does not turn a path into authorization or a
+lease. The child emits one raw sample record at a time, flushes it, then emits
+exactly one terminal record. On any exception it emits a sanitized terminal
+failure when possible and exits nonzero. The parent publishes only a complete
+validated temporary JSONL file.
 
 - [ ] **Step 7: Run worker tests**
 

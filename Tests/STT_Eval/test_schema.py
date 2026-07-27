@@ -275,6 +275,28 @@ def test_manifest_requires_model_vad_and_qualification_capabilities(
         ExperimentManifest.model_validate(raw)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("supports_timestamps", "yes"),
+        ("supports_timestamps", 1),
+        ("supports_timestamps", 0),
+        ("supports_long_form", "yes"),
+        ("supports_long_form", 1),
+        ("supports_long_form", 0),
+    ],
+)
+def test_model_capability_flags_require_strict_booleans(
+    field: str, value: str | int
+) -> None:
+    raw = minimal_experiment()
+    capabilities = _model(raw, "parakeet-v2-int8")["capabilities"]
+    capabilities[field] = value  # type: ignore[index]
+
+    with pytest.raises(ValidationError):
+        ExperimentManifest.model_validate(raw)
+
+
 def test_closed_matrix_rejects_duplicate_cells() -> None:
     raw = minimal_experiment()
     raw["matrix"].append(copy.deepcopy(raw["matrix"][0]))  # type: ignore[union-attr,index]
@@ -703,6 +725,51 @@ def test_open_verified_file_consumes_verified_descriptor_after_path_swap(
 
     assert identity.size_bytes == 4
     assert identity.sha256 == hashlib.sha256(b"safe").hexdigest()
+
+
+def test_open_verified_file_rejects_same_inode_mutation_on_context_exit(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(b"safe")
+    verified_file = None
+
+    with pytest.raises(ValueError, match="changed during consumption"):
+        with open_verified_file(
+            path,
+            expected_size=4,
+            expected_sha256=hashlib.sha256(b"safe").hexdigest(),
+        ) as verified:
+            verified_file = verified
+            assert verified.stream.read() == b"safe"
+            with path.open("r+b") as mutable:
+                mutable.write(b"evil")
+                mutable.flush()
+                os.fsync(mutable.fileno())
+
+    assert verified_file is not None
+    assert verified_file.stream.closed
+
+
+def test_open_verified_file_revalidates_and_closes_after_consumer_failure(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(b"safe")
+    verified_file = None
+
+    with pytest.raises(ValueError, match="changed during consumption"):
+        with open_verified_file(
+            path,
+            expected_size=4,
+            expected_sha256=hashlib.sha256(b"safe").hexdigest(),
+        ) as verified:
+            verified_file = verified
+            path.write_bytes(b"evil")
+            raise RuntimeError("consumer failed")
+
+    assert verified_file is not None
+    assert verified_file.stream.closed
 
 
 def test_revalidate_file_identity_detects_changed_path(tmp_path: Path) -> None:
