@@ -94,9 +94,9 @@ is where goals 1 and 2 are fully realised.
 ### 3.1 Writer ownership
 
 ```
-run_turn()                            RunLogWriter constructed ONCE here
-  └─ _run_one(primary)                writer passed down
-       └─ spawn() → _run_one(child)   SAME writer instance
+run_turn()                            RunLogWriter constructed ONCE here, UNBOUND
+  └─ _run_one(primary)                bind(run_id) — directory created here
+       └─ spawn() → _run_one(child)   SAME writer, already bound
 ```
 
 The writer is constructed in `AgentService.run_turn` and threaded through the
@@ -110,28 +110,62 @@ The writer is constructed in `AgentService.run_turn` and threaded through the
   Console bridge. Anything built on the hook would silently produce no log for
   any non-Console caller.
 
+**Construction is two-phase, and must be.** The run id does not exist when
+`run_turn` runs — `run_id = self.db.create_run(...)` is the first statement of
+`_run_one`, so the writer cannot name its `<run_id>/` directory at construction
+time. The writer is therefore constructed *unbound* in `run_turn` (fixing the
+counter to the tree) and `bind(run_id)` is called by the **primary** `_run_one`,
+which creates the directory. Child `_run_one` calls find the writer already
+bound and never rebind it.
+
 ### 3.2 Capture points
 
-Full fidelity is only available in `agent_service`'s own closures. The step
-record is not a viable source: `agent_runtime.py` truncates model turns to 200
-characters (`summary=turn.text[:200]`) and tool results to 2,000
-(`result=content[:2000]`) — strictly *less* than history retains.
+The step record is not a viable source: `agent_runtime.py` truncates model turns
+to 200 characters (`summary=turn.text[:200]`) and tool results to 2,000
+(`result=content[:2000]`) — strictly *less* than history retains. So capture must
+happen somewhere the full value exists.
 
-| Record type | Captured at | Carries |
+Capture is a **single new injected callable, `LoopDeps.on_record`**, called at
+exactly two points inside `run_agent_loop`:
+
+| Call site | Record types | Carries |
 | --- | --- | --- |
-| `model` | wrapper around `_make_call_model`'s `call_model` | full `ModelTurn.text`, `tokens` |
-| `tool_call` | `invoke_tool` wrapper, pre-dispatch | **full args** — `write_file` args are file contents |
-| `tool_result` | `invoke_tool` wrapper, post-dispatch | full `ToolResult.content` / `error` |
-| `spawn` | `spawn` closure | full task text **and the child's untruncated result**, captured before `max_subagent_result_chars` |
-| `error` | `on_step` | budget exhaustion, cycle detection |
+| Immediately after `turn = deps.call_model(...)`, before `add(STEP_MODEL, …)` | `model` | full `turn.text`, `turn.tokens`, and any `tool_calls` with their `call_id`s |
+| At the point `content` is assembled for a dispatched call, **before** `_truncate_tool_result` is applied | `tool_call`, `tool_result` | full args; full result or error text |
+| `on_step` (existing hook) | `error` | budget exhaustion, cycle detection |
 
-**Anti-duplication rule.** The wrappers own `model`, `tool_call`, `tool_result`,
-and `spawn`. `on_step` owns *only* `STEP_ERROR`. `on_step` also fires
-`STEP_TOOL_CALL` before dispatch; that firing is ignored, because the wrapper
-holds the complete version.
+**Why one hook in the loop rather than wrappers in the service.** An earlier
+draft wrapped `call_model`, `invoke_tool`, and `spawn` individually in
+`agent_service`. That is both more code and *incomplete*: the loop dispatches
+`find_tools`, `load_tools`, `spawn_subagent`, `skill_file`, `install_skill`, and
+`run_skill_script` through their own branches, never through `deps.invoke_tool`,
+so none of their results would have been logged — `run_skill_script`'s script
+output least excusably of all. The loop assembles `content` for **every** branch
+at one point, immediately before truncation. Capturing there is uniform by
+construction: builtin, MCP, skill, and runtime tools are all covered, and so is
+the `review_tool_calls` refusal path.
 
-`agent_runtime.py` is not modified. `agent_service` remains, per its own module
-docstring, the only impure module in `Agents/`.
+It also removes the need for a special `spawn` capture. A child's own model and
+tool records are already written by the same hook during its own loop, so the
+child's untruncated final answer is in the log as its last `model` record —
+independently of the `max_subagent_result_chars = 4000` cut applied to what the
+*parent* receives. The parent's `spawn` record needs only the task text and the
+returned summary.
+
+**This does modify `agent_runtime.py`**, and an earlier draft of this document
+wrongly claimed otherwise. The modification follows the module's established
+pattern exactly: `on_record` is an optional injected callable on `LoopDeps`,
+defaulting to a no-op, in the same shape as the existing `on_step` and
+`review_tool_calls`. The loop stays pure — it calls an injected function and
+owns no I/O. `agent_service` remains the only impure module in `Agents/`.
+
+**Anti-duplication rule.** `on_record` owns `model`, `tool_call`, `tool_result`,
+and `spawn`. `on_step` owns *only* `STEP_ERROR`; its `STEP_TOOL_CALL` and
+`STEP_MODEL` firings are ignored because `on_record` holds the complete versions.
+
+**Failure isolation.** `on_record` must be wrapped in the same
+catch-and-continue that `add()` already applies to `on_step`: a failing log write
+can never abort a run.
 
 ### 3.3 Location
 
@@ -190,6 +224,18 @@ searchable by any tool.
 Segments roll at 4 MB (`logs.0002.txt`, …), under `grep_files`'
 `_MAX_GREP_FILE_BYTES` ceiling of 5 MB.
 
+**A record never spans segments.** The roll decision is made *before* writing a
+record that would carry the current segment past the threshold, not after
+exceeding it. A split record would break the `bytes=`-exact parsing model, which
+assumes a record's content lies wholly within one file. Because
+`run_log_max_record_bytes` (1 MB) is well under the segment threshold (4 MB), a
+single record always fits.
+
+**Readers must tolerate a partially written trailing record.** The agent searches
+its own log *while the writer is appending to it*. `search_run_log` therefore
+parses up to the last record whose declared `bytes=` is fully present on disk and
+ignores any trailing remainder.
+
 **Segment discovery is glob + sort, not `MANIFEST`.** A crashed run never writes
 a manifest; making it load-bearing would render exactly the runs that most need
 inspection unreadable. `MANIFEST` carries convenience metadata only: run header
@@ -200,9 +246,18 @@ supersession.
 
 ### 5.1 Registration
 
-Registered as a **runtime tool**, handled in the service alongside `find_tools`,
-`load_tools`, and `spawn_subagent` — not as a catalog tool. Three consequences,
-each resolving a specific problem:
+Registered as a **runtime tool**, alongside `find_tools`, `load_tools`,
+`spawn_subagent`, `skill_file`, `install_skill`, and `run_skill_script` — not as
+a catalog tool.
+
+Registration follows the pattern those six already establish: a schema in
+`tool_catalog`, an optional callable on `LoopDeps`, and a dispatch branch in
+`run_agent_loop` guarded by `deps.<name> is not None`, appended to the existing
+`elif` chain. An unrecognised name still falls through to the chain's `else`,
+reaching `deps.invoke_tool` and its permission gate — so a stray call when the
+tool is not offered is refused normally rather than mishandled.
+
+Three consequences, each resolving a specific problem:
 
 - **Consumes no `max_active_tools` slot.** That ceiling is a one-way ratchet
   (`load_tools` refuses past it, nothing unloads). A memory tool should not
@@ -215,12 +270,24 @@ each resolving a specific problem:
 - **Offered only when logging is active** and the log is confirmed writable
   (§7).
 
-### 5.2 Sub-agent scoping
+### 5.2 Sub-agents do not get the tool
 
-A sub-agent's `search_run_log` is scoped to its own subtree's records by default.
-`spawn_subagent`'s contract is *"It sees only the task text you pass"*; granting
-a child its parent's entire history as an unremarked side effect would break that
-isolation. Widening it is a deliberate future decision, not a default.
+In Phase 1, `search_run_log` is offered to the **primary agent only**.
+
+The isolation argument is the first reason: `spawn_subagent`'s contract is *"It
+sees only the task text you pass"*, and granting a child its parent's entire
+history as an unremarked side effect would break that.
+
+But scoping a child to its *own* records — the obvious middle path, and what an
+earlier draft specified — turns out to be pointless. `clamp_child_budget` sets
+`max_subagents=0`, so a child's subtree is only itself; children are short; and a
+short run's entire history is already in its context. The tool would add surface
+area and a scoping rule to buy a child nothing. Not offering it is simpler and
+strictly safer.
+
+Giving children scoped or full access is a deliberate future decision, and one
+worth revisiting only once Phase 3 eviction makes a child's own history capable
+of exceeding its window.
 
 ### 5.3 Interface
 
@@ -372,6 +439,34 @@ echo with its `role="tool"` replies by `tool_call_id`. Eviction that orphans
 either half produces a request strict providers reject. Any eviction policy must
 operate on whole call/result groups.
 
+### 10.1 Which goals each phase actually delivers
+
+| Goal (§2.1) | Phase 1 | Phase 2 | Phase 3 |
+| --- | --- | --- | --- |
+| 1. Long-horizon runs unbounded by context | — | — | **Yes** |
+| 2. Small-context local models | — | — | **Yes** |
+| 3. Queryable, crash-durable run history | **Durability + per-run search** | Console reader, aggregation, cross-run search | — |
+| 4. 1:1 PRO-LONG reachable as config | Format and seams built for it | — | **Delivered** |
+
+Stated plainly so nobody mistakes Phase 1 for the whole thing: **Phase 1 does not
+reduce context usage.** It makes truncated content *recoverable* and run history
+*durable*. Goals 1 and 2 are delivered by Phase 3.
+
+### 10.2 A known Phase 1 failure mode
+
+Because Phase 1 evicts nothing, a `search_run_log` result enters history like any
+other tool result — capped at `max_tool_result_chars`, counted against
+`max_total_tokens`. An agent that searches its log heavily therefore *grows* its
+context faster than one that does not, and in the worst case can thrash: search →
+large result → context pressure → truncation → search again.
+
+Three things bound this rather than solve it: search results are capped at 16,000
+characters like every other result; the `context=` parameter defaults low so hits
+return records rather than whole regions; and the system-prompt section (§6.2)
+directs the model to search for *specific* content it knows it needs, not to
+browse. It is genuinely resolved only by Phase 3, and that is a further argument
+for not treating Phase 1 as the finished feature.
+
 ## 11. Deferred
 
 - **Model-authored code over the log.** The paper's largest single gain
@@ -392,7 +487,16 @@ operate on whole call/result groups.
 - **Counter monotonicity** across a parent plus two sub-agents; no duplicate
   record numbers.
 - **Segmentation:** roll at threshold; search spanning segments; a run with a
-  missing `MANIFEST` remains fully searchable.
+  missing `MANIFEST` remains fully searchable; **no record ever spans a segment
+  boundary**, including one written when the segment is just under threshold.
+- **Concurrent read during write:** a search issued while a record is
+  half-written returns every complete record and ignores the remainder.
+- **Capture completeness:** results from `find_tools`, `load_tools`,
+  `run_skill_script`, an MCP tool, a skill tool, and a `review_tool_calls`
+  refusal each appear in the log — the branches a service-side wrapper would have
+  missed.
+- **Primary-only offer:** a sub-agent is not given `search_run_log`, and a stray
+  call to it from a child is refused through the normal permission path.
 - **Capture fidelity:** a 50,000-character tool result appears in full in the log
   while history shows the 16,000-character truncation plus a record pointer.
 - **Degradation:** no workspace bound; unwritable directory; write failure
@@ -404,10 +508,10 @@ operate on whole call/result groups.
 
 ## 13. Review findings register
 
-Twenty issues were found across two review passes before this document was
-written — the first over the architecture, the second over the record format.
-Each is addressed above; they are recorded here so reviewers can check the
-reasoning rather than rediscover it.
+Twenty-seven issues were found across three review passes — the first over the
+architecture, the second over the record format, the third over this document
+after it was written. Each is addressed above; they are recorded here so
+reviewers can check the reasoning rather than rediscover it.
 
 **First pass — architecture.**
 
@@ -438,6 +542,18 @@ reasoning rather than rediscover it.
 | 18 | `MANIFEST` as a correctness dependency makes crashed runs unreadable | Discovery is glob + sort; manifest is metadata only (§4.3) |
 | 19 | Writer reachable from multiple threads via `_call_with_timeout`; fsync policy unstated | Lock + `O_APPEND`; flush per record, fsync at roll and run end (§7) |
 | 20 | `tool_call` args were unspecified — `write_file` args *are* file contents | Full args logged (§3.2) |
+
+**Third pass — this document.**
+
+| # | Finding | Resolution |
+| --- | --- | --- |
+| 21 | **Contradiction:** §3.2 claimed `agent_runtime.py` is unmodified while §5.1 registered a runtime tool, which requires a `LoopDeps` field and a dispatch branch in the loop | Claim corrected; the modification is stated and shown to follow the pattern the six existing runtime tools already establish (§3.2, §5.1) |
+| 22 | **Incomplete capture:** service-side wrappers miss every runtime-tool result — `find_tools`, `load_tools`, `skill_file`, `install_skill`, `run_skill_script` — because the loop dispatches those outside `deps.invoke_tool` | Replaced three wrappers with one `on_record` hook at the loop's single `content`-assembly point, which is uniform across all branches (§3.2) |
+| 23 | **Ordering bug:** the writer cannot name its `<run_id>/` directory in `run_turn`; `create_run` is the first statement of `_run_one` | Two-phase construction: unbound in `run_turn`, `bind(run_id)` by the primary `_run_one` (§3.1) |
+| 24 | Sub-agent scoping was specified but buys a child nothing — `max_subagents=0` makes its subtree just itself, and its short history is already in context | Tool is offered to the primary agent only in Phase 1 (§5.2) |
+| 25 | A record could span a segment boundary, breaking `bytes=`-exact parsing | Roll decided *before* writing; a 1 MB record cap under a 4 MB threshold guarantees fit (§4.3) |
+| 26 | Readers would hit a partially written trailing record — the agent searches the log while the writer appends | Parse to the last complete record; ignore the remainder (§4.3) |
+| 27 | The document did not say which goals each phase delivers, and never stated that Phase 1 can *increase* context pressure | Goal/phase matrix and the thrash failure mode both documented (§10.1, §10.2) |
 
 ## 14. Related work in this repository
 
