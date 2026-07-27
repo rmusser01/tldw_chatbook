@@ -4,7 +4,7 @@
 
 **Goal:** Remove the unreachable pre-Library TLDW API worker pipeline, its shared application request context, and its payload-bearing completion handlers without disturbing the live Library ingest implementation.
 
-**Architecture:** Latest `dev` contains no producer for the `api_calls` worker group, no `tldw_api_events.py`, no retired MediaIngestScreen, and no matching `#tldw-api-*` widgets. The only remaining pieces are an application field, a worker-registry branch, compatibility exports, and completion handlers. Delete that orphan graph instead of manufacturing a replacement producer or result-envelope abstraction. Library remains the only ingest owner through its queue, request mapping, and server batch cancellation seams.
+**Architecture:** Latest `dev` contains no producer for the `api_calls` worker group, no `tldw_api_events.py`, no retired MediaIngestScreen, and no matching `#tldw-api-*` widgets. The remaining executable pieces are an application field, a worker-registry branch, compatibility exports, and completion handlers; two production comments also preserve obsolete module/selector references. Delete that orphan graph and correct those comments instead of manufacturing a replacement producer or result-envelope abstraction. Library remains the only ingest owner through its queue, request mapping, and server batch cancellation seams.
 
 **Tech Stack:** Python 3.11+, Textual production app, Python AST, pytest/pytest-asyncio, Ruff.
 
@@ -39,6 +39,11 @@ substitute or unbound app method is allowed.
   stale worker-registry group comment after `api_calls` is deleted; do not
   change Notes behavior.
 - Modify `tldw_chatbook/app.py`: remove `_last_tldw_api_request_context`.
+- Modify `tldw_chatbook/Library/server_ingest_request.py`: keep the live
+  request-mapping rationale while removing its obsolete `tldw_api_events.py`
+  reference.
+- Modify `tldw_chatbook/css/build_css.py`: keep the deleted-stylesheet
+  rationale while removing literal retired `#tldw-api-*` selector references.
 - Create `Tests/ProductionApp/test_retired_tldw_api_worker_pipeline.py`.
 - Modify `Tests/test_application_state_ownership.py`.
 
@@ -78,6 +83,9 @@ Expected: FAIL on the orphaned field/routing/handlers before production edits.
   `ingest_events.py`.
 - [ ] Update `note_ingest_events.py`'s stale comment that lists `api_calls` as
   a live registry group; do not change its code path.
+- [ ] Remove obsolete retired-module/selector names from the historical
+  comments in `server_ingest_request.py` and `css/build_css.py`; do not change
+  live request mapping or stylesheet assembly.
 - [ ] Confirm no producer, selector, handler, compatibility property, or
   dynamic reference remains.
 
@@ -109,9 +117,9 @@ Expected: PASS.
 - [ ] Run:
 
 ```bash
-python -m compileall -q tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py tldw_chatbook/Event_Handlers/note_ingest_events.py tldw_chatbook/Library/server_ingest_request.py tldw_chatbook/app.py
-python -m ruff check tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py tldw_chatbook/Event_Handlers/note_ingest_events.py tldw_chatbook/Library/server_ingest_request.py tldw_chatbook/app.py Tests/Library/test_server_ingest_request.py Tests/ProductionApp/test_retired_tldw_api_worker_pipeline.py Tests/test_application_state_ownership.py
-python -m ruff format --check tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py tldw_chatbook/Event_Handlers/note_ingest_events.py tldw_chatbook/Library/server_ingest_request.py Tests/Library/test_server_ingest_request.py Tests/ProductionApp/test_retired_tldw_api_worker_pipeline.py Tests/test_application_state_ownership.py
+python -m compileall -q tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py tldw_chatbook/Event_Handlers/note_ingest_events.py tldw_chatbook/Library/server_ingest_request.py tldw_chatbook/css/build_css.py tldw_chatbook/app.py
+python -m ruff check tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py tldw_chatbook/Event_Handlers/note_ingest_events.py tldw_chatbook/Library/server_ingest_request.py tldw_chatbook/css/build_css.py tldw_chatbook/app.py Tests/Library/test_server_ingest_request.py Tests/ProductionApp/test_retired_tldw_api_worker_pipeline.py Tests/test_application_state_ownership.py
+python -m ruff format --check tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py tldw_chatbook/Event_Handlers/note_ingest_events.py tldw_chatbook/Library/server_ingest_request.py tldw_chatbook/css/build_css.py Tests/Library/test_server_ingest_request.py Tests/ProductionApp/test_retired_tldw_api_worker_pipeline.py Tests/test_application_state_ownership.py
 git diff --check
 ```
 
@@ -120,7 +128,7 @@ git diff --check
 - [ ] Commit:
 
 ```bash
-git add tldw_chatbook/Event_Handlers/media_ingest_workers.py tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py tldw_chatbook/Event_Handlers/note_ingest_events.py tldw_chatbook/app.py Tests/ProductionApp/test_retired_tldw_api_worker_pipeline.py Tests/test_application_state_ownership.py
+git add tldw_chatbook/Event_Handlers/media_ingest_workers.py tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py tldw_chatbook/Event_Handlers/note_ingest_events.py tldw_chatbook/Library/server_ingest_request.py tldw_chatbook/css/build_css.py tldw_chatbook/app.py Tests/ProductionApp/test_retired_tldw_api_worker_pipeline.py Tests/test_application_state_ownership.py
 git commit -m "refactor(ingest): retire dead TLDW API worker pipeline (task-905)"
 ```
 
