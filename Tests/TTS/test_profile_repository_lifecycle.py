@@ -6,6 +6,7 @@ import asyncio
 import gc
 import importlib
 import sqlite3
+import sys
 import threading
 import traceback
 from collections.abc import Awaitable, Callable
@@ -84,14 +85,19 @@ class _SequencedCloseConnection:
         events: list[tuple[str, int]],
         label: str,
         close_errors: list[BaseException | None],
+        *,
+        before_close: Callable[[], None] | None = None,
     ) -> None:
         self.events = events
         self.label = label
         self.close_errors = close_errors
+        self.before_close = before_close
         self.close_calls = 0
         self.closed = False
 
     def close(self) -> None:
+        if self.before_close is not None:
+            self.before_close()
         self.events.append((f"{self.label}.close", threading.get_ident()))
         self.close_calls += 1
         error = self.close_errors.pop(0) if self.close_errors else None
@@ -127,6 +133,27 @@ class _SequencedReleaseLease:
         if error is not None:
             raise error
         self.acquired = False
+
+
+class _ObservedProfileStoreLease(ProfileStoreLease):
+    def __init__(
+        self,
+        database_path: Path,
+        mode: ProfileStoreLockMode,
+        events: list[tuple[str, int]],
+        label: str,
+    ) -> None:
+        super().__init__(database_path, mode)
+        self.events = events
+        self.label = label
+
+    def acquire(self) -> ProfileStoreLease:
+        self.events.append((f"{self.label}.acquire", threading.get_ident()))
+        return super().acquire()
+
+    def release(self) -> None:
+        self.events.append((f"{self.label}.release", threading.get_ident()))
+        super().release()
 
 
 class _RecordingExecutor:
@@ -206,6 +233,29 @@ def _tainted_repository_error(
             raise ProfileRepositoryError(code)
         except ProfileRepositoryError as error:
             return error
+
+
+def _try_exclusive_lease(database_path: Path) -> ProfileRepositoryError | None:
+    contender = ProfileStoreLease(
+        database_path,
+        ProfileStoreLockMode.EXCLUSIVE,
+        timeout_seconds=0.05,
+        check_interval_seconds=0.005,
+    )
+    try:
+        contender.acquire()
+    except ProfileRepositoryError as error:
+        return error
+    try:
+        return None
+    finally:
+        contender.release()
+
+
+async def _assert_exclusive_lease_blocked(database_path: Path) -> None:
+    error = await asyncio.to_thread(_try_exclusive_lease, database_path)
+    assert error is not None
+    _assert_safe_error(error, "lock_timeout", str(database_path))
 
 
 async def _wait_thread_event(event: threading.Event) -> None:
@@ -822,6 +872,214 @@ async def test_failed_open_cleans_partial_lease_and_maps_hostile_error(
 
 
 @pytest.mark.asyncio
+async def test_failed_open_retains_real_shared_lease_until_connection_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
+    secret = str(tmp_path / "partial-connection-close-failure")
+    events: list[tuple[str, int]] = []
+    previous_worker_trace: Any = None
+
+    def restore_worker_trace() -> None:
+        sys.settrace(previous_worker_trace)
+
+    first_connection = _SequencedCloseConnection(
+        events,
+        "connection-1",
+        [RuntimeError(secret), None],
+        before_close=restore_worker_trace,
+    )
+    second_connection = _RecordingConnection(events)
+    leases: list[_ObservedProfileStoreLease] = []
+    open_calls = 0
+    injected_failure = threading.Event()
+    worker_trace_checked = threading.Event()
+    opening_error = RuntimeError("injected-open-transition-failure")
+
+    def passthrough_worker_trace(
+        _frame: Any,
+        _event: str,
+        _argument: Any,
+    ) -> Any:
+        return passthrough_worker_trace
+
+    def lease_factory(
+        path: Path,
+        mode: ProfileStoreLockMode,
+        **_kwargs: object,
+    ) -> _ObservedProfileStoreLease:
+        lease = _ObservedProfileStoreLease(
+            path,
+            mode,
+            events,
+            f"lease-{len(leases) + 1}",
+        )
+        leases.append(lease)
+        return lease
+
+    def fail_after_connection_assignment(
+        frame: Any,
+        event: str,
+        _argument: Any,
+    ) -> Any:
+        if (
+            frame.f_code is module.TTSProfileRepository._worker_open.__code__
+            and event == "line"
+            and frame.f_locals.get("connection") is first_connection
+        ):
+            injected_failure.set()
+            frame.f_trace = None
+            raise opening_error
+        return fail_after_connection_assignment
+
+    def controlled_open(_database_path: Path) -> Any:
+        nonlocal open_calls, previous_worker_trace
+        open_calls += 1
+        if open_calls == 1:
+            if sys.gettrace() is None:
+                sys.settrace(passthrough_worker_trace)
+            previous_worker_trace = sys.gettrace()
+            worker_frame = sys._getframe(1)
+            worker_frame.f_trace = fail_after_connection_assignment
+            sys.settrace(fail_after_connection_assignment)
+            return first_connection
+        assert sys.gettrace() is previous_worker_trace
+        worker_trace_checked.set()
+        return second_connection
+
+    monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
+    monkeypatch.setattr(module, "open_profile_store", controlled_open)
+    repository = module.TTSProfileRepository(database_path)
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.open()
+
+        _assert_safe_error(caught.value, "operation_failed", secret)
+        assert injected_failure.is_set()
+        assert repository._connection is first_connection
+        assert repository._lease is leases[0]
+        assert first_connection.closed is False
+        assert first_connection.close_calls == 1
+        assert leases[0].acquired is True
+        assert not _phase_threads(events, "lease-1.release")
+        await _assert_exclusive_lease_blocked(database_path)
+
+        retried = await repository.open()
+
+        assert retried == ProfileStoreResult(generation=2, value=None)
+        assert first_connection.closed is True
+        assert first_connection.close_calls == 2
+        assert leases[0].acquired is False
+        assert repository._connection is second_connection
+        assert repository._lease is leases[1]
+        assert leases[1].acquired is True
+        assert worker_trace_checked.is_set()
+        phases = [phase for phase, _thread_id in events]
+        assert max(
+            index for index, phase in enumerate(phases) if phase == "connection-1.close"
+        ) < phases.index("lease-1.release")
+        assert phases.index("lease-1.release") < phases.index("lease-2.acquire")
+        await _assert_exclusive_lease_blocked(database_path)
+    finally:
+        if not repository.terminal:
+            await repository.close()
+
+    assert await asyncio.to_thread(_try_exclusive_lease, database_path) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("primary_is_control", [True, False])
+async def test_failed_open_connection_cleanup_control_preserves_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    primary_is_control: bool,
+) -> None:
+    module = _repository_module()
+    events: list[tuple[str, int]] = []
+    primary_signal = _ControlFlow()
+    cleanup_signal = _ControlFlow()
+    primary_error: BaseException
+    expected_signal: _ControlFlow
+    if primary_is_control:
+        primary_error = primary_signal
+        expected_signal = primary_signal
+    else:
+        primary_error = RuntimeError("ordinary-open-transition-failure")
+        expected_signal = cleanup_signal
+    previous_worker_trace: Any = None
+
+    def restore_worker_trace() -> None:
+        sys.settrace(previous_worker_trace)
+
+    connection = _SequencedCloseConnection(
+        events,
+        "connection",
+        [cleanup_signal, None],
+        before_close=restore_worker_trace,
+    )
+    lease = _SequencedReleaseLease(events, "lease", [])
+
+    def lease_factory(
+        _database_path: Path,
+        mode: ProfileStoreLockMode,
+        **_kwargs: object,
+    ) -> _SequencedReleaseLease:
+        assert mode is ProfileStoreLockMode.SHARED
+        return lease
+
+    def fail_after_connection_assignment(
+        frame: Any,
+        event: str,
+        _argument: Any,
+    ) -> Any:
+        if (
+            frame.f_code is module.TTSProfileRepository._worker_open.__code__
+            and event == "line"
+            and frame.f_locals.get("connection") is connection
+        ):
+            frame.f_trace = None
+            raise primary_error
+        return fail_after_connection_assignment
+
+    def partial_open(_database_path: Path) -> Any:
+        nonlocal previous_worker_trace
+        previous_worker_trace = sys.gettrace()
+        worker_frame = sys._getframe(1)
+        worker_frame.f_trace = fail_after_connection_assignment
+        sys.settrace(fail_after_connection_assignment)
+        return connection
+
+    monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
+    monkeypatch.setattr(module, "open_profile_store", partial_open)
+    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+
+    try:
+        with pytest.raises(_ControlFlow) as caught:
+            await repository.open()
+
+        assert caught.value is expected_signal
+        assert repository._connection is connection
+        assert repository._lease is lease
+        assert connection.closed is False
+        assert lease.acquired is True
+        assert lease.release_calls == 0
+
+        assert await repository.close() == ProfileStoreResult(
+            generation=2,
+            value=None,
+        )
+        assert connection.closed is True
+        assert lease.acquired is False
+        assert lease.release_calls == 1
+    finally:
+        if not repository.terminal:
+            await repository.close()
+
+
+@pytest.mark.asyncio
 async def test_failed_open_retains_lease_until_retry_cleanup_succeeds(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1012,7 +1270,9 @@ async def test_retry_cleans_residual_connection_before_acquiring_new_lease(
         assert repository._connection is first_connection
         assert first_connection.closed is False
         assert first_connection.close_calls == 1
-        assert leases[0].acquired is False
+        assert repository._lease is leases[0]
+        assert leases[0].acquired is True
+        assert leases[0].release_calls == 0
         assert len(leases) == 1
         assert open_calls == 1
 
@@ -1517,40 +1777,76 @@ async def test_close_cancels_queued_work_before_draining_running_work(
 
 
 @pytest.mark.asyncio
-async def test_close_maps_cleanup_error_and_still_releases_and_shuts_down(
+async def test_close_failure_retains_real_shared_lease_and_connection_fail_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _repository_module()
+    database_path = tmp_path / "profiles.sqlite3"
     secret = str(tmp_path / "secret-close-error")
     events: list[tuple[str, int]] = []
     connection = _RecordingConnection(events, close_error=RuntimeError(secret))
     executors: list[_RecordingExecutor] = []
+    leases: list[_ObservedProfileStoreLease] = []
 
     def executor_factory(max_workers: int) -> _RecordingExecutor:
         executor = _RecordingExecutor(max_workers, events)
         executors.append(executor)
         return executor
 
+    def lease_factory(
+        path: Path,
+        mode: ProfileStoreLockMode,
+        **_kwargs: object,
+    ) -> _ObservedProfileStoreLease:
+        lease = _ObservedProfileStoreLease(
+            path,
+            mode,
+            events,
+            f"lease-{len(leases) + 1}",
+        )
+        leases.append(lease)
+        return lease
+
     monkeypatch.setattr(module, "ThreadPoolExecutor", executor_factory)
-    _install_fake_store(monkeypatch, module, events, connection)
-    repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
+    monkeypatch.setattr(module, "ProfileStoreLease", lease_factory)
+    monkeypatch.setattr(module, "open_profile_store", lambda _path: connection)
+    repository = module.TTSProfileRepository(database_path)
     await repository.open()
 
-    with pytest.raises(ProfileRepositoryError) as caught:
-        await repository.close()
+    try:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.close()
 
-    _assert_safe_error(caught.value, "operation_failed", secret)
-    assert repository.state is ProfileRepositoryState.CLOSED
-    assert repository.terminal is True
-    assert len(_phase_threads(events, "lease.release")) == 1
-    assert executors[0].shutdown_calls == 1
-    assert await repository.close() == ProfileStoreResult(generation=2, value=None)
-    assert executors[0].shutdown_calls == 1
+        _assert_safe_error(caught.value, "operation_failed", secret)
+        assert repository.state is ProfileRepositoryState.CLOSED
+        assert repository.terminal is True
+        assert repository._connection is connection
+        assert repository._lease is leases[0]
+        assert connection.closed is False
+        assert leases[0].acquired is True
+        assert not _phase_threads(events, "lease-1.release")
+        assert executors[0].shutdown_calls == 1
+        await _assert_exclusive_lease_blocked(database_path)
+        assert await repository.close() == ProfileStoreResult(
+            generation=2,
+            value=None,
+        )
+        assert executors[0].shutdown_calls == 1
+    finally:
+        connection.close_error = None
+        if not connection.closed:
+            connection.close()
+        if leases and leases[0].acquired:
+            await asyncio.to_thread(leases[0].release)
+        repository._connection = None
+        repository._lease = None
+
+    assert await asyncio.to_thread(_try_exclusive_lease, database_path) is None
 
 
 @pytest.mark.asyncio
-async def test_close_preserves_control_flow_after_remaining_cleanup(
+async def test_close_preserves_connection_cleanup_control_and_retains_lease(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1566,15 +1862,28 @@ async def test_close_preserves_control_flow_after_remaining_cleanup(
         return executor
 
     monkeypatch.setattr(module, "ThreadPoolExecutor", executor_factory)
-    _install_fake_store(monkeypatch, module, events, connection)
+    leases = _install_fake_store(monkeypatch, module, events, connection)
     repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
     await repository.open()
 
-    with pytest.raises(_ControlFlow) as caught:
-        await repository.close()
+    try:
+        with pytest.raises(_ControlFlow) as caught:
+            await repository.close()
 
-    assert caught.value is signal
-    assert len(_phase_threads(events, "lease.release")) == 1
-    assert executors[0].shutdown_calls == 1
-    assert repository.state is ProfileRepositoryState.CLOSED
-    assert repository.terminal is True
+        assert caught.value is signal
+        assert repository._connection is connection
+        assert repository._lease is leases[0]
+        assert connection.closed is False
+        assert leases[0].acquired is True
+        assert not _phase_threads(events, "lease.release")
+        assert executors[0].shutdown_calls == 1
+        assert repository.state is ProfileRepositoryState.CLOSED
+        assert repository.terminal is True
+    finally:
+        connection.close_error = None
+        if not connection.closed:
+            connection.close()
+        if leases[0].acquired:
+            leases[0].release()
+        repository._connection = None
+        repository._lease = None

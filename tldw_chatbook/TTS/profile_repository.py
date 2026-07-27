@@ -318,7 +318,9 @@ class TTSProfileRepository:
             except BaseException as error:
                 connection_error = error
                 self._connection = connection
-        if lease is not None:
+        if lease is not None and connection_error is not None:
+            self._lease = lease
+        elif lease is not None:
             try:
                 lease.release()
             except BaseException as error:
@@ -552,7 +554,7 @@ class TTSProfileRepository:
             if connection_error is None:
                 self._connection = None
 
-        if lease is not None:
+        if lease is not None and connection_error is None:
             try:
                 lease.release()
             except BaseException as error:
