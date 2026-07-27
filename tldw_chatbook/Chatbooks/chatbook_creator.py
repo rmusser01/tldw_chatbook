@@ -107,7 +107,21 @@ class ChatbookCreator:
                 application_owned=True,
             ).lexical_path
         except OSError as exc:
-            fallback_root = Path(tempfile.mkdtemp(prefix="tldw_chatbook-chatbooks-"))
+            # `.resolve()`, not the raw mkdtemp path: on macOS the system
+            # temp root is /var/folders/..., and /var is a symlink to
+            # /private/var. `secure_private_directory` refuses to traverse a
+            # symlinked component (by design -- that is the guard against a
+            # swapped path mid-walk) and `lexical_path` normalises without
+            # resolving, so the raw path raises
+            # `PrivatePathError: link_or_non_regular`. That error subclasses
+            # OSError and is raised *inside* this handler, so it escaped the
+            # constructor instead of falling back: on macOS, every export
+            # that reached this branch died here. Matches the same
+            # `Path(tempfile.gettempdir()).resolve(...)` treatment in
+            # Web_Scraping/cookie_scraping/cookie_cloner.py.
+            fallback_root = Path(
+                tempfile.mkdtemp(prefix="tldw_chatbook-chatbooks-")
+            ).resolve()
             logger.warning(
                 f"ChatbookCreator.__init__: Failed to create configured temp directory "
                 f"{configured_temp_dir}: {exc}. Falling back to {fallback_root}"

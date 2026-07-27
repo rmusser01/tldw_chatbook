@@ -252,7 +252,14 @@ class LabScreen(BaseAppScreen):
 
         yield LabModeStrip(active_route=self.screen_name, id="lab-mode-strip")
 
-        workbench = LabWorkbench(rail_layout=self.rail_layout, id="lab-workbench")
+        # The mode class lets a mode size its own rail: label length is a
+        # per-mode property, and Speech's emoji rows need more cells than
+        # Models' plain ones (see `.lab-mode-stts #lab-rail` in _lab.tcss).
+        workbench = LabWorkbench(
+            rail_layout=self.rail_layout,
+            id="lab-workbench",
+            classes=f"lab-mode-{self.screen_name}",
+        )
         yield workbench
 
     def on_mount(self) -> None:

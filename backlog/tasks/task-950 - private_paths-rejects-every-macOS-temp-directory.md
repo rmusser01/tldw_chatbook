@@ -38,6 +38,38 @@ In `Tests/Watchlists` it is partly **masked** by a second, unrelated breakage: `
 Do not fix this by loosening the guard's symlink rejection wholesale — rejecting symlinked components is the point of it. The likely correct treatment is to resolve the path before walking, or to treat the platform's own temp root as trusted, but that is a judgement call for whoever owns this subsystem.
 <!-- SECTION:DESCRIPTION:END -->
 
+## Re-measured on dev `66fffc409` (2026-07-27)
+
+The suite-wide symptom this task opens with is **gone**. `384623d5b`
+("test(ui): update mounted app runtime harness") gave `_build_test_app`'s
+`mkdtemp` a `.resolve(strict=True)`, which removes the symlinked component
+before the guard ever walks it, and the same commit replaced the
+`current_runtime_backend` assignment with `_publish_runtime_policy_projection`
+— so AC #5 is already met and the two breakages this task said had to be fixed
+together were, in fact, fixed together.
+
+| Suite | As filed | Now, clean dev, no TMPDIR override |
+|---|---|---|
+| `Tests/UI/test_destination_visual_parity_correction.py` | 96 failed, 4 passed | **2 failed, 102 passed** |
+| `Tests/UI/test_watchlists_destination_shell.py` | 47 failed, 1 passed | **48 passed** |
+| `Tests/Watchlists` | 15 failed, 130 passed | **167 passed** |
+
+What is left is the guard itself, not the fallout. `secure_private_directory`
+still rejects a raw `/var/folders/...` path and accepts the same directory
+resolved, so AC #1, #2, #4 and #6 stand as written. Per this task's own
+instruction that the treatment is a judgement call for the subsystem owner,
+the guard has NOT been touched.
+
+One real caller-side instance was found and fixed separately (see the
+chatbook fix in this branch): `ChatbookCreator.__init__`'s fallback passed a
+raw `mkdtemp()` path to `secure_private_directory`. Because `PrivatePathError`
+subclasses `OSError` and that call sits *inside* the `except OSError` handler,
+the failure escaped the constructor rather than falling back — so on macOS the
+fallback that exists to keep exports working was itself the thing that broke
+them. Worth auditing the other callers that pair `mkdtemp` with the
+private-path API for the same shape.
+
+
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A SQLite database can be opened under the system temp directory on macOS

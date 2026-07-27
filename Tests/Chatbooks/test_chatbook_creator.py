@@ -1128,3 +1128,59 @@ class TestChatbookCreator:
             assert manifest_data.get("include_media") is True
             assert manifest_data.get("media_quality") == "original"
             assert manifest_data.get("include_embeddings") is True
+
+
+@pytest.mark.unit
+def test_the_temp_dir_fallback_survives_a_symlinked_system_temp_root(monkeypatch, tmp_path):
+    """The fallback must not die on the guard that protects it.
+
+    Args:
+        monkeypatch: Redirects `get_user_data_dir` into failure and points
+            `mkdtemp` at the symlinked root below.
+        tmp_path: Provides the real directory and the symlink to it.
+
+    `secure_private_directory` refuses to traverse a symlinked path
+    component. On macOS the system temp root is /var/folders/..., and /var
+    is a symlink to /private/var, so the raw `mkdtemp()` path is rejected
+    with `PrivatePathError: link_or_non_regular`.
+
+    That error subclasses OSError and is raised *inside* the `except OSError`
+    handler that reaches this branch, so it propagates straight out of
+    `__init__` rather than falling back to anything: on macOS every export
+    that hit this path died here, and the fallback that exists to keep
+    exporting working was the thing that broke it.
+
+    Simulated rather than macOS-only so it runs everywhere: a symlinked temp
+    root is the general shape of the bug, not an Apple quirk.
+    """
+    real_root = tmp_path / "real-tmp"
+    real_root.mkdir()
+    linked_root = tmp_path / "linked-tmp"
+    try:
+        linked_root.symlink_to(real_root, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        # Windows refuses symlink creation without developer mode or admin.
+        # This test is `unit`-marked so it runs in CI on every OS; skipping
+        # where the filesystem cannot express the precondition is honest,
+        # and the bug it guards is POSIX-shaped anyway (/var -> /private/var).
+        pytest.skip(f"symlinks unavailable on this platform: {exc}")
+
+    def failing_user_data_dir():
+        raise OSError("configured temp dir unavailable")
+
+    monkeypatch.setattr(creator_module, "get_user_data_dir", failing_user_data_dir)
+    monkeypatch.setattr(
+        creator_module.tempfile,
+        "mkdtemp",
+        lambda *a, **kw: str(linked_root / "chatbooks-work"),
+    )
+    (linked_root / "chatbooks-work").mkdir()
+
+    creator = ChatbookCreator(db_paths={})
+
+    # Landed on the real directory, with no symlinked component left in it.
+    assert creator.temp_dir.is_dir()
+    assert not any(
+        part.is_symlink() for part in [creator.temp_dir, *creator.temp_dir.parents]
+        if str(part).startswith(str(tmp_path))
+    ), f"temp_dir still traverses a symlink: {creator.temp_dir}"

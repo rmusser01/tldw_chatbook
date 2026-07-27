@@ -741,6 +741,11 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
 def _build_test_app(configured_default: str | None = None) -> TldwCli:
     user_data_dir = Path(
         tempfile.mkdtemp(prefix="tldw-chatbook-test-")
+        # `.resolve(strict=True)` is load-bearing, not tidiness: on macOS
+        # mkdtemp returns /var/folders/..., /var is a symlink, and the
+        # private-path guard refuses to traverse a symlinked component.
+        # Without it every test on this harness dies with
+        # `PrivatePathError: link_or_non_regular` before its first assertion.
     ).resolve(strict=True)
 
     def fake_runtime_policy(app):

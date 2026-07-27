@@ -13,6 +13,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Static
 
+from tldw_chatbook.UI.Navigation.pending_handoff_store import PendingHandoffStore
 from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
 from Tests.UI.test_screen_navigation import _build_test_app
 
@@ -41,7 +42,12 @@ _SIMPLE_SCREEN_ROUTES = (
     ("search", "Search"),
     ("media", "Media"),
     ("writing", "Writing"),
-    ("stts", "Speech"),
+    # "stts" removed with the Speech Lab-frame adoption: STTSScreen extends
+    # LabScreen, whose compose_content() enters
+    # `with Horizontal(id="lab-header-row"): ...`, and entering that context
+    # manager without a running app raises NoActiveAppError -- the same
+    # reason "evals" was never in this list. Covered instead by
+    # test_stts_screen_composes_destination_header_in_the_lab_frame below.
     ("logs", "Logs"),
     ("stats", "Stats"),
 )
@@ -216,6 +222,12 @@ async def test_study_screen_mounts_destination_header_and_boxes_library():
         runtime_backend=None,
         app_config={},
         notify=lambda *args, **kwargs: None,
+        # StudyScreen.on_mount -> _apply_pending_scope_handoff reads this
+        # unconditionally (study_screen.py:1172, :1196), as artifacts_screen
+        # and chat_screen do. The real app always has one
+        # (app.py:3667), so a fake without it is the fake being wrong, not
+        # the screen being unguarded -- give it a real, empty store.
+        pending_handoffs=PendingHandoffStore(),
     )
     app = _StudyHarness(app_instance)
 
@@ -270,3 +282,53 @@ async def test_folded_screens_box_owning_destination_in_nav():
         async with app.run_test(size=(180, 20)) as pilot:
             await pilot.pause(0.1)
             assert app.query_one(f"#{expected_button_id}").has_class("is-active"), route
+
+
+@pytest.mark.asyncio
+async def test_stts_screen_composes_destination_header_in_the_lab_frame():
+    """Equivalent of test_folded_screen_composes_destination_header_first for
+    Speech, which left that test's flat-compose_content() assumption when it
+    adopted the Lab frame (see the comment on _SIMPLE_SCREEN_ROUTES above).
+
+    Like Models, the header id is the frame's shared
+    "lab-destination-header", not a route-specific one -- the old
+    "stts-destination-header" is gone with the screen's own compose_content.
+    """
+    from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
+
+    class _STTSHarness(App):
+        def __init__(self, app_instance):
+            super().__init__()
+            self._app_instance = app_instance
+
+        async def on_mount(self) -> None:
+            await self.push_screen(STTSScreen(self._app_instance))
+
+    app = _STTSHarness(_build_test_app())
+
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_stack[-1]
+
+        header = screen.query_one("#lab-destination-header", DestinationHeader)
+        assert header.has_class("workbench-header")
+        assert header.has_class("ds-destination-header")
+        title = screen.query_one(
+            "#lab-destination-header #workbench-header-title", Static
+        )
+        assert str(title.renderable) == "Speech"
+        subtitle = screen.query_one(
+            "#lab-destination-header #workbench-header-subtitle", Static
+        )
+        subtitle_text = str(subtitle.renderable)
+        assert subtitle_text
+        assert len(subtitle_text) <= 60
+        assert "—" not in subtitle_text
+        assert "--" not in subtitle_text
+        # Readiness is derived from local speech dependencies, so this is
+        # whichever of Ready/Blocked matches this machine -- but never blank,
+        # and never color-only.
+        status = screen.query_one(
+            "#lab-destination-header #workbench-header-status", Static
+        )
+        assert str(status.renderable) in {"Ready", "Blocked"}

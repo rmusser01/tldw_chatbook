@@ -23,6 +23,7 @@ from textual.widgets import (
     Collapsible,
     Rule,
 )
+from textual.css.query import QueryError
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual.binding import Binding
@@ -5738,49 +5739,17 @@ class STTSWindow(Container):
         self.app_instance = app_instance
 
     def compose(self) -> ComposeResult:
-        """Compose the S/TT/S window"""
-        # Sidebar
-        with Vertical(classes="stts-sidebar"):
-            yield Label("Speech Menu", classes="section-title")
-            yield Button(
-                "🎤 TTS Playground",
-                id="view-playground-btn",
-                classes="sidebar-button",
-                variant="primary",
-            )
-            yield Button(
-                "⚙️ TTS Settings", id="view-settings-btn", classes="sidebar-button"
-            )
-            yield Button(
-                "📚 AudioBook/Podcast",
-                id="view-audiobook-btn",
-                classes="sidebar-button",
-            )
+        """Compose the S/TT/S window: content only.
 
-            # Additional features
-            yield Rule()
-            yield Label("Additional Features:", classes="section-title")
-            yield Button(
-                "🎙️ Voice Cloning", id="view-voice-cloning-btn", classes="sidebar-button"
-            )
-            yield Button(
-                "🔤 Speech Recognition", id="view-stt-btn", classes="sidebar-button"
-            )
-            yield Button(
-                "🎵 Audio Effects",
-                id="view-effects-btn",
-                classes="sidebar-button",
-                disabled=True,
-            )
-            capability_status = Static(
-                self._speech_capability_status_text(),
-                id="speech-capability-status",
-                classes="speech-capability-status",
-            )
-            capability_status.tooltip = self._speech_capability_status_tooltip()
-            yield capability_status
+        The sidebar that used to lead this method -- six view buttons and the
+        capability status line -- moved into the Lab frame's rail and status
+        chip (``UI/Screens/stts_screen.py``), so that Speech has the same
+        chrome as Models and Evals instead of a second, differently-styled
+        navigation column inside the body.
 
-        # Content area
+        The window keeps ownership of ``current_view`` and of mounting the
+        matching content widget; the screen only points it at a view.
+        """
         with Container(classes="stts-content"):
             # Show playground by default
             yield TTSPlaygroundWidget()
@@ -5824,9 +5793,24 @@ class STTSWindow(Container):
         )
 
     def watch_current_view(self, old_view: str, new_view: str) -> None:
-        """Handle view changes"""
-        # Remove old content
-        content_container = self.query_one(".stts-content", Container)
+        """Handle view changes.
+
+        Returns early when the content container is not mounted yet. The
+        window is now the Lab frame's deferred body, so it is mounted after
+        first paint rather than composed inline -- and a reactive watcher can
+        fire against a window whose own children have not been composed. The
+        unguarded `query_one` raised NoMatches out of the frame's body mount,
+        which took down the whole screen. Mirrors the same QueryError
+        tolerance `LLMManagementWindow.watch_active_view` carries.
+        """
+        try:
+            content_container = self.query_one(".stts-content", Container)
+        except QueryError:
+            logger.debug(
+                "STTS content container not mounted yet; deferring view "
+                f"change to '{new_view}' until compose completes."
+            )
+            return
 
         # Give widgets a chance to clean up before removal
         for child in content_container.children:
@@ -5849,18 +5833,11 @@ class STTSWindow(Container):
         elif new_view == "dictation":
             content_container.mount(DictationWindow())
 
-        # Update button variants
-        for btn in self.query(".sidebar-button").results(Button):
-            btn.variant = "default"
-
-        if new_view == "playground":
-            self.query_one("#view-playground-btn", Button).variant = "primary"
-        elif new_view == "settings":
-            self.query_one("#view-settings-btn", Button).variant = "primary"
-        elif new_view == "audiobook":
-            self.query_one("#view-audiobook-btn", Button).variant = "primary"
-        elif new_view == "dictation":
-            self.query_one("#view-stt-btn", Button).variant = "primary"
+        # Selection styling is the rail's job now. These lines used to
+        # `query_one("#view-*-btn")` for the four view buttons; those live on
+        # STTSScreen since the sidebar moved, so every one of them would raise
+        # NoMatches on the first view change. The screen watches
+        # `current_view` and applies `is-active` itself.
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle sidebar button presses and delegate to content widgets"""
