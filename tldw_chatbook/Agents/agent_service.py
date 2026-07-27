@@ -396,7 +396,9 @@ class AgentService:
                 or call.name not in disclosed_names
             ):
                 return ToolResult(ok=False, error=f"Tool not permitted: {call.name}")
-            timeout = config.budget.max_tool_call_seconds
+            timeout = self.registry.timeout_for(call.name) or (
+                config.budget.max_tool_call_seconds
+            )
             if timeout and timeout > 0:
                 return _call_with_timeout(
                     lambda: self.registry.invoke_by_name(call.name, call.args),

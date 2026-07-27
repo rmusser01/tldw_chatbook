@@ -8,13 +8,17 @@ import math
 import pytest
 
 from tldw_chatbook.Evals.word_bench.analysis import (
+    NEAR_TIE_LOGPROB_GAP_NATS,
     TRUNCATION_WARN_THRESHOLD,
+    combined_truncation,
     divergence,
     effective_k,
     entropy,
     group_means,
+    near_tie,
     resolve_probe,
     spread,
+    truncated_mass,
 )
 from tldw_chatbook.Evals.word_bench.models import CellCapture, TokenProb
 
@@ -128,11 +132,38 @@ def test_divergence_truncates_both_cells_to_min_k():
     assert jsd_mixed == pytest.approx(jsd_even, abs=1e-9)
 
 
+def test_truncated_mass_at_no_k_reproduces_the_cells_own_native_figure():
+    cap = _cap([("a", 0.5), ("b", 0.3), ("c", 0.1)])
+    assert truncated_mass(cap) == pytest.approx(cap.truncated_mass, abs=1e-9)
+
+
+def test_truncated_mass_at_a_shared_k_equalizes_two_cells_of_the_same_behaviour():
+    """The Truncation lens's own version of the shared-K rule entropy and
+    divergence already follow: a K=20 and a K=5 cell holding the SAME
+    distribution over the first 5 ranks must read the same truncation at
+    the shared K, even though their native figures differ."""
+    same = [("a", 0.5), ("b", 0.3), ("c", 0.1), ("d", 0.05), ("e", 0.03)]
+    rich = _cap(same + [(f"x{i}", 0.001) for i in range(15)], k_returned=20)
+    poor = _cap(same, k_returned=5)
+
+    # Native figures genuinely disagree -- the assertion below is not
+    # vacuous.
+    assert rich.truncated_mass != pytest.approx(poor.truncated_mass, abs=1e-6)
+
+    shared = effective_k([rich, poor])
+    assert shared == 5
+    assert truncated_mass(rich, k=shared) == pytest.approx(
+        truncated_mass(poor, k=shared), abs=1e-9
+    )
+    assert truncated_mass(poor, k=shared) == pytest.approx(0.02, abs=1e-9)
+
+
 def test_probe_observed_when_present_in_top_k():
     cap = _cap([(" Sure", 0.6), (" I", 0.4)])
     r = resolve_probe(cap, " Sure", ever_observed=True)
     assert r.state == "observed"
     assert r.logprob == pytest.approx(math.log(0.6), abs=1e-9)
+    assert r.matched is cap.top_k[0], "the matched TokenProb rides on the reading"
 
 
 def test_probe_bounded_when_absent_but_seen_elsewhere_in_the_run():
@@ -276,6 +307,71 @@ def test_divergence_is_an_estimate_not_a_guaranteed_bound():
         "feasible completion -- proving `reported` is NOT a guaranteed "
         "lower bound of the true value"
     )
+
+
+def test_near_tie_true_when_top_two_logprobs_are_within_the_threshold():
+    """0.02 nats gap, well under NEAR_TIE_LOGPROB_GAP_NATS (0.15)."""
+    cap = _cap([("a", 0.51), ("b", 0.5), ("c", 0.01)])
+    gap = abs(cap.top_k[0].logprob - cap.top_k[1].logprob)
+    assert gap < NEAR_TIE_LOGPROB_GAP_NATS
+    assert near_tie(cap) is True
+
+
+def test_near_tie_false_for_a_clear_winner():
+    """A ~2.3 nat gap (a ~10x probability ratio) is far outside the
+    near-tie threshold."""
+    cap = _cap([("a", 0.9), ("b", 0.09), ("c", 0.01)])
+    gap = abs(cap.top_k[0].logprob - cap.top_k[1].logprob)
+    assert gap > NEAR_TIE_LOGPROB_GAP_NATS
+    assert near_tie(cap) is False
+
+
+def test_near_tie_false_when_fewer_than_two_tokens():
+    """No rank-2 token to compare against -- must not raise or claim a tie."""
+    assert near_tie(_cap([("a", 1.0)])) is False
+    assert near_tie(_cap([])) is False
+
+
+def test_combined_truncation_matches_divergences_own_is_bounded_decision():
+    """The two truncations individually clear TRUNCATION_WARN_THRESHOLD
+    (0.15 < 0.25) but their SUM (0.30) exceeds it -- mirrors
+    test_divergence_flags_bounded_when_truncated_mass_is_material, but
+    asserts the actual combined_truncation() NUMBER, not just the boolean
+    divergence() derives from it."""
+    a = _cap([("x", 0.85)])  # 0.15 unobserved
+    b = _cap([("x", 0.85)])  # 0.15 unobserved
+    combined = combined_truncation(a, b)
+    assert combined == pytest.approx(0.30, abs=1e-9)
+    _, is_bounded = divergence(a, b)
+    assert is_bounded is True
+    assert combined > TRUNCATION_WARN_THRESHOLD
+
+
+def test_combined_truncation_below_threshold_matches_divergence_not_bounded():
+    a = _cap([("x", 0.95)])  # 0.05 unobserved
+    b = _cap([("x", 0.95)])  # 0.05 unobserved
+    combined = combined_truncation(a, b)
+    assert combined == pytest.approx(0.10, abs=1e-9)
+    _, is_bounded = divergence(a, b)
+    assert is_bounded is False
+    assert combined < TRUNCATION_WARN_THRESHOLD
+
+
+def test_combined_truncation_is_not_the_sum_of_each_cells_own_truncated_mass_at_mixed_k():
+    """The property this function's docstring warns about: at a shared K
+    smaller than one cell's native K, that cell's OWN `truncated_mass`
+    (computed over its full native top_k) understates the truncation
+    combined_truncation() actually uses (computed at the shared k)."""
+    rich = _cap([("a", 0.5), ("b", 0.3), ("c", 0.1)], k_returned=3)  # own truncated_mass = 0.1
+    poor = _cap([("a", 0.5), ("b", 0.3)], k_returned=2)  # own truncated_mass = 0.2
+
+    naive_sum = rich.truncated_mass + poor.truncated_mass
+    real_combined = combined_truncation(rich, poor)
+
+    # At shared k=2, rich's "c" (0.1) becomes part of ITS OWN unobserved
+    # bucket too, so its truncation at k=2 (0.2) exceeds its full-native
+    # truncated_mass (0.1) -- naive summation understates the real figure.
+    assert real_combined > naive_sum
 
 
 def test_group_means_exclude_ungrouped_rows():

@@ -58,6 +58,31 @@ _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
 
 
+@dataclass(slots=True)
+class ConsoleProviderStreamSignals:
+    """Expose thread-safe provenance signals for one provider stream.
+
+    The gateway marks these signals while normalizing provider output so the
+    controller can distinguish provider content from locally synthesized
+    fallback copy.
+    """
+
+    _synthetic_fallback: threading.Event = field(
+        default_factory=threading.Event,
+        init=False,
+        repr=False,
+    )
+
+    @property
+    def synthetic_fallback_emitted(self) -> bool:
+        """Return whether the stream emitted locally synthesized fallback copy."""
+        return self._synthetic_fallback.is_set()
+
+    def mark_synthetic_fallback(self) -> None:
+        """Record that locally synthesized fallback copy was emitted."""
+        self._synthetic_fallback.set()
+
+
 def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
     """Return safe user-visible provider failure copy.
 
@@ -920,6 +945,7 @@ class ConsoleProviderGateway:
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
         tools: list | None = None,
+        signals: ConsoleProviderStreamSignals | None = None,
     ) -> AsyncIterator[str | ProviderToolCalls]:
         """Dispatch streaming for a resolved Console provider.
 
@@ -931,6 +957,7 @@ class ConsoleProviderGateway:
                 provided, yields str chunks as before; if the provider
                 returned native tool-calls, the final item is a
                 ``ProviderToolCalls`` instead of a str.
+            signals: Optional out-of-band stream provenance signals.
 
         Yields:
             Assistant-visible content chunks, and -- only when ``tools`` was
@@ -968,7 +995,7 @@ class ConsoleProviderGateway:
             return
         if resolution.execution_key:
             async for chunk in self._stream_generic_chat(
-                resolution, messages, tools=tools
+                resolution, messages, tools=tools, signals=signals
             ):
                 yield chunk
             return
@@ -978,6 +1005,7 @@ class ConsoleProviderGateway:
         resolution: ConsoleProviderResolution,
         messages: list[Mapping[str, Any]],
         tools: list | None = None,
+        signals: ConsoleProviderStreamSignals | None = None,
     ) -> AsyncIterator[str | ProviderToolCalls]:
         """Bridge synchronous chat_api_call responses into async Console chunks."""
         loop = asyncio.get_running_loop()
@@ -1003,7 +1031,9 @@ class ConsoleProviderGateway:
                 # by string equality — review minor m4: a real answer that
                 # happens to equal the copy text now flows through).
                 for text in self.normalize_provider_response(
-                    response, suppress_fallback_copy=accumulator is not None
+                    response,
+                    suppress_fallback_copy=accumulator is not None,
+                    signals=signals,
                 ):
                     if stop_event.is_set():
                         break
@@ -1070,6 +1100,7 @@ class ConsoleProviderGateway:
     def normalize_provider_response(
         response: Any,
         suppress_fallback_copy: bool = False,
+        signals: ConsoleProviderStreamSignals | None = None,
     ) -> Iterator[str]:
         """Yield safe assistant-visible chunks from generic provider output.
 
@@ -1080,6 +1111,7 @@ class ConsoleProviderGateway:
                 GENERATED instead of being string-filtered downstream — so a
                 real model answer that happens to equal the copy text flows
                 through untouched (review minor m4, PR #648 line).
+            signals: Optional out-of-band stream provenance signals.
 
         Yields:
             Assistant-visible text chunks (and, unless suppressed,
@@ -1090,6 +1122,8 @@ class ConsoleProviderGateway:
             if content:
                 yield content
             elif not suppress_fallback_copy:
+                if signals is not None:
+                    signals.mark_synthetic_fallback()
                 yield NO_PROVIDER_CONTENT_COPY
             return
         if content is _UNSUPPORTED_RESPONSE:
@@ -1106,14 +1140,22 @@ class ConsoleProviderGateway:
                         continue
                     emitted = True
                     if not suppress_fallback_copy:
+                        if signals is not None:
+                            signals.mark_synthetic_fallback()
                         yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
                 if not emitted and not suppress_fallback_copy:
+                    if signals is not None:
+                        signals.mark_synthetic_fallback()
                     yield NO_PROVIDER_CONTENT_COPY
                 return
             if not suppress_fallback_copy:
+                if signals is not None:
+                    signals.mark_synthetic_fallback()
                 yield UNSUPPORTED_PROVIDER_RESPONSE_COPY
             return
         if not suppress_fallback_copy:
+            if signals is not None:
+                signals.mark_synthetic_fallback()
             yield NO_PROVIDER_CONTENT_COPY
 
     def _chat_api_call(self, **kwargs: Any) -> Any:

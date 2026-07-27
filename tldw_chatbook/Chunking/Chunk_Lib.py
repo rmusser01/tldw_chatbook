@@ -62,23 +62,102 @@ def _sent_tokenize_fallback(text):
 sent_tokenize = _sent_tokenize_fallback
 
 
+# nltk's sentence tokeniser needs a corpus that is a RUNTIME DOWNLOAD rather
+# than part of the package, so "nltk is installed" does not imply "nltk is
+# usable". WHICH resource it needs depends on the nltk version: <=3.8 reads
+# 'punkt', >=3.9 reads 'punkt_tab'. Naming either one is therefore a guess, so
+# the code below never asks which resources are present -- it asks the
+# tokeniser whether it works, which is the only question with a stable answer.
+_NLTK_TOKENIZER_CORPORA = ("punkt", "punkt_tab")
+
+# Latches once the tokeniser has been found unusable (corpus missing and not
+# downloadable). Without it every chunking call would re-probe, re-attempt a
+# network download and re-log the same warning, since the `nltk` global stays
+# None on that path.
+_nltk_tokenizer_unusable = False
+
+
+def _probe_sent_tokenize(tokenize) -> bool:
+    """Ask the tokeniser whether it can actually tokenise.
+
+    Args:
+        tokenize: Candidate ``sent_tokenize`` callable.
+
+    Returns:
+        True if it tokenised a probe sentence; False if its corpus is missing
+        (``LookupError``) or it failed for any other reason.
+    """
+    try:
+        tokenize("Probe sentence one. Probe sentence two.")
+        return True
+    except LookupError:
+        return False
+    except Exception:
+        logger.opt(exception=True).debug(
+            "nltk sentence tokeniser probe failed unexpectedly; using the "
+            "built-in fallback."
+        )
+        return False
+
+
+def _download_nltk_tokenizer_corpora(_nltk) -> None:
+    """Attempt to fetch every corpus any supported nltk version might want.
+
+    Return values are deliberately ignored: an nltk too old to know
+    ``punkt_tab`` reports failure for it while being perfectly usable, so only
+    a re-probe can decide the outcome.
+
+    Args:
+        _nltk: The imported ``nltk`` module.
+
+    Returns:
+        None.
+    """
+    for resource in _NLTK_TOKENIZER_CORPORA:
+        try:
+            _nltk.download(resource, quiet=True)
+        except Exception:
+            logger.opt(exception=True).debug(
+                f"NLTK '{resource}' download attempt failed."
+            )
+
+
 def _ensure_nltk():
     """Import nltk on first actual use and bind the real ``sent_tokenize``.
 
     No-ops (leaves ``nltk`` as ``None`` and the regex-fallback
-    ``sent_tokenize`` in place) if nltk isn't installed, matching the
-    previous eager-import fallback semantics.
+    ``sent_tokenize`` in place) if nltk isn't installed, or if it is installed
+    but its tokeniser corpus is missing and cannot be downloaded -- matching
+    the previous eager-import fallback semantics.
     """
-    global nltk, sent_tokenize
+    global nltk, sent_tokenize, _nltk_tokenizer_unusable
     if nltk is not None:
         return nltk
-    if not NLTK_AVAILABLE:
+    if not NLTK_AVAILABLE or _nltk_tokenizer_unusable:
         return None
     try:
         import nltk as _nltk
         from nltk.tokenize import sent_tokenize as _sent_tokenize
     except ImportError:
         return None
+
+    # Probe before binding, so a missing corpus degrades here rather than
+    # raising LookupError deep inside a chunking call (task-842). On failure,
+    # try to provision the data once -- that download is what previously made
+    # this work at all -- and let a second probe, not the download's own
+    # verdict, decide whether the tokeniser is usable.
+    if not _probe_sent_tokenize(_sent_tokenize):
+        _download_nltk_tokenizer_corpora(_nltk)
+        if not _probe_sent_tokenize(_sent_tokenize):
+            _nltk_tokenizer_unusable = True
+            logger.warning(
+                "nltk is installed but its sentence-tokeniser data is missing "
+                "and could not be downloaded, so sentence splitting will use "
+                "the simpler built-in fallback. To fetch it manually, run: "
+                "python -m nltk.downloader punkt punkt_tab"
+            )
+            return None
+
     # Bind `sent_tokenize` BEFORE the gate global (`nltk`), so a racing thread
     # that observes `nltk is not None` never finds `sent_tokenize` still the
     # regex fallback.
@@ -159,14 +238,14 @@ _nltk_data_ready = False
 
 
 def ensure_nltk_data() -> None:
-    """Ensure NLTK's ``punkt`` tokenizer data is present, lazily and once.
+    """Ensure NLTK's sentence-tokenizer data is present, lazily and once.
 
     Idempotent: the first successful check flips the module-level
-    ``_nltk_data_ready`` flag so repeat calls are no-ops. Triggers the lazy
-    ``nltk`` import via :func:`_ensure_nltk` and, if the ``punkt`` resource is
-    missing, downloads it. A no-op when NLTK isn't installed. Moved off module
-    scope so importing this module (and the app) no longer pays the import or a
-    network download at boot.
+    ``_nltk_data_ready`` flag so repeat calls are no-ops. Delegates to
+    :func:`_ensure_nltk`, which probes the tokenizer, downloads its corpus if
+    the probe fails, and re-probes. A no-op when NLTK isn't installed. Moved off
+    module scope so importing this module (and the app) no longer pays the
+    import or a network download at boot.
 
     Returns:
         None.
@@ -175,31 +254,16 @@ def ensure_nltk_data() -> None:
     if _nltk_data_ready:
         return
     if not NLTK_AVAILABLE:
-        logger.debug("NLTK not available, skipping punkt tokenizer check")
+        logger.debug("NLTK not available, skipping tokenizer data check")
         return
 
-    _ensure_nltk()
-    if nltk is None:
-        # find_spec said nltk was present but the real import failed; behave
-        # as if nltk were unavailable (the regex fallback stays bound).
-        return
-
-    try:
-        nltk.data.find("tokenizers/punkt")
-        _nltk_data_ready = True
-    except LookupError:
-        logger.info("NLTK 'punkt' tokenizer not found. Downloading...")
-        try:
-            download_ok = nltk.download("punkt")
-            if download_ok:
-                logger.info("'punkt' downloaded successfully.")
-                _nltk_data_ready = True
-            else:
-                logger.warning(
-                    "NLTK 'punkt' download did not complete; sentence tokenization may fall back or fail later."
-                )
-        except Exception as e:
-            logger.error(f"Failed to download 'punkt': {e}")
+    # Readiness is whether `_ensure_nltk()` bound the real tokenizer, i.e.
+    # whether it TOKENIZES. This used to test `find("tokenizers/punkt")` and
+    # download "punkt" -- but nltk >= 3.9 reads 'punkt_tab', so on a machine
+    # with only 'punkt' this reported ready and the very next call still raised
+    # LookupError. Probing the behaviour instead of naming a resource is what
+    # keeps that from depending on the installed nltk version (task-842).
+    _nltk_data_ready = _ensure_nltk() is not None
             # Depending on how critical this is, you might raise an error or just warn
             # For now, we'll let it proceed, and sent_tokenize will fail later if needed.
 
@@ -1034,12 +1098,27 @@ class Chunker:
             logger.warning(
                 f"NLTK Punkt for '{language}' (for semantic chunking) not found. Defaulting to 'english'."
             )
-            sentences = sent_tokenize(text, language="english")
+            try:
+                sentences = sent_tokenize(text, language="english")
+            except Exception:
+                # The English retry was previously uncaught, so a machine
+                # missing the corpus for BOTH languages failed the whole
+                # chunking call from here (task-842).
+                logger.warning(
+                    "NLTK Punkt is unavailable for English too; using the "
+                    "built-in sentence split."
+                )
+                sentences = _sent_tokenize_fallback(text)
         except Exception as e:
+            # Splitting on newlines was the old fallback here, which for
+            # ordinary single-paragraph prose returns the entire document as
+            # one "sentence" -- i.e. semantic chunking silently stopped
+            # chunking. The regex split at least yields sentences.
             logger.error(
-                f"Error sentence tokenizing for semantic chunking: {e}. Using newline split."
+                f"Error sentence tokenizing for semantic chunking: {e}. "
+                "Using the built-in sentence split."
             )
-            sentences = text.splitlines()
+            sentences = _sent_tokenize_fallback(text)
 
         if not sentences:
             return []

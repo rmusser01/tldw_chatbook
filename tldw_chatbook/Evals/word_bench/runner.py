@@ -135,7 +135,24 @@ class WordBenchRunner:
 
                 done += 1
                 if progress is not None:
-                    progress(done, total)
+                    try:
+                        progress(done, total)
+                    except Exception:
+                        # A broken UI-supplied callback must degrade to no
+                        # progress reporting, not kill the run -- otherwise
+                        # it escapes to run()'s caller and is indistinguishable
+                        # from a real cancellation, leaving this run group's
+                        # rows stranded at "running" forever (the same failure
+                        # class the asyncio.CancelledError handler around
+                        # runner.run() exists to close, just for a different
+                        # exception type). Stop calling it after the first
+                        # failure rather than logging once per remaining cell.
+                        logger.opt(exception=True).warning(
+                            "Word bench progress callback raised for run group "
+                            "{}; continuing without progress reporting.",
+                            group_id,
+                        )
+                        progress = None
 
         for run_id in run_ids.values():
             self._db.update_run_status(run_id, "completed")

@@ -5,6 +5,7 @@ import contextlib
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from tldw_chatbook.Chat.console_agent_bridge import (
     CONSOLE_AGENT_OPERATING_PROMPT,
@@ -16,15 +17,21 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     _compose_run_allowed_tools,
     _compose_run_registry_and_allowed,
     _non_colliding_mcp_names,
+    _WARNED_SHADOWED_MCP_NAMES,
+    shadowed_mcp_names,
 )
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderStreamSignals,
+    ProviderToolCalls,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_models import (
+    DIRECT_DISCLOSE_THRESHOLD,
     LOAD_TOOLS_NAME,
     RUN_DONE,
     RUN_ERROR,
@@ -44,6 +51,23 @@ from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 
 
+@pytest.fixture(autouse=True)
+def _reset_shadowed_mcp_warning_dedup():
+    """Reset the shadowed-MCP-name log-once set so tests are order-independent.
+
+    Mirrors ``Tests/Internal_Prompts/conftest.py``'s
+    ``resolver._warned_ids.clear()`` idiom for the identical reason:
+    ``_compose_run_registry_and_allowed``'s shadowed-name warning is now
+    deduped per name for the life of the process (finding 8, substrate
+    review). Without this reset, whichever test in this file runs FIRST
+    for a given shadowed name would win, and every later test asserting
+    the same warning would silently observe nothing logged.
+    """
+    _WARNED_SHADOWED_MCP_NAMES.clear()
+    yield
+    _WARNED_SHADOWED_MCP_NAMES.clear()
+
+
 class _FakeMCPProvider:
     """Minimal ``ToolProvider`` double standing in for a composed
     ``MCPToolProvider`` (T3) -- these bridge-level tests only need the
@@ -54,8 +78,10 @@ class _FakeMCPProvider:
         self._entries = list(entries)
         self.invoke_calls: list[tuple[str, dict]] = []
         self.stamp_scope_calls = 0
+        self.list_catalog_calls = 0
 
     def list_catalog(self):
+        self.list_catalog_calls += 1
         return [
             ToolCatalogEntry(
                 id=name, name=name, one_line_description=desc, source="mcp"
@@ -115,6 +141,25 @@ class _ChunkGateway:
             yield chunk
 
 
+class _SignalChunkGateway(_ChunkGateway):
+    """Scripted gateway that records the out-of-band signal by identity."""
+
+    def __init__(self, scripts):
+        super().__init__(scripts)
+        self.signals_seen = []
+        self.signal_states_seen = []
+
+    async def stream_chat(self, resolution, messages, tools=None, signals=None):
+        self.signals_seen.append(signals)
+        self.signal_states_seen.append(signals.synthetic_fallback_emitted)
+        async for chunk in super().stream_chat(
+            resolution,
+            messages,
+            tools=tools,
+        ):
+            yield chunk
+
+
 class _NativeResolution:
     """A fake resolution whose execution_key resolves to a native-capable provider."""
 
@@ -135,6 +180,14 @@ def _native_calls(name, args, call_id="c1"):
 
 
 def _bridge(tmp_path, scripts, native_tools_enabled=None):
+    return _bridge_with_gateway(
+        tmp_path,
+        _ChunkGateway(scripts),
+        native_tools_enabled=native_tools_enabled,
+    )
+
+
+def _bridge_with_gateway(tmp_path, gateway, native_tools_enabled=None):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -145,7 +198,7 @@ def _bridge(tmp_path, scripts, native_tools_enabled=None):
     bridge = ConsoleAgentBridge(
         agent_runs_db=db,
         store=store,
-        provider_gateway=_ChunkGateway(scripts),
+        provider_gateway=gateway,
         native_tools_enabled=native_tools_enabled,
     )
     return bridge, db, store, session, assistant.id
@@ -405,6 +458,83 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     assert seen_loops[0].is_closed(), (
         "the run's shared loop must be closed once run_reply returns"
     )
+
+
+def test_provider_stream_signal_survives_primary_tool_and_final_turns(tmp_path):
+    signals = ConsoleProviderStreamSignals()
+    gateway = _SignalChunkGateway(
+        [
+            [_fence("calculator", {"expression": "6*7"})],
+            ["It is ", "42."],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert gateway.signals_seen == [signals, signals]
+    assert all(item is signals for item in gateway.signals_seen)
+
+
+def test_provider_stream_signal_survives_subagent_turns(tmp_path):
+    signals = ConsoleProviderStreamSignals()
+    gateway = _SignalChunkGateway(
+        [
+            [_fence("spawn_subagent", {"task": "compute 1+1"})],
+            ["2"],
+            ["Done: 2."],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert gateway.signals_seen == [signals, signals, signals]
+    assert all(item is signals for item in gateway.signals_seen)
+
+
+def test_provider_stream_signal_is_never_reset_by_bridge(tmp_path):
+    signals = ConsoleProviderStreamSignals()
+    signals.mark_synthetic_fallback()
+    gateway = _SignalChunkGateway([["Already marked."]])
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        provider_stream_signals=signals,
+    )
+
+    assert outcome.status == "done"
+    assert gateway.signals_seen == [signals]
+    assert gateway.signal_states_seen == [True]
+    assert signals.synthetic_fallback_emitted is True
+
+
+def test_provider_stream_signal_omission_preserves_legacy_gateway_signature(tmp_path):
+    bridge, _db, store, session, aid = _bridge(tmp_path, [["Unchanged."]])
+
+    outcome = _run(bridge, store, session, aid)
+
+    assert outcome.status == "done"
+    assert bridge._gateway.calls == 1
+    assert store.get_message(aid).content == "Unchanged."
 
 
 def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
@@ -1799,6 +1929,132 @@ def test_non_colliding_mcp_names_pure_helper():
     assert _non_colliding_mcp_names(mcp_provider, {"calculator"}) == ("mcp__srv__y",)
 
 
+def test_shadowed_mcp_names_reports_what_the_filter_drops():
+    """A user's configured MCP tool must never vanish silently.
+
+    Built-ins keep winning the collision -- inverting that would let a
+    compromised server name-squat an audited built-in -- so the shadowing
+    is surfaced instead. ``shadowed_mcp_names`` and
+    ``_non_colliding_mcp_names`` must partition the same catalog: every
+    entry appears in exactly one of the two results.
+    """
+    mcp_provider = _FakeMCPProvider([("read_file", "x"), ("weather", "y")])
+    collision_names = {"read_file"}
+
+    assert shadowed_mcp_names(mcp_provider, collision_names) == ("read_file",)
+    assert _non_colliding_mcp_names(mcp_provider, collision_names) == ("weather",)
+
+
+def test_compose_run_registry_and_allowed_warns_when_mcp_tool_is_shadowed():
+    """``shadowed_mcp_names`` itself is a silent pure partition -- the
+    user-visible half of this behavior is the warning logged from
+    ``_compose_run_registry_and_allowed`` for each dropped name. Without it
+    a user whose configured MCP tool stopped being offered has no way to
+    discover a built-in silently claimed the name.
+
+    caplog does not intercept loguru (this project's logger); attach a
+    temporary loguru sink instead (mirrors
+    ``Tests/Chat/test_console_chat_store.py``'s pattern).
+    """
+    from loguru import logger as loguru_logger
+
+    mcp_provider = _FakeMCPProvider(
+        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
+    )
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert any("calculator" in message for message in messages), messages
+
+
+def test_compose_run_registry_and_allowed_no_warning_without_mcp_collisions():
+    """No MCP name collided with a builtin, so nothing should be logged --
+    guards against a future refactor that logs unconditionally instead of
+    only when a name is actually dropped."""
+    from loguru import logger as loguru_logger
+
+    mcp_provider = _FakeMCPProvider([("mcp__srv_a__search", "Search")])
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert messages == []
+
+
+def test_compose_run_registry_and_allowed_walks_mcp_catalog_only_once():
+    """Finding 8 (substrate review): ``_partition_mcp_catalog_by_collision``
+    already computes both the non-colliding and shadowed sides in a single
+    walk of ``mcp_provider.list_catalog()``, but the composition function
+    used to call the two PUBLIC wrapper functions separately
+    (``_non_colliding_mcp_names`` then ``shadowed_mcp_names``), each of
+    which re-invoked the partition -- walking the catalog twice per run.
+    """
+    mcp_provider = _FakeMCPProvider(
+        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
+    )
+
+    _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+
+    assert mcp_provider.list_catalog_calls == 1
+
+
+def test_compose_run_registry_and_allowed_warns_about_a_shadowed_name_only_once():
+    """Finding 8 (substrate review): ``_compose_run_registry_and_allowed``
+    runs once per Console message, so a naive per-call warning re-logs the
+    identical shadowed-name message on every single turn of a long-running
+    session. The warning must fire at most once per name for the life of
+    the process.
+    """
+    from loguru import logger as loguru_logger
+
+    mcp_provider = _FakeMCPProvider(
+        [("calculator", "shadowing MCP tool"), ("mcp__srv_a__search", "Search")]
+    )
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        # Simulate three Console messages in the same session, each
+        # re-composing the run registry.
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+        _compose_run_registry_and_allowed({}, mcp_provider=mcp_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    calculator_warnings = [m for m in messages if "calculator" in m]
+    assert len(calculator_warnings) == 1, messages
+
+
+def test_compose_run_registry_and_allowed_warns_once_per_distinct_shadowed_name():
+    """A dedup keyed on the wrong thing (e.g. "has anything ever been
+    warned") would silently suppress a DIFFERENT shadowed name's very
+    first warning -- this pins that the dedup is per-name. Both
+    ``calculator`` and ``get_current_datetime`` are always-on builtins
+    (see ``Tools.tool_executor``), so both genuinely collide.
+    """
+    from loguru import logger as loguru_logger
+
+    first_provider = _FakeMCPProvider([("calculator", "x")])
+    second_provider = _FakeMCPProvider([("get_current_datetime", "y")])
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        _compose_run_registry_and_allowed({}, mcp_provider=first_provider)
+        _compose_run_registry_and_allowed({}, mcp_provider=second_provider)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert any("calculator" in m for m in messages)
+    assert any("get_current_datetime" in m for m in messages)
+
+
 def test_run_reply_routes_fence_call_to_mcp_provider(tmp_path):
     """End-to-end: a run with no skills service still registers an eligible
     MCP provider fresh (not the shared, construction-time registry) and
@@ -1951,15 +2207,17 @@ def test_skill_named_like_a_builtin_never_shadows_it_at_invocation(tmp_path):
 
 
 class _ManySkillsService:
-    """9 real skills (> DIRECT_DISCLOSE_THRESHOLD == 8), so the catalog
-    defers everything to find_tools/load_tools -- the exact >8-skill shape
-    that engaged progressive disclosure in the live gate capture."""
+    """Enough real skills to exceed DIRECT_DISCLOSE_THRESHOLD on their own
+    (even before the 2 builtins _compose_run_registry_and_allowed always
+    adds), so the catalog defers everything to find_tools/load_tools -- the
+    same >threshold-skill shape that engaged progressive disclosure in the
+    live gate capture."""
 
     def __init__(self):
         self.execute_calls = []
 
     async def get_context(self, *, mode="local"):
-        names = ["shout"] + [f"filler{i}" for i in range(8)]
+        names = ["shout"] + [f"filler{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD)]
         return {
             "available_skills": [
                 {

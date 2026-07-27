@@ -51,7 +51,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderStreamSignals,
+    ProviderToolCalls,
+)
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
@@ -90,50 +93,73 @@ _KNOWN_SUBAGENT_PREFIXES: set[str] = {SUBAGENT_SYSTEM_PROMPT}
 # cost 2 more turns / 6 more steps (6 turns / 16 steps total), so even the
 # old 8-turn cap cleared the floor with room to spare.
 #
-# The three numbers below are sized TOGETHER so that max_model_turns stays
+# The four numbers below are sized TOGETHER so that max_model_turns stays
 # the primary limiter -- raising it alone would just move the wall to
-# whichever of the other two binds first:
-#   * max_model_turns=20 gives ~20 tool-calling rounds per user message
-#     (raised from 8).
-#   * max_steps=64: a fence tool round costs 3 steps (STEP_MODEL +
-#     STEP_TOOL_CALL + STEP_TOOL_RESULT), so 19 rounds + 1 wrap-up
-#     STEP_MODEL = 3*19 + 1 = 58 steps. At the old 32 the step check would
-#     have fired around round 10, never letting the 20-turn cap be reached.
-#     64 clears 58 while staying a real backstop: a NATIVE multi-call batch
-#     (task-243) costs 1 + 2N steps per turn, so a run of heavy parallel
-#     batches can still legitimately hit the step backstop before the turn
-#     cap -- that is the backstop doing its job.
-#   * max_wall_seconds=1200: the prior 480s was derived as 25-50s/turn x up
-#     to 8 model turns at the slow local-model pace this gate exercises; at
-#     20 turns that same pace needs ~500-1000s, so 480 would have become
-#     the new binding limit around turn 10. 1200s covers the 20-turn worst
-#     case. This is a backstop, not a target -- fast cloud models finish 20
-#     turns in a fraction of it, and the user can Stop at any point (the
-#     tool-call wrapper polls cancellation every 0.5s, task-327).
+# whichever of the other constants binds first:
+#   * max_model_turns=30 gives ~30 tool-calling rounds per user message
+#     (raised from 20).
+#   * max_steps=96: a fence tool round costs 3 steps (STEP_MODEL +
+#     STEP_TOOL_CALL + STEP_TOOL_RESULT), so 29 rounds + 1 wrap-up
+#     STEP_MODEL = 3*29 + 1 = 88 steps. 96 clears that while staying a real
+#     backstop: a NATIVE multi-call batch (task-243) costs 1 + 2N steps per
+#     turn, so a run of heavy parallel batches can still legitimately hit the
+#     step backstop before the turn cap -- that is the backstop doing its job.
+#   * max_wall_seconds=1800: derived as 25-50s/turn x 30 model turns at the
+#     slow local-model pace this gate exercises = 750-1500s at N=30. 1800s
+#     covers the 30-turn worst case. This is a backstop, not a target -- fast
+#     cloud models finish 30 turns in a fraction of it, and the user can Stop
+#     at any point (the tool-call wrapper polls cancellation every 0.5s, task-327).
+#   * max_total_tokens=1_000_000: Sub-agents inherit the turn and step budget
+#     (agent_models.clamp_child_budget, operator decision 2026-07-25), so one
+#     message can reach 30 * (1 + max_subagents) = 90 provider turns. The wall
+#     clock bounds that in TIME but not in SPEND. This ceiling is a PER-RUN
+#     bound, not a shared one: `agent_runtime.run_agent_loop`'s
+#     `total_tokens` is a local to each run, and `clamp_child_budget` passes
+#     `max_total_tokens` through to a child UNCHANGED rather than dividing
+#     it -- so the parent and each of up to max_subagents=2 children can
+#     independently spend up to this ceiling. The real worst-case aggregate
+#     across one Console message is therefore roughly 3x this value
+#     (~3M tokens), not a value bounded BY it directly. It still sits far
+#     above any normal 30-turn run.
 # The engine's own RunBudget defaults (agent_models.RunBudget) keep the
 # bare max_steps=8, so this override applies only at the Console bridge's
 # own config-assembly site (run_reply below); other callers of
 # RunBudget()/AgentConfig keep the conservative engine default.
 #: Tool-calling rounds the Console agent gets per user message. THE primary
-#: limiter -- the two constants below exist to keep it reachable.
-CONSOLE_MAX_MODEL_TURNS = 20
+#: limiter -- the constants below exist to keep it reachable and to bound
+#: what it costs.
+CONSOLE_MAX_MODEL_TURNS = 30
 
 #: Step backstop. A fence round costs 3 steps (STEP_MODEL + STEP_TOOL_CALL +
 #: STEP_TOOL_RESULT) and the wrap-up reply costs 1, so N turns need
-#: 3*(N-1)+1 steps -- 58 at N=20. 64 clears that while staying a real
+#: 3*(N-1)+1 steps -- 88 at N=30. 96 clears that while staying a real
 #: backstop for native multi-call batches (1 + 2N steps per turn).
 #: `test_console_budget_step_cap_admits_a_full_model_turn_run` fails if this
 #: ever drops below the derived minimum.
-CONSOLE_MAX_STEPS = 64
+CONSOLE_MAX_STEPS = 96
 
-#: Wall-clock backstop for the whole run, at the slow local-model pace this
-#: gate exercises (25-50s per turn x CONSOLE_MAX_MODEL_TURNS).
-CONSOLE_MAX_WALL_SECONDS = 1200.0
+#: Wall-clock backstop, at the slow local-model pace this gate exercises
+#: (25-50s per turn x CONSOLE_MAX_MODEL_TURNS = 750-1500s at N=30).
+CONSOLE_MAX_WALL_SECONDS = 1800.0
+
+#: Cumulative prompt+completion spend ceiling -- but a PER-RUN one:
+#: `agent_runtime.run_agent_loop`'s `total_tokens` is a per-run local, and
+#: `clamp_child_budget` passes this value through to each sub-agent
+#: UNCHANGED rather than dividing it among children. Sub-agents also
+#: inherit the turn and step budget (agent_models.clamp_child_budget,
+#: operator decision 2026-07-25), so one message can reach
+#: 30 * (1 + max_subagents) = 90 provider turns across the parent and up to
+#: max_subagents=2 children -- each independently able to spend up to this
+#: ceiling, for a real worst-case aggregate of roughly 3x this value
+#: (~3M tokens), not a value THIS constant bounds directly. It still sits
+#: far above any normal 30-turn run.
+CONSOLE_MAX_TOTAL_TOKENS = 1_000_000
 
 CONSOLE_RUN_BUDGET = RunBudget(
     max_steps=CONSOLE_MAX_STEPS,
     max_wall_seconds=CONSOLE_MAX_WALL_SECONDS,
     max_model_turns=CONSOLE_MAX_MODEL_TURNS,
+    max_total_tokens=CONSOLE_MAX_TOTAL_TOKENS,
 )
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
@@ -480,6 +506,7 @@ class _StreamingModelAdapter:
         assistant_message_id,
         should_cancel,
         loop,
+        provider_stream_signals: ConsoleProviderStreamSignals | None = None,
     ):
         self._store = store
         self._gateway = provider_gateway
@@ -487,6 +514,7 @@ class _StreamingModelAdapter:
         self._assistant_message_id = assistant_message_id
         self._should_cancel = should_cancel
         self._loop = loop
+        self._provider_stream_signals = provider_stream_signals
 
     def chat_call(
         self,
@@ -516,6 +544,8 @@ class _StreamingModelAdapter:
             # this task's own `tools=None` contract see identical behavior
             # either way, since the callee-side default is also None.
             stream_kwargs = {"tools": tools} if tools is not None else {}
+            if self._provider_stream_signals is not None:
+                stream_kwargs["signals"] = self._provider_stream_signals
             async for chunk in self._gateway.stream_chat(
                 self._resolution, messages_payload, **stream_kwargs
             ):
@@ -768,10 +798,102 @@ def _non_colliding_mcp_names(
         The subset of ``mcp_provider.list_catalog()`` names not present in
         ``collision_names``, in catalog order.
     """
-    return tuple(
-        entry.name
-        for entry in mcp_provider.list_catalog()
-        if entry.name not in collision_names
+    non_colliding, _shadowed = _partition_mcp_catalog_by_collision(
+        mcp_provider, collision_names
+    )
+    return non_colliding
+
+
+def shadowed_mcp_names(
+    mcp_provider: Any,
+    collision_names: frozenset[str] | set[str],
+) -> tuple[str, ...]:
+    """MCP tool names this run drops because a built-in owns the name.
+
+    The exact complement of ``_non_colliding_mcp_names``. Built-ins win
+    collisions deliberately -- letting the MCP side win would let a
+    compromised server name-squat an audited built-in like ``write_file``
+    and intercept calls the user believes are gated -- but a user whose
+    configured tool silently stops working has no way to discover why.
+
+    Both this function and ``_non_colliding_mcp_names`` delegate to
+    ``_partition_mcp_catalog_by_collision``, which walks the catalog once
+    and buckets every entry into exactly one side. That keeps the two
+    public results an exact partition by construction -- there is no
+    second copy of the ``entry.name in collision_names`` test to drift out
+    of sync as the collision rule evolves.
+
+    Args:
+        mcp_provider: A composed ``MCPToolProvider`` (or test double).
+        collision_names: Names owned by builtins, runtime tools, or skills.
+
+    Returns:
+        The dropped names, in catalog order.
+    """
+    _non_colliding, shadowed = _partition_mcp_catalog_by_collision(
+        mcp_provider, collision_names
+    )
+    return shadowed
+
+
+def _partition_mcp_catalog_by_collision(
+    mcp_provider: Any,
+    collision_names: frozenset[str] | set[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split an MCP provider's catalog into (non-colliding, shadowed) names.
+
+    The single place the collision predicate is evaluated. Both
+    ``_non_colliding_mcp_names`` and ``shadowed_mcp_names`` are thin views
+    onto this partition, so they can never disagree about which side a
+    given name falls on.
+
+    Args:
+        mcp_provider: A composed ``MCPToolProvider`` (or test double) whose
+            ``list_catalog()`` has already been built.
+        collision_names: Names that must never be treated as a distinct
+            MCP tool -- builtins, ``RUNTIME_TOOL_NAMES``, and this run's
+            own eligible skill names.
+
+    Returns:
+        A ``(non_colliding, shadowed)`` pair, each in catalog order, whose
+        union (in either order) reproduces the full catalog's names with
+        no overlap and no omission.
+    """
+    non_colliding: list[str] = []
+    shadowed: list[str] = []
+    for entry in mcp_provider.list_catalog():
+        bucket = shadowed if entry.name in collision_names else non_colliding
+        bucket.append(entry.name)
+    return tuple(non_colliding), tuple(shadowed)
+
+
+# Names already warned about being shadowed by a built-in, this process --
+# mirrors `Internal_Prompts.resolver`'s `_warn_once` idiom (a module-level
+# dedup set plus a guard function), kept as THIS module's own set rather
+# than sharing resolver's: `_compose_run_registry_and_allowed` runs once per
+# Console message (finding 8, substrate review), so without this a long
+# session re-logs the identical warning every single turn. Tests that need
+# a fresh warning must clear this between cases -- see
+# `Tests/Chat/test_console_agent_bridge.py`'s reset fixture, mirroring
+# `Tests/Internal_Prompts/conftest.py`'s `resolver._warned_ids.clear()`.
+_WARNED_SHADOWED_MCP_NAMES: set[str] = set()
+
+
+def _warn_shadowed_mcp_name_once(name: str) -> None:
+    """Log the shadowed-MCP-tool warning for ``name`` at most once per process.
+
+    Args:
+        name: An MCP tool name dropped because a built-in owns it (one
+            entry of ``_partition_mcp_catalog_by_collision``'s ``shadowed``
+            side).
+    """
+    if name in _WARNED_SHADOWED_MCP_NAMES:
+        return
+    _WARNED_SHADOWED_MCP_NAMES.add(name)
+    logger.warning(
+        "MCP tool {name} is shadowed by a built-in of the same name "
+        "and is not offered this run",
+        name=name,
     )
 
 
@@ -838,7 +960,18 @@ def _compose_run_registry_and_allowed(
     allowed_tools = tuple(builtin_names) + skill_names
     if mcp_provider is not None:
         collision_names = set(builtin_names) | set(skill_names) | RUNTIME_TOOL_NAMES
-        mcp_names = _non_colliding_mcp_names(mcp_provider, collision_names)
+        # Single partition call (finding 8, substrate review): the two
+        # public wrappers (`_non_colliding_mcp_names`, `shadowed_mcp_names`)
+        # each independently call `_partition_mcp_catalog_by_collision`,
+        # which walks `mcp_provider.list_catalog()` -- so calling BOTH
+        # wrappers here walked the catalog twice per run. Calling the
+        # partition directly gets both sides from the one walk it already
+        # does internally.
+        mcp_names, shadowed_names = _partition_mcp_catalog_by_collision(
+            mcp_provider, collision_names
+        )
+        for shadowed in shadowed_names:
+            _warn_shadowed_mcp_name_once(shadowed)
         if mcp_names:
             registry.register_provider(
                 _CollisionFilteredMCPProvider(mcp_provider, frozenset(mcp_names))
@@ -983,6 +1116,7 @@ class ConsoleAgentBridge:
         session_system_prompt: str,
         agent_messages: list[dict],
         should_cancel: Callable[[], bool],
+        provider_stream_signals: ConsoleProviderStreamSignals | None = None,
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
         builtin_gate: Any | None = None,
@@ -1357,6 +1491,7 @@ class ConsoleAgentBridge:
             assistant_message_id=assistant_message_id,
             should_cancel=should_cancel,
             loop=run_loop,
+            provider_stream_signals=provider_stream_signals,
         )
 
         live_steps: list[AgentLiveStep] = []

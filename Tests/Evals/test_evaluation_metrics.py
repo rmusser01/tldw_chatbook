@@ -3,11 +3,78 @@ Tests for custom evaluation metrics.
 Tests instruction_adherence, format_compliance, coherence_score, and dialogue_quality metrics.
 """
 
-import pytest
 from unittest.mock import Mock
 
-from tldw_chatbook.Evals.eval_runner import BaseEvalRunner, EvalSample, EvalSampleResult
+import pytest
+
+from tldw_chatbook.Evals.eval_runner import (
+    BaseEvalRunner,
+    EvalSample,
+    EvalSampleResult,
+    MetricsCalculator,
+)
+from tldw_chatbook.Evals.metrics_calculator import (
+    MetricsCalculator as StandaloneMetricsCalculator,
+)
 from tldw_chatbook.Evals.task_loader import TaskConfig
+
+
+class _StubEmbeddingModel:
+    """Deterministic stand-in for a SentenceTransformer.
+
+    Lets tests exercise the "embedding model IS present" success path of
+    ``calculate_semantic_similarity`` without downloading or loading a real
+    model. Maps each input string to a fixed vector via ``encode()``, the
+    same method name/signature real SentenceTransformer models expose.
+    """
+
+    def __init__(self, vectors: dict):
+        self._vectors = vectors
+
+    def encode(self, texts):
+        return [self._vectors[text] for text in texts]
+
+
+class _ConstantEmbeddingModel:
+    """Stub embedding model that returns the same fixed vector for every
+    input string, ignoring the text entirely.
+
+    Used to test the exact-match short-circuit in
+    ``calculate_semantic_similarity``: since every string maps to the same
+    vector here, if that short-circuit were removed,
+    ``calculate_semantic_similarity(s, s)`` would fall through to computing
+    cosine self-similarity on this vector instead of returning 1.0
+    immediately. Pairing this with a vector whose self-similarity is
+    demonstrably NOT exactly 1.0 at float64 (see
+    ``_PRECISION_LOSING_VECTOR`` below) makes that fallthrough detectable.
+    """
+
+    def __init__(self, vector):
+        self._vector = vector
+
+    def encode(self, texts):
+        return [self._vector for _ in texts]
+
+
+# An 8-dim vector (arbitrary values from a random search, not float32
+# truncated) whose cosine self-similarity - computed exactly the way
+# calculate_semantic_similarity computes it, dot(v, v) / (norm(v) * norm(v))
+# at float64 - lands at 0.9999999999999999, a couple of ULPs short of exact
+# 1.0. sqrt-then-square rounding does not always cancel out even at double
+# precision. Verified directly:
+#   >>> v = np.asarray(_PRECISION_LOSING_VECTOR, dtype=np.float64)
+#   >>> float(np.dot(v, v) / (np.linalg.norm(v) * np.linalg.norm(v)))
+#   0.9999999999999999
+_PRECISION_LOSING_VECTOR = [
+    0.3610581159591675,
+    -1.952863097190857,
+    2.347409725189209,
+    0.9684969186782837,
+    -0.759387195110321,
+    0.9021982550621033,
+    -0.46695318818092346,
+    -0.060689520090818405,
+]
 
 
 class TestRunner(BaseEvalRunner):
@@ -311,3 +378,248 @@ class TestEvaluationMetrics:
         metrics = runner.calculate_metrics(dialogue, "expected", sample)
         assert "dialogue_quality" in metrics
         assert metrics["dialogue_quality"] > 0.5
+
+
+class TestSemanticSimilarityWithEmbeddingModel:
+    """Exercise the embedding-model success path of calculate_semantic_similarity.
+
+    Regression coverage for TASK-862: when an embedding model is available
+    (real SentenceTransformer or, here, a stub passed via the
+    ``embedding_model`` parameter), the function used to fall off the end
+    without returning anything, silently yielding None on every call. The
+    existing suite only ever exercised the "embeddings unavailable" fallback
+    path, so it never caught this. These tests supply a fake embedding model
+    so they are fast, deterministic, and require no network access or model
+    download.
+    """
+
+    def test_returns_float_not_none_when_embedding_model_present(self):
+        """A real float must come back, not None, when embeddings succeed."""
+        model = _StubEmbeddingModel(
+            {
+                "the cat sat": [1.0, 0.0, 0.0],
+                "the cat sat on the mat": [0.9, 0.1, 0.0],
+            }
+        )
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            "the cat sat", "the cat sat on the mat", embedding_model=model
+        )
+
+        assert score is not None
+        assert isinstance(score, float)
+        assert 0.0 < score < 1.0
+
+    def test_identical_embeddings_yield_similarity_one(self):
+        """Identical vectors -> cosine similarity 1.0 (clamped upper bound).
+
+        Uses two DIFFERENT input strings that happen to map to the same
+        vector, not two identical strings. calculate_semantic_similarity
+        now short-circuits on exact string equality before ever calling
+        the embedding model, so using identical strings here would no
+        longer exercise the embedding math this test is named for - it
+        would just exercise the short-circuit added for a different reason
+        (see TestSemanticSimilarityExactMatchShortCircuit below).
+        """
+        model = _StubEmbeddingModel(
+            {
+                "a cat sentence": [1.0, 2.0, 3.0],
+                "a kitty sentence": [1.0, 2.0, 3.0],
+            }
+        )
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            "a cat sentence", "a kitty sentence", embedding_model=model
+        )
+
+        assert score == pytest.approx(1.0)
+
+    def test_opposite_embeddings_are_clamped_to_zero(self):
+        """Cosine similarity is [-1, 1], but callers expect a [0, 1] score.
+
+        Opposite vectors give raw cosine similarity -1.0; the function must
+        clamp that into range rather than returning a negative score.
+        """
+        model = _StubEmbeddingModel(
+            {
+                "positive": [1.0, 0.0],
+                "negative": [-1.0, 0.0],
+            }
+        )
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            "positive", "negative", embedding_model=model
+        )
+
+        assert score is not None
+        assert score == pytest.approx(0.0)
+        assert 0.0 <= score <= 1.0
+
+    def test_zero_norm_embedding_returns_zero_not_exception_fallback(self):
+        """A zero vector must yield 0.0, not divide-by-zero / lexical fallback.
+
+        Uses two DIFFERENT (not exactly equal, so the string-equality
+        short-circuit does not fire) but lexically overlapping predicted/
+        expected strings, both mapped to a zero-magnitude embedding vector.
+        The lexical-overlap fallback (used when embeddings error out) scores
+        this pair at ~0.857 (verified via
+        MetricsCalculator._calculate_lexical_semantic_fallback), not 0.0 and
+        not 1.0. Zero-magnitude embedding vectors previously raised
+        ZeroDivisionError in the pure-Python branch, which the broad
+        `except Exception` silently converted into that lexical fallback
+        score. Asserting exactly 0.0 here fails loudly if that regression
+        returns, instead of coincidentally matching either path's output.
+        """
+        model = _StubEmbeddingModel(
+            {
+                "the cat sat down": [0.0, 0.0, 0.0],
+                "the cat sat": [0.0, 0.0, 0.0],
+            }
+        )
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            "the cat sat down", "the cat sat", embedding_model=model
+        )
+
+        assert score == 0.0
+
+
+class TestSemanticSimilarityExactMatchShortCircuit:
+    """calculate_semantic_similarity(s, s) must return exactly 1.0.
+
+    Follow-up regression coverage: the initial TASK-862 fix upcast
+    embeddings to float64 before the cosine-similarity division, which
+    reduces but does NOT eliminate floating point precision loss -
+    sqrt-then-square rounding still leaves a real fraction of embeddings a
+    few ULPs short of exact 1.0 even at float64 (measured empirically:
+    ~30% of random float32 vectors; concretely,
+    ``calculate_semantic_similarity("the cat sat on the mat", "the cat sat
+    on the mat")`` returned 0.9999999999999998 through the real cached
+    MiniLM model on this machine). Cosine similarity of a vector with
+    itself is 1.0 by construction, so exact string equality must
+    short-circuit before the embedding model is ever consulted, rather than
+    depending on floating point arithmetic to land exactly on 1.0.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "4",
+            "hello",
+            "the cat sat on the mat",
+            "a much longer sentence with several different words in it",
+        ],
+    )
+    def test_exact_match_returns_one_despite_lossy_embedding(self, text):
+        """An exact string match returns exactly 1.0 despite a lossy embedding round-trip.
+
+        Args:
+            text: Input string used as both the predicted and expected value.
+                Every case maps, via ``_ConstantEmbeddingModel``, to the same
+                deliberately precision-losing vector, so this parametrization
+                confirms the short-circuit holds regardless of the specific
+                text content.
+        """
+        # Every input string maps to the SAME deliberately precision-losing
+        # vector (see _PRECISION_LOSING_VECTOR), regardless of its content.
+        # If the short-circuit were removed, this would compute cosine
+        # self-similarity on that vector - 0.9999999999999999, not 1.0 -
+        # instead of returning the exact 1.0 guaranteed by construction.
+        model = _ConstantEmbeddingModel(_PRECISION_LOSING_VECTOR)
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            text, text, embedding_model=model
+        )
+
+        assert score == 1.0
+
+    def test_non_identical_strings_still_use_the_embedding_path(self):
+        """Only LITERAL equality short-circuits; near-misses must not.
+
+        "4" and "4 " are different strings (trailing space), so they must
+        still go through the embedding model rather than short-circuiting.
+        Both map to the same precision-losing vector here, so the result
+        should be extremely close to 1.0 but demonstrably NOT the exact
+        1.0 the short-circuit would produce - proving this pair took the
+        embedding path, not the short-circuit.
+        """
+        model = _ConstantEmbeddingModel(_PRECISION_LOSING_VECTOR)
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            "4", "4 ", embedding_model=model
+        )
+
+        assert score != 1.0
+        assert score == pytest.approx(1.0)
+
+
+class TestStandaloneMetricsCalculatorSemanticSimilarity:
+    """Regression coverage for the second ``MetricsCalculator`` copy.
+
+    ``tldw_chatbook/Evals/metrics_calculator.py`` defines a standalone
+    ``MetricsCalculator`` that duplicates the one in ``eval_runner.py``
+    (see TASK-863). Nothing imports it at runtime, but ``Evals/README.md``
+    and ``DEVELOPER_GUIDE.md`` both instruct users to import it directly, so
+    it needs to uphold the same ``[0, 1]``-score invariants as the
+    ``eval_runner`` copy even though the two have not yet been consolidated
+    into one implementation. These tests exercise
+    ``StandaloneMetricsCalculator`` (imported from ``metrics_calculator``,
+    aliased to avoid colliding with the ``eval_runner`` import used above)
+    directly, independent of the ``eval_runner`` tests.
+    """
+
+    def test_exact_match_returns_one(self):
+        """An exact string match returns exactly 1.0 without calling the embedding model."""
+        model = _ConstantEmbeddingModel(_PRECISION_LOSING_VECTOR)
+
+        score = StandaloneMetricsCalculator.calculate_semantic_similarity(
+            "the cat sat on the mat", "the cat sat on the mat", embedding_model=model
+        )
+
+        assert score == 1.0
+
+    def test_opposite_embeddings_are_clamped_to_zero_not_negative_one(self):
+        """Cosine similarity is [-1, 1], but callers expect a [0, 1] score.
+
+        Opposite vectors give raw cosine similarity -1.0; the standalone
+        copy must clamp that into range rather than returning the negative
+        raw cosine value (the defect TASK-863 flagged: this copy previously
+        returned raw cosine similarity uncapped).
+        """
+        model = _StubEmbeddingModel(
+            {
+                "positive": [1.0, 0.0],
+                "negative": [-1.0, 0.0],
+            }
+        )
+
+        score = StandaloneMetricsCalculator.calculate_semantic_similarity(
+            "positive", "negative", embedding_model=model
+        )
+
+        assert score is not None
+        assert score == pytest.approx(0.0)
+        assert 0.0 <= score <= 1.0
+
+    def test_zero_norm_embedding_returns_zero_without_raising(self):
+        """A zero-magnitude embedding vector must yield 0.0, not raise or return NaN.
+
+        Uses two DIFFERENT (not exactly equal, so the string-equality
+        short-circuit does not fire) strings, both mapped to a
+        zero-magnitude embedding vector. An unguarded division here
+        computes 0/0, which numpy turns into NaN rather than raising -
+        asserting exactly 0.0 (not just "no exception") fails loudly if
+        that NaN leaks out instead of being caught by the zero-guard.
+        """
+        model = _StubEmbeddingModel(
+            {
+                "the cat sat down": [0.0, 0.0, 0.0],
+                "the cat sat": [0.0, 0.0, 0.0],
+            }
+        )
+
+        score = StandaloneMetricsCalculator.calculate_semantic_similarity(
+            "the cat sat down", "the cat sat", embedding_model=model
+        )
+
+        assert score == 0.0

@@ -5,6 +5,7 @@ This provides a minimal interface to the existing chunking functionality
 to satisfy the import requirements of the simplified RAG service.
 """
 
+import json
 import re
 from typing import List, Dict, Any
 import logging
@@ -23,6 +24,34 @@ class InvalidChunkingMethodError(ChunkingError):
     """Exception raised when an invalid chunking method is specified."""
 
     pass
+
+
+def _chunk_to_text(chunk: Any) -> str:
+    """Return the text of a chunk, whatever shape the chunker produced.
+
+    ``Chunker.chunk_text`` is not uniform: the text methods yield plain strings,
+    while the structure-aware ones (``json``, ``xml``, ``ebook_chapters``) yield
+    dicts carrying their text alongside metadata. Callers that assumed one shape
+    crashed on the other -- see task-840 for the audio path and task-841 for this
+    one.
+
+    Args:
+        chunk: A chunk as returned by the underlying chunker.
+
+    Returns:
+        The chunk's text, or an empty string when it carries none.
+    """
+    if isinstance(chunk, str):
+        return chunk
+    if isinstance(chunk, dict):
+        for key in ("text", "content", "chunk"):
+            value = chunk.get(key)
+            if isinstance(value, str):
+                return value
+        # A structured payload with no text field: serialise rather than drop it,
+        # so the content still reaches the index.
+        return json.dumps(chunk, ensure_ascii=False, default=str)
+    return str(chunk)
 
 
 class ChunkingService:
@@ -181,7 +210,16 @@ class ChunkingService:
                 total_length = len(content)
                 num_chunks = len([c for c in chunks if c])
 
-                for i, chunk_text in enumerate(chunks):
+                for i, raw_chunk in enumerate(chunks):
+                    if not raw_chunk:
+                        continue
+
+                    # Structure-aware chunkers (json, xml, ebook_chapters) return
+                    # dicts carrying their own text plus metadata, while the text
+                    # methods return plain strings. Assuming a string here called
+                    # .split() on a dict and every json/xml chunk request died with
+                    # "'dict' object has no attribute 'split'" (task-841).
+                    chunk_text = _chunk_to_text(raw_chunk)
                     if not chunk_text:
                         continue
 

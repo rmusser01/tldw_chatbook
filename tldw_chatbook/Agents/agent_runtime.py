@@ -262,6 +262,35 @@ def _catalog_lines(entries: list) -> str:
     return "\n".join(f"{e.id} — {e.name}: {e.one_line_description}" for e in entries)
 
 
+def _truncate_tool_result(content: str, max_chars: int, tool_name: str) -> str:
+    """Bound one tool result before it enters history.
+
+    Applied at the append seam rather than inside each tool so a tool that
+    forgets to paginate cannot blow the context, and so MCP and skill
+    results are covered by the same rule as built-ins.
+
+    Args:
+        content: The tool's full result text.
+        max_chars: Ceiling from ``RunBudget.max_tool_result_chars``; 0 or
+            negative means unlimited.
+        tool_name: Named in the trailer so the model knows which call was
+            cut and can re-issue it more narrowly.
+
+    Returns:
+        ``content`` unchanged when under the cap or when unlimited;
+        otherwise the first ``max_chars`` characters plus a trailer stating
+        the original length and how to retrieve the remainder.
+    """
+    if max_chars <= 0 or len(content) <= max_chars:
+        return content
+    return (
+        content[:max_chars]
+        + f"\n\n[truncated: {tool_name} returned {len(content)} characters; "
+        f"showing the first {max_chars}. Re-issue the call with a narrower "
+        f"query, or use the tool's offset/limit arguments to read the rest.]"
+    )
+
+
 def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> None:
     """Append one tool result to history using the call's role/id shaping.
 
@@ -611,6 +640,14 @@ def run_agent_loop(
                     result = deps.invoke_tool(call)
 
                 content = result.content if result.ok else f"ERROR: {result.error}"
+
+            # Truncate once, unconditionally, regardless of which branch set
+            # `content` above -- the review-hook refusal string (verdict !=
+            # "proceed") and every dispatched-tool result share the same cap
+            # so neither path can enter history unbounded.
+            content = _truncate_tool_result(
+                content, budget.max_tool_result_chars, call.name
+            )
 
             add(STEP_TOOL_RESULT, tool_name=call.name, result=content[:2000])
             _append_tool_result(messages, call, content)

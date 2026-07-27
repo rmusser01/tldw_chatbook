@@ -275,6 +275,16 @@ class MetricsCalculator:
         if not predicted or not expected:
             return 0.0
 
+        # Exact string equality guarantees cosine similarity of 1.0 by
+        # construction (a vector's similarity with itself is always 1), so
+        # short-circuit before touching the embedding model at all. Kept in
+        # sync with eval_runner.MetricsCalculator.calculate_semantic_similarity
+        # - see that copy's docstring/comments for the full rationale on why
+        # this must be a literal `==` check rather than relying on the
+        # embedding math to land on exactly 1.0.
+        if predicted == expected:
+            return 1.0
+
         lexical_fallback = MetricsCalculator._calculate_lexical_semantic_fallback(
             predicted, expected
         )
@@ -299,19 +309,33 @@ class MetricsCalculator:
                 from numpy import dot
                 from numpy.linalg import norm
 
-                cosine_sim = dot(pred_embedding, exp_embedding) / (
-                    norm(pred_embedding) * norm(exp_embedding)
+                norm_product = norm(pred_embedding) * norm(exp_embedding)
+                # Guard against zero-magnitude vectors: an unguarded division
+                # here computes 0/0, which numpy silently turns into NaN
+                # rather than raising - and NaN survives an unguarded
+                # min()/max() clamp depending on argument order, so it must
+                # be caught here rather than left to the clamp below.
+                cosine_sim = (
+                    float(dot(pred_embedding, exp_embedding) / norm_product)
+                    if norm_product > 0
+                    else 0.0
                 )
-                return float(cosine_sim)
             except ImportError:
-                # Fallback to pure Python cosine similarity
+                # Fallback to pure Python cosine similarity. The zero-guard
+                # below swaps in a 1.0 denominator (not the final value) when
+                # both vectors are zero-magnitude: the dot product is also 0
+                # in that case, so 0 / 1.0 = 0.0, which is the correct
+                # similarity for two zero vectors.
                 dot_product = sum(a * b for a, b in zip(pred_embedding, exp_embedding))
                 norm1 = sum(a * a for a in pred_embedding) ** 0.5
                 norm2 = sum(b * b for b in exp_embedding) ** 0.5
                 cosine_sim = dot_product / (
                     (norm1 * norm2) if norm1 * norm2 > 0 else 1.0
                 )
-                return cosine_sim
+
+            # Cosine similarity ranges over [-1, 1]; callers/tests expect a
+            # [0, 1] score, so clamp before returning.
+            return max(0.0, min(1.0, cosine_sim))
 
         except ImportError:
             # Fallback to token overlap if embeddings not available

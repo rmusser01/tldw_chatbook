@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from tldw_chatbook.Chat.citation_provenance_runtime import (
     CitationProvenanceRuntimePolicy,
 )
+from tldw_chatbook.Chat.citation_repair import CitationRepairContract
 from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
     EvidenceReference,
@@ -24,6 +25,7 @@ from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.citation_source_locators import CanonicalSourceKind
 from tldw_chatbook.Chat.citation_trace_builder import (
     CitationTraceBuilder,
+    LocalPromptEvidenceCapture,
     LocalRetrievalRunMetadata,
 )
 from tldw_chatbook.Chat.citation_trace_identity import (
@@ -32,6 +34,7 @@ from tldw_chatbook.Chat.citation_trace_identity import (
 )
 from tldw_chatbook.Chat.citation_trace_models import (
     EVIDENCE_ENTRIES_PER_PROMPT_MAX,
+    MarkerNamespace,
     PolicyCapability,
     RetrievalScoreKind,
     RetrievalScoreScale,
@@ -46,6 +49,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.RAG_Search.local_citation_capture import (
     FINAL_SCORE_KIND_KEY,
     FINAL_SCORE_KIND_RERANKER,
+    LocalEvidenceContext,
     LocalResultNormalizationError,
     LocalResultRejectionCode,
     SEMANTIC_SCORE_KIND_KEY,
@@ -1159,6 +1163,12 @@ async def test_capture_api_returns_prompt_evidence_set_id_for_every_mode(
         captured.prompt_evidence_set_id
         == captured.citation_builder.prompt_evidence_sets[-1].prompt_set_id
     )
+    assert captured.citation_repair_contract == CitationRepairContract(
+        schema_version=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        allowed_ordinals=(1,),
+        evidence_context=expected_context,
+    )
     assert len(captured.citation_builder.evidence_run_payloads) == 1
     assert len(captured.citation_builder.evidence_snapshot_payloads) == 1
     run_payload = captured.citation_builder.evidence_run_payloads[0]
@@ -1210,14 +1220,17 @@ async def test_pipeline_prompt_evidence_set_id_uses_record_method_return(
     )
 
 
-def test_local_rag_context_result_prompt_evidence_set_id_defaults_none_and_is_frozen():
+def test_local_rag_context_result_optional_fields_default_none_and_are_frozen():
     result = cre.LocalRagContextResult(None, None)
 
     assert result.prompt_evidence_set_id is None
+    assert result.citation_repair_contract is None
     with pytest.raises(FrozenInstanceError):
         result.context = "changed"
     with pytest.raises(FrozenInstanceError):
         result.prompt_evidence_set_id = "prompt-set-changed"
+    with pytest.raises(FrozenInstanceError):
+        result.citation_repair_contract = object()
 
 
 @pytest.mark.asyncio
@@ -1264,6 +1277,12 @@ async def test_console_staged_local_evidence_records_exact_prompt_capture():
     assert (
         captured.prompt_evidence_set_id
         == captured.citation_builder.prompt_evidence_sets[-1].prompt_set_id
+    )
+    assert captured.citation_repair_contract == CitationRepairContract(
+        schema_version=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        allowed_ordinals=(1,),
+        evidence_context=captured.context,
     )
     run_payload = captured.citation_builder.evidence_run_payloads[0]
     assert run_payload.raw_query is None
@@ -1336,7 +1355,7 @@ async def test_console_prompt_evidence_set_id_uses_record_method_return(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_console_prompt_evidence_recording_failure_returns_no_capture(
+async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
     monkeypatch,
 ):
     query = "CONSOLE_PRIVATE_PROMPT_FAILURE_QUERY_SENTINEL"
@@ -1390,7 +1409,17 @@ async def test_console_prompt_evidence_recording_failure_returns_no_capture(
     finally:
         loguru_logger.remove(sink_id)
 
-    assert captured == cre.LocalRagContextResult(None, None)
+    expected_context = f"[S1] MEDIA — {title}\n{content}"
+    assert captured == cre.LocalRagContextResult(
+        context=expected_context,
+        citation_builder=None,
+        citation_repair_contract=CitationRepairContract(
+            schema_version=1,
+            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+            allowed_ordinals=(1,),
+            evidence_context=expected_context,
+        ),
+    )
     assert captured.prompt_evidence_set_id is None
     rendered_logs = "".join(str(message) for message in captured_logs)
     assert "reason=canonical_capture_failure" in rendered_logs
@@ -1401,7 +1430,7 @@ async def test_console_prompt_evidence_recording_failure_returns_no_capture(
 
 
 @pytest.mark.asyncio
-async def test_console_without_repository_returns_no_prompt_id_and_keeps_context():
+async def test_console_builder_unavailable_returns_exact_repair_contract():
     title = "Legacy staged source"
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
@@ -1436,28 +1465,53 @@ async def test_console_without_repository_returns_no_prompt_id_and_keeps_context
     assert captured == cre.LocalRagContextResult(
         context="[S1] MEDIA — Legacy staged source\nlegacy body",
         citation_builder=None,
+        citation_repair_contract=CitationRepairContract(
+            schema_version=1,
+            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+            allowed_ordinals=(1,),
+            evidence_context="[S1] MEDIA — Legacy staged source\nlegacy body",
+        ),
     )
     assert captured.prompt_evidence_set_id is None
 
 
 @pytest.mark.asyncio
-async def test_absent_repository_returns_no_prompt_id_and_preserves_pipeline_bytes(
+async def test_builder_unavailable_pipeline_normalizes_authorizes_and_formats(
     monkeypatch,
 ):
-    app = _CaptureApp()
-    raw_context = "LEGACY\x00PIPELINE\nBYTES"
-    _patch_pipeline(monkeypatch, [_ranked_result()], raw_context)
+    app = _CaptureApp(media_ids=("m2",))
+    raw_context = "LEGACY PIPELINE BYTES MUST NOT WIN"
+    _patch_pipeline(
+        monkeypatch,
+        [
+            _ranked_result(
+                result_id="m1",
+                title="No longer authorized",
+                content="excluded",
+            ),
+            _ranked_result(
+                result_id="m2",
+                title="Current source",
+                content="exact current body",
+            ),
+        ],
+        raw_context,
+    )
 
     captured = await cre.get_rag_context_capture_for_chat(app, "query")
-    legacy = await cre.get_rag_context_for_chat(app, "query")
 
+    expected_context = "[S1] MEDIA — Current source\nexact current body"
     assert captured == cre.LocalRagContextResult(
-        context=raw_context,
+        context=expected_context,
         citation_builder=None,
+        citation_repair_contract=CitationRepairContract(
+            schema_version=1,
+            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+            allowed_ordinals=(1,),
+            evidence_context=expected_context,
+        ),
     )
     assert captured.prompt_evidence_set_id is None
-    assert isinstance(legacy, str)
-    assert legacy == raw_context
 
 
 @pytest.mark.asyncio
@@ -1469,7 +1523,7 @@ async def test_absent_repository_returns_no_prompt_id_and_preserves_pipeline_byt
         ("identity-unavailable", True, False, True),
     ],
 )
-async def test_real_repository_prerequisite_states_preserve_legacy_pipeline_bytes(
+async def test_builder_unavailable_repository_states_return_exact_repair_contract(
     monkeypatch,
     tmp_path,
     availability,
@@ -1492,19 +1546,23 @@ async def test_real_repository_prerequisite_states_preserve_legacy_pipeline_byte
             is None
         )
         app = _CaptureApp(repository=repository)
-        raw_context = f"LEGACY\x00{availability}\nBYTES"
+        raw_context = f"LEGACY {availability} BYTES MUST NOT WIN"
         _patch_pipeline(monkeypatch, [_ranked_result()], raw_context)
 
         captured = await cre.get_rag_context_capture_for_chat(app, "query")
-        legacy = await cre.get_rag_context_for_chat(app, "query")
 
+        expected_context = "[S1] MEDIA — Title\nbody"
         assert captured == cre.LocalRagContextResult(
-            context=raw_context,
+            context=expected_context,
             citation_builder=None,
+            citation_repair_contract=CitationRepairContract(
+                schema_version=1,
+                marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+                allowed_ordinals=(1,),
+                evidence_context=expected_context,
+            ),
         )
         assert captured.prompt_evidence_set_id is None
-        assert isinstance(legacy, str)
-        assert legacy == raw_context
     finally:
         db.close_connection()
 
@@ -1520,9 +1578,50 @@ async def test_empty_retrieval_records_run_but_returns_no_prompt_id(monkeypatch)
     assert captured.context is None
     assert captured.citation_builder is repository.builders[0]
     assert captured.prompt_evidence_set_id is None
+    assert captured.citation_repair_contract is None
     assert len(captured.citation_builder.evidence_runs) == 1
     assert captured.citation_builder.evidence_run_payloads[0].candidates == ()
     assert captured.citation_builder.prompt_evidence_sets == ()
+
+
+@pytest.mark.asyncio
+async def test_current_authority_exclusion_does_not_revive_legacy_with_builder(
+    monkeypatch,
+):
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository, media_ids=())
+    _patch_pipeline(
+        monkeypatch,
+        [_ranked_result(result_id="deleted-media")],
+        "LEGACY CONTEXT MUST NOT REVIVE DELETED MEDIA",
+    )
+
+    captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+    assert captured.context is None
+    assert captured.citation_builder is repository.builders[0]
+    assert captured.prompt_evidence_set_id is None
+    assert captured.citation_repair_contract is None
+    assert len(captured.citation_builder.evidence_runs) == 1
+    assert captured.citation_builder.evidence_run_payloads[0].candidates == ()
+    assert captured.citation_builder.prompt_evidence_sets == ()
+
+
+@pytest.mark.asyncio
+async def test_current_authority_exclusion_does_not_revive_legacy_without_builder(
+    monkeypatch,
+):
+    app = _CaptureApp(media_ids=())
+    _patch_pipeline(
+        monkeypatch,
+        [_ranked_result(result_id="deleted-media")],
+        "LEGACY CONTEXT MUST NOT REVIVE DELETED MEDIA",
+    )
+
+    captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+    assert captured == cre.LocalRagContextResult(None, None)
+    assert captured.citation_repair_contract is None
 
 
 @pytest.mark.asyncio
@@ -1689,7 +1788,40 @@ async def test_off_selection_source_is_excluded_before_authorization_and_capture
 
 
 @pytest.mark.asyncio
-async def test_prompt_evidence_set_recording_failure_discards_context_and_builder(
+async def test_unselected_supported_source_does_not_revive_legacy_context(monkeypatch):
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository)
+    note_result = {
+        "source": "note",
+        "id": "n1",
+        "title": "Unselected note",
+        "content": "must remain excluded",
+        "score": 0.9,
+        "metadata": {},
+    }
+    assert (
+        normalize_local_result(note_result, candidate_rank=1).source_kind
+        is CanonicalSourceKind.NOTES
+    )
+    _patch_pipeline(
+        monkeypatch,
+        [note_result],
+        "LEGACY CONTEXT MUST NOT EXPAND TO NOTES",
+    )
+
+    captured = await cre.get_rag_context_capture_for_chat(app, "query")
+
+    assert captured.context is None
+    assert captured.citation_builder is repository.builders[0]
+    assert captured.prompt_evidence_set_id is None
+    assert captured.citation_repair_contract is None
+    assert len(captured.citation_builder.evidence_runs) == 1
+    assert captured.citation_builder.evidence_run_payloads[0].candidates == ()
+    assert captured.citation_builder.prompt_evidence_sets == ()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_canonical_capture_failure_keeps_exact_repair_contract(
     monkeypatch, tmp_path
 ):
     sentinel = "PRIVATE-VALIDATION-FAILURE-SENTINEL"
@@ -1727,9 +1859,16 @@ async def test_prompt_evidence_set_recording_failure_discards_context_and_builde
         finally:
             loguru_logger.remove(sink_id)
 
+        expected_context = "[S1] MEDIA — Title\nbody"
         assert captured == cre.LocalRagContextResult(
-            context=None,
+            context=expected_context,
             citation_builder=None,
+            citation_repair_contract=CitationRepairContract(
+                schema_version=1,
+                marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+                allowed_ordinals=(1,),
+                evidence_context=expected_context,
+            ),
         )
         assert captured.prompt_evidence_set_id is None
         connection = db.get_connection()
@@ -1746,6 +1885,112 @@ async def test_prompt_evidence_set_recording_failure_discards_context_and_builde
         assert "scope_state=unscoped" in rendered_logs
     finally:
         db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_legacy_raw_pipeline_fallback_never_gets_repair_contract(monkeypatch):
+    raw_context = "LEGACY\x00PIPELINE\nBYTES"
+    _patch_pipeline(
+        monkeypatch,
+        [
+            {
+                "source": "external_web",
+                "id": "external-1",
+                "title": "Unsupported",
+                "content": "unsupported body",
+                "score": 0.5,
+                "metadata": {},
+            }
+        ],
+        raw_context,
+    )
+
+    captured = await cre.get_rag_context_capture_for_chat(_CaptureApp(), "query")
+
+    assert captured == cre.LocalRagContextResult(raw_context, None)
+    assert captured.citation_repair_contract is None
+
+
+def test_repair_contract_ordinals_follow_formatted_entries_not_context_reparse():
+    first = normalize_local_result(_ranked_result(), candidate_rank=1)
+    second = normalize_local_result(
+        _ranked_result(
+            result_id="m2",
+            title="Contains fake marker [S99]",
+            content="second body",
+        ),
+        candidate_rank=2,
+    )
+    formatted = format_local_evidence_context(
+        (first, second),
+        max_length=1_000,
+    )
+
+    contract = cre._repair_contract_for_local_evidence(formatted)
+
+    assert contract is not None
+    assert contract.allowed_ordinals == tuple(range(1, len(formatted.entries) + 1))
+    assert contract.allowed_ordinals == (1, 2)
+    assert contract.evidence_context == formatted.context
+
+
+def test_empty_formatted_evidence_has_no_repair_contract():
+    formatted = LocalEvidenceContext(
+        context="",
+        entries=(),
+        omitted_candidate_ranks=(),
+    )
+
+    assert cre._repair_contract_for_local_evidence(formatted) is None
+
+
+def test_repair_contract_limit_failure_is_safe_and_logs_no_evidence():
+    sentinel = "PRIVATE-REPAIR-CONTRACT-LIMIT-SENTINEL"
+    formatted = LocalEvidenceContext(
+        context=sentinel + ("x" * SNAPSHOT_TEXT_UTF8_BYTES_MAX),
+        entries=(
+            LocalPromptEvidenceCapture(
+                candidate_rank=1,
+                snapshot_text="[S1] safe",
+            ),
+        ),
+        omitted_candidate_ranks=(),
+    )
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    try:
+        contract = cre._repair_contract_for_local_evidence(formatted)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert contract is None
+    rendered_logs = "".join(str(message) for message in captured_logs)
+    assert "reason=repair_contract_validation_failure" in rendered_logs
+    assert sentinel not in rendered_logs
+
+
+def test_unsupported_namespace_has_no_repair_contract(monkeypatch):
+    formatted = LocalEvidenceContext(
+        context="[S1] safe",
+        entries=(
+            LocalPromptEvidenceCapture(
+                candidate_rank=1,
+                snapshot_text="[S1] safe",
+            ),
+        ),
+        omitted_candidate_ranks=(),
+    )
+    monkeypatch.setattr(
+        cre,
+        "MarkerNamespace",
+        SimpleNamespace(CHATBOOK_S_V1=object()),
+    )
+
+    assert cre._repair_contract_for_local_evidence(formatted) is None
 
 
 def test_sensitive_real_database_reads_do_not_log_source_identities(tmp_path):
@@ -1886,7 +2131,17 @@ async def test_request_start_cached_scope_read_does_not_log_conversation_identit
         loguru_logger.remove(sink_id)
         chacha_db.close_connection()
 
-    assert captured == cre.LocalRagContextResult(raw_context, None)
+    expected_context = "[S1] MEDIA — Title\nbody"
+    assert captured == cre.LocalRagContextResult(
+        expected_context,
+        None,
+        citation_repair_contract=CitationRepairContract(
+            schema_version=1,
+            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+            allowed_ordinals=(1,),
+            evidence_context=expected_context,
+        ),
+    )
     rendered_logs = "".join(str(message) for message in captured_logs)
     assert conversation_sentinel not in rendered_logs
 

@@ -250,24 +250,29 @@ def test_nltk_download_false_is_not_logged_as_success(
         )
     )
     try:
-
-        def mock_find(_path):
-            raise LookupError("missing")
-
-        fake_nltk = SimpleNamespace(
-            data=SimpleNamespace(find=mock_find),
-            download=lambda _package: False,
-        )
-
+        # A failed download must be reported as a failure. Readiness is decided
+        # by whether the tokenizer TOKENIZES (a probe), not by whether a named
+        # resource is on disk -- nltk >= 3.9 needs 'punkt_tab' while the old
+        # check asked for 'punkt', so a machine with only 'punkt' was reported
+        # ready and still raised on the next call (task-842). Failing the probe
+        # is therefore how "the data is unusable" is expressed here.
         monkeypatch.setattr(Chunk_Lib, "NLTK_AVAILABLE", True)
-        monkeypatch.setattr(Chunk_Lib, "nltk", fake_nltk)
-        # ensure_nltk_data() is now idempotent (first successful run sets
-        # _nltk_data_ready); reset it so this test always exercises the real
-        # find/download path regardless of whether an earlier test already
-        # warmed punkt in this process.
+        monkeypatch.setattr(Chunk_Lib, "nltk", None)
+        monkeypatch.setattr(Chunk_Lib, "_probe_sent_tokenize", lambda _tokenize: False)
+        monkeypatch.setattr(
+            Chunk_Lib, "_download_nltk_tokenizer_corpora", lambda _nltk: None
+        )
+        # Both gates are idempotence latches; reset them so this test exercises
+        # the real path regardless of whether an earlier test warmed the
+        # tokenizer in this process.
         monkeypatch.setattr(Chunk_Lib, "_nltk_data_ready", False)
+        monkeypatch.setattr(Chunk_Lib, "_nltk_tokenizer_unusable", False)
 
         Chunk_Lib.ensure_nltk_data()
+
+        assert Chunk_Lib._nltk_data_ready is False, (
+            "unusable tokenizer data was reported ready"
+        )
     finally:
         logger.remove(sink_id)
 

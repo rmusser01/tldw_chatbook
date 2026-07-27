@@ -25,6 +25,7 @@ class ConsoleRunStatus(str, Enum):
     IDLE = "idle"
     VALIDATING = "validating"
     STREAMING = "streaming"
+    CHECKING_CITATIONS = "checking_citations"
     COMPLETED = "completed"
     BLOCKED = "blocked"
     STOPPED = "stopped"
@@ -39,6 +40,44 @@ DEFAULT_CONSOLE_SESSION_TITLE = "Chat 1"
 
 CONSOLE_AUTO_TITLE_MAX_LENGTH = 30
 _DEFAULT_CONSOLE_SESSION_TITLE_RE = re.compile(r"^Chat \d+$")
+
+
+class ConsoleCitationPhase(str, Enum):
+    """Approved structural phases for transient citation presentation."""
+
+    CHECKING = "checking"
+    REPAIRING = "repairing"
+    SELECTED = "selected"
+
+
+class ConsoleCitationNoticeCode(str, Enum):
+    """Approved structural citation-result notices."""
+
+    REPAIRED = "repaired"
+    UNAVAILABLE = "unavailable"
+    CANCELED = "canceled"
+
+
+@dataclass(frozen=True)
+class ConsoleCitationPresentation:
+    """Content-free transient citation presentation metadata."""
+
+    phase: ConsoleCitationPhase
+    notice_code: ConsoleCitationNoticeCode | None = None
+    original_attempt_available: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject unbounded or non-structural presentation values."""
+        if not isinstance(self.phase, ConsoleCitationPhase):
+            raise ValueError("phase must be an approved ConsoleCitationPhase")
+        if self.notice_code is not None and not isinstance(
+            self.notice_code, ConsoleCitationNoticeCode
+        ):
+            raise ValueError(
+                "notice_code must be an approved ConsoleCitationNoticeCode"
+            )
+        if type(self.original_attempt_available) is not bool:
+            raise ValueError("original_attempt_available must be a bool")
 
 
 def is_default_console_session_title(title: str) -> bool:
@@ -182,7 +221,10 @@ class ConsoleRunState:
     @property
     def is_stop_allowed(self) -> bool:
         """Return whether Console can stop an active stream from this state."""
-        return self.status is ConsoleRunStatus.STREAMING
+        return self.status in {
+            ConsoleRunStatus.STREAMING,
+            ConsoleRunStatus.CHECKING_CITATIONS,
+        }
 
 
 @dataclass(frozen=True)
@@ -301,6 +343,8 @@ class ConsoleChatMessage:
     #: ``attachments`` (index i describes attachment position i). An empty
     #: tuple (the default) means this is NOT a generation message.
     generation_metadata: tuple["GenerationVariantMeta", ...] = ()
+    #: Safe current-session citation UI state. Never persisted or restored.
+    citation_presentation: ConsoleCitationPresentation | None = None
 
 
 @dataclass(frozen=True)

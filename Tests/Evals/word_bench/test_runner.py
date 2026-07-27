@@ -95,6 +95,39 @@ async def test_progress_reports_group_level_totals(db, config, targets, snippets
 
 
 @pytest.mark.asyncio
+async def test_a_raising_progress_callback_does_not_strand_the_run(
+    db, config, targets, snippets
+):
+    """A broken UI-supplied progress callback is not a cancellation -- it
+    must not propagate out of run() and leave every eval_runs row sitting
+    at "running" forever. This is the same failure class the
+    asyncio.CancelledError handler in sample_bench.create_and_run_sample_
+    bench exists to close, just for a different exception type; the fix
+    belongs at the call site in runner.py, not in that handler, so this
+    test pins it directly against the runner."""
+    task_id = save_bench(db, config)
+    runner = WordBenchRunner(db, lambda t: FakeClient([]))
+
+    def broken_progress(done, total):
+        raise RuntimeError("boom")
+
+    outcome = await runner.run(
+        config, targets, snippets, task_id, progress=broken_progress
+    )
+
+    grid = load_grid(db, outcome.group_id)
+    assert len(grid["cells"]) == 4, "the run itself must still complete"
+
+    runs = db.list_runs(run_group_id=outcome.group_id)
+    assert len(runs) == len(targets)
+    for run in runs:
+        assert run["status"] == "completed", (
+            "a throwing progress callback must not strand the run row at "
+            "'running'"
+        )
+
+
+@pytest.mark.asyncio
 async def test_cancel_stops_the_run_and_keeps_completed_cells(db, config, targets, snippets):
     token = CancelToken()
     order = []

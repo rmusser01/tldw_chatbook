@@ -14,6 +14,15 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
+from tldw_chatbook.Chat.citation_repair import CitationRepairContract
+from tldw_chatbook.Chat.citation_trace_builder import CitationTraceBuilder
+from tldw_chatbook.Chat.citation_trace_identity import (
+    CitationFingerprintCodec,
+    LocalCitationIdentityContext,
+)
+from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace, PolicyCapability
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     LocalRagContextResult,
@@ -21,6 +30,160 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchRequest
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+
+
+def _repair_contract(context: str) -> CitationRepairContract:
+    return CitationRepairContract(
+        schema_version=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        allowed_ordinals=(1,),
+        evidence_context=context,
+    )
+
+
+def _controller_builder() -> CitationTraceBuilder:
+    return CitationTraceBuilder.local(
+        request_id="request-controller-boundary",
+        generation_id="generation-controller-boundary",
+        identity_context=LocalCitationIdentityContext(
+            profile_id="profile-controller-boundary",
+            local_authority_id="authority-controller-boundary",
+            fingerprint_key_id="key-controller-boundary",
+        ),
+        fingerprint_codec=CitationFingerprintCodec(b"k" * 32),
+        policy_version="controller-boundary-v1",
+        policy_capabilities=(PolicyCapability.VIEW_SNAPSHOT,),
+    )
+
+
+@pytest.mark.asyncio
+async def test_controller_returns_same_repair_contract_object_at_capture_boundary():
+    context = "[S1] MEDIA — Source\nexact body"
+    contract = _repair_contract(context)
+    builder = _controller_builder()
+    capture = AsyncMock(
+        return_value=LocalRagContextResult(
+            context=context,
+            citation_builder=builder,
+            prompt_evidence_set_id="prompt-set-independent",
+            citation_repair_contract=contract,
+        )
+    )
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=_CapturingGateway(),
+        rag_capture_provider=capture,
+    )
+
+    captured = await controller._capture_rag_context("question")
+
+    assert captured == (context, builder, "prompt-set-independent", contract)
+    assert captured[1] is builder
+    assert captured[3] is contract
+
+
+@pytest.mark.asyncio
+async def test_controller_rejects_repair_contract_with_different_exact_context():
+    context = "[S1] MEDIA — Source\nprovider evidence"
+    contract = _repair_contract("[S1] MEDIA — Source\nother evidence")
+    builder = _controller_builder()
+    capture = AsyncMock(
+        return_value=LocalRagContextResult(
+            context=context,
+            citation_builder=builder,
+            prompt_evidence_set_id="prompt-set-mismatch",
+            citation_repair_contract=contract,
+        )
+    )
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=_CapturingGateway(),
+        rag_capture_provider=capture,
+    )
+
+    captured = await controller._capture_rag_context("question")
+
+    assert captured == (context, builder, "prompt-set-mismatch", None)
+    assert captured[0] is context
+    assert captured[1] is builder
+
+
+@pytest.mark.asyncio
+async def test_controller_rejects_repair_contract_when_context_is_missing():
+    contract = _repair_contract("[S1] MEDIA — Source\nexact body")
+    builder = _controller_builder()
+    capture = AsyncMock(
+        return_value=SimpleNamespace(
+            citation_builder=builder,
+            prompt_evidence_set_id="prompt-set-missing-context",
+            citation_repair_contract=contract,
+        )
+    )
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=_CapturingGateway(),
+        rag_capture_provider=capture,
+    )
+
+    captured = await controller._capture_rag_context("question")
+
+    assert captured == (None, builder, "prompt-set-missing-context", None)
+    assert captured[1] is builder
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blank_context", ["", " \t\n"])
+async def test_controller_rejects_repair_contract_when_context_is_blank(
+    blank_context,
+):
+    contract = _repair_contract("[S1] MEDIA — Source\nexact body")
+    builder = _controller_builder()
+    capture = AsyncMock(
+        return_value=LocalRagContextResult(
+            context=blank_context,
+            citation_builder=builder,
+            prompt_evidence_set_id="prompt-set-blank-context",
+            citation_repair_contract=contract,
+        )
+    )
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=_CapturingGateway(),
+        rag_capture_provider=capture,
+    )
+
+    captured = await controller._capture_rag_context("question")
+
+    assert captured == (None, builder, "prompt-set-blank-context", None)
+    assert captured[1] is builder
+
+
+@pytest.mark.asyncio
+async def test_controller_rejects_duck_typed_repair_contract():
+    context = "[S1] MEDIA — Source\nexact body"
+    duck_contract = SimpleNamespace(
+        schema_version=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        allowed_ordinals=(1,),
+        evidence_context=context,
+    )
+    capture = AsyncMock(
+        return_value=SimpleNamespace(
+            context=context,
+            citation_builder=None,
+            prompt_evidence_set_id=None,
+            citation_repair_contract=duck_contract,
+        )
+    )
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=_CapturingGateway(),
+        rag_capture_provider=capture,
+    )
+
+    captured = await controller._capture_rag_context("question")
+
+    assert captured == (context, None, None, None)
 
 
 @pytest.mark.asyncio

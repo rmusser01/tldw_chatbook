@@ -96,6 +96,37 @@
     padding: 0 1;
 }
 
+/* Task 6 (empty states, sample bench, export). "No providers configured"
+   replaces the BENCHES SECTION BODY only (see library_rail.py's
+   _no_providers_message) -- deliberately not the whole rail: Datasets and
+   Runs never needed a provider, and classic tasks stay reachable without
+   one. These two ids only ever render together, in place of that one
+   section's bench list. */
+#evals-rail-no-providers {
+    padding: 1 1 0 1;
+}
+
+#evals-rail-no-providers-detail {
+    padding: 0 1 1 1;
+}
+
+#evals-rail-open-settings,
+#evals-create-sample-bench {
+    margin: 0 1 1 1;
+    width: auto;
+}
+
+/* "No datasets" offers authoring and import side by side -- two compact
+   buttons in one row, under the section's existing empty-copy line. */
+.evals-rail-empty-actions {
+    height: auto;
+    padding: 0 1;
+}
+
+.evals-rail-empty-actions > Button {
+    margin: 0 1 0 0;
+}
+
 /* I3: the labelled subgroup separating classic (non-word-bench) tasks from
    word benches under the Benches section -- see library_rail.py's
    CLASSIC_SUBGROUP_LABEL. Inert (a Static, never a Button); styled like
@@ -206,4 +237,44 @@
 
 #evals-import-snippets {
     margin: 1 0 0 0;
+}
+
+/* Task 1 (results grid + lenses). The grid fills its detail pane; the
+   DataTable does its own row virtualization/scrolling once given a real
+   height via `1fr`, so -- unlike #evals-snippet-table/#evals-bench-target-
+   table above, which are plain Static lists with no scrolling of their
+   own -- the wrapping #evals-results-grid does not need `overflow-y: auto`
+   itself. */
+#evals-results-grid {
+    height: 100%;
+    min-height: 0;
+}
+
+#evals-grid-meta,
+#evals-grid-state {
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+#evals-grid-controls {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+#evals-grid-controls > Select {
+    width: 1fr;
+}
+
+#evals-grid-table {
+    height: 1fr;
+    min-height: 0;
+}
+
+/* Focused-cell detail can run to many lines (a full top-K plus a probe
+   table) -- scrolled at this level per the I4 convention above, mirroring
+   #evals-inspector-bench/#evals-classic-detail (no separate list-body vs.
+   sibling-control split needed here). */
+#evals-cell-inspector {
+    overflow-y: auto;
 }

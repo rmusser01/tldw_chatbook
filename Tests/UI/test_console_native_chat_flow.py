@@ -26,6 +26,9 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
+    ConsoleCitationNoticeCode,
+    ConsoleCitationPhase,
+    ConsoleCitationPresentation,
     ConsoleMessageRole,
     ConsoleRunStatus,
     GenerationVariantMeta,
@@ -38,6 +41,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_ACTIVE_RUN_STATUSES,
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
@@ -56,6 +60,10 @@ from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryServ
 
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
+
+
+def test_checking_citations_is_an_active_console_run_status():
+    assert ConsoleRunStatus.CHECKING_CITATIONS in CONSOLE_ACTIVE_RUN_STATUSES
 
 
 def _configure_openai_missing_api_key(app) -> None:
@@ -1280,7 +1288,8 @@ def test_console_transcript_fingerprint_tolerates_empty_variant_container():
 
     fingerprint = screen._native_console_transcript_fingerprint([message])
 
-    assert fingerprint[1][0][-1] == (0, ())
+    assert fingerprint[1][0][-2] == (0, ())
+    assert fingerprint[1][0][-1] is None
 
 
 def test_console_provider_selection_reads_local_llamacpp_configured_model():
@@ -2344,6 +2353,131 @@ async def test_console_selected_message_copy_action_uses_app_clipboard():
     assert console._last_console_action.action_id == "copy"
 
 
+def test_console_original_attempt_action_parser_prefers_full_prefix():
+    assert ChatScreen._parse_console_message_action_button_id(
+        "console-message-action-view-original-attempt-message-1"
+    ) == ("view-original-attempt", "message-1")
+
+
+@pytest.mark.asyncio
+async def test_console_original_attempt_preview_toggles_without_changing_selected_content():
+    app = _build_test_app()
+    app.copy_to_clipboard = Mock()
+    save_note = Mock(return_value="saved-note")
+    app.notes_scope_service = SimpleNamespace(save_note=save_note)
+    app.post_message = Mock()
+    host = ConsoleHarness(app)
+    original = "Original unselected attempt"
+    repaired = "Selected repaired answer [S1]"
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session = store.ensure_session()
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Question",
+        )
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=repaired,
+        )
+        store.set_citation_presentation(
+            message.id,
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            ),
+        )
+        controller._remember_original_attempt(message.id, original)
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        view_selector = f"#console-message-action-view-original-attempt-{message.id}"
+        await _wait_for_selector(console, pilot, view_selector)
+
+        async def assert_repaired_consumers() -> None:
+            selected = store.get_message(message.id)
+            app.copy_to_clipboard.reset_mock()
+            await console.handle_console_message_action(
+                SimpleNamespace(
+                    button=SimpleNamespace(
+                        id=f"console-message-action-copy-{message.id}"
+                    ),
+                    stop=Mock(),
+                )
+            )
+            copied_text = app.copy_to_clipboard.call_args.args[0]
+            plain_export = transcript.to_plain_text()
+            save_note.reset_mock()
+            await console._save_console_message_as_note(message.id)
+            save_payload = save_note.call_args.kwargs["content"]
+            provider_messages = controller._provider_messages_for_session(session.id)
+            provider_contents = [row.get("content") for row in provider_messages]
+
+            app.post_message.reset_mock()
+            console._console_speaking_message_id = None
+            await console.handle_console_message_action(
+                SimpleNamespace(
+                    button=SimpleNamespace(
+                        id=f"console-message-action-speak-{message.id}"
+                    ),
+                    stop=Mock(),
+                )
+            )
+            spoken_event = next(
+                call.args[0]
+                for call in app.post_message.call_args_list
+                if call.args[0].__class__.__name__ == "TTSRequestEvent"
+            )
+
+            assert selected.content == repaired
+            assert copied_text == repaired
+            assert repaired in plain_export
+            assert save_payload == repaired
+            assert repaired in provider_contents
+            assert spoken_event.text == repaired
+            for output in (
+                selected.content,
+                copied_text,
+                plain_export,
+                save_payload,
+                *provider_contents,
+                spoken_event.text,
+            ):
+                assert original not in str(output)
+
+        await assert_repaired_consumers()
+        await pilot.click(view_selector)
+        await _wait_for_selector(
+            console,
+            pilot,
+            f"#console-original-attempt-{message.id}",
+        )
+        assert console._console_original_attempt_previews == {message.id: original}
+        await assert_repaired_consumers()
+
+        view_button = console.query_one(view_selector, Button)
+        view_button.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert console._console_original_attempt_previews == {}
+        assert len(console.query(f"#console-original-attempt-{message.id}")) == 0
+        await assert_repaired_consumers()
+
+        controller.clear_original_attempt(message.id)
+        console._console_original_attempt_previews[message.id] = original
+        await console._sync_native_console_chat_ui()
+        assert console._console_original_attempt_previews == {}
+        assert store.get_message(message.id).content == repaired
+
+
 @pytest.mark.asyncio
 async def test_transcript_role_label_renders_dim_body_full_contrast():
     app = _build_test_app()
@@ -3002,6 +3136,67 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
 
 
 @pytest.mark.asyncio
+async def test_console_original_attempt_delete_clears_parent_and_descendant_previews():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session = store.ensure_session()
+        parent = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Parent repaired [S1]",
+        )
+        descendant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Descendant repaired [S1]",
+        )
+        for message, original in (
+            (parent, "Parent original"),
+            (descendant, "Descendant original"),
+        ):
+            store.set_citation_presentation(
+                message.id,
+                ConsoleCitationPresentation(
+                    phase=ConsoleCitationPhase.SELECTED,
+                    notice_code=ConsoleCitationNoticeCode.REPAIRED,
+                ),
+            )
+            controller._remember_original_attempt(message.id, original)
+            console._console_original_attempt_previews[message.id] = original
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(parent.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console,
+            pilot,
+            f"#console-message-action-delete-{parent.id}",
+        )
+        delete_button = console.query_one(
+            f"#console-message-action-delete-{parent.id}",
+            Button,
+        )
+        delete_button.press()
+        await pilot.pause()
+        delete_button.press()
+        await pilot.pause()
+
+        assert controller._original_attempts == {}
+        assert console._console_original_attempt_previews == {}
+        with pytest.raises(KeyError):
+            store.get_message(parent.id)
+        with pytest.raises(KeyError):
+            store.get_message(descendant.id)
+
+
+@pytest.mark.asyncio
 async def test_console_delete_confirmation_resets_when_selection_changes():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -3081,6 +3276,17 @@ async def test_console_selected_message_edit_action_opens_modal_and_saves_conten
             role=ConsoleMessageRole.ASSISTANT,
             content="answer",
         )
+        controller = console._ensure_console_chat_controller()
+        store.set_citation_presentation(
+            message.id,
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            ),
+        )
+        controller._remember_original_attempt(message.id, "original answer")
+        console._console_original_attempt_previews[message.id] = "original answer"
+        assert controller.original_attempt_for_message(message.id) == "original answer"
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
@@ -3106,8 +3312,83 @@ async def test_console_selected_message_edit_action_opens_modal_and_saves_conten
         await pilot.pause()
 
     assert store.get_message(message.id).content == "edited answer"
+    assert controller.original_attempt_for_message(message.id) is None
+    assert message.id not in console._console_original_attempt_previews
     assert console._last_console_action.action_id == "edit"
     assert console._last_console_action.visible_copy == "Edited message."
+
+
+@pytest.mark.asyncio
+async def test_console_edit_resend_clears_replaced_descendant_original_attempt():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(
+        chunks=("new", " reply")
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        _select_llamacpp_console(console)
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session = store.ensure_session()
+        user_message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="original question",
+        )
+        replaced_assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="repaired answer [S1]",
+        )
+        store.set_citation_presentation(
+            replaced_assistant.id,
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            ),
+        )
+        controller._remember_original_attempt(
+            replaced_assistant.id,
+            "original answer",
+        )
+        console._console_original_attempt_previews[replaced_assistant.id] = (
+            "original answer"
+        )
+        assert (
+            controller.original_attempt_for_message(replaced_assistant.id)
+            == "original answer"
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(user_message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console,
+            pilot,
+            f"#console-message-action-edit-{user_message.id}",
+        )
+        await pilot.click(f"#console-message-action-edit-{user_message.id}")
+        await _wait_for_selector(
+            host.screen_stack[-1],
+            pilot,
+            "#console-edit-message-modal",
+        )
+        edit_modal = host.screen_stack[-1]
+        edit_modal.query_one(
+            "#console-edit-message-body", TextArea
+        ).text = "edited question"
+        await pilot.click("#console-edit-message-resend")
+        await _wait_for_text(console, pilot, "new reply")
+
+        assert controller.original_attempt_for_message(replaced_assistant.id) is None
+        assert replaced_assistant.id not in console._console_original_attempt_previews
+        assert replaced_assistant.id not in store.active_path_message_ids(session.id)
 
 
 @pytest.mark.asyncio
@@ -3727,6 +4008,17 @@ async def test_console_regenerate_action_streams_selected_variant():
             role=ConsoleMessageRole.ASSISTANT,
             content="seed",
         )
+        controller = console._ensure_console_chat_controller()
+        store.set_citation_presentation(
+            source.id,
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            ),
+        )
+        controller._remember_original_attempt(source.id, "original seed")
+        console._console_original_attempt_previews[source.id] = "original seed"
+        assert controller.original_attempt_for_message(source.id) == "original seed"
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
@@ -3754,6 +4046,74 @@ async def test_console_regenerate_action_streams_selected_variant():
         new_sibling = store.get_message(new_leaf_id)
         assert new_sibling.content == "hello"
         assert new_sibling.variants is None
+        assert controller.original_attempt_for_message(source.id) is None
+        assert source.id not in console._console_original_attempt_previews
+
+
+@pytest.mark.asyncio
+async def test_console_rejected_regenerate_preserves_original_attempt_preview():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = BlockedGateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        _select_llamacpp_console(console)
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session = store.ensure_session(title="Chat 1")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="prompt",
+        )
+        source = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="repaired answer [S1]",
+        )
+        store.set_citation_presentation(
+            source.id,
+            ConsoleCitationPresentation(
+                phase=ConsoleCitationPhase.SELECTED,
+                notice_code=ConsoleCitationNoticeCode.REPAIRED,
+            ),
+        )
+        controller._remember_original_attempt(source.id, "original answer")
+        console._console_original_attempt_previews[source.id] = "original answer"
+        assert controller.original_attempt_for_message(source.id) == "original answer"
+        seeded = store.get_message(source.id)
+        assert seeded.citation_presentation is not None
+        assert seeded.citation_presentation.original_attempt_available is True
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(source.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console,
+            pilot,
+            f"#console-message-action-regenerate-{source.id}",
+        )
+        await pilot.click(f"#console-message-action-regenerate-{source.id}")
+        await _wait_for_text(console, pilot, "Provider blocked")
+
+        retained = store.get_message(source.id)
+        assert controller.original_attempt_for_message(source.id) == "original answer"
+        assert retained.citation_presentation is not None
+        assert retained.citation_presentation.original_attempt_available is True
+        assert console._console_original_attempt_previews == {
+            source.id: "original answer"
+        }
+        assert source.id in store.active_path_message_ids(session.id)
+        assert [
+            message.id
+            for message in store.messages_for_session(session.id)
+            if message.role is ConsoleMessageRole.ASSISTANT
+        ] == [source.id]
 
 
 @pytest.mark.asyncio

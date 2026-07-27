@@ -15,13 +15,17 @@ from loguru import logger
 
 # Local Imports
 from ...Chat.citation_evidence_models import EvidenceBundle
+from ...Chat.citation_repair import CitationRepairContract
 from ...Chat.citation_source_locators import CanonicalSourceKind
 from ...Chat.citation_trace_builder import (
     CitationTraceBuilder,
     LocalRetrievalRunMetadata,
 )
 from ...Chat.citation_trace_identity import new_opaque_id
-from ...Chat.citation_trace_models import RETRIEVAL_CANDIDATES_PER_RUN_MAX
+from ...Chat.citation_trace_models import (
+    MarkerNamespace,
+    RETRIEVAL_CANDIDATES_PER_RUN_MAX,
+)
 from ...Chat.rag_scope import (
     CONVERSATION_METADATA_SCOPE_KEY,
     EffectiveScope,
@@ -66,14 +70,16 @@ logger = logger.bind(module="chat_rag_events_simplified")
 
 @dataclass(frozen=True)
 class LocalRagContextResult:
-    """RAG context with optional request-scoped builder and prompt-set identity.
+    """RAG context with independent canonical capture and repair eligibility.
 
-    The optional ID is the authoritative prompt-evidence-set identity.
+    The optional ID is the authoritative prompt-evidence-set identity. Repair
+    eligibility remains available when canonical builder recording does not.
     """
 
     context: str | None
     citation_builder: CitationTraceBuilder | None
     prompt_evidence_set_id: str | None = None
+    citation_repair_contract: CitationRepairContract | None = None
 
 
 @dataclass(frozen=True)
@@ -1407,6 +1413,30 @@ def _create_local_capture_builder(app: "TldwCli") -> CitationTraceBuilder | None
     return builder if isinstance(builder, CitationTraceBuilder) else None
 
 
+def _repair_contract_for_local_evidence(
+    formatted: LocalEvidenceContext,
+) -> CitationRepairContract | None:
+    """Build bounded repair eligibility from exact formatted entry metadata."""
+
+    if not isinstance(formatted, LocalEvidenceContext):
+        return None
+    if not formatted.context or not formatted.entries:
+        return None
+    try:
+        return CitationRepairContract(
+            schema_version=1,
+            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+            allowed_ordinals=tuple(range(1, len(formatted.entries) + 1)),
+            evidence_context=formatted.context,
+        )
+    except (TypeError, ValueError, UnicodeEncodeError):
+        logger.warning(
+            "Citation repair contract unavailable; "
+            "reason=repair_contract_validation_failure"
+        )
+        return None
+
+
 def _selected_source_kinds(
     sources: Dict[str, bool],
 ) -> Tuple[CanonicalSourceKind, ...]:
@@ -1423,7 +1453,7 @@ def _selected_source_kinds(
 async def _capture_local_pipeline_results(
     app: "TldwCli",
     *,
-    builder: CitationTraceBuilder,
+    builder: CitationTraceBuilder | None,
     request_session: _RequestScopeSession | None,
     user_message: str,
     search_mode: str,
@@ -1436,8 +1466,9 @@ async def _capture_local_pipeline_results(
     retrieval_started_at: datetime,
     retrieval_ended_at: datetime,
     retrieval_elapsed_ms: int,
+    legacy_context: str | None,
 ) -> LocalRagContextResult:
-    """Atomically assemble and record canonical local prompt evidence."""
+    """Assemble exact local evidence and optionally record canonical objects."""
 
     try:
         selected_source_kinds = _selected_source_kinds(sources)
@@ -1445,12 +1476,14 @@ async def _capture_local_pipeline_results(
         normalized: list[NormalizedLocalResult] = []
         rejected_count = 0
         off_selection_count = 0
+        canonical_candidate_seen = False
         for candidate_rank, result in enumerate(results, start=1):
             try:
                 candidate = normalize_local_result(
                     result,
                     candidate_rank=candidate_rank,
                 )
+                canonical_candidate_seen = True
                 if candidate.source_kind not in selected_source_kind_set:
                     off_selection_count += 1
                     continue
@@ -1489,6 +1522,31 @@ async def _capture_local_pipeline_results(
             authorization.candidates,
             max_length=max_context_length,
         )
+        context = formatted.context if formatted.context.strip() else None
+        repair_contract = _repair_contract_for_local_evidence(formatted)
+        if (
+            context is None
+            and not canonical_candidate_seen
+            and legacy_context
+            and legacy_context.strip()
+        ):
+            logger.info("RAG context retained; reason=legacy_pipeline_fallback")
+            return LocalRagContextResult(legacy_context, None)
+        if builder is None:
+            return LocalRagContextResult(
+                context,
+                None,
+                citation_repair_contract=repair_contract,
+            )
+    except Exception:
+        logger.error(
+            "Canonical RAG capture failed; reason=canonical_capture_failure; "
+            f"mode={search_mode}; requested_top_k={top_k}; "
+            f"scope_state={effective_scope.state}"
+        )
+        return LocalRagContextResult(None, None)
+
+    try:
         retrieval_metadata = LocalRetrievalRunMetadata(
             search_mode=search_mode,
             requested_top_k=top_k,
@@ -1521,15 +1579,23 @@ async def _capture_local_pipeline_results(
             f"prompt_entries={len(formatted.entries)}; "
             f"duration_ms={retrieval_elapsed_ms}"
         )
-        context = formatted.context if formatted.context.strip() else None
-        return LocalRagContextResult(context, builder, prompt_evidence_set_id)
+        return LocalRagContextResult(
+            context,
+            builder,
+            prompt_evidence_set_id,
+            repair_contract,
+        )
     except Exception:
         logger.error(
             "Canonical RAG capture failed; reason=canonical_capture_failure; "
             f"mode={search_mode}; requested_top_k={top_k}; "
             f"scope_state={effective_scope.state}"
         )
-        return LocalRagContextResult(None, None)
+        return LocalRagContextResult(
+            context,
+            None,
+            citation_repair_contract=repair_contract,
+        )
 
 
 async def capture_console_staged_evidence_for_chat(
@@ -1636,10 +1702,15 @@ async def capture_console_staged_evidence_for_chat(
     context = formatted.context if formatted.context.strip() else None
     if context is None:
         return LocalRagContextResult(None, None)
+    repair_contract = _repair_contract_for_local_evidence(formatted)
 
     builder = _create_local_capture_builder(app)
     if builder is None:
-        return LocalRagContextResult(context, None)
+        return LocalRagContextResult(
+            context,
+            None,
+            citation_repair_contract=repair_contract,
+        )
 
     try:
         scope_resolution = await resolve_scope_for_session(
@@ -1697,14 +1768,23 @@ async def capture_console_staged_evidence_for_chat(
             f"normalized_candidates={len(normalized)}; "
             f"authorized_candidates={len(authorization.candidates)}"
         )
-        return LocalRagContextResult(None, None)
+        return LocalRagContextResult(
+            context,
+            None,
+            citation_repair_contract=repair_contract,
+        )
 
     logger.info(
         "Console canonical RAG capture completed; "
         f"candidates={len(authorization.candidates)}; "
         f"prompt_entries={len(formatted.entries)}"
     )
-    return LocalRagContextResult(context, builder, prompt_evidence_set_id)
+    return LocalRagContextResult(
+        context,
+        builder,
+        prompt_evidence_set_id,
+        repair_contract,
+    )
 
 
 async def get_rag_context_capture_for_chat(
@@ -1921,29 +2001,23 @@ async def get_rag_context_capture_for_chat(
         retrieval_elapsed_ms = int((perf_counter() - retrieval_started_clock) * 1000)
         _notify_semantic_leg_state(app, diagnostics, results)
 
-        if builder is not None:
-            return await _capture_local_pipeline_results(
-                app,
-                builder=builder,
-                request_session=request_session,
-                user_message=user_message,
-                search_mode=search_mode,
-                sources=sources,
-                top_k=top_k,
-                max_context_length=max_context_length,
-                enable_rerank=enable_rerank,
-                effective_scope=effective_scope,
-                results=results,
-                retrieval_started_at=retrieval_started_at,
-                retrieval_ended_at=retrieval_ended_at,
-                retrieval_elapsed_ms=retrieval_elapsed_ms,
-            )
-
-        if context and context.strip():
-            logger.info(f"RAG context generated: {len(context)} characters")
-            return LocalRagContextResult(context, None)
-        logger.warning("No relevant RAG context found")
-        return LocalRagContextResult(None, None)
+        return await _capture_local_pipeline_results(
+            app,
+            builder=builder,
+            request_session=request_session,
+            user_message=user_message,
+            search_mode=search_mode,
+            sources=sources,
+            top_k=top_k,
+            max_context_length=max_context_length,
+            enable_rerank=enable_rerank,
+            effective_scope=effective_scope,
+            results=results,
+            retrieval_started_at=retrieval_started_at,
+            retrieval_ended_at=retrieval_ended_at,
+            retrieval_elapsed_ms=retrieval_elapsed_ms,
+            legacy_context=context,
+        )
 
     except Exception:
         logger.error("RAG search failed; reason=pipeline_failure")
