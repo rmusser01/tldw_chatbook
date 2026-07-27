@@ -151,6 +151,7 @@ async def _cleanup_audio_cpp_privacy_resources(
 def test_tts_package_exports_only_stable_adapter_service_api() -> None:
     expected = {
         "AssignedTTSProfileSnapshot",
+        "CapabilitySnapshotState",
         "CharacterRef",
         "CharacterTTSAssignment",
         "NormalizationOptions",
@@ -169,6 +170,7 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "TTSConfigMutation",
         "TTSGenerationProfile",
         "TTSModelInfo",
+        "TTSNativeCapabilitySnapshot",
         "TTSOperationCode",
         "TTSOperationError",
         "TTSPreferencesSnapshot",
@@ -179,7 +181,11 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "TTSProviderCatalog",
         "TTSProviderDescriptor",
         "TTSRequest",
+        "TTSRequestedSelectionSnapshot",
         "TTSService",
+        "TTSStructuredVoiceAdapter",
+        "TTSVoiceDiscoveryResult",
+        "VoiceDiscoveryState",
         "bind_tts_service",
         "canonical_json_options",
         "close_tts_resources",

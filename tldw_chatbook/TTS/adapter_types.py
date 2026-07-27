@@ -262,14 +262,31 @@ class TTSNativeCapabilitySnapshot:
         if self.catalog is not None:
             if type(self.catalog) is not TTSProviderCatalog:
                 raise TypeError("Capability catalog must be a provider catalog")
-            if self.catalog.provider_id != self.provider_id:
+            if (
+                type(self.catalog.provider_id) is not str
+                or self.catalog.provider_id != self.provider_id
+            ):
                 raise ValueError("Capability catalog provider does not match")
             if type(self.catalog.revision) is not int:
                 raise TypeError("Capability catalog revision must be an integer")
             if self.catalog.revision < 0:
                 raise ValueError("Capability catalog revision must be nonnegative")
+            if type(self.catalog.health) is not ProviderHealth:
+                raise TypeError("Capability catalog health is invalid")
+            if type(self.catalog.health.fresh) is not bool:
+                raise TypeError("Capability catalog freshness must be a boolean")
+            if type(self.catalog.models) is not tuple:
+                raise TypeError("Capability catalog models must be a tuple")
         if not isinstance(self.voice_results, Mapping):
             raise TypeError("Capability voice results must be a mapping")
+
+        catalog_model_ids: set[str] = set()
+        if self.catalog is not None:
+            for model in self.catalog.models:
+                if type(model) is not TTSModelInfo:
+                    raise TypeError("Capability catalog model is invalid")
+                _validate_voice_discovery_identifier(model.model_id, "model ID")
+                catalog_model_ids.add(model.model_id)
 
         frozen_results: dict[str, TTSVoiceDiscoveryResult] = {}
         for model_id, result in self.voice_results.items():
@@ -280,11 +297,25 @@ class TTSNativeCapabilitySnapshot:
                 raise ValueError("Capability voice result provider does not match")
             if result.model_id != model_id:
                 raise ValueError("Capability voice result model does not match")
+            if result.state != "unverified":
+                if self.catalog is None:
+                    raise ValueError("Authoritative voice result requires a catalog")
+                if (
+                    not self.catalog.health.fresh
+                    or result.catalog_revision != self.catalog.revision
+                ):
+                    raise ValueError("Authoritative voice result catalog is stale")
+                if result.state == "complete" and model_id not in catalog_model_ids:
+                    raise ValueError("Complete voice result requires a catalog model")
+                if result.state == "model_missing" and model_id in catalog_model_ids:
+                    raise ValueError("Missing voice result contradicts the catalog")
             frozen_results[model_id] = result
 
         if self.state == "complete":
             if self.catalog is None:
                 raise ValueError("Complete capability snapshot requires a catalog")
+            if not self.catalog.health.fresh:
+                raise ValueError("Complete capability snapshot requires fresh catalog")
             for result in frozen_results.values():
                 if result.state == "unverified":
                     raise ValueError(

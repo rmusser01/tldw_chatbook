@@ -21,6 +21,7 @@ from tldw_chatbook.TTS.adapter_types import (
     CapabilitySnapshotState,
     CleanupCallback,
     ProgressSink,
+    ProviderHealth,
     TTSAudioResponse,
     TTSNativeCapabilitySnapshot,
     TTSOperationError,
@@ -44,6 +45,12 @@ _CLEANUP_FAILURE_NOTE = "TTS cleanup also failed while preserving the original e
 _TTS_SETTINGS_FOREGROUND_TIMEOUT_SECONDS = 2.0
 _NATIVE_CAPABILITY_TIMEOUT_SECONDS = 10.0
 _NATIVE_CAPABILITY_VOICE_CONCURRENCY = 4
+
+
+def _native_capability_deadline() -> float:
+    """Return the one aggregate deadline for a capability observation."""
+    return asyncio.get_running_loop().time() + _NATIVE_CAPABILITY_TIMEOUT_SECONDS
+
 
 TTSSettingsProviderStatus = Literal[
     "applied",
@@ -554,7 +561,8 @@ class TTSService:
         progress_sink: ProgressSink | None = None,
     ) -> tuple[TTSAudioResponse, TTSRequestedSelectionSnapshot]:
         """Synthesize one exact native request with admitted provenance."""
-        self._require_native_provider(request.provider_id)
+        if type(request.provider_id) is not str or request.provider_id != "audio_cpp":
+            raise ValueError("Exact provenance requires exact audio_cpp provider")
         return await self._request_admission.synthesize_exact(
             request,
             progress_sink,
@@ -597,9 +605,7 @@ class TTSService:
             voice_results={},
         )
         primary_error: BaseException | None = None
-        deadline = (
-            asyncio.get_running_loop().time() + _NATIVE_CAPABILITY_TIMEOUT_SECONDS
-        )
+        deadline = _native_capability_deadline()
         try:
             async with asyncio.timeout_at(deadline):
                 (
@@ -614,6 +620,12 @@ class TTSService:
                     lease.adapter,
                     model_ids,
                 )
+                if self._close_signal.is_set():
+                    result = self._unverified_native_capabilities(
+                        provider_id,
+                        revision,
+                        result.catalog,
+                    )
         except asyncio.CancelledError as error:
             primary_error = error
             raise
@@ -635,6 +647,12 @@ class TTSService:
                         lease.release,
                         primary_error,
                     )
+        if self._close_signal.is_set():
+            return self._unverified_native_capabilities(
+                provider_id,
+                revision,
+                result.catalog,
+            )
         return result
 
     async def _observe_native_capabilities(
@@ -659,26 +677,25 @@ class TTSService:
                 or catalog.provider_id != provider_id
             ):
                 return last_snapshot
+            if not self._catalog_is_fresh(catalog):
+                return self._unverified_native_capabilities(
+                    provider_id,
+                    configuration_revision,
+                    catalog,
+                )
             if model_ids and not isinstance(adapter, TTSStructuredVoiceAdapter):
-                return TTSNativeCapabilitySnapshot(
-                    provider_id=provider_id,
-                    configuration_revision=configuration_revision,
-                    state="unverified",
-                    catalog=catalog,
-                    voice_results={},
+                return self._unverified_native_capabilities(
+                    provider_id,
+                    configuration_revision,
+                    catalog,
                 )
 
             semaphore = asyncio.Semaphore(_NATIVE_CAPABILITY_VOICE_CONCURRENCY)
             assert isinstance(adapter, TTSStructuredVoiceAdapter)
-            observed = await asyncio.gather(
-                *(
-                    self._observe_native_voices(
-                        adapter,
-                        semaphore,
-                        model_id,
-                    )
-                    for model_id in model_ids
-                )
+            observed = await self._observe_native_voice_batch(
+                adapter,
+                semaphore,
+                model_ids,
             )
             voice_results = dict(zip(model_ids, observed, strict=True))
             final_catalog = await adapter.get_catalog(refresh=True)  # type: ignore[attr-defined]
@@ -693,8 +710,24 @@ class TTSService:
                     catalog=catalog,
                     voice_results=voice_results,
                 )
+            if not self._catalog_is_fresh(final_catalog):
+                return self._unverified_native_capabilities(
+                    provider_id,
+                    configuration_revision,
+                    final_catalog,
+                )
 
             catalog_moved = final_catalog.revision != catalog.revision
+            if catalog_moved:
+                last_snapshot = self._unverified_native_capabilities(
+                    provider_id,
+                    configuration_revision,
+                    final_catalog,
+                )
+                if attempt == 0:
+                    continue
+                return last_snapshot
+
             authoritative = all(
                 result.provider_id == provider_id
                 and result.model_id == model_id
@@ -703,19 +736,64 @@ class TTSService:
                 for model_id, result in voice_results.items()
             )
             state: CapabilitySnapshotState = (
-                "complete" if not catalog_moved and authoritative else "unverified"
+                "complete" if authoritative else "unverified"
             )
             last_snapshot = TTSNativeCapabilitySnapshot(
                 provider_id=provider_id,
                 configuration_revision=configuration_revision,
                 state=state,
                 catalog=final_catalog,
-                voice_results=voice_results,
+                voice_results=(
+                    voice_results
+                    if authoritative
+                    else self._safe_unverified_voice_results(
+                        final_catalog,
+                        voice_results,
+                    )
+                ),
             )
-            if not catalog_moved or attempt == 1:
-                return last_snapshot
+            return last_snapshot
 
         return last_snapshot
+
+    async def _observe_native_voice_batch(
+        self,
+        adapter: TTSStructuredVoiceAdapter,
+        semaphore: asyncio.Semaphore,
+        model_ids: tuple[str, ...],
+    ) -> tuple[TTSVoiceDiscoveryResult, ...]:
+        tasks = tuple(
+            asyncio.create_task(
+                self._observe_native_voices(adapter, semaphore, model_id),
+                name="tts_native_capability_voice",
+            )
+            for model_id in model_ids
+        )
+        try:
+            return tuple(await asyncio.gather(*tasks))
+        except BaseException as primary_error:
+            cleanup_task = asyncio.create_task(
+                self._cancel_and_join_capability_tasks(tasks),
+                name="tts_native_capability_voice_cleanup",
+            )
+            try:
+                await _join_retained_task(cleanup_task)
+            except asyncio.CancelledError:
+                if isinstance(primary_error, asyncio.CancelledError):
+                    raise primary_error from None
+                raise
+            except BaseException as cleanup_error:
+                _record_cleanup_failure(primary_error, cleanup_error)
+            raise
+
+    @staticmethod
+    async def _cancel_and_join_capability_tasks(
+        tasks: tuple[asyncio.Task[TTSVoiceDiscoveryResult], ...],
+    ) -> None:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     @staticmethod
     async def _observe_native_voices(
@@ -725,6 +803,40 @@ class TTSService:
     ) -> TTSVoiceDiscoveryResult:
         async with semaphore:
             return await adapter.observe_voices(model_id, refresh=True)
+
+    @staticmethod
+    def _catalog_is_fresh(catalog: TTSProviderCatalog) -> bool:
+        return (
+            type(catalog.health) is ProviderHealth
+            and type(catalog.health.fresh) is bool
+            and catalog.health.fresh
+        )
+
+    @staticmethod
+    def _safe_unverified_voice_results(
+        catalog: TTSProviderCatalog,
+        voice_results: Mapping[str, TTSVoiceDiscoveryResult],
+    ) -> dict[str, TTSVoiceDiscoveryResult]:
+        return {
+            model_id: result
+            for model_id, result in voice_results.items()
+            if result.state == "unverified"
+            or (catalog.health.fresh and result.catalog_revision == catalog.revision)
+        }
+
+    @staticmethod
+    def _unverified_native_capabilities(
+        provider_id: str,
+        configuration_revision: int,
+        catalog: TTSProviderCatalog | None,
+    ) -> TTSNativeCapabilitySnapshot:
+        return TTSNativeCapabilitySnapshot(
+            provider_id=provider_id,
+            configuration_revision=configuration_revision,
+            state="unverified",
+            catalog=catalog,
+            voice_results={},
+        )
 
     def _require_native_provider(self, provider_id: str) -> None:
         if type(provider_id) is not str:

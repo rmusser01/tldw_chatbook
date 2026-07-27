@@ -679,7 +679,7 @@ async def test_exact_native_admission_freezes_text_free_selection_and_releases_g
     adapter = _BlockingExactAdapter()
     registry = _counting_native_registry(adapter)
     service = TTSService(registry)
-    mutable_options = {"nested": {"value": 1}}
+    mutable_options: dict[str, Any] = {}
     request = TTSRequest(
         provider_id="audio_cpp",
         model_id="Model/Exact",
@@ -701,7 +701,7 @@ async def test_exact_native_admission_freezes_text_free_selection_and_releases_g
     response: TTSAudioResponse | None = None
     try:
         await _wait_bounded(writer_entered.wait())
-        mutable_options["nested"]["value"] = 2
+        mutable_options["late"] = "private control value"
         adapter.allow_synthesis.set()
         response, selection = await _wait_bounded(synthesis)
 
@@ -711,11 +711,11 @@ async def test_exact_native_admission_freezes_text_free_selection_and_releases_g
         assert selection.voice_id == "Voice/Exact"
         assert selection.response_format == "wav"
         assert selection.speed == 1.0
-        assert selection.options == {"nested": {"value": 1}}
+        assert selection.options == {}
         assert selection.configuration_revision == 1
         assert not hasattr(selection, "text")
         assert "private submitted text" not in repr(selection)
-        assert adapter.requests[0].options == {"nested": {"value": 1}}
+        assert adapter.requests[0].options == {}
         assert registry.expected_revisions == [("audio_cpp", 1)]
         assert registry._total_leases() == 1
         response.model_id = "server-reported-model"
@@ -723,6 +723,113 @@ async def test_exact_native_admission_freezes_text_free_selection_and_releases_g
     finally:
         adapter.allow_synthesis.set()
         await asyncio.gather(synthesis, writer, return_exceptions=True)
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "updates",
+    (
+        {"options": {"origin": "https://user:password@example.invalid"}},
+        {"options": {"credential": "PRIVATE_API_KEY"}},
+        {"options": {"raw_body": bytearray(b"PRIVATE_RAW_BODY")}},
+        {"options": {1: "PRIVATE_NON_STRING_KEY"}},
+        {"response_format": "mp3"},
+        {"speed": 1.1},
+    ),
+)
+async def test_exact_audio_cpp_admission_rejects_unreviewed_contract_values(
+    updates: dict[str, object],
+) -> None:
+    private_values = (
+        "PRIVATE_SUBMITTED_TEXT",
+        "https://user:password@example.invalid",
+        "PRIVATE_API_KEY",
+        "PRIVATE_RAW_BODY",
+        "PRIVATE_NON_STRING_KEY",
+    )
+    adapter = _CapturingAdapter("audio_cpp")
+    registry = _counting_native_registry(adapter)
+    service = TTSService(registry)
+    values: dict[str, object] = {
+        "provider_id": "audio_cpp",
+        "model_id": "Model/Exact",
+        "text": "PRIVATE_SUBMITTED_TEXT",
+        "voice": None,
+        "response_format": "wav",
+        "speed": 1.0,
+        "options": {},
+    }
+    values.update(updates)
+    response: TTSAudioResponse | None = None
+    try:
+        with pytest.raises((TypeError, ValueError)) as captured:
+            response, _selection = await service.synthesize_exact(
+                TTSRequest(**values)  # type: ignore[arg-type]
+            )
+
+        rendered = f"{captured.value!s} {captured.value!r}"
+        for private_value in private_values:
+            assert private_value not in rendered
+        assert adapter.synthesize_calls == 0
+        assert registry._total_leases() == 0
+        assert service._operation_limit._value == 4
+    finally:
+        if response is not None:
+            await response.aclose()
+        await service.close()
+        await service.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_exact_admission_rejects_unreviewed_native_provider() -> None:
+    audio_cpp = _CapturingAdapter("audio_cpp")
+    future_native = _CapturingAdapter("future_native")
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=lambda _config: audio_cpp,
+                initial_config={},
+            ),
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="future_native",
+                    display_name="Future native",
+                    native=True,
+                ),
+                factory=lambda _config: future_native,
+                initial_config={},
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry)
+    response: TTSAudioResponse | None = None
+    try:
+        with pytest.raises(ValueError, match="exact audio_cpp"):
+            response, _selection = await service.synthesize_exact(
+                TTSRequest(
+                    provider_id="future_native",
+                    model_id="model",
+                    text="private text",
+                    voice=None,
+                    response_format="wav",
+                    speed=1.0,
+                    options={},
+                )
+            )
+
+        assert future_native.synthesize_calls == 0
+        assert registry._total_leases() == 0
+    finally:
         if response is not None:
             await response.aclose()
         await service.close()

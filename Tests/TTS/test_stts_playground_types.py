@@ -75,11 +75,8 @@ def test_generated_audio_retains_provenance_and_actual_format_suffix(
         artifact.provider_id = "legacy"  # type: ignore[misc]
 
 
-def test_requested_selection_is_text_free_and_deeply_immutable() -> None:
-    source: dict[str, Any] = {
-        "language": "en",
-        "conditioning": {"temperature": 0.2},
-    }
+def test_requested_selection_is_text_free_and_owns_empty_options() -> None:
+    source: dict[str, Any] = {}
     selection = TTSRequestedSelectionSnapshot(
         provider_id="audio_cpp",
         model_id="model",
@@ -89,8 +86,7 @@ def test_requested_selection_is_text_free_and_deeply_immutable() -> None:
         options=source,
         configuration_revision=4,
     )
-    source["language"] = "fr"
-    source["conditioning"]["temperature"] = 0.9
+    source["late"] = "private"
 
     assert {field.name for field in fields(selection)} == {
         "provider_id",
@@ -102,15 +98,10 @@ def test_requested_selection_is_text_free_and_deeply_immutable() -> None:
         "configuration_revision",
     }
     assert not hasattr(selection, "text")
-    assert selection.options == {
-        "language": "en",
-        "conditioning": {"temperature": 0.2},
-    }
+    assert selection.options == {}
     assert isinstance(selection.options, MappingProxyType)
     with pytest.raises(TypeError):
-        selection.options["language"] = "es"  # type: ignore[index]
-    with pytest.raises(TypeError):
-        selection.options["conditioning"]["temperature"] = 0.5  # type: ignore[index]
+        selection.options["late"] = "value"  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         selection.model_id = "replacement"  # type: ignore[misc]
 
@@ -151,6 +142,53 @@ def test_generated_audio_requested_selection_is_optional_and_immutable(
 
     assert artifact.requested_selection is selection
     assert legacy.requested_selection is None
+
+
+class _PrivateOption:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
+@pytest.mark.parametrize(
+    "updates",
+    (
+        {"options": {"language": "en"}},
+        {"options": {"blob": bytearray(b"raw-private-body")}},
+        {"options": {"object": _PrivateOption("private-object-value")}},
+        {"options": {1: "non-string-key"}},
+        {"options": {"origin": "https://user:password@example.invalid"}},
+        {"options": {"credential": "PRIVATE_API_KEY"}},
+        {"provider_id": "future_native"},
+        {"response_format": "mp3"},
+        {"speed": 1.1},
+    ),
+)
+def test_requested_selection_rejects_unreviewed_or_private_contract_values(
+    updates: dict[str, object],
+) -> None:
+    private_values = (
+        "raw-private-body",
+        "private-object-value",
+        "https://user:password@example.invalid",
+        "PRIVATE_API_KEY",
+    )
+    values: dict[str, object] = {
+        "provider_id": "audio_cpp",
+        "model_id": "model",
+        "voice_id": None,
+        "response_format": "wav",
+        "speed": 1.0,
+        "options": {},
+        "configuration_revision": 1,
+    }
+    values.update(updates)
+
+    with pytest.raises((TypeError, ValueError)) as captured:
+        TTSRequestedSelectionSnapshot(**values)  # type: ignore[arg-type]
+
+    rendered = f"{captured.value!s} {captured.value!r}"
+    for private_value in private_values:
+        assert private_value not in rendered
 
 
 @pytest.mark.parametrize(

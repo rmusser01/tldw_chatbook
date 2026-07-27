@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -62,22 +61,30 @@ class TTSRequestedSelectionSnapshot:
 
     def __post_init__(self) -> None:
         _require_exact_identifier("provider_id", self.provider_id)
+        if self.provider_id != "audio_cpp":
+            raise ValueError("Requested selection requires exact audio_cpp provider")
         _require_exact_identifier("model_id", self.model_id)
         _require_exact_identifier("voice_id", self.voice_id, nullable=True)
         _require_exact_identifier("response_format", self.response_format)
-        if type(self.speed) not in (int, float):
-            raise TypeError("speed must be a number")
-        speed = float(self.speed)
-        if not math.isfinite(speed) or not 0.25 <= speed <= 4.0:
-            raise ValueError("speed is invalid")
+        if self.response_format != "wav":
+            raise ValueError("Requested selection requires WAV format")
+        if type(self.speed) is not float or self.speed != 1.0:
+            raise ValueError("Requested selection requires speed 1.0")
         if not isinstance(self.options, Mapping):
             raise TypeError("options must be a mapping")
+        try:
+            next(iter(self.options))
+        except StopIteration:
+            pass
+        except Exception:
+            raise TypeError("options must be an empty mapping") from None
+        else:
+            raise ValueError("Requested selection options must be empty")
         if type(self.configuration_revision) is not int:
             raise TypeError("configuration_revision must be an integer")
         if self.configuration_revision < 0:
             raise ValueError("configuration_revision must be nonnegative")
-        object.__setattr__(self, "speed", speed)
-        object.__setattr__(self, "options", _freeze_option(self.options))
+        object.__setattr__(self, "options", MappingProxyType({}))
 
 
 @dataclass(frozen=True, slots=True)
