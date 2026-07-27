@@ -309,9 +309,30 @@
 #lab-inspector #evals-inspector-pane {
     border: none;
     background: transparent;
-    height: 100%;
     min-height: 0;
     padding: 0;
+}
+
+/* `#lab-rail` and `#lab-inspector` are VerticalScroll containers that
+ * already hold a collapse header row. A pane at `height: 100%` there makes
+ * the scrollable content header + 100% -- measured `virtual_size` 35 against
+ * a `container_size` of 34, so both rails were permanently scrollable by one
+ * row and the collapse header could be scrolled out of reach, even with
+ * short content. `auto` lets the pane size to its content and leaves
+ * overflow to the scroll container, which is its job.
+ *
+ * This is the same mistake as `#evals-results-grid`'s `height: 100%` fixed
+ * in this branch: 100% is the full parent height and ignores siblings.
+ * Caught by Qodo on PR #1010. */
+#lab-rail #evals-library-pane,
+#lab-inspector #evals-inspector-pane {
+    height: auto;
+}
+
+/* `#lab-body` is a plain Vertical with no header sibling, so the detail
+ * pane genuinely should fill it. */
+#lab-body #evals-detail-pane {
+    height: 100%;
 }
 
 /* "No datasets" offers authoring and import together. In the old three-pane
