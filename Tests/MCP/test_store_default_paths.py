@@ -47,19 +47,31 @@ def test_configured_server_target_store_default_path_derives_from_get_user_data_
 
 
 def test_local_mcp_store_default_tracks_a_retargeted_profile(monkeypatch, tmp_path):
-    """The default must be resolved at construction time, not cached from
-    whichever profile happened to be active when the module first loaded --
-    proving it derives via the live accessor rather than a baked-in
-    constant (the exact class of staleness a module-level literal has)."""
-    from tldw_chatbook.config import get_user_data_dir
+    """The default must resolve at construction time via the live accessor.
 
-    retargeted = tmp_path / "profile-two" / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(retargeted))
+    TASK-855's point is that the default is not a module-level constant
+    baked from whichever profile happened to be active at import. Retarget
+    the accessor itself and the next construction must follow it -- a
+    baked constant would keep pointing at the old location.
+
+    Note this patches ``get_user_data_dir`` rather than setting
+    ``TLDW_CONFIG_PATH``: the data directory is resolved from
+    ``[paths] data_dir`` (or the platform default), NOT from where the
+    config file happens to live, so retargeting the config path would not
+    move it and would prove nothing.
+    """
+    import tldw_chatbook.config as config_module
+
+    retargeted = tmp_path / "profile-two"
+    retargeted.mkdir(parents=True, exist_ok=True)
+    # Patch the accessor at its source: the helper imports it inside the
+    # function body, so a module-attribute patch on the store module would
+    # silently not apply and the test would pass for the wrong reason.
+    monkeypatch.setattr(config_module, "get_user_data_dir", lambda: retargeted)
 
     store = LocalMCPStore()
 
-    assert store.path == get_user_data_dir() / "local_mcp_store.json"
-    assert str(tmp_path) in str(store.path)
+    assert store.path == retargeted / "local_mcp_store.json"
 
 
 def test_local_mcp_store_default_is_covered_by_the_sensitive_path_denylist():
