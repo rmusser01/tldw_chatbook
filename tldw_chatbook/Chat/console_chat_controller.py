@@ -545,12 +545,17 @@ class ConsoleProviderGatewayProtocol(Protocol):
 
 @dataclass(slots=True)
 class ConsoleCitationRepairSession:
-    contract: CitationRepairContract
-    resolution: ConsoleProviderResolution
+    contract: CitationRepairContract | None
+    resolution: ConsoleProviderResolution | None
     attempt_started: bool = False
     selection_committed: bool = False
     phase: str = "initial_streaming"
     cancel_reason: Literal["user", "session_close", "shutdown"] | None = None
+
+    def clear_governed_state(self) -> None:
+        """Release request content and provider configuration after cleanup."""
+        self.contract = None
+        self.resolution = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -3856,6 +3861,8 @@ class ConsoleChatController:
                 stream_signals=stream_signals,
             )
         finally:
+            if citation_repair_session is not None:
+                citation_repair_session.clear_governed_state()
             if (
                 self._active_stream_task is active_task
                 and self._active_assistant_message_id == assistant_message_id
@@ -4182,7 +4189,12 @@ class ConsoleChatController:
             repair_session.selection_committed = True
             return ConsoleCitationSelectionOutcome(initial_body, "bypassed")
 
-        decision = decide_citation_repair(initial_body, repair_session.contract)
+        contract = repair_session.contract
+        resolution = repair_session.resolution
+        if contract is None or resolution is None:
+            return ConsoleCitationSelectionOutcome(initial_body, "unavailable")
+
+        decision = decide_citation_repair(initial_body, contract)
         if decision is CitationRepairDecision.VALID:
             return commit("valid")
         if decision is CitationRepairDecision.UNAVAILABLE:
@@ -4227,10 +4239,9 @@ class ConsoleChatController:
                 )
 
             repair_messages = build_citation_repair_messages(
-                repair_session.contract,
+                contract,
                 initial_body,
             )
-            resolution = repair_session.resolution
             if repair_messages is None or not repair_request_fits_model_window(
                 repair_messages,
                 initial_answer=initial_body,
@@ -4296,7 +4307,7 @@ class ConsoleChatController:
         selected = select_repaired_body(
             initial_body,
             repaired_body,
-            repair_session.contract,
+            contract,
         )
         if not selected.repaired:
             return commit(

@@ -796,3 +796,41 @@ def test_repair_window_lookup_or_count_exception_fails_closed(seam: str) -> None
         ),
         window_fn=(fail if seam == "window" else lambda _model, _provider: 2_000),
     )
+
+
+@pytest.mark.parametrize(
+    "repaired_body",
+    (
+        "",
+        "REPAIRED_BODY_SENTINEL [S2]",
+        "CHANGED_CLAIM_SENTINEL [S1]",
+        "x" * (REPAIR_ANSWER_BODY_UTF8_BYTES_MAX + 1),
+    ),
+    ids=("empty", "invalid-marker", "changed-claim", "oversized"),
+)
+def test_repair_selection_privacy_reason_codes_contain_no_governed_text(
+    repaired_body: str,
+) -> None:
+    initial_body = "INITIAL_BODY_SENTINEL"
+    contract = _contract(
+        context=(
+            "[S1] SOURCE_IDENTITY_SENTINEL LOCATOR_SENTINEL\n"
+            "EVIDENCE_SENTINEL FULL_REPAIR_PROMPT_SENTINEL"
+        )
+    )
+
+    selection = select_repaired_body(initial_body, repaired_body, contract)
+
+    assert selection.selected_body == initial_body
+    assert selection.repaired is False
+    for sentinel in (
+        initial_body,
+        "REPAIRED_BODY_SENTINEL",
+        "CHANGED_CLAIM_SENTINEL",
+        "SOURCE_IDENTITY_SENTINEL",
+        "LOCATOR_SENTINEL",
+        "EVIDENCE_SENTINEL",
+        "FULL_REPAIR_PROMPT_SENTINEL",
+        "PROVIDER_EXCEPTION_SENTINEL",
+    ):
+        assert sentinel not in selection.reason_code

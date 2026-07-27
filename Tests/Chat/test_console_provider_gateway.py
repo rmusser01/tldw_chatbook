@@ -1100,7 +1100,9 @@ def test_normalize_generic_provider_response_shapes() -> None:
     ) == [unsupported]
 
 
-def test_stream_signal_has_one_content_free_private_event_and_read_only_state() -> None:
+def test_stream_signal_privacy_has_one_content_free_private_event_and_read_only_state() -> (
+    None
+):
     signals = gateway_module.ConsoleProviderStreamSignals()
 
     signal_fields = dataclasses.fields(signals)
@@ -1121,6 +1123,13 @@ def test_stream_signal_has_one_content_free_private_event_and_read_only_state() 
         "credential-secret",
         "raw exception detail",
         "retrieval evidence text",
+        "INITIAL_BODY_SENTINEL_TASK_553_15",
+        "REPAIRED_BODY_SENTINEL_TASK_553_15",
+        "EVIDENCE_SENTINEL_TASK_553_15",
+        "SOURCE_IDENTITY_SENTINEL_TASK_553_15",
+        "LOCATOR_SENTINEL_TASK_553_15",
+        "FULL_REPAIR_PROMPT_SENTINEL_TASK_553_15",
+        "PROVIDER_EXCEPTION_SENTINEL_TASK_553_15",
     ):
         assert governed_text.lower() not in rendered.lower()
 

@@ -1861,6 +1861,55 @@ def test_citation_presentation_never_reaches_terminal_persistence() -> None:
     assert persistence.update_calls == []
 
 
+def test_terminal_citation_persistence_privacy_contains_only_selected_body() -> None:
+    initial_body = "INITIAL_BODY_SENTINEL_TASK_553_15"
+    selected_body = f"{initial_body} [S1] REPAIRED_BODY_SENTINEL_TASK_553_15"
+    persistence = _ReadyCitationPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+        defer_terminal_persistence=True,
+    )
+    store.append_stream_chunk(message.id, initial_body)
+    store.replace_deferred_terminal_body(message.id, selected_body)
+    presentation = ConsoleCitationPresentation(
+        phase=ConsoleCitationPhase.SELECTED,
+        notice_code=ConsoleCitationNoticeCode.REPAIRED,
+        original_attempt_available=True,
+    )
+    store.set_citation_presentation(message.id, presentation)
+
+    completed = store.mark_message_complete(message.id)
+
+    assert completed.content == selected_body
+    assert len(persistence.create_calls) == 1
+    assert persistence.create_calls[0]["content"] == selected_body
+    assert "citation_presentation" not in persistence.create_calls[0]
+    assert persistence.update_calls == []
+    rendered_diagnostics = repr(
+        (
+            presentation,
+            store._terminal_citation_finalizers,
+            store._terminal_persistence_deferred_ids,
+            store._provisional_terminal_selection_ids,
+        )
+    )
+    for sentinel in (
+        initial_body,
+        "REPAIRED_BODY_SENTINEL_TASK_553_15",
+        "EVIDENCE_SENTINEL_TASK_553_15",
+        "SOURCE_IDENTITY_SENTINEL_TASK_553_15",
+        "LOCATOR_SENTINEL_TASK_553_15",
+        "FULL_REPAIR_PROMPT_SENTINEL_TASK_553_15",
+        "PROVIDER_EXCEPTION_SENTINEL_TASK_553_15",
+    ):
+        assert sentinel not in rendered_diagnostics
+
+
 def test_citation_presentation_restore_defaults_to_none() -> None:
     presentation = ConsoleCitationPresentation(
         phase=ConsoleCitationPhase.SELECTED,

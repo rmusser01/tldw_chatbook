@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import asyncio
+import logging
 import threading
 import time
 import weakref
@@ -79,6 +80,13 @@ _CANCEL_ROW_PERSISTENCE_EXCEPTION = (
 _CANCEL_ROW_PERSISTENCE_FAILURE_CODE = (
     "citation_repair_cancel_record_persistence_failed"
 )
+_REPAIR_INITIAL_BODY_SENTINEL = "REPAIR_INITIAL_BODY_SENTINEL_TASK_553_15"
+_REPAIR_REPAIRED_BODY_SENTINEL = "REPAIR_REPAIRED_BODY_SENTINEL_TASK_553_15"
+_REPAIR_EVIDENCE_SENTINEL = "REPAIR_EVIDENCE_SENTINEL_TASK_553_15"
+_REPAIR_SOURCE_IDENTITY_SENTINEL = "REPAIR_SOURCE_IDENTITY_SENTINEL_TASK_553_15"
+_REPAIR_LOCATOR_SENTINEL = "REPAIR_LOCATOR_SENTINEL_TASK_553_15"
+_REPAIR_FULL_PROMPT_SENTINEL = "REPAIR_FULL_PROMPT_SENTINEL_TASK_553_15"
+_REPAIR_PROVIDER_EXCEPTION_SENTINEL = "REPAIR_PROVIDER_EXCEPTION_SENTINEL_TASK_553_15"
 _MISSING = object()
 _OMITTED = object()
 
@@ -435,6 +443,37 @@ def _repair_contract() -> CitationRepairContract:
         allowed_ordinals=(1,),
         evidence_context="[S1] MEDIA — Repair source\nExact repair evidence.",
     )
+
+
+def _privacy_repair_contract() -> CitationRepairContract:
+    return CitationRepairContract(
+        schema_version=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        allowed_ordinals=(1,),
+        evidence_context=(
+            f"[S1] {_REPAIR_SOURCE_IDENTITY_SENTINEL} "
+            f"{_REPAIR_LOCATOR_SENTINEL}\n"
+            f"{_REPAIR_EVIDENCE_SENTINEL} {_REPAIR_FULL_PROMPT_SENTINEL}"
+        ),
+    )
+
+
+def _repair_governed_sentinels() -> tuple[str, ...]:
+    return (
+        _REPAIR_INITIAL_BODY_SENTINEL,
+        _REPAIR_REPAIRED_BODY_SENTINEL,
+        _REPAIR_EVIDENCE_SENTINEL,
+        _REPAIR_SOURCE_IDENTITY_SENTINEL,
+        _REPAIR_LOCATOR_SENTINEL,
+        _REPAIR_FULL_PROMPT_SENTINEL,
+        _REPAIR_PROVIDER_EXCEPTION_SENTINEL,
+    )
+
+
+def _assert_content_free_repair_state(*values: object) -> None:
+    rendered = "\n".join(repr(value) for value in values)
+    for governed_text in _repair_governed_sentinels():
+        assert governed_text not in rendered
 
 
 def _repair_capture(contract: CitationRepairContract) -> SimpleNamespace:
@@ -1201,6 +1240,179 @@ async def test_citation_repair_direct_initial_session_defers_without_persistence
 
 
 @pytest.mark.asyncio
+async def test_citation_repair_cleaned_session_contains_no_governed_text() -> None:
+    contract = _privacy_repair_contract()
+    persistence = _ReadyCitationPersistence()
+    store = _recording_citation_store(persistence)
+    gateway = _ScriptedCitationGateway(
+        (
+            (_REPAIR_INITIAL_BODY_SENTINEL,),
+            (RuntimeError(_REPAIR_PROVIDER_EXCEPTION_SENTINEL),),
+        )
+    )
+    retained_sessions: list[object] = []
+
+    def retain_session(call_index: int) -> None:
+        if call_index == 0:
+            retained_sessions.append(controller._active_citation_repair_session)
+
+    gateway.on_call = retain_session
+
+    async def capture(_draft: str) -> SimpleNamespace:
+        return _repair_capture(contract)
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        rag_capture_provider=capture,
+        agent_runtime_enabled=False,
+    )
+    expected_repair_messages = build_citation_repair_messages(
+        contract,
+        _REPAIR_INITIAL_BODY_SENTINEL,
+    )
+    assert expected_repair_messages is not None
+    assert _REPAIR_FULL_PROMPT_SENTINEL in repr(expected_repair_messages)
+
+    await controller.submit_draft("question")
+
+    assert len(retained_sessions) == 1
+    assert gateway.calls[1]["messages"] == expected_repair_messages
+    cleaned_session = retained_sessions[0]
+    assert cleaned_session is not None
+    assert cleaned_session.contract is None
+    assert cleaned_session.resolution is None
+    _assert_content_free_repair_state(cleaned_session)
+    assert controller._active_citation_repair_session is None
+
+
+@pytest.mark.parametrize(
+    "failure_mode",
+    (
+        "request-fit",
+        "provider-raise",
+        "empty-output",
+        "oversized-output",
+        "invalid-markers",
+        "changed-claims",
+        "fallback-bypass",
+    ),
+)
+@pytest.mark.asyncio
+async def test_citation_repair_failure_privacy_sentinels_are_confined_to_selected_body(
+    failure_mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    initial_body = _REPAIR_INITIAL_BODY_SENTINEL
+    repair_scripts: dict[str, tuple[object, ...]] = {
+        "provider-raise": (RuntimeError(_REPAIR_PROVIDER_EXCEPTION_SENTINEL),),
+        "empty-output": (),
+        "oversized-output": (
+            _REPAIR_REPAIRED_BODY_SENTINEL + ("x" * (1024 * 1024 + 1)),
+        ),
+        "invalid-markers": (f"{initial_body} [S2] {_REPAIR_REPAIRED_BODY_SENTINEL}",),
+        "changed-claims": (f"{_REPAIR_REPAIRED_BODY_SENTINEL} [S1]",),
+    }
+    scripts = (
+        (initial_body,),
+        *(
+            ()
+            if failure_mode in {"request-fit", "fallback-bypass"}
+            else (repair_scripts[failure_mode],)
+        ),
+    )
+    if failure_mode == "request-fit":
+        monkeypatch.setattr(
+            controller_module,
+            "repair_request_fits_model_window",
+            lambda *_args, **_kwargs: False,
+        )
+
+    contract = _privacy_repair_contract()
+    persistence = _ReadyCitationPersistence()
+    store = _recording_citation_store(persistence)
+    gateway = _ScriptedCitationGateway(
+        scripts,
+        mark_fallback_calls=(
+            frozenset({0}) if failure_mode == "fallback-bypass" else frozenset()
+        ),
+    )
+    retained_sessions: list[object] = []
+
+    def retain_session(call_index: int) -> None:
+        if call_index == 0:
+            retained_sessions.append(controller._active_citation_repair_session)
+
+    gateway.on_call = retain_session
+
+    async def capture(_draft: str) -> SimpleNamespace:
+        return _repair_capture(contract)
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        rag_capture_provider=capture,
+        agent_runtime_enabled=False,
+    )
+    expected_repair_messages = build_citation_repair_messages(contract, initial_body)
+    assert expected_repair_messages is not None
+    assert _REPAIR_FULL_PROMPT_SENTINEL in repr(expected_repair_messages)
+    loguru_records: list[object] = []
+    sink_id = loguru_logger.add(
+        loguru_records.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    caplog.set_level(logging.DEBUG)
+    try:
+        result = await controller.submit_draft("question")
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assistant = _assistant(store)
+    assistant_writes = [
+        call
+        for call in persistence.create_calls
+        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
+    ]
+    assert result.visible_copy == assistant.content == initial_body
+    if len(gateway.calls) == 2:
+        assert gateway.calls[1]["messages"] == expected_repair_messages
+    assert len(assistant_writes) == 1
+    assert assistant_writes[0]["content"] == initial_body
+    sanitized_writes = [
+        {
+            **call,
+            "content": (
+                "<selected-body>" if call is assistant_writes[0] else call["content"]
+            ),
+        }
+        for call in persistence.create_calls
+    ]
+    cleaned_session = retained_sessions[0]
+    assert cleaned_session.contract is None
+    assert cleaned_session.resolution is None
+    assert controller._active_citation_repair_session is None
+    assert controller._active_assistant_message_id is None
+    assert controller._active_stream_task is None
+    assert controller.original_attempt_for_message(assistant.id) is None
+    _assert_content_free_repair_state(
+        caplog.text,
+        loguru_records,
+        *(call["signals"] for call in gateway.calls),
+        assistant.citation_presentation,
+        cleaned_session,
+        sanitized_writes,
+        controller.run_state,
+        controller.run_state_history,
+        store._terminal_citation_finalizers,
+        store._provisional_terminal_selection_ids,
+        store._terminal_persistence_deferred_ids,
+    )
+
+
+@pytest.mark.asyncio
 async def test_citation_repair_direct_valid_initial_completes_once_without_repair():
     persistence = _ReadyCitationPersistence()
     result, controller, store, gateway, _contract = await _run_direct_citation_repair(
@@ -1961,13 +2173,15 @@ def _controlled_citation_repair(
     *,
     agent: bool,
     persistence: _ReadyCitationPersistence | None = None,
+    contract: CitationRepairContract | None = None,
+    initial_body: str = "Original claim without marker",
+    repaired_body: str | None = None,
     pause_before_first_chunk: bool = False,
     pause_after_first_chunk: bool = False,
     yield_late_chunk_on_cancel: bool = False,
     pause_initial_after_first_chunk: bool = False,
 ):
-    initial_body = "Original claim without marker"
-    repaired_body = f"{initial_body} [S1]"
+    repaired_body = repaired_body or f"{initial_body} [S1]"
     repair_call_index = 0 if agent else 1
     scripts = ((repaired_body,),) if agent else ((initial_body,), (repaired_body,))
     gateway = _ControlledCitationGateway(
@@ -1979,7 +2193,7 @@ def _controlled_citation_repair(
         pause_initial_after_first_chunk=pause_initial_after_first_chunk,
     )
     store = _recording_citation_store(persistence)
-    contract = _repair_contract()
+    contract = contract or _repair_contract()
 
     async def capture(_draft):
         return _repair_capture(contract)
@@ -2001,6 +2215,24 @@ async def _wait_for_citation_checking(controller: ConsoleChatController) -> None
             return
         await asyncio.sleep(0)
     raise AssertionError("citation checking was not observable")
+
+
+def _sanitize_selected_persistence(
+    persistence: _ReadyCitationPersistence,
+    selected_body: str,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            **call,
+            "content": (
+                "<selected-body>"
+                if call["sender"] == ConsoleMessageRole.ASSISTANT.value
+                and call["content"] == selected_body
+                else call["content"]
+            ),
+        }
+        for call in persistence.create_calls
+    ]
 
 
 def _assert_user_citation_repair_cancel(
@@ -2069,6 +2301,174 @@ def test_citation_repair_checking_run_state_is_stoppable_but_send_blocked():
     assert checking.is_send_allowed is False
     assert checking.is_stop_allowed is True
     assert streaming.is_stop_allowed is True
+
+
+@pytest.mark.parametrize("agent", (False, True), ids=("direct", "agent"))
+@pytest.mark.asyncio
+async def test_citation_repair_user_cancellation_privacy_sentinels(
+    agent: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    persistence = _ReadyCitationPersistence()
+    initial_body = _REPAIR_INITIAL_BODY_SENTINEL
+    repaired_body = f"{initial_body} [S1] {_REPAIR_REPAIRED_BODY_SENTINEL}"
+    controller, store, gateway, _bridge, _initial, _repaired = (
+        _controlled_citation_repair(
+            agent=agent,
+            persistence=persistence,
+            contract=_privacy_repair_contract(),
+            initial_body=initial_body,
+            repaired_body=repaired_body,
+            pause_before_first_chunk=True,
+        )
+    )
+    loguru_records: list[object] = []
+    sink_id = loguru_logger.add(
+        loguru_records.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    caplog.set_level(logging.DEBUG)
+    try:
+        task = asyncio.create_task(controller.submit_draft("question"))
+        await gateway.repair_started.wait()
+        retained_session = controller._active_citation_repair_session
+        assert retained_session is not None
+        assert controller.stop_active_run() is True
+        await task
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assistant = _assistant(store)
+    assistant_writes = [
+        call
+        for call in persistence.create_calls
+        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
+    ]
+    assert len(assistant_writes) == 1
+    assert assistant_writes[0]["content"] == initial_body
+    assert retained_session.contract is None
+    assert retained_session.resolution is None
+    _assert_content_free_repair_state(
+        caplog.text,
+        loguru_records,
+        *(call["signals"] for call in gateway.calls),
+        assistant.citation_presentation,
+        retained_session,
+        _sanitize_selected_persistence(persistence, initial_body),
+        controller.run_state,
+        controller.run_state_history,
+        controller._active_citation_repair_session,
+        controller._active_assistant_message_id,
+        controller._active_stream_task,
+    )
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_late_chunk_privacy_sentinels(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    persistence = _ReadyCitationPersistence()
+    initial_body = _REPAIR_INITIAL_BODY_SENTINEL
+    controller, store, gateway, _bridge, _initial, _repaired = (
+        _controlled_citation_repair(
+            agent=False,
+            persistence=persistence,
+            contract=_privacy_repair_contract(),
+            initial_body=initial_body,
+            repaired_body=f"{initial_body} [S1] {_REPAIR_REPAIRED_BODY_SENTINEL}",
+            pause_after_first_chunk=True,
+            yield_late_chunk_on_cancel=True,
+        )
+    )
+    loguru_records: list[object] = []
+    sink_id = loguru_logger.add(
+        loguru_records.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    caplog.set_level(logging.DEBUG)
+    try:
+        task = asyncio.create_task(controller.submit_draft("question"))
+        await gateway.first_repair_chunk_collected.wait()
+        retained_session = controller._active_citation_repair_session
+        assert retained_session is not None
+        assert controller.stop_active_run() is True
+        await task
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assistant = _assistant(store)
+    assert assistant.content == initial_body
+    assert retained_session.contract is None
+    assert retained_session.resolution is None
+    _assert_content_free_repair_state(
+        caplog.text,
+        loguru_records,
+        *(call["signals"] for call in gateway.calls),
+        assistant.citation_presentation,
+        retained_session,
+        _sanitize_selected_persistence(persistence, initial_body),
+        controller.run_state,
+        controller.run_state_history,
+        controller._active_citation_repair_session,
+        controller._active_assistant_message_id,
+        controller._active_stream_task,
+    )
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_session_close_privacy_sentinels(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    persistence = _ReadyCitationPersistence()
+    initial_body = _REPAIR_INITIAL_BODY_SENTINEL
+    controller, store, gateway, _bridge, _initial, _repaired = (
+        _controlled_citation_repair(
+            agent=False,
+            persistence=persistence,
+            contract=_privacy_repair_contract(),
+            initial_body=initial_body,
+            repaired_body=f"{initial_body} [S1] {_REPAIR_REPAIRED_BODY_SENTINEL}",
+            pause_before_first_chunk=True,
+            yield_late_chunk_on_cancel=True,
+        )
+    )
+    loguru_records: list[object] = []
+    sink_id = loguru_logger.add(
+        loguru_records.append,
+        level="DEBUG",
+        format="{message}",
+    )
+    caplog.set_level(logging.DEBUG)
+    try:
+        task = asyncio.create_task(controller.submit_draft("question"))
+        await gateway.repair_started.wait()
+        retained_session = controller._active_citation_repair_session
+        assert retained_session is not None
+        session_id = store.active_session_id
+        assert session_id is not None
+        controller.close_session(session_id)
+        result = await task
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert result.visible_copy == "Session closed."
+    assert retained_session.contract is None
+    assert retained_session.resolution is None
+    _assert_content_free_repair_state(
+        caplog.text,
+        loguru_records,
+        *(call["signals"] for call in gateway.calls),
+        retained_session,
+        persistence.create_calls,
+        controller.run_state,
+        controller.run_state_history,
+        controller._active_citation_repair_session,
+        controller._active_assistant_message_id,
+        controller._active_stream_task,
+        store.sessions(),
+    )
 
 
 @pytest.mark.asyncio
