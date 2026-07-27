@@ -51,14 +51,14 @@ consumer.
 
 ## Task 1: Start TASK-649 and Check In the Reachability Manifest
 
-- [ ] Move the task In Progress and add its task-local plan:
+- [x] Move the task In Progress and add its task-local plan:
 
 ```bash
 backlog task edit 649 -s "In Progress"
 backlog task edit 649 --plan $'ADR required: yes\nADR path: backlog/decisions/026-application-session-state-ownership.md; backlog/decisions/011-chatbook-workbench-ui-system.md\nReason: Existing ADRs select native Console as the only production Chat composition.\n\n1. Prove legacy import/reachability.\n2. Remove ChatScreen legacy branches.\n3. Delete exclusive modules, styles, and tests.\n4. Verify native Console behavior and structural absence.'
 ```
 
-- [ ] Generate the source/test inventory with:
+- [x] Generate the source/test inventory with:
 
 ```bash
 rg -n "Chat_Window|ChatWindowEnhanced|ChatWindow\\b|chat_window" tldw_chatbook Tests
@@ -66,12 +66,12 @@ rg -n "UI\\.Chat_Modules|compact_model_bar|chat_diagnostics" tldw_chatbook Tests
 rg -n "Chat_Window|ChatWindowEnhanced|ChatWindow\\b" tldw_chatbook/UI/Screens tldw_chatbook/UI/Navigation
 ```
 
-- [ ] In the manifest, classify every hit as:
+- [x] In the manifest, classify every hit as:
   `delete-exclusive`, `prune-exclusive-branch`, `retain-live-shared`, or
   `defer-root-wired-to-TASK-650`. For every retained module, name its live
   production importer. The manifest must prove no registered screen imports
   either deleted composition.
-- [ ] Treat at least these surrogate suites as deletion candidates and verify
+- [x] Treat at least these surrogate suites as deletion candidates and verify
   their sole subject before removal:
   `test_chat_window_enhanced.py`,
   `test_chat_window_enhanced_integration.py`,
@@ -81,7 +81,7 @@ rg -n "Chat_Window|ChatWindowEnhanced|ChatWindow\\b" tldw_chatbook/UI/Screens tl
   `test_send_stop_button.py`,
   `test_ui_example_best_practices.py`, and
   `test_legacy_attach_picker.py`.
-- [ ] Commit the manifest before deletion:
+- [x] Commit the manifest before deletion:
 
 ```bash
 git add Docs/superpowers/reviews/2026-07-26-task-649-legacy-chat-reachability.md
@@ -90,9 +90,9 @@ git commit -m "docs(chat): prove legacy composition reachability (task-649)"
 
 ## Task 2: Write the Production-Route Failure First
 
-- [ ] Add a mounted production test that navigates to the registered `ChatScreen`, asserts the real `ConsoleSessionSurface` and composer are mounted, and asserts the screen exposes no `chat_window` field or legacy `#chat-window`.
-- [ ] Add structural tests that reject production imports or definitions of `ChatWindow` and `ChatWindowEnhanced`, while allowing historical prose only where explicitly documented.
-- [ ] Run:
+- [x] Add a mounted production test that navigates to the registered `ChatScreen`, asserts the real `ConsoleSessionSurface` and composer are mounted, and asserts the screen exposes no `chat_window` field or legacy `#chat-window`.
+- [x] Add structural tests that reject production imports or definitions of `ChatWindow` and `ChatWindowEnhanced`, while allowing historical prose only where explicitly documented.
+- [x] Run:
 
 ```bash
 pytest Tests/ProductionApp/test_chat_composition_retirement.py Tests/test_application_state_ownership.py -q
@@ -102,16 +102,16 @@ Expected: FAIL while the legacy classes/field/branches remain.
 
 ## Task 3: Remove the Dormant Branches from ChatScreen
 
-- [ ] Remove the imports, `self.chat_window`, `_ensure_chat_window()`, and every branch whose only receiver is that field, including legacy:
+- [x] Remove the imports, `self.chat_window`, `_ensure_chat_window()`, and every branch whose only receiver is that field, including legacy:
   provider/model refresh, shell sidebar delegation, diagnostics, tab-container
   fallback, save/restore, attachment transfer, settings extraction, empty-state
   hiding, resume synchronization, and button delegation.
-- [ ] Keep native Console store/session/surface behavior and production
+- [x] Keep native Console store/session/surface behavior and production
   `ChatScreen` route construction unchanged. Do not add `LegacyChatState`, a
   compatibility property, or an adapter.
-- [ ] Replace any mixed helper with its native Console branch only when that
+- [x] Replace any mixed helper with its native Console branch only when that
   branch has a live caller; otherwise delete the helper.
-- [ ] Run the production test:
+- [x] Run the production test:
 
 ```bash
 pytest Tests/ProductionApp/test_chat_composition_retirement.py -q
@@ -121,25 +121,25 @@ Expected: PASS.
 
 ## Task 4: Delete Exclusive Modules, Styles, and Tests
 
-- [ ] Delete the two composition modules and every manifest entry marked
+- [x] Delete the two composition modules and every manifest entry marked
   `delete-exclusive`. Prune only the marked branches in shared event modules.
-- [ ] Remove `ChatWindowEnhanced` selectors from
+- [x] Remove `ChatWindowEnhanced` selectors from
   `css/features/_chat.tcss`, then rebuild the committed bundle:
 
 ```bash
 python tldw_chatbook/css/build_css.py
 ```
 
-- [ ] Verify the rebuilt CSS contains no `ChatWindow` selector and still
+- [x] Verify the rebuilt CSS contains no `ChatWindow` selector and still
   contains native Console selectors.
-- [ ] Delete legacy-only surrogate suites. Do not rewrite them around another
+- [x] Delete legacy-only surrogate suites. Do not rewrite them around another
   widget shell; native behavior is covered by the production-app test.
-- [ ] Re-run the manifest searches and update the checked-in disposition with
+- [x] Re-run the manifest searches and update the checked-in disposition with
   the final zero-hit/live-shared evidence.
 
 ## Task 5: Verify and Close TASK-649
 
-- [ ] Run:
+- [x] Run:
 
 ```bash
 pytest Tests/ProductionApp/test_chat_composition_retirement.py Tests/ProductionApp/test_provider_selection_ownership.py Tests/test_application_state_ownership.py -q
@@ -154,7 +154,7 @@ git diff --check
   `Chat_Events/chat_events.py` baseline exceptions; both remain linted,
   compiled, behavior-tested, and diff-checked.
 
-- [ ] Commit the retirement using the exact manifest-approved file set:
+- [x] Commit the retirement using the exact manifest-approved file set:
 
 ```bash
 git add Docs/superpowers/reviews/2026-07-26-task-649-legacy-chat-reachability.md Docs/security/production-diagnostic-inventory.json scripts/check_persistent_diagnostic_inventory.py tldw_chatbook/app.py tldw_chatbook/Chat/attachment_core.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/compact_model_bar.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events_tabs.py tldw_chatbook/Event_Handlers/Chat_Events/chat_events_worldbooks.py tldw_chatbook/Event_Handlers/worker_events.py tldw_chatbook/css/features/_chat.tcss tldw_chatbook/css/tldw_cli_modular.tcss Tests/ProductionApp/test_chat_composition_retirement.py Tests/test_application_state_ownership.py Tests/test_smoke.py Tests/test_remaining_diagnostic_sentinel_matrix.py Tests/UI/test_product_maturity_phase1_core_loop.py Tests/UI/test_product_maturity_phase1_empty_setup_states.py
@@ -165,7 +165,7 @@ git commit -m "refactor(chat): retire dormant legacy composition (task-649)"
   named by the checked-in manifest explicitly with `git add -u -- <path>`.
   Never stage the whole `tldw_chatbook/UI` or `Tests` trees.
 
-- [ ] Re-read TASK-649, add Implementation Notes containing the manifest,
+- [x] Re-read TASK-649, add Implementation Notes containing the manifest,
   actual commands, counts, durations, modified/deleted files, ADRs, and
   deviations, check all acceptance criteria, then mark Done and commit its
   task file:
