@@ -4,9 +4,11 @@
 # Imports
 from typing import TYPE_CHECKING, Optional, List, Dict
 import asyncio
+import json
+import os
 import shutil
 import sqlite3
-import json
+import tempfile
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -34,6 +36,7 @@ from textual.widgets import (
     ListView,
 )
 from textual.message import Message
+from textual.worker import NoActiveWorker, get_current_worker
 from textual.widgets import Markdown
 from textual import on
 
@@ -81,6 +84,9 @@ class ToolsSettingsWindow(Container):
     """
     Container for the Tools & Settings Tab's UI.
     """
+
+    _BACKUP_COPY_WORKER_DESCRIPTION = "Copy legacy database backups"
+    _BACKUP_MANIFEST_WORKER_DESCRIPTION = "Write database backup manifest"
 
     class IngestUiStyleChanged(Message):
         """Request that the app refresh the active ingest view after a style change."""
@@ -489,7 +495,8 @@ class ToolsSettingsWindow(Container):
         super().__init__(**kwargs)
         self._app_instance = app_instance
         self.config_data = load_cli_config_and_ensure_existence()
-    
+        self._backup_all_in_progress = False
+
     @property
     def app_instance(self):
         """Get the app instance, falling back to self.app if not set."""
@@ -5781,75 +5788,90 @@ Thank you for using tldw-chatbook! 🎉
 
     async def _backup_databases(self) -> None:
         """Create timestamped backups of all databases."""
-        try:
+        if getattr(self, "_backup_all_in_progress", False):
             self.app_instance.notify(
-                "Starting database backup...", severity="information"
+                "Database backup is already in progress.",
+                severity="warning",
             )
-
-            backup_worker = self.run_worker(
-                self._backup_worker,
-                name="backup_worker",
-                group="tts_profile_backup_all",
-                thread=True,
-                exclusive=True,
-                exit_on_error=False,
-            )
-            timestamp, backup_dir, backed_up = await backup_worker.wait()
-        except Exception:
-            self._raise_if_backup_cancelled()
-            logger.warning("Database backup phase=legacy failed")
-            self.app_instance.notify("Database backup failed.", severity="error")
             return
 
-        profile_backup_succeeded = False
+        self._backup_all_in_progress = True
         try:
-            repository = await self.app_instance._ensure_tts_profile_repository()
-            if repository is not None:
-                profile_backup_path = (
-                    backup_dir / f"tldw_chatbook_tts_profiles_{timestamp}.db"
+            try:
+                self.app_instance.notify(
+                    "Starting database backup...", severity="information"
                 )
-                await repository.backup_to(profile_backup_path)
-                backed_up.append(("TTS Profiles", profile_backup_path))
-                profile_backup_succeeded = True
-            else:
-                logger.warning("Database backup phase=tts_profiles unavailable")
-        except Exception:
-            self._raise_if_backup_cancelled()
-            logger.warning("Database backup phase=tts_profiles failed")
 
-        try:
-            manifest_worker = self.run_worker(
-                partial(
-                    self._write_backup_manifest,
-                    timestamp,
-                    backup_dir,
-                    tuple(backed_up),
-                ),
-                name="backup_manifest_worker",
-                group="tts_profile_backup_all",
-                thread=True,
-                exclusive=True,
-                exit_on_error=False,
-            )
-            await manifest_worker.wait()
-        except Exception:
-            self._raise_if_backup_cancelled()
-            logger.warning("Database backup phase=manifest failed")
-            self.app_instance.notify("Database backup failed.", severity="error")
-            return
+                backup_worker = self.run_worker(
+                    self._backup_worker,
+                    name="backup_worker",
+                    group="tts_profile_backup_all",
+                    description=self._BACKUP_COPY_WORKER_DESCRIPTION,
+                    thread=True,
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                timestamp, backup_dir, backed_up = await self._wait_for_backup_worker(
+                    backup_worker
+                )
+            except Exception:
+                self._raise_if_backup_cancelled()
+                logger.warning("Database backup phase=legacy failed")
+                self.app_instance.notify("Database backup failed.", severity="error")
+                return
 
-        if profile_backup_succeeded:
+            profile_backup_succeeded = False
+            try:
+                repository = await self.app_instance._ensure_tts_profile_repository()
+                if repository is not None:
+                    profile_backup_path = (
+                        backup_dir / f"tldw_chatbook_tts_profiles_{timestamp}.db"
+                    )
+                    await repository.backup_to(profile_backup_path)
+                    backed_up.append(("TTS Profiles", profile_backup_path))
+                    profile_backup_succeeded = True
+                else:
+                    logger.warning("Database backup phase=tts_profiles unavailable")
+            except Exception:
+                self._raise_if_backup_cancelled()
+                logger.warning("Database backup phase=tts_profiles failed")
+
+            try:
+                manifest_worker = self.run_worker(
+                    partial(
+                        self._write_backup_manifest,
+                        timestamp,
+                        backup_dir,
+                        tuple(backed_up),
+                    ),
+                    name="backup_manifest_worker",
+                    group="tts_profile_backup_all",
+                    description=self._BACKUP_MANIFEST_WORKER_DESCRIPTION,
+                    thread=True,
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+                await self._wait_for_backup_worker(manifest_worker)
+            except Exception:
+                self._raise_if_backup_cancelled()
+                logger.warning("Database backup phase=manifest failed")
+                self.app_instance.notify("Database backup failed.", severity="error")
+                return
+
+            if profile_backup_succeeded:
+                self.app_instance.notify(
+                    "Database backup completed successfully.",
+                    severity="success",
+                )
+                return
+
             self.app_instance.notify(
-                "Database backup completed successfully.",
-                severity="success",
+                "Database backup completed with a partial failure; "
+                "TTS profiles were not backed up.",
+                severity="warning",
             )
-            return
-
-        self.app_instance.notify(
-            "Database backup completed with a partial failure; "
-            "TTS profiles were not backed up.",
-            severity="warning",
-        )
+        finally:
+            self._backup_all_in_progress = False
 
     @staticmethod
     def _raise_if_backup_cancelled() -> None:
@@ -5859,19 +5881,67 @@ Thank you for using tldw-chatbook! 🎉
         if current_task is not None and current_task.cancelling():
             raise asyncio.CancelledError from None
 
+    @staticmethod
+    async def _wait_for_backup_worker(worker):
+        """Await a Textual worker and always signal it when waiting aborts."""
+
+        try:
+            return await worker.wait()
+        except BaseException:
+            try:
+                worker.cancel()
+            except BaseException:
+                logger.warning("Database backup worker cancellation signal failed")
+            raise
+
+    @staticmethod
+    def _raise_if_textual_worker_cancelled() -> None:
+        """Cooperatively stop executor work after its Textual worker is cancelled."""
+
+        try:
+            worker = get_current_worker()
+        except NoActiveWorker:
+            return
+        if worker.is_cancelled:
+            raise asyncio.CancelledError from None
+
+    @staticmethod
+    def _unlink_backup_artifact(path: Path, phase: str) -> None:
+        """Remove an unpublished artifact without masking control flow."""
+
+        try:
+            path.unlink(missing_ok=True)
+        except BaseException:
+            logger.warning("Database backup phase={} cleanup=unlink failed", phase)
+
+    @staticmethod
+    def _remove_empty_backup_directory(path: Path) -> None:
+        """Best-effort removal of a failed legacy phase's reserved directory."""
+
+        try:
+            path.rmdir()
+        except BaseException:
+            logger.warning("Database backup phase=legacy cleanup=rmdir failed")
+
     def _backup_worker(self) -> tuple[str, Path, list[tuple[str, Path]]]:
         """Copy the legacy databases and return their backup entries."""
 
+        staged_paths: list[Path] = []
+        published_paths: list[Path] = []
+        backup_dir: Path | None = None
+        completed = False
         try:
             db_config = self.config_data.get("database", {})
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            backup_dir = (
-                Path.home() / ".local" / "share" / "tldw_cli" / "backups" / timestamp
+            backup_root = Path.home() / ".local" / "share" / "tldw_cli" / "backups"
+            backup_root.mkdir(parents=True, exist_ok=True)
+            backup_dir = Path(
+                tempfile.mkdtemp(
+                    dir=backup_root,
+                    prefix=f"{timestamp}_",
+                )
             )
-            backup_dir.mkdir(parents=True, exist_ok=True)
-
-            backed_up: list[tuple[str, Path]] = []
 
             chachanotes_path = Path(
                 db_config.get(
@@ -5879,30 +5949,69 @@ Thank you for using tldw-chatbook! 🎉
                     "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
                 )
             ).expanduser()
-            if chachanotes_path.exists():
-                backup_path = backup_dir / f"tldw_chatbook_ChaChaNotes_{timestamp}.db"
-                shutil.copy2(chachanotes_path, backup_path)
-                backed_up.append(("ChaChaNotes", backup_path))
-
             prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                backup_path = backup_dir / f"tldw_cli_prompts_{timestamp}.db"
-                shutil.copy2(prompts_path, backup_path)
-                backed_up.append(("Prompts", backup_path))
-
             media_path = Path(
                 db_config.get(
                     "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
                 )
             ).expanduser()
-            if media_path.exists():
-                backup_path = backup_dir / f"tldw_cli_media_v2_{timestamp}.db"
-                shutil.copy2(media_path, backup_path)
-                backed_up.append(("Media", backup_path))
 
+            candidates = (
+                (
+                    "ChaChaNotes",
+                    chachanotes_path,
+                    backup_dir / f"tldw_chatbook_ChaChaNotes_{timestamp}.db",
+                ),
+                (
+                    "Prompts",
+                    prompts_path,
+                    backup_dir / f"tldw_cli_prompts_{timestamp}.db",
+                ),
+                (
+                    "Media",
+                    media_path,
+                    backup_dir / f"tldw_cli_media_v2_{timestamp}.db",
+                ),
+            )
+            staged_backups: list[tuple[str, Path, Path]] = []
+            for name, source_path, backup_path in candidates:
+                self._raise_if_textual_worker_cancelled()
+                if not source_path.exists():
+                    continue
+                descriptor, temporary_name = tempfile.mkstemp(
+                    dir=backup_dir,
+                    prefix=f".{backup_path.name}.",
+                    suffix=".tmp",
+                )
+                temporary_path = Path(temporary_name)
+                staged_paths.append(temporary_path)
+                os.close(descriptor)
+                shutil.copy2(source_path, temporary_path)
+                self._raise_if_textual_worker_cancelled()
+                staged_backups.append((name, temporary_path, backup_path))
+
+            backed_up: list[tuple[str, Path]] = []
+            self._raise_if_textual_worker_cancelled()
+            for name, temporary_path, backup_path in staged_backups:
+                self._raise_if_textual_worker_cancelled()
+                os.replace(temporary_path, backup_path)
+                staged_paths.remove(temporary_path)
+                published_paths.append(backup_path)
+                self._raise_if_textual_worker_cancelled()
+                backed_up.append((name, backup_path))
+
+            completed = True
             return timestamp, backup_dir, backed_up
         except Exception:
             raise RuntimeError("legacy_database_backup_failed") from None
+        finally:
+            for temporary_path in staged_paths:
+                self._unlink_backup_artifact(temporary_path, "legacy")
+            if not completed:
+                for published_path in published_paths:
+                    self._unlink_backup_artifact(published_path, "legacy")
+                if backup_dir is not None:
+                    self._remove_empty_backup_directory(backup_dir)
 
     @staticmethod
     def _write_backup_manifest(
@@ -5912,6 +6021,8 @@ Thank you for using tldw-chatbook! 🎉
     ) -> None:
         """Write the final manifest after every successful backup settles."""
 
+        temporary_path: Path | None = None
+        descriptor: int | None = None
         try:
             info_path = backup_dir / "backup_info.json"
             backup_info = {
@@ -5920,10 +6031,37 @@ Thank you for using tldw-chatbook! 🎉
                     {"name": name, "path": str(path)} for name, path in backed_up
                 ],
             }
-            with info_path.open("w", encoding="utf-8") as info_file:
+            descriptor, temporary_name = tempfile.mkstemp(
+                dir=backup_dir,
+                prefix=f".{info_path.name}.",
+                suffix=".tmp",
+                text=True,
+            )
+            temporary_path = Path(temporary_name)
+            info_file = os.fdopen(descriptor, "w", encoding="utf-8")
+            descriptor = None
+            with info_file:
                 json.dump(backup_info, info_file, indent=2)
+                info_file.flush()
+                os.fsync(info_file.fileno())
+            ToolsSettingsWindow._raise_if_textual_worker_cancelled()
+            os.replace(temporary_path, info_path)
+            temporary_path = None
         except Exception:
             raise RuntimeError("backup_manifest_write_failed") from None
+        finally:
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except BaseException:
+                    logger.warning(
+                        "Database backup phase=manifest cleanup=close failed"
+                    )
+            if temporary_path is not None:
+                ToolsSettingsWindow._unlink_backup_artifact(
+                    temporary_path,
+                    "manifest",
+                )
 
     async def _check_database_integrity(self) -> None:
         """Check integrity of all databases."""

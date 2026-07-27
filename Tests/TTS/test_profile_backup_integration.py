@@ -11,6 +11,7 @@ import ast
 import json
 import shutil
 import sqlite3
+import threading
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from unittest.mock import Mock
 
 import pytest
 from loguru import logger
+from textual.app import App, ComposeResult
 from textual.worker import WorkerCancelled, WorkerFailed
 
 from tldw_chatbook import config
@@ -95,6 +97,10 @@ class _WorkerLike:
         self._work = work
         self._before_run = before_run
         self._observed_errors = observed_errors
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
 
     async def wait(self) -> Any:
         try:
@@ -107,6 +113,84 @@ class _WorkerLike:
             if self._observed_errors is not None:
                 self._observed_errors.append(error)
             raise WorkerFailed(error) from None
+
+
+class _RealBackupWindow(ToolsSettingsWindow):
+    """Minimal mounted settings window for real Textual worker tests."""
+
+    def compose(self) -> ComposeResult:
+        yield from ()
+
+
+class _RealBackupApp(App[None]):
+    """Real Textual app boundary for worker lifecycle regression coverage."""
+
+    def __init__(
+        self,
+        *,
+        repository: _RecordingProfileRepository | None,
+        config_data: dict[str, Any],
+    ) -> None:
+        super().__init__()
+        self.repository = repository
+        self.ensure_calls = 0
+        self.notifications: list[tuple[str, dict[str, Any]]] = []
+        self.settings_window = _RealBackupWindow(app_instance=self)
+        self.settings_window.config_data = config_data
+
+    def compose(self) -> ComposeResult:
+        yield self.settings_window
+
+    async def _ensure_tts_profile_repository(
+        self,
+    ) -> _RecordingProfileRepository | None:
+        self.ensure_calls += 1
+        return self.repository
+
+    def notify(self, message: str, **kwargs: Any) -> None:
+        self.notifications.append((message, kwargs))
+
+
+def _prepare_real_backup_app(
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    repository: _RecordingProfileRepository | None,
+) -> tuple[_RealBackupApp, tuple[Path, Path, Path]]:
+    """Create a mounted-app candidate with isolated legacy database paths."""
+
+    chachanotes_path = tmp_path / "legacy-chachanotes.db"
+    prompts_path = tmp_path / "legacy-prompts.db"
+    media_path = tmp_path / "legacy-media.db"
+    for source in (chachanotes_path, prompts_path, media_path):
+        source.write_bytes(b"database")
+
+    monkeypatch.setattr(
+        tools_settings_module.Path,
+        "home",
+        classmethod(lambda cls: tmp_path),
+    )
+    monkeypatch.setattr(
+        tools_settings_module,
+        "get_prompts_db_path",
+        lambda: prompts_path,
+    )
+    monkeypatch.setattr(
+        tools_settings_module,
+        "load_cli_config_and_ensure_existence",
+        lambda: {},
+    )
+
+    app = _RealBackupApp(
+        repository=repository,
+        config_data={
+            "database": {
+                "chachanotes_db_path": str(chachanotes_path),
+                "media_db_path": str(media_path),
+            }
+        },
+    )
+    return app, (chachanotes_path, prompts_path, media_path)
 
 
 def _prepare_backup_window(
@@ -318,6 +402,313 @@ def test_tts_profiles_path_is_resolved_only_in_app_constructor() -> None:
 
 
 @pytest.mark.asyncio
+async def test_real_worker_cancellation_before_legacy_publication_leaves_no_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repository = _RecordingProfileRepository()
+    app, _ = _prepare_real_backup_app(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        repository=repository,
+    )
+    copy_started = threading.Event()
+    release_copy = threading.Event()
+    copy_finished = threading.Event()
+    real_copy2 = shutil.copy2
+
+    def blocking_copy2(
+        source: Path,
+        destination: Path,
+        *args: Any,
+        **kwargs: Any,
+    ) -> str:
+        result = real_copy2(source, destination, *args, **kwargs)
+        copy_started.set()
+        release_copy.wait(timeout=2)
+        copy_finished.set()
+        return result
+
+    monkeypatch.setattr(tools_settings_module.shutil, "copy2", blocking_copy2)
+
+    async with app.run_test() as pilot:
+        backup_task = asyncio.create_task(app.settings_window._backup_databases())
+        await asyncio.wait_for(asyncio.to_thread(copy_started.wait), timeout=1)
+        backup_task.cancel()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await backup_task
+        finally:
+            release_copy.set()
+
+        await asyncio.wait_for(asyncio.to_thread(copy_finished.wait), timeout=1)
+        await pilot.pause()
+
+    backup_root = tmp_path / ".local" / "share" / "tldw_cli" / "backups"
+    assert tuple(backup_root.rglob("*.db")) == ()
+    assert tuple(backup_root.rglob("*.tmp")) == ()
+    assert tuple(backup_root.iterdir()) == ()
+    assert _terminal_notifications(app) == []
+    assert app.settings_window._backup_all_in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_real_worker_cancellation_before_manifest_publication_leaves_no_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repository = _RecordingProfileRepository()
+    app, _ = _prepare_real_backup_app(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        repository=repository,
+    )
+    dump_started = threading.Event()
+    release_dump = threading.Event()
+    dump_finished = threading.Event()
+    real_dump = json.dump
+
+    def blocking_dump(*args: Any, **kwargs: Any) -> None:
+        real_dump(*args, **kwargs)
+        dump_started.set()
+        release_dump.wait(timeout=2)
+        dump_finished.set()
+
+    monkeypatch.setattr(tools_settings_module.json, "dump", blocking_dump)
+
+    async with app.run_test() as pilot:
+        backup_task = asyncio.create_task(app.settings_window._backup_databases())
+        await asyncio.wait_for(asyncio.to_thread(dump_started.wait), timeout=1)
+        backup_task.cancel()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await backup_task
+        finally:
+            release_dump.set()
+
+        await asyncio.wait_for(asyncio.to_thread(dump_finished.wait), timeout=1)
+        await pilot.pause()
+
+    backup_root = tmp_path / ".local" / "share" / "tldw_cli" / "backups"
+    assert tuple(backup_root.rglob("backup_info.json")) == ()
+    assert tuple(backup_root.rglob("*.tmp")) == ()
+    assert _terminal_notifications(app) == []
+    assert app.settings_window._backup_all_in_progress is False
+
+
+def test_manifest_mid_write_failure_preserves_previous_file_and_cleans_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backup_dir = tmp_path / "backup"
+    backup_dir.mkdir()
+    manifest_path = backup_dir / "backup_info.json"
+    previous_manifest = {"timestamp": "previous", "databases": []}
+    manifest_path.write_text(json.dumps(previous_manifest), encoding="utf-8")
+
+    def fail_mid_dump(
+        value: Any,
+        stream: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        stream.write('{"timestamp": "partial')
+        stream.flush()
+        raise RuntimeError("private manifest serialization failure")
+
+    monkeypatch.setattr(tools_settings_module.json, "dump", fail_mid_dump)
+
+    with pytest.raises(RuntimeError, match="backup_manifest_write_failed"):
+        ToolsSettingsWindow._write_backup_manifest(
+            "20260727_010203",
+            backup_dir,
+            (),
+        )
+
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == previous_manifest
+    assert tuple(backup_dir.glob("*.tmp")) == ()
+    assert tuple(backup_dir.glob(".*.tmp")) == ()
+
+
+def test_manifest_cleanup_failure_does_not_mask_base_exception_or_expose_values(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backup_dir = tmp_path / "private-backup-directory"
+    backup_dir.mkdir()
+    private_error = f"cleanup failed at {backup_dir / 'private-stage.tmp'}"
+
+    def interrupt_mid_dump(
+        value: Any,
+        stream: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        stream.write('{"timestamp": "partial')
+        raise KeyboardInterrupt("original manifest interruption")
+
+    real_unlink = Path.unlink
+
+    def fail_stage_cleanup(
+        path: Path,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        if path.parent == backup_dir and path.suffix == ".tmp":
+            raise RuntimeError(private_error)
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(tools_settings_module.json, "dump", interrupt_mid_dump)
+    monkeypatch.setattr(tools_settings_module.Path, "unlink", fail_stage_cleanup)
+    log_messages: list[str] = []
+    sink_id = logger.add(log_messages.append, level="WARNING", format="{message}")
+
+    try:
+        with pytest.raises(KeyboardInterrupt, match="original manifest interruption"):
+            ToolsSettingsWindow._write_backup_manifest(
+                "20260727_010203",
+                backup_dir,
+                (),
+            )
+    finally:
+        logger.remove(sink_id)
+        for temporary_path in backup_dir.iterdir():
+            real_unlink(temporary_path)
+
+    public_copy = "\n".join(map(str, log_messages))
+    assert "cleanup=unlink failed" in public_copy
+    assert private_error not in public_copy
+    assert str(backup_dir) not in public_copy
+
+
+@pytest.mark.asyncio
+async def test_real_backup_all_same_clock_uses_distinct_timestamp_prefixed_directories(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fixed_timestamp = "20260727_010203"
+
+    class FixedDatetime:
+        @classmethod
+        def now(cls) -> FixedDatetime:
+            return cls()
+
+        def strftime(self, date_format: str) -> str:
+            assert date_format == "%Y%m%d_%H%M%S"
+            return fixed_timestamp
+
+    monkeypatch.setattr(tools_settings_module, "datetime", FixedDatetime)
+    repository = _RecordingProfileRepository()
+    app, _ = _prepare_real_backup_app(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        repository=repository,
+    )
+
+    async with app.run_test():
+        await app.settings_window._backup_databases()
+        await app.settings_window._backup_databases()
+
+    backup_root = tmp_path / ".local" / "share" / "tldw_cli" / "backups"
+    backup_directories = tuple(
+        sorted(path for path in backup_root.iterdir() if path.is_dir())
+    )
+    assert len(backup_directories) == 2
+    assert all(
+        backup_dir.name.startswith(f"{fixed_timestamp}_")
+        for backup_dir in backup_directories
+    )
+    assert {path.parent for path in repository.destinations} == set(backup_directories)
+    assert all((path / "backup_info.json").exists() for path in backup_directories)
+    assert app.settings_window._backup_all_in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_real_backup_all_rejects_duplicate_orchestration_while_profile_waits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    release_profile = asyncio.Event()
+    repository = _RecordingProfileRepository(release=release_profile)
+    app, _ = _prepare_real_backup_app(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        repository=repository,
+    )
+
+    async with app.run_test() as pilot:
+        first_backup = asyncio.create_task(app.settings_window._backup_databases())
+        await asyncio.wait_for(repository.started.wait(), timeout=1)
+        duplicate_backup = asyncio.create_task(app.settings_window._backup_databases())
+
+        try:
+            for _ in range(20):
+                await pilot.pause()
+                if duplicate_backup.done() or len(repository.destinations) > 1:
+                    break
+            assert duplicate_backup.done()
+            assert len(repository.destinations) == 1
+        finally:
+            release_profile.set()
+            await asyncio.gather(first_backup, duplicate_backup)
+
+    assert (
+        "Database backup is already in progress.",
+        {"severity": "warning"},
+    ) in app.notifications
+    assert app.settings_window._backup_all_in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_real_backup_workers_expose_only_value_free_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repository = _RecordingProfileRepository()
+    app, source_paths = _prepare_real_backup_app(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        repository=repository,
+    )
+    configured_profile_path = tmp_path / "private-configured-profile-store.db"
+    app.settings_window.config_data["database"]["tts_profiles_db_path"] = str(
+        configured_profile_path
+    )
+    workers: list[Any] = []
+
+    async with app.run_test():
+        real_run_worker = app.settings_window.run_worker
+
+        def recording_run_worker(work: Any, **kwargs: Any) -> Any:
+            worker = real_run_worker(work, **kwargs)
+            workers.append(worker)
+            return worker
+
+        monkeypatch.setattr(
+            app.settings_window,
+            "run_worker",
+            recording_run_worker,
+        )
+        await app.settings_window._backup_databases()
+
+    assert [worker.description for worker in workers] == [
+        "Copy legacy database backups",
+        "Write database backup manifest",
+    ]
+    sensitive_values = {
+        *(str(path) for path in source_paths),
+        str(configured_profile_path),
+        *(str(path) for path in repository.destinations),
+        *(str(path.parent) for path in repository.destinations),
+    }
+    for worker in workers:
+        public_metadata = "\n".join(
+            (worker.name, worker.group, worker.description, repr(worker))
+        )
+        assert all(value not in public_metadata for value in sensitive_values)
+
+
+@pytest.mark.asyncio
 async def test_backup_all_awaits_profile_and_manifest_before_success(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -387,6 +778,7 @@ async def test_backup_all_awaits_profile_and_manifest_before_success(
         {
             "name": "backup_worker",
             "group": "tts_profile_backup_all",
+            "description": "Copy legacy database backups",
             "thread": True,
             "exclusive": True,
             "exit_on_error": False,
@@ -394,6 +786,7 @@ async def test_backup_all_awaits_profile_and_manifest_before_success(
         {
             "name": "backup_manifest_worker",
             "group": "tts_profile_backup_all",
+            "description": "Write database backup manifest",
             "thread": True,
             "exclusive": True,
             "exit_on_error": False,
@@ -404,6 +797,7 @@ async def test_backup_all_awaits_profile_and_manifest_before_success(
     assert len(terminal) == 1
     assert terminal[0][1]["severity"] == "success"
     assert str(destination.parent) not in terminal[0][0]
+    assert window._backup_all_in_progress is False
 
 
 @pytest.mark.asyncio
@@ -464,13 +858,20 @@ async def test_backup_all_records_only_legacy_entries_on_profile_partial_failure
         == {
             "name": expected_name,
             "group": "tts_profile_backup_all",
+            "description": expected_description,
             "thread": True,
             "exclusive": True,
             "exit_on_error": False,
         }
-        for call, expected_name in zip(
+        for call, (expected_name, expected_description) in zip(
             worker_calls,
-            ("backup_worker", "backup_manifest_worker"),
+            (
+                ("backup_worker", "Copy legacy database backups"),
+                (
+                    "backup_manifest_worker",
+                    "Write database backup manifest",
+                ),
+            ),
             strict=True,
         )
     )
@@ -484,6 +885,7 @@ async def test_backup_all_records_only_legacy_entries_on_profile_partial_failure
     )
     assert private_error not in public_copy
     assert str(profile_path) not in public_copy
+    assert window._backup_all_in_progress is False
 
 
 @pytest.mark.asyncio
@@ -497,6 +899,7 @@ async def test_backup_all_worker_failure_is_private_and_never_reports_success(
     repository = _RecordingProfileRepository()
     app = _BackupApp(repository)
     worker_calls: list[dict[str, Any]] = []
+    workers: list[_WorkerLike] = []
     observed_errors: list[Exception] = []
 
     def run_worker(
@@ -504,7 +907,9 @@ async def test_backup_all_worker_failure_is_private_and_never_reports_success(
         **kwargs: Any,
     ) -> _WorkerLike:
         worker_calls.append(kwargs)
-        return _WorkerLike(work, observed_errors=observed_errors)
+        worker = _WorkerLike(work, observed_errors=observed_errors)
+        workers.append(worker)
+        return worker
 
     window, profile_path, _ = _prepare_backup_window(
         tmp_path=tmp_path,
@@ -548,6 +953,12 @@ async def test_backup_all_worker_failure_is_private_and_never_reports_success(
     assert len(worker_calls) == (1 if failure_phase == "legacy" else 2)
     assert len(observed_errors) == 1
     assert private_error not in repr(observed_errors[0])
+    assert workers[-1].cancelled
+    assert not any(worker.cancelled for worker in workers[:-1])
+    assert window._backup_all_in_progress is False
+    if failure_phase == "legacy":
+        backup_root = tmp_path / ".local" / "share" / "tldw_cli" / "backups"
+        assert tuple(backup_root.iterdir()) == ()
 
 
 @pytest.mark.asyncio
@@ -563,6 +974,7 @@ async def test_backup_all_cancellation_does_not_write_manifest_or_notify_complet
     worker_started = asyncio.Event()
     release_worker = asyncio.Event()
     worker_calls = 0
+    workers: list[_WorkerLike] = []
 
     def run_worker(
         work: Callable[[], Any],
@@ -577,7 +989,9 @@ async def test_backup_all_cancellation_does_not_write_manifest_or_notify_complet
             await release_worker.wait()
 
         before_run = pause_worker if worker_calls == expected_call else None
-        return _WorkerLike(work, before_run=before_run)
+        worker = _WorkerLike(work, before_run=before_run)
+        workers.append(worker)
+        return worker
 
     window, _, _ = _prepare_backup_window(
         tmp_path=tmp_path,
@@ -599,5 +1013,10 @@ async def test_backup_all_cancellation_does_not_write_manifest_or_notify_complet
 
     if cancel_phase == "profile":
         await asyncio.wait_for(repository.cancelled.wait(), timeout=1)
+        assert not any(worker.cancelled for worker in workers)
+    else:
+        assert workers[-1].cancelled
+        assert not any(worker.cancelled for worker in workers[:-1])
     assert _terminal_notifications(app) == []
     assert tuple(tmp_path.rglob("backup_info.json")) == ()
+    assert window._backup_all_in_progress is False
