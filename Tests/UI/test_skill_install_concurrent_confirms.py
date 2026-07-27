@@ -24,10 +24,11 @@ import time
 import pytest
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
 
-class _FakeApp:
+class FakeApp:
     """`call_from_thread` stand-in: invokes the callback immediately."""
 
     def call_from_thread(self, fn, *args, **kwargs):
@@ -54,7 +55,7 @@ def controller():
     """
     store = ConsoleChatStore()
     ctrl = ConsoleChatController(store=store, provider_gateway=object())
-    ctrl.app = _FakeApp()
+    ctrl.app = FakeApp()
     ctrl.set_pending_skill_install = lambda payload: None
     ctrl.skill_install_confirm_timeout_seconds = lambda: 30.0
     ctrl.session_a = store.create_session(title="A").id
@@ -145,6 +146,58 @@ def test_teardown_of_one_round_leaves_the_other_armed(controller):
     controller.resolve_pending_skill_install(False, request_id=id2)
     t2.join(timeout=5)
     assert results["two"] is False
+
+
+def test_two_rounds_for_the_same_session_keep_badge_and_payload_until_both_resolve(
+    controller,
+):
+    """TASK-1050 (Defect A/B): two install-confirm rounds for the SAME
+    session (unlike every test above, which uses two DIFFERENT sessions)
+    -- `_parked_skill_install_payloads` is keyed by session id alone, so
+    arming the second round overwrites the first's retained payload under
+    that key. Resolving the EARLIER round first must not clear the badge
+    (a sibling round is still outstanding) nor discard the NEWER round's
+    still-armed payload; only resolving the LAST one does either."""
+    results = {}
+    t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
+    id1 = controller.pending_skill_install_ids()[0]
+    assert (
+        controller.run_marker_for(controller.session_a)
+        is ConsoleRunMarker.NEEDS_APPROVAL
+    )
+
+    t2 = _arm(controller, "https://x/two", controller.session_a, results, "two")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 2)
+    id2 = [i for i in controller.pending_skill_install_ids() if i != id1][0]
+    # Round 2 overwrote round 1's stored payload under the same session key.
+    assert (
+        controller._parked_skill_install_payloads[controller.session_a]["request_id"]
+        == id2
+    )
+
+    # Round 1 (the EARLIER round) resolves first -- must not evict round
+    # 2's still-armed payload nor clear the badge.
+    controller.resolve_pending_skill_install(False, request_id=id1)
+    t1.join(timeout=5)
+    assert results["one"] is False
+    assert (
+        controller.run_marker_for(controller.session_a)
+        is ConsoleRunMarker.NEEDS_APPROVAL
+    )
+    assert controller.session_a in controller._pending_approvals
+    assert (
+        controller._parked_skill_install_payloads[controller.session_a]["request_id"]
+        == id2
+    )
+
+    # Round 2 (the LAST remaining round) resolves -- now everything clears.
+    controller.resolve_pending_skill_install(True, request_id=id2)
+    t2.join(timeout=5)
+    assert results["two"] is True
+    assert controller.run_marker_for(controller.session_a) is ConsoleRunMarker.NONE
+    assert controller.session_a not in controller._pending_approvals
+    assert controller.session_a not in controller._parked_skill_install_payloads
 
 
 def test_stale_request_id_with_both_rounds_live_resolves_neither(controller):

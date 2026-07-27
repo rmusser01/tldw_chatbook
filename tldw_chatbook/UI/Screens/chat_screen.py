@@ -15811,9 +15811,28 @@ class ChatScreen(BaseAppScreen):
         user actually visits ``session_id``.
 
         Also usable directly as a test seam to drive the park path without
-        a live worker thread/round -- setting the badge flag itself here
-        (in addition to each bridge also setting it directly) is what makes
-        that safe: this method is fully self-contained.
+        a live worker thread/round -- setting the badge itself here (via
+        the deprecated ``set_run_pending_approval`` shim, ONLY when no real
+        round is registered yet) is what makes that safe: this method is
+        fully self-contained.
+
+        TASK-1050 (Defect A): the owning bridge (``request_mcp_approvals``/
+        ``request_skill_install_confirm``/``request_skill_script_confirm``)
+        already registers THIS round's own real round/request id via
+        ``add_pending_round`` moments before invoking this park callback --
+        by the time this runs, ``has_pending_approval_round(session_id)``
+        is normally already ``True``. This method has no round id of its
+        own to register (its public contract, wired as ``ConsoleChatController
+        .park_pending_approval``, is a single-arg ``Callable[[str], None]``
+        -- several tests wire it directly to a plain single-arg collector),
+        so it must NOT unconditionally stamp the deprecated boolean shim:
+        doing so would register the shim's synthetic sentinel round id
+        ALONGSIDE the real one, and the real round's own teardown
+        (``discard_pending_round``) would then leave that sentinel behind,
+        leaking a stale NEEDS_APPROVAL badge past the round's actual
+        resolution. Only falls back to the shim when no round is
+        registered yet -- i.e. when this method is used standalone (the
+        test-seam usage the docstring above describes).
 
         Args:
             session_id: The parked round's OWNING session.
@@ -15821,7 +15840,8 @@ class ChatScreen(BaseAppScreen):
         controller = self._console_chat_controller
         if controller is None:
             return
-        controller.set_run_pending_approval(session_id, True)
+        if not controller.has_pending_approval_round(session_id):
+            controller.set_run_pending_approval(session_id, True)
         session_title, workspace_name = self._console_session_title_and_workspace_name(
             controller, session_id
         )

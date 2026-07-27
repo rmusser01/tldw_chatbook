@@ -129,6 +129,12 @@ _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 120.0
 #: injected -- mirrors `_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS`'s
 #: role for `request_skill_script_confirm`'s own wait loop.
 _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 120.0
+#: TASK-1050: synthetic round id `set_run_pending_approval`'s deprecated
+#: boolean shim registers under, internally, so its add/discard composes
+#: safely with the round-keyed `_pending_approvals` accounting (see that
+#: method's docstring) without ever colliding with a real bridge round's
+#: `uuid4()` id -- every genuine round id is a UUID string; this is not.
+_LEGACY_PENDING_APPROVAL_ROUND_ID = "__legacy_pending_approval__"
 
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
@@ -652,20 +658,41 @@ class ConsoleChatController:
         # keyed by session id like the run-state maps above, but track
         # marker-only bookkeeping that ``_run_states`` doesn't capture on
         # its own:
-        #   - `_pending_approvals`: sessions with an outstanding human
-        #     approval decision blocking their run. `set_run_pending_
-        #     approval` writes it; Task 9 wires the approval paths that
-        #     call it. Named to avoid colliding with the PRE-EXISTING
-        #     `self.set_pending_approval` INSTANCE ATTRIBUTE below (the
-        #     MCP batch-approval UI callback slot, task-5) -- a same-named
-        #     method here would be silently clobbered by that assignment.
+        #   - `_pending_approvals`: TASK-1050 (round-keyed accounting):
+        #     session id -> the set of outstanding approval-like round ids
+        #     (real bridge round/request ids, or the deprecated shim's
+        #     `_LEGACY_PENDING_APPROVAL_ROUND_ID` sentinel) currently
+        #     blocking that session. A session is "pending" iff it is a KEY
+        #     here with a non-empty value set -- `add_pending_round`/
+        #     `discard_pending_round` are the ONLY writers and keep that
+        #     invariant (an emptied set is popped, never left as `{}`), so
+        #     every reader (`run_marker_for`, `fleet_summary_counts`,
+        #     plain `in`/`not in` membership tests throughout the test
+        #     suite) can keep treating this exactly like the plain
+        #     `set[str]` of session ids it used to be. Was a single global
+        #     boolean per session (`set_run_pending_approval`) shared by
+        #     THREE independent bridges (MCP tool approvals, skill-install
+        #     confirms, skill-script confirms) -- whichever bridge's round
+        #     finished first cleared the badge even if a SIBLING round from
+        #     a different bridge (or a second round from the SAME bridge)
+        #     was still outstanding for that session. `set_run_pending_
+        #     approval` is now a deprecated boolean shim kept ONLY for
+        #     callers that genuinely have no round id of their own (see its
+        #     docstring) -- Task 9 originally wired the approval paths that
+        #     called it; TASK-1050 migrated all three bridges themselves to
+        #     `add_pending_round`/`discard_pending_round` with their real
+        #     round/request ids. Named to avoid colliding with the
+        #     PRE-EXISTING `self.set_pending_approval` INSTANCE ATTRIBUTE
+        #     below (the MCP batch-approval UI callback slot, task-5) -- a
+        #     same-named method here would be silently clobbered by that
+        #     assignment.
         #   - `_unvisited_outcomes`: sessions whose run reached a terminal
         #     COMPLETED/FAILED status while NOT the active (viewed)
         #     session, stamped by `_set_run_state` and cleared by
         #     `mark_session_visited` (called from `switch_session`). The
         #     viewed session's own terminal transition is seen live and is
         #     deliberately never stamped here.
-        self._pending_approvals: set[str] = set()
+        self._pending_approvals: dict[str, set[str]] = {}
         self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
         #: F2b fix (Qodo wave): guards every mutation of `_pending_
         #: approvals`, `_parked_approval_payloads`, and `_pending_
@@ -946,34 +973,138 @@ class ConsoleChatController:
         """
         return len(self._live_busy_session_ids())
 
+    def add_pending_round(self, session_id: str, round_id: str) -> None:
+        """Register ``round_id`` as an outstanding approval-like round for ``session_id``.
+
+        TASK-1050 (Defect A): the fleet-visible pending-approval badge used
+        to be a single boolean per session (``_pending_approvals`` as a
+        plain ``set[str]``, flipped by the now-deprecated ``set_run_
+        pending_approval``) shared by THREE independent bridges -- MCP tool
+        approvals, skill-install confirms, and skill-script confirms. Any
+        one bridge's teardown cleared the badge for its own session_id
+        regardless of whether a SIBLING round (same bridge or a different
+        one) was still outstanding for that same session, so the badge
+        could go dark while a live confirm was still waiting on the user.
+
+        ``_pending_approvals`` is now keyed by session id to the SET of
+        round ids currently outstanding for it -- a session reads as
+        "pending" (``run_marker_for``/``fleet_summary_counts``) iff that
+        set is non-empty. Idempotent: adding an already-registered
+        ``round_id`` again is a no-op (set semantics), so a caller never
+        needs to check first.
+
+        Every genuine bridge round already mints a fresh ``uuid4()`` round/
+        request id before arming (``request_mcp_approvals``'s ``round_id``,
+        ``request_skill_install_confirm``'s/``request_skill_script_
+        confirm``'s ``request_id``) -- this is the id each bridge now
+        passes here instead of the old boolean.
+
+        Args:
+            session_id: The session the round belongs to.
+            round_id: The round's own unique id (a real bridge round id, or
+                the reserved ``_LEGACY_PENDING_APPROVAL_ROUND_ID`` sentinel
+                -- see ``set_run_pending_approval``).
+        """
+        # F2b fix (Qodo wave), preserved: reachable from a worker thread
+        # while the UI thread concurrently iterates `_pending_approvals`
+        # via `fleet_summary_counts` -- guard the mutation with the shared
+        # lock so iteration never observes a torn add/discard.
+        with self._approval_state_lock:
+            self._pending_approvals.setdefault(session_id, set()).add(round_id)
+
+    def discard_pending_round(self, session_id: str, round_id: str) -> None:
+        """Clear ``round_id`` from ``session_id``'s outstanding approval-like rounds.
+
+        TASK-1050 (Defect A) counterpart to ``add_pending_round``: discards
+        only THIS round's id from the session's round-id set. The fleet
+        badge (``run_marker_for``) clears only once that set is empty --
+        i.e. once every bridge round for the session has resolved, not just
+        this one. Idempotent: discarding an id that was never added (or was
+        already discarded) is a safe no-op, and discarding the SAME id
+        twice never double-decrements anything (set semantics -- there is
+        nothing to corrupt).
+
+        Args:
+            session_id: The session the round belongs to.
+            round_id: The round's own unique id, as passed to the matching
+                ``add_pending_round`` call.
+        """
+        with self._approval_state_lock:
+            rounds = self._pending_approvals.get(session_id)
+            if rounds is None:
+                return
+            rounds.discard(round_id)
+            if not rounds:
+                self._pending_approvals.pop(session_id, None)
+
+    def has_pending_approval_round(self, session_id: str) -> bool:
+        """Return whether ``session_id`` currently has ANY outstanding approval-like round.
+
+        TASK-1050: exposed so a caller that lacks a round id of its own
+        (see ``set_run_pending_approval``'s docstring) can check whether a
+        REAL round is already registered before redundantly stamping the
+        deprecated boolean shim -- ``ChatScreen._park_console_approval`` is
+        the one production caller that needs this (its owning bridge always
+        registers the real round id via ``add_pending_round`` moments
+        before invoking the park callback, so by the time this runs, the
+        real round is normally already present).
+
+        Args:
+            session_id: The session to check.
+
+        Returns:
+            ``True`` iff at least one round id is currently registered for
+            ``session_id``.
+        """
+        with self._approval_state_lock:
+            return session_id in self._pending_approvals
+
     def set_run_pending_approval(self, session_id: str, pending: bool) -> None:
-        """Record whether ``session_id``'s run is waiting on a human approval decision.
+        """DEPRECATED boolean shim -- prefer ``add_pending_round``/``discard_pending_round``.
 
         Parallel-agents spec §6 (Task 7 stores/exposes the flag; Task 9
-        wires the approval paths -- MCP batch approvals, skill-install/
-        script confirms -- that call this). Deliberately NOT named
-        ``set_pending_approval``: that name is already a pre-existing
-        INSTANCE ATTRIBUTE on this controller (an MCP batch-approval UI
-        callback slot assigned by ``ChatScreen._ensure_console_chat_
-        controller``, see ``__init__``) -- reusing it as a method name
-        here would be silently clobbered by that attribute's own
-        assignment.
+        wired the approval paths -- MCP batch approvals, skill-install/
+        script confirms -- that originally called this). TASK-1050 (Defect
+        A) migrated all three bridges to the round-keyed ``add_pending_
+        round``/``discard_pending_round`` instead, since a plain boolean
+        cannot represent "N independent rounds outstanding for one
+        session" without one clobbering another's clear.
+
+        This shim survives for the ONE remaining caller genuinely without a
+        round id of its own: ``ChatScreen._park_console_approval`` (wired
+        as ``park_pending_approval``), whose own public contract is a
+        single-arg ``Callable[[str], None]`` with no room for a round id --
+        changing that would ripple into every test that wires ``park_
+        pending_approval = some_list.append`` -- and it is ALSO used
+        directly, standalone, by tests exercising the marker/badge
+        lifecycle without a live round (mirrors how those tests already
+        drive other controller seams directly).
+
+        Internally represented as the reserved
+        ``_LEGACY_PENDING_APPROVAL_ROUND_ID`` sentinel round id, so it
+        composes safely alongside real round ids in the same per-session
+        set -- ``pending=True`` adds the sentinel, ``pending=False``
+        discards ONLY the sentinel (a real round registered separately via
+        ``add_pending_round`` is untouched either way). Because of this, a
+        caller that calls this with ``pending=True`` while a REAL round is
+        ALREADY registered for the session adds a harmless, redundant
+        no-op-visible entry -- but that same caller must not rely on this
+        call's own ``pending=False`` (or a real round's ``discard_pending_
+        round``) to fully clear the badge on its own; whichever one runs
+        last is the one that actually clears it. ``ChatScreen._park_
+        console_approval`` avoids this ambiguity by checking ``has_
+        pending_approval_round`` first and only falling back to this shim
+        when no real round is registered yet.
 
         Args:
             session_id: The session whose pending-approval flag to update.
             pending: ``True`` to mark the session as awaiting a decision,
                 ``False`` to clear it.
         """
-        # F2b fix (Qodo wave): this is reachable from the worker thread
-        # (``request_mcp_approvals``'s own body/``finally``) while the UI
-        # thread may concurrently iterate ``_pending_approvals`` via
-        # ``fleet_summary_counts`` -- guard the mutation with the shared
-        # lock so that iteration never observes a torn add/discard.
-        with self._approval_state_lock:
-            if pending:
-                self._pending_approvals.add(session_id)
-            else:
-                self._pending_approvals.discard(session_id)
+        if pending:
+            self.add_pending_round(session_id, _LEGACY_PENDING_APPROVAL_ROUND_ID)
+        else:
+            self.discard_pending_round(session_id, _LEGACY_PENDING_APPROVAL_ROUND_ID)
 
     def mark_session_visited(self, session_id: str) -> None:
         """Clear ``session_id``'s unvisited terminal outcome.
@@ -1029,6 +1160,13 @@ class ConsoleChatController:
             ``session_id``'s current fleet-visible state, per the
             precedence above.
         """
+        # TASK-1050: `_pending_approvals` is keyed by session id to a SET of
+        # outstanding round ids (see `add_pending_round`) -- a plain `in`
+        # dict-key check is exactly "does this session have ANY pending
+        # round", which is what NEEDS_APPROVAL means; `add_pending_round`/
+        # `discard_pending_round` guarantee an emptied round set is popped
+        # rather than left behind as a stale `{}`, so this can never read
+        # "pending" for a session with zero live rounds.
         if session_id in self._pending_approvals:
             return ConsoleRunMarker.NEEDS_APPROVAL
         if session_id in self._live_busy_session_ids():
@@ -2011,15 +2149,20 @@ class ConsoleChatController:
             self.store.active_session_id or ""
         )
         if session_id is not None:
-            # Set the badge flag directly here (worker thread, plain-dict/
-            # set mutation -- same no-marshal convention as `_active_
-            # cancel_events` elsewhere in this class) so it is authoritative
-            # regardless of whether a UI bridge happens to be wired.
+            # Register THIS round's own id directly here (worker thread,
+            # plain-dict/set mutation -- same no-marshal convention as
+            # `_active_cancel_events` elsewhere in this class) so it is
+            # authoritative regardless of whether a UI bridge happens to be
+            # wired. TASK-1050 (Defect A): round-keyed, not a plain
+            # boolean -- a sibling round from this bridge or either of the
+            # other two (skill-install/skill-script confirms) for the SAME
+            # session stays independently tracked, so THIS round's own
+            # teardown can never clear a badge a sibling still needs.
             # `park_pending_approval`/`ChatScreen._park_console_approval`
-            # ALSO sets it (harmless: `set.add` is idempotent) -- that is
-            # what makes `_park_console_approval` a self-contained seam
-            # tests can call directly without a live round.
-            self.set_run_pending_approval(session_id, True)
+            # only falls back to the deprecated boolean shim when NO round
+            # is registered yet (`has_pending_approval_round`), so it never
+            # double-counts against this call.
+            self.add_pending_round(session_id, round_id)
             # Fix wave (CRITICAL 1, final review): retain THIS round's
             # payload for EVERY session-attributed round -- mounted or
             # parked -- not just a parked one. `switch_session` re-derives
@@ -2101,19 +2244,49 @@ class ConsoleChatController:
             # this worker thread tears the round down.
             with self._approval_state_lock:
                 self._pending_approval_rounds.pop(round_id, None)
+                # TASK-1050 (Defect B): mirrors `request_skill_install_
+                # confirm`'s/`request_skill_script_confirm`'s identical
+                # guard -- a SECOND MCP round for the SAME session
+                # overwrites `_parked_approval_payloads[session_id]` (it is
+                # keyed by session id alone, not by round id), so an
+                # unconditional pop here would let the EARLIER round's
+                # teardown discard the NEWER round's still-armed retained
+                # payload. Only pop when either (a) this is the LAST
+                # armed MCP round for the session, or (b) the payload
+                # currently stored under this session's key is still THIS
+                # round's own (i.e. nothing has overwritten it since).
+                still_armed_same_session = session_id is not None and any(
+                    state.get("session_id") == session_id
+                    for state in self._pending_approval_rounds.values()
+                )
                 if session_id is not None:
-                    self._parked_approval_payloads.pop(session_id, None)
+                    stored_payload = self._parked_approval_payloads.get(session_id)
+                    stored_is_this_round = (
+                        stored_payload is not None
+                        and stored_payload.get("round_id") == round_id
+                    )
+                    if not still_armed_same_session or stored_is_this_round:
+                        self._parked_approval_payloads.pop(session_id, None)
             if session_id is not None:
-                self.set_run_pending_approval(session_id, False)
+                # TASK-1050 (Defect A): discard ONLY this round's own id --
+                # the badge clears only once every bridge round for this
+                # session (this one included) has resolved.
+                self.discard_pending_round(session_id, round_id)
             # Only clear the MOUNTED card if this round's session is still
-            # the one being viewed right now -- a parked round resolving
-            # (timeout/cancel) in the background, or one that was visited-
-            # then-abandoned-again before deciding, must never blank
-            # whatever the CURRENTLY active session's own card is showing.
+            # the one being viewed right now, AND no OTHER MCP round for
+            # the SAME session remains armed (TASK-1050: mirrors the
+            # skill-install/skill-script bridges' identical
+            # `still_armed_same_session` mounted-card guard -- a sibling
+            # MCP round for this session must keep its own card visible,
+            # not have it blanked out from under it by this round's
+            # teardown). A parked round resolving (timeout/cancel) in the
+            # background, or one that was visited-then-abandoned-again
+            # before deciding, must never blank whatever the CURRENTLY
+            # active session's own card is showing.
             still_active = session_id is None or session_id == (
                 self.store.active_session_id or ""
             )
-            if still_active:
+            if still_active and not still_armed_same_session:
                 try:
                     self._marshal_pending_approval(None)
                 except Exception:  # noqa: BLE001 -- suppress teardown-time errors
@@ -2470,7 +2643,12 @@ class ConsoleChatController:
             and session_id != (self.store.active_session_id or "")
         )
         if session_id is not None:
-            self.set_run_pending_approval(session_id, True)
+            # TASK-1050 (Defect A): round-keyed, not a plain boolean -- see
+            # `request_mcp_approvals`' identical `add_pending_round` call
+            # for the full rationale (a sibling round from this bridge or
+            # either of the other two must not have its badge stolen by
+            # THIS round's own teardown).
+            self.add_pending_round(session_id, request_id)
             # Retain THIS round's payload for EVERY session-attributed
             # round -- mounted or parked -- not just a parked one, mirroring
             # `request_mcp_approvals`' identical retention (Fix wave,
@@ -2498,9 +2676,30 @@ class ConsoleChatController:
                     for state in self._pending_skill_install_rounds.values()
                 )
             if session_id is not None:
+                # TASK-1050 (Defect B): a SECOND skill-install round for the
+                # SAME session overwrites `_parked_skill_install_payloads
+                # [session_id]` (keyed by session id alone, not by round
+                # id) -- an unconditional pop here would let the EARLIER
+                # round's teardown discard the NEWER round's still-armed
+                # retained payload, leaving it unresolvable-until-timeout
+                # after a switch-away/back remounts `None`. Only pop when
+                # either (a) this is the LAST armed round for the session,
+                # or (b) the payload currently stored under this session's
+                # key is still THIS round's own.
                 with self._approval_state_lock:
-                    self._parked_skill_install_payloads.pop(session_id, None)
-                self.set_run_pending_approval(session_id, False)
+                    stored_payload = self._parked_skill_install_payloads.get(
+                        session_id
+                    )
+                    stored_is_this_round = (
+                        stored_payload is not None
+                        and stored_payload.get("request_id") == request_id
+                    )
+                    if not still_armed_same_session or stored_is_this_round:
+                        self._parked_skill_install_payloads.pop(session_id, None)
+                # TASK-1050 (Defect A): discard ONLY this round's own id --
+                # the badge clears only once every bridge round for this
+                # session (this one included) has resolved.
+                self.discard_pending_round(session_id, request_id)
             # Only clear the MOUNTED card if this round's session is still
             # the one being viewed right now, AND no OTHER round for the
             # SAME session remains armed (mirrors `request_mcp_approvals`'
@@ -2666,7 +2865,10 @@ class ConsoleChatController:
             and session_id != (self.store.active_session_id or "")
         )
         if session_id is not None:
-            self.set_run_pending_approval(session_id, True)
+            # TASK-1050 (Defect A): round-keyed, not a plain boolean -- see
+            # `request_mcp_approvals`' identical `add_pending_round` call
+            # for the full rationale.
+            self.add_pending_round(session_id, request_id)
             with self._approval_state_lock:
                 self._parked_skill_script_payloads[session_id] = card_payload
         try:
@@ -2692,9 +2894,30 @@ class ConsoleChatController:
                     for state in self._pending_skill_script_rounds.values()
                 )
             if session_id is not None:
+                # TASK-1050 (Defect B): mirrors `request_skill_install_
+                # confirm`'s identical guard -- a SECOND skill-script round
+                # for the SAME session overwrites `_parked_skill_script_
+                # payloads[session_id]` (keyed by session id alone), so an
+                # unconditional pop here would let the EARLIER round's
+                # teardown discard the NEWER round's still-armed retained
+                # payload. Only pop when either (a) this is the LAST armed
+                # round for the session, or (b) the payload currently
+                # stored under this session's key is still THIS round's
+                # own.
                 with self._approval_state_lock:
-                    self._parked_skill_script_payloads.pop(session_id, None)
-                self.set_run_pending_approval(session_id, False)
+                    stored_payload = self._parked_skill_script_payloads.get(
+                        session_id
+                    )
+                    stored_is_this_round = (
+                        stored_payload is not None
+                        and stored_payload.get("request_id") == request_id
+                    )
+                    if not still_armed_same_session or stored_is_this_round:
+                        self._parked_skill_script_payloads.pop(session_id, None)
+                # TASK-1050 (Defect A): discard ONLY this round's own id --
+                # the badge clears only once every bridge round for this
+                # session (this one included) has resolved.
+                self.discard_pending_round(session_id, request_id)
             # Only clear the MOUNTED card if this round's session is still
             # the one being viewed right now, AND no OTHER round for the
             # SAME session remains armed -- a sibling round for a
@@ -6605,6 +6828,11 @@ class ConsoleChatController:
         # which deliberately STAYS non-active-only (the viewed session's own
         # COMPLETED/FAILED transition is visible live in its transcript and
         # must never grow a stale "unvisited" fleet marker on itself).
+        # TASK-1050: a terminal run state means NO approval-like round can
+        # legitimately remain live for this session from ANY bridge -- pop
+        # the session's ENTIRE round-id set (not just the deprecated shim's
+        # sentinel), unlike a single bridge's own teardown which only ever
+        # discards ITS OWN round id.
         if run_state.status in {
             ConsoleRunStatus.BLOCKED,
             ConsoleRunStatus.COMPLETED,
@@ -6616,7 +6844,7 @@ class ConsoleChatController:
             # `_pending_approvals` mutation for consistency (and so it
             # stays correct if a future caller ever moves this off-thread).
             with self._approval_state_lock:
-                self._pending_approvals.discard(target)
+                self._pending_approvals.pop(target, None)
         # Parallel-agents spec §6: stamp an unvisited terminal outcome, but
         # ONLY for a session other than the currently active (viewed) one --
         # the viewed session's own COMPLETED/FAILED transition is visible
