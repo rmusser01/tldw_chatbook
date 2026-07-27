@@ -3,7 +3,7 @@
 **Date:** 2026-07-26
 **Backlog:** TASK-553.15
 **Parent:** TASK-553
-**Status:** Approved for implementation
+**Status:** Approved and implemented
 **ADR required:** no
 **ADR path:** `backlog/decisions/024-rag-citation-provenance-and-source-resolution.md`
 
