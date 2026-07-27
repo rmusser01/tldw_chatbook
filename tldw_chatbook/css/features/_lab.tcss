@@ -349,3 +349,220 @@
 #lab-rail .evals-rail-empty-actions Button {
     width: 100%;
 }
+
+/* --- Speech panes, Console grammar ---------------------------------------
+ *
+ * One row per thing. The legacy playground spent 4 rows on every
+ * label/input pair and 5 on each explanatory notice, which made the form 93
+ * rows tall in a 34-row viewport and put `Generate Speech` at y=60. These
+ * rules exist to keep that from coming back: chips are height 1, the action
+ * strip is height 1, and only the text input is allowed to grow.
+ */
+.speech-pane {
+    height: 1fr;
+    padding: 0 1;
+}
+
+.speech-pane-title {
+    height: 1;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-status-info;
+}
+
+#speech-playground-actions {
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
+}
+
+/* The only element allowed to take the remaining space -- everything else on
+   this screen is one row. */
+.speech-input {
+    height: 1fr;
+    min-height: 5;
+    margin: 1 0;
+    border: solid $ds-grid-line;
+}
+
+.speech-input:focus {
+    border: solid $ds-input-focus-border;
+}
+
+.speech-chip-row {
+    height: 1;
+    min-height: 1;
+}
+
+/* `width: auto` with a cap, for the reason the Lab status chip carries one:
+   an unbounded auto chip starves its neighbours on the same row. */
+.speech-chip {
+    width: auto;
+    max-width: 30;
+    height: 1;
+    padding: 0 1;
+    margin-right: 1;
+    color: $ds-text-muted;
+    background: $ds-surface-panel;
+    text-overflow: ellipsis;
+}
+
+.speech-status-line {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+    color: $ds-status-warning;
+}
+
+/* Textual's Button carries a default min-width, so the shared
+ * `.workbench-action { width: auto }` alone still spread six actions across
+ * the full pane -- "Export" rendered as "Ex" and "Clear" fell off the right
+ * edge entirely. Console packs its action strip left; so does this. */
+#speech-playground-actions Button.workbench-action {
+    width: auto;
+    min-width: 0;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}
+
+
+/* Reverse-video section head, matching Console's inspector section bars
+ * (Sources / Run / Tools) rather than inventing a third heading style. */
+.speech-section-head {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+
+/* Text | Result, side by side. The pane has width to spend and does not have
+ * 34 rows of content to spend vertically -- filling the height with one tall
+ * empty box is what made the first two passes read as sparse. */
+.speech-split {
+    height: 1fr;
+    min-height: 0;
+    margin-top: 1;
+}
+
+.speech-split-pane {
+    width: 1fr;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+}
+
+#speech-result-pane {
+    margin-left: 2;
+}
+
+/* Below SPEECH_SPLIT_MIN_WIDTH two columns would be ~20 cells each, so the
+ * split stacks. Toggled from `on_resize` because Textual has no media
+ * queries -- same approach as the Personas compact workbench. */
+.speech-split-stacked .speech-split {
+    layout: vertical;
+}
+
+.speech-split-stacked #speech-result-pane {
+    margin-left: 0;
+    margin-top: 1;
+}
+
+.speech-input {
+    height: 1fr;
+    min-height: 4;
+    margin: 0;
+}
+
+.speech-result-state {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#speech-result-actions {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+}
+
+#speech-result-actions Button.workbench-action {
+    width: auto;
+    min-width: 0;
+    padding: 0 1;
+    margin: 0 2 0 0;
+    border: none;
+}
+
+/* Result chips stack one per row here, unlike the settings line: they are
+   read as a list of facts about one artifact, not scanned across. */
+#speech-result-pane .speech-chip {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+}
+
+/* Narrow: stack the one-row rows rather than let them overflow.
+ *
+ * At 80 columns the Lab body is ~41 cells. Six actions and four chips do not
+ * fit on one row each -- Stop/Export/Clear and two chips were being cut off
+ * at the right edge, present in the DOM and unreachable on screen. Dropping
+ * actions below a threshold would hide capability; stacking keeps every
+ * option and spends rows, which is the correct trade on a narrow terminal
+ * where rows are the cheaper resource.
+ */
+.speech-split-stacked #speech-playground-actions,
+.speech-split-stacked #speech-result-actions,
+.speech-split-stacked #speech-settings-line {
+    layout: vertical;
+    height: auto;
+    min-height: 1;
+}
+
+.speech-split-stacked #speech-playground-actions Button.workbench-action,
+.speech-split-stacked #speech-result-actions Button.workbench-action {
+    width: 100%;
+    margin: 0;
+    text-align: left;
+    content-align: left middle;
+}
+
+.speech-split-stacked .speech-chip {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+}
+
+/* With the rows stacked, the pane scrolls rather than clipping. */
+.speech-split-stacked {
+    overflow-y: auto;
+}
+
+/* Stacked, the panes must overflow rather than compress. `height: 1fr` on
+ * the text area let it shrink to a single row so the Result pane fell off
+ * the bottom with nothing to scroll -- virtual height equalled the
+ * container, so the content was clipped, not scrollable. Fixed heights make
+ * the pane genuinely taller than its viewport, which is what turns
+ * `overflow-y: auto` into a usable scroll. */
+.speech-split-stacked .speech-split-pane {
+    height: auto;
+}
+
+.speech-split-stacked .speech-input {
+    height: 6;
+    min-height: 6;
+}
+
+/* The split itself must stop being `1fr` when stacked: at 1fr it resolved to
+ * 3 rows while its two panes needed 17, so it squeezed them and the overflow
+ * happened inside a container that does not scroll. `auto` lets it take its
+ * content height and pushes the scrolling up to `.speech-pane`, which has
+ * `overflow-y: auto`. */
+.speech-split-stacked .speech-split {
+    height: auto;
+}

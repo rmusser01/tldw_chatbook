@@ -18,6 +18,7 @@ from ..Lab_Modules.lab_speech_status import (
     speech_dependencies_available,
 )
 from ..Lab_Modules.lab_workbench import LAB_RAIL_ROW_CLASS
+from ..Speech.speech_playground_pane import SpeechPlaygroundPane
 from ..STTS_Window import STTSWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabScreen
@@ -69,6 +70,8 @@ class STTSScreen(LabScreen):
         """
         super().__init__(app_instance, "stts", **kwargs)
         self.stts_window: STTSWindow | None = None
+        #: PROPOSAL SCOPE: which view the redesigned pane covers so far.
+        self._redesign_view = "playground"
 
     def lab_header_state(self) -> WorkbenchHeaderState:
         """Return the Speech header copy and derived readiness.
@@ -134,11 +137,18 @@ class STTSScreen(LabScreen):
         )
 
     def build_lab_body(self) -> Widget:
-        """Build the legacy STTS window.
+        """Build the body for the current view.
+
+        PROPOSAL SCOPE: the playground is the redesigned Console-grammar
+        pane; every other view still mounts the legacy window. Extending the
+        rest is the next step, not an oversight.
 
         Returns:
-            The ``STTSWindow``, mounted after first paint like every Lab body.
+            ``SpeechPlaygroundPane`` for the playground, otherwise the
+            ``STTSWindow``, mounted after first paint like every Lab body.
         """
+        if self._redesign_view == "playground":
+            return SpeechPlaygroundPane(id="speech-playground-pane")
         self.stts_window = STTSWindow(self.app_instance, classes="window")
         self.stts_window.styles.height = "1fr"
         return self.stts_window
@@ -153,6 +163,7 @@ class STTSScreen(LabScreen):
         ``current_view`` itself rather than waiting for a press.
         """
         if self.stts_window is None:
+            # Redesigned panes own their own state; nothing to bind yet.
             return
         self.watch(
             self.stts_window, "current_view", self._sync_rail_active, init=True
