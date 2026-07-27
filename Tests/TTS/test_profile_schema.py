@@ -10,6 +10,7 @@ from uuid import UUID
 
 import pytest
 
+import tldw_chatbook.TTS.profile_schema as profile_schema
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_schema import (
     ASSIGNMENT_PROFILE_INDEX,
@@ -117,6 +118,58 @@ def _directory_snapshot(path: Path) -> dict[str, bytes | None]:
         item.name: item.read_bytes() if item.is_file() else None
         for item in path.iterdir()
     }
+
+
+_STANDARD_PROFILE_DDL = """
+CREATE TABLE tts_generation_profiles (
+    profile_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL UNIQUE,
+    provider_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    voice_id TEXT NULL,
+    response_format TEXT NOT NULL,
+    speed REAL NOT NULL,
+    options_json TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
+_STANDARD_ASSIGNMENT_DDL = """
+CREATE TABLE character_tts_assignments (
+    source TEXT NOT NULL,
+    authority_id TEXT NOT NULL,
+    character_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(source, authority_id, character_id),
+    FOREIGN KEY(profile_id)
+        REFERENCES tts_generation_profiles(profile_id)
+        ON DELETE RESTRICT
+)
+"""
+
+
+def _create_custom_v1(
+    path: Path,
+    *,
+    profile_ddl: str = _STANDARD_PROFILE_DDL,
+    assignment_ddl: str = _STANDARD_ASSIGNMENT_DDL,
+    extra_statements: tuple[str, ...] = (),
+) -> None:
+    connection = sqlite3.connect(path)
+    connection.execute(profile_ddl)
+    connection.execute(assignment_ddl)
+    connection.execute(
+        "CREATE INDEX idx_character_tts_assignments_profile_id "
+        "ON character_tts_assignments(profile_id)"
+    )
+    for statement in extra_statements:
+        connection.execute(statement)
+    connection.execute("PRAGMA user_version = 1")
+    connection.close()
 
 
 def test_empty_store_migrates_transactionally_and_is_configured(tmp_path: Path) -> None:
@@ -310,6 +363,151 @@ def test_malformed_v1_profile_schema_is_rejected(tmp_path: Path, schema: str) ->
     )
     connection.execute("PRAGMA user_version = 1")
     connection.close()
+
+    with _safe_error("schema_corrupt"):
+        open_profile_store(path)
+
+
+def test_unexpected_trigger_with_write_semantics_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    _create_custom_v1(
+        path,
+        extra_statements=(
+            """
+            CREATE TRIGGER delete_inserted_profile
+            AFTER INSERT ON tts_generation_profiles
+            BEGIN
+                DELETE FROM tts_generation_profiles
+                WHERE profile_id = NEW.profile_id;
+            END
+            """,
+        ),
+    )
+    connection = sqlite3.connect(path)
+    _insert_profile(connection, _profile())
+    connection.commit()
+    assert (
+        connection.execute("SELECT COUNT(*) FROM tts_generation_profiles").fetchone()[0]
+        == 0
+    )
+    connection.close()
+
+    with _safe_error("schema_corrupt"):
+        open_profile_store(path)
+
+
+def test_unexpected_unique_index_with_write_semantics_is_rejected(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    _create_custom_v1(
+        path,
+        extra_statements=(
+            "CREATE UNIQUE INDEX unexpected_provider_uniqueness "
+            "ON tts_generation_profiles(provider_id)",
+        ),
+    )
+    connection = sqlite3.connect(path)
+    _insert_profile(connection, _profile())
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert_profile(
+            connection,
+            _profile(
+                profile_id=UUID("11234567-89ab-cdef-8123-456789abcdef"),
+                display_name="Second",
+                normalized_name="second",
+            ),
+        )
+    connection.rollback()
+    connection.close()
+
+    with _safe_error("schema_corrupt"):
+        open_profile_store(path)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "CREATE TABLE unexpected_user_table (value TEXT)",
+        (
+            "CREATE VIEW unexpected_user_view AS "
+            "SELECT profile_id FROM tts_generation_profiles"
+        ),
+    ],
+)
+def test_unexpected_user_schema_object_is_rejected(
+    tmp_path: Path, statement: str
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    _create_custom_v1(path, extra_statements=(statement,))
+
+    with _safe_error("schema_corrupt"):
+        open_profile_store(path)
+
+
+@pytest.mark.parametrize(
+    "column_definition",
+    [
+        "extra TEXT",
+        "extra TEXT NOT NULL DEFAULT 'value'",
+        "extra TEXT GENERATED ALWAYS AS (display_name) VIRTUAL",
+    ],
+)
+def test_extra_profile_column_is_rejected(
+    tmp_path: Path, column_definition: str
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    _create_custom_v1(path)
+    connection = sqlite3.connect(path)
+    connection.execute(
+        f"ALTER TABLE tts_generation_profiles ADD COLUMN {column_definition}"
+    )
+    connection.close()
+
+    with _safe_error("schema_corrupt"):
+        open_profile_store(path)
+
+
+@pytest.mark.parametrize(
+    "profile_ddl",
+    [
+        _STANDARD_PROFILE_DDL.replace(
+            "provider_id TEXT NOT NULL",
+            "provider_id TEXT NOT NULL COLLATE NOCASE",
+        ),
+        _STANDARD_PROFILE_DDL.replace(
+            "speed REAL NOT NULL",
+            "speed REAL NOT NULL CHECK (speed > 0)",
+        ),
+        _STANDARD_PROFILE_DDL.replace(
+            "response_format TEXT NOT NULL",
+            "response_format TEXT NOT NULL DEFAULT 'mp3'",
+        ),
+    ],
+)
+def test_unexpected_profile_column_semantics_are_rejected(
+    tmp_path: Path, profile_ddl: str
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    _create_custom_v1(path, profile_ddl=profile_ddl)
+
+    with _safe_error("schema_corrupt"):
+        open_profile_store(path)
+
+
+def test_unexpected_profile_foreign_key_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    profile_ddl = _STANDARD_PROFILE_DDL.replace(
+        "provider_id TEXT NOT NULL",
+        "provider_id TEXT NOT NULL REFERENCES provider_parent(provider_id)",
+    )
+    _create_custom_v1(
+        path,
+        profile_ddl=profile_ddl,
+        extra_statements=(
+            "CREATE TABLE provider_parent (provider_id TEXT PRIMARY KEY)",
+        ),
+    )
 
     with _safe_error("schema_corrupt"):
         open_profile_store(path)
@@ -509,6 +707,57 @@ def test_migration_failure_rolls_back_schema_and_version(
         check.close()
 
 
+@pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit])
+def test_migration_control_flow_exception_rolls_back_and_closes_connection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_type: type[BaseException],
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    signal = exception_type("control flow")
+    real_connect = sqlite3.connect
+    retained_connections: list[sqlite3.Connection] = []
+
+    def tracked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        connection = real_connect(*args, **kwargs)  # type: ignore[arg-type]
+        retained_connections.append(connection)
+        return connection
+
+    def interrupt_after_ddl(connection: sqlite3.Connection) -> None:
+        connection.execute("CREATE TABLE half_schema (value TEXT)")
+        raise signal
+
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+    monkeypatch.setitem(MIGRATIONS, 0, interrupt_after_ddl)
+
+    try:
+        with pytest.raises(exception_type) as caught:
+            open_profile_store(path)
+        assert caught.value is signal
+
+        second_writer = real_connect(path, timeout=0.1, isolation_level=None)
+        try:
+            second_writer.execute("BEGIN IMMEDIATE")
+            assert second_writer.execute("PRAGMA user_version").fetchone()[0] == 0
+            assert (
+                second_writer.execute(
+                    "SELECT name FROM sqlite_schema "
+                    "WHERE type = 'table' AND name = 'half_schema'"
+                ).fetchone()
+                is None
+            )
+            second_writer.execute("CREATE TABLE writer_probe (value TEXT)")
+            second_writer.rollback()
+        finally:
+            second_writer.close()
+    finally:
+        for connection in retained_connections:
+            try:
+                connection.close()
+            except sqlite3.ProgrammingError:
+                pass
+
+
 def test_profile_and_assignment_codecs_round_trip_exact_values(tmp_path: Path) -> None:
     profile = _profile()
     assignment = _assignment()
@@ -649,6 +898,39 @@ def test_candidate_validation_reads_all_domain_rows_and_preserves_file(
     assert _directory_snapshot(tmp_path) == before
 
 
+def test_candidate_private_snapshot_is_restrictive_and_removed_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    connection.close()
+    private_directory = tmp_path / "private-snapshots"
+    private_directory.mkdir()
+    real_mkstemp = profile_schema.tempfile.mkstemp
+    real_connect = sqlite3.connect
+    snapshot_paths: list[Path] = []
+
+    def tracked_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        kwargs["dir"] = private_directory
+        fd, name = real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+        snapshot_paths.append(Path(name))
+        return fd, name
+
+    def checked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        assert len(snapshot_paths) == 1
+        assert profile_schema.stat.S_IMODE(snapshot_paths[0].stat().st_mode) == 0o600
+        return real_connect(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(sqlite3, "connect", checked_connect)
+
+    validate_profile_candidate(path)
+
+    assert len(snapshot_paths) == 1
+    assert not snapshot_paths[0].exists()
+    assert list(private_directory.iterdir()) == []
+
+
 def test_candidate_v0_is_rejected_without_migration(tmp_path: Path) -> None:
     path = tmp_path / "candidate.sqlite3"
     sqlite3.connect(path).close()
@@ -719,6 +1001,198 @@ def test_symlink_candidate_cannot_bypass_target_sidecar_rejection(
     assert _directory_snapshot(tmp_path) == before
 
 
+def test_candidate_source_open_is_nonblocking_across_fifo_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    connection.close()
+    original_path = tmp_path / "original-candidate.sqlite3"
+    real_os_open = profile_schema.os.open
+    observed_flags: list[int] = []
+
+    def racing_os_open(
+        target: object, flags: int, *args: object, **kwargs: object
+    ) -> int:
+        if Path(target) == path and not observed_flags:
+            observed_flags.append(flags)
+            path.replace(original_path)
+            profile_schema.os.mkfifo(path)
+            flags |= profile_schema.os.O_NONBLOCK
+        return real_os_open(target, flags, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(profile_schema.os, "open", racing_os_open)
+    try:
+        with _safe_error("schema_corrupt"):
+            validate_profile_candidate(path)
+    finally:
+        if path.exists():
+            path.unlink()
+        original_path.replace(path)
+
+    assert len(observed_flags) == 1
+    assert observed_flags[0] & profile_schema.os.O_NONBLOCK
+
+
+def test_candidate_rejects_private_snapshot_path_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    connection.close()
+    original = path.read_bytes()
+
+    private_directory = tmp_path / "private-snapshots"
+    private_directory.mkdir()
+    replacement = private_directory / "replacement.sqlite3"
+    connection = open_profile_store(replacement)
+    _insert_profile(connection, _profile())
+    connection.commit()
+    connection.close()
+
+    real_mkstemp = profile_schema.tempfile.mkstemp
+    real_connect = sqlite3.connect
+    snapshot_paths: list[Path] = []
+    replaced = False
+
+    def tracked_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        kwargs["dir"] = private_directory
+        fd, name = real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+        snapshot_paths.append(Path(name))
+        return fd, name
+
+    def racing_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        nonlocal replaced
+        if snapshot_paths and not replaced:
+            replacement.replace(snapshot_paths[0])
+            replaced = True
+        return real_connect(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(sqlite3, "connect", racing_connect)
+
+    with _safe_error("schema_corrupt"):
+        validate_profile_candidate(path)
+
+    assert replaced
+    assert path.read_bytes() == original
+    assert list(private_directory.iterdir()) == []
+
+
+def test_candidate_rejects_sidecar_created_after_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    connection.close()
+    original = path.read_bytes()
+    sidecar = path.with_name(f"{path.name}-wal")
+    original_entries = set(_directory_snapshot(tmp_path))
+    real_connect = sqlite3.connect
+
+    def racing_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        sidecar.write_bytes(b"late WAL state")
+        return real_connect(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(sqlite3, "connect", racing_connect)
+
+    with _safe_error("schema_corrupt"):
+        validate_profile_candidate(path)
+
+    assert path.read_bytes() == original
+    assert sidecar.read_bytes() == b"late WAL state"
+    assert set(_directory_snapshot(tmp_path)) == original_entries | {sidecar.name}
+
+
+def test_candidate_rejects_source_modified_during_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    _insert_profile(connection, _profile())
+    connection.commit()
+    connection.close()
+    original = path.read_bytes()
+    real_decode_profile = profile_schema.decode_profile
+    modified = False
+
+    def racing_decode_profile(row: object) -> TTSGenerationProfile:
+        nonlocal modified
+        if not modified:
+            with path.open("ab") as source:
+                source.write(b"late source mutation")
+            modified = True
+        return real_decode_profile(row)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(profile_schema, "decode_profile", racing_decode_profile)
+
+    with _safe_error("schema_corrupt"):
+        validate_profile_candidate(path)
+
+    assert path.read_bytes() == original + b"late source mutation"
+
+
+@pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit])
+def test_candidate_control_flow_exception_closes_and_removes_private_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_type: type[BaseException],
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    _insert_profile(connection, _profile())
+    connection.commit()
+    connection.close()
+    original = path.read_bytes()
+    private_directory = tmp_path / "private-snapshots"
+    private_directory.mkdir()
+    signal = exception_type("control flow")
+    real_mkstemp = profile_schema.tempfile.mkstemp
+    real_os_open = profile_schema.os.open
+    real_connect = sqlite3.connect
+    snapshot_paths: list[Path] = []
+    source_fds: list[int] = []
+    snapshot_connections: list[sqlite3.Connection] = []
+
+    def tracked_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        kwargs["dir"] = private_directory
+        fd, name = real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+        snapshot_paths.append(Path(name))
+        return fd, name
+
+    def tracked_os_open(*args: object, **kwargs: object) -> int:
+        fd = real_os_open(*args, **kwargs)  # type: ignore[arg-type]
+        if Path(str(args[0])) == path:
+            source_fds.append(fd)
+        return fd
+
+    def tracked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        opened = real_connect(*args, **kwargs)  # type: ignore[arg-type]
+        snapshot_connections.append(opened)
+        return opened
+
+    def interrupt_decode(_row: object) -> TTSGenerationProfile:
+        raise signal
+
+    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(profile_schema.os, "open", tracked_os_open)
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+    monkeypatch.setattr(profile_schema, "decode_profile", interrupt_decode)
+
+    with pytest.raises(exception_type) as caught:
+        validate_profile_candidate(path)
+
+    assert caught.value is signal
+    assert len(snapshot_paths) == len(source_fds) == len(snapshot_connections) == 1
+    assert not snapshot_paths[0].exists()
+    assert list(private_directory.iterdir()) == []
+    with pytest.raises(OSError):
+        profile_schema.os.fstat(source_fds[0])
+    with pytest.raises(sqlite3.ProgrammingError):
+        snapshot_connections[0].execute("SELECT 1")
+    assert path.read_bytes() == original
+
+
 def test_candidate_rejects_invalid_domain_row(tmp_path: Path) -> None:
     path = tmp_path / "candidate.sqlite3"
     connection = open_profile_store(path)
@@ -742,6 +1216,46 @@ def test_candidate_rejects_invalid_domain_row(tmp_path: Path) -> None:
         validate_profile_candidate(path)
 
     assert _directory_snapshot(tmp_path) == before
+
+
+def test_candidate_ordinary_error_removes_private_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    row = encode_profile(_profile())
+    row["revision"] = 0
+    connection.execute(
+        """
+        INSERT INTO tts_generation_profiles VALUES (
+            :profile_id, :display_name, :normalized_name, :provider_id, :model_id,
+            :voice_id, :response_format, :speed, :options_json, :revision,
+            :created_at, :updated_at
+        )
+        """,
+        row,
+    )
+    connection.commit()
+    connection.close()
+    private_directory = tmp_path / "private-snapshots"
+    private_directory.mkdir()
+    real_mkstemp = profile_schema.tempfile.mkstemp
+    snapshot_paths: list[Path] = []
+
+    def tracked_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        kwargs["dir"] = private_directory
+        fd, name = real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+        snapshot_paths.append(Path(name))
+        return fd, name
+
+    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
+
+    with _safe_error("corrupt_data"):
+        validate_profile_candidate(path)
+
+    assert len(snapshot_paths) == 1
+    assert not snapshot_paths[0].exists()
+    assert list(private_directory.iterdir()) == []
 
 
 def test_foreign_key_check_failure_is_rejected(tmp_path: Path) -> None:

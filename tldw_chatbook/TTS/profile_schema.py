@@ -7,7 +7,10 @@ connection; candidate validation owns and always closes its read-only connection
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import stat
+import tempfile
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -85,6 +88,40 @@ SELECT
 FROM character_tts_assignments AS a
 JOIN tts_generation_profiles AS p ON p.profile_id = a.profile_id
 """
+
+_PROFILE_TABLE_DDL = """
+CREATE TABLE tts_generation_profiles (
+    profile_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL UNIQUE,
+    provider_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    voice_id TEXT NULL,
+    response_format TEXT NOT NULL,
+    speed REAL NOT NULL,
+    options_json TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+)
+"""
+_ASSIGNMENT_TABLE_DDL = """
+CREATE TABLE character_tts_assignments (
+    source TEXT NOT NULL,
+    authority_id TEXT NOT NULL,
+    character_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(source, authority_id, character_id),
+    FOREIGN KEY(profile_id)
+        REFERENCES tts_generation_profiles(profile_id)
+        ON DELETE RESTRICT
+)
+"""
+_ASSIGNMENT_PROFILE_INDEX_DDL = (
+    f"CREATE INDEX {ASSIGNMENT_PROFILE_INDEX} ON character_tts_assignments(profile_id)"
+)
 
 RowLike: TypeAlias = sqlite3.Row | Mapping[str, object]
 
@@ -339,44 +376,9 @@ def decode_assigned_snapshot(row: RowLike) -> AssignedTTSProfileSnapshot:
 def _migrate_v0_to_v1(connection: sqlite3.Connection) -> None:
     """Create schema version 1 inside the caller's active transaction."""
 
-    connection.execute(
-        """
-        CREATE TABLE tts_generation_profiles (
-            profile_id TEXT PRIMARY KEY,
-            display_name TEXT NOT NULL,
-            normalized_name TEXT NOT NULL UNIQUE,
-            provider_id TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            voice_id TEXT NULL,
-            response_format TEXT NOT NULL,
-            speed REAL NOT NULL,
-            options_json TEXT NOT NULL,
-            revision INTEGER NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE character_tts_assignments (
-            source TEXT NOT NULL,
-            authority_id TEXT NOT NULL,
-            character_id TEXT NOT NULL,
-            profile_id TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            PRIMARY KEY(source, authority_id, character_id),
-            FOREIGN KEY(profile_id)
-                REFERENCES tts_generation_profiles(profile_id)
-                ON DELETE RESTRICT
-        )
-        """
-    )
-    connection.execute(
-        f"CREATE INDEX {ASSIGNMENT_PROFILE_INDEX} "
-        "ON character_tts_assignments(profile_id)"
-    )
+    connection.execute(_PROFILE_TABLE_DDL)
+    connection.execute(_ASSIGNMENT_TABLE_DDL)
+    connection.execute(_ASSIGNMENT_PROFILE_INDEX_DDL)
 
 
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {0: _migrate_v0_to_v1}
@@ -404,10 +406,52 @@ def _user_tables(connection: sqlite3.Connection) -> set[str]:
     }
 
 
-def _table_info(connection: sqlite3.Connection, table: str) -> dict[str, sqlite3.Row]:
-    return {
-        row["name"]: row for row in connection.execute(f"PRAGMA table_info({table})")
+def _normalized_ddl(sql: str) -> str:
+    return " ".join(sql.split())
+
+
+def _validate_owned_schema_sql(connection: sqlite3.Connection) -> None:
+    expected = {
+        ("table", PROFILE_TABLE): _normalized_ddl(_PROFILE_TABLE_DDL),
+        ("table", ASSIGNMENT_TABLE): _normalized_ddl(_ASSIGNMENT_TABLE_DDL),
+        ("index", ASSIGNMENT_PROFILE_INDEX): _normalized_ddl(
+            _ASSIGNMENT_PROFILE_INDEX_DDL
+        ),
     }
+    actual: dict[tuple[str, str], str] = {}
+    for row in connection.execute(
+        """
+        SELECT type, name, sql
+        FROM sqlite_schema
+        WHERE name NOT GLOB 'sqlite_*'
+        """
+    ):
+        if (
+            type(row["type"]) is not str
+            or type(row["name"]) is not str
+            or type(row["sql"]) is not str
+        ):
+            raise ValueError
+        actual[(row["type"], row["name"])] = _normalized_ddl(row["sql"])
+    if actual != expected:
+        raise ValueError
+
+
+def _table_xinfo_manifest(
+    connection: sqlite3.Connection, table: str
+) -> list[tuple[int, str, str, int, object, int, int]]:
+    return [
+        (
+            row["cid"],
+            row["name"],
+            row["type"],
+            row["notnull"],
+            row["dflt_value"],
+            row["pk"],
+            row["hidden"],
+        )
+        for row in connection.execute(f"PRAGMA table_xinfo({table})")
+    ]
 
 
 def _has_exact_binary_index_keys(
@@ -447,76 +491,52 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
     try:
         if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
             raise ValueError
-        if _user_tables(connection) < {PROFILE_TABLE, ASSIGNMENT_TABLE}:
+        if _user_tables(connection) != {PROFILE_TABLE, ASSIGNMENT_TABLE}:
             raise ValueError
+        _validate_owned_schema_sql(connection)
 
-        expected_profile = {
-            "profile_id": ("TEXT", 0, 1),
-            "display_name": ("TEXT", 1, 0),
-            "normalized_name": ("TEXT", 1, 0),
-            "provider_id": ("TEXT", 1, 0),
-            "model_id": ("TEXT", 1, 0),
-            "voice_id": ("TEXT", 0, 0),
-            "response_format": ("TEXT", 1, 0),
-            "speed": ("REAL", 1, 0),
-            "options_json": ("TEXT", 1, 0),
-            "revision": ("INTEGER", 1, 0),
-            "created_at": ("TEXT", 1, 0),
-            "updated_at": ("TEXT", 1, 0),
-        }
-        profile_info = _table_info(connection, PROFILE_TABLE)
-        for name, (declared_type, not_null, pk) in expected_profile.items():
-            row = profile_info.get(name)
-            if row is None or (row["type"].upper(), row["notnull"], row["pk"]) != (
-                declared_type,
-                not_null,
-                pk,
-            ):
-                raise ValueError
-        if [row["name"] for row in profile_info.values() if row["pk"]] != [
-            "profile_id"
+        if _table_xinfo_manifest(connection, PROFILE_TABLE) != [
+            (0, "profile_id", "TEXT", 0, None, 1, 0),
+            (1, "display_name", "TEXT", 1, None, 0, 0),
+            (2, "normalized_name", "TEXT", 1, None, 0, 0),
+            (3, "provider_id", "TEXT", 1, None, 0, 0),
+            (4, "model_id", "TEXT", 1, None, 0, 0),
+            (5, "voice_id", "TEXT", 0, None, 0, 0),
+            (6, "response_format", "TEXT", 1, None, 0, 0),
+            (7, "speed", "REAL", 1, None, 0, 0),
+            (8, "options_json", "TEXT", 1, None, 0, 0),
+            (9, "revision", "INTEGER", 1, None, 0, 0),
+            (10, "created_at", "TEXT", 1, None, 0, 0),
+            (11, "updated_at", "TEXT", 1, None, 0, 0),
         ]:
             raise ValueError
         if not _has_exact_primary_key_index(connection, PROFILE_TABLE, ("profile_id",)):
             raise ValueError
 
-        unique_normalized = False
-        for row in connection.execute(f"PRAGMA index_list({PROFILE_TABLE})"):
-            if (
-                row["unique"] == 1
-                and row["partial"] == 0
-                and _has_exact_binary_index_keys(
-                    connection, row["name"], ("normalized_name",)
-                )
-            ):
-                unique_normalized = True
-        if not unique_normalized:
+        profile_indexes = list(
+            connection.execute(f"PRAGMA index_list({PROFILE_TABLE})")
+        )
+        normalized_indexes = [row for row in profile_indexes if row["origin"] == "u"]
+        if (
+            len(profile_indexes) != 2
+            or len(normalized_indexes) != 1
+            or normalized_indexes[0]["unique"] != 1
+            or normalized_indexes[0]["partial"] != 0
+            or not _has_exact_binary_index_keys(
+                connection, normalized_indexes[0]["name"], ("normalized_name",)
+            )
+        ):
+            raise ValueError
+        if list(connection.execute(f"PRAGMA foreign_key_list({PROFILE_TABLE})")):
             raise ValueError
 
-        expected_assignment = {
-            "source": ("TEXT", 1, 1),
-            "authority_id": ("TEXT", 1, 2),
-            "character_id": ("TEXT", 1, 3),
-            "profile_id": ("TEXT", 1, 0),
-            "created_at": ("TEXT", 1, 0),
-            "updated_at": ("TEXT", 1, 0),
-        }
-        assignment_info = _table_info(connection, ASSIGNMENT_TABLE)
-        for name, (declared_type, not_null, pk) in expected_assignment.items():
-            row = assignment_info.get(name)
-            if row is None or (row["type"].upper(), row["notnull"], row["pk"]) != (
-                declared_type,
-                not_null,
-                pk,
-            ):
-                raise ValueError
-        assignment_pk = sorted(
-            (row["pk"], row["name"]) for row in assignment_info.values() if row["pk"]
-        )
-        if [name for _position, name in assignment_pk] != [
-            "source",
-            "authority_id",
-            "character_id",
+        if _table_xinfo_manifest(connection, ASSIGNMENT_TABLE) != [
+            (0, "source", "TEXT", 1, None, 1, 0),
+            (1, "authority_id", "TEXT", 1, None, 2, 0),
+            (2, "character_id", "TEXT", 1, None, 3, 0),
+            (3, "profile_id", "TEXT", 1, None, 0, 0),
+            (4, "created_at", "TEXT", 1, None, 0, 0),
+            (5, "updated_at", "TEXT", 1, None, 0, 0),
         ]:
             raise ValueError
         if not _has_exact_primary_key_index(
@@ -526,13 +546,14 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ):
             raise ValueError
 
-        assignment_indexes = {
-            row["name"]: row
-            for row in connection.execute(f"PRAGMA index_list({ASSIGNMENT_TABLE})")
-        }
+        assignment_index_rows = list(
+            connection.execute(f"PRAGMA index_list({ASSIGNMENT_TABLE})")
+        )
+        assignment_indexes = {row["name"]: row for row in assignment_index_rows}
         profile_index = assignment_indexes.get(ASSIGNMENT_PROFILE_INDEX)
         if (
-            profile_index is None
+            len(assignment_index_rows) != 2
+            or profile_index is None
             or profile_index["origin"] != "c"
             or profile_index["partial"] != 0
             or profile_index["unique"] != 0
@@ -579,11 +600,13 @@ def _migrate_empty_store(connection: sqlite3.Connection) -> None:
             version += 1
             connection.execute(f"PRAGMA user_version = {version}")
         connection.commit()
-    except Exception:
+    except BaseException as error:
         try:
             connection.rollback()
-        except Exception:
+        except BaseException:
             pass
+        if not isinstance(error, Exception):
+            raise
         raise _repository_error("migration_failed") from None
 
 
@@ -617,14 +640,17 @@ def open_profile_store(path: Path) -> sqlite3.Connection:
                 raise _repository_error("schema_corrupt")
         _validate_schema(connection)
         return connection
-    except ProfileRepositoryError:
+    except BaseException as error:
         if connection is not None:
-            connection.close()
+            try:
+                connection.close()
+            except BaseException:
+                pass
+        if isinstance(error, ProfileRepositoryError):
+            raise
+        if isinstance(error, Exception):
+            raise _repository_error("schema_corrupt") from None
         raise
-    except Exception:
-        if connection is not None:
-            connection.close()
-        raise _repository_error("schema_corrupt") from None
 
 
 def _validate_all_rows(connection: sqlite3.Connection) -> None:
@@ -641,8 +667,90 @@ def _validate_all_rows(connection: sqlite3.Connection) -> None:
         raise _repository_error("corrupt_data") from None
 
 
+def _source_identity(value: os.stat_result) -> tuple[int, ...]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _directory_identity(value: os.stat_result) -> tuple[int, ...]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _candidate_sidecars(resolved_path: Path) -> tuple[Path, ...]:
+    return tuple(
+        resolved_path.with_name(f"{resolved_path.name}{suffix}")
+        for suffix in ("-wal", "-shm", "-journal")
+    )
+
+
+def _sidecars_absent(resolved_path: Path) -> bool:
+    return not any(
+        os.path.lexists(sidecar) for sidecar in _candidate_sidecars(resolved_path)
+    )
+
+
+def _source_is_unchanged(
+    source_fd: int,
+    resolved_path: Path,
+    source_identity: tuple[int, ...],
+    directory_identity: tuple[int, ...],
+) -> bool:
+    return (
+        _source_identity(os.fstat(source_fd)) == source_identity
+        and _source_identity(os.stat(resolved_path)) == source_identity
+        and _directory_identity(os.stat(resolved_path.parent)) == directory_identity
+        and _sidecars_absent(resolved_path)
+    )
+
+
+def _snapshot_is_unchanged(
+    snapshot_fd: int,
+    snapshot_path: str,
+    snapshot_identity: tuple[int, ...],
+) -> bool:
+    return (
+        _source_identity(os.fstat(snapshot_fd)) == snapshot_identity
+        and _source_identity(os.lstat(snapshot_path)) == snapshot_identity
+    )
+
+
+def _copy_source_to_snapshot(source_fd: int, snapshot_fd: int) -> None:
+    while chunk := os.read(source_fd, 1024 * 1024):
+        offset = 0
+        while offset < len(chunk):
+            written = os.write(snapshot_fd, chunk[offset:])
+            if written <= 0:
+                raise OSError
+            offset += written
+    os.fsync(snapshot_fd)
+
+
+def _close_suppressing_errors(resource: object) -> bool:
+    try:
+        close = getattr(resource, "close")
+        close()
+        return True
+    except BaseException:
+        return False
+
+
 def validate_profile_candidate(path: Path) -> None:
-    """Validate a standalone v1 backup without writing or consulting WAL state."""
+    """Validate a point-in-time private snapshot of a standalone v1 backup.
+
+    A later restore must validate its own repository-controlled staged snapshot;
+    a successful path validation is never an authorization to trust future bytes.
+    """
 
     if not isinstance(path, Path):
         raise _repository_error("missing")
@@ -654,15 +762,72 @@ def validate_profile_candidate(path: Path) -> None:
         raise _repository_error("schema_corrupt") from None
     if not resolved_path.is_file():
         raise _repository_error("missing")
-    if any(
-        resolved_path.with_name(f"{resolved_path.name}{suffix}").exists()
-        for suffix in ("-wal", "-shm", "-journal")
-    ):
-        raise _repository_error("schema_corrupt")
-    connection: sqlite3.Connection | None = None
     try:
-        uri = f"{resolved_path.as_uri()}?mode=ro&immutable=1"
-        connection = sqlite3.connect(uri, uri=True, isolation_level=None)
+        directory_state = _directory_identity(os.stat(resolved_path.parent))
+        if not _sidecars_absent(resolved_path):
+            raise _repository_error("schema_corrupt")
+    except ProfileRepositoryError:
+        raise
+    except Exception:
+        raise _repository_error("schema_corrupt") from None
+
+    source_fd: int | None = None
+    snapshot_fd: int | None = None
+    snapshot_path: str | None = None
+    connection: sqlite3.Connection | None = None
+    completed = False
+    try:
+        path_state = _source_identity(os.stat(resolved_path))
+        if not stat.S_ISREG(path_state[2]):
+            raise ValueError
+
+        source_flags = (
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
+        source_flags |= getattr(os, "O_NOFOLLOW", 0)
+        source_fd = os.open(resolved_path, source_flags)
+        source_state = _source_identity(os.fstat(source_fd))
+        if source_state != path_state or not _source_is_unchanged(
+            source_fd,
+            resolved_path,
+            source_state,
+            directory_state,
+        ):
+            raise ValueError
+
+        snapshot_fd, snapshot_path = tempfile.mkstemp(
+            prefix="tldw-tts-profile-candidate-",
+            suffix=".sqlite3",
+        )
+        os.fchmod(snapshot_fd, 0o600)
+        _copy_source_to_snapshot(source_fd, snapshot_fd)
+        snapshot_state = _source_identity(os.fstat(snapshot_fd))
+        if (
+            snapshot_state[3] != source_state[3]
+            or not stat.S_ISREG(snapshot_state[2])
+            or stat.S_IMODE(snapshot_state[2]) != 0o600
+            or not _snapshot_is_unchanged(
+                snapshot_fd,
+                snapshot_path,
+                snapshot_state,
+            )
+            or not _source_is_unchanged(
+                source_fd,
+                resolved_path,
+                source_state,
+                directory_state,
+            )
+        ):
+            raise ValueError
+
+        snapshot_uri = f"{Path(snapshot_path).resolve().as_uri()}?mode=ro&immutable=1"
+        connection = sqlite3.connect(snapshot_uri, uri=True, isolation_level=None)
+        if not _snapshot_is_unchanged(
+            snapshot_fd,
+            snapshot_path,
+            snapshot_state,
+        ):
+            raise ValueError
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA query_only = ON")
         _configure_connection(connection)
@@ -671,10 +836,44 @@ def validate_profile_candidate(path: Path) -> None:
             raise _repository_error("schema_unsupported")
         _validate_schema(connection)
         _validate_all_rows(connection)
+        connection.close()
+        connection = None
+        if not _snapshot_is_unchanged(
+            snapshot_fd,
+            snapshot_path,
+            snapshot_state,
+        ) or not _source_is_unchanged(
+            source_fd,
+            resolved_path,
+            source_state,
+            directory_state,
+        ):
+            raise ValueError
+        completed = True
     except ProfileRepositoryError:
         raise
     except Exception:
         raise _repository_error("schema_corrupt") from None
     finally:
+        cleanup_succeeded = True
         if connection is not None:
-            connection.close()
+            cleanup_succeeded &= _close_suppressing_errors(connection)
+        if snapshot_fd is not None:
+            try:
+                os.close(snapshot_fd)
+            except BaseException:
+                cleanup_succeeded = False
+        if source_fd is not None:
+            try:
+                os.close(source_fd)
+            except BaseException:
+                cleanup_succeeded = False
+        if snapshot_path is not None:
+            try:
+                os.unlink(snapshot_path)
+            except FileNotFoundError:
+                pass
+            except BaseException:
+                cleanup_succeeded = False
+        if completed and not cleanup_succeeded:
+            raise _repository_error("schema_corrupt") from None
