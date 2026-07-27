@@ -12,10 +12,11 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.css.query import QueryError
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from ..Lab_Modules.lab_rail_layout import (
     LAB_RAIL_INSPECTOR,
@@ -27,7 +28,7 @@ from ..Lab_Modules.lab_workbench import LabWorkbench
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
-from .lab_mode_strip import LabModeStrip
+from .lab_mode_strip import LAB_MODE_CHIP_IDS, LabModeStrip
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -53,6 +54,24 @@ class LabScreen(BaseAppScreen):
     everything else: rail collapse and its persistence, the deferred body
     mount, and status-row refresh.
     """
+
+    #: `[` / `]` move focus along the mode strip; they never navigate. Enter is
+    #: then ordinary Button activation on the focused chip, which posts
+    #: NavigateToScreen -- so cycling builds zero intermediate screens.
+    #:
+    #: Both are printable keys, so text inputs consume them first and these act
+    #: only from button or list focus. Escape is deliberately unbound:
+    #: EvalsScreen already binds it to its own back action.
+    BINDINGS = [
+        Binding("left_square_bracket", "lab_mode_focus(-1)", "Prev mode", show=False),
+        Binding("right_square_bracket", "lab_mode_focus(1)", "Next mode", show=False),
+    ]
+
+    #: Footer hints registered for every Lab mode.
+    LAB_FOOTER_SHORTCUTS: tuple[tuple[str, str], ...] = (
+        ("[ / ]", "Switch mode"),
+        ("Enter", "Go"),
+    )
 
     def __init__(self, app_instance: "TldwCli", screen_name: str, **kwargs: Any) -> None:
         """Create a Lab screen.
@@ -157,6 +176,47 @@ class LabScreen(BaseAppScreen):
         super().on_mount()
         self._populate_regions()
         self.call_after_refresh(self._mount_lab_body)
+        self.register_footer_shortcuts(
+            source="lab", shortcuts=self.LAB_FOOTER_SHORTCUTS
+        )
+
+    def action_lab_mode_focus(self, delta: int) -> None:
+        """Move focus to an adjacent mode chip, wrapping at both ends.
+
+        Does not navigate: Enter on the focused chip commits, which is what
+        keeps cycling free of intermediate screen mounts.
+
+        Args:
+            delta: ``-1`` for the previous chip, ``1`` for the next.
+        """
+        focused = self.focused
+        focused_id = getattr(focused, "id", None)
+        if focused_id in LAB_MODE_CHIP_IDS:
+            index = LAB_MODE_CHIP_IDS.index(focused_id)
+        else:
+            # Focus is elsewhere: start from the chip for this screen's own
+            # mode so the first press lands beside it, not at a strip end.
+            index = self._active_mode_chip_index()
+        target = LAB_MODE_CHIP_IDS[(index + delta) % len(LAB_MODE_CHIP_IDS)]
+        try:
+            self.query_one(f"#{target}", Button).focus()
+        except QueryError:
+            logger.warning("Lab mode chip {} missing; focus not moved.", target)
+
+    def _active_mode_chip_index(self) -> int:
+        """Return the strip index of this screen's own mode.
+
+        Returns:
+            The index of the chip carrying ``is-active``, or 0 when the strip
+            has not composed one.
+        """
+        for index, chip_id in enumerate(LAB_MODE_CHIP_IDS):
+            try:
+                if "is-active" in self.query_one(f"#{chip_id}", Button).classes:
+                    return index
+            except QueryError:
+                continue
+        return 0
 
     def _populate_regions(self) -> None:
         """Mount rail and inspector contents into their regions."""
