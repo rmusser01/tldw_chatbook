@@ -1088,3 +1088,43 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
     assert uncalled == [], (
         f"WatchlistBundleService methods with no production caller: {uncalled}"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_tree_write_start_does_not_wedge_later_writes():
+    """Qodo #3 on PR #989: `_tree_write_active` could stick True forever.
+
+    The flag was raised before `flow_factory()` ran, and is lowered only by
+    `_run_tree_write`'s `finally`. If building the flow raised synchronously
+    that worker never started, so the flag stayed up and every later
+    create/rename/delete returned at the guard -- silently, for the life of
+    the screen.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        def exploding_factory():
+            raise RuntimeError("flow could not be built")
+
+        screen._start_tree_write(exploding_factory)
+        await pilot.pause()
+
+        assert screen._tree_write_active is False, (
+            "a write that never started must leave the guard down, or every "
+            "later watchlist action is silently swallowed"
+        )
+
+        ran = []
+
+        async def working_flow():
+            ran.append(True)
+
+        screen._start_tree_write(working_flow)
+        for _ in range(20):
+            await pilot.pause()
+            if ran:
+                break
+        assert ran, "the next write must still be able to start"

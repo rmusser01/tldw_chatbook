@@ -105,3 +105,61 @@ def test_lazy_site_config_table_creation_helper_is_gone():
     from tldw_chatbook.Subscriptions.site_config_manager import SiteConfigManager
 
     assert not hasattr(SiteConfigManager, "_create_tables")
+
+
+def test_ensure_site_configs_schema_creates_only_that_table(tmp_path):
+    """Qodo #4 on PR #989: guaranteeing one table must not build a database.
+
+    `SiteConfigManager` takes a caller-supplied `db_path`. Opening a full
+    `SubscriptionsDB` there to make sure `site_configs` exists would run the
+    whole subscriptions schema against that file -- around fifteen unrelated
+    tables plus indices and triggers -- a side effect no caller asked for.
+
+    `ensure_site_configs_schema` shares its DDL with `_initialize_schema`, so
+    there is still exactly one definition of the table; it just applies that
+    one and stops.
+    """
+    from tldw_chatbook.DB.Subscriptions_DB import ensure_site_configs_schema
+
+    path = tmp_path / "somebody_elses.db"
+    ensure_site_configs_schema(path)
+
+    with closing(sqlite3.connect(str(path))) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+
+    # `sqlite_sequence` is excluded above: SQLite creates it itself for any
+    # AUTOINCREMENT column, so it is not a table this helper chose to make.
+    assert "site_configs" in tables
+    assert tables == {"site_configs"}, (
+        f"only site_configs may be created on a caller-supplied path; "
+        f"found {sorted(tables)}"
+    )
+
+
+def test_ensure_site_configs_schema_is_idempotent_and_keeps_rows(tmp_path):
+    """Runs on every `SiteConfigManager` construction, so it must be a no-op
+    the second time and must never disturb existing configs."""
+    from tldw_chatbook.DB.Subscriptions_DB import ensure_site_configs_schema
+
+    path = tmp_path / "configs.db"
+    ensure_site_configs_schema(path)
+    with closing(sqlite3.connect(str(path))) as conn:
+        conn.execute(
+            "INSERT INTO site_configs (domain, config_data) VALUES (?, ?)",
+            ("example.com", '{"kept": true}'),
+        )
+        conn.commit()
+
+    ensure_site_configs_schema(path)
+
+    with closing(sqlite3.connect(str(path))) as conn:
+        rows = conn.execute(
+            "SELECT domain, config_data FROM site_configs"
+        ).fetchall()
+    assert rows == [("example.com", '{"kept": true}')]

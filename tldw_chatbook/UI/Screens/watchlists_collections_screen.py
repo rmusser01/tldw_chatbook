@@ -1575,8 +1575,33 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         if self._tree_write_active:
             return
+        # Build and schedule BEFORE arming the guard. `_run_tree_write`'s
+        # `finally` is the only thing that lowers this flag, and it never runs
+        # if `flow_factory()` or `run_worker` raises synchronously -- which
+        # would leave the flag stuck True and silently swallow every later
+        # create/rename/delete for the life of the screen.
+        try:
+            worker_coro = self._run_tree_write(flow_factory())
+        except Exception:
+            logger.opt(exception=True).debug("Watchlist tree write could not start.")
+            self._notify_watchlists(
+                "That watchlist action could not be started.", severity="error"
+            )
+            return
+        # Arm before scheduling, and disarm if scheduling fails. Arming
+        # afterwards would be its own race: the worker's `finally` could
+        # already have lowered the flag by the time we raised it, leaving it
+        # stuck True with nothing running.
         self._tree_write_active = True
-        self.run_worker(self._run_tree_write(flow_factory()), group="wl-tree-write")
+        try:
+            self.run_worker(worker_coro, group="wl-tree-write")
+        except Exception:
+            self._tree_write_active = False
+            worker_coro.close()
+            logger.opt(exception=True).debug("Watchlist tree write could not start.")
+            self._notify_watchlists(
+                "That watchlist action could not be started.", severity="error"
+            )
 
     async def _run_tree_write(self, flow: Any) -> None:
         """Await one write flow, reporting rather than raising.

@@ -24,7 +24,7 @@ from loguru import logger
 #
 # Local Imports
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
-from ..DB.Subscriptions_DB import SubscriptionsDB
+from ..DB.Subscriptions_DB import ensure_site_configs_schema
 from ..Utils.config_encryption import ConfigEncryption
 from ..Metrics.metrics_logger import log_counter
 from ..config import CLI_APP_CLIENT_ID, get_subscriptions_db_path
@@ -249,17 +249,19 @@ class SiteConfigManager:
         if db_path is None:
             db_path = str(get_subscriptions_db_path())
 
-        # `site_configs` is declared in `SubscriptionsDB._initialize_schema`
-        # (see that file for the ownership rationale), not created lazily
-        # here any more. This manager still reads/writes it through its own
-        # `CharactersRAGDB` connection below -- both point at the same
-        # on-disk file -- so constructing (and immediately closing) a
-        # `SubscriptionsDB` first guarantees that schema, including
-        # `site_configs`, exists before this manager runs any query against
-        # it. `_initialize_schema` runs unconditionally on every open (this
-        # database has no versioned migrations), so repeating it here on
-        # every `SiteConfigManager` construction is safe and idempotent.
-        SubscriptionsDB(db_path, CLI_APP_CLIENT_ID).close()
+        # `site_configs` is declared by `SubscriptionsDB`, which owns it (see
+        # that file for the ownership rationale), and is no longer created
+        # lazily here. This manager reads and writes it through its own
+        # `CharactersRAGDB` connection below -- both point at the same on-disk
+        # file -- so the table has to exist before any query runs.
+        #
+        # Applies the one table rather than opening a full `SubscriptionsDB`:
+        # `db_path` is caller-supplied, and constructing the whole database
+        # here would run the entire subscriptions schema against whatever file
+        # was passed. `ensure_site_configs_schema` shares its DDL with
+        # `_initialize_schema`, so there is still exactly one definition, and
+        # `CREATE TABLE IF NOT EXISTS` keeps it idempotent per construction.
+        ensure_site_configs_schema(db_path)
 
         self.db = CharactersRAGDB(db_path, CLI_APP_CLIENT_ID)
         self.encryption = ConfigEncryption()
