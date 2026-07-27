@@ -26,7 +26,7 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
-from textual.widgets import Button, DataTable, Input, Label, Static
+from textual.widgets import Button, DataTable, Input, Label, Static, TextArea
 
 from tldw_chatbook.TTS import (
     LoadedTTSProfile,
@@ -645,7 +645,14 @@ class STTSProfileLibrary(Widget):
             cursor_type="row",
             zebra_stripes=True,
         )
-        yield Static(_PROFILE_LOADING_COPY, id="stts-profile-status")
+        yield TextArea(
+            _PROFILE_LOADING_COPY,
+            id="stts-profile-status",
+            read_only=True,
+            soft_wrap=False,
+            show_line_numbers=False,
+            compact=True,
+        )
         with Horizontal(id="stts-profile-actions"):
             yield Button(
                 "Preview",
@@ -1059,7 +1066,7 @@ class STTSProfileLibrary(Widget):
     def _set_status(self, copy: str) -> None:
         if not self.is_mounted:
             return
-        self.query_one("#stts-profile-status", Static).update(Text(copy))
+        self.query_one("#stts-profile-status", TextArea).text = copy
 
     def _sync_selected_actions(self) -> None:
         disabled = (

@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 import pytest
 from textual.app import App, ComposeResult
 from textual.widget import Widget
-from textual.widgets import Button, DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Static, TextArea
 
 from tldw_chatbook.TTS import (
     LoadedTTSProfile,
@@ -355,6 +355,17 @@ def _table_cell(table: DataTable[Any], row: int, column: int) -> str:
     return str(table.get_row_at(row)[column])
 
 
+def _visible_content_rows(widget: Widget) -> tuple[str, ...]:
+    strips = widget.screen._compositor.render_strips()
+    region = widget.content_region
+    return tuple(
+        "".join(segment.text for segment in strips[y])[
+            region.x : region.x + region.width
+        ].strip()
+        for y in range(region.y, region.y + region.height)
+    )
+
+
 def _artifact() -> STTSGeneratedAudio:
     requested = TTSRequestedSelectionSnapshot(
         provider_id="audio_cpp",
@@ -480,8 +491,8 @@ async def test_profile_store_unavailable_isolated_to_stable_library_recovery() -
         await pilot.click("#view-profiles-btn")
         await _wait_until(pilot, lambda: app.profile_service_requests == 1)
 
-        status = app.query_one("#stts-profile-status", Static)
-        assert str(status.render()) == PROFILE_STORE_UNAVAILABLE_COPY
+        status = app.query_one("#stts-profile-status", TextArea)
+        assert status.text == PROFILE_STORE_UNAVAILABLE_COPY
         assert app.query_one("#stts-profile-table", DataTable).row_count == 0
         assert not app.query_one("#stts-profile-refresh-btn", Button).disabled
 
@@ -506,10 +517,10 @@ async def test_refresh_reloads_service_after_store_level_list_failure(
         await pilot.click("#view-profiles-btn")
         await _wait_until(pilot, lambda: len(failed_service.list_calls) == 1)
 
-        status = app.query_one("#stts-profile-status", Static)
+        status = app.query_one("#stts-profile-status", TextArea)
         await _wait_until(
             pilot,
-            lambda: str(status.render()) == PROFILE_STORE_UNAVAILABLE_COPY,
+            lambda: status.text == PROFILE_STORE_UNAVAILABLE_COPY,
         )
         assert app.profile_service_requests == 1
         assert app.query_one("#stts-profile-table", DataTable).row_count == 0
@@ -598,7 +609,7 @@ async def test_voice_profile_actions_fit_and_remain_keyboard_reachable_at_80x24(
     async with app.run_test(size=(80, 24)) as pilot:
         await _select_action_profile(app, pilot)
         table = app.query_one("#stts-profile-table", DataTable)
-        status = app.query_one("#stts-profile-status", Static)
+        status = app.query_one("#stts-profile-status", TextArea)
         buttons = tuple(
             app.query_one(f"#{button_id}", Button) for button_id in action_ids
         )
@@ -643,21 +654,64 @@ async def test_profile_recovery_copy_is_visible_at_80x24(
 
     async with app.run_test(size=(80, 24)) as pilot:
         await _select_action_profile(app, pilot)
-        status = app.query_one("#stts-profile-status", Static)
-        strips = status.screen._compositor.render_strips()
-        region = status.content_region
-        visible_lines = tuple(
-            "".join(segment.text for segment in strips[y])[
-                region.x : region.x + region.width
-            ].strip()
-            for y in range(region.y, region.y + region.height)
-        )
+        status = app.query_one("#stts-profile-status", TextArea)
 
-        assert visible_lines == (
+        assert _visible_content_rows(status) == (
             expected_recovery,
             "Selected: Voice 00",
             "audio_cpp / model/0 / voice/0",
         )
+
+
+@pytest.mark.asyncio
+async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> None:
+    model_id = f"model/{'opaque-model-segment/' * 5}model-tail"
+    voice_id = f"voice/{'opaque-voice-segment/' * 5}voice-tail"
+    profile = replace(_profile(0), model_id=model_id, voice_id=voice_id)
+    service = _ActionProfileService(profile, availability_state="unavailable")
+    app = _ActionHost(service)
+    detail_copy = f"audio_cpp / {model_id} / {voice_id}"
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _select_action_profile(app, pilot)
+        status = app.query_one("#stts-profile-status")
+        visible_lines = _visible_content_rows(status)
+
+        assert visible_lines[0] == "Unavailable — Refresh, then Edit."
+        assert visible_lines[1] == "Selected: Voice 00"
+        assert visible_lines[2].startswith("audio_cpp / model/opaque-model")
+        assert status.region.height <= 5
+
+        app.query_one("#stts-profile-table", DataTable).focus()
+        for _ in range(8):
+            await pilot.press("tab")
+            if app.focused is status:
+                break
+        assert app.focused is status
+        assert isinstance(status, TextArea)
+        assert status.read_only
+        assert not status.soft_wrap
+        assert status.text == (
+            f"Unavailable — Refresh, then Edit.\nSelected: Voice 00\n{detail_copy}"
+        )
+
+        await pilot.press("down", "down", "end")
+        await _wait_until(pilot, lambda: status.scroll_x > 0)
+        assert _visible_content_rows(status)[2].endswith("voice-tail")
+
+        unchanged = status.text
+        await pilot.press("x")
+        assert status.text == unchanged
+
+        for selector in (
+            "#stts-profile-preview-btn",
+            "#stts-profile-edit-btn",
+            "#stts-profile-duplicate-btn",
+            "#stts-profile-refresh-btn",
+            "#stts-profile-delete-btn",
+        ):
+            button = app.query_one(selector, Button)
+            assert button.region.bottom <= app.size.height
 
 
 @pytest.mark.asyncio
@@ -1310,7 +1364,7 @@ async def test_edit_conflict_retains_the_exact_draft_without_leaking_values(
         assert service.update_calls[0][0] is selected
         assert service.update_calls[0][1] is submitted
         assert (
-            str(app.query_one("#stts-profile-status", Static).render())
+            app.query_one("#stts-profile-status", TextArea).text
             == profile_library_module.PROFILE_CONFLICT_COPY
         )
 
@@ -1397,8 +1451,9 @@ async def test_create_from_artifact_handoff_preserves_the_exact_artifact() -> No
         assert service.create_calls == [("Saved artifact", artifact)]
         assert service.create_calls[0][1] is artifact
         assert result is service.created_result
-        assert "must never enter profile UI copy" not in str(
-            app.query_one("#stts-profile-status", Static).render()
+        assert (
+            "must never enter profile UI copy"
+            not in app.query_one("#stts-profile-status", TextArea).text
         )
 
 
@@ -1428,7 +1483,7 @@ async def test_delete_shows_advisory_count_but_repository_conflict_is_final(
         assert service.assignment_count_calls[0] is selected
         assert service.delete_calls[0] is selected
         assert (
-            str(app.query_one("#stts-profile-status", Static).render())
+            app.query_one("#stts-profile-status", TextArea).text
             == profile_library_module.PROFILE_CONFLICT_COPY
         )
 
@@ -1458,7 +1513,7 @@ async def test_assigned_profile_delete_is_blocked_before_repository_mutation(
         assert service.assignment_count_calls[0] is selected
         assert service.delete_calls == []
         assert (
-            str(app.query_one("#stts-profile-status", Static).render())
+            app.query_one("#stts-profile-status", TextArea).text
             == profile_library_module.PROFILE_DELETE_PROTECTED_COPY
         )
 
@@ -1479,7 +1534,7 @@ async def test_refresh_and_editor_repair_keep_unavailable_persisted_values(
         library, selected = await _select_action_profile(app, pilot)
         await _wait_until(pilot, lambda: len(service.availability_calls) == 1)
 
-        detail = str(app.query_one("#stts-profile-status", Static).render())
+        detail = app.query_one("#stts-profile-status", TextArea).text
         assert "missing/exact-model" in detail
         assert "missing/exact-voice" in detail
         assert "Refresh, then Edit" in detail
@@ -1541,7 +1596,7 @@ async def test_unexpected_action_errors_render_only_value_independent_copy(
         monkeypatch.setattr(app, "push_screen_wait", _duplicate)
         assert await library.duplicate_selected_profile() is None
 
-        status = str(app.query_one("#stts-profile-status", Static).render())
+        status = app.query_one("#stts-profile-status", TextArea).text
         assert status == profile_library_module.PROFILE_ACTION_FAILED_COPY
         assert "/Users/private/key" not in status
         assert "upstream.invalid" not in status
