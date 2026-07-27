@@ -1130,8 +1130,14 @@ class TestChatbookCreator:
             assert manifest_data.get("include_embeddings") is True
 
 
+@pytest.mark.unit
 def test_the_temp_dir_fallback_survives_a_symlinked_system_temp_root(monkeypatch, tmp_path):
     """The fallback must not die on the guard that protects it.
+
+    Args:
+        monkeypatch: Redirects `get_user_data_dir` into failure and points
+            `mkdtemp` at the symlinked root below.
+        tmp_path: Provides the real directory and the symlink to it.
 
     `secure_private_directory` refuses to traverse a symlinked path
     component. On macOS the system temp root is /var/folders/..., and /var
@@ -1150,7 +1156,14 @@ def test_the_temp_dir_fallback_survives_a_symlinked_system_temp_root(monkeypatch
     real_root = tmp_path / "real-tmp"
     real_root.mkdir()
     linked_root = tmp_path / "linked-tmp"
-    linked_root.symlink_to(real_root, target_is_directory=True)
+    try:
+        linked_root.symlink_to(real_root, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        # Windows refuses symlink creation without developer mode or admin.
+        # This test is `unit`-marked so it runs in CI on every OS; skipping
+        # where the filesystem cannot express the precondition is honest,
+        # and the bug it guards is POSIX-shaped anyway (/var -> /private/var).
+        pytest.skip(f"symlinks unavailable on this platform: {exc}")
 
     def failing_user_data_dir():
         raise OSError("configured temp dir unavailable")
