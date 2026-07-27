@@ -229,7 +229,7 @@ def test_cap_refusal_truncates_and_k_more_suffix():
     # Mark first 4 sessions as busy (STREAMING status = not send_allowed)
     for session_id in [session_1_id, session_2_id, session_3_id, session_4_id]:
         controller._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.STREAMING, f"run"),
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "run"),
             session_id=session_id,
         )
 
