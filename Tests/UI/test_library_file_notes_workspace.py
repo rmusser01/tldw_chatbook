@@ -16,6 +16,7 @@ sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
 
 import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module  # noqa: E402
 from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
+    LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
 )
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
@@ -179,17 +180,26 @@ async def test_tree_search_open_dirty_and_autosave_keep_one_editor(
             "search results did not replace the tree",
         )
         assert not tree.display
-        assert "folder/alpha.md" in _tree_labels(
-            workspace.query_one("#file-notes-search-results", Tree)
+        results = workspace.query_one("#file-notes-search-results", Tree)
+        assert "folder/alpha.md" in _tree_labels(results)
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        match = next(
+            node
+            for node in results.root.children
+            if node.data == ("file", "folder/alpha.md")
         )
+        results.select_node(match)
+        await _wait_until(
+            pilot,
+            lambda: workspace.current_path == "folder/alpha.md",
+            "selecting the visible search result did not open its file",
+        )
+        assert editor.text == "needle in this body\n"
+
         search.value = ""
         await _wait_until(pilot, lambda: tree.display, "tree did not return")
 
-        editor = workspace.query_one("#file-notes-editor", TextArea)
-        assert await workspace.open_path("folder/alpha.md")
-        await pilot.pause()
         assert workspace.query_one("#file-notes-editor", TextArea) is editor
-        assert editor.text == "needle in this body\n"
         assert workspace.save_state == "saved"
 
         _replace_editor_text(editor, "changed body")
@@ -550,6 +560,9 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
     root = tmp_path / "notes"
     root.mkdir()
     (root / "library.md").write_text("library file", encoding="utf-8")
+    (root / "other.md").write_text("other file", encoding="utf-8")
+    replacement_root = tmp_path / "replacement"
+    replacement_root.mkdir()
     replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(
         root=root,
@@ -619,6 +632,24 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
         (root / "library.md").write_text("external", encoding="utf-8")
         await retained.refresh_files()
         assert retained.save_state == "conflict"
+
+        assert not await retained.open_path("other.md")
+        assert retained.current_path == "library.md"
+        assert editor.text == "draft"
+
+        assert not await retained.set_root(replacement_root, persist=False)
+        assert retained.root == root.resolve()
+        assert editor.text == "draft"
+
+        assert not await screen.flush_pending_work()
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert screen.query_one("#library-file-notes-workspace") is retained
+
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_MEDIA)
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert screen.query_one("#library-file-notes-workspace") is retained
+        assert editor.text == "draft"
+
         screen.query_one("#library-notes-source-database", Button).press()
         await pilot.pause()
         assert screen._library_notes_source == "files"
