@@ -1,11 +1,12 @@
 # Character TTS Generation Profiles with Native audio.cpp Console Speech — Design
 
-**Status:** design approved by the user on 2026-07-25; independent spec review completed after three passes; review amendments incorporated; final written-spec review approved before Slice 2A continuation on 2026-07-26
+**Status:** design approved by the user on 2026-07-25; independent spec review completed after three passes; review amendments incorporated; final written-spec review approved before Slice 2A continuation on 2026-07-26; Slice 2B pre-task review amendments approved on 2026-07-27
 **Date:** 2026-07-25
 **Related design:** [audio.cpp TTS Adapter Registry](2026-07-23-audio-cpp-tts-adapter-registry-design.md)
 **Existing ADR:** [ADR-023 — TTS Adapter Registry and audio.cpp Runtime Boundary](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
-**Planned ADR:** `backlog/decisions/028-character-tts-generation-profile-ownership.md`
+**Profile ADR:** [ADR-028 — Character TTS Generation Profile Ownership](../../../backlog/decisions/028-character-tts-generation-profile-ownership.md)
 **Slice 1 status:** implemented and live-UAT validated; TASK-710 remains In Progress because the repository-wide DoD suite is not green and no external server was available for a post-rebase live rerun
+**Slice 2A status:** implemented by TASK-763 and merged in PR #977; the versioned profile domain, repository lifecycle, backup/restore, and app-owned lazy repository are available for Slice 2B
 
 ## Goal
 
@@ -240,6 +241,41 @@ own profile-safe option schema without a database redesign. Consistent with
 ADR-023, audio.cpp accepts only `wav`, speed exactly `1.0`, and an empty options
 object in this release; arbitrary options and other speeds are rejected.
 
+Executable profile providers use an explicit profile-safe allowlist. A
+registry descriptor having `native == true` is not by itself permission to
+create, save, validate, preview, or execute a profile. Slice 2B admits exactly
+`audio_cpp`; each later provider requires a separately reviewed profile
+contract and allowlist change.
+
+### Native voice capability observation
+
+Tuple-only voice discovery remains sufficient for the existing selector but is
+not authoritative enough for profile availability. Slice 2B adds a
+service/registry-level `TTSVoiceDiscoveryResult` obtained through a
+revision-matched provider lease. It contains the provider and model IDs,
+provider-configuration and catalog revisions, an immutable voice tuple, and one
+safe state:
+
+- `complete`: the optional voice endpoint succeeded; the voice tuple may
+  legitimately be empty;
+- `model_missing`: the same authoritative catalog revision does not contain
+  the exact model; or
+- `unverified`: timeout, transport/contract failure, reconfiguration,
+  shutdown, or another ambiguous condition prevented an authoritative result.
+
+The result contains no origin, credential, raw upstream body, or submitted
+text. Existing tuple-returning discovery may remain as a compatibility
+projection for current selectors, but profile validation and availability may
+not infer exact-voice absence from that projection.
+
+The profile service obtains one bounded `TTSNativeCapabilitySnapshot` from
+`TTSService` for the distinct models on a page. `TTSService` acquires one
+revision-matched provider lease under the admission coordinator, then observes
+one catalog and deduplicated per-model voice results through that leased
+adapter. The snapshot carries the provider-configuration and catalog revisions
+shared by those observations. UI and profile code receive neither the lease nor
+the concrete adapter.
+
 ### Character reference
 
 A bare character ID is not globally unique. Assignments use the canonical
@@ -371,6 +407,16 @@ admission failure. An expected provider revision is checked at the service and
 registry boundary as a defensive invariant; a mismatch never proceeds with a
 mixed selection and adapter.
 
+For exact Playground and profile previews, the coordinator also produces a
+text-free immutable `TTSRequestedSelectionSnapshot` inside the same shared
+admission boundary that acquires the matching provider lease. It contains the
+requested provider, exact model, submitted voice, requested format, speed,
+validated options, and admitted provider-configuration revision. UI code never
+constructs or reconstructs this snapshot from selectors or response metadata.
+The successful audio artifact carries it separately from actual response
+provider, model, format, content type, sample rate, and other response
+metadata.
+
 #### `TTSProfileRepository`
 
 The repository owns a dedicated, versioned SQLite database in the existing user
@@ -392,19 +438,25 @@ cards, or the active server.
 
 #### `TTSProfileService`
 
-The service owns profile-domain validation and workflows:
+Across the complete workstream, this service is the profile-domain boundary.
+Slice 2B deliberately implements only:
 
-- create, update, rename, duplicate, list, and delete profiles;
-- assign, replace, and remove character assignments;
-- validate a profile against current native provider capabilities;
-- calculate profile availability and repair guidance;
-- prepare standalone and character-card export payloads;
-- consume the optional profile attachment during character-card import;
-- apply import collision policy;
-- expose structured profile-domain errors.
+- create from an admitted successful preview;
+- update, rename, duplicate, bounded list/search, and protected delete;
+- exact `audio_cpp` profile validation;
+- page-bounded availability and minimal repair guidance; and
+- structured profile-domain errors.
+
+Slice 2B does not add character references, assignment workflows, request
+resolution, character-card import/export, collision policy, standalone profile
+export/import, legacy-provider profiles, or managed audio.cpp behavior. Those
+remain owned by Slices 3A, 3B, 4, or the separately deferred process-management
+work.
 
 It depends on the repository and the app-owned `TTSService` catalog APIs, but it
-does not synthesize audio itself.
+does not synthesize audio itself. It may prepare an exact immutable profile
+selection for the admission coordinator; the existing Playground owns preview
+text, generation, playback, artifact lifetime, and cleanup.
 
 #### `CharacterTTSRequestResolver`
 
@@ -429,6 +481,8 @@ concrete adapter, mutate assignments, or silently fall back.
 
 ### Dependency flow
 
+The complete target dependency flow is:
+
 ```text
 Console / STTS / Character editor
              |
@@ -452,6 +506,9 @@ Console / STTS / Character editor
 UI layers may use the profile service for management and submit app-issued
 speech snapshots to the admission coordinator. They never access SQLite rows,
 provider leases, or concrete adapters directly.
+
+In Slice 2B, only STTS reaches the profile service. Character-editor and
+roleplay resolver edges do not exist yet.
 
 ## Persistence model
 
@@ -662,18 +719,22 @@ interpreted as selection modes and are never serialized as empty exact values.
 7. A newly generated character-authored roleplay response exposes **Speak**.
    Clicking it uses the assigned profile and plays the complete WAV.
 
-Each successful generated-audio artifact contains a text-free immutable
-generation-selection snapshot with the requested provider, exact model,
+Each successful generated-audio artifact contains the
+`TTSRequestedSelectionSnapshot` issued inside exact request admission. The
+snapshot is text-free and records the requested provider, exact model,
 submitted voice, requested format, speed, validated options, and provider
-configuration revision used at admission. Actual response provider, model,
-format, content type, sample rate, and other response metadata remain separate
-artifact fields and are not silently substituted into the reusable request
-profile.
+configuration revision used to acquire the matching lease. Actual response
+provider, model, format, content type, sample rate, and other response metadata
+remain separate artifact fields and are not silently substituted into the
+reusable request profile.
 
-STTS preview uses the same admission coordinator as Console speech. Selector
-snapshot, any catalog-derived value, provider configuration revision, and
-matching service lease are therefore admitted atomically rather than assembled
-from independently changing settings and registry state.
+STTS preview uses the coordinator's exact-selection admission path rather than
+calling `TTSService.synthesize()` directly. Selector snapshot, any
+catalog-derived value, provider configuration revision, and matching service
+lease are therefore admitted atomically rather than assembled from
+independently changing settings and registry state. The Playground may provide
+the request text and selected values, but it cannot issue the reusable
+selection provenance.
 
 **Save result as profile** reads only that immutable selection snapshot. It
 does not reread mutable Playground controls. Before creation, the profile
@@ -690,22 +751,61 @@ STTS provides the shared profile-management surface:
 
 - bounded, paginated list and search;
 - create from a successful preview;
-- preview;
+- preview through the existing Playground;
 - rename and edit;
 - duplicate;
-- standalone export;
 - delete with assignment-count protection;
 - availability and repair status.
 
-The profile editor discovers valid values from native catalogs. New audio.cpp
-profiles and new assignments can be saved only when their exact provider,
-model, format, and voice semantics validate against the current native
-catalog and their speed is exactly `1.0`. An imported or previously valid
-profile that becomes unavailable remains visible with a repair action.
+The profile library and editor live in focused modules rather than adding
+another feature body to `UI/STTS_Window.py`. STTS mounts the library as a
+separate view. **Preview** loads the profile's exact selection into the
+existing Playground and navigates there; it does not introduce a second
+generation handler, player, artifact store, or cleanup lifecycle.
+
+The profile editor discovers valid values from a revision-coherent native
+capability snapshot. Slice 2B saves only exact `audio_cpp` profiles whose
+provider, model, format, and voice semantics are authoritatively available,
+whose speed is exactly `1.0`, and whose options are empty. A descriptor marked
+native but absent from the explicit profile-safe allowlist remains unsupported.
+A previously valid profile that becomes unavailable or unverified remains
+visible with a non-mutating recovery action.
+
+The just-completed admitted preview is the creation evidence for
+**Save result as profile**. When its provider-configuration revision is still
+current, saving rechecks the profile-safe structural contract but performs no
+second catalog or voice request that could turn a successful generation into a
+spurious discovery failure. Later availability may still reflect external
+server changes. A rename-only edit is also allowed while capabilities are
+unverified because it leaves the exact generation selection unchanged.
+Changing generation fields or creating a duplicate requires an authoritative
+current capability snapshot.
+
+Duplicate opens a create form populated from the source profile but requires an
+explicit new unique display name. Saving creates a new UUID at revision 1; it
+never aliases or edits the source profile.
+
+Profile list/search uses a fixed repository-bounded page size, a short input
+debounce, and a latest-request generation. A late list, availability, catalog,
+or voice result cannot replace newer search, page, provider-configuration, or
+unmount state. One page evaluation obtains one coherent
+provider/configuration/catalog snapshot and deduplicates voice discovery by
+exact model; it does not issue one provider request per profile. Slice 2B adds
+no second long-lived capability cache because the adapter already owns bounded
+catalog and voice caches.
 
 The editor clearly warns that editing a shared profile changes future speech
 for all assigned characters and shows the assignment count. It uses optimistic
 revision checks so two open editors cannot silently overwrite each other.
+The displayed count is advisory: delete relies on the repository's
+transactional foreign-key restriction at mutation time and maps a concurrent
+new assignment to a safe conflict rather than trusting a preflight count.
+
+Repair in Slice 2B is intentionally minimal: refresh current native
+capabilities and reopen the ordinary editor with the persisted exact values.
+It never substitutes a model or voice automatically. If the profile store
+cannot open, only profile-library and save-profile controls become unavailable;
+ordinary Playground generation, settings, and legacy speech continue to work.
 
 ### Character editor
 
@@ -858,9 +958,29 @@ Profile availability is separate from target status. A profile may be locally
 present but unavailable because its provider is unconfigured, not native, its
 model is missing, or its request fields no longer validate.
 
-Provider reconfiguration invalidates cached profile availability. Exact IDs are
-revalidated on the next display or request; cached health or catalog results
-never remain authoritative across a provider configuration revision.
+Profile availability has three states:
+
+- `available`: one revision-coherent successful capability observation
+  confirms the exact profile selection;
+- `unavailable`: an authoritative current observation confirms an unsupported
+  provider/profile contract, unconfigured provider, missing model, missing
+  exact voice, or invalid request field; and
+- `unverified`: reconfiguration, timeout, network/transport failure, contract
+  failure, shutdown, or another ambiguous observation prevents confirmation.
+
+An exact voice is missing only when successful voice discovery for the same
+configuration, catalog revision, and model authoritatively excludes it.
+Voice discovery must therefore expose a structured successful or failed
+outcome; it must not collapse model absence, an empty successful voice list,
+timeout, transport failure, and contract failure into the same empty tuple.
+`unverified` offers retry/refresh and never relabels, rewrites, or auto-repairs
+the persisted selection.
+
+Provider reconfiguration invalidates any in-flight page availability result.
+Exact IDs are revalidated on the next display or request; cached health or
+catalog results never remain authoritative across a provider configuration
+revision. No list result is published unless the configuration and UI request
+generations still match.
 
 Authoritative character deletion cleanup and the profile-side
 **Remove missing assignments** action ship with assignment support. The
@@ -878,8 +998,10 @@ Profile-domain failures are distinct from adapter `TTSOperationError` values:
 | profile store unavailable | Retry store access; optionally use global for this message |
 | assignment target lacks authority | Reopen or repair the server-backed conversation |
 | assigned profile missing/corrupt | Repair or remove the assignment |
-| provider not native or not configured | Configure the provider or edit the profile |
+| provider not profile-safe/allowlisted or not configured | Configure the provider or edit the profile |
 | profile currently unavailable | Refresh catalog, reconnect, or edit the profile |
+| profile availability unverified | Retry or refresh without changing the stored profile |
+| preview configuration revision stale | Regenerate the preview before saving |
 | optimistic revision conflict | Reload, compare, and reapply the edit |
 | import requires repair | Review validated fields before assigning |
 
@@ -942,9 +1064,10 @@ If a card already contains a malformed or conflicting Chatbook TTS namespace,
 explicit TTS export fails rather than overwriting or ambiguously merging it.
 Unrelated extension namespaces are preserved.
 
-Standalone profile export uses the same sanitized profile payload without a
-character card. Standalone profile import is not part of this design; only an
-attachment arriving through character-card import is consumed.
+Standalone profile export is deferred with portability to Slice 4 and uses the
+same sanitized profile payload without a character card. Standalone profile
+import is not part of this design; only an attachment arriving through
+character-card import is consumed.
 
 ### Import treats the extension as hostile
 
@@ -1072,12 +1195,22 @@ This slice independently fixes the first-time-user UAT failure.
 
 ### Slice 2B — Profile service and STTS library
 
-- Add the profile service and native-provider validation.
+- Add the Slice 2B-only profile service and exact `audio_cpp` allowlist
+  validation.
 - Add bounded STTS list/search, save-from-preview, edit, duplicate, preview,
-  export, delete, availability, and repair flows.
-- Extend successful preview artifacts with immutable requested-selection and
+  delete, availability, and minimal non-mutating repair flows.
+- Add revision-matched exact request admission and extend successful preview
+  artifacts with coordinator-issued immutable requested-selection and
   provider-configuration provenance.
+- Distinguish authoritative empty/absent capabilities from unverified voice or
+  catalog failures.
+- Keep the profile library in focused modules, reuse the existing Playground
+  for preview, and bound/deduplicate page capability work with stale-result
+  suppression.
 - Support native audio.cpp execution only.
+- Add no character identity, assignment, request resolver, roleplay routing,
+  profile/card portability, standalone export/import, automatic repair,
+  legacy-profile execution, or managed process behavior.
 
 Together, Slices 2A and 2B deliver reusable local profiles before character
 assignment.
@@ -1104,6 +1237,8 @@ assignment.
 ### Slice 4 — Optional character-card portability
 
 - Add transient explicit export with a sanitized Chatbook extension.
+- Add standalone export using the same sanitized payload; standalone import
+  remains out of scope.
 - Add hostile import validation and collision prompts.
 - Add structured created-versus-reused character outcomes and cross-database
   import compensation.
@@ -1134,6 +1269,27 @@ not part of any slice here.
 - a second Chatbook process holding the shared store lock makes exclusive
   restore fail safely before file replacement;
 - joined assignment/profile read returns one immutable revision snapshot.
+- exact preview admission issues one text-free requested-selection snapshot
+  with the same provider-configuration revision used to acquire the lease;
+- changing selectors or response metadata after admission cannot alter the
+  requested-selection snapshot, and a configuration change before save rejects
+  stale provenance;
+- save-from-success performs no redundant catalog/voice request, rename-only
+  succeeds while capabilities are unverified, and generation edits or
+  duplicates remain blocked until authoritative validation succeeds;
+- Slice 2B rejects every provider except exact `audio_cpp`, including a
+  hypothetical future descriptor marked native without a reviewed
+  profile-safe allowlist entry;
+- successful empty voice discovery, authoritative exact-voice absence, model
+  absence, timeout, transport failure, contract failure, reconfiguration, and
+  shutdown produce distinct availability outcomes;
+- one profile page performs one coherent catalog observation and at most one
+  voice discovery per distinct model, with no per-row provider request;
+- stale search/page/configuration results cannot replace current UI state;
+- duplicate always creates a new UUID and revision, and a concurrent assignment
+  between displayed count and delete remains protected transactionally; and
+- profile-store failure disables only profile consumers and leaves ordinary
+  Playground generation operational.
 
 ### Resolution matrix
 
@@ -1222,8 +1378,12 @@ may be admitted; every stale or mismatched snapshot fails safely.
 ### UI tests
 
 - STTS preview and save-result-as-profile;
-- profile list, search, edit, duplicate, conflicts, availability, repair,
-  export, and protected deletion;
+- profile list, debounced search, edit, duplicate, conflicts, three-state
+  availability, minimal repair, existing-Playground preview, and protected
+  deletion;
+- profile-library unmount, page changes, search changes, and provider
+  reconfiguration reject late publications;
+- profile-store unavailable state leaves the Playground and settings usable;
 - character assignment, removal, repair, and shared-profile warnings;
 - soft-delete/restore preservation, permanent character deletion cleanup,
   missing-target removal, and preservation of inactive and unverified
@@ -1239,7 +1399,7 @@ may be admitted; every stale or mismatched snapshot fails safely.
 - server-character authority missing and same-ID/different-authority cases;
 - paginated profile views perform bounded, cached verification only against the
   matching active authority;
-- import/export confirmation and collision prompts.
+- Slice 4 import/export confirmation and collision prompts.
 
 ### Portability and security tests
 
@@ -1300,12 +1460,23 @@ user-started external audio.cpp server:
 8. confirm server health;
 9. confirm Chatbook did not launch, restart, signal, or stop the server.
 
+Slice 2B UAT stops after saving the successful preview, then verifies library
+reload/search, edit conflict handling, duplicate with a new name, preview by
+returning through the existing Playground, three-state availability, protected
+delete, and persistence across application restart. Character assignment and
+roleplay steps 5 through 7 do not become Slice 2B completion criteria; they
+ship and are replayed only after Slices 3A and 3B.
+
 Focused automated UI tests support the UAT but do not replace the real Console
 flow.
 
 ## Performance, privacy, and observability
 
 - Profile list/search is bounded and paginated.
+- Slice 2B debounces search, publishes only the latest matching UI and
+  provider-configuration generations, and deduplicates capability work per
+  provider/model for each page. It does not add a second long-lived catalog or
+  voice cache.
 - All profile-store work runs through the repository-owned serialized worker
   off the Textual event loop; no UI or ad-hoc executor owns a database
   connection.
@@ -1350,12 +1521,13 @@ integration is disabled.
 
 **ADR paths:**
 
-- amend
+- amended
   `backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md`
-  before Slice 1 implementation;
-- create
+  for Slice 1 and for Slice 2B's exact-admission provenance plus structured
+  voice-capability observation;
+- accepted
   `backlog/decisions/028-character-tts-generation-profile-ownership.md`
-  before Slice 2A implementation.
+  for Slice 2A and later profile consumers.
 
 **Reason:** Slice 1 strengthens the existing cross-module TTS service contract
 with atomic request admission/publication, expected configuration revisions,
@@ -1363,11 +1535,16 @@ and a bounded exclusive handoff state machine; those decisions amend ADR-023
 rather than waiting for profile persistence. The later profile feature
 establishes a new versioned store, data ownership and identity rules,
 fail-closed runtime semantics, and character-card import/export policy. ADR-028
-will extend rather than duplicate the amended ADR-023.
+extends rather than duplicates the amended ADR-023.
 
 No new dependency decision is required. The implementation uses the existing
 SQLite, validation, TTS service, registry, Textual, backup, and playback
 facilities.
+
+The Slice 2B amendments require no new ADR. They amend ADR-023's existing
+service contract and implement the accepted ADR-028 ownership boundary, while
+narrowing delivery scope without changing persistence, provider configuration,
+or process-runtime decisions.
 
 ## Acceptance criteria
 
@@ -1389,6 +1566,16 @@ facilities.
   authorship.
 - A user can save a successful STTS audio.cpp preview as a named reusable
   profile and manage it in a shared library.
+- Save-from-preview uses a coordinator-issued, text-free requested-selection
+  snapshot carrying the exact admitted provider-configuration revision;
+  mutable controls and actual response metadata cannot replace requested
+  profile values.
+- Profile availability distinguishes authoritative absence from unverified
+  discovery failure, so a timeout or contract/transport error never reports an
+  exact model or voice as removed.
+- Slice 2B reuses the existing Playground for profile preview, bounds and
+  deduplicates page capability work, rejects stale UI publications, and leaves
+  ordinary generation usable when the profile store is unavailable.
 - Profile names use trimmed NFKC case-folded uniqueness and reject invisible or
   invalid control code points across local and imported data.
 - Every first-release audio.cpp global selection and profile uses WAV, speed

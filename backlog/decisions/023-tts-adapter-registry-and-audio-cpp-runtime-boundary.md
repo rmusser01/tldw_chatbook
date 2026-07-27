@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Tasks: TASK-561, TASK-560, TASK-569, TASK-710
+Related Tasks: TASK-561, TASK-560, TASK-569, TASK-710, TASK-763
 Supersedes: N/A
 
 ## Decision
@@ -108,6 +108,17 @@ safe response provenance for playback and export. Safe failures expose bounded
 recovery actions; stale discovery disables new generation without invalidating
 an existing artifact; audio.cpp never automatically falls back.
 
+The approved profile-library continuation extends this boundary in two
+specific ways. Exact Playground/profile admission issues a text-free immutable
+requested-selection snapshot inside the same gate that acquires the
+revision-matched provider lease; UI code cannot reconstruct reusable profile
+provenance from mutable selectors or actual response metadata. Profile
+capability checks use a revision-bound structured voice-discovery result that
+distinguishes a successful empty voice list and authoritative model absence
+from timeout, transport/contract failure, reconfiguration, and shutdown.
+Tuple-only voice discovery may remain as a selector compatibility projection,
+but it is not authority for profile availability or exact-voice removal.
+
 Slices 4–5 remain user-provided prebuilt binary plus user-provided
 `server.json` launch/supervision and managed UI. Slices 1–3 do not launch,
 monitor, restart, or stop audio.cpp and expose no managed process settings or
@@ -149,6 +160,7 @@ policy, and a cross-module interface.
 | Generate audio.cpp server configuration | Duplicates an evolving upstream schema and makes Chatbook responsible for model provisioning. |
 | Require true SSE/PCM streaming initially | Adds buffering, partial-failure, sample-rate, cancellation, and playback concerns before the adapter architecture is established. |
 | Support multiple audio.cpp instances | Expands the first adapter into provider-instance routing, load balancing, and failover. |
+| Treat an empty voice tuple as authoritative absence | Conflates a valid empty optional endpoint with timeout, transport/contract failure, reconfiguration, shutdown, and model absence, causing false profile repair or removal guidance. |
 
 ## Consequences
 
@@ -158,6 +170,10 @@ policy, and a cross-module interface.
   Under one application-owned shared admission gate, each request freezes its
   complete selection and acquires a provider lease carrying the same
   configuration revision.
+- Exact Playground/profile admission produces a text-free requested-selection
+  snapshot within that boundary. The snapshot records requested provider,
+  exact model, submitted voice, format, speed, validated options, and admitted
+  configuration revision separately from actual response metadata.
 - Settings publication holds the exclusive side of that admission gate.
   Requests observe either the old coherent preference-and-lease pair, the new
   coherent pair, or a structured reconfiguring/unavailable state; they never
@@ -258,6 +274,11 @@ policy, and a cross-module interface.
   request never falls back to another model or provider.
 - Successful authoritative catalog refreshes invalidate voice caches through a
   new catalog revision, even when the model list is unchanged.
+- Profile capability consumers use a revision-bound structured voice
+  observation. A successful observation may authoritatively contain zero
+  voices; ambiguous discovery failures remain unverified and never prove that
+  an exact voice was removed. Compatibility tuple projections are not profile
+  authority.
 - Chatbook logs setting names and outcomes, never values or API keys. Managed
   child output is treated as potentially sensitive, retained only in a bounded
   in-memory diagnostic ring, and never copied into general logs or persisted.
