@@ -1,42 +1,24 @@
-# ruff: noqa: E402
-
 from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 
 import pytest
 from textual.css.query import NoMatches
 from textual.widgets import Input
 
-# Exercise the full production app in its supported "optional transcription
-# backend absent" configuration. The installed parakeet-mlx wheel aborts the
-# interpreter while importing MLX in this test runner, before Textual can mount.
-_MISSING_MODULE = object()
-_previous_parakeet_mlx = sys.modules.get("parakeet_mlx", _MISSING_MODULE)
-sys.modules["parakeet_mlx"] = None
-
-try:
-    import tldw_chatbook.app as app_module
-    from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
-    from tldw_chatbook.config import load_settings
-    from tldw_chatbook.Constants import TAB_CHAT
-    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
-    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
-    from tldw_chatbook.Widgets.Console.console_session_surface import (
-        ConsoleSessionSurface,
-    )
-finally:
-    if _previous_parakeet_mlx is _MISSING_MODULE:
-        sys.modules.pop("parakeet_mlx", None)
-    else:
-        sys.modules["parakeet_mlx"] = _previous_parakeet_mlx
+import tldw_chatbook.app as app_module
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.config import load_settings
+from tldw_chatbook.Constants import TAB_CHAT
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
 
 
 def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -260,7 +242,9 @@ async def test_native_console_prompt_handoff_releases_transient_and_acknowledges
         async with app.run_test(size=(140, 48)) as pilot:
             chat = await _wait_for_screen(app, pilot, ChatScreen)
 
-            monkeypatch.setattr(chat, "_console_setup_blocked_reason", lambda: "blocked")
+            monkeypatch.setattr(
+                chat, "_console_setup_blocked_reason", lambda: "blocked"
+            )
             app.pending_handoffs.stage(
                 HandoffChannel.CONSOLE_PROMPT_INSERT,
                 "terminal prompt",
@@ -270,8 +254,7 @@ async def test_native_console_prompt_handoff_releases_transient_and_acknowledges
                 HandoffChannel.CONSOLE_PROMPT_INSERT
             )
             assert (
-                app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT)
-                is None
+                app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
             )
 
             monkeypatch.setattr(chat, "_console_setup_blocked_reason", lambda: "")

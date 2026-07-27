@@ -1,45 +1,27 @@
-# ruff: noqa: E402
-
 from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from typing import Any
 
 import pytest
 from textual.widgets import Button
 
-# Exercise the full production app in its supported "optional transcription
-# backend absent" configuration. The installed parakeet-mlx wheel aborts the
-# interpreter while importing MLX in this test runner, before Textual can mount.
-_MISSING_MODULE = object()
-_previous_parakeet_mlx = sys.modules.get("parakeet_mlx", _MISSING_MODULE)
-sys.modules["parakeet_mlx"] = None
-
-try:
-    import tldw_chatbook.app as app_module
-    from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.Chat.console_chat_models import (
-        ConsoleMessageRole,
-        ConsoleRunStatus,
-    )
-    from tldw_chatbook.Chat.console_provider_gateway import (
-        ConsoleProviderResolution,
-    )
-    from tldw_chatbook.config import load_settings
-    from tldw_chatbook.Constants import TAB_CHAT
-    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-    from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
-    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
-finally:
-    if _previous_parakeet_mlx is _MISSING_MODULE:
-        sys.modules.pop("parakeet_mlx", None)
-    else:
-        sys.modules["parakeet_mlx"] = _previous_parakeet_mlx
+import tldw_chatbook.app as app_module
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleRunStatus,
+)
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+from tldw_chatbook.config import load_settings
+from tldw_chatbook.Constants import TAB_CHAT
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 
 REMOVED_CHAT_ROOT_NAMES = (
