@@ -132,14 +132,22 @@ remain deferred.
 Library ingestion workers are local-only and never download a transcription
 model.
 
-- For exact faster-whisper, select the model in the Library form and cache that
-  exact model before choosing **Start ingest**. For example, to cache `base`:
+- For semantic `default`, the closed promotion gate selects local-only
+  faster-whisper. The model picker stays disabled, so cache the model configured
+  as `[transcription].default_model` (normally `base`) before choosing
+  **Start ingest**.
+- For exact `faster-whisper`, cache the exact model selected in the Library
+  model picker before choosing **Start ingest**.
 
-  ```bash
-  python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8')"
-  ```
+For example, this prepares semantic `default` when `default_model = "base"`:
 
-  Replace `base` with the exact model selected in the form.
+```bash
+python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8')"
+```
+
+Replace `base` with the configured `default_model` for semantic `default`, or
+with the exact model selected for exact `faster-whisper`.
+
 - For exact English Parakeet, select `parakeet-onnx`, keep language `en`, and
   use **Install verified Parakeet v2 INT8**. The installer fills the local
   model folder with the curated v2 installation.
@@ -293,8 +301,10 @@ The Local Ingestion window supports batch processing:
   the Library worker will not download a missing model
 - For exact Parakeet ONNX, remember that a manual directory is checked only for
   required filenames; the check does not validate their contents
-- For faster-whisper, cache the exact model selected in the Library form before
-  choosing **Start ingest**
+- For semantic `default`, cache `[transcription].default_model` even though the
+  model picker is disabled
+- For exact `faster-whisper`, cache the exact model selected in the Library
+  form before choosing **Start ingest**
 
 **"CUDA out of memory"**
 - Use a smaller model
