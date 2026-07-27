@@ -45,6 +45,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
@@ -997,7 +998,20 @@ async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
 
 
 def _select_llamacpp_console(console: ChatScreen) -> None:
-    """Select the native llama.cpp path after mounted controls initialize."""
+    """Select the native llama.cpp path after mounted controls initialize.
+
+    ``_console_control_provider``/``_console_control_model`` mirror the
+    legacy compact-provider bar into Console's *display* labels only (see
+    ``on_console_compact_provider_changed``'s docstring) -- they do not
+    reach the active session's settings, which were already snapshotted
+    when the screen mounted its first session (before this helper ever
+    runs). Without also pushing the selection through
+    ``_replace_active_console_session_settings`` (the same call the real
+    Console Settings modal apply path and ``_apply_detected_local_server``
+    use), the already-existing session stays on its mount-time default
+    provider and every send this helper is meant to unblock stays gated
+    behind the first-run setup modal.
+    """
     app_config = console.app_instance.app_config
     api_settings = app_config.setdefault("api_settings", {})
     llama_settings = api_settings.setdefault("llama_cpp", {})
@@ -1005,6 +1019,16 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
     llama_settings.setdefault("model", "test-model")
     console._console_control_provider = "llama_cpp"
     console._console_control_model = "test-model"
+    settings = console._ensure_active_console_session_settings()
+    console._replace_active_console_session_settings(
+        replace(
+            settings,
+            provider="llama_cpp",
+            model="test-model",
+            base_url=None,
+            source="user",
+        )
+    )
     console._sync_console_control_bar()
 
 
@@ -1294,8 +1318,17 @@ def test_console_transcript_fingerprint_tolerates_empty_variant_container():
 
 def test_console_provider_selection_reads_local_llamacpp_configured_model():
     app = _build_test_app()
-    app.chat_api_provider_value = "local_llamacpp"
-    app.chat_api_model_value = "runtime-model"
+    # Provider/model resolution reads `app_config["chat_defaults"]` (see
+    # `_effective_console_provider_model`) -- `chat_api_provider_value` /
+    # `chat_api_model_value` are legacy root-chat attributes with no reader
+    # left in the native Console path (removed under TASK-650) and setting
+    # them here was a no-op, so the unconfigured provider fell through to
+    # the `"llama_cpp"` hardcoded fallback instead of this test's intended
+    # `"local_llamacpp"` selection.
+    app.app_config["chat_defaults"] = {
+        "provider": "local_llamacpp",
+        "model": "runtime-model",
+    }
     app.app_config["api_settings"] = {
         "local_llamacpp": {
             "api_url": "http://127.0.0.1:9099/v1/chat/completions",
@@ -1795,8 +1828,17 @@ async def test_console_native_send_preserves_expanded_payload_whitespace():
 async def test_console_configured_model_reaches_gateway_when_ui_model_is_unset():
     gateway = SelectionCapturingGateway()
     app = _build_test_app()
-    app.chat_api_provider_value = "local_llamacpp"
-    app.chat_api_model_value = None
+    # `chat_defaults.provider` (read by `_effective_console_provider_model`
+    # at session-creation time), not `_console_control_provider` set after
+    # mount: the active session's settings -- and so its provider -- are
+    # snapshotted once when the session is first created, and a later
+    # `_console_control_provider` assignment only relabels the legacy
+    # compact-bar display; it never re-derives the already-created session's
+    # settings. Setting it post-mount left the session on the hardcoded
+    # `"llama_cpp"` fallback instead of this test's intended
+    # `"local_llamacpp"`, so `api_settings.llama_cpp` (never configured
+    # here) produced no model and the send stayed blocked.
+    app.app_config["chat_defaults"] = {"provider": "local_llamacpp"}
     app.console_provider_gateway_factory = lambda: gateway
     app.app_config["api_settings"] = {
         "local_llamacpp": {
@@ -1809,9 +1851,6 @@ async def test_console_configured_model_reaches_gateway_when_ui_model_is_unset()
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        console._console_control_provider = "local_llamacpp"
-        console._console_control_model = None
-        console._sync_console_control_bar()
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -7319,6 +7358,7 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     screen._console_chat_store = store
     screen._console_visible_draft_session_id = None
     screen._console_composer_or_none = lambda: None
+    screen._task_resume_state = TaskResumeState()
     return screen
 
 
