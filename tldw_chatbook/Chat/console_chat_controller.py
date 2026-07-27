@@ -3770,6 +3770,37 @@ class ConsoleChatController:
         citation_repair_session: ConsoleCitationRepairSession | None = None,
     ) -> ConsoleSubmitResult:
         try:
+            return await self._stream_assistant_response_inner(
+                resolution=resolution,
+                provider_messages=provider_messages,
+                assistant_message_id=assistant_message_id,
+                prepare_retry=prepare_retry,
+                variant_mode=variant_mode,
+                prefill=prefill,
+                prefill_from_one_shot=prefill_from_one_shot,
+                skill_bindings=skill_bindings,
+                skill_bundle_block=skill_bundle_block,
+                citation_repair_session=citation_repair_session,
+            )
+        finally:
+            if citation_repair_session is not None:
+                citation_repair_session.clear_governed_state()
+
+    async def _stream_assistant_response_inner(
+        self,
+        *,
+        resolution: Any,
+        provider_messages: list[dict[str, str]],
+        assistant_message_id: str,
+        prepare_retry: bool = False,
+        variant_mode: bool = False,
+        prefill: str | None = None,
+        prefill_from_one_shot: bool = False,
+        skill_bindings: tuple[str, ...] = (),
+        skill_bundle_block: str = "",
+        citation_repair_session: ConsoleCitationRepairSession | None = None,
+    ) -> ConsoleSubmitResult:
+        try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
@@ -3861,8 +3892,6 @@ class ConsoleChatController:
                 stream_signals=stream_signals,
             )
         finally:
-            if citation_repair_session is not None:
-                citation_repair_session.clear_governed_state()
             if (
                 self._active_stream_task is active_task
                 and self._active_assistant_message_id == assistant_message_id

@@ -453,7 +453,7 @@ def _privacy_repair_contract() -> CitationRepairContract:
         evidence_context=(
             f"[S1] {_REPAIR_SOURCE_IDENTITY_SENTINEL} "
             f"{_REPAIR_LOCATOR_SENTINEL}\n"
-            f"{_REPAIR_EVIDENCE_SENTINEL} {_REPAIR_FULL_PROMPT_SENTINEL}"
+            f"{_REPAIR_EVIDENCE_SENTINEL}"
         ),
     )
 
@@ -1240,8 +1240,37 @@ async def test_citation_repair_direct_initial_session_defers_without_persistence
 
 
 @pytest.mark.asyncio
-async def test_citation_repair_cleaned_session_contains_no_governed_text() -> None:
+async def test_citation_repair_cleaned_session_contains_no_governed_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     contract = _privacy_repair_contract()
+    real_build_messages = controller_module.build_citation_repair_messages
+    exact_repair_messages = real_build_messages(
+        contract,
+        _REPAIR_INITIAL_BODY_SENTINEL,
+    )
+    assert exact_repair_messages is not None
+    exact_repair_messages = [dict(message) for message in exact_repair_messages]
+    exact_repair_messages[0]["content"] += f"\n{_REPAIR_FULL_PROMPT_SENTINEL}"
+    assert _REPAIR_FULL_PROMPT_SENTINEL not in contract.evidence_context
+    assert _REPAIR_FULL_PROMPT_SENTINEL not in _REPAIR_INITIAL_BODY_SENTINEL
+    assert _REPAIR_FULL_PROMPT_SENTINEL not in _REPAIR_REPAIRED_BODY_SENTINEL
+    assert _REPAIR_FULL_PROMPT_SENTINEL in repr(exact_repair_messages)
+
+    def build_exact_messages(
+        received_contract: CitationRepairContract,
+        initial_answer: str,
+    ) -> list[dict[str, str]]:
+        assert received_contract is contract
+        assert initial_answer == _REPAIR_INITIAL_BODY_SENTINEL
+        return [dict(message) for message in exact_repair_messages]
+
+    monkeypatch.setattr(
+        controller_module,
+        "build_citation_repair_messages",
+        build_exact_messages,
+    )
     persistence = _ReadyCitationPersistence()
     store = _recording_citation_store(persistence)
     gateway = _ScriptedCitationGateway(
@@ -1267,23 +1296,119 @@ async def test_citation_repair_cleaned_session_contains_no_governed_text() -> No
         rag_capture_provider=capture,
         agent_runtime_enabled=False,
     )
-    expected_repair_messages = build_citation_repair_messages(
-        contract,
-        _REPAIR_INITIAL_BODY_SENTINEL,
+    loguru_records: list[object] = []
+    sink_id = loguru_logger.add(
+        loguru_records.append,
+        level="DEBUG",
+        format="{message}",
     )
-    assert expected_repair_messages is not None
-    assert _REPAIR_FULL_PROMPT_SENTINEL in repr(expected_repair_messages)
-
-    await controller.submit_draft("question")
+    caplog.set_level(logging.DEBUG)
+    try:
+        result = await controller.submit_draft("question")
+    finally:
+        loguru_logger.remove(sink_id)
 
     assert len(retained_sessions) == 1
-    assert gateway.calls[1]["messages"] == expected_repair_messages
+    assert gateway.calls[1]["messages"] == exact_repair_messages
     cleaned_session = retained_sessions[0]
     assert cleaned_session is not None
     assert cleaned_session.contract is None
     assert cleaned_session.resolution is None
-    _assert_content_free_repair_state(cleaned_session)
+    assistant = _assistant(store)
+    assert result.visible_copy == assistant.content == _REPAIR_INITIAL_BODY_SENTINEL
+    _assert_content_free_repair_state(
+        caplog.text,
+        loguru_records,
+        *(call["signals"] for call in gateway.calls),
+        assistant.citation_presentation,
+        cleaned_session,
+        _sanitize_selected_persistence(
+            persistence,
+            _REPAIR_INITIAL_BODY_SENTINEL,
+        ),
+        controller.run_state,
+        controller.run_state_history,
+        store._terminal_citation_finalizers,
+        store._provisional_terminal_selection_ids,
+        store._terminal_persistence_deferred_ids,
+    )
     assert controller._active_citation_repair_session is None
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_missing_owner_privacy_scrubs_session() -> None:
+    store = _recording_citation_store()
+    gateway = _ScriptedCitationGateway(())
+    repair_session = controller_module.ConsoleCitationRepairSession(
+        contract=_privacy_repair_contract(),
+        resolution=gateway.resolution,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    result = await controller._stream_assistant_response(
+        resolution=gateway.resolution,
+        provider_messages=[],
+        assistant_message_id="missing-assistant",
+        citation_repair_session=repair_session,
+    )
+
+    assert result.visible_copy == "Session closed."
+    assert repair_session.contract is None
+    assert repair_session.resolution is None
+
+
+@pytest.mark.parametrize("failure_seam", ("compaction", "window-bound"))
+@pytest.mark.asyncio
+async def test_citation_repair_predispatch_exception_privacy_scrubs_session(
+    failure_seam: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _recording_citation_store()
+    session_id = store.active_session_id
+    assert session_id is not None
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        defer_terminal_persistence=True,
+    )
+    gateway = _ScriptedCitationGateway(())
+    repair_session = controller_module.ConsoleCitationRepairSession(
+        contract=_privacy_repair_contract(),
+        resolution=gateway.resolution,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError(_REPAIR_PROVIDER_EXCEPTION_SENTINEL)
+
+    if failure_seam == "compaction":
+        monkeypatch.setattr(
+            controller,
+            "_apply_context_summary_compaction",
+            fail,
+        )
+    else:
+        monkeypatch.setattr(controller_module, "bound_messages_to_window", fail)
+
+    with pytest.raises(RuntimeError, match=_REPAIR_PROVIDER_EXCEPTION_SENTINEL):
+        await controller._stream_assistant_response(
+            resolution=gateway.resolution,
+            provider_messages=[{"role": "user", "content": "question"}],
+            assistant_message_id=assistant.id,
+            citation_repair_session=repair_session,
+        )
+
+    assert repair_session.contract is None
+    assert repair_session.resolution is None
 
 
 @pytest.mark.parametrize(
@@ -1357,7 +1482,7 @@ async def test_citation_repair_failure_privacy_sentinels_are_confined_to_selecte
     )
     expected_repair_messages = build_citation_repair_messages(contract, initial_body)
     assert expected_repair_messages is not None
-    assert _REPAIR_FULL_PROMPT_SENTINEL in repr(expected_repair_messages)
+    assert _REPAIR_FULL_PROMPT_SENTINEL not in repr(expected_repair_messages)
     loguru_records: list[object] = []
     sink_id = loguru_logger.add(
         loguru_records.append,
@@ -2794,15 +2919,18 @@ async def test_citation_repair_stop_after_selection_commit_is_noop():
 
 
 @pytest.mark.asyncio
-async def test_citation_repair_shutdown_during_collection_has_no_user_stop_row():
+async def test_citation_repair_shutdown_during_collection_privacy_has_no_user_stop_row():
     controller, store, gateway, _bridge, initial_body, _repaired_body = (
         _controlled_citation_repair(
             agent=False,
+            contract=_privacy_repair_contract(),
             pause_before_first_chunk=True,
         )
     )
     task = asyncio.create_task(controller.submit_draft("question"))
     await gateway.repair_started.wait()
+    retained_session = controller._active_citation_repair_session
+    assert retained_session is not None
 
     await controller.shutdown()
     await task
@@ -2815,6 +2943,8 @@ async def test_citation_repair_shutdown_during_collection_has_no_user_stop_row()
         message.role is not ConsoleMessageRole.SYSTEM
         for message in store.messages_for_session(store.active_session_id)
     )
+    assert retained_session.contract is None
+    assert retained_session.resolution is None
 
 
 @pytest.mark.asyncio
