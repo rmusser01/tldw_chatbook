@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import multiprocessing
 import sqlite3
 import threading
@@ -789,6 +790,25 @@ def test_private_clock_and_uuid_seams_remain_constructor_pure(
     assert not database_path.parent.exists()
 
 
+def test_profile_mutation_generation_parameters_are_keyword_only() -> None:
+    create_generation = inspect.signature(
+        profile_repository.TTSProfileRepository.create_profile
+    ).parameters["expected_generation"]
+    update_generation = inspect.signature(
+        profile_repository.TTSProfileRepository.update_profile
+    ).parameters["expected_generation"]
+    delete_generation = inspect.signature(
+        profile_repository.TTSProfileRepository.delete_profile
+    ).parameters["expected_generation"]
+
+    assert create_generation.kind is inspect.Parameter.KEYWORD_ONLY
+    assert create_generation.default is None
+    assert update_generation.kind is inspect.Parameter.KEYWORD_ONLY
+    assert update_generation.default is inspect.Parameter.empty
+    assert delete_generation.kind is inspect.Parameter.KEYWORD_ONLY
+    assert delete_generation.default is inspect.Parameter.empty
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("method_name", "args", "kwargs", "secret"),
@@ -1029,6 +1049,35 @@ async def test_loaded_profile_mutations_reject_missing_expected_generation(
     _assert_safe_error(caught.value, "operation_failed")
     assert submitted is False
     assert not tmp_path.joinpath("must-not-exist").exists()
+
+
+@pytest.mark.asyncio
+async def test_create_accepts_current_expected_generation(
+    tmp_path: Path,
+) -> None:
+    async with _opened_repository(
+        tmp_path / "current-create-generation.sqlite3"
+    ) as repository:
+        current = await repository.create_profile(
+            _draft("Current"),
+            profile_id=CALLER_ID,
+        )
+
+        duplicate = await repository.create_profile(
+            _draft("Duplicate"),
+            expected_generation=current.generation,
+        )
+
+        assert duplicate.generation == current.generation
+        assert duplicate.value.profile_id == GENERATED_ID
+        assert duplicate.value.revision == 1
+        page = await repository.list_profiles()
+        assert page.generation == current.generation
+        assert page.value.total == 2
+        assert {profile.profile_id for profile in page.value.profiles} == {
+            current.value.profile_id,
+            duplicate.value.profile_id,
+        }
 
 
 @pytest.mark.asyncio

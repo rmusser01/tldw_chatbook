@@ -1572,7 +1572,7 @@ async def test_cancelled_open_settles_worker_and_publishes_consistent_state(
 
 
 @pytest.mark.asyncio
-async def test_normal_submission_rejects_every_non_open_state(
+async def test_normal_submission_checks_state_before_mismatched_expected_generation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1583,27 +1583,39 @@ async def test_normal_submission_rejects_every_non_open_state(
     repository = module.TTSProfileRepository(tmp_path / "profiles.sqlite3")
 
     with pytest.raises(ProfileRepositoryError) as caught:
-        await repository._submit_operation(lambda _connection: "closed")
+        await repository._submit_operation(
+            lambda _connection: "closed",
+            expected_generation=999,
+        )
     _assert_safe_error(caught.value, "closed")
 
     await repository.open()
     with repository._state_lock:
         repository._state = ProfileRepositoryState.RESTORING
     with pytest.raises(ProfileRepositoryError) as caught:
-        await repository._submit_operation(lambda _connection: "restoring")
+        await repository._submit_operation(
+            lambda _connection: "restoring",
+            expected_generation=999,
+        )
     _assert_safe_error(caught.value, "restoring")
 
     with repository._state_lock:
         repository._state = ProfileRepositoryState.UNAVAILABLE
     with pytest.raises(ProfileRepositoryError) as caught:
-        await repository._submit_operation(lambda _connection: "unavailable")
+        await repository._submit_operation(
+            lambda _connection: "unavailable",
+            expected_generation=999,
+        )
     _assert_safe_error(caught.value, "unavailable")
 
     with repository._state_lock:
         repository._state = ProfileRepositoryState.OPEN
     await repository.close()
     with pytest.raises(ProfileRepositoryError) as caught:
-        await repository._submit_operation(lambda _connection: "terminal")
+        await repository._submit_operation(
+            lambda _connection: "terminal",
+            expected_generation=999,
+        )
     _assert_safe_error(caught.value, "terminal")
 
 
@@ -2614,9 +2626,6 @@ async def test_pre_restore_loaded_mutations_reject_same_identity_replacement_bef
                 )
             ),
         ]
-        await asyncio.sleep(0)
-        if any(task.done() for task in mutation_tasks):
-            await asyncio.gather(*mutation_tasks)
         await asyncio.wait_for(all_paused.wait(), timeout=1.0)
 
         restored = await repository.restore_from(candidate)
