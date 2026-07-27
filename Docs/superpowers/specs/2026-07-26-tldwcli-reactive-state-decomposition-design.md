@@ -1,11 +1,13 @@
 # TldwCli Reactive State Decomposition Design
 
 Date: 2026-07-26
-Status: Independently reviewed; pending user approval
+Status: User-approved for planning; implementation not started
 ADR:
 [ADR-026](../../../backlog/decisions/026-application-session-state-ownership.md),
 [ADR-006](../../../backlog/decisions/006-provider-aware-generation-settings.md),
-[ADR-011](../../../backlog/decisions/011-chatbook-workbench-ui-system.md)
+[ADR-011](../../../backlog/decisions/011-chatbook-workbench-ui-system.md),
+[ADR-022](../../../backlog/decisions/022-local-private-data-boundary.md),
+[ADR-025](../../../backlog/decisions/025-immutable-installed-distribution-assets.md)
 
 ## Summary
 
@@ -29,7 +31,8 @@ The tranche also repairs four contracts exposed by the inventory:
 
 1. the unused root button-dispatch map is deleted only after supported LLM
    action buttons are registered at their production destination and the
-   unsupported custom Transformers server-launch block is removed;
+   unsupported custom Transformers server-launch block is removed while the
+   retained model list/download output is rehomed with those controls;
 2. Media messages stop at `MediaWindow`, preventing the destination and the
    legacy app handler from both applying one mutation;
 3. command-palette provider changes become an explicit Console intent instead
@@ -445,8 +448,9 @@ After live destination routing exists, delete:
 - `MediaScreen.save_state()` continues reading the actual mounted
   `MediaWindow`; no duplicate screen or app fields are introduced.
 - A stale async detail/search completion may update durable/runtime cache
-  cleanup as required, but may update visible selection only for the same
-  window generation and selected record.
+  cleanup as required, but may update visible selection/list state only for
+  the same local generation, active media type, search tuple, and selected
+  record.
 
 One real event must produce exactly one scoped-service mutation and one
 destination refresh.
@@ -533,17 +537,23 @@ The fallback context contains only values the success handler actually reads:
 - `overwrite_db`.
 
 It does not retain the mutable request model. Mutable collections are detached
-into immutable primitives when the worker is launched. The custom prompt and
-the enclosing context are excluded from `repr`; the response is also excluded
-because it can contain processed content. The envelope's default
-representation therefore exposes neither response nor fallback payload.
+into immutable primitives when the worker is launched. Every fallback field
+is excluded from the context's `repr`, and the enclosing context and response
+are excluded from the envelope's `repr`. The response can contain processed
+content. Default representations therefore expose neither response nor
+fallback payload.
 
 The success handler validates and unwraps the envelope and uses those exact
-fallback fields. It never reads `app._last_tldw_api_request_context`.
+fallback fields before any presentation lookup. Valid durable ingestion
+continues when the originating screen has been unmounted; loading, button, and
+status settlement is best-effort presentation against the matching mounted
+owner. It never reads `app._last_tldw_api_request_context`.
 
-The envelope is created from the worker closure's detached inputs. Two
-concurrent workers therefore cannot exchange request options. Failure and
-cancellation do not leave shared context to be consumed by a later worker.
+The production submit path calls one module-level, app-independent async
+executor with explicit client, media type, request, local-file, and detached
+fallback inputs. Two concurrent workers therefore cannot exchange request
+options. Failure and public Textual-worker cancellation do not leave shared
+context to be consumed by a later worker.
 
 The envelope and context contain no credentials, raw request headers, tokens,
 or filesystem secrets. Diagnostics identify only the operation, media type,
@@ -564,7 +574,8 @@ reactives or exposed by the same ownership trace.
 | `_conv_char_search_timer`, `_ccp_conversation_search_generation` | Delete with Personas/CCP slice when their old handler path is removed | Legacy CCP search lifecycle. |
 | `_conversation_search_timer`, `_chat_sidebar_prompt_search_timer`, `_media_sidebar_search_timer` | Delete with legacy Chat slice | Legacy sidebar debounce state. |
 | `_notes_search_timer` | Delete with Notes slice if no non-legacy reader remains | Library owns current Notes search. |
-| `_media_search_timers`, `_media_search_generation`, `media_search_current_page`, `media_search_total_pages`, `current_sidebar_media_item`, `_initial_media_view` | Delete with Media/legacy Chat slices when their old emitters are removed | Duplicate legacy search/pagination/sidebar state; live Media owns its workers and list page. |
+| `media_search_current_page`, `media_search_total_pages`, `current_sidebar_media_item` | Delete in TASK-650 with the legacy Chat slice | These fields are exclusive to the dormant Chat media sidebar and its handlers. |
+| `_media_search_timers`, `_media_search_generation`, `_initial_media_view` | Delete in TASK-652 with the Media slice | These fields back the duplicate app-root Media search/navigation path; live `MediaWindow` owns current searches and view state. |
 | `_initial_search_sub_tab_view`, `_initial_ingest_view`, `_initial_tools_settings_view`, `_initial_llm_view` | Delete with their root navigation slices | Legacy initializer defaults. |
 | `_last_tldw_api_request_context` | Replace with immutable worker result envelope | Shared last-request state can cross-contaminate concurrent completions. |
 | `TldwCli.query_one()` fallback into the active screen | Explicitly excluded; requires a separate handler/lifecycle decomposition | It is a broad coupling seam, but process managers and legacy non-state handlers still depend on it. Removing it here would expand beyond the verified state slices. New code in this tranche must not add callers. |
@@ -765,20 +776,37 @@ The implementation plans may split a slice only if the resulting tasks are
 independently valuable and do not reference future task IDs. They may not
 combine service lifecycle or broad query-boundary removal into these slices.
 
+### Approved task and plan mapping
+
+| Slice | Backlog task | Implementation plan | Dependencies |
+| ---: | --- | --- | --- |
+| 1 | TASK-647 | `Docs/superpowers/plans/2026-07-26-task-647-llm-destination-actions.md` | None |
+| 2 | TASK-648 | `Docs/superpowers/plans/2026-07-26-task-648-provider-selection-ownership.md` | TASK-647 |
+| 3 | TASK-649 | `Docs/superpowers/plans/2026-07-26-task-649-retire-legacy-chat-composition.md` | TASK-648 |
+| 4 | TASK-650 | `Docs/superpowers/plans/2026-07-26-task-650-remove-legacy-chat-root-state.md` | TASK-648, TASK-649 |
+| 5 | TASK-651 | `Docs/superpowers/plans/2026-07-26-task-651-remove-legacy-ccp-prompt-root-state.md` | TASK-647 |
+| 6 | TASK-652 | `Docs/superpowers/plans/2026-07-26-task-652-media-destination-state.md` | TASK-647 |
+| 7 | TASK-653 | `Docs/superpowers/plans/2026-07-26-task-653-retired-destination-root-state.md` | TASK-647 |
+| 8 | TASK-654 | `Docs/superpowers/plans/2026-07-26-task-654-tldw-api-result-envelope.md` | TASK-647 |
+| 9 | TASK-655 | `Docs/superpowers/plans/2026-07-26-task-655-reactive-ownership-closeout.md` | TASK-647–654 |
+
 ## ADR Check
 
 ADR required: no
 
 ADR path:
 `backlog/decisions/026-application-session-state-ownership.md`,
-`backlog/decisions/006-provider-aware-generation-settings.md`, and
-`backlog/decisions/011-chatbook-workbench-ui-system.md`
+`backlog/decisions/006-provider-aware-generation-settings.md`,
+`backlog/decisions/011-chatbook-workbench-ui-system.md`,
+`backlog/decisions/022-local-private-data-boundary.md`, and
+`backlog/decisions/025-immutable-installed-distribution-assets.md`
 
 Reason: This specification directly implements the accepted decisions that
 destination screens own domain/view state, Settings owns persisted generation
 defaults, Console owns active session settings, and `TldwCli` coordinates
-narrow owners without a root state object. It does not change those decisions.
-Accepted ADRs remain immutable.
+narrow owners without a root state object. ADR-022 supplies the payload-safe
+diagnostic boundary and ADR-025 supplies the installed-artifact gate. This
+specification does not change those decisions. Accepted ADRs remain immutable.
 
 ## Acceptance Boundary
 
