@@ -207,6 +207,25 @@ async def test_native_console_owns_rails_sessions_and_snapshot_without_root_mirr
             assert chat._current_console_rail_state().left_open is True
             assert chat._current_console_rail_state().right_open is True
 
+            install_payload = {
+                "url": "https://github.com/example/skill",
+                "timeout_seconds": 120.0,
+            }
+            script_payload = {
+                "request_id": "task-650-script",
+                "skill_name": "example",
+            }
+            chat._set_console_pending_skill_install(install_payload)
+            assert chat._task_resume_state.pending_skill_install == install_payload
+            chat._set_console_pending_skill_script(script_payload)
+            assert chat._task_resume_state.pending_skill_install == install_payload
+            assert chat._task_resume_state.pending_skill_script == script_payload
+            chat._set_console_pending_skill_install(None)
+            assert chat._task_resume_state.pending_skill_install is None
+            assert chat._task_resume_state.pending_skill_script == script_payload
+            chat._set_console_pending_skill_script(None)
+            assert chat._task_resume_state.pending_skill_script is None
+
             await pilot.press("ctrl+t")
             await _wait_for_session_count(chat, pilot, 2)
             assert store.active_session_id != initial_session_id
