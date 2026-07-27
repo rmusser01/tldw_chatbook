@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dis
 import inspect
 import multiprocessing
@@ -16,7 +17,10 @@ import pytest
 
 import tldw_chatbook.TTS.profile_store_lock as lock_module
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
+from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
+from tldw_chatbook.TTS.profile_schema import open_profile_store
 from tldw_chatbook.TTS.profile_store_lock import ProfileStoreLease, ProfileStoreLockMode
+from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
 
 
 class _IntSubclass(int):
@@ -2249,5 +2253,72 @@ def test_spawned_shared_lease_blocks_parent_exclusive(tmp_path: Path) -> None:
                 process.join(5.0)
         child_connection.close()
         parent_connection.close()
+
+    assert process.exitcode == 0
+
+
+@pytest.mark.asyncio
+async def test_spawned_shared_lease_bounds_restore_before_stage_and_rebinds_open(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "profiles.sqlite3"
+    candidate = tmp_path / "candidate.sqlite3"
+    candidate_connection = open_profile_store(candidate)
+    candidate_connection.close()
+    repository = TTSProfileRepository(database_path)
+    await repository.open()
+    context = multiprocessing.get_context("spawn")
+    parent_connection, child_connection = context.Pipe()
+    process = context.Process(
+        target=_spawned_lease_holder,
+        args=(str(database_path), child_connection),
+    )
+    started = False
+    release_sent = False
+    try:
+        process.start()
+        started = True
+        child_connection.close()
+        ready = await asyncio.to_thread(parent_connection.poll, 5.0)
+        assert ready, "child did not report ready"
+        assert parent_connection.recv() == ("ready", None)
+
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.restore_from(candidate, timeout_seconds=0.1)
+
+        _assert_safe_repository_error(
+            caught.value,
+            "lock_timeout",
+            str(database_path),
+            str(candidate),
+        )
+        assert repository.state is ProfileRepositoryState.OPEN
+        assert repository.generation == 2
+        assert repository._connection is not None
+        assert repository._lease is not None
+        assert repository._lease.mode is ProfileStoreLockMode.SHARED
+        assert not tuple(tmp_path.glob("*.restore-stage.sqlite3"))
+        assert not tuple(tmp_path.glob("*.pre-restore-*.recovery.sqlite3"))
+        assert (await repository.list_profiles()).value.total == 0
+
+        parent_connection.send("release")
+        release_sent = True
+        released = await asyncio.to_thread(parent_connection.poll, 5.0)
+        assert released, "child did not report release"
+        assert parent_connection.recv() == ("released", None)
+    finally:
+        if started and process.is_alive() and not release_sent:
+            try:
+                parent_connection.send("release")
+            except (BrokenPipeError, EOFError, OSError):
+                pass
+        if started:
+            await asyncio.to_thread(process.join, 5.0)
+            if process.is_alive():
+                process.terminate()
+                await asyncio.to_thread(process.join, 5.0)
+        child_connection.close()
+        parent_connection.close()
+        await repository.close()
 
     assert process.exitcode == 0

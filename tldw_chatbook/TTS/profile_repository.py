@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import math
+import os
 import sqlite3
+import stat
 import threading
+import tempfile
+import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -26,6 +31,7 @@ from tldw_chatbook.TTS.profile_schema import (
     encode_profile,
     encode_uuid,
     open_profile_store,
+    validate_profile_candidate,
 )
 from tldw_chatbook.TTS.profile_store_lock import (
     ProfileStoreLease,
@@ -35,7 +41,9 @@ from tldw_chatbook.TTS.profile_types import (
     AssignedTTSProfileSnapshot,
     CharacterRef,
     CharacterTTSAssignment,
+    ProfileBackupReceipt,
     ProfileRepositoryState,
+    ProfileRestoreReceipt,
     ProfileStoreResult,
     TTSGenerationProfile,
     TTSProfileDraft,
@@ -51,12 +59,15 @@ _MAX_NORMALIZED_SEARCH_CHARACTERS = 512
 _MAX_NORMALIZED_SEARCH_BYTES = 2_048
 _UNSAFE_SEARCH_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _unicode_ord = ord
+_monotonic = time.monotonic
 # SQLite extended result codes are ABI-stable.  Keeping the exact values here
 # also supports Python builds that do not expose every named sqlite3 constant.
 _SQLITE_CONSTRAINT_FOREIGNKEY = 787
 _SQLITE_CONSTRAINT_PRIMARYKEY = 1_555
 _SQLITE_CONSTRAINT_TRIGGER = 1_811
 _SQLITE_CONSTRAINT_UNIQUE = 2_067
+_STORE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_RESTORE_REBIND_TIMEOUT_SECONDS = 5.0
 _TransactionOperation = Literal[
     "create",
     "read",
@@ -117,6 +128,22 @@ class _PersistedAssignment:
     assignment: CharacterTTSAssignment
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class _DestinationSnapshot:
+    """One canonical backup destination admitted before worker submission."""
+
+    path: Path
+    parent_identity: tuple[int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _CandidateSnapshot:
+    """One exact standalone restore candidate and its admission identity."""
+
+    path: Path
+    identity: tuple[int, int, int, int, int, int]
 
 
 def _repository_error(code: str) -> ProfileRepositoryError:
@@ -260,6 +287,201 @@ def _validate_page_offset(value: object) -> int:
     if type(value) is not int or value < 0:
         raise _repository_error("operation_failed")
     return cast(int, value)
+
+
+def _stat_identity(value: os.stat_result) -> tuple[int, int]:
+    return (value.st_dev, value.st_ino)
+
+
+def _full_stat_identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _reserved_store_paths(database_path: Path) -> tuple[Path, ...]:
+    resolved = database_path.resolve(strict=False)
+    return (
+        resolved,
+        resolved.with_name(f"{resolved.name}.lock"),
+        *(
+            resolved.with_name(f"{resolved.name}{suffix}")
+            for suffix in _STORE_SIDECAR_SUFFIXES
+        ),
+    )
+
+
+def _validate_backup_destination(
+    destination: object,
+    database_path: Path,
+) -> _DestinationSnapshot:
+    """Validate and canonicalize one safe publication target."""
+
+    if type(destination) is not _PATH_TYPE:
+        raise _repository_error("backup_failed")
+
+    validation_error: BaseException | None = None
+    snapshot: _DestinationSnapshot | None = None
+    try:
+        exact_destination = cast(Path, destination)
+        if os.path.lexists(exact_destination) and exact_destination.is_symlink():
+            raise ValueError
+        resolved_destination = exact_destination.resolve(strict=False)
+        parent = resolved_destination.parent.resolve(strict=True)
+        parent_state = parent.stat()
+        if not stat.S_ISDIR(parent_state.st_mode):
+            raise ValueError
+
+        reserved = _reserved_store_paths(database_path)
+        if resolved_destination in reserved:
+            raise ValueError
+        if os.path.lexists(resolved_destination):
+            destination_state = resolved_destination.stat()
+            if not stat.S_ISREG(destination_state.st_mode):
+                raise ValueError
+            destination_identity = _stat_identity(destination_state)
+            for reserved_path in reserved:
+                if not os.path.lexists(reserved_path):
+                    continue
+                if _stat_identity(reserved_path.stat()) == destination_identity:
+                    raise ValueError
+        snapshot = _DestinationSnapshot(
+            path=resolved_destination,
+            parent_identity=_stat_identity(parent_state),
+        )
+    except BaseException as error:
+        validation_error = error
+
+    if validation_error is not None:
+        if not isinstance(validation_error, Exception):
+            raise validation_error
+        raise _repository_error("backup_failed")
+    assert snapshot is not None
+    return snapshot
+
+
+def _validate_restore_timeout(value: object) -> float:
+    if type(value) not in (int, float):
+        raise _repository_error("restore_failed")
+    try:
+        normalized = float(cast(int | float, value))
+    except Exception:
+        raise _repository_error("restore_failed") from None
+    if not math.isfinite(normalized) or normalized <= 0:
+        raise _repository_error("restore_failed")
+    return normalized
+
+
+def _validate_restore_candidate_path(
+    candidate: object,
+    database_path: Path,
+) -> _CandidateSnapshot:
+    """Validate one exact non-store regular-file identity without mutation."""
+
+    if type(candidate) is not _PATH_TYPE:
+        raise _repository_error("restore_failed")
+
+    validation_error: BaseException | None = None
+    snapshot: _CandidateSnapshot | None = None
+    try:
+        exact_candidate = cast(Path, candidate)
+        if exact_candidate.is_symlink():
+            raise ValueError
+        resolved_candidate = exact_candidate.resolve(strict=True)
+        candidate_state = resolved_candidate.stat()
+        if not stat.S_ISREG(candidate_state.st_mode):
+            raise ValueError
+        reserved = _reserved_store_paths(database_path)
+        if resolved_candidate in reserved:
+            raise ValueError
+        candidate_identity = _stat_identity(candidate_state)
+        for reserved_path in reserved:
+            if not os.path.lexists(reserved_path):
+                continue
+            if _stat_identity(reserved_path.stat()) == candidate_identity:
+                raise ValueError
+        snapshot = _CandidateSnapshot(
+            path=resolved_candidate,
+            identity=_full_stat_identity(candidate_state),
+        )
+    except BaseException as error:
+        validation_error = error
+
+    if validation_error is not None:
+        if not isinstance(validation_error, Exception):
+            raise validation_error
+        raise _repository_error("restore_failed")
+    assert snapshot is not None
+    return snapshot
+
+
+def _candidate_is_unchanged(candidate: _CandidateSnapshot) -> bool:
+    try:
+        return (
+            not candidate.path.is_symlink()
+            and _full_stat_identity(candidate.path.stat()) == candidate.identity
+        )
+    except Exception:
+        return False
+
+
+def _read_monotonic() -> float:
+    timing_error: BaseException | None = None
+    value: object = None
+    try:
+        value = _monotonic()
+    except BaseException as error:
+        timing_error = error
+    if timing_error is not None:
+        if not isinstance(timing_error, Exception):
+            raise timing_error
+        raise _repository_error("restore_failed")
+    if type(value) not in (int, float):
+        raise _repository_error("restore_failed")
+    normalized = float(cast(int | float, value))
+    if not math.isfinite(normalized):
+        raise _repository_error("restore_failed")
+    return normalized
+
+
+def _remaining_seconds(deadline: float) -> float:
+    remaining = deadline - _read_monotonic()
+    if not math.isfinite(remaining):
+        raise _repository_error("restore_failed")
+    return remaining
+
+
+def _unlink_path_if_present(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _fsync_file(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name != "posix":
+        return
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _escape_like_literal(value: str) -> str:
@@ -996,6 +1218,723 @@ class TTSProfileRepository:
                 validated_character_ref,
             )
         )
+
+    async def backup_to(
+        self,
+        destination: Path,
+    ) -> ProfileStoreResult[ProfileBackupReceipt]:
+        """Publish one validated SQLite online-backup snapshot atomically.
+
+        Args:
+            destination: Exact non-store path for the completed snapshot.
+
+        Returns:
+            The active generation and safe backup metadata.
+
+        Raises:
+            ProfileRepositoryError: If path admission, state, backup,
+                validation, or atomic publication fails safely.
+            BaseException: A caller control-flow signal preserved by the
+                serialized operation lane.
+        """
+
+        destination_snapshot = _validate_backup_destination(
+            destination,
+            self._database_path,
+        )
+        return await self._submit_operation(
+            lambda connection: self._worker_backup_to(
+                connection,
+                destination_snapshot,
+            )
+        )
+
+    def _worker_backup_to(
+        self,
+        connection: sqlite3.Connection,
+        destination: _DestinationSnapshot,
+    ) -> ProfileBackupReceipt:
+        """Create and atomically publish one worker-owned online backup."""
+
+        temporary_path: Path | None = None
+        destination_connection: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        cleanup_errors: list[BaseException] = []
+        published = False
+        receipt: ProfileBackupReceipt | None = None
+        try:
+            # Validate the clock before any destination publication.
+            created_at = self._clock()
+            ProfileBackupReceipt(created_at=created_at, byte_count=0)
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{destination.path.name}.",
+                suffix=".backup",
+                dir=destination.path.parent,
+            )
+            temporary_path = Path(temporary_name)
+            os.close(descriptor)
+            destination_connection = sqlite3.connect(
+                temporary_path,
+                isolation_level=None,
+            )
+            self._worker_online_backup(connection, destination_connection)
+            destination_connection.close()
+            destination_connection = None
+            self._worker_validate_standalone_snapshot(temporary_path)
+            temporary_state = temporary_path.stat()
+            if not stat.S_ISREG(temporary_state.st_mode):
+                raise _repository_error("backup_failed")
+            receipt = ProfileBackupReceipt(
+                created_at=created_at,
+                byte_count=temporary_state.st_size,
+            )
+
+            current_destination = _validate_backup_destination(
+                destination.path,
+                self._database_path,
+            )
+            if current_destination.parent_identity != destination.parent_identity:
+                raise _repository_error("backup_failed")
+            _fsync_file(temporary_path)
+            os.replace(temporary_path, destination.path)
+            published = True
+            _fsync_directory(destination.path.parent)
+        except BaseException as error:
+            body_error = error
+
+        if destination_connection is not None:
+            try:
+                destination_connection.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+        if temporary_path is not None:
+            if not published:
+                try:
+                    _unlink_path_if_present(temporary_path)
+                except BaseException as error:
+                    cleanup_errors.append(error)
+            for suffix in _STORE_SIDECAR_SUFFIXES:
+                try:
+                    _unlink_path_if_present(
+                        temporary_path.with_name(f"{temporary_path.name}{suffix}")
+                    )
+                except BaseException as error:
+                    cleanup_errors.append(error)
+
+        if body_error is not None or cleanup_errors:
+            for candidate_error in (body_error, *cleanup_errors):
+                if candidate_error is not None and not isinstance(
+                    candidate_error,
+                    Exception,
+                ):
+                    raise candidate_error
+            raise _repository_error("backup_failed")
+        assert receipt is not None
+        return receipt
+
+    def _worker_online_backup(
+        self,
+        source: sqlite3.Connection,
+        destination: sqlite3.Connection,
+    ) -> None:
+        """Copy one complete SQLite snapshot through the online-backup API."""
+
+        source.backup(destination)
+
+    def _worker_require_full_integrity(
+        self,
+        connection: sqlite3.Connection,
+    ) -> None:
+        """Require SQLite's full integrity check on one worker-owned handle."""
+
+        try:
+            results = [row[0] for row in connection.execute("PRAGMA integrity_check")]
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            raise _repository_error("schema_corrupt")
+        if results != ["ok"]:
+            raise _repository_error("schema_corrupt")
+
+    def _worker_validate_standalone_snapshot(self, path: Path) -> None:
+        """Run shared schema/domain checks plus full integrity on one snapshot."""
+
+        validate_profile_candidate(path)
+        connection: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        close_error: BaseException | None = None
+        try:
+            connection = sqlite3.connect(
+                f"{path.resolve(strict=True).as_uri()}?mode=ro&immutable=1",
+                uri=True,
+                isolation_level=None,
+            )
+            self._worker_require_full_integrity(connection)
+        except BaseException as error:
+            body_error = error
+        if connection is not None:
+            try:
+                connection.close()
+            except BaseException as error:
+                close_error = error
+        _raise_with_cleanup_precedence(body_error, close_error)
+
+    def _worker_restore(
+        self,
+        candidate: _CandidateSnapshot,
+        deadline: float,
+        generation: int,
+    ) -> ProfileRestoreReceipt:
+        """Run one exclusive staged restore and race-free shared rebind."""
+
+        stage_path: Path | None = None
+        recovery_path: Path | None = None
+        exclusive_lease: ProfileStoreLease | None = None
+        rebound_lease: ProfileStoreLease | None = None
+        rebound_connection: sqlite3.Connection | None = None
+        primary_error: BaseException | None = None
+        cleanup_errors: list[BaseException] = []
+        stage_cleanup_errors: list[BaseException] = []
+        replaced = False
+        receipt: ProfileRestoreReceipt | None = None
+        try:
+            restored_at = self._clock()
+            ProfileRestoreReceipt(
+                restored_at=restored_at,
+                profile_count=0,
+                assignment_count=0,
+            )
+            self._worker_close_for_restore()
+
+            remaining = _remaining_seconds(deadline)
+            if remaining <= 0:
+                raise _repository_error("restore_failed")
+            exclusive_lease = ProfileStoreLease(
+                self._database_path,
+                ProfileStoreLockMode.EXCLUSIVE,
+                timeout_seconds=remaining,
+            )
+            exclusive_lease.acquire()
+
+            if not _candidate_is_unchanged(candidate):
+                raise _repository_error("restore_failed")
+            stage_path = self._worker_stage_candidate(candidate)
+            recovery_path = self._worker_create_recovery_backup(restored_at)
+            self._worker_remove_live_sidecars()
+            _fsync_file(stage_path)
+            _fsync_directory(stage_path.parent)
+            os.replace(stage_path, self._database_path.resolve(strict=False))
+            replaced = True
+            stage_path = None
+            _fsync_directory(self._database_path.resolve(strict=False).parent)
+
+            scoped = open_profile_store(self._database_path, must_exist=True)
+            scoped_error: BaseException | None = None
+            try:
+                self._worker_require_full_integrity(scoped)
+                self._worker_store_counts(scoped)
+            except BaseException as error:
+                scoped_error = error
+            close_error: BaseException | None = None
+            try:
+                scoped.close()
+            except BaseException as error:
+                close_error = error
+                self._connection = scoped
+                self._lease = exclusive_lease
+                exclusive_lease = None
+            _raise_with_cleanup_precedence(scoped_error, close_error)
+
+            assert exclusive_lease is not None
+            exclusive_lease.release()
+            exclusive_lease = None
+            rebound_lease = ProfileStoreLease(
+                self._database_path,
+                ProfileStoreLockMode.SHARED,
+                timeout_seconds=_RESTORE_REBIND_TIMEOUT_SECONDS,
+            )
+            rebound_lease.acquire()
+            rebound_connection = open_profile_store(
+                self._database_path,
+                must_exist=True,
+            )
+            # Validate the authoritative long-lived handle, not only the
+            # scoped pre-handoff handle.
+            self._worker_require_full_integrity(rebound_connection)
+            profile_count, assignment_count = self._worker_store_counts(
+                rebound_connection
+            )
+            receipt = ProfileRestoreReceipt(
+                restored_at=restored_at,
+                profile_count=profile_count,
+                assignment_count=assignment_count,
+            )
+            self._lease = rebound_lease
+            self._connection = rebound_connection
+            rebound_lease = None
+            rebound_connection = None
+            with self._state_lock:
+                if (
+                    self._generation != generation
+                    or self._terminal
+                    or self._state is not ProfileRepositoryState.RESTORING
+                ):
+                    raise _repository_error("stale")
+                self._state = ProfileRepositoryState.OPEN
+        except BaseException as error:
+            primary_error = error
+
+        if stage_path is not None:
+            stage_cleanup_errors.extend(self._worker_remove_temporary_store(stage_path))
+        if rebound_connection is not None:
+            try:
+                rebound_connection.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+                self._connection = rebound_connection
+                self._lease = rebound_lease
+                rebound_lease = None
+            rebound_connection = None
+        if rebound_lease is not None:
+            try:
+                rebound_lease.release()
+            except BaseException as error:
+                cleanup_errors.append(error)
+                self._lease = rebound_lease
+                rebound_lease = None
+        if exclusive_lease is not None:
+            if self._connection is not None:
+                self._lease = exclusive_lease
+                exclusive_lease = None
+            else:
+                try:
+                    exclusive_lease.release()
+                except BaseException as error:
+                    cleanup_errors.append(error)
+                    self._lease = exclusive_lease
+                    exclusive_lease = None
+
+        if primary_error is None and not cleanup_errors and not stage_cleanup_errors:
+            assert receipt is not None
+            return receipt
+
+        rebound_ok = False
+        if not replaced and not cleanup_errors:
+            try:
+                if self._connection is not None and self._lease is not None:
+                    if (
+                        self._lease.mode is not ProfileStoreLockMode.SHARED
+                        or not self._lease.acquired
+                    ):
+                        raise _repository_error("restore_failed")
+                    self._worker_store_counts(self._connection)
+                    rebound_ok = True
+                elif self._connection is None and self._lease is None:
+                    self._worker_rebind_current_store()
+                    rebound_ok = True
+            except BaseException as error:
+                cleanup_errors.append(error)
+        with self._state_lock:
+            if (
+                self._generation == generation
+                and not self._terminal
+                and self._state is ProfileRepositoryState.RESTORING
+            ):
+                self._state = (
+                    ProfileRepositoryState.OPEN
+                    if rebound_ok
+                    else ProfileRepositoryState.UNAVAILABLE
+                )
+
+        for candidate_error in (
+            primary_error,
+            *stage_cleanup_errors,
+            *cleanup_errors,
+        ):
+            if candidate_error is not None and not isinstance(
+                candidate_error,
+                Exception,
+            ):
+                raise candidate_error
+        if rebound_ok and isinstance(primary_error, ProfileRepositoryError):
+            code = primary_error.code
+            if code in {
+                "corrupt_data",
+                "lock_timeout",
+                "schema_corrupt",
+                "schema_partial",
+                "schema_unsupported",
+            }:
+                raise _repository_error(code)
+        # Once created, recovery evidence is deliberately retained on failure.
+        _ = recovery_path
+        raise _repository_error("restore_failed")
+
+    def _worker_close_for_restore(self) -> None:
+        connection = self._connection
+        lease = self._lease
+        if connection is None or lease is None:
+            raise _repository_error("invalid_state")
+        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if (
+            checkpoint is None
+            or len(checkpoint) != 3
+            or any(type(value) is not int for value in checkpoint)
+            or tuple(checkpoint) != (0, 0, 0)
+        ):
+            raise _repository_error("restore_failed")
+        connection.close()
+        self._connection = None
+        lease.release()
+        self._lease = None
+
+    def _worker_stage_candidate(self, candidate: _CandidateSnapshot) -> Path:
+        source: sqlite3.Connection | None = None
+        destination: sqlite3.Connection | None = None
+        stage_path: Path | None = None
+        body_error: BaseException | None = None
+        cleanup_errors: list[BaseException] = []
+        try:
+            descriptor, stage_name = tempfile.mkstemp(
+                prefix=f".{self._database_path.name}.",
+                suffix=".restore-stage.sqlite3",
+                dir=self._database_path.resolve(strict=False).parent,
+            )
+            stage_path = Path(stage_name)
+            os.close(descriptor)
+            source = sqlite3.connect(
+                f"{candidate.path.as_uri()}?mode=ro",
+                uri=True,
+                isolation_level=None,
+            )
+            destination = sqlite3.connect(stage_path, isolation_level=None)
+            self._worker_online_backup(source, destination)
+            destination.close()
+            destination = None
+            source.close()
+            source = None
+            if not _candidate_is_unchanged(candidate):
+                raise _repository_error("restore_failed")
+            self._worker_validate_standalone_snapshot(stage_path)
+        except BaseException as error:
+            body_error = error
+
+        for connection in (destination, source):
+            if connection is None:
+                continue
+            try:
+                connection.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+        if isinstance(body_error, sqlite3.DatabaseError):
+            body_error = _repository_error("schema_corrupt")
+        if body_error is not None or cleanup_errors:
+            if stage_path is not None:
+                cleanup_errors.extend(self._worker_remove_temporary_store(stage_path))
+            _raise_with_cleanup_precedence(body_error, *cleanup_errors)
+        assert stage_path is not None
+        return stage_path
+
+    def _worker_create_recovery_backup(self, restored_at: datetime) -> Path:
+        source: sqlite3.Connection | None = None
+        destination: sqlite3.Connection | None = None
+        recovery_path: Path | None = None
+        body_error: BaseException | None = None
+        cleanup_errors: list[BaseException] = []
+        try:
+            timestamp = restored_at.astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+            descriptor, recovery_name = tempfile.mkstemp(
+                prefix=f"{self._database_path.name}.pre-restore-{timestamp}-",
+                suffix=".recovery.sqlite3",
+                dir=self._database_path.resolve(strict=False).parent,
+            )
+            recovery_path = Path(recovery_name)
+            os.close(descriptor)
+            source = open_profile_store(self._database_path, must_exist=True)
+            destination = sqlite3.connect(recovery_path, isolation_level=None)
+            self._worker_online_backup(source, destination)
+            destination.close()
+            destination = None
+            try:
+                source.close()
+            except BaseException:
+                self._connection = source
+                source = None
+                raise
+            else:
+                source = None
+            self._worker_validate_standalone_snapshot(recovery_path)
+            _fsync_file(recovery_path)
+            _fsync_directory(recovery_path.parent)
+        except BaseException as error:
+            body_error = error
+
+        for connection in (destination, source):
+            if connection is None:
+                continue
+            try:
+                connection.close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+        if body_error is not None or cleanup_errors:
+            if recovery_path is not None:
+                cleanup_errors.extend(
+                    self._worker_remove_temporary_store(recovery_path)
+                )
+            _raise_with_cleanup_precedence(body_error, *cleanup_errors)
+        assert recovery_path is not None
+        return recovery_path
+
+    def _worker_remove_live_sidecars(self) -> None:
+        database_path = self._database_path.resolve(strict=False)
+        rollback_journal = database_path.with_name(f"{database_path.name}-journal")
+        try:
+            rollback_journal.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            raise _repository_error("restore_failed")
+        for suffix in ("-wal", "-shm"):
+            sidecar = database_path.with_name(f"{database_path.name}{suffix}")
+            try:
+                state = sidecar.lstat()
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(state.st_mode):
+                raise _repository_error("restore_failed")
+            sidecar.unlink()
+
+    def _worker_remove_temporary_store(self, path: Path) -> list[BaseException]:
+        errors: list[BaseException] = []
+        for target in (
+            path,
+            *(
+                path.with_name(f"{path.name}{suffix}")
+                for suffix in _STORE_SIDECAR_SUFFIXES
+            ),
+        ):
+            try:
+                _unlink_path_if_present(target)
+            except BaseException as error:
+                errors.append(error)
+        return errors
+
+    def _worker_store_counts(
+        self,
+        connection: sqlite3.Connection,
+    ) -> tuple[int, int]:
+        counts: list[int] = []
+        for table in ("tts_generation_profiles", "character_tts_assignments"):
+            row = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
+                raise _repository_error("corrupt_data")
+            counts.append(cast(int, row[0]))
+        return (counts[0], counts[1])
+
+    def _worker_rebind_current_store(self) -> None:
+        if self._connection is not None and self._lease is not None:
+            self._worker_store_counts(self._connection)
+            return
+
+        cleanup_error: BaseException | None = None
+        try:
+            self._worker_cleanup()
+        except BaseException as error:
+            cleanup_error = error
+        if cleanup_error is not None:
+            raise cleanup_error
+
+        lease = ProfileStoreLease(
+            self._database_path,
+            ProfileStoreLockMode.SHARED,
+            timeout_seconds=_RESTORE_REBIND_TIMEOUT_SECONDS,
+        )
+        connection: sqlite3.Connection | None = None
+        body_error: BaseException | None = None
+        try:
+            lease.acquire()
+            connection = open_profile_store(self._database_path, must_exist=True)
+            self._worker_store_counts(connection)
+        except BaseException as error:
+            body_error = error
+        if body_error is None:
+            assert connection is not None
+            self._lease = lease
+            self._connection = connection
+            return
+
+        connection_error: BaseException | None = None
+        lease_error: BaseException | None = None
+        if connection is not None:
+            try:
+                connection.close()
+            except BaseException as error:
+                connection_error = error
+                self._connection = connection
+                self._lease = lease
+                connection = None
+        if connection_error is None:
+            try:
+                lease.release()
+            except BaseException as error:
+                lease_error = error
+                self._lease = lease
+        _raise_with_cleanup_precedence(body_error, connection_error, lease_error)
+
+    async def restore_from(
+        self,
+        candidate: Path,
+        timeout_seconds: int | float = 5.0,
+    ) -> ProfileStoreResult[ProfileRestoreReceipt]:
+        """Atomically restore one validated standalone profile-store snapshot.
+
+        Args:
+            candidate: Exact standalone candidate path.
+            timeout_seconds: Positive finite quiescence/exclusive-lock budget.
+
+        Returns:
+            The admitted lifecycle generation and safe restore metadata.
+
+        Raises:
+            ProfileRepositoryError: If admission, quiescence, validation,
+                locking, replacement, or lifecycle rebind fails safely.
+            BaseException: A caller control-flow signal after lifecycle
+                settlement and cleanup.
+        """
+
+        timeout = _validate_restore_timeout(timeout_seconds)
+        candidate_snapshot = _validate_restore_candidate_path(
+            candidate,
+            self._database_path,
+        )
+        deadline = _read_monotonic() + timeout
+        if not math.isfinite(deadline):
+            raise _repository_error("restore_failed")
+
+        lifecycle_lock = self._bind_or_check_loop()
+        remaining = _remaining_seconds(deadline)
+        if remaining <= 0:
+            raise _repository_error("restore_failed")
+        try:
+            await asyncio.wait_for(lifecycle_lock.acquire(), timeout=remaining)
+        except TimeoutError:
+            raise _repository_error("restore_failed") from None
+
+        try:
+            with self._state_lock:
+                state_error = self._normal_state_error_locked()
+                if state_error is not None:
+                    raise _repository_error(state_error)
+                self._state = ProfileRepositoryState.RESTORING
+                self._generation += 1
+                generation = self._generation
+                pending = tuple(self._pending_futures)
+                executor = self._executor
+
+            for future in pending:
+                future.cancel()
+
+            completion = asyncio.create_task(
+                self._finish_restore(
+                    candidate_snapshot,
+                    deadline,
+                    generation,
+                    pending,
+                    executor,
+                )
+            )
+            return await self._await_lifecycle_completion(completion)
+        finally:
+            lifecycle_lock.release()
+
+    async def _finish_restore(
+        self,
+        candidate: _CandidateSnapshot,
+        deadline: float,
+        generation: int,
+        pending: tuple[Future[object], ...],
+        executor: ThreadPoolExecutor | None,
+    ) -> ProfileStoreResult[ProfileRestoreReceipt]:
+        """Quiesce old work, run restore on the worker, and publish safely."""
+
+        self._bind_or_check_loop()
+        running = tuple(future for future in pending if not future.done())
+        if running:
+            wrappers = tuple(asyncio.wrap_future(future) for future in running)
+            drain = asyncio.gather(*wrappers, return_exceptions=True)
+            remaining = _remaining_seconds(deadline)
+            if remaining <= 0:
+                with self._state_lock:
+                    if (
+                        self._generation == generation
+                        and not self._terminal
+                        and self._state is ProfileRepositoryState.RESTORING
+                    ):
+                        self._state = ProfileRepositoryState.OPEN
+                raise _repository_error("restore_failed")
+            try:
+                await asyncio.wait_for(asyncio.shield(drain), timeout=remaining)
+            except TimeoutError:
+                with self._state_lock:
+                    if (
+                        self._generation == generation
+                        and not self._terminal
+                        and self._state is ProfileRepositoryState.RESTORING
+                    ):
+                        self._state = ProfileRepositoryState.OPEN
+                raise _repository_error("restore_failed") from None
+
+        remaining = _remaining_seconds(deadline)
+        if remaining <= 0 or executor is None:
+            with self._state_lock:
+                if (
+                    self._generation == generation
+                    and not self._terminal
+                    and self._state is ProfileRepositoryState.RESTORING
+                ):
+                    self._state = ProfileRepositoryState.OPEN
+            raise _repository_error("restore_failed")
+
+        submission_error: BaseException | None = None
+        restore_future: Future[ProfileRestoreReceipt] | None = None
+        try:
+            restore_future = executor.submit(
+                self._worker_restore,
+                candidate,
+                deadline,
+                generation,
+            )
+        except BaseException as error:
+            submission_error = error
+        if submission_error is not None:
+            with self._state_lock:
+                if (
+                    self._generation == generation
+                    and not self._terminal
+                    and self._state is ProfileRepositoryState.RESTORING
+                ):
+                    self._state = ProfileRepositoryState.OPEN
+            _raise_operation_error(submission_error)
+        assert restore_future is not None
+
+        worker_error: BaseException | None = None
+        receipt: ProfileRestoreReceipt | None = None
+        try:
+            receipt = await asyncio.wrap_future(restore_future)
+        except BaseException as error:
+            worker_error = error
+        if worker_error is not None:
+            _raise_operation_error(worker_error)
+
+        with self._state_lock:
+            if (
+                self._generation != generation
+                or self._terminal
+                or self._state is not ProfileRepositoryState.OPEN
+            ):
+                raise _repository_error("stale")
+        assert receipt is not None
+        return ProfileStoreResult(generation=generation, value=receipt)
 
     def _worker_create_profile(
         self,

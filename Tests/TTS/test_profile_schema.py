@@ -203,6 +203,134 @@ def test_empty_store_migrates_transactionally_and_is_configured(tmp_path: Path) 
         connection.close()
 
 
+@pytest.mark.parametrize("must_exist", [None, 0, 1, "true", object()])
+def test_live_store_opener_requires_exact_bool_for_must_exist(
+    tmp_path: Path,
+    must_exist: object,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    before = _directory_snapshot(tmp_path)
+
+    with _safe_error("operation_failed") as caught:
+        open_profile_store(path, must_exist=must_exist)  # type: ignore[arg-type]
+
+    assert _directory_snapshot(tmp_path) == before
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_live_store_no_create_mode_rejects_missing_without_creating(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "missing # profile?.sqlite3"
+    before = _directory_snapshot(tmp_path)
+
+    with _safe_error("missing") as caught:
+        open_profile_store(path, must_exist=True)
+
+    assert _directory_snapshot(tmp_path) == before
+    assert path.exists() is False
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert str(path) not in str(caught.value)
+
+
+def test_live_store_no_create_mode_rejects_non_file_without_mutation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    path.mkdir()
+    before = _directory_snapshot(tmp_path)
+
+    with _safe_error("missing") as caught:
+        open_profile_store(path, must_exist=True)
+
+    assert _directory_snapshot(tmp_path) == before
+    assert path.is_dir()
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_live_store_no_create_mode_rejects_existing_empty_file_without_migration(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "empty.sqlite3"
+    path.touch()
+    before = path.read_bytes()
+
+    with _safe_error("schema_partial") as caught:
+        open_profile_store(path, must_exist=True)
+
+    assert path.read_bytes() == before == b""
+    assert not tuple(tmp_path.glob("empty.sqlite3-*"))
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_live_store_no_create_mode_uses_quoted_rw_uri_and_validates_v1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles # ready?.sqlite3"
+    created = open_profile_store(path)
+    created.close()
+    real_connect = sqlite3.connect
+    calls: list[tuple[object, dict[str, object]]] = []
+
+    def tracked_connect(
+        database: object,
+        *args: object,
+        **kwargs: object,
+    ) -> sqlite3.Connection:
+        calls.append((database, dict(kwargs)))
+        return real_connect(database, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+
+    connection = open_profile_store(path, must_exist=True)
+    try:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        connection.close()
+
+    assert calls == [
+        (
+            f"{path.resolve().as_uri()}?mode=rw",
+            {"uri": True, "isolation_level": None},
+        )
+    ]
+
+
+def test_live_store_no_create_race_to_missing_is_bounded_and_context_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    created = open_profile_store(path)
+    created.close()
+    real_connect = sqlite3.connect
+
+    def remove_before_connect(
+        database: object,
+        *args: object,
+        **kwargs: object,
+    ) -> sqlite3.Connection:
+        path.unlink()
+        return real_connect(database, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(sqlite3, "connect", remove_before_connect)
+
+    with _safe_error("missing") as caught:
+        open_profile_store(path, must_exist=True)
+
+    assert path.exists() is False
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert str(path) not in str(caught.value)
+
+
 def test_v1_schema_has_required_constraints_and_index(tmp_path: Path) -> None:
     connection = open_profile_store(tmp_path / "profiles.sqlite3")
     try:

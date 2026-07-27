@@ -650,15 +650,73 @@ def _migrate_empty_store(connection: sqlite3.Connection) -> None:
     raise _repository_error("migration_failed") from None
 
 
-def open_profile_store(path: Path) -> sqlite3.Connection:
-    """Open/configure a live store, migrating only a truly empty v0 database."""
+def open_profile_store(
+    path: Path,
+    *,
+    must_exist: bool = False,
+) -> sqlite3.Connection:
+    """Open/configure a live store, optionally refusing to create a missing file.
+
+    Args:
+        path: Profile-store path.
+        must_exist: When true, use SQLite ``mode=rw`` so no missing database can
+            be created during restore validation or lifecycle rebind.
+
+    Returns:
+        One fully configured and validated caller-owned connection.
+
+    Raises:
+        ProfileRepositoryError: If inputs or the store fail closed validation.
+    """
 
     connection: sqlite3.Connection | None = None
     body_error: BaseException | None = None
     try:
-        if not isinstance(path, Path):
+        if not isinstance(path, Path) or type(must_exist) is not bool:
             raise _repository_error("operation_failed")
-        connection = sqlite3.connect(path, isolation_level=None)
+        database_uri: str | None = None
+        if must_exist:
+            resolution_missing = False
+            resolution_failed = False
+            resolved_path: Path | None = None
+            try:
+                resolved_path = path.resolve(strict=True)
+            except FileNotFoundError:
+                resolution_missing = True
+            except Exception:
+                resolution_failed = True
+            if resolution_missing:
+                raise _repository_error("missing")
+            if resolution_failed or resolved_path is None:
+                raise _repository_error("operation_failed")
+            if not resolved_path.is_file():
+                raise _repository_error("missing")
+            database_uri = f"{resolved_path.as_uri()}?mode=rw"
+        connect_error: BaseException | None = None
+        try:
+            if database_uri is None:
+                connection = sqlite3.connect(path, isolation_level=None)
+            else:
+                connection = sqlite3.connect(
+                    database_uri,
+                    uri=True,
+                    isolation_level=None,
+                )
+        except BaseException as error:
+            connect_error = error
+        if connect_error is not None:
+            missing_after_connect = False
+            if must_exist:
+                try:
+                    missing_after_connect = not path.resolve(strict=True).is_file()
+                except FileNotFoundError:
+                    missing_after_connect = True
+                except Exception:
+                    pass
+            if missing_after_connect:
+                raise _repository_error("missing")
+            raise connect_error
+        assert connection is not None
         _configure_connection(connection)
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if type(version) is not int:
@@ -666,6 +724,8 @@ def open_profile_store(path: Path) -> sqlite3.Connection:
         if version > CURRENT_PROFILE_SCHEMA_VERSION:
             raise _repository_error("schema_unsupported")
         if version == 0:
+            if must_exist:
+                raise _repository_error("schema_partial")
             if _user_schema_objects(connection):
                 raise _repository_error("schema_partial")
             journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
