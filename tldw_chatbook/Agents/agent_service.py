@@ -297,12 +297,19 @@ class AgentService:
         # see the schema-pin comment in _run_one for the rationale. `None`
         # (the default) means the run is not wired for it.
         self._run_skill_script_tool = run_skill_script_tool
-        # Constructed here (or by the caller) so EVERY caller gets a log --
-        # on_step is passed in by the Console bridge, so anything riding
-        # that hook would silently log nothing for other callers.
-        from .run_log import RunLogWriter as _RunLogWriter
-
-        self.run_log_writer = run_log_writer or _RunLogWriter()
+        # Round-1 review fix (spec §3.1): the writer is per RUN TREE, not
+        # per service instance -- `bind()` latches permanently (see its own
+        # docstring), so a writer built here in __init__ and reused across
+        # two `run_turn` calls on the same `AgentService` would silently
+        # append the second tree's records into the first tree's
+        # already-bound directory and overwrite its manifest. `run_turn`
+        # builds a fresh, UNBOUND writer per call from this attribute being
+        # `None` -- see its own docstring/body. An explicitly injected
+        # writer (tests, primarily) is the one exception: it is honored
+        # as-is for the life of the service, on the assumption a caller
+        # supplying its own writer also owns that writer's lifecycle.
+        self._injected_run_log_writer = run_log_writer
+        self.run_log_writer = run_log_writer
 
     # -- internals -------------------------------------------------------
 
@@ -834,9 +841,31 @@ class AgentService:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
             terminal ``RunOutcome``. The run record (and any sub-agent run
             records) are persisted before this returns.
+
+        Run-log contract:
+            The run-log writer is scoped to ONE run tree, not to this
+            service instance. Unless a writer was explicitly injected via
+            the constructor (tests, primarily — that one is reused as-is
+            for the life of the service), each call to ``run_turn`` builds
+            a fresh, unbound ``RunLogWriter``. ``bind()`` latches
+            permanently for that writer's whole life (see its own
+            docstring), so reusing one writer across two ``run_turn`` calls
+            would append the second tree's records into the first tree's
+            already-bound directory and overwrite its manifest.
         """
         if supersede_run_id:
             self.db.supersede_run_tree(supersede_run_id)
+        # Per run tree, not per service instance -- see "Run-log contract"
+        # above. `_injected_run_log_writer` is `None` for every caller that
+        # didn't pass one to the constructor (i.e. every production caller
+        # today), so this builds a new, unbound writer each call; an
+        # injected writer is honored unchanged.
+        if self._injected_run_log_writer is not None:
+            self.run_log_writer = self._injected_run_log_writer
+        else:
+            from .run_log import RunLogWriter as _RunLogWriter
+
+            self.run_log_writer = _RunLogWriter()
         # Per-run scope for the registry's owner-map cache (tool_catalog's
         # _owner_and_id): reset here, once, at the top of the run tree —
         # covers the primary turn AND any sub-agents it spawns via

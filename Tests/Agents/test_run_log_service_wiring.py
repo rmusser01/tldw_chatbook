@@ -1,12 +1,19 @@
 # Tests/Agents/test_run_log_service_wiring.py
 """The service owns the writer: one counter per run tree, every caller logged."""
 
+import json
 from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents import run_log as run_log_module
-from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget
+from tldw_chatbook.Agents.agent_models import (
+    RUN_DONE,
+    SPAWN_TOOL_NAME,
+    AgentConfig,
+    RunBudget,
+)
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Agents.run_log_format import iter_records
@@ -28,6 +35,27 @@ def chat_call_returning(text):
         return {"choices": [{"message": {"content": text}}]}
 
     return call
+
+
+def fence(name, args):
+    return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
+
+
+def scripted_chat(replies):
+    """Returns each reply from ``replies`` in order across successive calls."""
+    remaining = list(replies)
+
+    def call(**kwargs):
+        return {"choices": [{"message": {"content": remaining.pop(0)}}]}
+
+    return call
+
+
+def all_records(run_dir: Path):
+    records = []
+    for segment in sorted(run_dir.glob("logs.*.txt")):
+        records.extend(iter_records(segment.read_bytes()))
+    return records
 
 
 def read_all(root: Path):
@@ -85,3 +113,123 @@ def test_disabled_writer_leaves_the_run_untouched(wired, monkeypatch):
     )
     assert outcome.final_text == "hello"
     assert not (root / "agent-runs").exists()
+
+
+def test_a_real_spawn_shares_the_parent_log_directory_and_counter(wired):
+    """Round-1 review fix: the prior version of this suite only ever proved
+    sharing by manually calling ``writer.append`` on the object the test
+    already held -- a real ``spawn()`` never ran. A mutation giving
+    non-primary runs their own fresh writer instance (see this file's git
+    history / the fix report) still passed all 51 pre-fix tests. This test
+    drives an ACTUAL sub-agent spawn through the fence tool-call protocol
+    and checks the parent's and child's records land in one directory with
+    one strictly-increasing, gap-free, duplicate-free number sequence.
+    """
+    db, registry, root = wired
+    replies = [
+        fence(SPAWN_TOOL_NAME, {"task": "child task"}),  # parent turn 1: spawns
+        "child says hi",  # CHILD turn 1
+        "parent final",  # parent turn 2
+    ]
+    service = AgentService(db, registry, chat_call=scripted_chat(replies))
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(),
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "delegate this"}],
+        config=config,
+        api_endpoint="llama_cpp",  # non-native: dispatches spawn via the fence
+    )
+    assert outcome.status == RUN_DONE and outcome.subagents_spawned == 1
+
+    run_dirs = [d for d in (root / "agent-runs").iterdir() if d.is_dir()]
+    assert len(run_dirs) == 1, "parent and child must share ONE log directory"
+    records = all_records(run_dirs[0])
+
+    numbers = [r.number for r in records]
+    assert numbers == list(range(1, len(numbers) + 1)), (
+        "record numbers must be gap-free, duplicate-free, and strictly "
+        f"increasing across the whole tree; got {numbers}"
+    )
+    kinds = {r.kind for r in records}
+    assert kinds == {"primary", "subagent"}, (
+        "both the parent's and the child's records must actually be present "
+        f"-- got kinds {kinds}"
+    )
+
+
+def test_on_record_returns_the_assigned_record_number(wired, monkeypatch):
+    """Round-1 review fix: a mutation that calls ``append(...)`` and then
+    ``return None`` instead of returning its result still passed all 51
+    pre-fix tests -- nothing pinned the return value. A later task threads
+    this number into a truncation trailer, so dropping it silently breaks
+    that. This test captures the actual ``LoopDeps`` the service builds and
+    calls its ``on_record`` directly, asserting the return is the writer's
+    assigned (non-``None``) record number.
+    """
+    db, registry, root = wired
+    captured: dict = {}
+    real_run_agent_loop = agent_service_module.run_agent_loop
+
+    def spy_run_agent_loop(config, messages, active, deps):
+        captured["deps"] = deps
+        return real_run_agent_loop(config, messages, active, deps)
+
+    monkeypatch.setattr(agent_service_module, "run_agent_loop", spy_run_agent_loop)
+
+    service = AgentService(db, registry, chat_call=chat_call_returning("hello"))
+    service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(model="m", system_prompt="s", budget=RunBudget()),
+        api_endpoint="openai",
+    )
+    deps = captured["deps"]
+    assert deps.on_record is not None
+    result = deps.on_record("model", {"content": "probe"})
+    assert isinstance(result, int) and result > 0, (
+        f"on_record must return the writer's assigned record number, got {result!r}"
+    )
+
+
+def test_run_turn_called_twice_on_one_service_gets_two_separate_logs(wired):
+    """Round-1 review fix (item 3): ``bind()`` latches permanently, so a
+    writer built once in ``__init__`` and reused across two ``run_turn``
+    calls on the same ``AgentService`` would silently append the second
+    tree's records into the first tree's (already-bound) directory and
+    overwrite its manifest. The writer must be constructed fresh per
+    ``run_turn`` call (per spec §3.1) unless one was explicitly injected via
+    the constructor.
+    """
+    db, registry, root = wired
+    service = AgentService(db, registry, chat_call=chat_call_returning("hello"))
+    config = AgentConfig(model="m", system_prompt="s", budget=RunBudget())
+    service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "first"}],
+        config=config,
+        api_endpoint="openai",
+    )
+    service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "second"}],
+        config=config,
+        api_endpoint="openai",
+    )
+    run_dirs = [d for d in (root / "agent-runs").iterdir() if d.is_dir()]
+    assert len(run_dirs) == 2, "each run_turn call must get its own log directory"
+    for run_dir in run_dirs:
+        manifest = json.loads((run_dir / "MANIFEST").read_text())
+        assert manifest["record_count"] == 1, (
+            "the second tree's manifest must not include the first tree's "
+            f"records; got {manifest}"
+        )
+        numbers = [r.number for r in all_records(run_dir)]
+        assert numbers == [1], (
+            "numbering must restart per tree, not continue across "
+            f"run_turn calls; got {numbers}"
+        )
