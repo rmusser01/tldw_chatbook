@@ -3,14 +3,18 @@ Tests for custom evaluation metrics.
 Tests instruction_adherence, format_compliance, coherence_score, and dialogue_quality metrics.
 """
 
-import pytest
 from unittest.mock import Mock
+
+import pytest
 
 from tldw_chatbook.Evals.eval_runner import (
     BaseEvalRunner,
     EvalSample,
     EvalSampleResult,
     MetricsCalculator,
+)
+from tldw_chatbook.Evals.metrics_calculator import (
+    MetricsCalculator as StandaloneMetricsCalculator,
 )
 from tldw_chatbook.Evals.task_loader import TaskConfig
 
@@ -507,6 +511,15 @@ class TestSemanticSimilarityExactMatchShortCircuit:
         ],
     )
     def test_exact_match_returns_one_despite_lossy_embedding(self, text):
+        """An exact string match returns exactly 1.0 despite a lossy embedding round-trip.
+
+        Args:
+            text: Input string used as both the predicted and expected value.
+                Every case maps, via ``_ConstantEmbeddingModel``, to the same
+                deliberately precision-losing vector, so this parametrization
+                confirms the short-circuit holds regardless of the specific
+                text content.
+        """
         # Every input string maps to the SAME deliberately precision-losing
         # vector (see _PRECISION_LOSING_VECTOR), regardless of its content.
         # If the short-circuit were removed, this would compute cosine
@@ -538,3 +551,75 @@ class TestSemanticSimilarityExactMatchShortCircuit:
 
         assert score != 1.0
         assert score == pytest.approx(1.0)
+
+
+class TestStandaloneMetricsCalculatorSemanticSimilarity:
+    """Regression coverage for the second ``MetricsCalculator`` copy.
+
+    ``tldw_chatbook/Evals/metrics_calculator.py`` defines a standalone
+    ``MetricsCalculator`` that duplicates the one in ``eval_runner.py``
+    (see TASK-863). Nothing imports it at runtime, but ``Evals/README.md``
+    and ``DEVELOPER_GUIDE.md`` both instruct users to import it directly, so
+    it needs to uphold the same ``[0, 1]``-score invariants as the
+    ``eval_runner`` copy even though the two have not yet been consolidated
+    into one implementation. These tests exercise
+    ``StandaloneMetricsCalculator`` (imported from ``metrics_calculator``,
+    aliased to avoid colliding with the ``eval_runner`` import used above)
+    directly, independent of the ``eval_runner`` tests.
+    """
+
+    def test_exact_match_returns_one(self):
+        """An exact string match returns exactly 1.0 without calling the embedding model."""
+        model = _ConstantEmbeddingModel(_PRECISION_LOSING_VECTOR)
+
+        score = StandaloneMetricsCalculator.calculate_semantic_similarity(
+            "the cat sat on the mat", "the cat sat on the mat", embedding_model=model
+        )
+
+        assert score == 1.0
+
+    def test_opposite_embeddings_are_clamped_to_zero_not_negative_one(self):
+        """Cosine similarity is [-1, 1], but callers expect a [0, 1] score.
+
+        Opposite vectors give raw cosine similarity -1.0; the standalone
+        copy must clamp that into range rather than returning the negative
+        raw cosine value (the defect TASK-863 flagged: this copy previously
+        returned raw cosine similarity uncapped).
+        """
+        model = _StubEmbeddingModel(
+            {
+                "positive": [1.0, 0.0],
+                "negative": [-1.0, 0.0],
+            }
+        )
+
+        score = StandaloneMetricsCalculator.calculate_semantic_similarity(
+            "positive", "negative", embedding_model=model
+        )
+
+        assert score is not None
+        assert score == pytest.approx(0.0)
+        assert 0.0 <= score <= 1.0
+
+    def test_zero_norm_embedding_returns_zero_without_raising(self):
+        """A zero-magnitude embedding vector must yield 0.0, not raise or return NaN.
+
+        Uses two DIFFERENT (not exactly equal, so the string-equality
+        short-circuit does not fire) strings, both mapped to a
+        zero-magnitude embedding vector. An unguarded division here
+        computes 0/0, which numpy turns into NaN rather than raising -
+        asserting exactly 0.0 (not just "no exception") fails loudly if
+        that NaN leaks out instead of being caught by the zero-guard.
+        """
+        model = _StubEmbeddingModel(
+            {
+                "the cat sat down": [0.0, 0.0, 0.0],
+                "the cat sat": [0.0, 0.0, 0.0],
+            }
+        )
+
+        score = StandaloneMetricsCalculator.calculate_semantic_similarity(
+            "the cat sat down", "the cat sat", embedding_model=model
+        )
+
+        assert score == 0.0

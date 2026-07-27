@@ -34,3 +34,7 @@ Decide one of: delete the orphan and repoint the docs at `eval_runner.py`, or ma
 - [ ] The surviving `calculate_semantic_similarity` clamps to `[0, 1]` and cannot return a negative score
 - [ ] A test would fail if the two implementations were reintroduced and drifted
 <!-- AC:END -->
+
+## Notes
+
+- 2026-07-27: PR #957 (TASK-862 follow-up, addressing a Qodo review finding) brought `calculate_semantic_similarity` in both copies into semantic agreement: `metrics_calculator.py`'s copy now also has the exact-string-equality short-circuit (`predicted == expected` -> `1.0`) and clamps its result to `[0, 1]` on both the numpy and pure-Python branches, matching `eval_runner.py`'s copy. Its zero-guard (`else 1.0` denominator swap on the pure-Python branch) was already correct and was left unchanged; a `norm_product > 0` guard was added to the numpy branch, which previously had no zero-guard at all and could return `NaN` for zero-magnitude vectors. New regression tests cover this copy directly in `Tests/Evals/test_evaluation_metrics.py::TestStandaloneMetricsCalculatorSemanticSimilarity`. The two copies are no longer semantically divergent - the remaining work here is consolidating them into a single implementation (this task's actual AC), not fixing further drift.
