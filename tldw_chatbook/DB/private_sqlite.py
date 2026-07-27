@@ -121,6 +121,12 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "BaseDB is the shared file and memory connection owner for subclasses.",
     ),
+    "db.subscriptions.site_configs": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Subscriptions_DB",
+        _PRIVATE_FILE,
+        "ensure_site_configs_schema declares site_configs on a caller-supplied "
+        "path without opening the whole SubscriptionsDB.",
+    ),
     "db.chachanotes.backup": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/ChaChaNotes_DB",
         _PRIVATE_FILE,

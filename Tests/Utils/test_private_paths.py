@@ -1,5 +1,7 @@
 import os
+import shutil
 import stat
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -897,3 +899,221 @@ def test_verify_trusted_directory_reports_windows_as_unverified_without_mutation
     assert result.status is PrivatePathStatus.UNVERIFIED_PLATFORM
     assert result.verified_private is False
     assert stat.S_IMODE(target.stat().st_mode) == before
+
+
+# --- Trusted system symlink traversal (TASK-950) -----------------------------
+#
+# macOS ships `/var -> private/var` and `/tmp -> private/tmp`, and the platform
+# temporary directory lives under `/var/folders`. The walk must be able to cross
+# a *root-owned* symlink without ever crossing one an unprivileged user could
+# have planted or repointed.
+
+
+def _symlinked_components(path: Path) -> list[Path]:
+    return [
+        candidate
+        for candidate in [path, *path.parents]
+        if candidate.is_symlink()
+    ]
+
+
+def _relabelled_stat(
+    original: os.stat_result,
+    *,
+    uid: int | None = None,
+    mode: int | None = None,
+) -> os.stat_result:
+    fields = list(original)
+    if mode is not None:
+        fields[0] = mode
+    if uid is not None:
+        fields[4] = uid
+    return os.stat_result(fields)
+
+
+def _relabel_symlink_identity(
+    monkeypatch,
+    components: set[str],
+    *,
+    uid: int,
+    mode: int,
+) -> None:
+    """Make named symlink components look like a differently-owned link.
+
+    Only root can create a root-owned symlink, so the positive and negative
+    ownership cases are exercised by relabelling the link's own ``lstat``.
+    """
+
+    real_stat = private_paths.os.stat
+
+    def relabelled_stat(path, *, dir_fd=None, follow_symlinks=True):
+        result = real_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+        if (
+            follow_symlinks is False
+            and path in components
+            and stat.S_ISLNK(result.st_mode)
+        ):
+            return _relabelled_stat(result, uid=uid, mode=mode)
+        return result
+
+    monkeypatch.setattr(private_paths.os, "stat", relabelled_stat)
+    # The replacement is not the real os.stat, so the dir_fd capability probe
+    # would otherwise report the POSIX guards as unavailable.
+    monkeypatch.setattr(private_paths, "_posix_guards_available", lambda: True)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+def test_verify_trusted_directory_traverses_the_platform_temporary_directory():
+    """The macOS `/var -> private/var` case, asserted against the real system."""
+
+    temporary_root = tempfile.gettempdir()
+    if not _symlinked_components(Path(temporary_root)):
+        pytest.skip("platform temporary directory has no symlinked component")
+
+    result = verify_trusted_directory(temporary_root, allow_shared_sticky=True)
+
+    assert result.status is PrivatePathStatus.TRUSTED_DIRECTORY
+    assert result.lexical_path == Path(temporary_root)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+def test_secure_private_directory_creates_under_the_platform_temporary_directory():
+    temporary_root = Path(tempfile.gettempdir())
+    if not _symlinked_components(temporary_root):
+        pytest.skip("platform temporary directory has no symlinked component")
+    scratch = Path(tempfile.mkdtemp(prefix="tldw-950-"))
+    try:
+        target = scratch / "databases"
+
+        result = secure_private_directory(
+            target,
+            create=True,
+            application_owned=True,
+        )
+
+        assert result.verified_private is True
+        assert stat.S_IMODE(target.stat().st_mode) == 0o700
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+def test_verify_trusted_directory_traverses_a_root_owned_symlink(
+    tmp_path,
+    monkeypatch,
+):
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    _relabel_symlink_identity(
+        monkeypatch,
+        {"alias"},
+        uid=0,
+        mode=stat.S_IFLNK | 0o755,
+    )
+
+    result = verify_trusted_directory(alias, allow_shared_sticky=False)
+
+    assert result.status is PrivatePathStatus.TRUSTED_DIRECTORY
+    assert result.lexical_path == alias
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+def test_verify_trusted_directory_traverses_a_relative_root_owned_symlink(
+    tmp_path,
+    monkeypatch,
+):
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to("real", target_is_directory=True)
+    _relabel_symlink_identity(
+        monkeypatch,
+        {"alias"},
+        uid=0,
+        mode=stat.S_IFLNK | 0o755,
+    )
+
+    result = verify_trusted_directory(alias, allow_shared_sticky=False)
+
+    assert result.status is PrivatePathStatus.TRUSTED_DIRECTORY
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+@pytest.mark.parametrize(
+    ("uid_offset", "mode"),
+    [
+        (1000, stat.S_IFLNK | 0o755),
+        (0, stat.S_IFLNK | 0o775),
+        (0, stat.S_IFLNK | 0o757),
+    ],
+    ids=["foreign-owner", "group-writable", "world-writable"],
+)
+def test_verify_trusted_directory_rejects_an_untrusted_symlink(
+    tmp_path,
+    monkeypatch,
+    uid_offset,
+    mode,
+):
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    foreign_uid = os.geteuid() + 1000 if uid_offset else 0
+    _relabel_symlink_identity(
+        monkeypatch,
+        {"alias"},
+        uid=foreign_uid,
+        mode=mode,
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        verify_trusted_directory(alias, allow_shared_sticky=False)
+
+    assert caught.value.result.status is PrivatePathStatus.LINK_OR_NON_REGULAR
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+@pytest.mark.timeout(20, method="signal")
+def test_verify_trusted_directory_stops_on_a_symlink_loop(tmp_path, monkeypatch):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.symlink_to(second, target_is_directory=True)
+    second.symlink_to(first, target_is_directory=True)
+    _relabel_symlink_identity(
+        monkeypatch,
+        {"first", "second"},
+        uid=0,
+        mode=stat.S_IFLNK | 0o755,
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        verify_trusted_directory(first, allow_shared_sticky=False)
+
+    assert caught.value.result.status is PrivatePathStatus.LINK_OR_NON_REGULAR
+    assert caught.value.result.reason == "symlink_hop_limit_exceeded"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
+def test_open_private_binary_traverses_a_root_owned_intermediate_symlink(
+    tmp_path,
+    monkeypatch,
+):
+    real = tmp_path / "real"
+    real.mkdir()
+    payload = b"[chat]\n"
+    target = real / "config.toml"
+    target.write_bytes(payload)
+    target.chmod(0o600)
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    _relabel_symlink_identity(
+        monkeypatch,
+        {"alias"},
+        uid=0,
+        mode=stat.S_IFLNK | 0o755,
+    )
+
+    with open_private_binary(alias / "config.toml") as opened:
+        assert opened.stream.read() == payload
