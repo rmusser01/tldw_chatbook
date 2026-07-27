@@ -177,11 +177,12 @@ Expected: v3/result-contract assertions fail because the service is v2-only.
 
 - [ ] **Step 3: Implement minimal v2/v3 model validation and result shaping**
 
-Use the routing constants rather than duplicating model strings. Change `_load_parakeet_onnx_model()` to validate the exact model/language pairing, keep `quantization="int8"` and `CPUExecutionProvider`, and continue requiring an existing complete local bundle. Do not pass language to `onnx_asr.load_model()`.
+Use the routing constants rather than duplicating model strings. Change `_load_parakeet_onnx_model()` to validate the exact model/language pairing, keep `quantization="int8"` and `CPUExecutionProvider`, and continue requiring a user-selected existing local directory with the required filenames. Do not pass language to `onnx_asr.load_model()`.
 
-A narrow verification-receipt identity read of at most 64 KiB is allowed only
-to reject a known v2 receipt when v3 is selected. It does not establish v3
-eligibility or inspect model contents; malformed, oversized, or otherwise
+A narrow, non-symlink verification-receipt metadata read of at most 64 KiB is
+allowed only to identify repository and revision metadata as v2 and reject that
+directory when v3 is selected. The receipt is not authenticated and does not
+verify file contents or v3 eligibility; malformed, oversized, or otherwise
 untrusted receipts are ignored. Do not download artifacts or parse ONNX graphs.
 
 Change `_parakeet_onnx_result()` to receive `requested_language` and distinguish:
@@ -251,7 +252,7 @@ In `_ingest_job_options()` call `resolve_batch_stt_route()` for audio/video opti
 
 In `_top_up_ingest_parse_pool()`, wrap `_ingest_job_options(claimed)` before pool creation. On `BatchSTTRoutingError`, sanitize the message, mark the claimed job failed and retryable, decrement the local `parsing_count` and (for audio/video) `heavy_parsing_count` that were incremented for the claim, then `continue` scanning the queue. This prevents a stuck `PARSING` row without stranding valid jobs behind it.
 
-Keep `local_file_ingestion.py` mechanical: forward the already-resolved fields unchanged to audio and video processors. In `audio_processing.py`, pass precision and the local-only flag into `TranscriptionService`. In the faster-whisper loader, select `effective_compute_type = kwargs.get("compute_type") or self.config["compute_type"]`, use it in both the cache key and `WhisperModel(compute_type=...)`, and pass `local_files_only=True` when requested. Direct callers that omit the override retain configured behavior. Do not download, parse graphs, or reroute in a worker; the service's bounded receipt read described in Task 2 is allowed only to reject a known v2/v3 identity mismatch.
+Keep `local_file_ingestion.py` mechanical: forward the already-resolved fields unchanged to audio and video processors. In `audio_processing.py`, pass precision and the local-only flag into `TranscriptionService`. In the faster-whisper loader, select `effective_compute_type = kwargs.get("compute_type") or self.config["compute_type"]`, use it in both the cache key and `WhisperModel(compute_type=...)`, and pass `local_files_only=True` when requested. Direct callers that omit the override retain configured behavior. Do not download, parse graphs, or reroute in a worker; the service's bounded receipt read described in Task 2 is allowed only to reject repository/revision metadata that identify v2 when v3 is selected.
 
 - [ ] **Step 4: Run seam tests and verify GREEN**
 
@@ -297,7 +298,7 @@ Document:
 - Exact Parakeet English uses v2 INT8.
 - Exact supported non-English uses v3 INT8 and does not enforce the selected language in the decoder.
 - Semantic Parakeet defaults remain gated; auto, unsupported languages, and translation use faster-whisper under the approved policy.
-- Batch transcription uses installed/local models only; Parakeet requires its explicit bundle and faster-whisper uses `local_files_only=True`, so a missing model fails clearly instead of downloading in a worker.
+- Batch transcription uses installed/local models only; Parakeet requires a user-selected existing local directory with the required filenames, and faster-whisper uses `local_files_only=True`, so a missing model fails clearly instead of downloading in a worker. The bounded receipt metadata check can reject a v2/v3 mismatch but does not authenticate or verify model contents.
 
 - [ ] **Step 2: Run fresh focused verification**
 
@@ -311,7 +312,10 @@ Run outside the macOS sandbox because the installed optional MLX probe requires 
   Tests/Local_Ingestion/test_local_file_ingestion.py \
   Tests/Local_Ingestion/test_audio_model_dir_routing.py \
   Tests/Transcription/test_faster_whisper_transcription.py \
-  Tests/Library/test_ingest_capabilities.py -q
+  Tests/Library/test_ingest_capabilities.py \
+  Tests/UI/test_library_ingest_canvas.py \
+  Tests/Audio/test_console_dictation.py \
+  Tests/UI/test_console_dictation.py -q
 ```
 
 Run static checks:

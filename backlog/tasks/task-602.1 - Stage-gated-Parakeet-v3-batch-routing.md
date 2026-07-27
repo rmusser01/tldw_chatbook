@@ -58,19 +58,22 @@ Reason: ADR-025 already governs routing, v3 language transparency, INT8, explici
   kept semantic `default` on faster-whisper while the promotion gate is closed.
 - Corrected the plan's invalid faster-whisper `en` to `fr` example to a
   translation-to-English request. Runtime validation rejects all non-English
-  faster-whisper targets. Also allowed a bounded, non-symlink receipt identity
-  read of at most 64 KiB solely to reject a known v2 receipt selected for v3;
-  it performs no download, graph parsing, or v3 eligibility claim.
+  faster-whisper targets. Also allowed a bounded, non-symlink receipt metadata
+  read of at most 64 KiB solely to reject repository and revision metadata that
+  identify v2 when v3 is selected. The receipt is not authenticated and does
+  not verify file contents or v3 eligibility; no download or graph parsing is
+  performed.
 - Runtime changes are in the Library capability/app boundary and
   `Local_Ingestion` routing, service, audio, and local-file seams. Focused
   coverage is in the App, Library, Local_Ingestion, Transcription, and Library
-  UI test modules. User documentation is in `Docs/Features/TRANSCRIPTION.md`
-  and `Docs/Features/TRANSCRIPTION_PROVIDERS.md`.
-- Fresh verification: 226 passed, 11 skipped, and 3 warnings. Ruff lint passed
-  on all cumulative changed runtime/test files; compileall passed on changed
-  runtime modules; routing mypy reported no issues; `git diff --check` passed.
-  The known whole-file `app.py` Ruff-format baseline was not reformatted or
-  rewritten.
+  UI and Console dictation test modules. User documentation is in
+  `Docs/Features/TRANSCRIPTION.md` and
+  `Docs/Features/TRANSCRIPTION_PROVIDERS.md`.
+- Fresh expanded verification command: 226 passed, 11 skipped, and 3 warnings.
+  Ruff lint passed on all cumulative changed runtime/test files; compileall
+  passed on changed runtime modules; routing mypy reported no issues;
+  `git diff --check` passed. The known whole-file `app.py` Ruff-format baseline
+  was not reformatted or rewritten.
 - ADR-025 remains the governing decision. Parent TASK-602 remains open for
   promoted/managed artifact eligibility, the app-owned `LocalSTTExecutor`,
   durable normalized provenance and retry lineage, managed long-form VAD and

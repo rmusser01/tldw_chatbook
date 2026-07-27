@@ -24,10 +24,13 @@ constraint. Results report the request, `effective_language=auto`,
 `detected_language=null`, and `requested_language_not_enforced`.
 
 All successful Library batch routes are INT8 and installed/local-only. Exact
-Parakeet requires the correct existing local bundle; a known verified v2
-receipt is rejected when v3 is selected. faster-whisper requires its model to
-already be cached. Missing files fail clearly and never trigger a download in
-an ingestion worker.
+Parakeet uses a user-selected existing local directory and checks for the
+required config, vocabulary, encoder, and decoder filenames. The runtime may
+read at most 64 KiB from a non-symlink receipt; repository and revision
+metadata that identify v2 are rejected when v3 is selected. The receipt is not
+authenticated and does not verify file contents or v3 eligibility.
+faster-whisper requires its model to already be cached. Missing files fail
+clearly and never trigger a download in an ingestion worker.
 
 Parakeet ONNX is not the legacy NeMo `parakeet` provider or the macOS-only
 `parakeet-mlx` provider covered below. Full managed v3 artifacts and the

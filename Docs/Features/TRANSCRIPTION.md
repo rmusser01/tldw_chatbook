@@ -91,10 +91,13 @@ selected code, `effective_language=auto`, `detected_language=null`, and the
 or was forced to the requested language.
 
 Batch transcription never downloads a model in an ingestion worker. Exact
-Parakeet requires the matching existing local bundle. Selecting v3 with a
-known verified v2 receipt is rejected; a receipt does not verify an arbitrary
-v3 directory. faster-whisper is also loaded with `local_files_only=True`, so a
-missing cache fails clearly instead of starting a worker download.
+Parakeet uses a user-selected existing local directory and checks that the
+required config, vocabulary, encoder, and decoder filenames are present. The
+runtime may read at most 64 KiB from a non-symlink receipt; when its repository
+and revision metadata identify v2 while v3 is selected, the directory is
+rejected. This receipt is not authenticated and does not verify file contents
+or v3 eligibility. faster-whisper is also loaded with `local_files_only=True`,
+so a missing cache fails clearly instead of starting a worker download.
 
 This Parakeet ONNX batch path is distinct from the legacy NeMo `parakeet`
 provider and the macOS-only `parakeet-mlx` provider described below. Full
@@ -247,7 +250,8 @@ The Local Ingestion window supports batch processing:
 - Ensure you've installed the required dependencies
 - For Library batch transcription, install or cache the model before ingesting;
   the worker will not download it
-- For exact Parakeet ONNX, select the local bundle for the routed v2 or v3 model
+- For exact Parakeet ONNX, select an existing local directory containing the
+  required filenames; this check does not validate their contents
 - For faster-whisper, confirm the selected model is already in the local cache
 
 **"CUDA out of memory"**
