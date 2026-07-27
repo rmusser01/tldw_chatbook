@@ -1,9 +1,10 @@
 ---
 id: TASK-1023
 title: Add session-scoped Git status and staging to File Notes
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-27 20:33'
+updated_date: '2026-07-27 21:23'
 labels:
   - notes
   - git
@@ -15,6 +16,7 @@ dependencies:
   - TASK-982
 documentation:
   - Docs/superpowers/specs/2026-07-27-file-notes-session-git-staging-design.md
+  - Docs/superpowers/plans/2026-07-27-file-notes-session-git-staging.md
   - backlog/decisions/034-file-notes-session-git-index-controls.md
 priority: high
 ---
@@ -39,3 +41,22 @@ Let users inspect and safely stage or unstage only paths changed during the curr
 - [ ] #10 Focused unit, one disposable-repository integration matrix containing the primary `git diff`/`git diff --cached` acceptance flow, mounted Textual lifecycle/keyboard tests, and one lightweight 1,000-plus-unrelated-notes fixture cover the approved boundary without a duplicate acceptance layer, full-suite, network, pagination, or broad performance execution.
 - [ ] #11 Chatbook selects no Git operation intended to modify the worktree and never writes the SQLite replica or File Notes session history during Git actions; commit, push, pull, fetch, remotes, credentials, branch mutation, hunk staging, repository initialization/repair, persistent ownership, full-repository status, sparse support, and nested-repository management remain absent.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/034-file-notes-session-git-index-controls.md
+Reason: ADR-034 already defines Git index ownership, trust, lifecycle, and UX; ADR-033 governs the process-session owner.
+
+1. Move sequenced File Notes session changes into a root-generation-bound process owner.
+2. Add pure session grouping, porcelain parsing, closure, row-policy, and ownership models.
+3. Add sanitized direct-argv repository discovery and trusted coalesced status.
+4. Implement exact Stage and Stage update with saved original baselines.
+5. Implement exact saved-baseline Unstage with index replacement-closure checks.
+6. Add the retained Session Git navigator, trust prompt, focused controls, and selective mutation gate.
+7. Inject the owner across fresh Library screens and settle it before Textual closes screens.
+8. Run only the approved focused repository/UI/lifecycle/UAT matrix and reconcile TASK-1023.
+
+Detailed plan: Docs/superpowers/plans/2026-07-27-file-notes-session-git-staging.md
+<!-- SECTION:PLAN:END -->
