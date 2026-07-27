@@ -2,7 +2,7 @@
 id: TASK-1010
 title: >-
   Three worker components are dead or broken on first call -- decide whether to fix or delete
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-27 12:30'
 labels:
@@ -50,3 +50,9 @@ For each: establish whether anything constructs and uses it. Delete what is dead
 
 Per the task owner's instruction, AC1 is ticked (all three components' live/dead status is now established with construction-site evidence). AC2 and AC3 are left unticked: only two of the three dead components were deleted; the third is intentionally not deleted because doing so, or leaving it as-is, both have consequences for an Accepted ADR's documented guarantee that this investigation cannot resolve. AC4 is left unticked for the same reason — "resolved... rather than left ambiguous" needs an owner decision on which of the two remediation paths above (or updating the ADR) to take, not just a diagnosis. Status set to `In Progress` rather than `Done`: real work remains (an explicit decision on `SubscriptionSchedulerWorker`/ADR-019, plus whichever deletion or fix follows from it), and forcing this to `Done` would misrepresent that gap as closed.
 <!-- SECTION:NOTES:END -->
+
+## Closed 2026-07-27
+
+Two of the three components were deleted (`SwarmUIWidget`, `MultiItemReviewWindow`) in PR #1019, verified dead by construction-site trace and with the image-generation spec annotated to match.
+
+The third, `SubscriptionSchedulerWorker`, is **not** deleted and is no longer this task's concern. Investigating whether ADR-019's rollback depended on it found a broader gap — rollback never reaches the old scheduler on either flag setting — which is filed as **TASK-1022** and handed to the watchlists workstream. Its disposition follows that decision: if rollback is restored the worker may be replaced by a working entry point; if the ADR is amended it is retired along with the rest of the chain. Either way it should not be removed in isolation.
