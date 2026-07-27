@@ -156,6 +156,7 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
             session_system_prompt,
             agent_messages,
             should_cancel,
+            provider_stream_signals=None,
             supersede_previous=False,
             mcp_provider=None,
             builtin_gate=None,
@@ -163,6 +164,7 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
             turn_skill_bindings=(),
             turn_bundle_block="",
             request_skill_install_confirm=None,
+            request_skill_script_confirm=None,
         ):
             captured["agent_messages"] = [dict(m) for m in agent_messages]
             from tldw_chatbook.Agents.agent_models import RunOutcome, RUN_DONE

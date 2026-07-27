@@ -3171,6 +3171,55 @@ async def test_normal_session_still_uses_agent_when_enabled():
 
 
 @pytest.mark.asyncio
+async def test_agent_path_applies_dictionary_before_bridge_sees_messages():
+    """TASK-761: pins the ORDERING contract, not just that the dictionary
+    is applied somewhere. `_apply_chat_dictionaries` and the agent
+    bridge's `run_reply` both append to a single shared event log; the
+    assertion requires the dictionary event to precede the bridge event
+    AND the bridge's own captured payload to already carry the substituted
+    text -- so a regression that calls the bridge first (even one that
+    still gets the content right some other way) fails this test, unlike
+    an assertion that only checks the final content in isolation."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    events: list[str] = []
+
+    def applier(conversation_id, content):
+        events.append("dictionary_applied")
+        return content.replace("Warden", "grim jailer")
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=True,
+        chat_dictionary_applier=applier,
+    )
+    session = _arm_session(store)
+    session.persisted_conversation_id = "conv-1"
+
+    captured: dict[str, list[dict[str, str]]] = {}
+
+    def run_reply(*, agent_messages, **kwargs):
+        events.append("bridge_called")
+        captured["agent_messages"] = list(agent_messages)
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+
+    controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+
+    await controller.submit_draft("The Warden nods.")
+
+    # Ordering: the dictionary MUST run before the bridge is dispatched.
+    assert events == ["dictionary_applied", "bridge_called"]
+    # And the bridge must have RECEIVED the substituted content, not the
+    # raw draft -- proving the substitution landed on the payload the
+    # bridge actually sees, not merely that the applier was called.
+    final_user = [
+        m for m in captured["agent_messages"] if m.get("role") == "user"
+    ][-1]
+    assert final_user["content"] == "The grim jailer nods."
+
+
+@pytest.mark.asyncio
 async def test_stream_assistant_response_owner_lookup_survives_closed_session():
     """task-427 review fix: the force_plain owner-lookup added at the top of
     ``_stream_assistant_response`` calls ``store.session_id_for_message``,
