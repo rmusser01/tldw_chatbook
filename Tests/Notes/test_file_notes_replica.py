@@ -315,6 +315,86 @@ def test_mark_deleted_retains_bytes_and_clear_tombstone_restores_search(
     assert not replica.clear_tombstone(root, "folder/gone.md")
 
 
+def test_move_file_replaces_current_projection_without_tombstone(
+    replica: FileNotesReplica,
+) -> None:
+    root = "/notes"
+    _upsert(replica, root, "moved-from.md", b"searchable move bytes")
+    moved_bytes = b"searchable move bytes"
+
+    assert replica.move_file(
+        root,
+        "moved-from.md",
+        "folder/moved-to.md",
+        moved_bytes,
+        content_hash=_digest(moved_bytes),
+        decoded_text=moved_bytes.decode("utf-8"),
+        size=len(moved_bytes),
+        mtime_ns=2,
+    )
+    assert [
+        item.relative_path for item in replica.list_active_files(root)
+    ] == ["folder/moved-to.md"]
+    assert replica.search(root, "searchable") == ["folder/moved-to.md"]
+    assert replica.get_bytes(root, "moved-from.md") is None
+    assert replica.list_deleted(root) == []
+
+    _upsert(replica, root, "real-delete.md", b"recoverable bytes")
+    assert replica.mark_deleted(root, "real-delete.md")
+    assert not replica.move_file(
+        root,
+        "real-delete.md",
+        "copied-from-tombstone.md",
+        b"current bytes",
+        content_hash=_digest(b"current bytes"),
+        decoded_text="current bytes",
+        size=len(b"current bytes"),
+        mtime_ns=3,
+    )
+    assert replica.get_restore_bytes(root, "real-delete.md") == b"recoverable bytes"
+    assert replica.list_deleted(root) == ["real-delete.md"]
+
+
+def test_move_file_rolls_back_destination_when_source_cleanup_fails(
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = "/notes"
+    source_bytes = b"source recovery bytes"
+    destination_bytes = b"destination bytes"
+    _upsert(replica, root, "source.md", source_bytes)
+    real_delete_fts = replica._delete_fts
+
+    def fail_source_cleanup(
+        cursor: sqlite3.Cursor,
+        selected_root: str,
+        relative_path: str,
+    ) -> None:
+        if relative_path == "source.md":
+            raise sqlite3.OperationalError("forced source cleanup failure")
+        real_delete_fts(cursor, selected_root, relative_path)
+
+    monkeypatch.setattr(replica, "_delete_fts", fail_source_cleanup)
+
+    with pytest.raises(sqlite3.OperationalError, match="forced source cleanup"):
+        replica.move_file(
+            root,
+            "source.md",
+            "destination.md",
+            destination_bytes,
+            content_hash=_digest(destination_bytes),
+            decoded_text=destination_bytes.decode("utf-8"),
+            size=len(destination_bytes),
+            mtime_ns=2,
+        )
+
+    assert replica.get_bytes(root, "source.md") == source_bytes
+    assert replica.get_bytes(root, "destination.md") is None
+    assert replica.search(root, "source recovery") == ["source.md"]
+    assert replica.search(root, "destination") == []
+    assert replica.list_deleted(root) == []
+
+
 def test_protection_matches_exact_files_and_component_bounded_prefixes(
     replica: FileNotesReplica,
 ) -> None:

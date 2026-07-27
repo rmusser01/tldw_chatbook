@@ -163,6 +163,7 @@ class FileNotesService:
         self._operation_lock = operation_lock or RLock()
         self._session_changes: list[SessionChange] = []
         self._entry_cache: dict[str, FileNoteEntry] = {}
+        self._pending_replica_moves: dict[str, str] = {}
 
     @property
     @_serialized
@@ -598,16 +599,20 @@ class FileNotesService:
         warning: str | None = None
         try:
             moved = self._load_file(destination_path)
-            warning = self._upsert_opened(moved)
         except (OSError, ValueError) as error:
             warning = f"Replica refresh failed: {error}"
-        if self._replica is not None:
-            try:
-                self._replica.mark_deleted(self.root_key, relative_path)
-            except Exception as error:
-                warning = _merge_warnings(warning, _replica_warning(error))
         else:
-            warning = _merge_warnings(warning, "Replica unavailable")
+            warning = self._move_opened(relative_path, moved)
+        self._pending_replica_moves.pop(destination_path, None)
+        for pending_source, pending_destination in tuple(
+            self._pending_replica_moves.items()
+        ):
+            if pending_destination == relative_path:
+                self._pending_replica_moves[pending_source] = destination_path
+        if warning is None:
+            self._pending_replica_moves.pop(relative_path, None)
+        else:
+            self._pending_replica_moves[relative_path] = destination_path
         self._session_changes.append(
             SessionChange("moved", relative_path, destination_path)
         )
@@ -814,10 +819,67 @@ class FileNotesService:
             warning = "Replica unavailable"
 
         observed, uncertain_paths, had_walk_error = self._walk_candidates()
+        pending_move_entries: dict[str, OpenedFileNote] = {}
+        pending_move_sources: set[str] = set()
+        if old_files is not None and self._replica is not None:
+            for source_path, destination_path in tuple(
+                self._pending_replica_moves.items()
+            ):
+                if source_path not in old_files:
+                    self._pending_replica_moves.pop(source_path, None)
+                    continue
+                source_info = old_files[source_path]
+                if source_path in observed:
+                    moved_info, move_warning = self._materialize_pending_move(
+                        source_path,
+                        fallback_mtime_ns=source_info.mtime_ns,
+                    )
+                    warning = _merge_warnings(warning, move_warning)
+                    if moved_info is not None:
+                        old_files[moved_info.relative_path] = moved_info
+                    continue
+                if destination_path not in observed:
+                    if had_walk_error:
+                        continue
+                    moved_info, move_warning = self._materialize_pending_move(
+                        source_path,
+                        fallback_mtime_ns=source_info.mtime_ns,
+                    )
+                    warning = _merge_warnings(warning, move_warning)
+                    if moved_info is None:
+                        pending_move_sources.add(source_path)
+                        continue
+                    old_files.pop(source_path, None)
+                    old_files[moved_info.relative_path] = moved_info
+                    continue
+                try:
+                    moved = self._load_file(destination_path)
+                except (OSError, ValueError):
+                    pending_move_sources.add(source_path)
+                    continue
+                move_warning = self._move_opened(source_path, moved)
+                if move_warning is not None:
+                    warning = _merge_warnings(warning, move_warning)
+                    pending_move_sources.add(source_path)
+                    pending_move_entries[destination_path] = moved
+                    continue
+                self._pending_replica_moves.pop(source_path, None)
+                old_files.pop(source_path, None)
+                old_files[destination_path] = ReplicaFileInfo(
+                    relative_path=destination_path,
+                    content_hash=moved.content_hash,
+                    size=moved.size,
+                    mtime_ns=moved.mtime_ns,
+                )
+
         entries: list[FileNoteEntry] = []
         created: list[str] = []
         modified: list[str] = []
         for relative_path, observed_file in observed.items():
+            pending_move = pending_move_entries.get(relative_path)
+            if pending_move is not None:
+                entries.append(_entry_from_opened(pending_move))
+                continue
             previous = None if old_files is None else old_files.get(relative_path)
             cached = self._entry_cache.get(relative_path)
             replica_matches = (
@@ -882,7 +944,10 @@ class FileNotesService:
         deleted: list[str] = []
         if old_files is not None and not had_walk_error:
             deleted = sorted(
-                set(old_files) - set(observed) - uncertain_paths
+                set(old_files)
+                - set(observed)
+                - uncertain_paths
+                - pending_move_sources
             )
             for relative_path in deleted:
                 try:
@@ -1124,6 +1189,88 @@ class FileNotesService:
             mtime_ns=opened.mtime_ns,
         )
 
+    def _move_opened(
+        self,
+        source_path: str,
+        opened: OpenedFileNote,
+    ) -> str | None:
+        if self._replica is None:
+            return "Replica unavailable"
+        try:
+            self._replica.move_file(
+                self.root_key,
+                source_path,
+                opened.relative_path,
+                opened.raw_bytes,
+                content_hash=opened.content_hash,
+                decoded_text=_decode_for_replica(opened.raw_bytes),
+                size=opened.size,
+                mtime_ns=opened.mtime_ns,
+            )
+        except Exception as error:
+            return _replica_warning(error)
+        return None
+
+    def _materialize_pending_move(
+        self,
+        source_path: str,
+        *,
+        fallback_mtime_ns: int,
+    ) -> tuple[ReplicaFileInfo | None, str | None]:
+        destination_path = self._pending_replica_moves.get(source_path)
+        if destination_path is None:
+            return None, None
+        if self._replica is None:
+            return None, "Replica unavailable"
+
+        try:
+            moved = self._load_file(destination_path)
+        except FileNotFoundError:
+            try:
+                retained_bytes = self._replica.get_bytes(
+                    self.root_key,
+                    source_path,
+                )
+                if retained_bytes is None:
+                    return (
+                        None,
+                        "Replica update deferred: retained move source is unavailable",
+                    )
+                retained_hash = _digest(retained_bytes)
+                self._replica.move_file(
+                    self.root_key,
+                    source_path,
+                    destination_path,
+                    retained_bytes,
+                    content_hash=retained_hash,
+                    decoded_text=_decode_for_replica(retained_bytes),
+                    size=len(retained_bytes),
+                    mtime_ns=fallback_mtime_ns,
+                )
+            except Exception as error:
+                return None, _replica_warning(error)
+            moved_info = ReplicaFileInfo(
+                relative_path=destination_path,
+                content_hash=retained_hash,
+                size=len(retained_bytes),
+                mtime_ns=fallback_mtime_ns,
+            )
+        except (OSError, ValueError) as error:
+            return None, f"Replica update deferred: {error}"
+        else:
+            warning = self._move_opened(source_path, moved)
+            if warning is not None:
+                return None, warning
+            moved_info = ReplicaFileInfo(
+                relative_path=destination_path,
+                content_hash=moved.content_hash,
+                size=moved.size,
+                mtime_ns=moved.mtime_ns,
+            )
+
+        self._pending_replica_moves.pop(source_path, None)
+        return moved_info, None
+
     def _upsert_bytes(
         self,
         relative_path: str,
@@ -1140,6 +1287,12 @@ class FileNotesService:
         )
         if observed_mtime_ns is None:
             raise ValueError("mtime_ns is required for replica upsert")
+        _, pending_warning = self._materialize_pending_move(
+            relative_path,
+            fallback_mtime_ns=observed_mtime_ns,
+        )
+        if pending_warning is not None:
+            return pending_warning
         try:
             self._replica.upsert_file(
                 self.root_key,

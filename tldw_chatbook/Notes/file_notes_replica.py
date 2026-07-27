@@ -76,38 +76,16 @@ class FileNotesReplica:
             mtime_ns: File modification time in nanoseconds.
         """
         with self._transaction() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO files (
-                    root,
-                    relative_path,
-                    raw_bytes,
-                    content_hash,
-                    decoded_text,
-                    size,
-                    mtime_ns,
-                    deleted_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
-                ON CONFLICT(root, relative_path) DO UPDATE SET
-                    raw_bytes = excluded.raw_bytes,
-                    content_hash = excluded.content_hash,
-                    decoded_text = excluded.decoded_text,
-                    size = excluded.size,
-                    mtime_ns = excluded.mtime_ns,
-                    deleted_at = NULL
-                """,
-                (
-                    root,
-                    relative_path,
-                    raw_bytes,
-                    content_hash,
-                    decoded_text,
-                    size,
-                    mtime_ns,
-                ),
+            self._upsert_file(
+                cursor,
+                root,
+                relative_path,
+                raw_bytes,
+                content_hash=content_hash,
+                decoded_text=decoded_text,
+                size=size,
+                mtime_ns=mtime_ns,
             )
-            self._replace_fts(cursor, root, relative_path, decoded_text)
 
     def get_bytes(self, root: str, relative_path: str) -> bytes | None:
         """Return exact current or tombstoned bytes for a path.
@@ -226,6 +204,58 @@ class FileNotesReplica:
                 return False
             self._delete_fts(cursor, root, relative_path)
         return True
+
+    def move_file(
+        self,
+        root: str,
+        source_path: str,
+        destination_path: str,
+        raw_bytes: bytes,
+        *,
+        content_hash: str,
+        decoded_text: str | None,
+        size: int,
+        mtime_ns: int,
+    ) -> bool:
+        """Publish a moved file and discard its active source atomically.
+
+        Args:
+            root: Canonical notes-root identifier.
+            source_path: Moved-from path relative to ``root``.
+            destination_path: Moved-to path relative to ``root``.
+            raw_bytes: Exact destination bytes read from disk.
+            content_hash: Digest of ``raw_bytes``.
+            decoded_text: Searchable text, or ``None`` for non-text content.
+            size: Destination file size in bytes.
+            mtime_ns: Destination modification time in nanoseconds.
+
+        Returns:
+            ``True`` when an active source row was removed. A genuine source
+            tombstone is retained.
+        """
+        with self._transaction() as cursor:
+            self._upsert_file(
+                cursor,
+                root,
+                destination_path,
+                raw_bytes,
+                content_hash=content_hash,
+                decoded_text=decoded_text,
+                size=size,
+                mtime_ns=mtime_ns,
+            )
+            self._delete_fts(cursor, root, source_path)
+            cursor.execute(
+                """
+                DELETE FROM files
+                WHERE root = ?
+                  AND relative_path = ?
+                  AND deleted_at IS NULL
+                """,
+                (root, source_path),
+            )
+            removed = cursor.rowcount > 0
+        return removed
 
     def clear_tombstone(self, root: str, relative_path: str) -> bool:
         """Clear a deletion marker and restore searchable current content.
@@ -578,6 +608,52 @@ class FileNotesReplica:
                 raise
             finally:
                 cursor.close()
+
+    @classmethod
+    def _upsert_file(
+        cls,
+        cursor: sqlite3.Cursor,
+        root: str,
+        relative_path: str,
+        raw_bytes: bytes,
+        *,
+        content_hash: str,
+        decoded_text: str | None,
+        size: int,
+        mtime_ns: int,
+    ) -> None:
+        cursor.execute(
+            """
+            INSERT INTO files (
+                root,
+                relative_path,
+                raw_bytes,
+                content_hash,
+                decoded_text,
+                size,
+                mtime_ns,
+                deleted_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+            ON CONFLICT(root, relative_path) DO UPDATE SET
+                raw_bytes = excluded.raw_bytes,
+                content_hash = excluded.content_hash,
+                decoded_text = excluded.decoded_text,
+                size = excluded.size,
+                mtime_ns = excluded.mtime_ns,
+                deleted_at = NULL
+            """,
+            (
+                root,
+                relative_path,
+                raw_bytes,
+                content_hash,
+                decoded_text,
+                size,
+                mtime_ns,
+            ),
+        )
+        cls._replace_fts(cursor, root, relative_path, decoded_text)
 
     @staticmethod
     def _delete_fts(
