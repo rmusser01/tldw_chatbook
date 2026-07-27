@@ -1008,6 +1008,69 @@ async def test_a_run_group_with_no_snippets_renders_an_empty_state_instead_of_cr
 
 
 @pytest.mark.asyncio
+async def test_unexpected_load_grid_failure_renders_error_state_without_crashing_the_app(
+    evals_app, mixed_run_group, monkeypatch
+):
+    """Regression (TASK-861 item 2): ``compose()`` only wrapped
+    ``load_grid(...)`` in ``except ValueError`` -- the deliberate
+    "no runs found for run group" case ``storage.load_grid`` raises on
+    purpose. Anything else (a locked database, a disk error, a schema
+    mismatch from an older profile -- ``Evals_DB.list_runs``/
+    ``get_run_results`` have no exception wrapping of their own) came
+    through unconverted. Textual's ``Widget._compose`` wraps the entire
+    ``compose()`` call in ``except Exception`` and hands it to
+    ``App._handle_exception``, whose own docstring says this "always
+    results in the app exiting" -- so an unconverted sqlite fault here
+    does not just break this widget, it silently kills the whole process.
+    Reproduces the escape directly (a stand-in for the author's own
+    "build a valid run group, DROP TABLE eval_results" repro) by making
+    ``load_grid`` raise ``sqlite3.OperationalError`` for an otherwise
+    valid run group id.
+    """
+    import sqlite3
+
+    from tldw_chatbook.UI.Evals import results_grid as results_grid_module
+
+    def _raise_operational_error(db, run_group_id):
+        raise sqlite3.OperationalError("no such table: eval_results")
+
+    monkeypatch.setattr(results_grid_module, "load_grid", _raise_operational_error)
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, mixed_run_group["group_id"])
+        await pilot.pause()
+
+        # The direct signal that ``compose()`` did NOT let the exception
+        # escape: Textual only ever populates ``App._exception`` via
+        # ``_handle_exception``, and its docstring says that "always
+        # results in the app exiting". No exception recorded here means
+        # the app is still alive, not merely that the crash hasn't been
+        # observed yet.
+        assert pilot.app._exception is None
+        assert pilot.app.is_running
+
+        error_state = grid.query_one("#evals-grid-error")
+        message = str(error_state.renderable)
+        assert "unexpected error" in message
+        # Must not impersonate the deliberate, distinctly-worded
+        # "no runs found" ValueError copy -- that path has its own
+        # meaning and its own test.
+        assert "may have been deleted" not in message
+        assert not grid.query("#evals-grid-table")
+
+        # And the shortcuts stay inert rather than crashing on a table
+        # that was never built (mirrors the empty-state regression test
+        # above).
+        grid.action_cycle_lens()
+        grid.action_cycle_baseline()
+        grid.action_cycle_sort()
+        grid.action_export()
+        await pilot.pause()
+        assert pilot.app.screen.query_one("#evals-results-grid", ResultsGrid) is grid
+
+
+@pytest.mark.asyncio
 async def test_truncation_lens_uses_the_shared_k_the_header_states(
     evals_app, clean_run_group
 ):

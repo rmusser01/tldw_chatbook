@@ -333,6 +333,29 @@ class ResultsGrid(Vertical):
                 id="evals-grid-error",
             )
             return
+        except Exception:
+            # Textual's Widget._compose wraps the whole compose() call in
+            # `except Exception` and forwards it to App._handle_exception,
+            # whose docstring says this "always results in the app
+            # exiting" -- any exception escaping this method takes the
+            # whole process down, not just this widget. ``load_grid`` only
+            # raises ``ValueError`` deliberately (the known-empty case
+            # above); everything else -- a locked database, a disk error,
+            # a schema mismatch from an older profile -- comes unwrapped
+            # from ``Evals_DB.list_runs``/``get_run_results`` and must be
+            # caught here instead. Deliberately `Exception`, not
+            # `BaseException`: `asyncio.CancelledError` is a
+            # `BaseException` subclass and must keep propagating.
+            logger.opt(exception=True).error(
+                f"Unexpected failure loading results grid for run group "
+                f"{self._run_group_id!r}."
+            )
+            yield Static(
+                "This run's results could not be loaded because of an "
+                "unexpected error; see the log for details.",
+                id="evals-grid-error",
+            )
+            return
 
         snapshot = self._grid["snapshot"]
         if not snapshot.get("snippets") or not snapshot.get("targets"):
