@@ -6,13 +6,14 @@ This is a refactored version that uses the new component-based architecture.
 
 import inspect
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, List, Optional, Dict, Any
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container
 from textual.reactive import reactive
-from textual.widgets import Button, Markdown, Label
-from loguru import logger
+from textual.widgets import Button, Label, Markdown
 
 # Import media components
 from ..Widgets.Media import (
@@ -1147,7 +1148,12 @@ class MediaWindow(Container):
 
     @on(MediaItemSelectedEvent)
     async def handle_media_item_selected(self, event: MediaItemSelectedEvent) -> None:
-        """Start item-detail loading without blocking the destination message pump."""
+        """Start item-detail loading without blocking the destination message pump.
+
+        Args:
+            event: Selection event containing the normalized record identifier
+                and detached browse record.
+        """
         event.stop()
         record = self._record_for_event(event)
         record_id = self._record_id(
@@ -1293,7 +1299,12 @@ class MediaWindow(Container):
 
     @on(MediaMetadataUpdateEvent)
     def handle_metadata_update(self, event: MediaMetadataUpdateEvent) -> None:
-        """Start one durable metadata mutation outside the widget message pump."""
+        """Start one durable metadata mutation outside the widget message pump.
+
+        Args:
+            event: Metadata edit containing the record identity and replacement
+                field values.
+        """
         event.stop()
 
         record = self._record_for_event(event)
@@ -1329,8 +1340,17 @@ class MediaWindow(Container):
             generation=self._metadata_generation,
             browse_identity=self._browse_presentation_identity(),
         )
+        mutation = scope_service.update_media_metadata_latest(
+            mode=request.mode,
+            media_id=request.source_media_id,
+            title=request.title,
+            media_type=request.media_type,
+            author=request.author,
+            url=request.url,
+            keywords=list(request.keywords),
+        )
         self.app_instance.run_worker(
-            self._run_durable_metadata_update(scope_service, request),
+            self._run_durable_metadata_update(mutation, request),
             group=_MEDIA_METADATA_UPDATE_WORKER_GROUP,
         )
 
@@ -1375,22 +1395,12 @@ class MediaWindow(Container):
 
     async def _run_durable_metadata_update(
         self,
-        scope_service: Any,
+        mutation: Any,
         request: _MediaMetadataUpdateRequest,
     ) -> None:
-        """Persist metadata, then update only the exact initiating owner."""
+        """Persist metadata in edit order, then update the initiating owner."""
         try:
-            await self._maybe_await(
-                scope_service.update_media_metadata(
-                    mode=request.mode,
-                    media_id=request.source_media_id,
-                    title=request.title,
-                    media_type=request.media_type,
-                    author=request.author,
-                    url=request.url,
-                    keywords=list(request.keywords),
-                )
-            )
+            await self._maybe_await(mutation)
         except Exception as exc:
             logger.warning(
                 "Media metadata update failed (backend={}, category={}).",
@@ -2347,7 +2357,12 @@ class MediaWindow(Container):
         """Trigger one generation-guarded media search in the background."""
         scope_service = self._scope_service()
         if scope_service is None:
-            logger.error("Media reading scope service not available")
+            logger.error(
+                "Media browse search unavailable (type_slug={}, backend={}): "
+                "media reading scope service is not configured.",
+                type_slug,
+                self._runtime_backend(),
+            )
             return
         if type_slug in ["collections-tags", "multi-item-review"]:
             logger.info("Skipping browse query for special Media view")

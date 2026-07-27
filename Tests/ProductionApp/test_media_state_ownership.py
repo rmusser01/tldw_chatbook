@@ -199,6 +199,235 @@ async def test_real_media_metadata_event_mutates_and_refreshes_once(
 
 
 @pytest.mark.asyncio
+async def test_real_metadata_updates_are_last_edit_wins_in_durable_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A slower earlier edit must not overwrite a newer edit for one record."""
+    app = _production_app(monkeypatch)
+    release_first = asyncio.Event()
+
+    try:
+        async with app.run_test(size=(160, 50)) as pilot:
+            app.post_message(NavigateToScreen("media"))
+            screen = await _wait_for_media_screen(app, pilot)
+            window = screen.media_window
+            assert window is not None
+
+            media_id, _media_uuid, message = app.media_db.add_media_with_keywords(
+                title="TASK-652 original metadata",
+                media_type="document",
+                content="TASK-652 metadata ordering record",
+                author="TASK-652",
+                keywords=["task-652"],
+            )
+            assert media_id is not None, message
+            detail = await app.media_reading_scope_service.get_media_detail(
+                mode="local",
+                media_id=media_id,
+            )
+            record_id = str(detail["id"])
+            window.active_media_type = "all-media"
+            window.selected_media_id = record_id
+            window.runtime_state.active_media_type = "all-media"
+            window.runtime_state.selected_record_id = record_id
+            window.runtime_state.detail_by_record_id[record_id] = dict(detail)
+            window.viewer_panel.load_media(detail)
+
+            first_started = asyncio.Event()
+            second_started = asyncio.Event()
+            finished_titles: list[str] = []
+            real_update = app.local_media_reading_service.update_media_metadata
+
+            async def reordered_update(media_id, **kwargs):
+                title = str(kwargs["title"])
+                if title == "TASK-652 older edit":
+                    first_started.set()
+                    await release_first.wait()
+                else:
+                    second_started.set()
+                result = real_update(media_id, **kwargs)
+                finished_titles.append(title)
+                return result
+
+            monkeypatch.setattr(
+                app.local_media_reading_service,
+                "update_media_metadata",
+                reordered_update,
+            )
+            monkeypatch.setattr(window, "_perform_search", lambda *_args: None)
+
+            def post_metadata(title: str) -> None:
+                window.viewer_panel.post_message(
+                    MediaMetadataUpdateEvent(
+                        media_id=media_id,
+                        record_id=record_id,
+                        backing_media_id=media_id,
+                        title=title,
+                        media_type="document",
+                        author="TASK-652",
+                        url="",
+                        keywords=["task-652"],
+                        type_slug="all-media",
+                    )
+                )
+
+            post_metadata("TASK-652 older edit")
+            await _wait_until(
+                pilot,
+                first_started.is_set,
+                "the older metadata update did not start",
+            )
+
+            post_metadata("TASK-652 newer edit")
+            for _ in range(30):
+                if second_started.is_set():
+                    break
+                await pilot.pause(0.01)
+            if second_started.is_set():
+                await _wait_until(
+                    pilot,
+                    lambda: "TASK-652 newer edit" in finished_titles,
+                    "the concurrently started newer edit did not finish",
+                )
+
+            release_first.set()
+            await _wait_until(
+                pilot,
+                lambda: len(finished_titles) == 2,
+                "both metadata updates did not settle",
+            )
+
+            stored = app.media_db.get_media_by_id(media_id)
+            assert stored is not None
+            assert stored["title"] == "TASK-652 newer edit"
+    finally:
+        release_first.set()
+        await _close_production_app(app)
+
+
+@pytest.mark.asyncio
+async def test_real_metadata_ordering_survives_media_window_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A replacement MediaWindow must share durable write ordering."""
+    app = _production_app(monkeypatch)
+    release_first = asyncio.Event()
+
+    try:
+        async with app.run_test(size=(160, 50)) as pilot:
+            app.post_message(NavigateToScreen("media"))
+            first_screen = await _wait_for_media_screen(app, pilot)
+            first_window = first_screen.media_window
+            assert first_window is not None
+
+            media_id, _media_uuid, message = app.media_db.add_media_with_keywords(
+                title="TASK-652 original replacement metadata",
+                media_type="document",
+                content="TASK-652 replacement-window ordering record",
+                author="TASK-652",
+                keywords=["task-652"],
+            )
+            assert media_id is not None, message
+            detail = await app.media_reading_scope_service.get_media_detail(
+                mode="local",
+                media_id=media_id,
+            )
+            record_id = str(detail["id"])
+
+            def select_record(window) -> None:
+                window.active_media_type = "all-media"
+                window.selected_media_id = record_id
+                window.runtime_state.active_media_type = "all-media"
+                window.runtime_state.selected_record_id = record_id
+                window.runtime_state.detail_by_record_id[record_id] = dict(detail)
+                window.viewer_panel.load_media(detail)
+                monkeypatch.setattr(window, "_perform_search", lambda *_args: None)
+
+            select_record(first_window)
+
+            first_started = asyncio.Event()
+            second_started = asyncio.Event()
+            finished_titles: list[str] = []
+            real_update = app.local_media_reading_service.update_media_metadata
+
+            async def reordered_local_update(media_id, **metadata):
+                title = str(metadata["title"])
+                if title == "TASK-652 older replaced-window edit":
+                    first_started.set()
+                    await release_first.wait()
+                else:
+                    second_started.set()
+                result = real_update(media_id, **metadata)
+                finished_titles.append(title)
+                return result
+
+            monkeypatch.setattr(
+                app.local_media_reading_service,
+                "update_media_metadata",
+                reordered_local_update,
+            )
+
+            def post_metadata(window, title: str) -> None:
+                window.viewer_panel.post_message(
+                    MediaMetadataUpdateEvent(
+                        media_id=media_id,
+                        record_id=record_id,
+                        backing_media_id=media_id,
+                        title=title,
+                        media_type="document",
+                        author="TASK-652",
+                        url="",
+                        keywords=["task-652"],
+                        type_slug="all-media",
+                    )
+                )
+
+            post_metadata(first_window, "TASK-652 older replaced-window edit")
+            await _wait_until(
+                pilot,
+                first_started.is_set,
+                "the older replacement-window edit did not start",
+            )
+
+            app.post_message(NavigateToScreen("settings"))
+            await _wait_for_screen(app, pilot, SettingsScreen)
+            assert first_window._closed
+
+            app.post_message(NavigateToScreen("media"))
+            second_screen = await _wait_for_media_screen(app, pilot)
+            second_window = second_screen.media_window
+            assert second_window is not None
+            assert second_window is not first_window
+            select_record(second_window)
+            post_metadata(second_window, "TASK-652 newer replaced-window edit")
+
+            for _ in range(30):
+                if second_started.is_set():
+                    break
+                await pilot.pause(0.01)
+            if second_started.is_set():
+                await _wait_until(
+                    pilot,
+                    lambda: "TASK-652 newer replaced-window edit" in finished_titles,
+                    "the newer replacement-window edit did not finish",
+                )
+
+            release_first.set()
+            await _wait_until(
+                pilot,
+                lambda: len(finished_titles) == 2,
+                "both replacement-window metadata updates did not settle",
+            )
+
+            stored = app.media_db.get_media_by_id(media_id)
+            assert stored is not None
+            assert stored["title"] == "TASK-652 newer replaced-window edit"
+    finally:
+        release_first.set()
+        await _close_production_app(app)
+
+
+@pytest.mark.asyncio
 async def test_real_media_destination_stops_handled_messages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -423,21 +652,21 @@ async def test_real_metadata_mutation_survives_media_screen_teardown(
             release_update = asyncio.Event()
             update_finished = asyncio.Event()
             committed = False
-            real_update = app.media_reading_scope_service.update_media_metadata
+            real_update = app.local_media_reading_service.update_media_metadata
 
-            async def delayed_real_update(**kwargs):
+            async def delayed_real_update(media_id, **kwargs):
                 nonlocal committed
                 update_started.set()
                 try:
                     await release_update.wait()
-                    result = await real_update(**kwargs)
+                    result = real_update(media_id, **kwargs)
                     committed = True
                     return result
                 finally:
                     update_finished.set()
 
             monkeypatch.setattr(
-                app.media_reading_scope_service,
+                app.local_media_reading_service,
                 "update_media_metadata",
                 delayed_real_update,
             )
@@ -523,7 +752,7 @@ async def test_real_metadata_completion_ignores_changed_selection(
             update_started = asyncio.Event()
             update_finished = asyncio.Event()
 
-            async def delayed_update(**_kwargs):
+            async def delayed_update(_media_id, **_kwargs):
                 update_started.set()
                 await release_update.wait()
                 update_finished.set()
@@ -541,7 +770,7 @@ async def test_real_metadata_completion_ignores_changed_selection(
                 }
 
             monkeypatch.setattr(
-                app.media_reading_scope_service,
+                app.local_media_reading_service,
                 "update_media_metadata",
                 delayed_update,
             )
@@ -651,11 +880,11 @@ async def test_real_metadata_failure_is_bounded_and_private(
             window.runtime_state.detail_by_record_id[record_id] = dict(record)
             window.viewer_panel.load_media(record)
 
-            async def fail_update(**_kwargs):
+            async def fail_update(_media_id, **_kwargs):
                 raise RuntimeError(private_value)
 
             monkeypatch.setattr(
-                app.media_reading_scope_service,
+                app.local_media_reading_service,
                 "update_media_metadata",
                 fail_update,
             )

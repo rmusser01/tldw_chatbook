@@ -34,6 +34,7 @@ Make MediaWindow the sole Media view and selection owner and ensure one producti
 - [x] #3 One real metadata event performs exactly one scoped mutation and refresh, while older item-detail and search completions cannot overwrite newer destination state.
 - [x] #4 MediaScreen snapshots and restores only the actual MediaWindow owner.
 - [x] #5 Normal production TldwCli Media checks plus focused ownership, static, formatting, compile, and authorized integration checks pass.
+- [x] #6 Concurrent metadata edits are last-request-wins in durable storage, including when the initiating MediaWindow is replaced before the writes settle.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,7 +46,7 @@ Reason: Existing ADRs make MediaWindow the production state/action owner.
 
 1. Reproduce one metadata event reaching both the destination and app.
 2. Stop handled messages before work and keep durable metadata mutation alive in an app-owned worker without root Media data.
-3. Guard stale detail/search/metadata presentation with destination-local generations.
+3. Order same-record metadata persistence at the long-lived scope-service boundary and guard stale detail/search/metadata presentation with destination-local generations.
 4. Remove duplicate reactive and ordinary app-root Media state plus legacy handlers and tests.
 5. Verify the real production TldwCli, snapshots, privacy, ownership, static checks, and integration gates.
 <!-- SECTION:PLAN:END -->
@@ -57,6 +58,7 @@ Implemented destination-owned Media state and exact-once event handling.
 
 - Moved MediaRuntimeState construction, browse/detail caches, selection, and search/detail/metadata generations into MediaWindow; removed the listed TldwCli and MediaScreen mirrors plus legacy app handlers and emitters.
 - Stopped every handled Media message at the destination before mutation, await, or worker launch. Metadata persistence runs in an app-owned generic worker with an immutable detached request, while presentation remains guarded by the exact mounted owner, selection, browse identity, and local generation.
+- Serialized same-record metadata writes in the long-lived media scope service with synchronous request reservation, so slower earlier edits cannot overwrite newer durable values within one MediaWindow or across destination replacement.
 - Unified mutation-triggered refreshes with the stale-safe browse worker, retained last-valid-page correction, and allowed valid completions while a real production modal is above the still-mounted Media route.
 - Reduced media_events.py to message contracts, removed obsolete root-only search tests, updated retained direct-function contracts, and replaced simplified mounted MediaWindow restore tests with full production TldwCli coverage.
 - MediaScreen now saves and restores only live MediaWindow fields; live and missing restored selections are verified on fresh production destinations.
@@ -66,16 +68,17 @@ ADR paths: backlog/decisions/033-application-session-state-ownership.md and back
 Reason: these existing ADRs already assign destination state/actions and stale-safe async presentation; no new decision was introduced.
 
 Verification:
-- Production Media plus ownership sentinels: 53 passed, 1 dependency warning, 240.07s.
-- Runtime-policy, Chat function, and MediaScreen integration selection: 28 passed, 1 dependency warning, 16.67s.
-- Direct MediaWindow functions: 31 passed, 1.59s; direct handoff functions: 4 passed, 0.21s; MediaRuntimeState functions: 3 passed, 0.12s.
-- Ruff format check: 12 files already formatted; Ruff check passed; compileall passed; git diff --check passed.
-- Independent review found a modal-owner race and retained-test contract drift; both were fixed and the re-review reported no remaining findings.
+- Production Media plus ownership sentinels: 55 passed, 1 dependency warning, 467.66s.
+- Runtime-policy, Chat function, and MediaScreen integration selection: 28 passed, 1 dependency warning, 18.95s.
+- Media scope-service functions: 73 passed, 2.55s; MediaRuntimeState functions: 3 passed, 0.13s.
+- Ruff format check: 14 files already formatted; Ruff check passed; compileall passed; git diff --check passed.
+- Independent review found a modal-owner race, retained-test contract drift, and durable metadata ordering race; all confirmed defects were fixed. A suggested keyword-refresh coupling was rejected after an import/mount census proved the legacy CollectionsTagWindow has no production mount and Media type transitions issue a fresh browse query.
 
 Verified evidence:
 - One real metadata message produced one mutation and one refresh and stopped at MediaWindow.
 - Real message propagation ended at MediaWindow for navigation, selection, delete/undelete, read-later, highlight, analysis, and collapse messages.
 - Older detail, ordinary search, and mutation-triggered refresh completions did not overwrite newer state; metadata survived Media teardown without stale presentation.
+- Same-window and replacement-window reverse-order metadata writes left the newer edit in durable SQLite storage.
 - Metadata failure diagnostics excluded sentinel private values.
 
 Deviations and adjacent findings:

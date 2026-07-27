@@ -4,7 +4,7 @@
 
 **Goal:** Make `MediaWindow` the sole Media view/selection owner, stop handled messages at that destination, and guarantee one metadata event causes one scoped mutation.
 
-**Architecture:** `MediaScreen` snapshots the mounted `MediaWindow`; the destination stops selection/search/mutation messages before any await. `MediaWindow` owns its runtime state and local operation generations. Metadata updates use the existing scoped service in an app-owned Textual worker so the durable operation survives outgoing-screen teardown; the app owns only the generic worker lifetime and no Media payload, result, cache, or presentation state. Presentation updates are guarded by the exact mounted owner, selected record, active type, query tuple, and local generation. The app-level duplicate handler and legacy Media root/search paths are deleted.
+**Architecture:** `MediaScreen` snapshots the mounted `MediaWindow`; the destination stops selection/search/mutation messages before any await. `MediaWindow` owns its runtime state and local operation generations. Metadata updates reserve per-record last-request-wins ordering at the long-lived scoped-service boundary, then run in an app-owned Textual worker so the durable operation survives outgoing-screen teardown and remains ordered across replacement destinations; the app owns only the generic worker lifetime and no Media payload, result, cache, or presentation state. Presentation updates are guarded by the exact mounted owner, selected record, active type, query tuple, and local generation. The app-level duplicate handler and legacy Media root/search paths are deleted.
 
 **Tech Stack:** Python 3.11+, Textual messages/reactives/workers, scoped media services, pytest/pytest-asyncio, AST ownership tests.
 
@@ -56,11 +56,13 @@ destination navigation authority.
 ## File Structure
 
 - Modify `tldw_chatbook/UI/MediaWindow_v2.py`: stop handled messages before await and guard stale presentation.
+- Modify `tldw_chatbook/Media/media_reading_scope_service.py`: serialize same-record metadata writes and skip not-yet-started superseded requests across destination replacement.
 - Modify `tldw_chatbook/UI/Screens/media_screen.py`: keep snapshot/restore limited to the mounted window.
 - Modify `tldw_chatbook/Event_Handlers/media_events.py`: retain message contracts/live shared helpers, delete app-root mutation/search/list implementations.
 - Modify `tldw_chatbook/Event_Handlers/collections_tag_events.py`: remove fallback refresh through deleted app Media fields.
 - Modify `tldw_chatbook/app.py`: remove root fields/watchers/input handlers, the duplicate metadata registration, and the app-owned `MediaRuntimeState`.
 - Create `Tests/ProductionApp/test_media_state_ownership.py`.
+- Modify `Tests/Media/test_media_reading_scope_service.py`.
 - Modify `Tests/test_application_state_ownership.py`.
 - Retire tests whose sole subject is the deleted legacy root Media path.
 
@@ -98,6 +100,9 @@ Expected: the metadata regression fails by observing duplicate reach before the 
 - [x] Launch metadata persistence as an app-owned Textual worker carrying an
   immutable detached request. Keep paths/payloads/results out of `TldwCli`;
   refresh only the exact still-mounted initiating `MediaWindow`.
+- [x] Reserve metadata write generations synchronously on the shared scope
+  service and serialize writes per backend/record so a slower earlier edit
+  cannot overwrite a newer edit, including after `MediaWindow` replacement.
 - [x] Add destination-local generations for metadata mutation, item-detail
   loading, and search completion. Each async path captures its record/query
   identity before awaiting; durable mutations always settle, but list/viewer
@@ -107,9 +112,10 @@ Expected: the metadata regression fails by observing duplicate reach before the 
   only operation/record category and exception category—not media content,
   metadata values, or response bodies.
 - [x] Add tests for exactly one mutation/refresh, service failure, selection
-  change while awaiting, screen navigation while awaiting, reverse-order
-  item-detail completion, and reverse-order search completion. An older detail
-  or search must never overwrite the newer selection/query.
+  change while awaiting, screen navigation while awaiting, same-window and
+  replacement-window metadata ordering, reverse-order item-detail completion,
+  and reverse-order search completion. An older metadata, detail, or search
+  completion must never overwrite the newer durable edit, selection, or query.
 
 ## Task 3: Delete App-Root Media State and Legacy Handlers
 
