@@ -1,5 +1,5 @@
 ---
-id: TASK-840
+id: TASK-868
 title: Audio and video ingest crash in chunking after transcription
 status: Done
 assignee: []
