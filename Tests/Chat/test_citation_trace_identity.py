@@ -68,6 +68,23 @@ class InsecureFakeKeyring(FakeKeyring):
     priority = 1
 
 
+class WritableSecureFakeKeyring(SecureFakeKeyring):
+    __module__ = "keyring.backends.macOS"
+
+    def __init__(self, value: str | None = None, *, error: Exception | None = None):
+        super().__init__(value, error=error)
+        self.set_calls: list[tuple[str, str, str]] = []
+
+    def set_password(self, service: str, account: str, value: str) -> None:
+        self.set_calls.append((service, account, value))
+        self.value = value
+
+
+class UnwritableSecureFakeKeyring(WritableSecureFakeKeyring):
+    def set_password(self, service: str, account: str, value: str) -> None:
+        raise RuntimeError("keyring is read-only")
+
+
 def test_opaque_ids_use_128_random_bits_with_stable_bounded_prefixes() -> None:
     first = new_opaque_id("trace")
     second = new_opaque_id("trace")
@@ -264,6 +281,48 @@ def test_keyring_adapter_uses_fixed_service_and_never_touches_real_keyring() -> 
     assert provider.load_key("key-1") == secret
     assert backend.calls == [(CITATION_FINGERPRINT_KEYRING_SERVICE, "key-1")]
     assert "redacted" in repr(provider).lower()
+
+
+def test_keyring_adapter_provisions_one_missing_secret_and_reuses_it() -> None:
+    backend = WritableSecureFakeKeyring()
+    provider = KeyringCitationFingerprintKeyProvider(keyring_backend=backend)
+
+    secret = provider.provision_key("key-1")
+
+    assert len(secret) == MINIMUM_FINGERPRINT_SECRET_BYTES
+    assert backend.set_calls == [
+        (
+            CITATION_FINGERPRINT_KEYRING_SERVICE,
+            "key-1",
+            base64.b64encode(secret).decode("ascii"),
+        )
+    ]
+    assert provider.provision_key("key-1") == secret
+    assert len(backend.set_calls) == 1
+
+
+@pytest.mark.parametrize(
+    "backend",
+    (
+        SecureFakeKeyring(None),
+        WritableSecureFakeKeyring("not-base64"),
+        WritableSecureFakeKeyring(error=RuntimeError("keyring unavailable")),
+        UnwritableSecureFakeKeyring(),
+        InsecureFakeKeyring(None),
+    ),
+)
+def test_keyring_adapter_provisioning_failures_never_replace_existing_state(
+    backend: FakeKeyring,
+) -> None:
+    provider = KeyringCitationFingerprintKeyProvider(keyring_backend=backend)
+
+    with pytest.raises(
+        CitationFingerprintKeyUnavailable,
+        match="fingerprint_key_unavailable",
+    ):
+        provider.provision_key("key-1")
+
+    assert getattr(backend, "set_calls", []) == []
 
 
 @pytest.mark.parametrize(

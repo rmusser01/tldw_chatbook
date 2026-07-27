@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.citation_provenance_runtime import (
 )
 from tldw_chatbook.Chat.citation_trace_identity import (
     CitationFingerprintKeyProvider,
+    CitationFingerprintKeyUnavailable,
     KeyringCitationFingerprintKeyProvider,
 )
 from tldw_chatbook.Chat.citation_trace_repository import (
@@ -38,12 +39,54 @@ def build_local_citation_conversation_service(
 
     if repository is None:
         runtime_policy = policy or CitationProvenanceRuntimePolicy.from_config()
+        identity_context = load_local_citation_identity_context(db)
+        runtime_key_provider = key_provider or KeyringCitationFingerprintKeyProvider()
         repository = CitationTraceRepository.from_key_provider(
             db,
             policy=runtime_policy,
-            identity_context=load_local_citation_identity_context(db),
-            key_provider=key_provider or KeyringCitationFingerprintKeyProvider(),
+            identity_context=identity_context,
+            key_provider=runtime_key_provider,
         )
+        if (
+            runtime_policy.canonical_writes_enabled
+            and identity_context is not None
+            and isinstance(
+                runtime_key_provider,
+                KeyringCitationFingerprintKeyProvider,
+            )
+            and not repository.local_citation_writes_ready
+        ):
+            with db.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE rag_identity_context
+                    SET fingerprint_key_id = fingerprint_key_id
+                    WHERE context_name = 'default'
+                    """
+                )
+                repository = CitationTraceRepository.from_key_provider(
+                    db,
+                    policy=runtime_policy,
+                    identity_context=identity_context,
+                    key_provider=runtime_key_provider,
+                )
+                if (
+                    not repository.local_citation_writes_ready
+                    and not repository.fingerprint_bearing_rows_exist()
+                ):
+                    try:
+                        runtime_key_provider.provision_key(
+                            identity_context.fingerprint_key_id
+                        )
+                    except CitationFingerprintKeyUnavailable:
+                        pass
+                    else:
+                        repository = CitationTraceRepository.from_key_provider(
+                            db,
+                            policy=runtime_policy,
+                            identity_context=identity_context,
+                            key_provider=runtime_key_provider,
+                        )
     migration = CitationLegacyMigrationService(
         db=db,
         repository=repository,
