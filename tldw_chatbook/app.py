@@ -7375,10 +7375,10 @@ class TldwCli(
         repository = getattr(self, "_tts_profile_repository", None)
         if repository is None:
             return None
-        if repository.state is ProfileRepositoryState.OPEN:
-            return repository
         if getattr(self, "_tts_profile_repository_close_task", None) is not None:
             return None
+        if repository.state is ProfileRepositoryState.OPEN:
+            return repository
 
         open_task = getattr(self, "_tts_profile_repository_open_task", None)
         if open_task is None or open_task.done():
@@ -7405,15 +7405,27 @@ class TldwCli(
             )
             self._tts_profile_repository_open_task = open_task
 
+            def settle_open_task(completed: asyncio.Task[bool]) -> None:
+                try:
+                    completed.exception()
+                except BaseException:
+                    pass
+                finally:
+                    if self._tts_profile_repository_open_task is completed:
+                        self._tts_profile_repository_open_task = None
+
+            open_task.add_done_callback(settle_open_task)
+
         try:
             opened = await asyncio.shield(open_task)
         except asyncio.CancelledError:
             raise
-        finally:
-            if open_task.done() and self._tts_profile_repository_open_task is open_task:
-                self._tts_profile_repository_open_task = None
 
-        if not opened or repository.state is not ProfileRepositoryState.OPEN:
+        if (
+            not opened
+            or repository.state is not ProfileRepositoryState.OPEN
+            or getattr(self, "_tts_profile_repository_close_task", None) is not None
+        ):
             return None
         return repository
 
@@ -7472,13 +7484,11 @@ class TldwCli(
         if not failures:
             return
 
-        cancellations = [
-            failure
-            for failure in failures
-            if isinstance(failure[1], asyncio.CancelledError)
+        control_flow_failures = [
+            failure for failure in failures if not isinstance(failure[1], Exception)
         ]
         primary_phase, primary_error = (
-            cancellations[0] if cancellations else failures[0]
+            control_flow_failures[0] if control_flow_failures else failures[0]
         )
         for phase, failure_error in failures:
             if failure_error is primary_error:

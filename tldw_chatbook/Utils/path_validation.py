@@ -341,7 +341,7 @@ def validate_path_simple(
             resolved = path.resolve()
             # Check if resolution changed the path significantly (possible symlink attack)
             if path.is_absolute() and resolved != path:
-                logger.warning(f"Path resolution changed: {path} -> {resolved}")
+                logger.warning("Path resolution changed during validation")
         elif require_exists:
             raise ValueError(f"Path does not exist: {path}")
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook import config
 
@@ -111,6 +112,39 @@ def test_tts_profiles_custom_db_path_rejects_invalid_input(
 
     with pytest.raises(ValueError):
         config.get_tts_profiles_db_path()
+
+
+def test_tts_profiles_symlink_validation_logs_no_path_values(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    resolved_target = tmp_path / "private-target" / "profiles.sqlite"
+    resolved_target.parent.mkdir()
+    resolved_target.touch()
+    configured_symlink = tmp_path / "configured-profile-store.sqlite"
+    configured_symlink.symlink_to(resolved_target)
+    monkeypatch.setattr(
+        config,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            str(configured_symlink)
+            if (section, key) == ("database", "tts_profiles_db_path")
+            else default
+        ),
+    )
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="WARNING", format="{message}")
+
+    try:
+        result = config.get_tts_profiles_db_path()
+    finally:
+        logger.remove(sink_id)
+
+    log_copy = "".join(map(str, messages))
+    assert result == resolved_target.resolve()
+    assert "Path resolution changed" in log_copy
+    assert str(configured_symlink) not in log_copy
+    assert str(resolved_target) not in log_copy
 
 
 def test_tts_profiles_path_is_resolved_only_in_app_constructor() -> None:

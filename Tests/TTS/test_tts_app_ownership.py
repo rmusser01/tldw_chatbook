@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ast
 import builtins
+import gc
 import threading
 from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
@@ -253,6 +254,132 @@ async def test_profile_repository_open_failure_is_safe_and_nonfatal() -> None:
     assert secret not in warning_copy
 
 
+class _OpenControlFlow(BaseException):
+    """Test-only signal that follows the BaseException control-flow path."""
+
+
+@pytest.mark.parametrize(
+    "failure_type",
+    (RuntimeError, _OpenControlFlow),
+    ids=("ordinary-error", "control-flow"),
+)
+@pytest.mark.asyncio
+async def test_cancelled_sole_open_waiter_settles_retained_task_without_disclosure(
+    failure_type: type[BaseException],
+) -> None:
+    secret = "/private/profile/path/detached-open.sqlite"
+    open_started = asyncio.Event()
+    allow_open = asyncio.Event()
+
+    class FailingRepository:
+        state = ProfileRepositoryState.CLOSED
+
+        async def open(self) -> None:
+            open_started.set()
+            await allow_open.wait()
+            self.state = ProfileRepositoryState.UNAVAILABLE
+            raise failure_type(f"could not open {secret}")
+
+    repository = FailingRepository()
+    owner: Any = SimpleNamespace(
+        _tts_profile_repository=repository,
+        _tts_profile_repository_open_task=None,
+        _tts_profile_repository_close_task=None,
+        loguru_logger=Mock(),
+    )
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    unhandled_contexts: list[dict[str, Any]] = []
+    loop.set_exception_handler(
+        lambda _loop, context: unhandled_contexts.append(context)
+    )
+    try:
+        waiter = asyncio.create_task(TldwCli._ensure_tts_profile_repository(owner))
+        await open_started.wait()
+        retained_task = owner._tts_profile_repository_open_task
+        assert retained_task is not None
+
+        waiter.cancel("sole open waiter stopped")
+        with pytest.raises(asyncio.CancelledError, match="sole open waiter stopped"):
+            await waiter
+
+        allow_open.set()
+        while not retained_task.done():
+            await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        marker_cleared = owner._tts_profile_repository_open_task is None
+        if not marker_cleared:
+            owner._tts_profile_repository_open_task = None
+        del waiter
+        del retained_task
+        gc.collect()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+    finally:
+        allow_open.set()
+        loop.set_exception_handler(previous_handler)
+
+    warning_copy = repr(owner.loguru_logger.warning.call_args_list)
+    context_copy = repr(unhandled_contexts)
+    assert marker_cleared is True
+    assert unhandled_contexts == []
+    assert secret not in warning_copy
+    assert secret not in context_copy
+
+
+@pytest.mark.asyncio
+async def test_profile_repository_ensure_rejects_publication_after_close_admission() -> (
+    None
+):
+    open_started = asyncio.Event()
+    allow_open = asyncio.Event()
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+
+    class RacingRepository:
+        state = ProfileRepositoryState.CLOSED
+        open_calls = 0
+        close_calls = 0
+
+        async def open(self) -> None:
+            self.open_calls += 1
+            open_started.set()
+            await allow_open.wait()
+            self.state = ProfileRepositoryState.OPEN
+
+        async def close(self) -> None:
+            self.close_calls += 1
+            close_started.set()
+            await allow_close.wait()
+            self.state = ProfileRepositoryState.CLOSED
+
+    repository = RacingRepository()
+    owner: Any = SimpleNamespace(
+        _tts_profile_repository=repository,
+        _tts_profile_repository_open_task=None,
+        _tts_profile_repository_close_task=None,
+        loguru_logger=Mock(),
+    )
+
+    ensure_task = asyncio.create_task(TldwCli._ensure_tts_profile_repository(owner))
+    await open_started.wait()
+    close_waiter = asyncio.create_task(TldwCli._close_tts_profile_repository(owner))
+    await close_started.wait()
+    assert owner._tts_profile_repository_close_task is not None
+
+    allow_open.set()
+    first_result = await ensure_task
+    second_result = await TldwCli._ensure_tts_profile_repository(owner)
+    allow_close.set()
+    await close_waiter
+
+    assert first_result is None
+    assert second_result is None
+    assert repository.open_calls == 1
+    assert repository.close_calls == 1
+
+
 @pytest.mark.asyncio
 async def test_profile_repository_close_is_shared_idempotent_and_cancellation_safe() -> (
     None
@@ -350,6 +477,66 @@ async def test_owned_tts_cleanup_preserves_cancellation_and_still_closes_service
     assert caught.value is cancellation
     assert calls == ["profile", "service"]
     assert any("cleanup" in note.lower() for note in cancellation.__notes__)
+
+
+@pytest.mark.parametrize(
+    "control_flow_type",
+    (KeyboardInterrupt, SystemExit),
+)
+@pytest.mark.asyncio
+async def test_owned_tts_cleanup_prefers_later_control_flow_over_ordinary_failure(
+    control_flow_type: type[BaseException],
+) -> None:
+    calls: list[str] = []
+    ordinary_error = RuntimeError("ordinary profile failure")
+    control_flow = control_flow_type("service control flow")
+
+    async def close_profile() -> None:
+        calls.append("profile")
+        raise ordinary_error
+
+    async def close_service() -> None:
+        calls.append("service")
+        raise control_flow
+
+    owner: Any = SimpleNamespace(
+        _close_tts_profile_repository=close_profile,
+        _close_tts_service=close_service,
+        loguru_logger=Mock(),
+    )
+
+    with pytest.raises(control_flow_type) as caught:
+        await TldwCli._close_owned_tts_resources(owner)
+
+    assert caught.value is control_flow
+    assert calls == ["profile", "service"]
+
+
+@pytest.mark.asyncio
+async def test_owned_tts_cleanup_preserves_earliest_control_flow_signal() -> None:
+    calls: list[str] = []
+    first_control_flow = KeyboardInterrupt("profile control flow")
+    later_cancellation = asyncio.CancelledError("later cancellation")
+
+    async def close_profile() -> None:
+        calls.append("profile")
+        raise first_control_flow
+
+    async def close_service() -> None:
+        calls.append("service")
+        raise later_cancellation
+
+    owner: Any = SimpleNamespace(
+        _close_tts_profile_repository=close_profile,
+        _close_tts_service=close_service,
+        loguru_logger=Mock(),
+    )
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        await TldwCli._close_owned_tts_resources(owner)
+
+    assert caught.value is first_control_flow
+    assert calls == ["profile", "service"]
 
 
 def test_only_application_constructs_profile_repository() -> None:
