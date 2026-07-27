@@ -35,14 +35,14 @@ class WatchlistsContextHarness(App):
 
 
 @pytest.mark.asyncio
-async def test_watchlists_shell_has_navigator_and_panes():
+async def test_watchlists_shell_has_tab_strip_and_panes():
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
         assert isinstance(screen, WatchlistsCollectionsScreen)
-        assert screen.query_one("#watchlists-navigator")
+        assert screen.query_one("#wl-tabs")
         assert screen.query_one("#watchlists-list-pane")
         assert screen.query_one("#watchlists-detail-pane")
         assert screen.query_one("#watchlists-inspector-pane")
@@ -50,14 +50,14 @@ async def test_watchlists_shell_has_navigator_and_panes():
 
 
 @pytest.mark.asyncio
-async def test_watchlists_navigator_updates_active_section():
+async def test_watchlists_tab_strip_updates_active_section():
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
         assert screen.active_section == "overview"
-        screen.query_one("#nav-sources", Button).press()
+        screen.query_one("#wl-tab-sources", Button).press()
         await pilot.pause()
         assert screen.active_section == "sources"
 
@@ -556,13 +556,16 @@ async def test_existing_panes_survive_the_workbench_rehost():
         screen = host.screen_stack[-1]
         assert screen.query("#wl-workbench"), "the workbench container should be mounted"
         # The panes that existed before must still be mounted, not replaced.
-        assert screen.query("#watchlists-navigator")
+        # The section navigator was retired for a centre tab strip (Phase C,
+        # task 3); #wl-tabs is its direct successor as "a working
+        # section-switcher is mounted."
+        assert screen.query("#wl-tabs")
         # Default active_section is "overview", so OverviewPane is what's there
-        # to start; switch to Sources (as the pre-existing navigator test does)
-        # to confirm SourcesPane also still renders inside the re-hosted ITEMS
-        # region rather than being dropped.
+        # to start; switch to Sources (as the tab-strip test does) to confirm
+        # SourcesPane also still renders inside the re-hosted ITEMS region
+        # rather than being dropped.
         assert screen.query("#watchlists-overview-pane")
-        screen.query_one("#nav-sources", Button).press()
+        screen.query_one("#wl-tab-sources", Button).press()
         await pilot.pause()
         assert screen.query("#watchlists-sources-pane")
 
@@ -769,7 +772,7 @@ async def test_bracket_toggle_preserves_in_progress_create_form_draft():
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
 
-        screen.query_one("#nav-sources", Button).press()
+        screen.query_one("#wl-tab-sources", Button).press()
         await pilot.pause()
         screen.query_one("#sources-new-button", Button).press()
         await pilot.pause()
@@ -813,7 +816,7 @@ async def test_submitting_the_create_form_clears_the_draft():
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
 
-        screen.query_one("#nav-sources", Button).press()
+        screen.query_one("#wl-tab-sources", Button).press()
         await pilot.pause()
         screen.query_one("#sources-new-button", Button).press()
         await pilot.pause()
@@ -846,7 +849,7 @@ async def test_cancelling_the_create_form_clears_the_draft():
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
 
-        screen.query_one("#nav-sources", Button).press()
+        screen.query_one("#wl-tab-sources", Button).press()
         await pilot.pause()
         screen.query_one("#sources-new-button", Button).press()
         await pilot.pause()
@@ -904,7 +907,7 @@ async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
             ("items", "#items-table"),
             ("rules", "#rules-table"),
         ):
-            screen.query_one(f"#nav-{section}", Button).press()
+            screen.query_one(f"#wl-tab-{section}", Button).press()
             await pilot.pause()
 
             table = await _wait_for_table_rows(pilot, table_id, screen, 1)
@@ -936,7 +939,7 @@ async def test_bracket_toggle_preserves_inspector_selection():
             return_value=[{"id": "s1", "name": "Feed One", "source_type": "rss"}]
         )
 
-        screen.query_one("#nav-sources", Button).press()
+        screen.query_one("#wl-tab-sources", Button).press()
         await pilot.pause()
         await _wait_for_table_rows(pilot, "#sources-table", screen, 1)
 
@@ -978,7 +981,7 @@ async def test_bracket_toggle_preserves_in_progress_rule_edit():
         }
         screen._controller.list_alert_rules = AsyncMock(return_value=[rule])
 
-        screen.query_one("#nav-rules", Button).press()
+        screen.query_one("#wl-tab-rules", Button).press()
         await pilot.pause()
         await _wait_for_table_rows(pilot, "#rules-table", screen, 1)
 
@@ -1049,7 +1052,7 @@ async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
 
         screen._controller.get_overview_data = _fake_overview_data
 
-        screen.query_one("#nav-rules", Button).press()
+        screen.query_one("#wl-tab-rules", Button).press()
         await pilot.pause()
         await _wait_for_table_rows(pilot, "#rules-table", screen, 1)
 
@@ -1081,4 +1084,564 @@ async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
         assert not screen.query("#rules-create-name"), (
             "no rule edit form fields should remain in the DOM after a "
             "successful save"
+        )
+
+
+# --- Task 4: wire the watchlist tree and tab strip into the screen ---
+#
+# As with the Task 5 section above, there is no `watchlists_app` fixture in
+# this file; the brief's snippets assumed one, but none existed before this
+# task either. These reuse the same `DestinationHarness` + `_build_test_app()`
+# pattern already established here.
+
+
+@pytest.mark.asyncio
+async def test_left_rail_hosts_the_tree_not_the_navigator():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert screen.query("#wl-tree")
+        assert not screen.query("#watchlists-navigator")
+
+
+@pytest.mark.asyncio
+async def test_centre_hosts_the_tab_strip():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        assert host.screen_stack[-1].query("#wl-tabs")
+
+
+@pytest.mark.asyncio
+async def test_clicking_a_tab_switches_the_active_section():
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        await pilot.click("#wl-tab-runs")
+        await pilot.pause()
+        assert screen.active_section == "runs"
+
+
+@pytest.mark.asyncio
+async def test_tree_selection_sets_the_screen_scope():
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        await pilot.pause()
+        assert screen.selected_scope.kind == "watchlist"
+        assert screen.selected_scope.watchlist_id == 7
+
+
+@pytest.mark.asyncio
+async def test_scope_survives_a_region_toggle():
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.post_message(TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=7)))
+        await pilot.pause()
+        await pilot.press("[")
+        await pilot.pause()
+        assert screen.selected_scope.watchlist_id == 7, (
+            "scope lives on the screen, so a workbench recompose must not lose it"
+        )
+
+
+@pytest.mark.asyncio
+async def test_feeds_region_follows_the_tree_scope():
+    """Task 7: narrowing the tree scope must change what Feeds covers.
+
+    Uses `_build_test_app()` + `DestinationHarness`, this file's own
+    established pattern (see every other test above) rather than a
+    `watchlists_app` fixture -- no such fixture exists in this file.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+
+    app = _build_test_app()
+    # Seeded (fix round 1): against this harness's empty subscriptions DB
+    # the assertion below passes through its own `or all_rows == []` escape
+    # hatch, so it also passed against a `scoped_source_rows` stubbed to
+    # `return []`. `_build_test_app()` wires the bundle service to an
+    # isolated temp-dir SQLite file, never the developer's database.
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    assert watchlist["id"] == 1, "a fresh temp DB numbers the first watchlist 1"
+    arxiv = service._db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    loose = service._db.add_subscription(
+        name="Loose", type="rss", source="https://c.example/f"
+    )
+    service.add_source(watchlist["id"], arxiv)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.post_message(TreeScopeChanged(TreeScope(kind="all")))
+        await pilot.pause()
+        all_rows = screen.scoped_source_rows()
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1))
+        )
+        await pilot.pause()
+        scoped_rows = screen.scoped_source_rows()
+
+        assert scoped_rows != all_rows or all_rows == [], (
+            "narrowing the scope to one watchlist must change what Feeds covers"
+        )
+        assert {row["id"] for row in all_rows} == {arxiv, loose}
+        assert [row["id"] for row in scoped_rows] == [arxiv]
+        assert all_rows != [], (
+            "the escape hatch above must not be what is carrying this test"
+        )
+
+
+@pytest.mark.asyncio
+async def test_source_scope_narrows_to_exactly_one():
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+
+    app = _build_test_app()
+    # Seeded (fix round 1): `len(rows) <= 1` is trivially true against an
+    # empty DB. Ten sources make the id-10 narrowing real, with nine
+    # siblings in the same watchlist that must NOT come back.
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    assert watchlist["id"] == 1
+    for index in range(10):
+        source_id = service._db.add_subscription(
+            name=f"source-{index:02d}",
+            type="rss",
+            source=f"https://feed-{index:02d}.example/rss",
+        )
+        service.add_source(watchlist["id"], source_id)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="source", watchlist_id=1, source_id=10))
+        )
+        await pilot.pause()
+        rows = screen.scoped_source_rows()
+        assert len(rows) <= 1
+        assert all(int(r["id"]) == 10 for r in rows)
+        assert len(rows) == 1, (
+            "the source exists, so `<= 1` must be carried by a real row"
+        )
+        assert rows[0]["name"] == "source-09"
+        assert len(screen._watchlist_bundle_service().list_source_rows(1)) == 10, (
+            "...and its nine siblings are present to be narrowed away"
+        )
+
+
+# --- Whole-branch review, Finding 1 + Finding 4: a tree move must reach the
+# panes' own selection state, not only the screen's mirrors of it ---
+#
+# Every pre-existing mirror-clear test writes `screen.selected_*` directly and
+# never drives a pane into a selected state, which is exactly why the pane-side
+# resurrection below shipped. These drive the pane.
+
+
+def _running_run_row() -> dict[str, Any]:
+    return {
+        "id": "run-1",
+        "source_title": "ArXiv",
+        "source_id": 1,
+        "status": "running",
+        "started_at": "2026-07-26T09:00:00Z",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_running_run_poll_cannot_resurrect_a_cleared_tree_scope():
+    """`RunsPane.run_poll` re-posts `RunSelected` once a second for 60 ticks.
+
+    If a tree move clears only the screen's `selected_run` mirror and leaves
+    the pane's own copy standing, the very next poll tick re-posts the
+    pre-move run, `_select_entity` snaps `selected_scope` back to "all" and
+    empties `_breadcrumb_labels` -- with no user action, about a second after
+    the user navigated somewhere else.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
+
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    assert watchlist["id"] == 1, "a fresh temp DB numbers the first watchlist 1"
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.active_section = "runs"
+        await pilot.pause(0.2)
+
+        runs_pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+        runs_pane.runs = [_running_run_row()]
+        await pilot.pause()
+        # Drive the PANE, not `screen.selected_run` -- the pane holding its own
+        # copy is the whole point.
+        runs_pane.select_run_by_id("run-1")
+        await pilot.pause()
+
+        assert runs_pane.selected_run is not None
+        assert screen.selected_run is not None, (
+            "the pane's selection must have reached the screen"
+        )
+        assert any(
+            worker.node is runs_pane and worker.name == "run_poll"
+            for worker in host.workers
+        ), "the running-run poll must be live, or this test proves nothing"
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1))
+        )
+        await pilot.pause()
+
+        assert screen.selected_run is None
+        assert screen.selected_entity is None
+        assert screen.selected_scope.kind == "watchlist"
+        assert screen._breadcrumb_labels == ["Morning AI Brief"]
+        assert runs_pane.selected_run is None, (
+            "the tree move must reach the pane's own copy, not only the mirror"
+        )
+
+        # One full poll interval, plus slack. No user action in between.
+        await pilot.pause(1.4)
+
+        assert screen.selected_run is None, (
+            "a poll tick resurrected a run the tree navigated away from"
+        )
+        assert screen.selected_entity is None
+        assert screen.selected_scope.kind == "watchlist"
+        assert screen.selected_scope.watchlist_id == 1
+        assert screen.tree_scope.kind == "watchlist"
+        assert screen._breadcrumb_labels == ["Morning AI Brief"], (
+            "the Inspector's breadcrumb must survive the poll interval"
+        )
+
+
+@pytest.mark.asyncio
+async def test_moving_the_tree_disarms_run_actions_selected_before_the_move():
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
+
+    app = _build_test_app()
+    app.watchlist_bundle_service.create("Morning AI Brief")
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.active_section = "runs"
+        await pilot.pause(0.2)
+
+        runs_pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+        runs_pane.runs = [_running_run_row()]
+        await pilot.pause()
+        runs_pane.select_run_by_id("run-1")
+        await pilot.pause()
+
+        cancel = screen.query_one("#runs-cancel-button", Button)
+        rerun = screen.query_one("#runs-rerun-button", Button)
+        assert not cancel.disabled, "precondition: a running run arms Cancel"
+        assert not rerun.disabled, "precondition: a selected run arms Re-run"
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1))
+        )
+        await pilot.pause()
+
+        cancel = screen.query_one("#runs-cancel-button", Button)
+        rerun = screen.query_one("#runs-rerun-button", Button)
+        assert cancel.disabled, (
+            "Cancel must not stay armed on a run the tree navigated away from"
+        )
+        assert rerun.disabled
+
+
+@pytest.mark.asyncio
+async def test_moving_the_tree_disarms_source_actions_selected_before_the_move():
+    """`SourcesPane`'s own Preview/Check-now post against `self.selected_source`.
+
+    Left standing after a tree move, they act on a source the screen believes
+    is deselected.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
+
+    app = _build_test_app()
+    app.watchlist_bundle_service.create("Morning AI Brief")
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        sources_pane.sources = [
+            {"id": 1, "name": "ArXiv", "source_type": "rss", "active": True}
+        ]
+        await pilot.pause()
+        sources_pane.select_source_by_id("1")
+        await pilot.pause()
+
+        assert screen.selected_source is not None
+        preview = screen.query_one("#sources-preview-button", Button)
+        check_now = screen.query_one("#sources-check-now-button", Button)
+        assert not preview.disabled, "precondition: a selected source arms Preview"
+        assert not check_now.disabled
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1))
+        )
+        await pilot.pause()
+
+        assert sources_pane.selected_source is None, (
+            "the tree move must reach the pane's own copy, not only the mirror"
+        )
+        preview = screen.query_one("#sources-preview-button", Button)
+        check_now = screen.query_one("#sources-check-now-button", Button)
+        assert preview.disabled, (
+            "Preview must not stay armed on a source the screen deselected"
+        )
+        assert check_now.disabled
+
+
+@pytest.mark.asyncio
+async def test_moving_the_tree_clears_a_notification_selected_in_its_pane():
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+    )
+
+    app = _build_test_app()
+    app.watchlist_bundle_service.create("Morning AI Brief")
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.active_section = "notifications"
+        await pilot.pause(0.2)
+
+        pane = screen.query_one(
+            "#watchlists-notifications-pane", NotificationsPane
+        )
+        pane.notifications = [
+            {"id": 1, "title": "Feed failed", "message": "boom", "is_read": False}
+        ]
+        await pilot.pause()
+        pane.select_notification_by_id("1")
+        await pilot.pause()
+        assert screen.selected_notification is not None
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=1))
+        )
+        await pilot.pause()
+
+        pane = screen.query_one(
+            "#watchlists-notifications-pane", NotificationsPane
+        )
+        assert pane.selected_notification is None, (
+            "the tree move must reach the pane's own copy, not only the mirror"
+        )
+        assert screen.selected_notification is None
+
+
+@pytest.mark.asyncio
+async def test_clearing_pane_selections_degrades_quietly_when_unmounted():
+    """The panes are only mounted for their own section, and the workbench
+    recomposes; `_apply_tree_scope` must not depend on any of them existing.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
+
+    app = _build_test_app()
+    screen = WatchlistsCollectionsScreen(app)
+    # Never mounted: every pane query raises.
+    screen._apply_tree_scope(TreeScope(kind="watchlist", watchlist_id=3))
+    assert screen.tree_scope.watchlist_id == 3
+    assert screen.selected_entity is None
+
+
+# --- Whole-branch review, Finding 2: tree expansion and tag filter are screen
+# state, because every section switch fully recomposes the workbench ---
+
+
+@pytest.mark.asyncio
+async def test_tree_expansion_survives_a_section_switch():
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeScope,
+        TreeScopeChanged,
+        WatchlistTree,
+    )
+
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    assert watchlist["id"] == 1
+    arxiv = service._db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    service.add_source(watchlist["id"], arxiv)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#wl-tree-expand-1", Button).press()
+        await pilot.pause()
+        source_node = f"#wl-tree-node-source-1-{arxiv}"
+        assert screen.query(source_node), "precondition: the watchlist expanded"
+
+        screen.post_message(
+            TreeScopeChanged(
+                TreeScope(kind="source", watchlist_id=1, source_id=arxiv)
+            )
+        )
+        await pilot.pause()
+
+        screen.query_one("#wl-tab-runs", Button).press()
+        await pilot.pause(0.2)
+
+        assert screen.active_section == "runs"
+        assert screen.query(source_node), (
+            "a section switch recomposes the workbench; the node the centre "
+            "is scoped to must still be in the rail"
+        )
+        tree = screen.query_one("#wl-tree", WatchlistTree)
+        assert tree.expanded == frozenset({1})
+
+
+@pytest.mark.asyncio
+async def test_tree_tag_filter_survives_a_section_switch():
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import WatchlistTree
+
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    service.create("Morning AI Brief", tags=["ai"])
+    service.create("Weekend Reads", tags=["fun"])
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        screen.query_one("#wl-tree-tag-0", Button).press()
+        await pilot.pause()
+        tree = screen.query_one("#wl-tree", WatchlistTree)
+        assert tree.active_tag == "ai", "precondition: the tag filter applied"
+        assert screen.query("#wl-tree-node-watchlist-1")
+        assert not screen.query("#wl-tree-node-watchlist-2")
+
+        screen.query_one("#wl-tab-runs", Button).press()
+        await pilot.pause(0.2)
+
+        tree = screen.query_one("#wl-tree", WatchlistTree)
+        assert tree.active_tag == "ai", (
+            "a tag filter set in the rail must not be dropped by a section switch"
+        )
+        assert not screen.query("#wl-tree-node-watchlist-2")
+
+
+@pytest.mark.asyncio
+async def test_tree_expansion_survives_a_tree_data_reload():
+    """`_load_tree_data` and `_apply_local_wc_snapshot` both full-recompose."""
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import WatchlistTree
+
+    app = _build_test_app()
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    arxiv = service._db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    service.add_source(watchlist["id"], arxiv)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        screen.query_one("#wl-tree-expand-1", Button).press()
+        await pilot.pause()
+        assert screen.query(f"#wl-tree-node-source-1-{arxiv}")
+
+        screen._load_tree_data()
+        await pilot.pause(0.2)
+
+        assert screen.query(f"#wl-tree-node-source-1-{arxiv}"), (
+            "reloading tree data must not collapse what the user expanded"
+        )
+        assert screen.query_one("#wl-tree", WatchlistTree).expanded == frozenset({1})
+
+
+@pytest.mark.asyncio
+async def test_seeded_tree_expansion_takes_effect_on_the_first_render():
+    """Seeding a `recompose=True` reactive must not cost a second compose.
+
+    `WatchlistTree.expanded` recomposes on write, so seeding it by plain
+    assignment would render the collapsed tree first and rebuild it a tick
+    later. The constructor uses `set_reactive` precisely to avoid that; this
+    pins the behaviour rather than assuming it.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import WatchlistTree
+
+    composes: list[int] = []
+
+    class CountingTree(WatchlistTree):
+        def compose(self):
+            composes.append(1)
+            yield from super().compose()
+
+    class TreeHarness(App):
+        def compose(self):
+            yield CountingTree(
+                watchlists=[{"id": 1, "name": "Morning AI Brief", "tags": ["ai"]}],
+                counts={1: {"unread": 2}},
+                source_rows_loader=lambda _wl: [{"id": 5, "name": "ArXiv"}],
+                expanded=frozenset({1}),
+                active_tag="ai",
+                id="wl-tree",
+            )
+
+    async with TreeHarness().run_test(size=(60, 30)) as pilot:
+        await pilot.pause()
+        tree = pilot.app.query_one("#wl-tree", CountingTree)
+        assert tree.expanded == frozenset({1})
+        assert tree.active_tag == "ai"
+        assert pilot.app.query("#wl-tree-node-source-1-5"), (
+            "the seeded expansion must be visible on the first render"
+        )
+        assert composes == [1], (
+            f"seeding queued an extra recompose ({len(composes)} composes)"
         )

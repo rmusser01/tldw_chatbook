@@ -14,6 +14,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -30,6 +31,25 @@ REGION_TITLES: dict[Region, str] = {
     Region.CONTENT: "Content",
     Region.RIGHT_RAIL: "Inspector",
 }
+
+#: Regions whose supplied pane draws its own heading, so adding the generic
+#: region title from `REGION_TITLES` would produce a *second* heading (and,
+#: for FEEDS -- whose pane is the "Sources" list -- an inaccurate one).
+#:
+#: This is deliberately NOT the same signal as "a content factory was
+#: supplied for this region". The two diverge at LEFT_RAIL: it supplies
+#: content too, but that content (`WatchlistTree`) composes only navigation
+#: `Button`s and no heading widget at all (see `watchlist_tree.py::compose`),
+#: so keying suppression on factory-presence -- as this module did before --
+#: rendered the expanded left rail as an unlabelled bordered box while its
+#: *collapsed* header still read "▸ Watchlists". Membership here means
+#: "the pane supplies its own heading", which is the actual rule.
+#:
+#: Phase D wires a real reader pane into CONTENT; whoever does that must add
+#: `Region.CONTENT` here *if and only if* that pane draws its own heading.
+SELF_HEADED_REGIONS: frozenset[Region] = frozenset(
+    {Region.FEEDS, Region.ITEMS, Region.RIGHT_RAIL}
+)
 
 #: Placeholder body copy. Phase C and D replace these with real panes.
 REGION_PLACEHOLDERS: dict[Region, str] = {
@@ -102,7 +122,7 @@ class WatchlistsWorkbench(Horizontal):
                 easy to miss with a single-recompose test. A factory
                 sidesteps the whole class of bug by handing back a brand
                 new instance on every region rebuild, matching how
-                ``WatchlistsNavigator`` (an overridden-``compose()``
+                ``WatchlistsTabStrip`` (an overridden-``compose()``
                 widget) already behaves.
         """
         super().__init__(**kwargs)
@@ -160,19 +180,141 @@ class WatchlistsWorkbench(Horizontal):
 
         factory = self._content.get(region)
         supplied = factory() if factory is not None else None
+        # Two independent questions, deliberately kept apart:
+        #
+        #   1. Does this region draw the generic `REGION_TITLES` heading?
+        #      Only when its pane does NOT supply one — `SELF_HEADED_REGIONS`
+        #      (see that constant for why this is not the factory check).
+        #   2. Does this region render the placeholder stub, or real content?
+        #      That IS the factory check.
+        #
+        # They looked identical while FEEDS/ITEMS/RIGHT_RAIL were the only
+        # wired regions, which is how LEFT_RAIL — wired, but with a heading-
+        # less `WatchlistTree` inside — ended up as an unlabelled box.
+        #
+        # FEEDS's pane needs a companion CSS fix for its own title removal
+        # (see the `#watchlists-list-pane` rule in `_watchlists.tcss`): FEEDS
+        # is the one region styled `height: auto`, so its supplied pane can
+        # no longer lean on the (now-removed) title `Static` as a `height: 1`
+        # sibling to anchor that auto-sizing.
+        children: list[Widget] = []
+        if region not in SELF_HEADED_REGIONS:
+            children.append(
+                Static(REGION_TITLES[region], classes="watchlists-region-title")
+            )
+        if supplied is None:
+            children.append(
+                Static(
+                    REGION_PLACEHOLDERS[region], classes="watchlists-region-placeholder"
+                )
+            )
+        else:
+            children.append(supplied)
+        classes = ["watchlists-region", f"watchlists-region-{region.value}"]
+        if self._is_sole_expanded_centre_region(region):
+            # A CSS hook for the solo case. `.watchlists-region-feeds` carries
+            # a `max-height` cap so a long feeds list cannot crowd ITEMS and
+            # CONTENT out of the centre stack — but when those two are
+            # collapsed to their one-line headers there is nothing left to
+            # crowd, and the cap turns solo-FEEDS into a short scrolling
+            # window with 25 blank rows under it. Nothing in the DOM
+            # distinguished that state before this class: `RegionLayout.solo`
+            # only collapses the *siblings*, so the soloed region itself is
+            # indistinguishable from an ordinarily-expanded one.
+            #
+            # Keyed on "sole expanded centre region" rather than on
+            # `solo_region` because the two produce the same DOM and want the
+            # same layout: `Z` on FEEDS and manually collapsing ITEMS+CONTENT
+            # with `z` both leave FEEDS alone in the centre.
+            classes.append("watchlists-region-sole-centre")
         body = Vertical(
-            Static(REGION_TITLES[region], classes="watchlists-region-title"),
-            supplied
-            if supplied is not None
-            else Static(
-                REGION_PLACEHOLDERS[region], classes="watchlists-region-placeholder"
-            ),
+            *children,
             id=f"wl-region-{region.value}",
-            classes=f"watchlists-region watchlists-region-{region.value}",
+            classes=" ".join(classes),
         )
         # Regions must be keyboard-reachable, or `z` cannot target them.
         body.can_focus = True
         return body
+
+    def _is_sole_expanded_centre_region(self, region: Region) -> bool:
+        """Whether ``region`` is the only centre region still expanded.
+
+        True exactly when the centre stack shows one real pane and two
+        one-line headers — the state `RegionLayout.solo` produces, and the
+        state a user reaches by collapsing the other two by hand.
+
+        Args:
+            region: The region to test. Rails always answer `False`; solo
+                applies to the centre stack only (`RegionLayout.solo`).
+
+        Returns:
+            `True` if `region` is a centre region and every other centre
+            region is collapsed, `False` otherwise.
+        """
+        if region not in CENTRE_REGIONS:
+            return False
+        expanded = [r for r in CENTRE_REGIONS if not self.region_layout.is_collapsed(r)]
+        return expanded == [region]
+
+    async def refresh_region_content(self, region: Region) -> None:
+        """Rebuild one expanded region's supplied content in place.
+
+        Task 7: the tree scope can change what FEEDS should show without
+        `region_layout` itself changing, so nothing would otherwise call
+        FEEDS's factory again. Setting `region_layout` (`recompose=True`)
+        would work too, but at the cost of tearing down and remounting
+        *every* region, including ones whose whole design point is staying
+        the same instance across an unrelated change -- the Inspector is
+        pushed new `scope`/`selected_entity` values in place for exactly
+        that reason (see `WatchlistsCollectionsScreen.watch_selected_scope`),
+        and a full recompose would silently replace it with a fresh
+        instance instead, breaking any caller holding a reference to the
+        old one.
+
+        A no-op when `region` is collapsed (nothing mounted to replace) or
+        was not given a content factory (the placeholder stub has nothing
+        to refresh either).
+
+        Replaces only the *supplied content*, never the generic
+        `REGION_TITLES` heading `_region_widget` prepends for regions
+        outside `SELF_HEADED_REGIONS` (fix round 1, Finding 3). The first
+        version removed every child, so refreshing LEFT_RAIL -- which
+        supplies content but is not self-headed -- stripped its
+        "Watchlists" heading and left an unlabelled bordered rail until the
+        next region toggle rebuilt it. That is the same defect
+        `SELF_HEADED_REGIONS`' own comment records having shipped once.
+
+        Args:
+            region: The region whose supplied content should be rebuilt.
+        """
+        if self.region_layout.is_collapsed(region):
+            return
+        factory = self._content.get(region)
+        if factory is None:
+            return
+        try:
+            container = self.query_one(f"#wl-region-{region.value}")
+        except NoMatches:
+            return
+        # Build the replacement BEFORE detaching anything: a factory that
+        # raises (or a worker cancelled while it runs) then leaves the
+        # mounted pane standing rather than a bordered empty box. The
+        # remove-then-mount pair below still has one await boundary --
+        # Textual's `NodeList._ensure_unique_id` rejects mounting the new
+        # pane while the old one (same id, e.g. `watchlists-list-pane`) is
+        # still attached, so there is no single-await atomic swap available
+        # without changing that guarded id.
+        replacement = factory()
+        # The heading, when present, is `_region_widget`'s first child and
+        # is not ours to replace.
+        stale = [
+            child
+            for child in container.children
+            if not child.has_class("watchlists-region-title")
+        ]
+        for child in stale:
+            await child.remove()
+        await container.mount(replacement)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Turn a collapsed-region header click into a `RegionToggled` message.
