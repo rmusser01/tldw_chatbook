@@ -140,6 +140,7 @@ def test_get_capabilities_audio_video() -> None:
     assert "faster_whisper" in caps.optional_features
     assert caps.field_names == (
         "transcription_provider",
+        "transcription_model_dir",
         "transcription_model",
         "language",
         "timestamps",
@@ -151,6 +152,13 @@ def test_get_capabilities_audio_video() -> None:
     )
     assert provider_field.options == ("parakeet-onnx", "faster-whisper")
     assert provider_field.default == "parakeet-onnx"
+
+    model_dir_field = next(
+        f for f in caps.fields if f.name == "transcription_model_dir"
+    )
+    assert model_dir_field.default == ""
+    assert model_dir_field.enabled_when == "transcription_provider"
+    assert model_dir_field.enabled_when_values == ("parakeet-onnx",)
 
     model_field = next(f for f in caps.fields if f.name == "transcription_model")
     assert model_field.options == ("tiny", "base", "small", "medium", "large")

@@ -349,6 +349,15 @@ _TYPE_GROUPS: dict[str, TypeGroupCapabilities] = {
                 depends_on="audio_processing",
             ),
             OptionField(
+                name="transcription_model_dir",
+                label="Local Parakeet model folder",
+                type="text",
+                default="",
+                depends_on="parakeet_onnx",
+                enabled_when="transcription_provider",
+                enabled_when_values=("parakeet-onnx",),
+            ),
+            OptionField(
                 name="transcription_model",
                 label="Transcription model",
                 type="select",

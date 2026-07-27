@@ -815,8 +815,13 @@ async def test_audio_video_defaults_to_parakeet_onnx_without_whisper_models():
             model = pilot.app.query_one(
                 "#opt-audio_video-transcription_model", Select
             )
+            model_dir = pilot.app.query_one(
+                "#opt-audio_video-transcription_model_dir", Input
+            )
             assert provider.value == "parakeet-onnx"
             assert model.disabled is True
+            assert model_dir.disabled is False
+            assert model_dir.value == ""
 
 
 @pytest.mark.asyncio

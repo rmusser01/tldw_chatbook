@@ -592,6 +592,7 @@ def parse_local_file_for_ingest(
                 transcription_provider=options.get(
                     "transcription_provider", "faster-whisper"
                 ),
+                transcription_model_dir=options.get("transcription_model_dir"),
                 transcription_model=options.get('transcription_model', chunk_options.get('transcription_model', 'base')),
                 transcription_language=options.get('language', chunk_options.get('transcription_language', 'en')),
                 perform_chunking=True,
@@ -648,6 +649,7 @@ def parse_local_file_for_ingest(
                 transcription_provider=options.get(
                     "transcription_provider", "faster-whisper"
                 ),
+                transcription_model_dir=options.get("transcription_model_dir"),
                 transcription_model=options.get('transcription_model', chunk_options.get('transcription_model', 'base')),
                 transcription_language=options.get('language', chunk_options.get('transcription_language', 'en')),
                 perform_chunking=True,
