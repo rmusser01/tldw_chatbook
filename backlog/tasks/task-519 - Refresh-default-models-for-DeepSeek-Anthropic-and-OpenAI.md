@@ -1,10 +1,11 @@
 ---
 id: TASK-519
 title: 'Refresh default models for DeepSeek, Anthropic, and OpenAI'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-27 03:58'
-updated_date: '2026-07-27 03:59'
+updated_date: '2026-07-27 04:12'
 labels: []
 dependencies: []
 ---
@@ -25,3 +26,13 @@ Replace stale provider defaults with current vendor-supported balanced general-p
 - [ ] #6 Focused configuration, provider-payload, and capability tests pass
 - [ ] #7 ADR-020 and the approved design are linked; no new ADR is required
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Implementation plan: Docs/superpowers/plans/2026-07-26-provider-default-model-refresh.md
+Design: Docs/superpowers/specs/2026-07-26-provider-default-model-refresh-design.md
+ADR required: no
+ADR path: backlog/decisions/020-automatic-model-catalog-refresh.md
+Reason: bundled defaults and request shaping stay within existing provider boundaries; ADR-020 already governs catalog discovery and persistence.
+<!-- SECTION:PLAN:END -->
