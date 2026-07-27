@@ -215,7 +215,9 @@ async def test_script_cannot_write_into_its_own_bundle(script_service):
 
 
 @pytest.mark.asyncio
-async def test_scratch_root_config_knob_is_reachable(script_service, tmp_path, monkeypatch):
+async def test_scratch_root_config_knob_is_reachable(
+    script_service, tmp_path, tmp_path_factory, monkeypatch
+):
     """The 3-arg get_cli_setting form actually reaches [skills] via REAL config.
 
     Writes a real config.toml and points TLDW_CONFIG_PATH at it -- the
@@ -228,8 +230,17 @@ async def test_scratch_root_config_knob_is_reachable(script_service, tmp_path, m
     file (the exact thing the section-dict-form bug at config.py:3965 would
     otherwise silently defeat). This exercises the genuine
     `load_cli_config_and_ensure_existence()` -> section-lookup path.
+
+    `custom_root` is deliberately built from `tmp_path_factory`, NOT
+    `tmp_path`: `script_service`'s `LocalSkillsService.store_dir` resolves to
+    this same test's `tmp_path` (see `make_trust_service`), which is now
+    (TASK-853) itself a protected container -- a scratch root nested
+    anywhere under it, including a plain `tmp_path / "custom-scratch"`
+    sibling of `skills`/`trust`, is correctly rejected as unsafe. A distinct
+    `tmp_path_factory` directory is a genuinely unrelated location, the
+    realistic shape of a real `[skills] script_scratch_root` value.
     """
-    custom_root = tmp_path / "custom-scratch"
+    custom_root = tmp_path_factory.mktemp("custom-scratch")
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         f'[skills]\nscript_scratch_root = "{custom_root}"\n', encoding="utf-8"
@@ -289,6 +300,42 @@ async def test_scratch_root_inside_skill_directory_is_rejected(script_service, m
     )
     # The rejected root must never even be created, let alone hold residue.
     assert not unsafe_root.exists()
+
+
+def test_is_unsafe_scratch_root_rejects_both_containment_directions(
+    script_service, tmp_path_factory
+):
+    """TASK-853: `_is_unsafe_scratch_root` must reject BOTH containment
+    directions, not just the one that already worked.
+
+    Pre-fix, this check only tested `get_safe_relative_path(root, container)`
+    -- root NESTED INSIDE a container -- so a root that instead ENCLOSES a
+    store (e.g. the skills service's own `store_dir`, which contains both
+    `skills_dir` and the trust store) passed uncaught. A reproduction
+    confirmed `store_dir` itself, and an ancestor of it, were both accepted
+    pre-fix. Every candidate here is derived from the service's own live
+    attributes (`service.store_dir`, `service.skills_dir`,
+    `service.trust_service.trust_store.store_dir`) rather than a re-spelled
+    literal, so this tracks the real containers instead of a copy that
+    could silently drift from them.
+    """
+    service, name = script_service
+    trust_store_dir = service.trust_service.trust_store.store_dir
+
+    # Direction 1 (already worked pre-fix): root NESTED INSIDE a store.
+    assert service._is_unsafe_scratch_root(service.skills_dir / "nested") is True
+    assert service._is_unsafe_scratch_root(trust_store_dir / "nested") is True
+
+    # Direction 2 (the bug): root that ENCLOSES a store. `store_dir` itself
+    # (now an explicit container) contains both `skills_dir` and the trust
+    # store, and its own parent encloses `store_dir` in turn.
+    assert service._is_unsafe_scratch_root(service.store_dir) is True
+    assert service._is_unsafe_scratch_root(service.store_dir.parent) is True
+
+    # A genuinely unrelated root -- neither inside nor enclosing any store --
+    # must still be accepted; the fix must not turn into "reject everything".
+    legitimate_root = tmp_path_factory.mktemp("legit-scratch")
+    assert service._is_unsafe_scratch_root(legitimate_root) is False
 
 
 @pytest.mark.asyncio

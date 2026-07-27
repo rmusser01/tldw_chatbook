@@ -1796,14 +1796,17 @@ class LocalSkillsService:
         )
 
     def _unsafe_scratch_root_containers(self) -> list[Path]:
-        """Directories a configured scratch root must never resolve inside.
+        """Directories a configured scratch root must never resolve inside OR enclose.
 
         Returns:
-            The skills store, plus the trust store's own directory when a
+            This service's own ``store_dir`` (which holds the skill index
+            directly), its ``skills_dir`` (nested under ``store_dir``, listed
+            explicitly for clarity even though it is already covered
+            transitively), plus the trust store's own directory when a
             trust service is wired (best-effort: absent/duck-typed trust
             services simply contribute nothing extra).
         """
-        containers = [self.skills_dir]
+        containers = [self.store_dir, self.skills_dir]
         trust_store = getattr(self.trust_service, "trust_store", None)
         trust_store_dir = getattr(trust_store, "store_dir", None)
         if trust_store_dir is not None:
@@ -1811,27 +1814,34 @@ class LocalSkillsService:
         return containers
 
     def _is_unsafe_scratch_root(self, root: Path) -> bool:
-        """Return True if ``root`` resolves inside the skills or trust store.
+        """Return True if ``root`` resolves inside, or resolves to enclose, a protected store.
 
-        A scratch root under either store would let a script's cwd land
+        A scratch root NESTED INSIDE a store would let a script's cwd land
         inside its own (or a sibling's) trusted bundle -- exactly the
         "a script must never tamper with its own bundle" property this
         service exists to guarantee, since any file the script leaves
         behind re-fingerprints the bundle and permanently quarantines it.
-        Uses ``get_safe_relative_path`` (which resolves both sides, so
-        symlinks and ``..`` segments cannot hide the containment) rather
+
+        A scratch root that instead ENCLOSES a store is just as dangerous in
+        the other direction: the script's cwd would sit one level above
+        every trusted bundle and the trust manifest/snapshots/grants,
+        exposing them as scratch-writable siblings. Both directions are
+        checked with ``get_safe_relative_path`` (which resolves both sides,
+        so symlinks and ``..`` segments cannot hide the containment) rather
         than a string prefix check.
 
         Args:
             root: The (not-yet-created) candidate scratch root.
 
         Returns:
-            True when ``root`` resolves inside any store directory that
-            must stay off limits.
+            True when ``root`` resolves inside, or resolves to enclose, any
+            store directory that must stay off limits.
         """
+        containers = self._unsafe_scratch_root_containers()
         return any(
             get_safe_relative_path(root, container) is not None
-            for container in self._unsafe_scratch_root_containers()
+            or get_safe_relative_path(container, root) is not None
+            for container in containers
         )
 
     def _script_scratch_root(self) -> str | None:
@@ -1843,10 +1853,11 @@ class LocalSkillsService:
         it would make this knob permanently unreachable.
 
         A configured root that resolves inside the skills store or the trust
-        store is REJECTED (see ``_is_unsafe_scratch_root``) and treated the
-        same as unconfigured -- checked BEFORE the directory is created, so a
-        rejected root is never actually made on disk. The safety check is
-        best-effort containment, consistent with the rest of this module.
+        store -- or that instead ENCLOSES either store -- is REJECTED (see
+        ``_is_unsafe_scratch_root``) and treated the same as unconfigured --
+        checked BEFORE the directory is created, so a rejected root is never
+        actually made on disk. The safety check is best-effort containment,
+        consistent with the rest of this module.
 
         Returns:
             The configured scratch root, or None to use the OS temp dir
@@ -1865,8 +1876,8 @@ class LocalSkillsService:
         if self._is_unsafe_scratch_root(root):
             logger.warning(
                 "Ignoring [skills] script_scratch_root={!r}: it resolves "
-                "inside a skills or trust store; falling back to the OS "
-                "temp dir",
+                "inside, or encloses, a skills or trust store; falling "
+                "back to the OS temp dir",
                 configured,
             )
             return None

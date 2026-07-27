@@ -32,7 +32,9 @@ def _service(tmp_path, passphrase="passphrase", key_cache=None):
     skills_dir = tmp_path / "skills"
     trust_store = SkillTrustStore(
         store_dir=tmp_path / "trust",
-        marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+        marker_store=FileSkillTrustGenerationMarkerStore(
+            tmp_path / "marker.json", store_dir=tmp_path
+        ),
     )
     service = SkillTrustService(
         skills_dir=skills_dir,
@@ -257,7 +259,9 @@ def test_existing_manifest_without_unlock_reports_locked_status(tmp_path):
         skills_dir=skills_dir,
         trust_store=SkillTrustStore(
             store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                tmp_path / "marker.json", store_dir=tmp_path
+            ),
         ),
     )
     status = locked_service.status_for_skill("demo")
@@ -451,7 +455,9 @@ def test_keyring_convenience_loads_only_salt_bound_cached_keys(tmp_path):
         skills_dir=skills_dir,
         trust_store=SkillTrustStore(
             store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                tmp_path / "marker.json", store_dir=tmp_path
+            ),
         ),
         key_cache=key_cache,
     )
@@ -469,7 +475,9 @@ def test_keyring_convenience_loads_only_salt_bound_cached_keys(tmp_path):
         skills_dir=skills_dir,
         trust_store=SkillTrustStore(
             store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                tmp_path / "marker.json", store_dir=tmp_path
+            ),
         ),
         key_cache=key_cache,
     )

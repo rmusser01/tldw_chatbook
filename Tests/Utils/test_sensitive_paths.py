@@ -325,7 +325,7 @@ def test_skill_trust_store_paths_are_refused_via_the_actually_used_accessors():
     store = SkillTrustStore(
         store_dir=trust_store_dir,
         marker_store=FileSkillTrustGenerationMarkerStore(
-            trust_store_dir / MARKER_FILENAME
+            trust_store_dir / MARKER_FILENAME, store_dir=trust_store_dir
         ),
     )
 

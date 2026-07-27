@@ -24,7 +24,7 @@ class _FakeKeyring:
 
 
 def test_file_marker_clear_is_idempotent(tmp_path):
-    store = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    store = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json", store_dir=tmp_path)
     store.save_marker(generation=1, manifest_digest="d")
     assert store.load_marker() is not None
     store.clear()
@@ -59,7 +59,7 @@ def test_keyring_key_cache_clear(monkeypatch):
 
 
 def test_store_delete_manifest_removes_file_and_snapshots(tmp_path):
-    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json", store_dir=tmp_path)
     store = SkillTrustStore(store_dir=tmp_path, marker_store=marker)
     store.manifest_path.parent.mkdir(parents=True, exist_ok=True)
     store.manifest_path.write_text("{}", encoding="utf-8")

@@ -5307,6 +5307,7 @@ class TldwCli(
         skill_trust_marker_store, reduced_rollback_protection = (
             build_skill_trust_marker_store_with_fallback(
                 fallback_marker_path=trust_store_dir / _SKILL_TRUST_MARKER_FILENAME,
+                store_dir=trust_store_dir,
                 account_scope=trust_account_scope,
             )
         )

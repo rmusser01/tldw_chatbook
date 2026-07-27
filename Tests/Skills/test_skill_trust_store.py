@@ -61,7 +61,9 @@ class AlwaysFailingMarkerStore:
 
 def test_trust_store_round_trips_manifest_snapshot_marker_and_salt(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"3" * 32)
-    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(
+        tmp_path / "marker.json", store_dir=tmp_path
+    )
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
     manifest = {
@@ -104,7 +106,9 @@ def test_trust_store_round_trips_manifest_snapshot_marker_and_salt(tmp_path):
 
 def test_trust_store_rejects_tampered_manifest(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"4" * 32)
-    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(
+        tmp_path / "marker.json", store_dir=tmp_path
+    )
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
     store.save_manifest(
@@ -120,7 +124,9 @@ def test_trust_store_rejects_tampered_manifest(tmp_path):
 
 def test_trust_store_rejects_marker_mismatch(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"5" * 32)
-    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(
+        tmp_path / "marker.json", store_dir=tmp_path
+    )
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
     store.save_manifest(
@@ -135,7 +141,7 @@ def test_trust_store_rejects_marker_mismatch(tmp_path):
 def test_trust_store_rejects_missing_marker_after_manifest_exists(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"6" * 32)
     marker_path = tmp_path / "marker.json"
-    marker = FileSkillTrustGenerationMarkerStore(marker_path)
+    marker = FileSkillTrustGenerationMarkerStore(marker_path, store_dir=marker_path.parent)
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
     store.save_manifest(
@@ -150,7 +156,7 @@ def test_trust_store_rejects_missing_marker_after_manifest_exists(tmp_path):
 def test_trust_store_marker_failure_preserves_previous_manifest_and_marker(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"7" * 32)
     marker = FailingMarkerStore(
-        FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+        FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json", store_dir=tmp_path),
         fail_on_save_number=2,
     )
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
@@ -176,7 +182,9 @@ def test_trust_store_marker_failure_preserves_previous_manifest_and_marker(tmp_p
 
 def test_trust_store_marker_rollback_preserves_original_failure(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"7" * 32)
-    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(
+        tmp_path / "marker.json", store_dir=tmp_path
+    )
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
     previous_manifest = {"version": 1, "generation": 1, "skills": {}, "audit": []}
     advanced_manifest = {"version": 1, "generation": 2, "skills": {}, "audit": []}
@@ -193,7 +201,9 @@ def test_trust_store_marker_rollback_preserves_original_failure(tmp_path):
 
 def test_trust_store_rejects_snapshot_directory_symlink_escape(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"7" * 32)
-    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(
+        tmp_path / "marker.json", store_dir=tmp_path
+    )
     store_dir = tmp_path / "trust"
     outside_dir = tmp_path / "outside"
     store_dir.mkdir()
@@ -214,7 +224,9 @@ def test_file_marker_store_rejects_marker_parent_symlink_escape(tmp_path):
     outside_dir.mkdir()
     marker_parent = tmp_path / "marker-parent"
     marker_parent.symlink_to(outside_dir, target_is_directory=True)
-    marker = FileSkillTrustGenerationMarkerStore(marker_parent / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(
+        marker_parent / "marker.json", store_dir=marker_parent
+    )
 
     with pytest.raises(ValueError, match="unsafe skill trust path"):
         marker.save_marker(generation=1, manifest_digest="digest")
@@ -222,9 +234,42 @@ def test_file_marker_store_rejects_marker_parent_symlink_escape(tmp_path):
     assert not (outside_dir / "marker.json").exists()
 
 
+def test_file_marker_store_rejects_marker_outside_store_dir(tmp_path):
+    """TASK-853: a marker path outside the trust store's own directory must
+    be rejected, not silently accepted.
+
+    Pre-fix, ``FileSkillTrustGenerationMarkerStore`` validated the marker
+    path against ``marker_path.parent`` -- the candidate's own parent -- so
+    the containment check was true by construction and rejected nothing. A
+    reproduction confirmed a marker file living in a totally unrelated
+    directory was silently accepted and written to. Passing the trust
+    store's real ``store_dir`` (independent of the marker path itself) as
+    the containment base closes that hole.
+    """
+    store_dir = tmp_path / "trust"
+    store_dir.mkdir()
+    outside_dir = tmp_path / "totally-unrelated-elsewhere"
+    outside_dir.mkdir()
+    marker_path = outside_dir / "marker.json"
+
+    marker = FileSkillTrustGenerationMarkerStore(marker_path, store_dir=store_dir)
+
+    with pytest.raises(ValueError, match="unsafe skill trust path"):
+        marker.save_marker(generation=1, manifest_digest="digest")
+    assert not marker_path.exists()
+
+    # A legitimate marker co-located with the store must still round-trip.
+    legit_marker_path = store_dir / "marker.json"
+    legit = FileSkillTrustGenerationMarkerStore(legit_marker_path, store_dir=store_dir)
+    legit.save_marker(generation=1, manifest_digest="digest")
+    assert legit.load_marker() == {"generation": 1, "manifest_digest": "digest"}
+
+
 def test_marker_store_builder_falls_back_to_reduced_protection_file_marker(tmp_path):
+    trust_store_dir = tmp_path / "trust"
     marker_store, reduced = build_skill_trust_marker_store_with_fallback(
-        fallback_marker_path=tmp_path / "trust" / "marker.json",
+        fallback_marker_path=trust_store_dir / "marker.json",
+        store_dir=trust_store_dir,
         keyring_backend=FakePlaintextKeyring(),
     )
 
@@ -236,7 +281,9 @@ def test_marker_store_builder_falls_back_to_reduced_protection_file_marker(tmp_p
 
 def test_trust_store_load_salt_requires_32_bytes(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"7" * 32)
-    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(
+        tmp_path / "marker.json", store_dir=tmp_path
+    )
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
     store.save_manifest(
@@ -252,7 +299,9 @@ def test_trust_store_load_salt_requires_32_bytes(tmp_path):
 
 def test_trust_store_snapshot_accepts_immutable_mapping_payloads(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"8" * 32)
-    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(
+        tmp_path / "marker.json", store_dir=tmp_path
+    )
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
     payload = {"files": MappingProxyType({"SKILL.md": "# Demo"})}
 
@@ -265,7 +314,9 @@ def test_trust_store_snapshot_accepts_immutable_mapping_payloads(tmp_path):
 
 def test_trust_store_rejects_non_string_mapping_keys(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"9" * 32)
-    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(
+        tmp_path / "marker.json", store_dir=tmp_path
+    )
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
     with pytest.raises(ValueError, match="mapping keys must be strings"):

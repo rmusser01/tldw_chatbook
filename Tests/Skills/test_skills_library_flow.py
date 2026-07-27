@@ -81,11 +81,14 @@ def _real_skills_scope_service(
 
 def _real_trust_service(tmp_path) -> SkillTrustService:
     """A real, already-unlocked (but not yet bootstrapped) trust service."""
+    marker_path = tmp_path / "marker.json"
     trust_service = SkillTrustService(
         skills_dir=tmp_path / "skills",
         trust_store=SkillTrustStore(
             store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                marker_path, store_dir=marker_path.parent
+            ),
         ),
     )
     trust_service.unlock_with_passphrase("trust-passphrase", salt=b"7" * 32)
@@ -98,11 +101,14 @@ def _real_uninitialized_trust_service(tmp_path) -> SkillTrustService:
     ``_real_trust_service`` above, which is already unlocked. This is the
     exact fresh-install shape the Phase-1 gate flagged as having no live-UI
     bootstrap path (FIX 2)."""
+    marker_path = tmp_path / "marker.json"
     return SkillTrustService(
         skills_dir=tmp_path / "skills",
         trust_store=SkillTrustStore(
             store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                marker_path, store_dir=marker_path.parent
+            ),
         ),
     )
 

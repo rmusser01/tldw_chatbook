@@ -10,11 +10,14 @@ from tldw_chatbook.Skills_Interop.skill_trust_store import (
 def _svc(tmp_path):
     (tmp_path / "trust").mkdir(exist_ok=True)
     (tmp_path / "skills").mkdir(exist_ok=True)
+    trust_store_dir = tmp_path / "trust"
     return SkillTrustService(
         skills_dir=tmp_path / "skills",
         trust_store=SkillTrustStore(
-            store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "trust" / "m.json"),
+            store_dir=trust_store_dir,
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                trust_store_dir / "m.json", store_dir=trust_store_dir
+            ),
         ),
         key_cache=None,
     )

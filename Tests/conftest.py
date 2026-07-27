@@ -566,12 +566,13 @@ def make_trust_service(tmp_path):
     trust_dir.mkdir(exist_ok=True)
 
     def _make() -> "SkillTrustService":
+        marker_path = trust_dir / "marker.json"
         return SkillTrustService(
             skills_dir=skills_dir,
             trust_store=SkillTrustStore(
                 store_dir=trust_dir,
                 marker_store=FileSkillTrustGenerationMarkerStore(
-                    trust_dir / "marker.json"
+                    marker_path, store_dir=marker_path.parent
                 ),
             ),
         )

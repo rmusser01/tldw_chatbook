@@ -28,7 +28,9 @@ def _fresh_service(tmp_path, skills_dir, key_cache):
         skills_dir=skills_dir,
         trust_store=SkillTrustStore(
             store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                tmp_path / "marker.json", store_dir=tmp_path
+            ),
         ),
         key_cache=key_cache,
     )
@@ -84,7 +86,9 @@ def test_no_key_cache_still_reports_locked(tmp_path):
         skills_dir=skills_dir,
         trust_store=SkillTrustStore(
             store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                tmp_path / "marker.json", store_dir=tmp_path
+            ),
         ),
     )
     assert fresh.trust_posture() == "locked"

@@ -739,7 +739,9 @@ async def test_e2e_install_skill_from_github_tree_url_real_services(tmp_path, mo
         skills_dir=tmp_path / "skills",
         trust_store=SkillTrustStore(
             store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                tmp_path / "marker.json", store_dir=tmp_path
+            ),
         ),
     )
     trust_service.unlock_with_passphrase("e2e-passphrase", salt=b"7" * 32)
@@ -950,7 +952,9 @@ def test_e2e_agent_install_skill_confirm_allow(tmp_path, monkeypatch):
         skills_dir=tmp_path / "skills",
         trust_store=SkillTrustStore(
             store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                tmp_path / "marker.json", store_dir=tmp_path
+            ),
         ),
     )
     trust_service.unlock_with_passphrase("e2e-passphrase", salt=b"7" * 32)
@@ -1035,7 +1039,9 @@ def test_e2e_agent_install_skill_confirm_deny(tmp_path, monkeypatch):
         skills_dir=tmp_path / "skills",
         trust_store=SkillTrustStore(
             store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                tmp_path / "marker.json", store_dir=tmp_path
+            ),
         ),
     )
     trust_service.unlock_with_passphrase("e2e-passphrase", salt=b"7" * 32)
