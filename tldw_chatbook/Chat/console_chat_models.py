@@ -33,6 +33,23 @@ class ConsoleRunStatus(str, Enum):
     RETRYING = "retrying"
 
 
+class ConsoleRunMarker(str, Enum):
+    """Fleet-visible run marker for a session (parallel-agents spec §6).
+
+    Derived (never stored raw) by ``ConsoleChatController.run_marker_for``
+    from a session's live run state, pending-approval flag, and unvisited
+    terminal outcome. ``NONE`` is the steady state; the other four values
+    are what a tab/fleet-summary glyph renders for a session that is not
+    currently being viewed.
+    """
+
+    NONE = "none"
+    RUNNING = "running"
+    NEEDS_APPROVAL = "needs-approval"
+    FINISHED_OK = "finished-ok"
+    FINISHED_FAILED = "finished-failed"
+
+
 ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "failed"]
 ConsoleMessageFeedback = Literal["up", "down"]
 CONSOLE_GLOBAL_WORKSPACE_ID = "global"

@@ -29,6 +29,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunMarker,
     ConsoleRunState,
     ConsoleRunStatus,
     ConsoleStagedSource,
@@ -648,6 +649,25 @@ class ConsoleChatController:
         # OWNING session instead of whatever the user currently has open.
         self._run_states: dict[str, ConsoleRunState] = {}
         self._run_state_histories: dict[str, list[ConsoleRunStatus]] = {}
+        # Parallel-agents spec §6: run-marker state (Task 7). Both maps are
+        # keyed by session id like the run-state maps above, but track
+        # marker-only bookkeeping that ``_run_states`` doesn't capture on
+        # its own:
+        #   - `_pending_approvals`: sessions with an outstanding human
+        #     approval decision blocking their run. `set_run_pending_
+        #     approval` writes it; Task 9 wires the approval paths that
+        #     call it. Named to avoid colliding with the PRE-EXISTING
+        #     `self.set_pending_approval` INSTANCE ATTRIBUTE below (the
+        #     MCP batch-approval UI callback slot, task-5) -- a same-named
+        #     method here would be silently clobbered by that assignment.
+        #   - `_unvisited_outcomes`: sessions whose run reached a terminal
+        #     COMPLETED/FAILED status while NOT the active (viewed)
+        #     session, stamped by `_set_run_state` and cleared by
+        #     `mark_session_visited` (called from `switch_session`). The
+        #     viewed session's own terminal transition is seen live and is
+        #     deliberately never stamped here.
+        self._pending_approvals: set[str] = set()
+        self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
         #: Optional owner hook invoked once a submit is accepted (user message
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
@@ -837,6 +857,84 @@ class ConsoleChatController:
             disallows a new send.
         """
         return len(self._live_busy_session_ids())
+
+    def set_run_pending_approval(self, session_id: str, pending: bool) -> None:
+        """Record whether ``session_id``'s run is waiting on a human approval decision.
+
+        Parallel-agents spec §6 (Task 7 stores/exposes the flag; Task 9
+        wires the approval paths -- MCP batch approvals, skill-install/
+        script confirms -- that call this). Deliberately NOT named
+        ``set_pending_approval``: that name is already a pre-existing
+        INSTANCE ATTRIBUTE on this controller (an MCP batch-approval UI
+        callback slot assigned by ``ChatScreen._ensure_console_chat_
+        controller``, see ``__init__``) -- reusing it as a method name
+        here would be silently clobbered by that attribute's own
+        assignment.
+        """
+        if pending:
+            self._pending_approvals.add(session_id)
+        else:
+            self._pending_approvals.discard(session_id)
+
+    def mark_session_visited(self, session_id: str) -> None:
+        """Clear ``session_id``'s unvisited terminal outcome and pending-approval flag.
+
+        Parallel-agents spec §6. Called from ``switch_session`` once the
+        store has swapped to ``session_id`` -- visiting a session is what
+        "sees" its outcome/approval-pending state, so both markers reset
+        to steady state (``run_marker_for`` then falls through to
+        ``ConsoleRunMarker.NONE`` unless a fresh run/approval starts).
+        """
+        self._unvisited_outcomes.pop(session_id, None)
+        self._pending_approvals.discard(session_id)
+
+    def run_marker_for(self, session_id: str) -> ConsoleRunMarker:
+        """Fleet-visible marker for ``session_id`` (parallel-agents spec §6).
+
+        Precedence, checked in order:
+
+        1. ``NEEDS_APPROVAL`` -- outranks ``RUNNING`` even though a parked
+           run is technically still in-flight: the marker must announce
+           the thing that needs a human, not just "something is
+           happening".
+        2. ``RUNNING`` -- derived from the same live/busy definition as
+           ``in_flight_run_count`` (``_live_busy_session_ids``), so this
+           never invents a second notion of "in-flight".
+        3. ``FINISHED_OK``/``FINISHED_FAILED`` -- from
+           ``_unvisited_outcomes``, stamped only for non-active sessions
+           by ``_set_run_state``'s terminal transitions and cleared by
+           ``mark_session_visited``.
+        4. ``NONE`` otherwise.
+        """
+        if session_id in self._pending_approvals:
+            return ConsoleRunMarker.NEEDS_APPROVAL
+        if session_id in self._live_busy_session_ids():
+            return ConsoleRunMarker.RUNNING
+        return self._unvisited_outcomes.get(session_id, ConsoleRunMarker.NONE)
+
+    def fleet_summary_counts(self) -> tuple[int, int]:
+        """Counts of OTHER live sessions running / needing approval.
+
+        Parallel-agents spec §6. Returns ``(other running, other pending-
+        approval)`` relative to the active (viewed) session -- its own
+        status is visible directly in the transcript, not through the
+        fleet summary, so it is excluded from both counts. Sessions the
+        store no longer has (orphaned ``_pending_approvals``/`
+        `_run_states`` entries) are excluded via the same live-session
+        filter ``_live_busy_session_ids`` applies. A session that is both
+        busy and pending-approval is counted only as pending, mirroring
+        ``run_marker_for``'s NEEDS_APPROVAL-outranks-RUNNING precedence --
+        neither count double-books it.
+        """
+        active = self.store.active_session_id or ""
+        live_ids = {session.id for session in self.store.sessions()}
+        other_pending = {
+            sid
+            for sid in self._pending_approvals
+            if sid in live_ids and sid != active
+        }
+        other_busy = {sid for sid in self._live_busy_session_ids() if sid != active}
+        return len(other_busy - other_pending), len(other_pending)
 
     @property
     def max_parallel_runs(self) -> int:
@@ -1324,6 +1422,12 @@ class ConsoleChatController:
         # in-flight state it already had (parallel-agents spec §2).
         previous_session_id = self.store.active_session_id
         session = self.store.switch_session(session_id)
+        # Parallel-agents spec §6: visiting the session you just switched TO
+        # clears its unvisited outcome/pending-approval marker -- must run
+        # AFTER the store swap above so `session_id` really is the new
+        # active session by the time downstream reads (e.g. `run_marker_for`)
+        # observe it.
+        self.mark_session_visited(session_id)
         if previous_session_id is not None:
             self._clear_terminal_run_state(session_id=previous_session_id)
         # Binding threading contract (task-5): a conversation switch denies
@@ -5819,6 +5923,17 @@ class ConsoleChatController:
         )
         self._run_states[target] = run_state
         self.run_state_history_for(target).append(run_state.status)
+        # Parallel-agents spec §6: stamp an unvisited terminal outcome, but
+        # ONLY for a session other than the currently active (viewed) one --
+        # the viewed session's own COMPLETED/FAILED transition is visible
+        # live in its transcript and must never grow a stale "unvisited"
+        # fleet marker on itself. `mark_session_visited` is the sole path
+        # that clears an entry stamped here.
+        if target != (self.store.active_session_id or ""):
+            if run_state.status is ConsoleRunStatus.COMPLETED:
+                self._unvisited_outcomes[target] = ConsoleRunMarker.FINISHED_OK
+            elif run_state.status is ConsoleRunStatus.FAILED:
+                self._unvisited_outcomes[target] = ConsoleRunMarker.FINISHED_FAILED
 
     def _clear_terminal_run_state(self, session_id: str | None = None) -> None:
         """Clear stale terminal status copy for ``session_id`` (default: active).
