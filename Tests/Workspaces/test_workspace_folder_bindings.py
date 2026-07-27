@@ -17,6 +17,19 @@ from tldw_chatbook.Workspaces.registry_service import (
 
 
 def build_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
+    """Build a registry backed by a fresh ``WorkspaceDB`` under ``tmp_path``.
+
+    Real callers always place ``WorkspaceDB`` under ``get_user_data_dir()``,
+    which is created as a side effect before the path is ever used. The
+    private-paths hardening removed ``BaseDB``'s own parent-directory
+    auto-creation (see ``P06`` in the SQLite private-owner inventory), so
+    opening a database whose containing directory does not yet exist now
+    raises ``PrivatePathError`` instead of silently creating it. Callers of
+    this helper may pass a subdirectory that has not been created yet (e.g.
+    a second, isolated registry root), so create it here the same way a real
+    caller's directory is guaranteed to exist.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
     return LocalWorkspaceRegistryService(
         WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="folder-tests")
     )
