@@ -57,6 +57,25 @@ def test_load_settings_decrypts_api_settings_when_encrypted(
     assert not config_encryption.is_encrypted(key)
 
 
+def test_check_encryption_needed_detects_real_plaintext_provider_key(
+    tmp_path, monkeypatch, reset_config_state
+):
+    """Regression test for task-852: check_encryption_needed() (the
+    should_encrypt_config() gate) must return True for a live config
+    holding a real, prefixed provider key name, not just the six literal
+    names detect_api_keys() used to match exactly."""
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[SearchEngines]\n'
+        'bing_search_api_key = "bing-real-plaintext-secret"\n'
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(cfg_path))
+    cfg._CONFIG_CACHE = None
+    cfg._CONFIG_CACHE_SOURCE = None
+
+    assert cfg.check_encryption_needed() is True
+
+
 def test_set_encryption_password_invalidates_stale_ciphertext_cache(
     tmp_path, monkeypatch, reset_config_state
 ):
