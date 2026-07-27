@@ -4719,6 +4719,63 @@ def get_subscriptions_db_path() -> Path:
     return db_path
 
 
+def get_evals_db_path() -> Path:
+    """Get the resolved path for the Evals database.
+
+    This is the single source of truth for where the Evals database lives.
+    ``tldw_chatbook.Evals.eval_orchestrator.EvaluationOrchestrator._initialize_database``
+    delegates to this function for its default (``db_path=None``) case, so the
+    orchestrator and any tooling that inspects/backs up the Evals DB (e.g. the
+    Settings database-maintenance panel) always agree on the path. See
+    TASK-860 / TASK-899.
+
+    Returns:
+        The resolved, expanded, absolute path to the Evals database --
+        either a configured custom path or ``evals.db`` under the current
+        profile's user data directory.
+    """
+    # Check if a custom path is configured
+    custom_path = get_cli_setting("database", "evals_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "evals_db_path"
+    ):
+        # Use custom path if explicitly configured
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        # Use user-specific folder
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "evals.db"
+    return db_path
+
+
+def get_rag_indexing_db_path() -> Path:
+    """Get the resolved path for the RAG indexing-state database.
+
+    This is the sqlite database that tracks incremental RAG indexing state
+    (filename ``rag_indexing.db``) -- it is not a vector store.
+    ``tldw_chatbook.RAG_Search.ingestion_indexing._default_indexing_db``
+    delegates to this function so the app and any tooling that inspects the
+    RAG database always agree on the path. See TASK-899.
+
+    Returns:
+        The resolved, expanded, absolute path to the RAG indexing-state
+        database -- either a configured custom path or ``rag_indexing.db``
+        under the current profile's user data directory.
+    """
+    # Check if a custom path is configured
+    custom_path = get_cli_setting("database", "rag_indexing_db_path", None)
+    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+        "rag_indexing_db_path"
+    ):
+        # Use custom path if explicitly configured
+        db_path = Path(custom_path).expanduser().resolve()
+    else:
+        # Use user-specific folder
+        user_dir = get_user_data_dir()
+        db_path = user_dir / "rag_indexing.db"
+    return db_path
+
+
 def get_notifications_db_path() -> Path:
     # Check if a custom path is configured
     custom_path = get_cli_setting("database", "notifications_db_path", None)
