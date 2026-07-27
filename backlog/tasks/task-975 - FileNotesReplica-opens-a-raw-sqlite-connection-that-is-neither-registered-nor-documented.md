@@ -3,11 +3,11 @@ id: TASK-975
 title: >-
   FileNotesReplica opens a raw sqlite connection that is neither registered nor
   documented
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-27 20:00'
-updated_date: '2026-07-27 18:43'
+updated_date: '2026-07-27 18:48'
 labels:
   - bug
   - db
@@ -40,11 +40,11 @@ What is not an option is leaving the census red, because the next person to add 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A decision is recorded — route through `connect_private_sqlite`, or document as an exclusion — with the reasoning stated
-- [ ] #2 `Tests/DB/test_private_sqlite_inventory.py` passes on a clean `dev` checkout
-- [ ] #3 If routed: an owner is registered and the inventory carries a `C`-row, with the ID range assertion extended
-- [ ] #4 If excluded: the `X`-row states why this database is outside the private-path contract
-- [ ] #5 File-notes replica behaviour is unchanged — existing replica tests pass
+- [x] #1 A decision is recorded — route through `connect_private_sqlite`, or document as an exclusion — with the reasoning stated
+- [x] #2 `Tests/DB/test_private_sqlite_inventory.py` passes on a clean `dev` checkout
+- [x] #3 If routed: an owner is registered and the inventory carries a `C`-row, with the ID range assertion extended
+- [x] #4 If excluded: the `X`-row states why this database is outside the private-path contract
+- [x] #5 File-notes replica behaviour is unchanged — existing replica tests pass
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,3 +59,11 @@ ADR required: no
 ADR path: backlog/decisions/029-local-private-data-boundary.md (existing) and backlog/decisions/029-file-notes-disk-authority.md (existing)
 Reason: This directly applies the accepted private-database boundary to the dedicated recovery replica; it introduces no new storage or ownership decision.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Routed FileNotesReplica through the registered private-SQLite boundary as owner `notes.file_notes_replica` for private-file and exact in-memory targets. The decision applies the existing local-private-data ADR because the replica stores exact current, revision, and recovery note bytes; no new ADR or schema change was needed. Added inventory row C37, extended the stable ID guard, corrected the inventory totals, and added a focused regression preserving the existing autocommit and cross-thread connection options.
+
+Focused verification after rebasing on current `origin/dev`: 21 private-SQLite inventory tests passed; 14 File Notes replica tests passed; the two new-owner target-kind cases passed; targeted Ruff and `git diff --check` passed. Self-review and an independent focused review found no actionable issues.
+<!-- SECTION:NOTES:END -->
