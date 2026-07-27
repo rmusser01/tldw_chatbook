@@ -4,7 +4,9 @@ import hashlib
 import sqlite3
 import sys
 import types
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -12,6 +14,7 @@ import pytest
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
 
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
+from tldw_chatbook.Notes.file_notes_replica import ReplicaFileInfo  # noqa: E402
 
 
 def _digest(raw_bytes: bytes) -> str:
@@ -45,6 +48,82 @@ def replica() -> FileNotesReplica:
     value = FileNotesReplica(":memory:")
     yield value
     value.close()
+
+
+def test_connection_operations_are_serialized_across_worker_threads(
+    replica: FileNotesReplica,
+) -> None:
+    root = "/notes"
+    _upsert(replica, root, "worker.md", b"thread-safe bytes")
+    transaction_started = Event()
+    release_transaction = Event()
+    read_started = Event()
+    read_finished = Event()
+
+    def hold_transaction() -> None:
+        with replica._transaction():
+            transaction_started.set()
+            assert release_transaction.wait(timeout=2)
+
+    def read_from_worker() -> bytes | None:
+        read_started.set()
+        try:
+            return replica.get_bytes(root, "worker.md")
+        finally:
+            read_finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        holder = executor.submit(hold_transaction)
+        assert transaction_started.wait(timeout=1)
+        reader = executor.submit(read_from_worker)
+        assert read_started.wait(timeout=1)
+        try:
+            assert not read_finished.wait(timeout=0.05)
+        finally:
+            release_transaction.set()
+        holder.result(timeout=1)
+        assert reader.result(timeout=1) == b"thread-safe bytes"
+
+
+def test_commit_failure_rolls_back_and_leaves_connection_usable(
+    replica: FileNotesReplica,
+) -> None:
+    with replica._lock:
+        replica._connection.execute("PRAGMA foreign_keys = ON")
+        replica._connection.executescript(
+            """
+            CREATE TEMP TABLE commit_parent (
+                id INTEGER PRIMARY KEY
+            );
+            CREATE TEMP TABLE commit_child (
+                parent_id INTEGER,
+                FOREIGN KEY(parent_id) REFERENCES commit_parent(id)
+                    DEFERRABLE INITIALLY DEFERRED
+            );
+            """
+        )
+
+    insert_completed = False
+    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"):
+        with replica._transaction() as cursor:
+            cursor.execute(
+                "INSERT INTO commit_child (parent_id) VALUES (?)",
+                (1,),
+            )
+            insert_completed = True
+
+    assert insert_completed
+    with replica._lock:
+        assert not replica._connection.in_transaction
+        assert (
+            replica._connection.execute(
+                "SELECT COUNT(*) FROM commit_child"
+            ).fetchone()[0]
+            == 0
+        )
+
+    _upsert(replica, "/notes", "after-failure.md", b"still usable")
+    assert replica.get_bytes("/notes", "after-failure.md") == b"still usable"
 
 
 def test_schema_has_only_required_tables_and_no_triggers(
@@ -111,6 +190,41 @@ def test_upsert_is_root_namespaced_and_manually_replaces_fts_content(
         ).fetchone()[0]
         == 1
     )
+
+
+def test_active_inventory_is_root_scoped_and_excludes_tombstones(
+    replica: FileNotesReplica,
+) -> None:
+    root_a = "/notes/a"
+    root_b = "/notes/b"
+    _upsert(replica, root_a, "b.md", b"second", mtime_ns=22)
+    _upsert(replica, root_a, "a.md", b"first", mtime_ns=11)
+    _upsert(replica, root_a, "gone.md", b"deleted", mtime_ns=33)
+    _upsert(replica, root_b, "a.md", b"other root", mtime_ns=44)
+    replica.mark_deleted(root_a, "gone.md")
+
+    assert replica.list_active_files(root_a) == [
+        ReplicaFileInfo(
+            relative_path="a.md",
+            content_hash=_digest(b"first"),
+            size=5,
+            mtime_ns=11,
+        ),
+        ReplicaFileInfo(
+            relative_path="b.md",
+            content_hash=_digest(b"second"),
+            size=6,
+            mtime_ns=22,
+        ),
+    ]
+    assert replica.list_active_files(root_b) == [
+        ReplicaFileInfo(
+            relative_path="a.md",
+            content_hash=_digest(b"other root"),
+            size=10,
+            mtime_ns=44,
+        )
+    ]
 
 
 def test_search_ignores_undecodable_and_deleted_rows_and_quotes_user_input(

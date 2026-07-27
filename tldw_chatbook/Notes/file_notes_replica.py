@@ -8,6 +8,17 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
+from typing import NamedTuple
+
+
+class ReplicaFileInfo(NamedTuple):
+    """Metadata needed to reconcile one active disk file with its replica."""
+
+    relative_path: str
+    content_hash: str
+    size: int
+    mtime_ns: int
 
 
 class FileNotesReplica:
@@ -23,13 +34,20 @@ class FileNotesReplica:
         path = os.fspath(db_path)
         if path != ":memory:":
             Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(path, isolation_level=None)
-        self._connection.row_factory = sqlite3.Row
+        self._lock = RLock()
+        with self._lock:
+            self._connection = sqlite3.connect(
+                path,
+                isolation_level=None,
+                check_same_thread=False,
+            )
+            self._connection.row_factory = sqlite3.Row
         self._initialize_schema()
 
     def close(self) -> None:
         """Close the persistent SQLite connection."""
-        self._connection.close()
+        with self._lock:
+            self._connection.close()
 
     def upsert_file(
         self,
@@ -79,15 +97,38 @@ class FileNotesReplica:
 
     def get_bytes(self, root: str, relative_path: str) -> bytes | None:
         """Return exact current or tombstoned bytes for a path."""
-        row = self._connection.execute(
-            """
-            SELECT raw_bytes
-            FROM files
-            WHERE root = ? AND relative_path = ?
-            """,
-            (root, relative_path),
-        ).fetchone()
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT raw_bytes
+                FROM files
+                WHERE root = ? AND relative_path = ?
+                """,
+                (root, relative_path),
+            ).fetchone()
         return None if row is None else bytes(row["raw_bytes"])
+
+    def list_active_files(self, root: str) -> list[ReplicaFileInfo]:
+        """Return active replica metadata for one canonical root."""
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT relative_path, content_hash, size, mtime_ns
+                FROM files
+                WHERE root = ? AND deleted_at IS NULL
+                ORDER BY relative_path
+                """,
+                (root,),
+            ).fetchall()
+        return [
+            ReplicaFileInfo(
+                relative_path=str(row["relative_path"]),
+                content_hash=str(row["content_hash"]),
+                size=int(row["size"]),
+                mtime_ns=int(row["mtime_ns"]),
+            )
+            for row in rows
+        ]
 
     def search(self, root: str, query: str, *, limit: int = 50) -> list[str]:
         """Return active paths whose decoded current content matches user text."""
@@ -97,21 +138,22 @@ class FileNotesReplica:
         escaped_query = query.replace('"', '""')
         literal_query = f'"{escaped_query}"'
         try:
-            rows = self._connection.execute(
-                """
-                SELECT files.relative_path
-                FROM files_fts
-                JOIN files
-                  ON files.root = files_fts.root
-                 AND files.relative_path = files_fts.relative_path
-                WHERE files_fts MATCH ?
-                  AND files.root = ?
-                  AND files.deleted_at IS NULL
-                ORDER BY bm25(files_fts), files.relative_path
-                LIMIT ?
-                """,
-                (literal_query, root, limit),
-            ).fetchall()
+            with self._lock:
+                rows = self._connection.execute(
+                    """
+                    SELECT files.relative_path
+                    FROM files_fts
+                    JOIN files
+                      ON files.root = files_fts.root
+                     AND files.relative_path = files_fts.relative_path
+                    WHERE files_fts MATCH ?
+                      AND files.root = ?
+                      AND files.deleted_at IS NULL
+                    ORDER BY bm25(files_fts), files.relative_path
+                    LIMIT ?
+                    """,
+                    (literal_query, root, limit),
+                ).fetchall()
         except sqlite3.OperationalError:
             return []
         return [str(row["relative_path"]) for row in rows]
@@ -171,29 +213,31 @@ class FileNotesReplica:
 
     def list_deleted(self, root: str) -> list[str]:
         """List tombstoned paths for one canonical root."""
-        rows = self._connection.execute(
-            """
-            SELECT relative_path
-            FROM files
-            WHERE root = ? AND deleted_at IS NOT NULL
-            ORDER BY deleted_at DESC, relative_path
-            """,
-            (root,),
-        ).fetchall()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT relative_path
+                FROM files
+                WHERE root = ? AND deleted_at IS NOT NULL
+                ORDER BY deleted_at DESC, relative_path
+                """,
+                (root,),
+            ).fetchall()
         return [str(row["relative_path"]) for row in rows]
 
     def get_restore_bytes(self, root: str, relative_path: str) -> bytes | None:
         """Return exact bytes only when a path has a deletion tombstone."""
-        row = self._connection.execute(
-            """
-            SELECT raw_bytes
-            FROM files
-            WHERE root = ?
-              AND relative_path = ?
-              AND deleted_at IS NOT NULL
-            """,
-            (root, relative_path),
-        ).fetchone()
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT raw_bytes
+                FROM files
+                WHERE root = ?
+                  AND relative_path = ?
+                  AND deleted_at IS NOT NULL
+                """,
+                (root, relative_path),
+            ).fetchone()
         return None if row is None else bytes(row["raw_bytes"])
 
     def protect(
@@ -240,27 +284,28 @@ class FileNotesReplica:
 
     def is_protected(self, root: str, relative_path: str) -> bool:
         """Return whether an exact or component-bounded prefix protects a path."""
-        row = self._connection.execute(
-            """
-            SELECT 1
-            FROM protected_paths
-            WHERE root = ?
-              AND (
-                    (is_prefix = 0 AND relative_path = ?)
-                 OR (
-                        is_prefix = 1
-                    AND (
-                           relative_path = ''
-                        OR relative_path = ?
-                        OR substr(?, 1, length(relative_path) + 1)
-                           = relative_path || '/'
-                    )
-                 )
-              )
-            LIMIT 1
-            """,
-            (root, relative_path, relative_path, relative_path),
-        ).fetchone()
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT 1
+                FROM protected_paths
+                WHERE root = ?
+                  AND (
+                        (is_prefix = 0 AND relative_path = ?)
+                     OR (
+                            is_prefix = 1
+                        AND (
+                               relative_path = ''
+                            OR relative_path = ?
+                            OR substr(?, 1, length(relative_path) + 1)
+                               = relative_path || '/'
+                        )
+                     )
+                  )
+                LIMIT 1
+                """,
+                (root, relative_path, relative_path, relative_path),
+            ).fetchone()
         return row is not None
 
     def checkpoint(
@@ -364,60 +409,61 @@ class FileNotesReplica:
             self._delete_fts(cursor, root, relative_path)
 
     def _initialize_schema(self) -> None:
-        self._connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS files (
-                root TEXT NOT NULL,
-                relative_path TEXT NOT NULL,
-                raw_bytes BLOB NOT NULL,
-                content_hash TEXT NOT NULL,
-                decoded_text TEXT,
-                size INTEGER NOT NULL,
-                mtime_ns INTEGER NOT NULL,
-                deleted_at TEXT,
-                UNIQUE(root, relative_path)
-            );
+        with self._lock:
+            self._connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS files (
+                    root TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    raw_bytes BLOB NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    decoded_text TEXT,
+                    size INTEGER NOT NULL,
+                    mtime_ns INTEGER NOT NULL,
+                    deleted_at TEXT,
+                    UNIQUE(root, relative_path)
+                );
 
-            CREATE TABLE IF NOT EXISTS revisions (
-                root TEXT NOT NULL,
-                relative_path TEXT NOT NULL,
-                raw_bytes BLOB NOT NULL,
-                content_hash TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                session_key TEXT,
-                created_at TEXT NOT NULL,
-                UNIQUE(root, relative_path, kind, session_key)
-            );
+                CREATE TABLE IF NOT EXISTS revisions (
+                    root TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    raw_bytes BLOB NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    session_key TEXT,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(root, relative_path, kind, session_key)
+                );
 
-            CREATE TABLE IF NOT EXISTS protected_paths (
-                root TEXT NOT NULL,
-                relative_path TEXT NOT NULL,
-                is_prefix INTEGER NOT NULL CHECK(is_prefix IN (0, 1)),
-                UNIQUE(root, relative_path, is_prefix)
-            );
+                CREATE TABLE IF NOT EXISTS protected_paths (
+                    root TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    is_prefix INTEGER NOT NULL CHECK(is_prefix IN (0, 1)),
+                    UNIQUE(root, relative_path, is_prefix)
+                );
 
-            CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
-                root UNINDEXED,
-                relative_path UNINDEXED,
-                decoded_text,
-                tokenize = 'unicode61'
-            );
-            """
-        )
+                CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+                    root UNINDEXED,
+                    relative_path UNINDEXED,
+                    decoded_text,
+                    tokenize = 'unicode61'
+                );
+                """
+            )
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Cursor]:
-        cursor = self._connection.cursor()
-        cursor.execute("BEGIN IMMEDIATE")
-        try:
-            yield cursor
-        except BaseException:
-            self._connection.rollback()
-            raise
-        else:
-            self._connection.commit()
-        finally:
-            cursor.close()
+        with self._lock:
+            cursor = self._connection.cursor()
+            try:
+                cursor.execute("BEGIN IMMEDIATE")
+                yield cursor
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+            finally:
+                cursor.close()
 
     @staticmethod
     def _delete_fts(
