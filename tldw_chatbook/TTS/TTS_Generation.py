@@ -597,8 +597,12 @@ class TTSService:
     ) -> TTSNativeCapabilitySnapshot:
         """Observe one bounded native capability snapshot without exposing a lease."""
         self._require_native_provider(provider_id)
+        revision = self.configuration_revision(provider_id)
+        if type(revision) is not int:
+            raise TypeError("Capability configuration revision must be an integer")
+        if revision < 0:
+            raise ValueError("Capability configuration revision must be nonnegative")
         deadline = _native_capability_deadline()
-        revision = 0
         lease: TTSAdapterLease | None = None
         result = TTSNativeCapabilitySnapshot(
             provider_id=provider_id,

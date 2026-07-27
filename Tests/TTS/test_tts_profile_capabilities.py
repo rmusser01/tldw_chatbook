@@ -5,8 +5,10 @@ import json
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
@@ -24,6 +26,7 @@ from tldw_chatbook.TTS import (
     TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.adapter_registry import (
+    ReconfigureResult,
     TTSAdapterLease,
     TTSAdapterRegistry,
 )
@@ -31,12 +34,23 @@ from tldw_chatbook.TTS.adapter_types import TTSProviderSpec
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+from tldw_chatbook.TTS.profile_errors import ProfileServiceError
+from tldw_chatbook.TTS.profile_service import (
+    TTSProfilePageSnapshot,
+    TTSProfileService,
+)
+from tldw_chatbook.TTS.profile_types import (
+    TTSGenerationProfile,
+    TTSProfileDraft,
+)
 
 _WAIT_SECONDS = 1.0
 _CAPABILITY_TASK_NAMES = {
     "tts_native_capability_voice",
     "tts_native_capability_voice_cleanup",
 }
+_PROFILE_ID = UUID("11111111-1111-4111-8111-111111111111")
+_PROFILE_CREATED_AT = datetime(2026, 7, 27, 12, tzinfo=UTC)
 
 
 def _model(model_id: str) -> TTSModelInfo:
@@ -230,6 +244,7 @@ class _RecordingRegistry(TTSAdapterRegistry):
             aliases={},
         )
         self.expected_revisions: list[tuple[str, int | None]] = []
+        self.fail_acquire = False
         self.release_started = asyncio.Event()
         self.release_allowed: asyncio.Event | None = None
 
@@ -240,6 +255,8 @@ class _RecordingRegistry(TTSAdapterRegistry):
         expected_revision: int | None = None,
     ) -> TTSAdapterLease:
         self.expected_revisions.append((provider_id, expected_revision))
+        if self.fail_acquire:
+            raise RuntimeError("synthetic capability acquisition failure")
         return await super().acquire(
             provider_id,
             expected_revision=expected_revision,
@@ -282,6 +299,79 @@ def _active_capability_tasks() -> tuple[asyncio.Task[Any], ...]:
         for task in asyncio.all_tasks()
         if not task.done() and task.get_name() in _CAPABILITY_TASK_NAMES
     )
+
+
+class _AvailabilityRepository:
+    """Minimal profile repository collaborator for capability integration."""
+
+    def __init__(self) -> None:
+        self.generation = 7
+
+    async def list_profiles(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("availability must not list profiles")
+
+    async def create_profile(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("availability must not create profiles")
+
+    async def update_profile(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("availability must not update profiles")
+
+    async def delete_profile(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("availability must not delete profiles")
+
+    async def assignment_count(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("availability must not count assignments")
+
+
+def _availability_page(repository_generation: int) -> TTSProfilePageSnapshot:
+    draft = TTSProfileDraft(
+        display_name="Narrator",
+        provider_id="audio_cpp",
+        model_id="model",
+        voice_id=None,
+        response_format="wav",
+        speed=1.0,
+        options={},
+    )
+    profile = TTSGenerationProfile(
+        profile_id=_PROFILE_ID,
+        display_name=draft.display_name,
+        normalized_name=draft.normalized_name,
+        provider_id=draft.provider_id,
+        model_id=draft.model_id,
+        voice_id=draft.voice_id,
+        response_format=draft.response_format,
+        speed=draft.speed,
+        options=draft.options,
+        revision=1,
+        created_at=_PROFILE_CREATED_AT,
+        updated_at=_PROFILE_CREATED_AT,
+    )
+    return TTSProfilePageSnapshot(
+        repository_generation=repository_generation,
+        profiles=(profile,),
+        total=1,
+    )
+
+
+def _force_prelease_failure(
+    failure: str,
+    monkeypatch: pytest.MonkeyPatch,
+    registry: _RecordingRegistry,
+) -> None:
+    if failure == "deadline":
+        import tldw_chatbook.TTS.TTS_Generation as generation_module
+
+        monkeypatch.setattr(
+            generation_module,
+            "_native_capability_deadline",
+            lambda: asyncio.get_running_loop().time(),
+        )
+        return
+    if failure == "acquire":
+        registry.fail_acquire = True
+        return
+    raise AssertionError(f"Unknown pre-lease failure: {failure}")
 
 
 class _MockResponseStream(httpx.AsyncByteStream):
@@ -514,6 +604,127 @@ async def test_real_audio_cpp_snapshot_keeps_one_catalog_revision(
         assert requests.count("/v1/audio/voices") == len(model_ids)
         assert registry._total_leases() == 0
     finally:
+        await _close_service(service)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ("deadline", "acquire"))
+async def test_prelease_capability_failure_preserves_current_revision_without_authority(
+    failure: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _CapabilityAdapter(("model",))
+    service, registry = _service(adapter)
+    _force_prelease_failure(failure, monkeypatch, registry)
+    try:
+        snapshot = await service.get_native_capability_snapshot(
+            "audio_cpp",
+            ("model",),
+        )
+
+        assert snapshot.configuration_revision == (
+            service.configuration_revision("audio_cpp")
+        )
+        assert snapshot.configuration_revision == 1
+        assert snapshot.state == "unverified"
+        assert snapshot.catalog is None
+        assert snapshot.voice_results == {}
+        assert adapter.catalog_calls == 0
+        assert adapter.voice_calls == []
+        assert registry.expected_revisions == (
+            [] if failure == "deadline" else [("audio_cpp", 1)]
+        )
+        assert registry._total_leases() == 0
+        assert _active_capability_tasks() == ()
+    finally:
+        await _close_service(service)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ("deadline", "acquire"))
+async def test_prelease_capability_failure_remains_unverified_for_profile_availability(
+    failure: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _CapabilityAdapter(("model",))
+    service, registry = _service(adapter)
+    repository = _AvailabilityRepository()
+    profile_service = TTSProfileService(repository, service)
+    _force_prelease_failure(failure, monkeypatch, registry)
+    try:
+        observed = await profile_service.observe_availability(
+            _availability_page(repository.generation)
+        )
+
+        assert observed.configuration_revision == (
+            service.configuration_revision("audio_cpp")
+        )
+        assert observed.configuration_revision == 1
+        assert observed.catalog_revision is None
+        assert tuple(item.state for item in observed.profiles) == ("unverified",)
+        assert tuple(item.recovery_action for item in observed.profiles) == ("refresh",)
+        assert adapter.catalog_calls == 0
+        assert adapter.voice_calls == []
+        assert registry.expected_revisions == (
+            [] if failure == "deadline" else [("audio_cpp", 1)]
+        )
+        assert registry._total_leases() == 0
+        assert _active_capability_tasks() == ()
+    finally:
+        await _close_service(service)
+
+
+@pytest.mark.asyncio
+async def test_profile_availability_rejects_genuine_queued_reconfiguration_as_stale() -> (
+    None
+):
+    adapter = _CapabilityAdapter(("model",))
+    adapter.catalog_release = asyncio.Event()
+    service, registry = _service(adapter)
+    repository = _AvailabilityRepository()
+    profile_service = TTSProfileService(repository, service)
+    observation = asyncio.create_task(
+        profile_service.observe_availability(_availability_page(repository.generation))
+    )
+    writer_entered = asyncio.Event()
+
+    async def reconfigure() -> ReconfigureResult:
+        async with service._request_admission._gate.write():
+            writer_entered.set()
+            return await service.reconfigure_provider(
+                "audio_cpp",
+                {"generation": 2},
+            )
+
+    writer: asyncio.Task[ReconfigureResult] | None = None
+    try:
+        await asyncio.wait_for(
+            adapter.catalog_started.wait(),
+            timeout=_WAIT_SECONDS,
+        )
+        writer = asyncio.create_task(reconfigure())
+        await asyncio.wait_for(writer_entered.wait(), timeout=_WAIT_SECONDS)
+
+        adapter.catalog_release.set()
+        with pytest.raises(ProfileServiceError) as caught:
+            await asyncio.wait_for(observation, timeout=_WAIT_SECONDS)
+
+        assert caught.value.code == "stale_configuration"
+        assert await asyncio.wait_for(writer, timeout=_WAIT_SECONDS) is (
+            ReconfigureResult.CHANGED
+        )
+        assert registry.expected_revisions == [("audio_cpp", 1)]
+        assert service.configuration_revision("audio_cpp") == 2
+        assert registry._total_leases() == 0
+        assert _active_capability_tasks() == ()
+    finally:
+        adapter.catalog_release.set()
+        observation.cancel()
+        if writer is not None:
+            writer.cancel()
+            await asyncio.gather(observation, writer, return_exceptions=True)
+        else:
+            await asyncio.gather(observation, return_exceptions=True)
         await _close_service(service)
 
 
