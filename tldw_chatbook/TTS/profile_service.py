@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import islice
 from types import MappingProxyType
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, TypeAlias, TypeVar, cast
 from uuid import UUID
 
 from tldw_chatbook.TTS.adapter_types import (
@@ -42,6 +43,7 @@ _PROFILE_PROVIDER_ID = "audio_cpp"
 _PROFILE_RESPONSE_FORMAT = "wav"
 _PROFILE_SPEED = 1.0
 _PROFILE_PAGE_LIMIT = 50
+_BoundedValue = TypeVar("_BoundedValue")
 _AVAILABILITY_RECOVERY: Mapping[
     ProfileAvailabilityState,
     ProfileRecoveryAction,
@@ -60,28 +62,34 @@ def _validate_nonnegative_integer(value: object, code: str) -> int:
     return value
 
 
-def _validate_profile_sequence(
+def _freeze_bounded_sequence(
     values: object,
+    expected_type: type[_BoundedValue],
     *,
     maximum: int = _PROFILE_PAGE_LIMIT,
-) -> tuple[TTSGenerationProfile, ...]:
+) -> tuple[_BoundedValue, ...]:
     if not isinstance(values, Sequence) or isinstance(values, (str, bytes, bytearray)):
         raise ProfileValidationError("profiles")
-    failed = False
-    profiles: tuple[object, ...] = ()
+    source_length = 0
+    source_length_failed = False
     try:
-        if len(values) > maximum:
-            raise ProfileValidationError("profiles")
-        profiles = tuple(values)
-    except ProfileValidationError:
-        raise
+        source_length = len(values)
     except Exception:  # noqa: BLE001 - hostile sequences fail closed
-        failed = True
-    if failed:
+        source_length_failed = True
+    if source_length_failed or source_length > maximum:
         raise ProfileValidationError("profiles")
-    if not all(type(profile) is TTSGenerationProfile for profile in profiles):
+
+    frozen_sample: tuple[object, ...] = ()
+    freeze_failed = False
+    try:
+        frozen_sample = tuple(islice(values, maximum + 1))
+    except Exception:  # noqa: BLE001 - hostile sequences fail closed
+        freeze_failed = True
+    if freeze_failed or len(frozen_sample) > maximum:
         raise ProfileValidationError("profiles")
-    return cast(tuple[TTSGenerationProfile, ...], profiles)
+    if not all(type(item) is expected_type for item in frozen_sample):
+        raise ProfileValidationError("profiles")
+    return cast(tuple[_BoundedValue, ...], frozen_sample)
 
 
 def _validate_availability_state(value: object) -> ProfileAvailabilityState:
@@ -193,7 +201,10 @@ class TTSProfilePageSnapshot:
             self.repository_generation,
             "generation",
         )
-        profiles = _validate_profile_sequence(self.profiles)
+        profiles = _freeze_bounded_sequence(
+            self.profiles,
+            TTSGenerationProfile,
+        )
         total = _validate_nonnegative_integer(self.total, "total")
         if total < len(profiles):
             raise ProfileValidationError("total")
@@ -260,29 +271,11 @@ class TTSProfileAvailabilitySnapshot:
                 catalog_revision,
                 "catalog_revision",
             )
-        if not isinstance(self.profiles, Sequence) or isinstance(
+        profiles = _freeze_bounded_sequence(
             self.profiles,
-            (str, bytes, bytearray),
-        ):
-            raise ProfileValidationError("profiles")
-        failed = False
-        profiles: tuple[object, ...] = ()
-        try:
-            if len(self.profiles) > _PROFILE_PAGE_LIMIT:
-                raise ProfileValidationError("profiles")
-            profiles = tuple(self.profiles)
-        except ProfileValidationError:
-            raise
-        except Exception:  # noqa: BLE001 - hostile sequences fail closed
-            failed = True
-        if failed:
-            raise ProfileValidationError("profiles")
-        if not all(type(item) is TTSProfileAvailability for item in profiles):
-            raise ProfileValidationError("profiles")
-        validated_profiles = cast(tuple[TTSProfileAvailability, ...], profiles)
-        if len({item.profile_id for item in validated_profiles}) != len(
-            validated_profiles
-        ):
+            TTSProfileAvailability,
+        )
+        if len({item.profile_id for item in profiles}) != len(profiles):
             raise ProfileValidationError("profiles")
         object.__setattr__(
             self,
@@ -295,7 +288,7 @@ class TTSProfileAvailabilitySnapshot:
             configuration_revision,
         )
         object.__setattr__(self, "catalog_revision", catalog_revision)
-        object.__setattr__(self, "profiles", validated_profiles)
+        object.__setattr__(self, "profiles", profiles)
 
 
 class TTSProfileService:

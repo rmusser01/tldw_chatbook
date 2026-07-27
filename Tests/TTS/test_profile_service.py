@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import FrozenInstanceError, fields
 from datetime import UTC, datetime
 from pathlib import Path
@@ -320,6 +320,27 @@ class _ExplodingSequence(Sequence[object]):
         )
 
 
+class _GuardedInfiniteSequence(Sequence[object]):
+    def __init__(self, item: object) -> None:
+        self.item = item
+        self.items_requested = 0
+
+    def __len__(self) -> int:
+        return 1
+
+    def __getitem__(self, _index: int) -> object:  # type: ignore[override]
+        return self.item
+
+    def __iter__(self) -> Iterator[object]:
+        while True:
+            self.items_requested += 1
+            if self.items_requested > 51:
+                raise RuntimeError(
+                    "https://user:credential@example.test/private/path submitted text"
+                )
+            yield self.item
+
+
 class _FakeTTSService:
     def __init__(
         self,
@@ -542,6 +563,47 @@ def test_service_values_do_not_retain_hostile_container_errors() -> None:
     assert "credential" not in visible
     assert "/private/path" not in visible
     assert "submitted text" not in visible
+
+
+def test_page_snapshot_stops_lying_unbounded_sequence_at_item_fifty_one() -> None:
+    profiles = _GuardedInfiniteSequence(_profile())
+
+    with pytest.raises(ProfileValidationError) as caught:
+        TTSProfilePageSnapshot(
+            repository_generation=1,
+            profiles=profiles,  # type: ignore[arg-type]
+            total=51,
+        )
+
+    assert caught.value.code == "profiles"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert profiles.items_requested == 51
+
+
+def test_availability_snapshot_stops_lying_unbounded_sequence_at_item_fifty_one() -> (
+    None
+):
+    profiles = _GuardedInfiniteSequence(
+        TTSProfileAvailability(
+            profile_id=_PROFILE_ID,
+            state="available",
+            recovery_action="none",
+        )
+    )
+
+    with pytest.raises(ProfileValidationError) as caught:
+        TTSProfileAvailabilitySnapshot(
+            repository_generation=1,
+            configuration_revision=1,
+            catalog_revision=1,
+            profiles=profiles,  # type: ignore[arg-type]
+        )
+
+    assert caught.value.code == "profiles"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert profiles.items_requested == 51
 
 
 @pytest.mark.asyncio
