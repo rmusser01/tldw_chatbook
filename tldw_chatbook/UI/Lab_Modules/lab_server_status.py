@@ -8,26 +8,21 @@ The handles live on the app rather than on LLMManagementWindow (see
 ``app.py``'s ``*_server_process`` attributes), and liveness uses the same
 ``proc and proc.poll() is None`` idiom as the LLM management event handlers.
 
-Ollama is deliberately absent from :data:`LAB_SERVER_SOURCES`. Its sibling
-servers (llama.cpp, Llamafile, vLLM, ONNX, MLX-LM) all assign their process
-handle from a dedicated worker via ``app_instance.call_from_thread``. Ollama
-has no such assignment anywhere in the codebase -- ``app.ollama_server_process``
-is only declared and reset to ``None`` -- so a row for it would always read
-"stopped" even while a user-started ``ollama serve`` process is alive: a
-wrong row, not a missing one. Worse, ``handle_ollama_start_service_button_pressed``
-(``Event_Handlers/LLM_Management_Events/llm_management_events_ollama.py``)
-cannot currently start that process at all: it calls
-``stream_worker_output_to_log(app, "ollama-log-output")`` with one positional
-argument short of that coroutine's three, and separately passes ``cmd`` and
-that (broken) call's result as positional args to ``App.run_worker`` --
-whose second positional parameter is also named ``name``, which the same
-call supplies again by keyword, so Python raises
-``TypeError: got multiple values for argument 'name'`` before any subprocess
-is created. This is pre-existing and unrelated to the Lab frame (verified
-identical on ``origin/dev``; the file has no diff on this branch) -- wiring
-Ollama up correctly needs that start handler fixed first, which is a
-separate, untested legacy code path and out of this fix's scope. Tracked
-for a follow-up task rather than guessed at here.
+Every provider here is tracked the same way: its process handle is published
+by ``server_lifecycle.run_server_subprocess`` through
+``app.call_from_thread(publish_server_process, ...)``, which sets the
+matching ``*_server_process`` attribute on the app.
+
+Ollama was excluded when this module was written, because at the time its
+start handler could not spawn a process at all and nothing ever assigned
+``app.ollama_server_process`` -- a row for it would have read "stopped"
+forever even while a user-started ``ollama serve`` was alive. Dev has since
+routed Ollama through the shared lifecycle owner
+(``server_lifecycle.SERVER_PROCESS_ATTRS`` includes it, and
+``handle_ollama_start_service_button_pressed`` reserves and publishes a
+claim like every sibling), so the exclusion outlived its reason and the
+Models status list was under-reporting: a user with Ollama running saw a
+count that ignored it. See task-886.
 """
 
 from __future__ import annotations
@@ -37,10 +32,13 @@ from dataclasses import dataclass
 from typing import Any
 
 #: (app attribute, display name), in the order the inspector lists them.
-#: Ollama is intentionally not one of these -- see the module docstring.
+#: Kept in step with ``server_lifecycle.SERVER_PROCESS_ATTRS``; the test
+#: suite asserts the two agree so a provider added there cannot go
+#: unreported here.
 LAB_SERVER_SOURCES: tuple[tuple[str, str], ...] = (
     ("llamacpp_server_process", "llama.cpp"),
     ("llamafile_server_process", "Llamafile"),
+    ("ollama_server_process", "Ollama"),
     ("vllm_server_process", "vLLM"),
     ("onnx_server_process", "ONNX"),
     ("mlx_server_process", "MLX-LM"),

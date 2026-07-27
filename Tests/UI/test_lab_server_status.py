@@ -1,10 +1,13 @@
-"""Pure reader over the app's five local-server process handles.
+"""Pure reader over the app's local-server process handles.
 
-Ollama is deliberately excluded -- see the docstring on
-``lab_server_status.LAB_SERVER_SOURCES`` -- so it is not exercised here.
+Covers all six, Ollama included: it was excluded while nothing assigned
+``app.ollama_server_process``, and dev's ``server_lifecycle`` refactor
+removed that reason (task-886).
 """
 
 from __future__ import annotations
+
+import pytest
 
 from tldw_chatbook.UI.Lab_Modules.lab_server_status import (
     LAB_SERVER_SOURCES,
@@ -32,9 +35,13 @@ class _FakeApp:
             setattr(self, attribute, proc)
 
 
-def test_all_five_servers_are_reported_even_when_none_run():
+def test_all_six_servers_are_reported_even_when_none_run():
     rows = read_server_rows(_FakeApp())
-    assert len(rows) == len(LAB_SERVER_SOURCES) == 5
+    # The literal 6 is the point of this assertion: comparing len(rows) to
+    # len(LAB_SERVER_SOURCES) alone is satisfied by any tuple of any size,
+    # including one a bad edit silently shortened. Pinning the number means
+    # dropping a provider fails here, and adding one is a deliberate edit.
+    assert len(rows) == len(LAB_SERVER_SOURCES) == 6
     assert all(row.running is False for row in rows)
 
 
@@ -58,7 +65,7 @@ def test_a_missing_attribute_reads_as_stopped():
         pass
 
     rows = read_server_rows(_Bare())
-    assert len(rows) == 5
+    assert len(rows) == len(LAB_SERVER_SOURCES)
     assert all(row.running is False for row in rows)
 
 
@@ -93,3 +100,35 @@ def test_chip_text_when_one_is_running_is_singular():
 def test_chip_text_when_none_are_running():
     rows = (LabServerRow(name="llama.cpp", running=False),)
     assert servers_chip_text(rows) == "Servers: none running"
+
+
+@pytest.mark.unit
+def test_every_lifecycle_tracked_server_is_reported_by_the_lab_status_list():
+    """The Lab status list must not silently omit a tracked provider.
+
+    Ollama was excluded from `LAB_SERVER_SOURCES` because, when this module
+    was written, nothing ever assigned `app.ollama_server_process` -- a row
+    would have read "stopped" forever. Dev later routed Ollama through the
+    shared lifecycle owner, and the exclusion stayed: the Models screen
+    under-reported, showing a server count that ignored a running Ollama.
+
+    Asserting the two sets agree means the next provider added to
+    `SERVER_PROCESS_ATTRS` cannot go unreported the same way. Compared by
+    attribute name rather than display name, since only the attribute is
+    what liveness is actually read from.
+    """
+    from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
+        SERVER_PROCESS_ATTRS,
+    )
+
+    reported = {attribute for attribute, _ in LAB_SERVER_SOURCES}
+    tracked = set(SERVER_PROCESS_ATTRS.values())
+
+    assert tracked - reported == set(), (
+        "lifecycle tracks these providers but the Lab status list omits them: "
+        f"{sorted(tracked - reported)}"
+    )
+    assert reported - tracked == set(), (
+        "the Lab status list reports attributes nothing publishes: "
+        f"{sorted(reported - tracked)}"
+    )

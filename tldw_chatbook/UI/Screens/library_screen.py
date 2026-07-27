@@ -197,9 +197,9 @@ from ...Workspaces import (
     build_library_workspace_depth_state,
 )
 from ...Workspaces.registry_service import next_local_workspace_identity
-from ...Widgets.Console.console_rail_section import (
-    CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
-    ConsoleRailSectionHeader,
+from ...Widgets.destination_rail import (
+    RAIL_SECTION_TOGGLE_PREFIX,
+    DestinationRailSectionHeader,
 )
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
@@ -6755,7 +6755,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             body = self.query_one(f"#library-rail-section-body-{section_id}")
             header = self.query_one(
-                f"#library-rail-section-header-{section_id}", ConsoleRailSectionHeader
+                f"#library-rail-section-header-{section_id}", DestinationRailSectionHeader
             )
         except Exception:
             return
@@ -6939,7 +6939,7 @@ class LibraryScreen(BaseAppScreen):
                 collapse/expand toggle.
         """
         button_id = event.button.id or ""
-        prefix = f"{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}library-"
+        prefix = f"{RAIL_SECTION_TOGGLE_PREFIX}library-"
         if not button_id.startswith(prefix):
             return
         event.stop()

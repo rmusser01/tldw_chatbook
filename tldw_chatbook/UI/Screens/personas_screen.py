@@ -50,7 +50,7 @@ from ...Media_Creation.generation_templates import GenerationTemplate, get_templ
 from ...tldw_api import UserProfileCreate, UserProfileUpdate
 from ...Utils.path_validation import validate_path_simple
 from ...Utils.paths import get_user_data_dir
-from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
+from ...Widgets.destination_rail import DestinationRailHandle
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
@@ -719,11 +719,12 @@ class PersonasScreen(BaseAppScreen):
             with Horizontal(
                 id="personas-workbench", classes="ds-panel destination-workbench"
             ):
-                library_handle = ConsoleRailHandle(
+                library_handle = DestinationRailHandle(
                     label="Library",
                     button_id="personas-library-rail-open",
                     badge_id="personas-library-rail-badge",
                     side="left",
+                    open_tooltip="Open Library rail",
                     id="personas-library-rail-handle",
                 )
                 library_handle.styles.width = PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH
@@ -800,11 +801,12 @@ class PersonasScreen(BaseAppScreen):
                     inspector_pane.display = False
                 yield inspector_pane
 
-                inspector_handle = ConsoleRailHandle(
+                inspector_handle = DestinationRailHandle(
                     label="Inspector",
                     button_id="personas-inspector-rail-open",
                     badge_id="personas-inspector-rail-badge",
                     side="right",
+                    open_tooltip="Open Inspector rail",
                     id="personas-inspector-rail-handle",
                 )
                 inspector_handle.styles.width = PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH
@@ -929,7 +931,6 @@ class PersonasScreen(BaseAppScreen):
             await setup_loading()
         self._sync_responsive_workbench()
         self._sync_personas_rails()
-        self._sync_personas_rail_tooltips()
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
         self._show_center(None)
         await self.character_handler.refresh_character_list()
@@ -989,18 +990,6 @@ class PersonasScreen(BaseAppScreen):
             self.query_one(
                 "#personas-inspector-rail-handle"
             ).display = not inspector_open
-        except QueryError:
-            return
-
-    def _sync_personas_rail_tooltips(self) -> None:
-        """Set Personas-specific collapsed rail tooltips on shared handles."""
-        try:
-            self.query_one(
-                "#personas-library-rail-open", Button
-            ).tooltip = "Open Library rail"
-            self.query_one(
-                "#personas-inspector-rail-open", Button
-            ).tooltip = "Open Inspector rail"
         except QueryError:
             return
 

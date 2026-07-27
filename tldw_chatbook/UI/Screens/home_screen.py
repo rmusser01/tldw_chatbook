@@ -52,9 +52,9 @@ from tldw_chatbook.Home.home_rail_state import (
     coerce_home_rail_preferences,
     serialize_home_rail_preferences,
 )
-from tldw_chatbook.Widgets.Console.console_rail_section import (
-    CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
-    ConsoleRailSectionHeader,
+from tldw_chatbook.Widgets.destination_rail import (
+    RAIL_SECTION_TOGGLE_PREFIX,
+    DestinationRailSectionHeader,
 )
 from tldw_chatbook.Widgets.Home.home_canvas import HomeCanvas
 from tldw_chatbook.Widgets.Home.home_rail import HOME_RAIL_ROW_PREFIX, HomeRail
@@ -667,7 +667,7 @@ class HomeScreen(BaseAppScreen):
         try:
             body = self.query_one(f"#home-rail-section-body-{section_id}")
             header = self.query_one(
-                f"#home-rail-section-header-{section_id}", ConsoleRailSectionHeader
+                f"#home-rail-section-header-{section_id}", DestinationRailSectionHeader
             )
         except Exception:
             return
@@ -719,10 +719,10 @@ class HomeScreen(BaseAppScreen):
                 self._sync_home_triage()
             return
 
-        if button_id.startswith(f"{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}home-"):
+        if button_id.startswith(f"{RAIL_SECTION_TOGGLE_PREFIX}home-"):
             event.stop()
             section_id = button_id.removeprefix(
-                f"{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}home-"
+                f"{RAIL_SECTION_TOGGLE_PREFIX}home-"
             )
             currently_open = bool(
                 getattr(self._home_rail_preferences(), f"{section_id}_open", True)

@@ -1044,8 +1044,31 @@ class LLMManagementWindow(Container):
 
                 # Populate help text for specific views
                 self._populate_help_text(new_view, target_view)
+                self._start_view_work(new_view, target_view)
             except QueryError:
                 logger.error(f"Target view #{target_view_id} not found")
+
+    def _start_view_work(self, view_name: str, view_widget) -> None:
+        """Kick off work a view should only do once it is actually shown.
+
+        `compose()` builds all nine views eagerly, so anything a view does
+        at mount time happens on every visit to this screen regardless of
+        which view the user wanted. The HuggingFace browse was doing exactly
+        that -- a live request to huggingface.co on arrival, for users who
+        never open Download Models (task-887).
+        """
+        if view_name != "download-models":
+            return
+        # Local import: this module is on the Models mount path, and the
+        # point of the change is to keep that path cheap.
+        from ..Widgets.HuggingFace.model_search_widget import ModelSearchWidget
+
+        try:
+            search = view_widget.query_one(ModelSearchWidget)
+        except QueryError:
+            logger.debug("Download Models view has no ModelSearchWidget; skipped.")
+            return
+        search.ensure_initial_browse()
 
     def _populate_help_text(self, view_name: str, view_widget) -> None:
         """Populate help text for views that have it."""

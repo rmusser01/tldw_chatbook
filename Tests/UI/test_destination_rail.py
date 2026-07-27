@@ -100,13 +100,19 @@ async def test_base_handle_omits_the_badge_when_empty():
         assert not app.query("#lab-rail-badge")
 
 
-def test_shared_glyphs_match_the_console_originals():
-    """Guard the deliberate duplication of the glyph literals.
+def test_console_reexports_the_shared_disclosure_glyphs():
+    """One definition, re-exported -- not two copies kept in step.
 
-    ``destination_rail`` redeclares these rather than importing from
-    ``Chat.console_glyphs``, so the shared widget stays free of the Chat
-    layer. That duplication would otherwise drift silently if either side
-    changed.
+    These used to be declared in both modules with an equality assertion
+    here holding them together: a lockstep between two files enforced from
+    a third, invisible to anything static. ADR-034 gave ownership to
+    `destination_rail`, which is what renders them, and made
+    `console_glyphs` re-export.
+
+    Asserting identity rather than equality is the point: `is` can only
+    hold if there is a single definition, so this fails if anyone
+    re-declares the literal instead of importing it. Equality would pass
+    for a re-introduced duplicate.
     """
     from tldw_chatbook.Chat import console_glyphs
     from tldw_chatbook.Widgets.destination_rail import (
@@ -114,8 +120,8 @@ def test_shared_glyphs_match_the_console_originals():
         GLYPH_EXPANDED,
     )
 
-    assert GLYPH_EXPANDED == console_glyphs.GLYPH_EXPANDED
-    assert GLYPH_COLLAPSED == console_glyphs.GLYPH_COLLAPSED
+    assert console_glyphs.GLYPH_EXPANDED is GLYPH_EXPANDED
+    assert console_glyphs.GLYPH_COLLAPSED is GLYPH_COLLAPSED
 
 
 def _console_handle(**overrides) -> ConsoleRailHandle:
@@ -178,16 +184,6 @@ async def test_console_handle_leaves_left_side_text_alone():
     async with app.run_test(size=(40, 12)) as pilot:
         await pilot.pause()
         assert str(app.query_one("#console-rail-badge", Static).renderable) == "1 approval"
-
-
-def test_console_section_header_is_the_shared_widget():
-    from tldw_chatbook.Widgets.Console.console_rail_section import (
-        CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
-        ConsoleRailSectionHeader,
-    )
-
-    assert ConsoleRailSectionHeader is DestinationRailSectionHeader
-    assert CONSOLE_RAIL_SECTION_TOGGLE_PREFIX == RAIL_SECTION_TOGGLE_PREFIX
 
 
 @pytest.mark.asyncio
