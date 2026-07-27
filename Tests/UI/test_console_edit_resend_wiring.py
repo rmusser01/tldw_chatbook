@@ -32,7 +32,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Widgets.Console import ConsoleTranscript
 
 
-CONSOLE_RUN_ALREADY_RUNNING_COPY = "A Console run is already running."
+CONSOLE_RUN_ALREADY_RUNNING_COPY = "A run is already running in this tab."
 
 
 async def _open_edit_modal(console, pilot, message_id: str):

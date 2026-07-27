@@ -37,7 +37,7 @@ from tldw_chatbook.Widgets.Console.console_rewind_modal import (
 )
 
 
-CONSOLE_RUN_ALREADY_RUNNING_COPY = "A Console run is already running."
+CONSOLE_RUN_ALREADY_RUNNING_COPY = "A run is already running in this tab."
 
 
 async def _seed_u1_a1_u2_a2(console):

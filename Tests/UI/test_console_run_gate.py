@@ -21,7 +21,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 
-ALREADY_RUNNING_COPY = "A Console run is already running."
+ALREADY_RUNNING_COPY = "A run is already running in this tab."
 
 
 def _build_screen():

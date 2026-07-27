@@ -140,3 +140,76 @@ def test_in_flight_run_count_and_run_states_snapshot(controller_with_two_session
     # Snapshot is a copy: mutating it must not affect the controller's map.
     snapshot[session_a] = ConsoleRunState()
     assert controller.run_state_for(session_a).status is ConsoleRunStatus.STREAMING
+
+
+def test_send_refusal_is_per_session_and_capped(controller_with_two_sessions, monkeypatch):
+    controller, session_a, session_b = controller_with_two_sessions
+    monkeypatch.setattr(
+        type(controller), "max_parallel_runs", property(lambda self: 1)
+    )
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "run A"), session_id=session_a
+    )
+
+    assert controller.send_refusal_copy(session_a) == (
+        "A run is already running in this tab."
+    )
+    refusal = controller.send_refusal_copy(session_b)
+    assert refusal is not None and "1 agents already running" in refusal
+    assert "Wait for one to finish or interrupt it." in refusal
+
+
+def test_cap_default_and_floor(controller_with_two_sessions, monkeypatch):
+    controller, _, _ = controller_with_two_sessions
+    import tldw_chatbook.Chat.console_chat_controller as ccc
+    monkeypatch.setattr(
+        ccc, "get_cli_setting", lambda *a, **k: 0, raising=False
+    )
+    assert controller.max_parallel_runs == 1  # floor
+    monkeypatch.setattr(
+        ccc, "get_cli_setting", lambda *a, **k: None, raising=False
+    )
+    assert controller.max_parallel_runs == 3  # default
+
+
+def test_lowering_cap_never_kills_running(controller_with_two_sessions, monkeypatch):
+    controller, session_a, session_b = controller_with_two_sessions
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "A"), session_id=session_a
+    )
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "B"), session_id=session_b
+    )
+    monkeypatch.setattr(
+        type(controller), "max_parallel_runs", property(lambda self: 1)
+    )
+    # Both stay streaming; only NEW sends are refused.
+    assert controller.run_state_for(session_a).status is ConsoleRunStatus.STREAMING
+    assert controller.run_state_for(session_b).status is ConsoleRunStatus.STREAMING
+    assert controller.in_flight_run_count() == 2
+
+
+def test_orphaned_closed_session_does_not_consume_cap_slot(
+    controller_with_two_sessions, monkeypatch
+):
+    """Carried finding from Task 1's review: closing a session mid-VALIDATING
+    leaves an orphaned entry in the per-session run-state map (``close_session``
+    never touches ``controller._run_states``). The cap must not count it --
+    ``send_refusal_copy`` intersects its busy list with ``store.sessions()``
+    so a session that no longer exists can't consume a cap slot or appear in
+    the refusal copy's session list.
+    """
+    controller, session_a, session_b = controller_with_two_sessions
+    monkeypatch.setattr(
+        type(controller), "max_parallel_runs", property(lambda self: 1)
+    )
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.VALIDATING, "orphan"), session_id=session_a
+    )
+    controller.store.close_session(session_a)
+
+    assert session_a not in {session.id for session in controller.store.sessions()}
+    # The orphaned entry is still in the map...
+    assert controller.in_flight_run_count() == 1
+    # ...but it must not occupy the cap's single slot for the surviving session.
+    assert controller.send_refusal_copy(session_b) is None

@@ -756,6 +756,60 @@ class ConsoleChatController:
         )
 
     @property
+    def max_parallel_runs(self) -> int:
+        """User-adjustable global cap on simultaneous runs (parallel-agents spec §4).
+
+        Reads ``[console] max_parallel_runs`` through the same
+        ``get_cli_setting`` seam used elsewhere in this module (see
+        ``_resolve_mcp_approval_timeout_seconds``). Floored at 1 and
+        defaulted to 3 so a bad/blank config value can never lock every
+        session out of sending.
+        """
+        raw = get_cli_setting("console", "max_parallel_runs", 3)
+        if raw is None:
+            return 3
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 3
+        return max(1, value)
+
+    def send_refusal_copy(self, session_id: str) -> str | None:
+        """Why a send to ``session_id`` must be refused right now, or ``None``.
+
+        Parallel-agents spec §4. Two gates, checked in order:
+
+        1. Per-session -- ``session_id``'s own run is still in flight.
+        2. Global cap -- ``max_parallel_runs`` busy sessions already exist,
+           so a NEW send (from any session, including an idle one) must
+           wait.
+
+        The cap's busy list is intersected with ``store.sessions()``: a
+        session closed mid-VALIDATING leaves its entry in
+        ``self._run_states`` behind (``ConsoleChatStore.close_session``
+        never touches the controller's map -- Task 1 review finding), and
+        a session that no longer exists must not consume a cap slot or be
+        named in the refusal copy.
+        """
+        if not self.run_state_for(session_id).is_send_allowed:
+            return "A run is already running in this tab."
+        live_sessions = {session.id: session for session in self.store.sessions()}
+        busy_ids = [
+            sid
+            for sid, state in self._run_states.items()
+            if sid in live_sessions and not state.is_send_allowed
+        ]
+        if len(busy_ids) < self.max_parallel_runs:
+            return None
+        titles = [live_sessions[sid].title for sid in busy_ids[:3]]
+        suffix = f" and {len(busy_ids) - 3} more" if len(busy_ids) > 3 else ""
+        return (
+            f"{len(busy_ids)} agents already running "
+            f"({', '.join(titles)}{suffix}). "
+            "Wait for one to finish or interrupt it."
+        )
+
+    @property
     def run_state_history(self) -> list[ConsoleRunStatus]:
         """The ACTIVE session's run-status history (read-only facade, mirrors ``run_state``)."""
         return self.run_state_history_for(self.store.active_session_id or "")
