@@ -26,7 +26,7 @@ from textual.app import App
 import tldw_chatbook
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.word_bench.models import BenchConfig, PreflightResult, Snippet, Target
-from tldw_chatbook.Evals.word_bench.storage import create_run_group, save_bench
+from tldw_chatbook.Evals.word_bench.storage import BENCH_TYPE, create_run_group, save_bench
 from tldw_chatbook.UI.Evals import bench_editor as bench_editor_module
 from tldw_chatbook.UI.Evals import inspector as inspector_module
 from tldw_chatbook.UI.Evals.bench_editor import CLASSIC_TASK_DEFERRAL_SENTENCE
@@ -658,14 +658,25 @@ async def test_classic_task_selection_has_no_run_control(evals_app, classic_task
 
 @pytest.fixture
 def bench_with_duplicate_target_id(evals_db: EvalsDB) -> str:
-    """A `BenchConfig` whose `target_ids` names the SAME id twice.
+    """An `eval_tasks` row whose `config_data.target_ids` names the SAME id
+    twice -- a legacy bench saved before `BenchConfig.__post_init__` (or
+    `create_run_group`) rejected that shape (task-1132's ancestor,
+    `git rev` b73de3564).
 
-    Nothing in `BenchConfig.__post_init__`, `save_bench`, or `load_bench`
-    enforces target-id uniqueness -- a word bench's target list is plain,
-    editable data -- so this is a realistic shape a UI edit (or a hand-
-    edited config_data blob) can produce, not a contrived one. Before the
-    fix, `bench_editor.py`'s target table and `inspector.py`'s readiness
-    list each derived a widget id straight from `target_id`
+    Written directly against `EvalsDB.create_task`, NOT through
+    `BenchConfig`/`save_bench`: both now reject a duplicate unconditionally
+    on the write path (`BenchConfig`'s default `strict=True`, and
+    `save_bench`'s own independent check -- see task-1132), so a bench
+    actually carrying this shape can now only arise from data written
+    before that validation existed. `storage.load_bench` constructs its
+    `BenchConfig` with `strict=False` specifically so this legacy shape can
+    still be read back rather than becoming permanently unopenable (see
+    that function's own docstring) -- this fixture exercises exactly that
+    read path.
+
+    Before the id-collision fix (Qodo #941 finding 2, unrelated to
+    task-1132), `bench_editor.py`'s target table and `inspector.py`'s
+    readiness list each derived a widget id straight from `target_id`
     (`evals-bench-target-<id>`, `evals-inspector-target-<id>`), so a
     duplicate collided at mount time and failed to compose the whole pane
     -- not just the duplicated row.
@@ -677,14 +688,20 @@ def bench_with_duplicate_target_id(evals_db: EvalsDB) -> str:
         source_path="inline:dup-target-set",
         metadata={"sample_count": 4},
     )
-    config = BenchConfig(
+    return evals_db.create_task(
         name="duplicate-target bench",
-        prompt_mode="raw",
-        top_k=20,
+        task_type="logprob",
+        config_format="custom",
+        config_data={
+            "bench_type": BENCH_TYPE,
+            "prompt_mode": "raw",
+            "top_k": 20,
+            "probes": [],
+            "target_ids": [target_id, target_id],
+            "concurrency": 1,
+        },
         dataset_id=dataset_id,
-        target_ids=(target_id, target_id),
     )
-    return save_bench(evals_db, config)
 
 
 @pytest.mark.asyncio

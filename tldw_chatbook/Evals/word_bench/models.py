@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import Literal, Optional
 
 PromptMode = Literal["raw", "chat"]
@@ -85,7 +85,34 @@ class Target:
 
 @dataclass(frozen=True)
 class BenchConfig:
-    """A word bench definition."""
+    """A word bench definition.
+
+    ``strict`` (default ``True``) gates only the ``target_ids``-uniqueness
+    check below, and is an ``InitVar`` -- accepted by ``__init__`` but not
+    stored as a field, so it never appears in equality, ``repr``, or
+    ``dataclasses.asdict``.
+
+    Every WRITE call site (user-facing bench creation/edit, ``save_bench``,
+    ``create_run_group``, ``WordBenchRunner.run``) must go through a
+    ``strict=True`` construction (the default -- nothing needs to opt in)
+    so a duplicate can never be created or run: every per-target map
+    downstream (``WordBenchRunner``'s ``clients``, its preflight/canary
+    dicts, ``storage.create_run_group``'s ``run_ids``) is keyed by target
+    id, and a duplicate would otherwise silently collapse two targets into
+    one with no error.
+
+    ``storage.load_bench`` is the ONE exception, constructing with
+    ``strict=False``: it rebuilds a ``BenchConfig`` from whatever is
+    already sitting in ``eval_tasks.config_data``, including a bench saved
+    before this validation existed (task-1132). Rejecting on READ would
+    make that legacy bench permanently unopenable instead of merely
+    unrunnable -- worse than the bug this validation fixes, since the user
+    could no longer even see the duplicate to remove it. A lenient load
+    preserves both ids exactly as stored so the bench editor and readiness
+    inspector render every row (see their own duplicate-safe, index-keyed
+    widget ids), and the run control stays blocked until the write path
+    (which still validates unconditionally) accepts an edited config.
+    """
 
     name: str
     prompt_mode: PromptMode
@@ -95,8 +122,9 @@ class BenchConfig:
     probes: tuple[str, ...] = ()
     description: str = ""
     concurrency: int = 1
+    strict: InitVar[bool] = True
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, strict: bool) -> None:
         if self.prompt_mode not in ("raw", "chat"):
             raise ValueError(
                 f"prompt_mode must be 'raw' or 'chat', got {self.prompt_mode!r}"
@@ -105,7 +133,7 @@ class BenchConfig:
             raise ValueError(f"top_k must be >= 1, got {self.top_k}")
         if self.concurrency < 1:
             raise ValueError(f"concurrency must be >= 1, got {self.concurrency}")
-        if len(set(self.target_ids)) != len(self.target_ids):
+        if strict and len(set(self.target_ids)) != len(self.target_ids):
             # Every per-target map downstream (WordBenchRunner's `clients`,
             # its preflight/canary dicts, storage.create_run_group's
             # `run_ids`) is keyed by target id. A duplicate silently
