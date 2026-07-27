@@ -11370,7 +11370,13 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
             return False
         controller = self._ensure_console_chat_controller()
-        target_session_id = controller.store.active_session_id
+        # Fix round 1 (minor): normalize the same way the controller side
+        # already does (`store.active_session_id or ""`) -- `None` is a
+        # valid (if unlikely, post-mount) dict key, but every other
+        # per-session map in this train keys on the normalized string, so
+        # a stray `None` here would silently start a SEPARATE bucket for
+        # "no session" instead of colliding predictably.
+        target_session_id = controller.store.active_session_id or ""
         refusal = controller.send_refusal_copy(target_session_id)
         if refusal:
             self._restore_console_send_stash(stash)

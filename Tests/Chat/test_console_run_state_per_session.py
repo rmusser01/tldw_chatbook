@@ -401,3 +401,116 @@ async def test_completing_run_pops_only_its_own_session_entries(
     task_b.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task_b
+
+
+# -- Fix round 1 (Critical 1): the shared `_stop_requested` flag must    --
+# -- never be read by a specific run's OWN cancellation-check loop.      --
+
+
+class TwoStreamGateway:
+    """Two independently blockable, genuinely concurrent streams,
+    distinguished by the draft text embedded in each call's own
+    ``provider_messages`` (each session sends a differently-worded
+    prompt) -- not by call order, which under real concurrency is not
+    guaranteed to match dispatch order."""
+
+    def __init__(self) -> None:
+        self.started = {"a": asyncio.Event(), "b": asyncio.Event()}
+        self.release = {"a": asyncio.Event(), "b": asyncio.Event()}
+
+    async def resolve_for_send(self, selection):
+        return type(
+            "Resolution",
+            (),
+            {
+                "ready": True,
+                "provider": "llama_cpp",
+                "model": "test-model",
+                "base_url": "http://127.0.0.1:9099",
+                "visible_copy": "",
+            },
+        )()
+
+    @staticmethod
+    def _key_for(messages: list[dict]) -> str:
+        for row in reversed(messages):
+            content = row.get("content")
+            if row.get("role") == "user" and isinstance(content, str):
+                if "prompt-a" in content:
+                    return "a"
+                if "prompt-b" in content:
+                    return "b"
+        raise AssertionError(f"unrecognized draft in {messages!r}")
+
+    async def stream_chat(self, resolution, messages):
+        key = self._key_for(messages)
+        yield f"{key}-chunk-1-"
+        self.started[key].set()
+        await self.release[key].wait()
+        yield f"{key}-chunk-2-"
+        yield f"{key}-chunk-3"
+
+
+@pytest.mark.asyncio
+async def test_stopping_one_session_does_not_truncate_a_concurrent_untouched_session():
+    """Critical 1 regression (Fix round 1): the direct/legacy stream loop's
+    cancellation check used to read the SHARED ``_stop_requested`` flag,
+    which ``_signal_stop`` sets unconditionally on ANY session's Stop/
+    Close -- so stopping session B silently truncated session A's still-
+    streaming, completely untouched reply (live-reproduced by the
+    reviewer). This drives two REAL, genuinely concurrent
+    ``submit_draft()`` calls through the ACTUAL cancellation-check code
+    path (``_stream_assistant_response``'s per-chunk check), not a
+    registered fake.
+
+    Deliberately signals B's stop via ``controller._signal_stop`` (the
+    exact call ``stop_active_run``/``close_session`` make) WITHOUT
+    task-cancelling B: B's own ``finally`` resetting the shared flag back
+    to ``False`` the moment its task unwinds would otherwise mask the bug
+    -- awaiting B to completion before touching A (as a full ``stop_
+    active_run()`` + ``await task_b`` sequence would) closes that exact
+    race window this test needs open. Isolating the bare flag WRITE from
+    task-cancellation timing is also more precise: it is the write alone,
+    independent of when/whether the writer's own task later unwinds, that
+    the fix (Critical 1) had to stop being read by an unrelated run's
+    loop.
+    """
+    store = ConsoleChatStore()
+    gateway = TwoStreamGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    session_a = store.ensure_session(title="A")
+    task_a = asyncio.create_task(controller.submit_draft("prompt-a"))
+    await asyncio.wait_for(gateway.started["a"].wait(), timeout=1)
+
+    session_b = controller.new_session(title="B")  # also activates B
+    task_b = asyncio.create_task(controller.submit_draft("prompt-b"))
+    await asyncio.wait_for(gateway.started["b"].wait(), timeout=1)
+
+    # Both genuinely mid-stream and suspended at the same time.
+    assert controller.in_flight_run_count() == 2
+    assert not task_a.done()
+    assert not task_b.done()
+
+    # Signal B's stop via the same internal path stop_active_run uses --
+    # WITHOUT cancelling B's task (still parked on its own release, its
+    # own `finally` never runs during this test, so the shared flag stays
+    # poisoned for the whole window A's own check runs in).
+    assert store.active_session_id == session_b.id
+    controller._signal_stop(session_id=session_b.id)
+
+    # A is still blocked mid-stream -- release it now, while the shared
+    # flag is poisoned by B's Stop, and let it run to completion.
+    gateway.release["a"].set()
+    result_a = await task_a
+    assert result_a.accepted is True
+
+    messages_a = store.messages_for_session(session_a.id)
+    assistant_a = next(m for m in messages_a if m.role is ConsoleMessageRole.ASSISTANT)
+    assert assistant_a.status == "complete"
+    assert assistant_a.content == "a-chunk-1-a-chunk-2-a-chunk-3"
+
+    # Clean up B (still parked on its own release) so nothing leaks.
+    gateway.release["b"].set()
+    result_b = await task_b
+    assert result_b.accepted is True

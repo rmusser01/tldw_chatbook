@@ -2983,7 +2983,13 @@ async def test_stop_mid_stream_consumes_one_shot():
 
         async def stream_chat(self, resolution, messages):
             yield "partial"
-            self.controller._stop_requested = True
+            # Fix round 1 (Critical 1): the direct/legacy stream loop now
+            # reads only its OWN run's per-session cancel_event, never the
+            # shared `_stop_requested` flag -- simulate Stop via the real
+            # internal signalling path instead of the flag directly.
+            self.controller._signal_stop(
+                session_id=self.controller.store.active_session_id
+            )
             yield "never-shown"
 
     gateway = StopAfterFirstChunkGateway()

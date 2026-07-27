@@ -494,7 +494,12 @@ async def test_stop_cancels_tree_and_persists_cancelled(tmp_path):
     original = controller._agent_bridge.run_reply
 
     def cancel_after_first(*args, **kwargs):
-        controller._stop_requested = True  # simulate Stop during the run
+        # Fix round 1 (Critical 1): `should_cancel` now reads only its own
+        # run's per-session cancel_event, never the shared `_stop_requested`
+        # flag -- simulate Stop during the run via the real internal
+        # signalling path (`_run_agent_reply` already populated this run's
+        # `_active_cancel_events[session_id]` before dispatching here).
+        controller._signal_stop(session_id=kwargs["session_id"])
         return original(*args, **kwargs)
 
     controller._agent_bridge.run_reply = cancel_after_first
@@ -804,7 +809,10 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
             if m.role is ConsoleMessageRole.ASSISTANT
         )
         store.mark_message_stopped(assistant_message_id)
-        controller._stop_requested = True
+        # Fix round 1 (Critical 1): should_cancel now reads only its own
+        # run's per-session cancel_event, never the shared `_stop_requested`
+        # flag -- simulate Stop via the real internal signalling path.
+        controller._signal_stop(session_id=session_id)
         async for chunk in real_stream_chat(resolution, messages):
             yield chunk
 

@@ -1346,17 +1346,25 @@ class ConsoleChatController:
         """Set the shared UI-facing stop flag AND ``session_id``'s own
         permanent per-run cancel signal.
 
-        ``_stop_requested`` stays a single shared flag (Task 3b did not
-        rescope it -- see ``_is_active_session_cancelled``) reset by the
-        run's own ``finally`` block as soon as the coroutine side of
-        ``_run_agent_reply`` is done handling a cancellation -- but
-        ``asyncio.to_thread`` survives Task cancellation, so the agent
-        bridge's background OS thread can still be running at that point
-        and poll ``should_cancel()`` afterward (task-227).
+        ``_stop_requested`` stays a single shared flag, but as of Fix
+        round 1 (Critical 1) NO run's own cancellation-check loop reads it
+        any more -- ``should_cancel`` (``_run_agent_reply``) and the
+        direct/legacy stream path's own checks (``_stream_assistant_
+        response``) read ONLY their run's own ``_active_cancel_events[
+        owner_id]``, captured by closure. Reading the shared flag from
+        inside a specific run's loop let ANY session's Stop/Close silently
+        truncate an unrelated, untouched session's still-streaming reply
+        (Fix round 1 finding). ``_stop_requested``'s remaining, INTENTIONAL
+        uses: ``shutdown()`` (global reach is correct there -- it stops
+        every session), and the three worker-thread approval/confirm
+        bridges' own best-effort check (see ``_is_active_session_
+        cancelled``), which predates per-session scoping and has its own,
+        narrower, documented limitation.
+
         ``_active_cancel_events[session_id]``, once set here, is never
         reset for that run, so a still-running bridge thread always
         observes the Stop correctly regardless of what the coroutine side
-        has already reset. Every caller (``close_session``,
+        has already reset (task-227). Every caller (``close_session``,
         ``stop_active_run``, ``shutdown``) already knows the exact session
         it is signalling -- there is deliberately no active-session
         fallback here, unlike ``_set_run_state``.
@@ -1367,27 +1375,41 @@ class ConsoleChatController:
             cancel_event.set()
 
     def _is_active_session_cancelled(self) -> bool:
-        """Best-effort cancel-signal check for the three worker-thread
-        approval/confirm bridges below (``request_mcp_approvals``,
-        ``request_skill_install_confirm``, ``request_skill_script_confirm``).
+        """Best-effort ADDITIONAL cancel-signal check for the three
+        worker-thread approval/confirm bridges below (``request_mcp_
+        approvals``, ``request_skill_install_confirm``, ``request_skill_
+        script_confirm``) -- OR'd with the shared ``_stop_requested`` flag
+        at each of their own poll sites (unchanged; an existing,
+        pre-Task-3b test (`test_request_mcp_approvals_cancellation_denies_
+        undecided`) asserts a bare ``_stop_requested = True`` flip is
+        itself sufficient to deny an approval round, so that OR-branch is
+        NOT removed here).
 
         KNOWN LIMITATION (Task 3b): these bridges are plain bound-method
         callbacks handed straight to ``ConsoleAgentBridge.run_reply``
         (fixed arity -- ``approval_callback(pending)``,
         ``confirm(url)``/``confirm(payload)`` -- no session id threaded
-        through), unlike ``should_cancel`` inside ``_run_agent_reply``,
-        which safely closes over ITS OWN run's ``cancel_event`` by value.
-        Falling back to the VIEWED session's cancel event here (mirroring
-        ``stop_active_run``'s own "the active session" convention) is
-        correct for the overwhelmingly common single-run case, but does
-        NOT correctly scope to a BACKGROUND session's own pending
-        approval -- and neither does ``_stop_requested`` above, which
-        stayed a single shared flag. Properly scoping concurrent
-        approvals/confirms to their own run is PA-T9 ("parked background
-        approvals"); until then, stopping the VIEWED session's run can
-        spuriously deny an unrelated background approval, and a Stop
-        aimed at a background run's own approval isn't observed by this
-        check at all.
+        through), unlike ``should_cancel`` inside ``_run_agent_reply``
+        (Fix round 1: now reads ONLY its own run's ``cancel_event``, never
+        the shared flag). Falling back to the VIEWED session's cancel
+        event here (mirroring ``stop_active_run``'s own "the active
+        session" convention) is correct for the overwhelmingly common
+        single-run case.
+
+        Post-Fix-round-1 scope: the STREAM itself (content/completion) of
+        an unrelated session is no longer affected by any session's Stop
+        -- that was Critical 1, now fixed via per-run ``cancel_event``s
+        with no shared-flag fallback. The residual gap here is narrower
+        and specific to these three bridges: a BACKGROUND session's own
+        pending approval is not found by this VIEWED-session-only lookup
+        (so its own Stop isn't observed here), and -- because
+        ``_stop_requested`` is still OR'd in at each bridge's own poll
+        site, unchanged -- stopping ANY session still denies every
+        in-flight approval/confirm round for every session (a narrower,
+        approval-round-only version of the old poisoning, not a stream-
+        truncation bug). Properly scoping concurrent approvals/confirms to
+        their own run (both problems) is PA-T9 ("parked background
+        approvals").
         """
         cancel_event = self._active_cancel_events.get(self.store.active_session_id or "")
         return cancel_event is not None and cancel_event.is_set()
@@ -4230,6 +4252,19 @@ class ConsoleChatController:
                     "content": prefill,
                 },
             ]
+        # Fix round 1 (Critical 1): a per-session cancel signal for this
+        # direct/legacy stream path too, mirroring `_run_agent_reply`'s own
+        # `cancel_event` -- the shared `_stop_requested` flag below is
+        # GLOBAL (set by ANY session's Stop/Close via `_signal_stop`), so
+        # reading it inside a specific run's own loop let stopping session
+        # B silently truncate an untouched session A's still-streaming
+        # reply. Captured by closure/local (not re-read off `self.
+        # _active_cancel_events` each poll) for the same reason
+        # `should_cancel` isn't: a concurrent NEXT run for this same
+        # session (after this one's own finally already popped its entry)
+        # must never be torn down by a stale reference to THIS run's event.
+        cancel_event = threading.Event()
+        self._active_cancel_events[owner_id] = cancel_event
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
         if prefill and not prepare_retry:
@@ -4258,7 +4293,7 @@ class ConsoleChatController:
             async for chunk in provider_stream:
                 if not chunk:
                     continue
-                if self._stop_requested:
+                if cancel_event.is_set():
                     try:
                         stopped = self._mark_stream_stopped(
                             assistant_message_id,
@@ -4286,7 +4321,7 @@ class ConsoleChatController:
                     return self._session_closed_result(session_id=owner_id)
                 if chunk:
                     emitted_content = True
-            if self._stop_requested:
+            if cancel_event.is_set():
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id,
@@ -4345,7 +4380,7 @@ class ConsoleChatController:
             self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
             return ConsoleSubmitResult(True, True, completed.content)
         except asyncio.CancelledError:
-            if self._stop_requested:
+            if cancel_event.is_set():
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id,
@@ -4379,6 +4414,18 @@ class ConsoleChatController:
                 session_id=owner_id,
             )
             return ConsoleSubmitResult(True, True, visible_copy)
+        finally:
+            # Fix round 1 (Critical 1): this run's own per-session cancel
+            # signal (created above, mirroring `_run_agent_reply`'s own)
+            # must not survive the run -- a stale entry would let a LATER,
+            # unrelated run on this same session inherit an already-set
+            # Event. Not `cancel_event.clear()`: `_select_post_generation_
+            # body` (already returned by the time this fires) captured this
+            # by session-id lookup rather than closure, so identity-gated
+            # pop (not reset-in-place) is what matches `_run_agent_reply`'s
+            # own matching pop.
+            if self._active_cancel_events.get(owner_id) is cancel_event:
+                self._active_cancel_events.pop(owner_id, None)
 
     async def _select_post_generation_body(
         self,
@@ -4418,9 +4465,19 @@ class ConsoleChatController:
                 return False
 
         def cancellation_requested() -> bool:
+            # Fix round 1 (Critical 1): this run's own per-session cancel
+            # signal, not the shared `_stop_requested` flag -- reading the
+            # global flag here let an UNRELATED session's Stop/Close
+            # silently cancel this session's still-running citation repair,
+            # the exact hazard this fix closes for the sibling stream
+            # loops. `_run_direct_provider_reply` registers this session's
+            # `cancel_event` in `_active_cancel_events[owner_session_id]`
+            # before ever calling this method.
+            cancel_event = self._active_cancel_events.get(owner_session_id)
             return (
                 repair_session.cancel_reason is not None
-                and self._stop_requested
+                and cancel_event is not None
+                and cancel_event.is_set()
                 and not repair_session.selection_committed
                 and repair_session.phase in {"checking", "repair_streaming"}
             )
@@ -4729,20 +4786,24 @@ class ConsoleChatController:
             agent_messages = agent_messages[1:]
 
         conversation_id = self._agent_conversation_id(session_id)
-        # noqa: E731 — tiny closure. Reads BOTH signals: `_stop_requested`
-        # for same-tick responsiveness (and test doubles that flip it
-        # directly), and `cancel_event` -- captured by value, not via
-        # `self._active_cancel_events[session_id]` -- for correctness once this run's
+        # noqa: E731 — tiny closure. Fix round 1 (Critical 1): reads ONLY
+        # `cancel_event` -- captured by value, not via `self.
+        # _active_cancel_events[session_id]` -- never the shared
+        # `_stop_requested` flag. `_stop_requested` is GLOBAL (set by ANY
+        # session's Stop/Close via `_signal_stop`), so OR'ing it in here
+        # let stopping an unrelated session silently cancel THIS run too.
+        # `cancel_event` alone is still correct once this run's own
         # `finally` below has already reset `_stop_requested` while the
         # bridge's background thread is still running (task-227: an
         # `asyncio.to_thread` call survives Task cancellation, so the
         # coroutine can finish handling a Stop and reset its own shared
         # bookkeeping well before the OS thread it detached from actually
-        # returns). `stop_active_run`/`close_session`/`shutdown` all set
-        # `cancel_event` via `_signal_stop()` the moment Stop is
-        # requested, and nothing ever clears it again for this run, so a
-        # late poll from the surviving thread still sees the cancellation.
-        should_cancel = lambda: self._stop_requested or cancel_event.is_set()  # noqa: E731
+        # returns) -- `stop_active_run`/`close_session`/`shutdown` all set
+        # THIS session's `cancel_event` via `_signal_stop(session_id=...)`
+        # the moment Stop is requested, and nothing ever clears it again
+        # for this run, so a late poll from the surviving thread still
+        # sees the cancellation regardless of `_stop_requested`'s state.
+        should_cancel = lambda: cancel_event.is_set()  # noqa: E731
 
         # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
         # on the running main loop, BEFORE the bridge is dispatched onto
@@ -4839,7 +4900,7 @@ class ConsoleChatController:
                 ),
             )
         except asyncio.CancelledError:
-            if self._stop_requested:
+            if cancel_event.is_set():
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id, visible_copy="Response stopped."
