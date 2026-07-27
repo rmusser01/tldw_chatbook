@@ -10,7 +10,6 @@ more features, and enhanced user experience.
 """
 
 from typing import List, Dict, Any, TYPE_CHECKING
-from pathlib import Path
 from datetime import datetime
 
 from textual.app import ComposeResult
@@ -20,7 +19,10 @@ from textual.widgets import Static, Button, Input, ListView, ListItem
 from textual.reactive import reactive
 from loguru import logger
 
-from ..Chatbooks.database_paths import secure_chatbook_directory
+from ..Chatbooks.database_paths import (
+    get_private_chatbooks_dir,
+    secure_chatbook_directory,
+)
 from ..Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:
@@ -382,9 +384,10 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self._export_path = secure_chatbook_directory(
-            Path.home() / "Documents" / "Chatbooks"
-        )
+        # Default to the app's private, hardened data directory rather than
+        # the hardcoded ~/Documents/Chatbooks literal (task-984). Pre-existing
+        # exports at the old location are not moved by this change.
+        self._export_path = get_private_chatbooks_dir()
 
     def compose(self) -> ComposeResult:
         # Header

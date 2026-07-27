@@ -45,7 +45,10 @@ from ..Widgets.SmartContentTree import (
     ContentSelectionChanged,
 )
 from ...Chatbooks.chatbook_creator import ChatbookCreator
-from ...Chatbooks.database_paths import get_chatbook_database_paths
+from ...Chatbooks.database_paths import (
+    get_chatbook_database_paths,
+    get_private_chatbooks_dir,
+)
 from ...Chatbooks.chatbook_models import ContentType
 from ...Chatbooks.server_chatbook_service import (
     build_server_job_record,
@@ -616,7 +619,10 @@ class PreviewConfirmStep(WizardStep):
         safe_name = "".join(c for c in title if c.isalnum() or c in " -_").strip()
         export_format = export_options.get("format", "zip")
         filename = f"{safe_name}_{timestamp}.{export_format}"
-        export_path = Path.home() / "Documents" / "Chatbooks" / filename
+        # Default to the app's private, hardened data directory rather than
+        # the hardcoded ~/Documents/Chatbooks literal (task-984); existing
+        # exports at the old location are left in place.
+        export_path = get_private_chatbooks_dir() / filename
         execution_mode = export_options.get("execution_mode", "local")
 
         if execution_mode == "server":
