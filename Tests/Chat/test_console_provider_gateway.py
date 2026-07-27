@@ -1602,6 +1602,63 @@ async def test_gateway_does_not_close_injected_http_client():
     await client.aclose()
 
 
+def test_aclose_does_not_let_a_later_loop_adopt_a_previously_claimed_client():
+    """Review finding: `aclose()` clears `_loop_clients` and resets
+    `_client_loop` to `None`, but never touched `self.http_client` itself,
+    so the "unclaimed init client" escape hatch in `_active_http_client()`
+    -- which used to key off `self._client_loop is None` -- could not tell
+    "never claimed by any loop" apart from "was claimed and released by a
+    loop that is now gone". Force the reliable version of the hazard: loop
+    A claims a client via a plain ``asyncio.run()`` call, which closes loop
+    A the instant it returns (mirrors a `console_agent_bridge` per-turn
+    loop that finished on its own, with `aclose()` never having run on it).
+    When `aclose()` later runs on an unrelated loop B, A's client can't even
+    be scheduled for closing (its owning loop is already gone), so it is
+    left with `is_closed is False`. A subsequent loop C must never adopt
+    that leftover client -- doing so reuses a client whose httpx/httpcore
+    connection-pool primitives are already bound to loop A, reintroducing
+    the cross-loop binding failure this per-loop cache exists to eliminate.
+
+    Uses three separate ``asyncio.run()`` calls (each spins up and tears
+    down its own loop) rather than ``@pytest.mark.asyncio`` -- a loop
+    cannot run another loop nested inside it, and the whole point here is
+    three DISTINCT loops, the first already closed before the second ever
+    starts.
+    """
+    gateway = ConsoleProviderGateway()
+
+    async def claim() -> tuple[httpx.AsyncClient, asyncio.AbstractEventLoop]:
+        return gateway._active_http_client(), asyncio.get_running_loop()
+
+    client_a, loop_a = asyncio.run(claim())
+
+    # Sanity: loop A really did claim the client, and `asyncio.run()` has
+    # already closed loop A by the time control returns here.
+    assert gateway._client_loop is loop_a
+    assert gateway.http_client is client_a
+    assert loop_a.is_closed()
+
+    # `aclose()` now runs on loop B -- unrelated to loop A, and gone by the
+    # time it returns too. It cannot schedule a close of A's client (A is
+    # already closed), so A's client is left open; that alone is fine (its
+    # own finalizer reclaims the sockets). What must NOT happen is a later
+    # loop adopting it.
+    asyncio.run(gateway.aclose())
+    assert client_a.is_closed is False
+
+    async def reclaim() -> httpx.AsyncClient:
+        return gateway._active_http_client()
+
+    new_client = asyncio.run(reclaim())
+
+    assert new_client is not client_a, (
+        "a client already bound to loop A's (now-closed) httpx/httpcore "
+        "internals must never be adopted for a different loop"
+    )
+
+    asyncio.run(gateway.aclose())
+
+
 @pytest.mark.asyncio
 async def test_owned_http_client_uses_generous_generation_read_timeout():
     """The owned client must not cap slow local generations at the old 30s."""

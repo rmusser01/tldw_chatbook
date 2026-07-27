@@ -497,6 +497,19 @@ class ConsoleProviderGateway:
         # `http_client`/`_client_loop` directly before any loop has touched
         # the gateway.
         self._client_loop: asyncio.AbstractEventLoop | None = None
+        # Whether the client built above (or injected) has ever been
+        # resolved through `_active_http_client`/`aclose`'s "unclaimed
+        # client" escape hatches. `_client_loop is None` is NOT a safe proxy
+        # for "never claimed": `aclose()` resets it to `None` on every
+        # teardown, including after a real loop already claimed and
+        # released a client, so re-deriving "unclaimed" from it would let a
+        # SECOND loop adopt a client a FIRST loop already bound internally
+        # (httpx/httpcore lazily bind connection-pool locks to whichever
+        # loop first touches them) -- silently reintroducing the very
+        # cross-loop binding failure this per-loop cache exists to
+        # eliminate. This flag is set exactly once, on the first-ever
+        # resolution, and `aclose()` never restores it.
+        self._client_ever_claimed = False
         # Guards every read-check-create of `_loop_clients` (and the mirror
         # fields above) as a single atomic critical section (PR #629 Fix
         # 1(a), preserved across the move to a per-loop cache below):
@@ -534,9 +547,6 @@ class ConsoleProviderGateway:
     async def aclose(self) -> None:
         """Close the HTTP client(s) owned by this instance.
 
-        Returns:
-            ``None``. Injected HTTP clients are left open for their owner.
-
         The client bound to the caller's current running loop (if any) is
         closed directly -- safe, since we are already running on that loop.
         Every other cached per-loop client -- e.g. one built earlier by the
@@ -545,6 +555,9 @@ class ConsoleProviderGateway:
         ``_schedule_stale_client_close`` on its own loop; this never awaits,
         and never closes, a client bound to a loop it is not currently
         running on.
+
+        Returns:
+            ``None``. Injected HTTP clients are left open for their owner.
         """
         if not self._owns_http_client:
             return
@@ -558,14 +571,20 @@ class ConsoleProviderGateway:
             current_client: httpx.AsyncClient | None = None
             if loop is not None:
                 current_client = self._loop_clients.pop(loop, None)
-                if current_client is None and self._client_loop is None:
+                if current_client is None and not self._client_ever_claimed:
                     # Never claimed by any loop yet -- e.g. `aclose()` is
                     # called right after construction, before
                     # `_active_http_client()` was ever touched. Treat the
                     # client built in `__init__` as belonging to the loop
                     # calling `aclose()` now (mirrors the escape hatch in
-                    # `_active_http_client`).
+                    # `_active_http_client`). `_client_ever_claimed` -- not
+                    # `_client_loop is None` -- is the correct test here: it
+                    # is set exactly once, on first-ever resolution, and is
+                    # never restored by a prior teardown, so a client a
+                    # loop already bound and released can never be
+                    # re-treated as "unclaimed" by this branch.
                     current_client = self.http_client
+                    self._client_ever_claimed = True
             others = [
                 (other_loop, other_client)
                 for other_loop, other_client in self._loop_clients.items()
@@ -652,23 +671,35 @@ class ConsoleProviderGateway:
                 self.http_client, self._client_loop = cached, loop
                 return cached
             if (
-                self._client_loop is None
+                not self._client_ever_claimed
                 and self.http_client is not None
                 and not self.http_client.is_closed
             ):
                 # Unclaimed-client escape hatch: the client built in
-                # `__init__` (or otherwise not yet resolved through this
-                # method by any loop) hasn't been adopted by a loop yet --
-                # claim it for the loop touching it now instead of
-                # discarding + scheduling a close of a client nothing has
-                # even used, exactly mirroring `GitHubAPIClient.client`'s
-                # unknown-loop escape hatch.
+                # `__init__` hasn't been adopted by ANY loop yet -- claim it
+                # for the loop touching it now instead of discarding +
+                # scheduling a close of a client nothing has even used,
+                # exactly mirroring `GitHubAPIClient.client`'s unknown-loop
+                # escape hatch. Gated on `_client_ever_claimed`, not
+                # `self._client_loop is None`: `aclose()` resets
+                # `_client_loop` to `None` on every teardown, including
+                # after a real loop already claimed and released a client,
+                # so re-deriving "unclaimed" from it would let a later loop
+                # adopt a client a prior loop already bound -- httpx/httpcore
+                # lazily bind connection-pool locks to whichever loop first
+                # touches them, so reusing that client from a second loop
+                # reintroduces the cross-loop binding failure this per-loop
+                # cache exists to eliminate. `_client_ever_claimed` is set
+                # exactly once, on the first-ever resolution, and is never
+                # restored by a subsequent `aclose()`.
                 self._loop_clients[loop] = self.http_client
                 self._client_loop = loop
+                self._client_ever_claimed = True
                 return self.http_client
             new_client = self._new_owned_http_client()
             self._loop_clients[loop] = new_client
             self.http_client, self._client_loop = new_client, loop
+            self._client_ever_claimed = True
             return new_client
 
     @staticmethod
