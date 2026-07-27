@@ -35,24 +35,22 @@ class ChatTaskCards(Container):
         script_card = self.query_one(SkillScriptConfirmCard)
         resume_panel = self.query_one(ChatResumePanel)
 
+        # A pending approval payload (task-5) is a dict carrying a "calls"
+        # list; `set_batch` also accepts an empty/absent list to mean
+        # "nothing pending" (task-914: the once-legacy non-batch shape
+        # produced by no live caller was removed alongside its dead
+        # single-approval card body).
         approval = task_state.pending_approval
-        # A batch approval payload (task-5) is a dict carrying a "calls"
-        # list -- anything else (None, or the legacy {"summary", "details",
-        # ...} single-approval shape) goes through the original API
-        # unchanged.
-        calls = approval.get("calls") if isinstance(approval, dict) else None
-        if calls:
-            approval_card.set_batch(
-                calls,
-                timeout_seconds=approval.get("timeout_seconds", 0.0),
-                # Task 9 fix round 1: round-trip the round's stamped id so
-                # a decision on THIS card resolves THIS round, never
-                # "whichever session is active" -- see
-                # `ConsoleChatController.resolve_pending_approval`.
-                round_id=approval.get("round_id"),
-            )
-        else:
-            approval_card.set_approval(approval)
+        approval = approval if isinstance(approval, dict) else {}
+        approval_card.set_batch(
+            approval.get("calls") or [],
+            timeout_seconds=approval.get("timeout_seconds", 0.0),
+            # Task 9 fix round 1: round-trip the round's stamped id so
+            # a decision on THIS card resolves THIS round, never
+            # "whichever session is active" -- see
+            # `ConsoleChatController.resolve_pending_approval`.
+            round_id=approval.get("round_id"),
+        )
         install_card.set_install(task_state.pending_skill_install)
         script_card.set_script(task_state.pending_skill_script)
         resume_panel.set_resume_state(task_state)

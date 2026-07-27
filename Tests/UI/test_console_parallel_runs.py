@@ -433,8 +433,8 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
       the DOM (`ConsoleSessionSurface.compose` yields it once, not
       per-session), toggled via its own `.display` flag rather than
       mount/unmount. "Not mounted" is therefore verified as `display is
-      False`, matching `ChatApprovalCard.set_batch`/`set_approval`'s own
-      visibility convention.
+      False`, matching `ChatApprovalCard.set_batch`'s own visibility
+      convention.
     - `ChatScreen._park_console_approval(session_id)` is the seam this
       task adds -- the UI-thread half of the park path (flag + toast),
       wired as `ConsoleChatController.park_pending_approval` and invoked

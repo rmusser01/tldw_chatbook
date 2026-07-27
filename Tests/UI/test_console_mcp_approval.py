@@ -4,9 +4,11 @@ Covers the widget half (``ChatApprovalCard.set_batch``/``ApprovalDecided``)
 and the controller half (``ConsoleChatController.request_mcp_approvals``/
 ``resolve_pending_approval``/context-change denial) of the worker-thread
 <-> UI-thread approval round-trip described in
-``.superpowers/sdd/task-5-brief.md``. ``Tests/UI/test_chat_approvals_and_
-resume.py`` covers the legacy single-approval API and must stay green
-unmodified -- this file only exercises the new batch path.
+``.superpowers/sdd/task-5-brief.md``. (task-914: the legacy single-approval
+API's own pinning suite, ``Tests/UI/test_chat_approvals_and_resume.py``,
+was already deleted by task-649 when its last caller -- the
+``Chat_Window_Enhanced`` composition -- was retired; the API itself and
+its dead card body were removed here.)
 """
 
 from __future__ import annotations
@@ -160,6 +162,40 @@ async def test_set_batch_redacts_secret_arguments_in_rendered_row():
 # ---------------------------------------------------------------------------
 # ChatApprovalCard.set_batch / ApprovalDecided
 # ---------------------------------------------------------------------------
+
+
+def test_legacy_single_approval_api_was_removed():
+    """task-914: `set_approval`/`#approval-single-body` were confirmed dead
+    (no production caller ever passed a non-batch payload -- the sole
+    legacy caller, the pre-task-649 `Chat_Window_Enhanced` composition,
+    was already fully retired) and removed rather than wired. This pins
+    the removal so the method can't quietly come back."""
+    assert not hasattr(ChatApprovalCard, "set_approval")
+
+
+@pytest.mark.asyncio
+async def test_card_never_renders_the_retired_single_approval_buttons():
+    """The card must never mount `#approval-allow-once`/`#approval-deny`
+    (the retired single-approval body's buttons) -- neither in its
+    default unmounted state, nor while showing a batch, nor after being
+    cleared back to empty. `set_batch` is the sole production entry
+    point, so this covers every state it can put the card in."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+
+        for retired_id in ("#approval-single-body", "#approval-allow-once", "#approval-deny"):
+            assert not list(app.query(retired_id)), retired_id
+
+        card.set_batch(_sample_calls(), timeout_seconds=45.0)
+        await pilot.pause()
+        for retired_id in ("#approval-single-body", "#approval-allow-once", "#approval-deny"):
+            assert not list(app.query(retired_id)), retired_id
+
+        card.set_batch([], timeout_seconds=45.0)
+        await pilot.pause()
+        for retired_id in ("#approval-single-body", "#approval-allow-once", "#approval-deny"):
+            assert not list(app.query(retired_id)), retired_id
 
 
 @pytest.mark.asyncio
