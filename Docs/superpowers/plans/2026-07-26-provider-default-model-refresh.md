@@ -620,7 +620,7 @@ git add "backlog/tasks/task-519 - Refresh-default-models-for-DeepSeek-Anthropic-
 git commit -m "docs: close provider default model refresh task"
 ```
 
-- [ ] **Step 6: Run final verification from the committed tree**
+- [x] **Step 6: Run final verification from the committed tree**
 
 ```bash
 .venv/bin/python -m pytest Tests/test_config_model_catalog_defaults.py Tests/Chat/test_chat_functions.py Tests/test_model_capabilities.py -q
