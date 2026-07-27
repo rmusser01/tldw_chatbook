@@ -12,8 +12,12 @@ from textual.containers import HorizontalScroll, Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_RUN_MARKER_GLYPHS,
+    ConsoleRunMarker,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
-from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE, GLYPH_IN_PROGRESS
+from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
@@ -170,21 +174,21 @@ class ConsoleSessionSurface(Vertical):
         session: ConsoleChatSession,
         *,
         active: bool,
-        streaming: bool = False,
+        marker: ConsoleRunMarker = ConsoleRunMarker.NONE,
     ) -> Button:
         """Build a stable-width Console session tab title button."""
         classes = "console-session-tab"
         if active:
             classes = f"{classes} console-session-tab-active"
         button = ConsoleSessionTabButton(
-            self._tab_label(session.title, streaming=streaming),
+            self._tab_label(session.title, marker=marker),
             id=f"console-session-tab-{session.id}",
             classes=classes,
             compact=True,
             session_id=session.id,
         )
         button.tooltip = _session_tab_tooltip(
-            session, active=active, streaming=streaming
+            session, active=active, streaming=marker is ConsoleRunMarker.RUNNING
         )
         button.styles.width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.min_width = CONSOLE_SESSION_TAB_WIDTH
@@ -195,12 +199,44 @@ class ConsoleSessionSurface(Vertical):
         return button
 
     @classmethod
-    def _tab_label(cls, title: str, *, streaming: bool) -> str:
-        """Return the tab label, prefixed with a run-state glyph when streaming."""
+    def _tab_label(
+        cls, title: str, *, marker: ConsoleRunMarker = ConsoleRunMarker.NONE
+    ) -> str:
+        """Return the tab label, prefixed with its fleet run-marker glyph.
+
+        Parallel-agents spec PA-T8: sourced from ``CONSOLE_RUN_MARKER_GLYPHS``
+        so RUNNING/NEEDS_APPROVAL/FINISHED_OK/FINISHED_FAILED all render here,
+        not just the legacy streaming-only glyph. ``ConsoleRunMarker.NONE``'s
+        glyph is the empty string, so an unmarked tab gets no stray leading
+        space.
+        """
         label = cls._display_title(title)
-        if streaming:
-            return f"{GLYPH_IN_PROGRESS} {label}"
+        glyph = CONSOLE_RUN_MARKER_GLYPHS.get(marker, "")
+        if glyph:
+            return f"{glyph} {label}"
         return label
+
+    @staticmethod
+    def _resolve_tab_marker(
+        session_id: str,
+        *,
+        streaming_session_id: str | None,
+        run_markers: dict[str, ConsoleRunMarker] | None,
+    ) -> ConsoleRunMarker:
+        """Return the fleet marker to render for a tab.
+
+        ``run_markers`` (keyed by session id, sourced from ``ConsoleChat
+        Controller.run_marker_for`` -- parallel-agents spec PA-T8) takes
+        precedence when the caller supplies it. Falls back to the legacy
+        single-session ``streaming_session_id`` cursor so unit tests that
+        drive ``ConsoleSessionSurface.sync_sessions`` directly (without a
+        controller) keep working unchanged.
+        """
+        if run_markers is not None:
+            return run_markers.get(session_id, ConsoleRunMarker.NONE)
+        if session_id == streaming_session_id:
+            return ConsoleRunMarker.RUNNING
+        return ConsoleRunMarker.NONE
 
     def _build_close_tab_button(self, session: ConsoleChatSession) -> Button:
         """Build the compact close control for a Console session tab."""
@@ -240,6 +276,7 @@ class ConsoleSessionSurface(Vertical):
         sessions: list[ConsoleChatSession],
         active_session_id: str | None,
         streaming_session_id: str | None = None,
+        run_markers: dict[str, ConsoleRunMarker] | None = None,
     ) -> None:
         """Update labels, tooltips, and active state without stealing focus."""
         session_by_id = {session.id: session for session in sessions}
@@ -250,12 +287,16 @@ class ConsoleSessionSurface(Vertical):
                 session = session_by_id.get(session_id)
                 if session is None or not isinstance(child, Button):
                     continue
-                streaming = session.id == streaming_session_id
-                child.label = self._tab_label(session.title, streaming=streaming)
+                marker = self._resolve_tab_marker(
+                    session_id,
+                    streaming_session_id=streaming_session_id,
+                    run_markers=run_markers,
+                )
+                child.label = self._tab_label(session.title, marker=marker)
                 child.tooltip = _session_tab_tooltip(
                     session,
                     active=session.id == active_session_id,
-                    streaming=streaming,
+                    streaming=marker is ConsoleRunMarker.RUNNING,
                 )
                 child.set_class(
                     session.id == active_session_id,
@@ -281,8 +322,18 @@ class ConsoleSessionSurface(Vertical):
         sessions: list[ConsoleChatSession],
         active_session_id: str | None,
         streaming_session_id: str | None = None,
+        run_markers: dict[str, ConsoleRunMarker] | None = None,
     ) -> None:
-        """Render native Console session tabs from controller-owned state."""
+        """Render native Console session tabs from controller-owned state.
+
+        Args:
+            run_markers: Per-session fleet run marker (parallel-agents spec
+                PA-T8), keyed by session id and sourced from
+                ``ConsoleChatController.run_marker_for``. When ``None`` (unit
+                tests that drive this surface directly, without a
+                controller), falls back to the legacy ``streaming_session_id``
+                single-session cursor for the RUNNING glyph only.
+        """
         active_session = next(
             (session for session in sessions if session.id == active_session_id),
             None,
@@ -301,6 +352,7 @@ class ConsoleSessionSurface(Vertical):
                     sessions=sessions,
                     active_session_id=active_session_id,
                     streaming_session_id=streaming_session_id,
+                    run_markers=run_markers,
                 )
                 return
 
@@ -310,11 +362,16 @@ class ConsoleSessionSurface(Vertical):
                 await child.remove()
             for session in sessions:
                 is_active = session.id == active_session_id
+                marker = self._resolve_tab_marker(
+                    session.id,
+                    streaming_session_id=streaming_session_id,
+                    run_markers=run_markers,
+                )
                 await tab_strip.mount(
                     self._build_session_tab_button(
                         session,
                         active=is_active,
-                        streaming=session.id == streaming_session_id,
+                        marker=marker,
                     )
                 )
                 await tab_strip.mount(self._build_close_tab_button(session))

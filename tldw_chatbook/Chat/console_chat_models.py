@@ -33,6 +33,37 @@ class ConsoleRunStatus(str, Enum):
     RETRYING = "retrying"
 
 
+class ConsoleRunMarker(str, Enum):
+    """Fleet-visible run marker for a session (parallel-agents spec §6).
+
+    Derived (never stored raw) by ``ConsoleChatController.run_marker_for``
+    from a session's live run state, pending-approval flag, and unvisited
+    terminal outcome. ``NONE`` is the steady state; the other four values
+    are what a tab/fleet-summary glyph renders for a session that is not
+    currently being viewed.
+    """
+
+    NONE = "none"
+    RUNNING = "running"
+    NEEDS_APPROVAL = "needs-approval"
+    FINISHED_OK = "finished-ok"
+    FINISHED_FAILED = "finished-failed"
+
+
+#: Glyph shown for each `ConsoleRunMarker` on Console session tabs and
+#: sidebar conversation-browser rows (parallel-agents spec §6, PA-T8). NONE
+#: maps to the empty string so an unmarked tab/row gets no glyph and no
+#: stray leading space -- callers must guard the space themselves, e.g.
+#: ``f"{glyph} {label}" if glyph else label``.
+CONSOLE_RUN_MARKER_GLYPHS: dict[ConsoleRunMarker, str] = {
+    ConsoleRunMarker.NONE: "",
+    ConsoleRunMarker.RUNNING: "●",
+    ConsoleRunMarker.NEEDS_APPROVAL: "◆",
+    ConsoleRunMarker.FINISHED_OK: "✓",
+    ConsoleRunMarker.FINISHED_FAILED: "✗",
+}
+
+
 ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "failed"]
 ConsoleMessageFeedback = Literal["up", "down"]
 CONSOLE_GLOBAL_WORKSPACE_ID = "global"
@@ -40,6 +71,16 @@ DEFAULT_CONSOLE_SESSION_TITLE = "Chat 1"
 
 CONSOLE_AUTO_TITLE_MAX_LENGTH = 30
 _DEFAULT_CONSOLE_SESSION_TITLE_RE = re.compile(r"^Chat \d+$")
+
+# Parallel-agents spec S4 (task-5): user-adjustable global cap on
+# simultaneous Console runs. Single source of truth for the default --
+# ConsoleChatController.max_parallel_runs reads it as the get_cli_setting
+# fallback, and settings_screen.py's DEFAULT_CONSOLE_MAX_PARALLEL_RUNS
+# aliases it so the settings UI and the controller can never drift apart.
+CONSOLE_DEFAULT_MAX_PARALLEL_RUNS = 3
+# send_refusal_copy names at most this many busy sessions before folding
+# the rest into an "and N more" suffix.
+CONSOLE_CAP_REFUSAL_TITLE_LIMIT = 3
 
 
 class ConsoleCitationPhase(str, Enum):

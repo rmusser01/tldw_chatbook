@@ -76,6 +76,34 @@ def test_every_exclusive_worker_on_chat_screen_names_a_group():
     )
 
 
+def _group_family(group_node: ast.AST | None) -> str | None:
+    """Resolve a ``group=`` value to a comparable "family" name.
+
+    A plain string literal (``ast.Constant``) resolves to itself. TASK-3 of
+    the parallel-agents spec (Sec3) rewrote the run-worker dispatch sites to
+    ``group=f"console-run-{session_id}"`` — an ``ast.JoinedStr`` whose first
+    segment is the literal prefix, followed by the interpolated session id.
+    Per-session dispatch sites are still all members of the SAME family, so a
+    ``JoinedStr`` whose first value is a ``Constant`` string starting with
+    ``"console-run-"`` resolves to the family name ``"console-run"`` — this
+    keeps the disjointness invariant below meaningful (every run-worker site
+    is in one family, and that family never collides with a sync group)
+    instead of the guard going blind (``None`` for every site) the moment the
+    literal became an f-string.
+    """
+    if isinstance(group_node, ast.Constant):
+        return group_node.value
+    if isinstance(group_node, ast.JoinedStr) and group_node.values:
+        first = group_node.values[0]
+        if (
+            isinstance(first, ast.Constant)
+            and isinstance(first.value, str)
+            and first.value.startswith("console-run-")
+        ):
+            return "console-run"
+    return None
+
+
 def test_console_run_and_sync_workers_use_disjoint_groups():
     """Pin the separation this fix exists for: the sync kicks must never share
     a group with the run workers. The names-a-group guard alone would pass if
@@ -88,6 +116,11 @@ def test_console_run_and_sync_workers_use_disjoint_groups():
         "_regenerate_console_message",
         "_continue_console_message",
         "_edit_resend_console_message",
+        # Fix wave (rider 5, final review): `/rewind`'s "summarize up to"
+        # choice dispatches on the same `group=f"console-run-{session_id}"`
+        # family (`_apply_console_rewind_choice`) -- missing from this set
+        # let it go unguarded by the disjointness assertion below.
+        "_summarize_console_up_to",
     }
     SYNC_COROUTINE = "_sync_native_console_chat_ui"
     run_groups: set[str] = set()
@@ -101,13 +134,17 @@ def test_console_run_and_sync_workers_use_disjoint_groups():
         target = _call_name(first) if isinstance(first, ast.Call) else ""
         keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
         group = keywords.get("group")
-        group_name = group.value if isinstance(group, ast.Constant) else None
+        group_name = _group_family(group)
         if target in RUN_COROUTINES:
             run_groups.add(group_name)
         elif target == SYNC_COROUTINE:
             sync_groups.add(group_name)
     assert run_groups == {"console-run"}, run_groups
     assert sync_groups == {"console-sync"}, sync_groups
+    # Explicit disjointness, independent of the exact-set assertions above:
+    # the invariant this test exists to guard is that the run-worker family
+    # and the sync-worker group(s) never overlap.
+    assert run_groups.isdisjoint(sync_groups), (run_groups, sync_groups)
 
 
 class TestTextualExclusiveGroupSemantics:

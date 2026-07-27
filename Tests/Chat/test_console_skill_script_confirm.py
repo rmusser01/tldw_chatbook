@@ -799,8 +799,13 @@ async def test_confirm_callback_present_when_ui_sink_wired(tmp_path):
     assert result.accepted is True
     confirm = captured[0]["request_skill_script_confirm"]
     assert confirm is not None
-    assert confirm.__self__ is controller
-    assert confirm.__func__ is ConsoleChatController.request_skill_script_confirm
+    # PA-T9: the controller now hands the bridge a `functools.partial`
+    # binding this run's OWNING session id (so the confirm's cancel check
+    # can be scoped to it -- finding #1), not the bare bound method --
+    # unwrap `.func` to still assert it is THIS controller's real method.
+    assert confirm.func.__self__ is controller
+    assert confirm.func.__func__ is ConsoleChatController.request_skill_script_confirm
+    assert confirm.keywords == {"session_id": captured[0]["session_id"]}
 
 
 def test_confirm_payload_shows_the_canonical_skill_name_not_the_raw_one(

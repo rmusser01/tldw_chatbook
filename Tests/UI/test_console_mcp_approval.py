@@ -25,6 +25,7 @@ from textual.widgets import Button, Select, Static
 import tldw_chatbook
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
@@ -71,6 +72,7 @@ class _CardHarnessApp(App[None]):
     def __init__(self) -> None:
         super().__init__()
         self.decided: list[dict[str, str]] = []
+        self.decided_round_ids: list[str | None] = []
 
     def compose(self) -> ComposeResult:
         yield ChatApprovalCard()
@@ -78,6 +80,7 @@ class _CardHarnessApp(App[None]):
     @on(ChatApprovalCard.ApprovalDecided)
     def _capture_decision(self, event: ChatApprovalCard.ApprovalDecided) -> None:
         self.decided.append(event.decisions)
+        self.decided_round_ids.append(event.round_id)
 
 
 def _sample_calls() -> list[dict]:
@@ -452,6 +455,25 @@ async def test_submit_posts_approval_decided_with_per_row_decisions():
 
 
 @pytest.mark.asyncio
+async def test_submit_echoes_back_the_round_id_stamped_by_set_batch():
+    """Task 9 fix round 1: `set_batch`'s `round_id` must round-trip
+    unchanged through `ApprovalDecided` -- this is what lets
+    `ConsoleChatController.resolve_pending_approval` resolve the EXACT
+    round the user decided, rather than guessing from whatever session
+    happens to be active when the message is handled."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=45.0, round_id="round-xyz")
+        await pilot.pause()
+
+        app.query_one("#approval-submit", Button).press()
+        await pilot.pause()
+
+        assert app.decided_round_ids == ["round-xyz"]
+
+
+@pytest.mark.asyncio
 async def test_set_batch_with_no_calls_hides_the_card():
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
@@ -739,6 +761,14 @@ def test_request_mcp_approvals_timeout_denies_with_timeout_for_all_undecided():
 
 
 def test_request_mcp_approvals_cancellation_denies_undecided():
+    """F5 fix (Qodo wave): this test's INTENT is "global stop denies every
+    in-flight approval round" -- real process teardown, not a single
+    session's Stop. It used to flip the bare, session-agnostic
+    `_stop_requested` flag to exercise that; F5 removed `_stop_requested`
+    from the bridge's poll (a single session's Stop must not cross-cancel
+    an unrelated session's approval round any more), so the equivalent
+    "global" signal is now the never-reset `_shutdown_requested` (set only
+    by `shutdown()`)."""
     controller, _ = _build_controller()
     received: list[dict | None] = []
     controller.app = _FakeApp()
@@ -747,7 +777,7 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
 
     def _cancel_soon() -> None:
         time.sleep(0.05)
-        controller._stop_requested = True
+        controller._shutdown_requested.set()
 
     canceller = threading.Thread(target=_cancel_soon)
     canceller.start()
@@ -759,13 +789,19 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
 
 
 def test_request_mcp_approvals_active_cancel_event_denies_undecided():
-    """The per-run `_active_cancel_event` (stop/close_session/shutdown's
+    """The per-run cancel event (stop/close_session/shutdown's
     `_signal_stop`) is observed even when `_stop_requested` has already
-    been reset by the coroutine side (task-227's own documented race)."""
+    been reset by the coroutine side (task-227's own documented race).
+    Task 3b: registered under the ACTIVE session's key -- `request_mcp_
+    approvals` has no session id of its own to key by (see
+    `_is_active_session_cancelled`'s docstring), so it falls back to
+    whatever session is currently active, same as `stop_active_run`."""
     controller, _ = _build_controller()
     controller.mcp_approval_timeout_seconds = lambda: 30.0
     cancel_event = threading.Event()
-    controller._active_cancel_event = cancel_event
+    controller._active_cancel_events[controller.store.active_session_id or ""] = (
+        cancel_event
+    )
 
     def _cancel_soon() -> None:
         time.sleep(0.05)
@@ -777,6 +813,44 @@ def test_request_mcp_approvals_active_cancel_event_denies_undecided():
     canceller.join()
 
     assert decisions == {"mcp__srv__tool": "deny"}
+
+
+def test_request_mcp_approvals_unrelated_session_stop_does_not_cross_cancel():
+    """F5 fix (Qodo wave): stopping a DIFFERENT session must not deny THIS
+    session's in-flight approval round. Before the fix, `_stop_requested`
+    (set globally by `_signal_stop` for ANY session's Stop/Close) was OR'd
+    into the bridge's own poll check, so any session's Stop denied every
+    session's in-flight approval round -- a narrower, approval-round-only
+    echo of the stream cross-cancellation Critical-1 already fixed for
+    the stream itself. `_signal_stop` still flips the (now bridge-inert)
+    `_stop_requested` flag here; only the UNRELATED session's own cancel
+    event is registered, and the store has no active session at all
+    (fresh `ConsoleChatStore()`), so `_is_active_session_cancelled` cannot
+    match it either -- the round must resolve via the real, explicit
+    decision below, not get denied out from under it."""
+    controller, _ = _build_controller()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    def _stop_unrelated_session_soon() -> None:
+        time.sleep(0.05)
+        controller._signal_stop(session_id="unrelated-session-id")
+
+    def _resolve_soon() -> None:
+        time.sleep(0.2)
+        controller.resolve_pending_approval({"mcp__srv__tool": "approve_once"})
+
+    stopper = threading.Thread(target=_stop_unrelated_session_soon)
+    resolver = threading.Thread(target=_resolve_soon)
+    stopper.start()
+    resolver.start()
+    decisions = controller.request_mcp_approvals([_pending()])
+    stopper.join()
+    resolver.join()
+
+    assert decisions == {"mcp__srv__tool": "approve_once"}
 
 
 def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution_log(
@@ -793,7 +867,11 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     logged there, since a timeout is not a cancellation). Uses the REAL
     `UnifiedMCPControlPlaneService` + JSONL-backed execution log (not the
     lighter `FakeMCPService`) so this proves the fix end-to-end through
-    the actual persistence path."""
+    the actual persistence path.
+
+    F5 fix (Qodo wave): flips `_shutdown_requested` rather than the bare
+    `_stop_requested` -- see `test_request_mcp_approvals_cancellation_
+    denies_undecided`'s own docstring for why."""
     from types import SimpleNamespace
 
     from tldw_chatbook.MCP.execution_log import MCPExecutionLog
@@ -824,7 +902,7 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
 
     def _cancel_soon() -> None:
         time.sleep(0.05)
-        controller._stop_requested = True
+        controller._shutdown_requested.set()
 
     canceller = threading.Thread(target=_cancel_soon)
     canceller.start()
@@ -851,21 +929,293 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     assert "run stopped while approval pending" in (records[0].get("error") or "")
 
 
-def test_switch_session_denies_a_pending_approval_round():
+def test_switch_session_parks_rather_than_denies_a_pending_approval_round():
+    """PA-T9 supersedes the old deny-on-switch contract this test used to
+    assert (`test_switch_session_denies_a_pending_approval_round`, removed):
+    pre-Task-9, only ONE approval round could ever be in flight controller-
+    wide, so `switch_session` force-denied it unconditionally on ANY
+    switch. Once a background session can carry its own live round (Task
+    3's concurrent runs + this task's parking design), that assumption no
+    longer holds -- switching away now PARKS the round (fleet badge, no
+    denial) instead, and it only resolves once the owning session is
+    revisited and a decision is actually submitted (or it independently
+    times out/cancels).
+
+    Final-review CRITICAL 1 strengthening: this test originally resolved
+    via the no-token active-session fallback
+    (`resolve_pending_approval(decisions)`, no `round_id`), which masked a
+    real bug -- `_parked_approval_payloads` was populated ONLY for a
+    PARKED round, so switching back to `owning_session` (which mounted
+    immediately and was NEVER parked) found nothing to re-derive the card
+    from. The fallback resolve "worked" anyway (it doesn't need the card
+    to be mounted), so the test passed despite the card being permanently
+    gone. Now asserts the card actually RE-MOUNTS on the switch back
+    (mirroring what a real `ChatApprovalCard` would show) and resolves via
+    the round_id THAT mount carried, exercising the real re-derive path
+    rather than a resolve call that stands in for it.
+    """
     controller, store = _build_controller()
-    other_session = store.ensure_session(title="Other")
+    owning_session = store.create_session(title="Owning").id
+    other_session = store.create_session(title="Other").id
+    store.switch_session(owning_session)
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
-    def _switch_soon() -> None:
-        time.sleep(0.05)
-        controller.switch_session(other_session.id)
+    result_holder: dict[str, dict[str, str]] = {}
 
-    switcher = threading.Thread(target=_switch_soon)
-    switcher.start()
-    decisions = controller.request_mcp_approvals([_pending()])
-    switcher.join()
+    def _run_round() -> None:
+        result_holder["decisions"] = controller.request_mcp_approvals(
+            [_pending()], session_id=owning_session
+        )
+
+    worker = threading.Thread(target=_run_round)
+    worker.start()
+    time.sleep(0.1)
+    # `owning_session` WAS the active session at round-start, so it mounted
+    # immediately (no parking) -- same as every pre-Task-9 call site.
+    assert mounted and mounted[-1] is not None
+
+    controller.switch_session(other_session)
+    time.sleep(0.05)
+    assert "decisions" not in result_holder  # not denied by the switch
+    assert mounted[-1] is None  # the departing session's card is cleared
+
+    controller.switch_session(owning_session)
+    # CRITICAL 1 fix: switching back re-mounts the SAME round's card --
+    # pre-fix, `mounted[-1]` would still be `None` here (no retained
+    # payload for a round that was never parked).
+    assert mounted[-1] is not None
+    round_id = mounted[-1]["round_id"]
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "approve_once"}, round_id=round_id
+    )
+    worker.join(timeout=2.0)
+
+    assert result_holder["decisions"] == {"mcp__srv__tool": "approve_once"}
+
+
+def test_request_mcp_approvals_parks_for_a_non_active_session():
+    """PA-T9: a round whose `session_id` differs from the store's ACTIVE
+    session parks -- no card mount (`set_pending_approval` never called
+    with a real payload), the run-marker pending flag flips, and
+    `park_pending_approval` fires exactly once. Visiting (switching to)
+    the owning session later mounts the SAME retained payload and lets it
+    resolve normally."""
+    controller, store = _build_controller()
+    viewed = store.create_session(title="Viewed").id
+    background = store.create_session(title="Background").id
+    store.switch_session(viewed)  # keep viewing the first session
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    parked: list[str] = []
+    controller.park_pending_approval = parked.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    result_holder: dict[str, dict[str, str]] = {}
+
+    def _run_round() -> None:
+        result_holder["decisions"] = controller.request_mcp_approvals(
+            [_pending()], session_id=background
+        )
+
+    worker = threading.Thread(target=_run_round)
+    worker.start()
+    time.sleep(0.1)
+
+    assert parked == [background]
+    assert mounted == []  # never mounted -- the active session's card is untouched
+    assert background in controller._pending_approvals
+    assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    # Visiting + deciding resolves it.
+    controller.switch_session(background)
+    controller.resolve_pending_approval({"mcp__srv__tool": "approve_once"})
+    worker.join(timeout=2.0)
+
+    assert result_holder["decisions"] == {"mcp__srv__tool": "approve_once"}
+    assert background not in controller._pending_approvals
+    # Mounted once on visit, cleared once resolved.
+    assert len(mounted) == 2
+    assert mounted[0] is not None
+    assert mounted[1] is None
+
+
+def test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_round():
+    """PA-T9 finding #1: pre-Task-9, `request_mcp_approvals`'s cancel check
+    fell back to the VIEWED session's cancel event regardless of which
+    session's round was actually waiting -- so ANY session's Stop could
+    spuriously deny a DIFFERENT session's in-flight approval batch. With
+    `session_id` threaded through, session A's cancel event -- already set
+    BEFORE this round even starts -- must never deny session B's round;
+    only B's own cancel event (or a genuine deadline) may resolve it."""
+    controller, store = _build_controller()
+    session_a = store.create_session(title="A").id
+    session_b = store.create_session(title="B").id
+    # A short deadline: if A's cancel event wrongly denied this round, the
+    # cancellation branch would fire first (`_record_cancelled_approval_
+    # decisions` aside) -- observing "timeout" instead of "deny" proves the
+    # cancellation branch never triggered.
+    controller.mcp_approval_timeout_seconds = lambda: 0.05
+
+    a_cancel_event = threading.Event()
+    a_cancel_event.set()
+    controller._active_cancel_events[session_a] = a_cancel_event
+
+    decisions = controller.request_mcp_approvals([_pending()], session_id=session_b)
+
+    assert decisions == {"mcp__srv__tool": "timeout"}
+
+
+def test_request_mcp_approvals_own_session_cancel_event_denies_the_round():
+    """PA-T9 finding #1, positive case: session B's OWN cancel event (as
+    `stop_active_run`/`close_session` would set via `_signal_stop` if B
+    were the viewed/closing session) still correctly denies B's round when
+    `session_id=B` is threaded through."""
+    controller, store = _build_controller()
+    session_b = store.ensure_session(title="B").id
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    cancel_event = threading.Event()
+    controller._active_cancel_events[session_b] = cancel_event
+
+    def _cancel_soon() -> None:
+        time.sleep(0.05)
+        cancel_event.set()
+
+    threading.Thread(target=_cancel_soon).start()
+    decisions = controller.request_mcp_approvals([_pending()], session_id=session_b)
 
     assert decisions == {"mcp__srv__tool": "deny"}
+
+
+def test_resolve_pending_approval_by_round_id_survives_a_mid_flight_session_switch():
+    """CRITICAL (review round 1): `ApprovalDecided` travels as an async
+    Textual message -- a `switch_session` landing in the gap between the
+    user's click and the handler running must NOT let session A's decision
+    resolve session B's completely different, unreviewed batch.
+    `resolve_pending_approval` now resolves by the `round_id` stamped onto
+    the card at mount time (exactly what `ChatApprovalCard.set_batch`/
+    `ApprovalDecided` round-trip), never by "whichever session is active
+    right now"."""
+    controller, store = _build_controller()
+    session_a = store.create_session(title="A").id
+    session_b = store.create_session(title="B").id
+    store.switch_session(session_a)
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    result_a: dict[str, dict[str, str]] = {}
+
+    def _run_round_a() -> None:
+        result_a["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__a__tool")], session_id=session_a
+        )
+
+    worker_a = threading.Thread(target=_run_round_a)
+    worker_a.start()
+    time.sleep(0.1)
+    # A is active at round-start, so it mounted immediately -- capture the
+    # round_id the real ChatApprovalCard would have stashed via set_batch.
+    assert mounted and mounted[-1] is not None
+    round_id_a = mounted[-1]["round_id"]
+
+    # Session B gets its own, completely independent pending round (parked,
+    # since B isn't active).
+    result_b: dict[str, dict[str, str]] = {}
+
+    def _run_round_b() -> None:
+        result_b["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__b__tool")], session_id=session_b
+        )
+
+    worker_b = threading.Thread(target=_run_round_b)
+    worker_b.start()
+    time.sleep(0.1)
+    round_id_b = controller._parked_approval_payloads[session_b]["round_id"]
+    assert round_id_b != round_id_a
+
+    # The user clicked "Submit" on A's card, but before the resulting
+    # ApprovalDecided message is handled, a switch_session moved the
+    # ACTIVE session to B -- exactly the async-message race under review.
+    store.switch_session(session_b)
+
+    controller.resolve_pending_approval(
+        {"mcp__a__tool": "approve_once"}, round_id=round_id_a
+    )
+    worker_a.join(timeout=2.0)
+
+    assert result_a["decisions"] == {"mcp__a__tool": "approve_once"}
+    assert "decisions" not in result_b  # B's round is completely untouched
+
+    # Clean up B's still-waiting round rather than leaving a live thread
+    # blocked for the rest of its 30s timeout.
+    controller.resolve_pending_approval(
+        {"mcp__b__tool": "deny"}, round_id=round_id_b
+    )
+    worker_b.join(timeout=2.0)
+    assert result_b["decisions"] == {"mcp__b__tool": "deny"}
+
+
+def test_resolve_pending_approval_ignores_a_stale_or_unknown_round_id():
+    """A `round_id` that doesn't match any currently-armed round (a
+    fabricated/unknown id, or one whose round already resolved and was
+    popped) is a safe no-op -- the request just returns, no round is
+    touched, nothing raises."""
+    controller, _ = _build_controller()
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "deny"}, round_id="not-a-real-round"
+    )  # must not raise
+
+
+def test_resolve_pending_approval_stale_round_id_never_resolves_a_newer_round_for_the_same_session():
+    """Mirrors `resolve_pending_skill_script`'s identical defended scenario:
+    round 1 for session A times out (its round_id is popped), round 2 arms
+    for the SAME session immediately after -- a late decision carrying
+    round 1's now-stale id must never resolve round 2."""
+    controller, store = _build_controller()
+    session_a = store.create_session(title="A").id
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 0.05
+
+    round_1_decisions = controller.request_mcp_approvals(
+        [_pending(llm_name="mcp__srv__tool")], session_id=session_a
+    )
+    assert round_1_decisions == {"mcp__srv__tool": "timeout"}
+    stale_round_id = mounted[0]["round_id"]
+
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    result_2: dict[str, dict[str, str]] = {}
+
+    def _run_round_2() -> None:
+        result_2["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__srv__tool")], session_id=session_a
+        )
+
+    worker = threading.Thread(target=_run_round_2)
+    worker.start()
+    time.sleep(0.1)
+    round_2_id = mounted[-1]["round_id"]
+    assert round_2_id != stale_round_id
+
+    # The stale decision (round 1's id) must not touch round 2.
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "deny"}, round_id=stale_round_id
+    )
+    time.sleep(0.1)
+    assert "decisions" not in result_2
+
+    # Round 2 still resolves normally via its OWN id.
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "approve_once"}, round_id=round_2_id
+    )
+    worker.join(timeout=2.0)
+    assert result_2["decisions"] == {"mcp__srv__tool": "approve_once"}
 
 
 def test_resolve_pending_approval_without_active_round_is_a_noop():
@@ -964,10 +1314,17 @@ def test_chat_screen_forwards_approval_decided_to_controller(mock_chat_host):
     controller = Mock()
     screen._console_chat_controller = controller
 
-    event = ChatApprovalCard.ApprovalDecided({"mcp__a__b": "deny"})
+    # Task 9 fix round 1: the event's round_id must forward too --
+    # resolve_pending_approval resolves BY that id, never by "whichever
+    # session is active".
+    event = ChatApprovalCard.ApprovalDecided(
+        {"mcp__a__b": "deny"}, round_id="round-123"
+    )
     screen.handle_console_approval_decided(event)
 
-    controller.resolve_pending_approval.assert_called_once_with({"mcp__a__b": "deny"})
+    controller.resolve_pending_approval.assert_called_once_with(
+        {"mcp__a__b": "deny"}, round_id="round-123"
+    )
 
 
 def test_chat_screen_approval_decided_handler_tolerates_no_controller(mock_chat_host):

@@ -131,10 +131,24 @@ class ChatApprovalCard(Container):
     """Inline approval card for privileged agent actions."""
 
     class ApprovalDecided(Message):
-        """Posted when the user submits per-row decisions for a pending batch."""
+        """Posted when the user submits per-row decisions for a pending batch.
 
-        def __init__(self, decisions: dict[str, str]) -> None:
+        ``round_id`` (Task 9 fix round 1) is the id ``ConsoleChatController.
+        request_mcp_approvals`` stamped onto the batch payload this card
+        was built from (see ``set_batch``) -- ``ConsoleChatController.
+        resolve_pending_approval`` uses it to resolve THIS exact round,
+        never "whichever session happens to be active" (an async-message
+        misattribution hazard fixed alongside this: `ApprovalDecided` can
+        be delivered after a `switch_session` already moved the active
+        session elsewhere). ``None`` only for the legacy single-approval
+        API, which has no batch/round concept.
+        """
+
+        def __init__(
+            self, decisions: dict[str, str], *, round_id: str | None = None
+        ) -> None:
             self.decisions = decisions
+            self.round_id = round_id
             super().__init__()
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -147,6 +161,11 @@ class ChatApprovalCard(Container):
         self._batch_selects: list[Select] = []
         self._batch_legal_values: list[list[str]] = []
         self._batch_rows: list[Horizontal] = []
+        #: The currently-rendered batch's round id (Task 9 fix round 1),
+        #: echoed back unchanged in `ApprovalDecided` on submit. `None`
+        #: whenever no batch (or a caller that predates round ids) is
+        #: showing.
+        self._batch_round_id: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("Approval required", id="approval-title")
@@ -219,7 +238,13 @@ class ChatApprovalCard(Container):
 
     # -- batch-approval API (task-5) -----------------------------------------
 
-    def set_batch(self, calls: list[dict[str, Any]], *, timeout_seconds: float) -> None:
+    def set_batch(
+        self,
+        calls: list[dict[str, Any]],
+        *,
+        timeout_seconds: float,
+        round_id: str | None = None,
+    ) -> None:
         """Render one row per unique ``llm_name`` in ``calls``.
 
         Synchronous throughout -- see the module docstring for why this
@@ -231,7 +256,19 @@ class ChatApprovalCard(Container):
         That makes a still-pruning previous batch's ids structurally
         unable to collide with the incoming batch's ids, without this
         method ever needing to await the removal.
+
+        Args:
+            calls: This turn's pending tool calls.
+            timeout_seconds: The round's configured approval timeout,
+                surfaced on the card.
+            round_id: The round's unique id (Task 9 fix round 1), stashed
+                and echoed back verbatim in ``ApprovalDecided`` on submit
+                so ``ConsoleChatController.resolve_pending_approval`` can
+                resolve THIS exact round rather than guessing from
+                whichever session happens to be active when the decision
+                is delivered.
         """
+        self._batch_round_id = round_id
         if not calls:
             self.display = False
             self.query_one("#approval-batch-body").display = False
@@ -367,4 +404,6 @@ class ChatApprovalCard(Container):
             name: select.value
             for name, select in zip(self._batch_names, self._batch_selects)
         }
-        self.post_message(self.ApprovalDecided(decisions))
+        self.post_message(
+            self.ApprovalDecided(decisions, round_id=self._batch_round_id)
+        )

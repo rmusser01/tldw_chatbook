@@ -3303,8 +3303,8 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         )
         await console._sync_native_console_chat_ui()
         controller = console._ensure_console_chat_controller()
-        controller.run_state = ConsoleRunState(
-            ConsoleRunStatus.STREAMING, "Streaming response."
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
         )
 
         settings_button = await _visible_console_settings_button(console, pilot)
@@ -3346,7 +3346,7 @@ async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
 
         controller = console._ensure_console_chat_controller()
         stale_copy = "Provider blocked: old llama.cpp failure."
-        controller.run_state = ConsoleRunState.blocked(stale_copy)
+        controller._set_run_state(ConsoleRunState.blocked(stale_copy))
         console._sync_console_mode_bar()
         assert stale_copy in str(
             console.query_one("#console-mode-bar", Static).renderable

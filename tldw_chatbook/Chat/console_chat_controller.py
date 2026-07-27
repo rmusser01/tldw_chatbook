@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import re
 import threading
 import time
@@ -20,6 +21,8 @@ from tldw_chatbook.Chat.attachment_core import (
     vision_block_reason,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
+    CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
     ConsoleChatMessage,
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
@@ -27,6 +30,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunMarker,
     ConsoleRunState,
     ConsoleRunStatus,
     ConsoleStagedSource,
@@ -636,26 +640,99 @@ class ConsoleChatController:
         self._chat_dictionary_applier = chat_dictionary_applier
         self._world_info_applier = world_info_applier
         self._rag_capture_provider = rag_capture_provider
-        self.run_state = ConsoleRunState()
-        self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
+        # Parallel-agents spec §2: run state is a PER-SESSION map, not a
+        # single global slot -- two sessions can each have their own
+        # in-flight/terminal run without stamping each other. `run_state`/
+        # `run_state_history` below become read-only facades over these maps
+        # (see the property block right after `__init__`); every WRITE goes
+        # through `_set_run_state`/`_clear_terminal_run_state`, which take an
+        # explicit `session_id` so a background completion can target its
+        # OWNING session instead of whatever the user currently has open.
+        self._run_states: dict[str, ConsoleRunState] = {}
+        self._run_state_histories: dict[str, list[ConsoleRunStatus]] = {}
+        # Parallel-agents spec §6: run-marker state (Task 7). Both maps are
+        # keyed by session id like the run-state maps above, but track
+        # marker-only bookkeeping that ``_run_states`` doesn't capture on
+        # its own:
+        #   - `_pending_approvals`: sessions with an outstanding human
+        #     approval decision blocking their run. `set_run_pending_
+        #     approval` writes it; Task 9 wires the approval paths that
+        #     call it. Named to avoid colliding with the PRE-EXISTING
+        #     `self.set_pending_approval` INSTANCE ATTRIBUTE below (the
+        #     MCP batch-approval UI callback slot, task-5) -- a same-named
+        #     method here would be silently clobbered by that assignment.
+        #   - `_unvisited_outcomes`: sessions whose run reached a terminal
+        #     COMPLETED/FAILED status while NOT the active (viewed)
+        #     session, stamped by `_set_run_state` and cleared by
+        #     `mark_session_visited` (called from `switch_session`). The
+        #     viewed session's own terminal transition is seen live and is
+        #     deliberately never stamped here.
+        self._pending_approvals: set[str] = set()
+        self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
+        #: F2b fix (Qodo wave): guards every mutation of `_pending_
+        #: approvals`, `_parked_approval_payloads`, and `_pending_
+        #: approval_rounds` -- the three approval-marker collections a
+        #: worker thread (`request_mcp_approvals`'s own body/`finally`) can
+        #: mutate WHILE the UI thread iterates them every ~0.2s sync tick
+        #: (`fleet_summary_counts`). An unguarded set/dict mutation racing
+        #: an unguarded iteration over the SAME object can raise
+        #: `RuntimeError: Set/dictionary changed size during iteration`.
+        #: `_unvisited_outcomes`/`_run_states` are NOT covered here: both
+        #: are written only from the main thread (`_set_run_state`,
+        #: `mark_session_visited`), never from a worker thread, so they
+        #: carry no cross-thread hazard this lock needs to close.
+        self._approval_state_lock = threading.Lock()
         #: Optional owner hook invoked once a submit is accepted (user message
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
         self.on_submission_accepted: Callable[[], None] | None = None
-        self._active_assistant_message_id: str | None = None
-        self._active_stream_task: asyncio.Task | None = None
+        # Task 3b: PER-SESSION maps, mirroring `_run_states`' own keying --
+        # two sessions can each have their own in-flight stream/cancel state
+        # without clobbering each other. Written/cleared at the SAME
+        # lifecycle points the old singulars were (`_stream_assistant_
+        # response`/`_run_agent_reply`'s start and `finally`), keyed by the
+        # run's OWNING session id (the same `owner_id`/`session_id` locals
+        # Task 1 threaded), never by whatever session the user currently has
+        # open. `stop_active_run` is the one place that DELIBERATELY reads
+        # by the ACTIVE (viewed) session -- see its own docstring.
+        self._active_assistant_message_ids: dict[str, str] = {}
+        self._active_stream_tasks: dict[str, asyncio.Task] = {}
         self._stop_requested = False
-        self._active_citation_repair_session: ConsoleCitationRepairSession | None = None
+        #: F5 fix (Qodo wave): set ONLY by ``shutdown()`` and NEVER reset
+        #: (unlike ``_stop_requested``, which every run's own lifecycle
+        #: resets to ``False`` -- see ``shutdown``/``_run_agent_reply``/
+        #: ``_stream_assistant_response``'s own resets -- making it
+        #: race-dependent whether a still-polling bridge thread observes a
+        #: Stop that raced a reset). The three worker-thread approval/
+        #: confirm bridges (``request_mcp_approvals``, ``request_skill_
+        #: install_confirm``, ``request_skill_script_confirm``) OR this
+        #: with ``_is_active_session_cancelled()`` at their poll sites
+        #: instead of the old, session-agnostic ``_stop_requested`` --
+        #: a single session's Stop must never deny another session's
+        #: unrelated approval round; only real process teardown (the one
+        #: case where every session's run legitimately ends at once) does.
+        self._shutdown_requested = threading.Event()
+        # Rebase note (dev citation-repair vs. Task 3b): dev added this as a
+        # singular slot (no per-session awareness); rescoped here the same
+        # way as the two maps above -- keyed by the run's OWNING session id,
+        # so a background session's in-flight repair can never be read/
+        # cleared by another session's close/stop/teardown path.
+        self._active_citation_repair_sessions: dict[str, ConsoleCitationRepairSession] = {}
         self._original_attempts: OrderedDict[str, str] = OrderedDict()
         #: Per-run cancellation flag for the agent bridge's background
-        #: thread (see ``_run_agent_reply``). ``threading.Event`` rather
-        #: than a shared bool: ``asyncio.to_thread`` survives Task
-        #: cancellation (the coroutine detaches from the still-running OS
-        #: thread), so the closure handed to that thread must observe a
-        #: signal that, once set, is never reset for THIS run -- unlike
+        #: thread (see ``_run_agent_reply``), keyed by owning session id
+        #: like the two maps above. ``threading.Event`` rather than a
+        #: shared bool: ``asyncio.to_thread`` survives Task cancellation
+        #: (the coroutine detaches from the still-running OS thread), so
+        #: the closure handed to that thread must observe a signal that,
+        #: once set, is never reset for THIS run -- unlike
         #: ``_stop_requested``, which the run's own ``finally`` block
         #: resets as soon as the coroutine side is done (task-227).
-        self._active_cancel_event: threading.Event | None = None
+        #: ``_stop_requested`` itself stays a single shared flag (Task 3b
+        #: did not rescope it) -- see ``_is_active_session_cancelled``'s
+        #: docstring for the resulting, deliberately-scoped-down, limit on
+        #: the three worker-thread approval/confirm bridges below.
+        self._active_cancel_events: dict[str, threading.Event] = {}
         #: The composed MCP provider for the current agent run, captured
         #: on the main loop in ``_run_agent_reply`` so ``build_context_snapshot``
         #: can read tool metadata later without recomposing.
@@ -674,19 +751,68 @@ class ConsoleChatController:
         #: _set_console_pending_approval``). Always invoked through
         #: ``self.app.call_from_thread`` from ``request_mcp_approvals``.
         self.set_pending_approval: Callable[[dict[str, Any] | None], None] | None = None
+        #: Task 9 (parked background approvals): UI-thread callback invoked
+        #: (via ``self.app.call_from_thread``) when ``request_mcp_approvals``
+        #: raises a round for a NON-active session -- sets the fleet
+        #: pending-approval badge and fires the one-per-card toast, WITHOUT
+        #: touching ``set_pending_approval``'s mounted-card slot (that stays
+        #: reserved for whichever session is actually being viewed). Wired
+        #: to ``ChatScreen._park_console_approval`` by ``_ensure_console_
+        #: chat_controller``, mirroring ``set_pending_approval``'s own
+        #: wiring. ``None`` in most controller-only tests, matching every
+        #: other UI bridge slot here.
+        self.park_pending_approval: Callable[[str], None] | None = None
+        #: Task 10 (background completion toasts): UI-thread callback
+        #: invoked DIRECTLY (never via ``self.app.call_from_thread`` --
+        #: unlike the two bridges above, every terminal ``_set_run_state``
+        #: call already runs on the main event-loop thread: worker-thread
+        #: agent runs resume here only after ``await asyncio.to_thread(...)``
+        #: returns in ``_run_agent_reply``) from ``_set_run_state``'s
+        #: non-active COMPLETED/FAILED branch, once per transition INTO a
+        #: terminal state. Wired to ``ChatScreen._notify_console_run_
+        #: outcome`` by ``_ensure_console_chat_controller``, mirroring
+        #: ``park_pending_approval``'s wiring and reusing its exact
+        #: session-title/workspace-name resolution
+        #: (``ChatScreen._console_workspace_display_name``). ``None`` in
+        #: most controller-only tests, matching every other UI bridge slot
+        #: here.
+        self.notify_run_outcome: Callable[[str, ConsoleRunStatus], None] | None = None
         #: Optional override for how long ``request_mcp_approvals`` waits
         #: for a human decision before failing every undecided call to
         #: ``"timeout"``. Defaults to reading ``[mcp] approval_timeout_
         #: seconds`` (T2's ``approval_timeout_seconds``) when unset.
         self.mcp_approval_timeout_seconds: Callable[[], float] | None = None
-        #: The active batch-approval round's release signal + shared
-        #: decisions holder, set for the duration of one ``request_mcp_
-        #: approvals`` call (worker thread) and read/written from the UI
-        #: thread by ``resolve_pending_approval`` /
-        #: ``_deny_pending_approval_on_context_change``. ``None`` whenever
-        #: no approval round is in flight.
-        self._pending_approval_event: threading.Event | None = None
-        self._pending_approval_decisions: dict[str, str] | None = None
+        #: Task 9 (Fix round 1): each batch-approval round's release signal
+        #: + shared decisions holder + owning session id, keyed by a
+        #: freshly minted ROUND id (``uuid4()``, stamped into the payload
+        #: as ``"round_id"`` and round-tripped through ``ChatApprovalCard``
+        #: -> ``ApprovalDecided`` -> ``resolve_pending_approval``) --
+        #: mirrors ``_pending_skill_script_rounds``'s identical
+        #: ``request_id``-keyed design. Superseded TWO earlier, both-wrong
+        #: shapes: the pre-Task-9 single ``_pending_approval_event``/
+        #: ``_pending_approval_decisions`` pair (only ever tracked ONE
+        #: round controller-wide -- fatal once two sessions can each have
+        #: their own concurrent pending approval), and this task's own
+        #: first draft keyed by session id alone (still wrong: `Approval
+        #: Decided` travels as an async Textual message, so a
+        #: `switch_session` landing in the gap between the user's click and
+        #: the handler running could resolve session A's decision against
+        #: session B's completely different batch -- review CRITICAL
+        #: finding, fix round 1). Read/written from the UI thread by
+        #: ``resolve_pending_approval``, which resolves ONLY the round
+        #: whose id was stamped onto the card the user actually decided --
+        #: never "whichever session happens to be active right now".
+        self._pending_approval_rounds: dict[str, dict[str, Any]] = {}
+        #: Task 9: retained payload for a PARKED round (session_id !=
+        #: active_session_id at round-start), keyed by owning session id --
+        #: the exact dict ``request_mcp_approvals`` would otherwise have
+        #: pushed straight to ``set_pending_approval``. ``switch_session``
+        #: re-derives the mounted card from this map every time the user
+        #: visits (or re-visits) the session, per the spec's "card state
+        #: derives from the run's pending review state, not mounted-widget
+        #: lifetime" contract -- never mutated by mount/unmount itself, only
+        #: by the round's own start (park) and end (any resolution path).
+        self._parked_approval_payloads: dict[str, dict[str, Any]] = {}
         #: UI-thread callback that pushes/clears the pending skill-install
         #: confirm payload into the owning screen's task-resume state
         #: (ChatScreen._set_console_pending_skill_install). Invoked through
@@ -719,15 +845,347 @@ class ConsoleChatController:
         #: late button press from a torn-down round 1 from authorizing
         #: round 2's script. `None` whenever no round is armed.
 
-    async def submit_draft(self, draft: str) -> ConsoleSubmitResult:
-        """Submit a composer draft through native Console validation and provider resolution."""
-        active_rejection = self._active_run_rejection()
+    @property
+    def run_state(self) -> ConsoleRunState:
+        """The ACTIVE session's run state (parallel-agents spec §2).
+
+        Read-only facade: the ~16 pre-existing read sites in chat_screen
+        keep their semantics ("the viewed session's run"), while writes go
+        through ``_set_run_state``/``_clear_terminal_run_state`` with an
+        explicit owning session id. There is deliberately no setter --
+        assigning ``controller.run_state = ...`` now raises ``AttributeError``
+        so a stray direct-assignment writer (bypassing the per-session map)
+        fails loudly instead of silently reintroducing the single-slot bug.
+
+        Returns:
+            The active session's recorded ``ConsoleRunState`` (a fresh idle
+            state when the active session has no recorded run).
+        """
+        return self.run_state_for(self.store.active_session_id or "")
+
+    def run_state_for(self, session_id: str) -> ConsoleRunState:
+        """Return ``session_id``'s own run state (a fresh idle one when unset).
+
+        Args:
+            session_id: The session id to look up.
+
+        Returns:
+            The session's recorded ``ConsoleRunState``, or a fresh idle
+            ``ConsoleRunState`` when the session has no recorded run.
+        """
+        return self._run_states.get(session_id) or ConsoleRunState()
+
+    def run_states(self) -> dict[str, ConsoleRunState]:
+        """Raw map snapshot incl. entries for closed sessions.
+
+        This is the UNFILTERED ``self._run_states`` copy -- it can contain
+        orphaned entries for sessions ``ConsoleChatStore.close_session`` has
+        already removed (closing never touches the controller's map). Use
+        ``in_flight_run_count`` (or ``_live_busy_session_ids``) for cap/fleet
+        math; those exclude orphans. This raw snapshot is for callers that
+        want the full recorded history regardless of session lifetime.
+
+        Returns:
+            A shallow copy of the internal session-id -> ``ConsoleRunState``
+            map, including entries for sessions the store has since closed.
+        """
+        return dict(self._run_states)
+
+    def _live_busy_session_ids(self) -> list[str]:
+        """Busy session ids that still exist in the store, insertion-ordered.
+
+        Intersects ``self._run_states`` with ``store.sessions()``: a session
+        closed mid-VALIDATING leaves its entry in the map behind (Task 1
+        review finding), and neither cap/fleet math nor the refusal copy's
+        session list may count or name a session that no longer exists.
+        Shared by ``in_flight_run_count`` and ``send_refusal_copy`` so both
+        apply the same live-session filter.
+        """
+        live_ids = {session.id for session in self.store.sessions()}
+        return [
+            sid
+            for sid, state in self._run_states.items()
+            if sid in live_ids and not state.is_send_allowed
+        ]
+
+    def in_flight_run_count(self) -> int:
+        """Count of LIVE sessions whose recorded run currently disallows a new send.
+
+        Excludes orphaned entries for sessions the store no longer has (see
+        ``_live_busy_session_ids``) -- consumers (cap math, fleet UX) must
+        never see a closed session's stale run inflate this count.
+
+        Returns:
+            The number of live sessions whose recorded run currently
+            disallows a new send.
+        """
+        return len(self._live_busy_session_ids())
+
+    def set_run_pending_approval(self, session_id: str, pending: bool) -> None:
+        """Record whether ``session_id``'s run is waiting on a human approval decision.
+
+        Parallel-agents spec §6 (Task 7 stores/exposes the flag; Task 9
+        wires the approval paths -- MCP batch approvals, skill-install/
+        script confirms -- that call this). Deliberately NOT named
+        ``set_pending_approval``: that name is already a pre-existing
+        INSTANCE ATTRIBUTE on this controller (an MCP batch-approval UI
+        callback slot assigned by ``ChatScreen._ensure_console_chat_
+        controller``, see ``__init__``) -- reusing it as a method name
+        here would be silently clobbered by that attribute's own
+        assignment.
+
+        Args:
+            session_id: The session whose pending-approval flag to update.
+            pending: ``True`` to mark the session as awaiting a decision,
+                ``False`` to clear it.
+        """
+        # F2b fix (Qodo wave): this is reachable from the worker thread
+        # (``request_mcp_approvals``'s own body/``finally``) while the UI
+        # thread may concurrently iterate ``_pending_approvals`` via
+        # ``fleet_summary_counts`` -- guard the mutation with the shared
+        # lock so that iteration never observes a torn add/discard.
+        with self._approval_state_lock:
+            if pending:
+                self._pending_approvals.add(session_id)
+            else:
+                self._pending_approvals.discard(session_id)
+
+    def mark_session_visited(self, session_id: str) -> None:
+        """Clear ``session_id``'s unvisited terminal outcome.
+
+        Parallel-agents spec §6. Called from ``switch_session`` once the
+        store has swapped to ``session_id`` -- visiting a session is what
+        "sees" its terminal outcome, so that marker resets to steady state
+        (``run_marker_for`` then falls through to ``ConsoleRunMarker.NONE``
+        unless a fresh run starts).
+
+        Task 9 correction: this used to ALSO discard ``session_id``'s
+        pending-approval flag, which directly contradicted the parked-
+        approval design once background sessions could carry a live
+        approval round -- a plain visit (e.g. just checking on a background
+        session, or the auto-mount ``switch_session`` now performs to show
+        its parked card) would silently deny-in-spirit the outstanding
+        round's badge before the human ever made a decision. The flag now
+        clears ONLY on the round's own resolution (``request_mcp_
+        approvals``' ``finally``) or a terminal run-state transition
+        (``_set_run_state``) -- never merely from being looked at. See
+        ``switch_session`` for the (separate) mount-the-parked-card step
+        that visiting now performs instead.
+
+        Args:
+            session_id: The session just switched to (or otherwise
+                visited).
+        """
+        self._unvisited_outcomes.pop(session_id, None)
+
+    def run_marker_for(self, session_id: str) -> ConsoleRunMarker:
+        """Fleet-visible marker for ``session_id`` (parallel-agents spec §6).
+
+        Precedence, checked in order:
+
+        1. ``NEEDS_APPROVAL`` -- outranks ``RUNNING`` even though a parked
+           run is technically still in-flight: the marker must announce
+           the thing that needs a human, not just "something is
+           happening".
+        2. ``RUNNING`` -- derived from the same live/busy definition as
+           ``in_flight_run_count`` (``_live_busy_session_ids``), so this
+           never invents a second notion of "in-flight".
+        3. ``FINISHED_OK``/``FINISHED_FAILED`` -- from
+           ``_unvisited_outcomes``, stamped only for non-active sessions
+           by ``_set_run_state``'s terminal transitions and cleared by
+           ``mark_session_visited``.
+        4. ``NONE`` otherwise.
+
+        Args:
+            session_id: The session to compute the marker for.
+
+        Returns:
+            The single ``ConsoleRunMarker`` that best describes
+            ``session_id``'s current fleet-visible state, per the
+            precedence above.
+        """
+        if session_id in self._pending_approvals:
+            return ConsoleRunMarker.NEEDS_APPROVAL
+        if session_id in self._live_busy_session_ids():
+            return ConsoleRunMarker.RUNNING
+        return self._unvisited_outcomes.get(session_id, ConsoleRunMarker.NONE)
+
+    def fleet_summary_counts(self) -> tuple[int, int]:
+        """Counts of OTHER live sessions running / needing approval.
+
+        Parallel-agents spec §6. Returns ``(other running, other pending-
+        approval)`` relative to the active (viewed) session -- its own
+        status is visible directly in the transcript, not through the
+        fleet summary, so it is excluded from both counts. Sessions the
+        store no longer has (orphaned ``_pending_approvals``/`
+        `_run_states`` entries) are excluded via the same live-session
+        filter ``_live_busy_session_ids`` applies. A session that is both
+        busy and pending-approval is counted only as pending, mirroring
+        ``run_marker_for``'s NEEDS_APPROVAL-outranks-RUNNING precedence --
+        neither count double-books it.
+
+        Returns:
+            A ``(other_running, other_pending_approval)`` tuple of counts,
+            both excluding the active (viewed) session.
+        """
+        active = self.store.active_session_id or ""
+        live_ids = {session.id for session in self.store.sessions()}
+        # F2b fix (Qodo wave): snapshot under the lock rather than
+        # iterating `_pending_approvals` live -- this runs on the UI
+        # thread's ~0.2s sync tick while a worker thread can concurrently
+        # add/discard entries (`request_mcp_approvals`'s own body/
+        # `finally`), so an unguarded comprehension here risked
+        # `RuntimeError: Set changed size during iteration`. The
+        # comprehension itself runs OUTSIDE the lock, over the snapshot.
+        with self._approval_state_lock:
+            pending_snapshot = set(self._pending_approvals)
+        other_pending = {
+            sid
+            for sid in pending_snapshot
+            if sid in live_ids and sid != active
+        }
+        other_busy = {sid for sid in self._live_busy_session_ids() if sid != active}
+        return len(other_busy - other_pending), len(other_pending)
+
+    @property
+    def max_parallel_runs(self) -> int:
+        """User-adjustable global cap on simultaneous runs (parallel-agents spec §4).
+
+        Reads ``[console] max_parallel_runs`` through the same
+        ``get_cli_setting`` seam used elsewhere in this module (see
+        ``_resolve_mcp_approval_timeout_seconds``). Floored at 1 and
+        defaulted to ``CONSOLE_DEFAULT_MAX_PARALLEL_RUNS`` so a bad/blank
+        config value can never lock every session out of sending.
+
+        Returns:
+            The configured cap on simultaneous runs, floored at 1.
+        """
+        raw = get_cli_setting(
+            "console", "max_parallel_runs", CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
+        )
+        if raw is None:
+            return CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
+        return max(1, value)
+
+    def send_refusal_copy(self, session_id: str) -> str | None:
+        """Why a send to ``session_id`` must be refused right now, or ``None``.
+
+        Parallel-agents spec §4. Two gates, checked in order:
+
+        1. Per-session -- ``session_id``'s own run is still in flight.
+        2. Global cap -- ``max_parallel_runs`` busy sessions already exist,
+           so a NEW send (from any session, including an idle one) must
+           wait.
+
+        The cap's busy list comes from ``_live_busy_session_ids`` (shared
+        with ``in_flight_run_count``): a session closed mid-VALIDATING
+        leaves its entry in ``self._run_states`` behind
+        (``ConsoleChatStore.close_session`` never touches the controller's
+        map -- Task 1 review finding), and a session that no longer exists
+        must not consume a cap slot or be named in the refusal copy.
+
+        Args:
+            session_id: The session id attempting to send.
+
+        Returns:
+            A human-readable refusal message if the send must be blocked
+            right now, otherwise ``None`` when the send is allowed.
+        """
+        if not self.run_state_for(session_id).is_send_allowed:
+            return "A run is already running in this tab."
+        busy_ids = self._live_busy_session_ids()
+        if len(busy_ids) < self.max_parallel_runs:
+            return None
+        live_sessions = {session.id: session for session in self.store.sessions()}
+        limit = CONSOLE_CAP_REFUSAL_TITLE_LIMIT
+        titles = [live_sessions[sid].title for sid in busy_ids[:limit]]
+        suffix = f" and {len(busy_ids) - limit} more" if len(busy_ids) > limit else ""
+        return (
+            f"{len(busy_ids)} agents already running "
+            f"({', '.join(titles)}{suffix}). "
+            "Wait for one to finish or interrupt it."
+        )
+
+    @property
+    def run_state_history(self) -> list[ConsoleRunStatus]:
+        """The ACTIVE session's run-status history (read-only facade, mirrors ``run_state``).
+
+        Returns:
+            The active session's list of recorded ``ConsoleRunStatus`` values.
+        """
+        return self.run_state_history_for(self.store.active_session_id or "")
+
+    def run_state_history_for(self, session_id: str) -> list[ConsoleRunStatus]:
+        """Return (creating if absent) ``session_id``'s run-status history.
+
+        Args:
+            session_id: The session id to look up.
+
+        Returns:
+            The session's list of recorded ``ConsoleRunStatus`` values,
+            initialized to ``[ConsoleRunStatus.IDLE]`` when absent.
+        """
+        return self._run_state_histories.setdefault(
+            session_id, [ConsoleRunStatus.IDLE]
+        )
+
+    async def submit_draft(
+        self, draft: str, *, session_id: str | None = None
+    ) -> ConsoleSubmitResult:
+        """Submit a composer draft through native Console validation and provider resolution.
+
+        F4 fix (Qodo wave, parallel-agents spec §2): sends are dispatched
+        per-session -- ``chat_screen._dispatch_console_draft_send`` captures
+        the target session at DISPATCH time and threads it through
+        ``run_worker``'s coroutine args (see ``_submit_console_native_
+        draft``). Before this fix, this method always re-resolved "the
+        session to submit into" via ``store.ensure_session()``/
+        ``store.active_session_id`` at EXECUTION time instead -- a session
+        switch during the scheduling gap between ``run_worker(...)`` and
+        this coroutine's body actually running could silently submit the
+        draft into whichever session the user switched TO, not the one
+        that was showing when Send was pressed.
+
+        Args:
+            draft: The raw composer text to submit.
+            session_id: The session this draft was dispatched for, captured
+                by the caller at dispatch time. ``None`` (the default)
+                preserves the pre-fix behavior -- resolve/create the
+                CURRENTLY active session -- for direct-call test idioms and
+                other callers that have no per-session dispatch to capture.
+                An empty string is treated the same as ``None`` (the
+                dispatch-time sentinel for "no session existed yet").
+
+        Returns:
+            The submission outcome: ``accepted`` False (with an explanatory
+            ``visible_copy``) when blocked before any provider call, or
+            when ``session_id`` names a session that no longer exists by
+            the time this runs (see ``_session_closed_result``); ``True``
+            once the turn actually proceeds.
+        """
+        active_rejection = self._active_run_rejection(session_id=session_id)
         if active_rejection is not None:
             return active_rejection
 
-        session = self.store.ensure_session(
-            workspace_id=self.store.workspace_context.active_workspace_id,
-        )
+        if session_id:
+            session = next(
+                (s for s in self.store.sessions() if s.id == session_id), None
+            )
+            if session is None:
+                # The dispatching session was closed during the gap between
+                # dispatch and this coroutine actually running -- there is
+                # nothing left to submit into. Stamp the (now-orphaned)
+                # session id, never whatever is active now (see
+                # `_session_closed_result`'s own docstring).
+                return self._session_closed_result(session_id=session_id)
+        else:
+            session = self.store.ensure_session(
+                workspace_id=self.store.workspace_context.active_workspace_id,
+            )
         pendings = self.store.pending_attachments(session.id)
         attachment_mode_pendings = [
             pending
@@ -796,7 +1254,8 @@ class ConsoleChatController:
         )
 
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
+            session_id=session.id,
         )
         try:
             resolution = await self.provider_gateway.resolve_for_send(
@@ -951,7 +1410,35 @@ class ConsoleChatController:
             title=title or f"Chat {next_number}",
             settings=settings,
         )
+        # `create_session` above already activated the new session, so the
+        # default (no explicit session_id -> active session) targets the
+        # session JUST created here -- which is fresh/never-recorded and
+        # therefore already idle, making this call a no-op today. Left
+        # unchanged (rather than reaching for the session being replaced)
+        # for the same reason `switch_session` below is: per-session run
+        # state is meant to persist on the session you're leaving, not be
+        # wiped just because a sibling session appeared.
         self._clear_terminal_run_state()
+        # Fix wave (IMPORTANT 2, final review): re-derive the mounted
+        # approval card for the brand-new (now active) session, exactly
+        # like `switch_session`/`close_session`'s neighbor-activation
+        # branch already do -- without this, a round mounted on the
+        # session being left behind stayed rendered over the new tab
+        # (`create_session` above activates `session`, but nothing else
+        # ever told the card to re-derive for it). A fresh session can
+        # never itself have a parked payload, so this always resolves to
+        # `None` here -- i.e. it always clears -- but going through the
+        # same `_parked_approval_payloads` lookup (rather than a bespoke
+        # unconditional clear) keeps this call site honest with the same
+        # "card state derives from the run's pending review state" rule
+        # every other activation path follows.
+        if self.set_pending_approval is not None:
+            # F2b fix (Qodo wave): guard the read for consistency with
+            # every other `_parked_approval_payloads` access, even though
+            # a single `.get()` is not itself an iteration hazard.
+            with self._approval_state_lock:
+                parked_payload = self._parked_approval_payloads.get(session.id)
+            self.set_pending_approval(parked_payload)
         return session
 
     def _maybe_auto_title_session(
@@ -1030,6 +1517,10 @@ class ConsoleChatController:
             self.system_prompt,
         )
         if current_selection != previous_selection:
+            # No session in scope here -- this is a global provider/model
+            # settings change, not tied to any particular session's run.
+            # Active-session UI path: clears whatever the user is currently
+            # looking at (parallel-agents spec §2).
             self._clear_terminal_run_state()
 
     def update_agent_runtime(
@@ -1051,16 +1542,57 @@ class ConsoleChatController:
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing native Console session."""
+        # Resolve the OUTGOING session BEFORE `store.switch_session` below
+        # moves `active_session_id` -- the no-arg default on
+        # `_clear_terminal_run_state` would otherwise target the session
+        # being ARRIVED AT (active_session_id already points there by the
+        # time it runs). Per the spec's "clear the session you are leaving
+        # if terminal" semantic, every session-scoped write in this refactor
+        # is explicit, so this one is too: pass the outgoing session's id
+        # directly. A session you're ARRIVING AT keeps whatever terminal/
+        # in-flight state it already had (parallel-agents spec §2).
+        previous_session_id = self.store.active_session_id
         session = self.store.switch_session(session_id)
-        self._clear_terminal_run_state()
-        # Binding threading contract (task-5): a conversation switch denies
-        # any pending MCP approval round rather than leaving its worker
-        # thread blocked on a card the user just navigated away from. Only
-        # one run (and therefore one approval round) can be active
-        # controller-wide at a time (`_active_run_rejection` blocks a new
-        # send while one is running), so this is unconditional -- a no-op
-        # whenever no round is in flight.
-        self._deny_pending_approval_on_context_change()
+        # Parallel-agents spec §6: visiting the session you just switched TO
+        # clears its unvisited outcome marker -- must run AFTER the store
+        # swap above so `session_id` really is the new active session by
+        # the time downstream reads (e.g. `run_marker_for`) observe it.
+        self.mark_session_visited(session_id)
+        if previous_session_id is not None:
+            self._clear_terminal_run_state(session_id=previous_session_id)
+        # Task 9 (parked background approvals): mount `session_id`'s
+        # parked round, if any, through the SAME UI bridge
+        # `request_mcp_approvals` uses for an active session's round --
+        # `self.set_pending_approval` is always safe to call with `None`
+        # too (clears whatever the session being LEFT had shown), so this
+        # single call both mounts a newly-visited parked card AND hides a
+        # departing session's card in one step. No `call_from_thread`
+        # marshal needed: `switch_session` always runs on the UI/main
+        # thread already (same convention as `mark_session_visited`/
+        # `_clear_terminal_run_state` above). Card state is entirely
+        # derived from `_parked_approval_payloads` (the round's own
+        # retained pending-review payload) every time this runs, never
+        # from whatever the card happened to be showing before -- so
+        # switching away and back re-mounts it unchanged (spec).
+        #
+        # Supersedes the pre-Task-9 `_deny_pending_approval_on_context_
+        # change()` call that used to run here: that assumed only one
+        # approval round could ever be in flight controller-wide (true
+        # before Task 3's concurrent runs), so ANY switch force-denied it.
+        # Once a background session can carry its own live round, denying
+        # it just for being switched away from directly contradicts
+        # parking -- the round now stays alive until its own resolution
+        # (decision, cancel, or timeout).
+        if self.set_pending_approval is not None:
+            # F2b fix (Qodo wave): guard the read for consistency with
+            # every other `_parked_approval_payloads` access.
+            with self._approval_state_lock:
+                parked_payload = self._parked_approval_payloads.get(session_id)
+            self.set_pending_approval(parked_payload)
+        # Skill-install/script confirms are NOT parked by this task (out of
+        # scope -- see PA-T9 report): still single-slot, controller-wide
+        # rounds, so a context change unconditionally denies whichever one
+        # is pending, same as before Task 9.
         self._deny_pending_skill_install_on_context_change()
         self._deny_pending_skill_script_on_context_change()
         return session
@@ -1074,28 +1606,54 @@ class ConsoleChatController:
         Returns:
             The session activated after closing, or ``None`` when no sessions remain.
         """
-        repair_session = self._active_citation_repair_session
+        repair_session = self._active_citation_repair_sessions.get(session_id)
         self.clear_original_attempts_for_session(session_id)
         owns_active_stream = self._active_stream_belongs_to_session(session_id)
         if repair_session is not None and owns_active_stream:
             repair_session.cancel_reason = "session_close"
         if owns_active_stream:
-            self._signal_stop()
-            if (
-                self._active_stream_task is not None
-                and self._active_stream_task is not asyncio.current_task()
-            ):
-                self._active_stream_task.cancel()
+            self._signal_stop(session_id=session_id)
+            task = self._active_stream_tasks.get(session_id)
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
             self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.STOPPED, "Session closed.")
+                ConsoleRunState(ConsoleRunStatus.STOPPED, "Session closed."),
+                # `session_id` here is the session being CLOSED, which the
+                # `_active_stream_belongs_to_session` guard above confirms
+                # owns the active stream -- not necessarily the currently
+                # ACTIVE session (you can close a background tab while
+                # viewing another one), so this must be explicit rather
+                # than falling back to the active-session default.
+                session_id=session_id,
             )
+        previous_active_id = self.store.active_session_id
         closed = self.store.close_session(session_id)
+        new_active_id = self.store.active_session_id
         if (
             owns_active_stream
             and repair_session is not None
-            and self._active_citation_repair_session is repair_session
+            and self._active_citation_repair_sessions.get(session_id) is repair_session
         ):
-            self._active_citation_repair_session = None
+            self._active_citation_repair_sessions.pop(session_id, None)
+        # Parallel-agents spec §6: closing the ACTIVE session auto-activates
+        # a neighbor (`ConsoleChatStore.close_session`, console_chat_store.py
+        # ~594-604) -- that neighbor is now the VIEWED session exactly as if
+        # `switch_session` had navigated to it, so its unvisited outcome
+        # must clear the same way, AND (Task 9) its parked approval card
+        # (if any) must mount the same way too -- closing a background tab
+        # must never leave the newly-viewed session's own pending approval
+        # invisible just because it arrived here via auto-activation rather
+        # than an explicit switch. Closing a BACKGROUND (non-active) session
+        # leaves `active_session_id` unchanged, so this is a no-op in that
+        # case.
+        if new_active_id is not None and new_active_id != previous_active_id:
+            self.mark_session_visited(new_active_id)
+            if self.set_pending_approval is not None:
+                # F2b fix (Qodo wave): guard the read for consistency with
+                # every other `_parked_approval_payloads` access.
+                with self._approval_state_lock:
+                    parked_payload = self._parked_approval_payloads.get(new_active_id)
+                self.set_pending_approval(parked_payload)
         return closed
 
     def original_attempt_for_message(self, message_id: str) -> str | None:
@@ -1169,56 +1727,170 @@ class ConsoleChatController:
             ),
         )
 
-    def _signal_stop(self) -> None:
-        """Set the shared UI-facing stop flag AND the active run's own
+    def _signal_stop(self, *, session_id: str) -> None:
+        """Set the shared UI-facing stop flag AND ``session_id``'s own
         permanent per-run cancel signal.
 
-        ``_stop_requested`` is reset by the run's own ``finally`` block as
-        soon as the coroutine side of ``_run_agent_reply`` is done handling
-        a cancellation -- but ``asyncio.to_thread`` survives Task
-        cancellation, so the agent bridge's background OS thread can still
-        be running at that point and poll ``should_cancel()`` afterward
-        (task-227). ``_active_cancel_event``, once set here, is never reset
-        for that run, so a still-running bridge thread always observes the
-        Stop correctly regardless of what the coroutine side has already
-        reset.
+        ``_stop_requested`` stays a single shared flag, but as of Fix
+        round 1 (Critical 1) NO run's own cancellation-check loop reads it
+        any more -- ``should_cancel`` (``_run_agent_reply``) and the
+        direct/legacy stream path's own checks (``_stream_assistant_
+        response``) read ONLY their run's own ``_active_cancel_events[
+        owner_id]``, captured by closure. Reading the shared flag from
+        inside a specific run's loop let ANY session's Stop/Close silently
+        truncate an unrelated, untouched session's still-streaming reply
+        (Fix round 1 finding).
+
+        F5 fix (Qodo wave): the three worker-thread approval/confirm
+        bridges no longer read ``_stop_requested`` either (see
+        ``_is_active_session_cancelled``) -- a single session's Stop/Close
+        must not deny an unrelated session's in-flight approval round any
+        more than it may truncate an unrelated session's stream. Real
+        process teardown (``shutdown()``) is the one case where denying
+        every session's round at once is correct; that now goes through
+        the dedicated, never-reset ``_shutdown_requested`` instead.
+        ``_stop_requested`` itself is left set here for any other/legacy
+        reader (kept for back-compat; this method's own contract has
+        always been "set it," not "this is its only reader").
+
+        ``_active_cancel_events[session_id]``, once set here, is never
+        reset for that run, so a still-running bridge thread always
+        observes the Stop correctly regardless of what the coroutine side
+        has already reset (task-227). Every caller (``close_session``,
+        ``stop_active_run``, ``shutdown``) already knows the exact session
+        it is signalling -- there is deliberately no active-session
+        fallback here, unlike ``_set_run_state``.
         """
         self._stop_requested = True
-        if self._active_cancel_event is not None:
-            self._active_cancel_event.set()
+        cancel_event = self._active_cancel_events.get(session_id)
+        if cancel_event is not None:
+            cancel_event.set()
+
+    def _is_active_session_cancelled(self) -> bool:
+        """Best-effort cancel-signal check that falls back to the VIEWED
+        session -- the pre-Task-9 behavior of the three worker-thread
+        approval/confirm bridges below (``request_mcp_approvals``,
+        ``request_skill_install_confirm``, ``request_skill_script_
+        confirm``), preserved here as the fallback ``_is_session_
+        cancelled`` uses when a caller has no ``session_id`` of its own to
+        pass (e.g. a legacy direct call in an older test). See
+        ``_is_session_cancelled``'s own docstring for the Task 9 fix this
+        was carved out of, and for the F5 fix (Qodo wave) that replaced
+        the shared, lifecycle-reset ``_stop_requested`` flag with the
+        never-reset ``_shutdown_requested`` in that same fallback branch.
+        """
+        cancel_event = self._active_cancel_events.get(self.store.active_session_id or "")
+        return cancel_event is not None and cancel_event.is_set()
+
+    def _is_session_cancelled(self, session_id: str | None) -> bool:
+        """Cancellation check for the three worker-thread approval/confirm
+        bridges below, scoped to ``session_id``'s OWN cancel event when
+        known (PA-T9 finding #1 fix).
+
+        Pre-Task-9, all three bridges checked ``self._stop_requested or
+        self._is_active_session_cancelled()`` -- the shared global flag
+        OR'd with the VIEWED session's cancel event, regardless of which
+        session's round was actually waiting. Once background sessions can
+        each carry their own in-flight approval round (parked or not),
+        that was a real cross-session bug: Session A's Stop
+        (``stop_active_run``/``close_session``, via ``_signal_stop``)
+        always sets the shared ``_stop_requested`` flag alongside A's own
+        cancel event, so the OR-check let A's Stop spuriously deny B's
+        completely unrelated, still-waiting approval batch.
+
+        Fix: when ``session_id`` is known, check ONLY that session's own
+        ``_active_cancel_events`` entry -- never the shared flag. This
+        still correctly resolves every INTENTIONAL global-reach case:
+        ``shutdown()`` (the one caller that must stop every session at
+        once) signals every live session's cancel event individually
+        (``_signal_stop(session_id=...)`` in its own per-session loop), so
+        a round scoped to ANY session still observes shutdown via its own
+        event -- ``_stop_requested`` was never the mechanism that made
+        shutdown reach a specific round, just a side effect of
+        ``_signal_stop`` also setting it.
+
+        ``session_id=None`` (a caller with no session context of its own --
+        e.g. an existing test calling ``request_mcp_approvals`` directly
+        with no ``session_id=`` kwarg) falls back to the exact pre-Task-9
+        behavior via ``_is_active_session_cancelled``, so those callers'
+        existing global-flag expectations are unchanged.
+
+        F5 fix (Qodo wave, folded in during the PR2 restack): that
+        ``session_id=None`` fallback used to OR in the shared
+        ``_stop_requested`` flag, which (a) any session's Stop set
+        regardless of which round was waiting, and (b) various run
+        lifecycles reset to ``False`` mid-flight, making whether a
+        still-polling bridge observed an earlier Stop a race. It now ORs
+        in ``_shutdown_requested`` instead -- set exactly once, only by
+        ``shutdown()``, and never reset -- so a legacy no-session caller's
+        "global stop denies" expectation is preserved for the one case
+        (real process teardown) where that is actually correct, without
+        reintroducing cross-session poisoning for everyday per-session
+        Stop/Close.
+        """
+        if session_id is not None:
+            cancel_event = self._active_cancel_events.get(session_id)
+            return cancel_event is not None and cancel_event.is_set()
+        return self._shutdown_requested.is_set() or self._is_active_session_cancelled()
 
     # -- MCP batch-approval bridge (task-5) ----------------------------------
 
-    def request_mcp_approvals(self, pending: list[MCPPendingCall]) -> dict[str, str]:
+    def request_mcp_approvals(
+        self, pending: list[MCPPendingCall], *, session_id: str | None = None
+    ) -> dict[str, str]:
         """Bridge one batch of pending MCP tool calls to the Console UI and back.
 
-        WORKER THREAD. Bound as ``MCPToolProvider``'s ``approval_callback``
-        (T6's closure hands ``self.request_mcp_approvals`` straight
-        through), so this runs on the agent bridge's background OS thread
-        (the ``asyncio.to_thread`` call inside ``_run_agent_reply``) --
-        it must never touch a widget directly, only through
-        ``self.app.call_from_thread``.
+        WORKER THREAD. Bound (via a ``functools.partial`` binding this
+        run's ``session_id``, Task 9) as ``MCPToolProvider``'s
+        ``approval_callback`` and ``build_tool_review_hook``'s
+        ``request_approvals``, so this runs on the agent bridge's
+        background OS thread (the ``asyncio.to_thread`` call inside
+        ``_run_agent_reply``) -- it must never touch a widget directly,
+        only through ``self.app.call_from_thread``.
 
-        Builds a fresh ``threading.Event`` + shared decisions dict, surfaces
-        the batch via ``self.set_pending_approval`` (marshaled onto the UI
-        thread), then polls ``event.wait(1.0)`` re-checking this run's
-        cancel signals and a deadline every second until one of three things
-        happens: the user submits a decision (``resolve_pending_approval``,
-        called from the UI thread, sets the Event), the run is
-        cancelled/stopped/torn down (``_stop_requested``/
-        ``_active_cancel_event`` -- already wired by ``stop_active_run``,
-        ``close_session``, and ``shutdown`` via ``_signal_stop``), or the
-        configured approval timeout elapses. Whichever unique ``llm_name``
-        never received an explicit decision by then fails closed to
-        ``"deny"`` (cancellation) or ``"timeout"`` (deadline) -- see
+        Builds a fresh ``threading.Event`` + shared decisions dict (stored
+        under this round's own entry in ``_pending_approval_rounds``, keyed
+        by a freshly minted ``round_id`` -- see that map's own docstring
+        for why a single shared slot, or a slot keyed by session id alone,
+        could not survive concurrent sessions or same-session round
+        replacement). Either MOUNTS the card immediately (``session_id`` is
+        the currently ACTIVE/viewed session, or unknown -- legacy
+        no-session callers keep the pre-Task-9 always-mount behavior) or
+        PARKS it (``session_id`` is a DIFFERENT, background session --
+        Task 9: the retained ``payload`` goes into
+        ``_parked_approval_payloads`` for ``switch_session`` to mount
+        later, and ``park_pending_approval`` fires the fleet badge +
+        one-shot toast instead of touching the mounted-card slot). Either
+        way it then polls ``event.wait(1.0)`` re-checking this run's OWN
+        cancel signal (``_is_session_cancelled``) and a deadline every
+        second until one of three things happens: the user submits a
+        decision (``resolve_pending_approval``, called from the UI thread
+        once the card's own stamped ``round_id`` is delivered back, sets
+        the Event -- Fix round 1: NOT "whichever round belongs to the
+        active session", see ``resolve_pending_approval``'s own docstring
+        for why that was a real cross-session misattribution hazard), the
+        run is cancelled/torn down (``_is_session_cancelled`` -- F5 fix,
+        Qodo wave: this round's OWN cancel event, or real process teardown
+        via ``_shutdown_requested``, never any OTHER session's bare Stop --
+        see that method's own docstring), or the configured approval
+        timeout elapses. Whichever unique ``llm_name`` never received an
+        explicit decision by then fails closed to ``"deny"``
+        (cancellation) or ``"timeout"`` (deadline) -- see
         ``MCPToolProvider._apply_verdict`` for how each decision string is
-        consumed. The card is always cleared afterwards (``finally``),
-        regardless of outcome.
+        consumed. The mounted card (if any) is always cleared afterwards
+        (``finally``), regardless of outcome -- but ONLY if this round's
+        session is STILL the active one at that moment, so a background
+        round resolving (timeout/cancel) while some OTHER session's card is
+        showing never clobbers it.
 
         Args:
             pending: One turn's pending tool calls awaiting approval,
                 possibly containing repeated ``llm_name``s (T3: calls
                 sharing a name share one verdict).
+            session_id: The run's OWNING session (Task 3 threads it through
+                ``_run_agent_reply``). ``None`` preserves every pre-Task-9
+                call site's behavior (always mounts against whatever
+                session is active at ROUND-key time; no parking).
 
         Returns:
             A decision string (``approve_once``/``approve_session``/
@@ -1238,12 +1910,40 @@ class ConsoleChatController:
 
         event = threading.Event()
         decisions: dict[str, str] = {}
-        self._pending_approval_event = event
-        self._pending_approval_decisions = decisions
+        # Fix round 1 (review CRITICAL finding): keyed by a freshly minted
+        # ROUND id, not by session id (or the active session) -- a session-
+        # keyed slot is ambiguous the moment either (a) the ACTIVE session
+        # changes between this round starting and the user's decision
+        # arriving (`ApprovalDecided` travels as an async Textual message,
+        # so a `switch_session` can land in that gap), or (b) a second
+        # round starts for the SAME session before a first round's stale
+        # decision message is delivered -- either way a session-keyed slot
+        # would let a stale/misdirected decision resolve the WRONG round.
+        # `round_id` is stamped into `payload` below, round-trips through
+        # `ChatApprovalCard.set_batch` -> `ApprovalDecided` ->
+        # `resolve_pending_approval`, and is the ONLY thing that round is
+        # ever resolved by -- mirrors `_pending_skill_script_rounds`'
+        # identical `request_id`-keyed defense.
+        round_id = str(uuid4())
+        owning_session_id = session_id if session_id is not None else (
+            self.store.active_session_id or ""
+        )
+        # F2b fix (Qodo wave): guard the round registration -- the UI
+        # thread's `resolve_pending_approval`/legacy fallback and the
+        # `fleet_summary_counts` sync tick can read/iterate this map
+        # concurrently with this worker thread's own writes.
+        with self._approval_state_lock:
+            self._pending_approval_rounds[round_id] = {
+                "event": event,
+                "decisions": decisions,
+                "session_id": owning_session_id,
+            }
 
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
         deadline = time.monotonic() + timeout_seconds
         payload = {
+            "round_id": round_id,
+            "session_id": owning_session_id,
             "calls": [
                 {
                     "llm_name": call.llm_name,
@@ -1258,14 +1958,54 @@ class ConsoleChatController:
             ],
             "timeout_seconds": timeout_seconds,
         }
+        # Task 9: park rather than mount when this round's session is a
+        # DIFFERENT, background session -- `session_id is None` (a legacy
+        # caller with no session context) always mounts, matching every
+        # pre-Task-9 call site.
+        is_parked = (
+            session_id is not None
+            and session_id != (self.store.active_session_id or "")
+        )
+        if session_id is not None:
+            # Set the badge flag directly here (worker thread, plain-dict/
+            # set mutation -- same no-marshal convention as `_active_
+            # cancel_events` elsewhere in this class) so it is authoritative
+            # regardless of whether a UI bridge happens to be wired.
+            # `park_pending_approval`/`ChatScreen._park_console_approval`
+            # ALSO sets it (harmless: `set.add` is idempotent) -- that is
+            # what makes `_park_console_approval` a self-contained seam
+            # tests can call directly without a live round.
+            self.set_run_pending_approval(session_id, True)
+            # Fix wave (CRITICAL 1, final review): retain THIS round's
+            # payload for EVERY session-attributed round -- mounted or
+            # parked -- not just a parked one. `switch_session` re-derives
+            # the card EXCLUSIVELY from `_parked_approval_payloads` (never
+            # from whatever the card happened to already be showing), so a
+            # round that mounted immediately (session_id was the active
+            # session at round-start) was previously unrecoverable the
+            # moment the user switched away and back: the lookup found
+            # nothing, mounted `None`, and the round silently hung with a
+            # stale NEEDS_APPROVAL badge and no card until its 120s
+            # timeout. The `finally` below already pops this key
+            # unconditionally (whenever `session_id is not None`,
+            # regardless of `is_parked`) -- storing it unconditionally
+            # here too makes retention symmetric with that cleanup, per
+            # spec §5 ("card state survives tab switches") for every round,
+            # not only parked ones.
+            # F2b fix (Qodo wave): guard the store -- `switch_session`'s
+            # own re-derive read (`.get()`) runs on the UI thread and can
+            # race this worker-thread write.
+            with self._approval_state_lock:
+                self._parked_approval_payloads[session_id] = payload
 
         try:
-            self._marshal_pending_approval(payload)
+            if is_parked:
+                if self.app is not None and self.park_pending_approval is not None:
+                    self.app.call_from_thread(self.park_pending_approval, session_id)
+            else:
+                self._marshal_pending_approval(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._stop_requested or (
-                    self._active_cancel_event is not None
-                    and self._active_cancel_event.is_set()
-                ):
+                if self._is_session_cancelled(session_id):
                     # Finding I3: a stop/unmount that resolves THIS round
                     # denies every still-undecided call, but
                     # `run_agent_loop`'s own `should_cancel()` check fires
@@ -1311,14 +2051,31 @@ class ConsoleChatController:
             # a second source of truth.
             return {name: decisions.get(name, "deny") for name in unique_names}
         finally:
-            self._pending_approval_event = None
-            self._pending_approval_decisions = None
-            try:
-                self._marshal_pending_approval(None)
-            except Exception:  # noqa: BLE001 -- suppress teardown-time errors
-                logger.opt(exception=True).debug(
-                    "Failed to marshal approval clear during teardown"
-                )
+            # F2b fix (Qodo wave): guard both pops -- `resolve_pending_
+            # approval`'s legacy fallback and `switch_session`'s re-derive
+            # read can each observe these maps from the UI thread while
+            # this worker thread tears the round down.
+            with self._approval_state_lock:
+                self._pending_approval_rounds.pop(round_id, None)
+                if session_id is not None:
+                    self._parked_approval_payloads.pop(session_id, None)
+            if session_id is not None:
+                self.set_run_pending_approval(session_id, False)
+            # Only clear the MOUNTED card if this round's session is still
+            # the one being viewed right now -- a parked round resolving
+            # (timeout/cancel) in the background, or one that was visited-
+            # then-abandoned-again before deciding, must never blank
+            # whatever the CURRENTLY active session's own card is showing.
+            still_active = session_id is None or session_id == (
+                self.store.active_session_id or ""
+            )
+            if still_active:
+                try:
+                    self._marshal_pending_approval(None)
+                except Exception:  # noqa: BLE001 -- suppress teardown-time errors
+                    logger.opt(exception=True).debug(
+                        "Failed to marshal approval clear during teardown"
+                    )
 
     def _record_cancelled_approval_decisions(
         self,
@@ -1423,6 +2180,7 @@ class ConsoleChatController:
 
     async def _compose_mcp_provider(
         self,
+        session_id: str | None = None,
     ) -> tuple[
         MCPToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
@@ -1448,6 +2206,17 @@ class ConsoleChatController:
         this is the only production writer of ``console_mcp_tool_count``/
         ``console_mcp_not_connected_count``.
 
+        Args:
+            session_id: The run's OWNING session (Task 3/9) -- threaded
+                into the composed provider's ``approval_callback`` (via a
+                ``functools.partial`` binding, since ``MCPToolProvider``
+                calls it with a fixed ``[pending]`` single-list arg) so a
+                single-call fallback approval raised through
+                ``invoke()``'s own gate parks/mounts and scopes its cancel
+                check exactly like the batch review-hook path does.
+                ``None`` (the default -- every pre-Task-9 call site) keeps
+                ``request_mcp_approvals``' legacy no-session behavior.
+
         Returns:
             ``(provider, review_tool_calls)`` when eligible -- a composed
             ``MCPToolProvider`` ready to hand to ``ConsoleAgentBridge.
@@ -1469,10 +2238,13 @@ class ConsoleChatController:
         if kill_switch:
             self._publish_mcp_inspector_counts(None, None)
             return None, None
+        bound_request_approvals = functools.partial(
+            self.request_mcp_approvals, session_id=session_id
+        )
         provider = MCPToolProvider(
             service=service,
             main_loop=asyncio.get_running_loop(),
-            approval_callback=self.request_mcp_approvals,
+            approval_callback=bound_request_approvals,
         )
         try:
             await provider.compose_catalog()
@@ -1487,58 +2259,117 @@ class ConsoleChatController:
             self._publish_mcp_inspector_counts(None, None)
             return None, None
         self._publish_mcp_inspector_counts(len(catalog), provider.not_connected_count)
-        return provider, build_mcp_review_hook(provider, self.request_mcp_approvals)
+        return provider, build_mcp_review_hook(provider, bound_request_approvals)
 
-    def resolve_pending_approval(self, decisions: dict[str, str]) -> None:
+    def resolve_pending_approval(
+        self, decisions: dict[str, str], *, round_id: str | None = None
+    ) -> None:
         """UI THREAD: apply the user's batch decision, releasing the waiting worker thread.
 
         Called by ``ChatScreen``'s ``ChatApprovalCard.ApprovalDecided``
-        handler. A no-op when there is no active round (e.g. a stale
-        message arriving after a timeout/cancellation already resolved and
-        cleared it).
+        handler, which forwards ``event.round_id`` -- the SAME id
+        ``request_mcp_approvals`` stamped into the payload the card was
+        built from (``ChatApprovalCard.set_batch`` stashes it;
+        ``_submit_batch_decisions`` echoes it back on submit, mirroring
+        ``resolve_pending_skill_script``'s identical ``request_id``
+        round-trip).
 
-        NOTE: Snapshots ``_pending_approval_decisions`` and ``_pending_approval_event``
-        into locals to avoid TOCTOU race: the worker thread's ``finally`` block nulls
-        both attributes concurrently. Guard and act only on the snapshots.
+        Fix round 1 (review CRITICAL finding): resolves ONLY the round
+        whose id matches ``round_id`` -- never "whichever round belongs to
+        the currently active session". ``ApprovalDecided`` travels as an
+        async Textual message: a ``switch_session`` landing in the gap
+        between the user's click and this handler running would otherwise
+        let session A's decision resolve session B's completely different,
+        unreviewed batch (or, for the same session, let a STALE decision
+        from an already-ended round 1 resolve a newer round 2 that
+        happened to arm before the stale message was delivered). A
+        mismatched or stale ``round_id`` -- including one belonging to a
+        round that already resolved and was popped -- is a safe no-op: the
+        real round (if any) stays pending and its card re-derives
+        unchanged on the next visit; nothing is ever auto-approved or
+        denied-by-accident here.
+
+        ``round_id=None`` preserves the pre-fix-round-1 fallback for
+        direct/legacy callers with no token to pass (e.g. existing tests
+        that call this immediately after arming a round with no session
+        switch in between): resolves whichever round belongs to the
+        CURRENTLY ACTIVE session, matching every such caller's existing
+        expectations. Production (``ChatApprovalCard``/``ChatScreen``)
+        always passes the real ``round_id`` now.
+
+        A no-op when there is no matching round at all (e.g. a stale
+        message arriving after a timeout/cancellation already resolved and
+        cleared it, or -- with no ``round_id`` -- simply no round pending
+        for the active session).
+
+        NOTE: Snapshots the round's ``decisions``/``event`` into locals to
+        avoid TOCTOU race: the worker thread's ``finally`` block pops the
+        round entry out of ``_pending_approval_rounds`` concurrently. Guard
+        and act only on the snapshots.
+
+        Args:
+            decisions: The user's per-``llm_name`` decision strings
+                (``approve_once``/``approve_session``/``always_allow``/
+                ``deny``) to merge into the round's shared decisions dict.
+            round_id: The specific round to resolve (the id stamped onto
+                the card the user actually decided). ``None`` falls back to
+                whichever round belongs to the currently active session
+                (legacy/direct-call compatibility -- see above).
         """
-        # Snapshot both at once to prevent TOCTOU race with worker thread's finally block
-        decisions_dict = self._pending_approval_decisions
-        approval_event = self._pending_approval_event
-        if decisions_dict is None or approval_event is None:
+        # F2b/F3b fix (Qodo wave, task-913): both branches read
+        # ``_pending_approval_rounds`` under the shared lock -- the worker
+        # thread's own registration (``request_mcp_approvals``) and
+        # teardown (its ``finally``) can mutate this dict concurrently
+        # with either branch here. The legacy ``round_id=None`` fallback
+        # in particular used to iterate ``.values()`` live; snapshotting
+        # it into a list under the lock first (then iterating the
+        # snapshot, outside the lock) closes the same
+        # "dictionary changed size during iteration" hazard
+        # ``fleet_summary_counts`` had for ``_pending_approvals``.
+        if round_id is not None:
+            with self._approval_state_lock:
+                round_state = self._pending_approval_rounds.get(round_id)
+        else:
+            active = self.store.active_session_id or ""
+            with self._approval_state_lock:
+                round_states = list(self._pending_approval_rounds.values())
+            round_state = next(
+                (
+                    state
+                    for state in round_states
+                    if state.get("session_id") == active
+                ),
+                None,
+            )
+        if round_state is None:
             return
+        # Snapshot both at once to prevent TOCTOU race with worker thread's finally block
+        decisions_dict = round_state["decisions"]
+        approval_event = round_state["event"]
         decisions_dict.update(decisions or {})
         approval_event.set()
 
-    def _deny_pending_approval_on_context_change(self) -> None:
-        """Force-resolve a pending approval round as denied for undecided calls.
-
-        Sets the round's Event without pre-filling ``decisions`` --
-        ``request_mcp_approvals``'s own post-loop fill-in resolves every
-        name that still lacks an explicit entry to ``"deny"``. A no-op when
-        no round is pending.
-
-        NOTE: Snapshots ``_pending_approval_event`` into a local to avoid TOCTOU race
-        with the worker thread's ``finally`` block that nulls it concurrently.
-        """
-        # Snapshot to prevent TOCTOU race with worker thread's finally block
-        approval_event = self._pending_approval_event
-        if approval_event is not None:
-            approval_event.set()
-
     # -- Skill-install confirm bridge (task-5) -------------------------------
 
-    def request_skill_install_confirm(self, url: str) -> bool:
+    def request_skill_install_confirm(
+        self, url: str, *, session_id: str | None = None
+    ) -> bool:
         """WORKER THREAD: ask the user to confirm a skill install before any fetch.
 
         Blocks on a fresh threading.Event, surfacing an Allow/Deny card via
         set_pending_skill_install (marshaled onto the UI thread), then polls
-        re-checking this run's cancel signals and a deadline. Cancel/stop,
-        timeout, context-change, or no wired UI all resolve to DENY
-        (fail-closed). Returns True only on an explicit Allow.
+        re-checking this run's cancel signals (scoped to ``session_id``'s
+        own cancel event when known -- PA-T9 finding #1, see
+        ``_is_session_cancelled``) and a deadline. Cancel/stop, timeout,
+        context-change, or no wired UI all resolve to DENY (fail-closed).
+        Returns True only on an explicit Allow.
 
         Args:
             url: The skill source URL the model wants to install, surfaced
                 verbatim on the confirm card for the user to inspect.
+            session_id: The run's OWNING session (Task 3/9). ``None``
+                preserves the pre-Task-9 VIEWED-session/global-flag
+                fallback (see ``_is_session_cancelled``).
 
         Returns:
             True only on an explicit Allow; every other path (deny, cancel,
@@ -1565,10 +2396,7 @@ class ConsoleChatController:
         try:
             self._marshal_pending_skill_install(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._stop_requested or (
-                    self._active_cancel_event is not None
-                    and self._active_cancel_event.is_set()
-                ):
+                if self._is_session_cancelled(session_id):
                     break
                 if time.monotonic() >= deadline:
                     break
@@ -1617,7 +2445,9 @@ class ConsoleChatController:
 
     # -- Skill-script confirm bridge -----------------------------------------
 
-    def request_skill_script_confirm(self, payload: dict[str, Any]) -> dict[str, bool]:
+    def request_skill_script_confirm(
+        self, payload: dict[str, Any], *, session_id: str | None = None
+    ) -> dict[str, bool]:
         """WORKER THREAD: ask the user to confirm running a skill's script.
 
         Mirrors request_skill_install_confirm, but carries a two-part decision:
@@ -1634,6 +2464,10 @@ class ConsoleChatController:
             payload: Confirm details to render ({"skill_name", "script_path",
                 "mechanism", "args", ...}); "timeout_seconds" and
                 "request_id" keys are added before marshaling to the UI.
+            session_id: The run's OWNING session (Task 3/9), scoping the
+                cancel check (``_is_session_cancelled`` -- PA-T9 finding
+                #1). ``None`` preserves the pre-Task-9 VIEWED-session/
+                global-flag fallback.
 
         Returns:
             ``{"allow": bool, "remember": bool}``. Every non-Allow path (deny,
@@ -1664,10 +2498,7 @@ class ConsoleChatController:
         try:
             self._marshal_pending_skill_script(card_payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._stop_requested or (
-                    self._active_cancel_event is not None
-                    and self._active_cancel_event.is_set()
-                ):
+                if self._is_session_cancelled(session_id):
                     break
                 if time.monotonic() >= deadline:
                     break
@@ -1760,7 +2591,16 @@ class ConsoleChatController:
             return list(self._pending_skill_script_rounds)
 
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
-        """Request the active stream to stop at the next safe boundary.
+        """Request the ACTIVE (viewed) session's stream to stop at the next
+        safe boundary.
+
+        Task 3b requirement 2: name and public semantics are unchanged --
+        this is the Stop button's contract, and it only ever targets
+        whatever session ``self.store.active_session_id`` currently is,
+        never a background run in another tab. A background run is
+        completely unaffected by this call (its own entries in the
+        per-session maps below are untouched); see ``shutdown`` for the
+        teardown path that stops every session at once.
 
         Args:
             record_user_stop: Append the explicit "stopped by user"
@@ -1768,24 +2608,24 @@ class ConsoleChatController:
                 ``False`` — a teardown stop is not a user action.
 
         Returns:
-            True when an active run was found and stopped.
+            True when the viewed session had an active run and it was
+            stopped; False (a no-op) when it did not.
         """
-        repair_session = self._active_citation_repair_session
+        session_id = self.store.active_session_id or ""
+        repair_session = self._active_citation_repair_sessions.get(session_id)
         if repair_session is not None and repair_session.selection_committed:
             return False
         if repair_session is not None and repair_session.phase in {
             "checking",
             "repair_streaming",
         }:
-            if self._active_assistant_message_id is None:
+            if self._active_assistant_message_ids.get(session_id) is None:
                 return False
             repair_session.cancel_reason = "user" if record_user_stop else "shutdown"
-            self._signal_stop()
-            if (
-                self._active_stream_task is not None
-                and self._active_stream_task is not asyncio.current_task()
-            ):
-                self._active_stream_task.cancel()
+            self._signal_stop(session_id=session_id)
+            task = self._active_stream_tasks.get(session_id)
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
             return True
 
         if self.run_state.status is not ConsoleRunStatus.STREAMING:
@@ -1794,12 +2634,12 @@ class ConsoleChatController:
                 return False
         else:
             assistant_message_id = (
-                self._active_assistant_message_id
+                self._active_assistant_message_ids.get(session_id)
                 or self._active_streaming_assistant_message_id()
             )
         if assistant_message_id is None:
             return False
-        self._signal_stop()
+        self._signal_stop(session_id=session_id)
         self._mark_stream_stopped(
             assistant_message_id,
             visible_copy="Response stopped.",
@@ -1809,47 +2649,89 @@ class ConsoleChatController:
             # copy is transient and the review found nothing else marked
             # the interruption.
             try:
-                session_id = self.store.session_id_for_message(assistant_message_id)
+                owner_id = self.store.session_id_for_message(assistant_message_id)
                 self.store.append_message(
-                    session_id,
+                    owner_id,
                     role=ConsoleMessageRole.SYSTEM,
                     content="Response stopped by user.",
                 )
             except KeyError:
                 pass
-        if (
-            self._active_stream_task is not None
-            and self._active_stream_task is not asyncio.current_task()
-        ):
-            self._active_stream_task.cancel()
+        task = self._active_stream_tasks.get(session_id)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
         return True
 
     async def shutdown(self) -> None:
-        """Stop and await the active stream task before owner teardown."""
+        """Stop and await EVERY session's active stream task before owner
+        teardown.
+
+        Task 3b requirement 3: unlike ``stop_active_run`` (deliberately
+        scoped to the VIEWED session only), teardown is global -- a
+        background run must never survive owner shutdown just because the
+        user was looking at a different tab when the app closed. Mirrors
+        ``stop_active_run``'s manual signal-then-cancel fallback for every
+        session with a live entry, rather than reusing ``stop_active_run``
+        itself, which by contract only ever resolves the active session.
+
+        F5 fix (Qodo wave): sets ``_shutdown_requested`` unconditionally
+        and FIRST -- before the no-tasks early return below -- so a
+        worker-thread approval/confirm bridge polling on behalf of a run
+        this method doesn't (yet) see in ``_active_stream_tasks`` still
+        observes real process teardown.
+        """
+        self._shutdown_requested.set()
         for message_id in tuple(self._original_attempts):
             self.clear_original_attempt(message_id)
-        task = self._active_stream_task
-        if task is None:
+        tasks = dict(self._active_stream_tasks)
+        if not tasks:
             return
-        if not self.stop_active_run(record_user_stop=False):
-            self._signal_stop()
-            if task is not asyncio.current_task():
+        current = asyncio.current_task()
+        for session_id in tasks:
+            # Dev's citation-repair feature threads a `cancel_reason`
+            # ("user" vs "shutdown") through `ConsoleCitationRepairSession`
+            # so `commit_canceled()` knows whether to append a "canceled by
+            # user" system row (`stop_active_run` sets this for the VIEWED
+            # session it targets) -- global teardown must set the same
+            # field for EVERY session's own in-flight repair, or a
+            # still-checking/repair-streaming session falls back to
+            # whatever `cancel_reason` (if any) was already there.
+            repair_session = self._active_citation_repair_sessions.get(session_id)
+            if (
+                repair_session is not None
+                and not repair_session.selection_committed
+                and repair_session.phase in {"checking", "repair_streaming"}
+            ):
+                repair_session.cancel_reason = "shutdown"
+            self._signal_stop(session_id=session_id)
+        for session_id, task in tasks.items():
+            if task is not current:
                 task.cancel()
-        if task is asyncio.current_task():
-            return
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            # Shutdown is a teardown path; stale task failures should not crash owner cleanup.
-            pass
-        finally:
-            if self._active_stream_task is task:
-                self._active_assistant_message_id = None
-                self._active_stream_task = None
-                self._stop_requested = False
-                self._active_cancel_event = None
+        for session_id, task in tasks.items():
+            if task is current:
+                # Shutdown was invoked from within its own run's task --
+                # cannot cancel/await itself; that run's own finally will
+                # still fire once this coroutine naturally unwinds.
+                continue
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                # Shutdown is a teardown path; stale task failures should not crash owner cleanup.
+                pass
+        self._stop_requested = False
+        # Safety net: each task's own `finally` (in `_stream_assistant_
+        # response`/`_run_agent_reply`) already pops ITS OWN session's
+        # entries on the happy path -- this only catches a task that
+        # somehow never reached that finally (e.g. a test double, or a
+        # task that failed before it), so teardown never leaves a stale
+        # entry behind for any session.
+        for session_id, task in tasks.items():
+            if self._active_stream_tasks.get(session_id) is task:
+                self._active_stream_tasks.pop(session_id, None)
+                self._active_assistant_message_ids.pop(session_id, None)
+                self._active_cancel_events.pop(session_id, None)
 
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
@@ -1881,12 +2763,17 @@ class ConsoleChatController:
         message_session_id = self.store.session_id_for_message(message_id)
         if message_session_id != session_id:
             visible_copy = "Open the original session before retrying this message."
-            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            self._set_run_state(
+                ConsoleRunState.blocked(visible_copy), session_id=session_id
+            )
             return ConsoleSubmitResult(False, False, visible_copy)
         if message.status != "failed":
             return self._block(session_id, "Only failed messages can be retried.")
 
-        self._set_run_state(ConsoleRunState.retrying("Retrying failed response."))
+        self._set_run_state(
+            ConsoleRunState.retrying("Retrying failed response."),
+            session_id=session_id,
+        )
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection()
         )
@@ -1948,11 +2835,14 @@ class ConsoleChatController:
             visible_copy = (
                 "Open the original session before continuing from this message."
             )
-            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            self._set_run_state(
+                ConsoleRunState.blocked(visible_copy), session_id=session_id
+            )
             return ConsoleSubmitResult(False, False, visible_copy)
 
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
+            session_id=session_id,
         )
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection()
@@ -2051,11 +2941,14 @@ class ConsoleChatController:
             )
         if self.store.session_id_for_message(message_id) != session_id:
             visible_copy = "Open the original session before regenerating this message."
-            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            self._set_run_state(
+                ConsoleRunState.blocked(visible_copy), session_id=session_id
+            )
             return ConsoleSubmitResult(False, False, visible_copy)
 
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
+            session_id=session_id,
         )
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection()
@@ -2157,14 +3050,18 @@ class ConsoleChatController:
             return ConsoleSubmitResult(False, False, "No active Console session.")
 
         if message_id not in self.store.active_path_message_ids(session_id):
-            return self._summarize_block("Switch to that branch before summarizing.")
+            return self._summarize_block(
+                session_id, "Switch to that branch before summarizing."
+            )
         try:
             target = self.store.get_message(message_id)
         except KeyError:
-            return self._summarize_block("Switch to that branch before summarizing.")
+            return self._summarize_block(
+                session_id, "Switch to that branch before summarizing."
+            )
         if target.role is not ConsoleMessageRole.USER:
             return self._summarize_block(
-                "Only your own messages can be summarized up to here."
+                session_id, "Only your own messages can be summarized up to here."
             )
 
         messages = self.store.messages_for_session(session_id)
@@ -2172,14 +3069,18 @@ class ConsoleChatController:
             (i for i, m in enumerate(messages) if m.id == message_id), None
         )
         if target_index is None:
-            return self._summarize_block("Switch to that branch before summarizing.")
+            return self._summarize_block(
+                session_id, "Switch to that branch before summarizing."
+            )
         before = [
             m
             for m in messages[:target_index]
             if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
         ]
         if not before:
-            return self._summarize_block("Nothing to summarize before that message.")
+            return self._summarize_block(
+                session_id, "Nothing to summarize before that message."
+            )
 
         # Rolling compaction: when a prior boundary sits on this path BEFORE the
         # target, the prior summary already covers everything strictly before
@@ -2203,14 +3104,16 @@ class ConsoleChatController:
 
         # "Summarizing..." run state, set the way regenerate sets VALIDATING.
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…")
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…"),
+            session_id=session_id,
         )
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection()
         )
         if not getattr(resolution, "ready", False):
             return self._summarize_block(
-                self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+                session_id,
+                self._blocked_visible_copy(getattr(resolution, "visible_copy", "")),
             )
 
         span_text = self._build_summary_span_text(
@@ -2234,26 +3137,38 @@ class ConsoleChatController:
                 "Console summarize-up-to failed", error=str(error)
             )
             visible_copy = "Couldn't summarize the conversation. Try again."
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+                session_id=session_id,
+            )
             return ConsoleSubmitResult(False, False, visible_copy)
 
         if not summary_text.strip():
-            return self._summarize_block("The model returned an empty summary.")
+            return self._summarize_block(
+                session_id, "The model returned an empty summary."
+            )
 
         self.store.set_session_context_summary(session_id, summary_text, message_id)
         turns = sum(1 for m in before if m.role is ConsoleMessageRole.USER)
         visible_copy = f"Summarized {turns} earlier turn{'s' if turns != 1 else ''}."
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, visible_copy))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, visible_copy),
+            session_id=session_id,
+        )
         return ConsoleSubmitResult(True, False, visible_copy)
 
-    def _summarize_block(self, visible_copy: str) -> ConsoleSubmitResult:
+    def _summarize_block(
+        self, session_id: str, visible_copy: str
+    ) -> ConsoleSubmitResult:
         """Blocked-summarize result that mutates NO transcript state.
 
         Unlike ``_block`` (which appends a SYSTEM row), a blocked summarize
         must leave the transcript untouched -- the run-state copy alone carries
         the reason to the control surfaces (Phase B discipline).
         """
-        self._set_run_state(ConsoleRunState.blocked(visible_copy))
+        self._set_run_state(
+            ConsoleRunState.blocked(visible_copy), session_id=session_id
+        )
         return ConsoleSubmitResult(False, False, visible_copy)
 
     def _build_summary_span_text(
@@ -2386,7 +3301,9 @@ class ConsoleChatController:
             )
         if self.store.session_id_for_message(message_id) != session_id:
             visible_copy = "Open the original session before editing this message."
-            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            self._set_run_state(
+                ConsoleRunState.blocked(visible_copy), session_id=session_id
+            )
             return ConsoleSubmitResult(False, False, visible_copy)
         if message_id not in self.store.active_path_message_ids(session_id):
             # Task 2 review fix (Qodo finding 2): `_provider_messages_for_session`
@@ -2418,7 +3335,8 @@ class ConsoleChatController:
                 return self._block(session_id, block_reason)
 
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
+            session_id=session_id,
         )
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection()
@@ -3530,7 +4448,9 @@ class ConsoleChatController:
         return copy or "Provider blocked."
 
     def _block(self, session_id: str, visible_copy: str) -> ConsoleSubmitResult:
-        self._set_run_state(ConsoleRunState.blocked(visible_copy))
+        self._set_run_state(
+            ConsoleRunState.blocked(visible_copy), session_id=session_id
+        )
         self.store.append_message(
             session_id,
             role=ConsoleMessageRole.SYSTEM,
@@ -3803,6 +4723,9 @@ class ConsoleChatController:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
+            # The message itself is already gone -- no owning session to
+            # attribute this to; default (active session) is a harmless
+            # no-op since nothing will ever read a closed session's state.
             return self._session_closed_result()
         owner = next((s for s in self.store.sessions() if s.id == owner_id), None)
         # task-427: a character session always takes the plain-provider
@@ -3853,10 +4776,10 @@ class ConsoleChatController:
             # swallows a store-close race that happens during the append.
             self._append_history_trimmed_note(owner_id, bound.dropped_count)
         active_task = asyncio.current_task()
-        self._active_assistant_message_id = assistant_message_id
-        self._active_stream_task = active_task
+        self._active_assistant_message_ids[owner_id] = assistant_message_id
+        self._active_stream_tasks[owner_id] = active_task
         self._stop_requested = False
-        self._active_citation_repair_session = citation_repair_session
+        self._active_citation_repair_sessions[owner_id] = citation_repair_session
         stream_signals = (
             ConsoleProviderStreamSignals()
             if citation_repair_session is not None
@@ -3893,14 +4816,25 @@ class ConsoleChatController:
             )
         finally:
             if (
-                self._active_stream_task is active_task
-                and self._active_assistant_message_id == assistant_message_id
+                self._active_stream_tasks.get(owner_id) is active_task
+                and self._active_assistant_message_ids.get(owner_id)
+                == assistant_message_id
             ):
-                self._active_assistant_message_id = None
-                self._active_stream_task = None
+                self._active_stream_tasks.pop(owner_id, None)
+                self._active_assistant_message_ids.pop(owner_id, None)
                 self._stop_requested = False
-                if self._active_citation_repair_session is citation_repair_session:
-                    self._active_citation_repair_session = None
+                if self._active_citation_repair_sessions.get(owner_id) is citation_repair_session:
+                    self._active_citation_repair_sessions.pop(owner_id, None)
+                # Task 3b (agent path): `_run_agent_reply`'s own finally
+                # deliberately leaves its cancel_event live past its own
+                # return (see that finally's docstring) so the citation-
+                # repair post-generation check -- which runs afterward, on
+                # this same task, via `_finalize_agent_reply` -- still
+                # observes it. This is the one place left to retire it, now
+                # that the whole run (agent OR direct) has fully finished.
+                # A no-op for the direct path, whose own finally already
+                # popped its own cancel_event before returning.
+                self._active_cancel_events.pop(owner_id, None)
 
     async def _run_direct_provider_reply(
         self,
@@ -3915,6 +4849,18 @@ class ConsoleChatController:
         citation_repair_session: ConsoleCitationRepairSession | None,
         stream_signals: ConsoleProviderStreamSignals | None,
     ) -> ConsoleSubmitResult:
+        # Dev's citation-repair refactor extracted this streaming body out of
+        # the wrapper (`_stream_assistant_response_inner`) into its own
+        # method, which left it without the `owner_id` the wrapper already
+        # resolved for ITSELF -- re-resolve independently here, same as
+        # `_run_agent_reply` does for its own `session_id`, rather than
+        # threading it through as a parameter (`None` on KeyError mirrors
+        # every other guarded call site below: no owning session to
+        # attribute a closed-session result to).
+        try:
+            owner_id = self.store.session_id_for_message(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result()
         one_shot_used = prefill if prefill_from_one_shot else None
         if prefill:
             provider_messages = [
@@ -3924,15 +4870,29 @@ class ConsoleChatController:
                     "content": prefill,
                 },
             ]
+        # Fix round 1 (Critical 1): a per-session cancel signal for this
+        # direct/legacy stream path too, mirroring `_run_agent_reply`'s own
+        # `cancel_event` -- the shared `_stop_requested` flag below is
+        # GLOBAL (set by ANY session's Stop/Close via `_signal_stop`), so
+        # reading it inside a specific run's own loop let stopping session
+        # B silently truncate an untouched session A's still-streaming
+        # reply. Captured by closure/local (not re-read off `self.
+        # _active_cancel_events` each poll) for the same reason
+        # `should_cancel` isn't: a concurrent NEXT run for this same
+        # session (after this one's own finally already popped its entry)
+        # must never be torn down by a stale reference to THIS run's event.
+        cancel_event = threading.Event()
+        self._active_cancel_events[owner_id] = cancel_event
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
         if prefill and not prepare_retry:
             try:
                 self.store.append_stream_chunk(assistant_message_id, prefill)
             except KeyError:
-                return self._session_closed_result()
+                return self._session_closed_result(session_id=owner_id)
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."),
+            session_id=owner_id,
         )
         retry_prepared = False
         emitted_content = False
@@ -3951,7 +4911,7 @@ class ConsoleChatController:
             async for chunk in provider_stream:
                 if not chunk:
                     continue
-                if self._stop_requested:
+                if cancel_event.is_set():
                     try:
                         stopped = self._mark_stream_stopped(
                             assistant_message_id,
@@ -3960,7 +4920,7 @@ class ConsoleChatController:
                             retry_prepared=retry_prepared,
                         )
                     except KeyError:
-                        return self._session_closed_result()
+                        return self._session_closed_result(session_id=owner_id)
                     self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                     return ConsoleSubmitResult(True, True, stopped.content)
                 if prepare_retry and not retry_prepared:
@@ -3972,14 +4932,14 @@ class ConsoleChatController:
                                 assistant_message_id, prefill
                             )
                         except KeyError:
-                            return self._session_closed_result()
+                            return self._session_closed_result(session_id=owner_id)
                 try:
                     self.store.append_stream_chunk(assistant_message_id, chunk)
                 except KeyError:
-                    return self._session_closed_result()
+                    return self._session_closed_result(session_id=owner_id)
                 if chunk:
                     emitted_content = True
-            if self._stop_requested:
+            if cancel_event.is_set():
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id,
@@ -3988,25 +4948,26 @@ class ConsoleChatController:
                         retry_prepared=retry_prepared,
                     )
                 except KeyError:
-                    return self._session_closed_result()
+                    return self._session_closed_result(session_id=owner_id)
                 self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                 return ConsoleSubmitResult(True, True, stopped.content)
             if not emitted_content:
                 try:
                     failed = self.store.get_message(assistant_message_id)
                 except KeyError:
-                    return self._session_closed_result()
+                    return self._session_closed_result(session_id=owner_id)
                 self._set_run_state(
                     ConsoleRunState(
                         ConsoleRunStatus.FAILED,
                         "Provider stream ended without content.",
-                    )
+                    ),
+                    session_id=owner_id,
                 )
                 if not prepare_retry:
                     try:
                         failed = self.store.mark_message_failed(assistant_message_id)
                     except KeyError:
-                        return self._session_closed_result()
+                        return self._session_closed_result(session_id=owner_id)
                 return ConsoleSubmitResult(True, True, failed.content)
             if citation_repair_session is not None and stream_signals is not None:
                 try:
@@ -4016,7 +4977,14 @@ class ConsoleChatController:
                         stream_signals=stream_signals,
                     )
                 except KeyError:
-                    return self._session_closed_result()
+                    # F4 fix (Qodo wave): `owner_id` was already resolved
+                    # above (line ~4290) and is in scope here, same as
+                    # every other guarded call site in this method -- the
+                    # bare no-arg call defaulted to whatever session is
+                    # ACTIVE right now, wrongly stamping a STOPPED run
+                    # state on an unrelated live session instead of this
+                    # run's own (now-orphaned) one.
+                    return self._session_closed_result(session_id=owner_id)
                 if selection.state == "canceled":
                     self._consume_one_shot_prefill(
                         assistant_message_id,
@@ -4029,14 +4997,15 @@ class ConsoleChatController:
                 else:
                     completed = self.store.mark_message_complete(assistant_message_id)
             except KeyError:
-                return self._session_closed_result()
+                return self._session_closed_result(session_id=owner_id)
             self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
+                ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
+                session_id=owner_id,
             )
             self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
             return ConsoleSubmitResult(True, True, completed.content)
         except asyncio.CancelledError:
-            if self._stop_requested:
+            if cancel_event.is_set():
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id,
@@ -4045,7 +5014,7 @@ class ConsoleChatController:
                         retry_prepared=retry_prepared,
                     )
                 except KeyError:
-                    return self._session_closed_result()
+                    return self._session_closed_result(session_id=owner_id)
                 self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
@@ -4060,15 +5029,28 @@ class ConsoleChatController:
                 else:
                     self.store.get_message(assistant_message_id)
             except KeyError:
-                return self._session_closed_result()
-            try:
-                session_id = self.store.session_id_for_message(assistant_message_id)
-            except KeyError:
-                session_id = None
-            if session_id is not None:
-                self._append_failure_system_row(session_id, visible_copy)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+                return self._session_closed_result(session_id=owner_id)
+            # Reuse the guarded owner_id resolved at the top of this method
+            # (rather than re-deriving it) -- this is the run's OWNING
+            # session regardless of whatever the user currently has open.
+            self._append_failure_system_row(owner_id, visible_copy)
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+                session_id=owner_id,
+            )
             return ConsoleSubmitResult(True, True, visible_copy)
+        finally:
+            # Fix round 1 (Critical 1): this run's own per-session cancel
+            # signal (created above, mirroring `_run_agent_reply`'s own)
+            # must not survive the run -- a stale entry would let a LATER,
+            # unrelated run on this same session inherit an already-set
+            # Event. Not `cancel_event.clear()`: `_select_post_generation_
+            # body` (already returned by the time this fires) captured this
+            # by session-id lookup rather than closure, so identity-gated
+            # pop (not reset-in-place) is what matches `_run_agent_reply`'s
+            # own matching pop.
+            if self._active_cancel_events.get(owner_id) is cancel_event:
+                self._active_cancel_events.pop(owner_id, None)
 
     async def _select_post_generation_body(
         self,
@@ -4087,10 +5069,16 @@ class ConsoleChatController:
         initial_body = initial_message.content
 
         def owns_request() -> bool:
+            # Task 3b: check the OWNING session's own map entries, not a
+            # global singular slot -- a concurrent session's own in-flight
+            # stream/repair must never be mistaken for this one.
             if (
-                self._active_assistant_message_id != assistant_message_id
-                or self._active_stream_task is not asyncio.current_task()
-                or self._active_citation_repair_session is not repair_session
+                self._active_assistant_message_ids.get(owner_session_id)
+                != assistant_message_id
+                or self._active_stream_tasks.get(owner_session_id)
+                is not asyncio.current_task()
+                or self._active_citation_repair_sessions.get(owner_session_id)
+                is not repair_session
             ):
                 return False
             try:
@@ -4102,9 +5090,19 @@ class ConsoleChatController:
                 return False
 
         def cancellation_requested() -> bool:
+            # Fix round 1 (Critical 1): this run's own per-session cancel
+            # signal, not the shared `_stop_requested` flag -- reading the
+            # global flag here let an UNRELATED session's Stop/Close
+            # silently cancel this session's still-running citation repair,
+            # the exact hazard this fix closes for the sibling stream
+            # loops. `_run_direct_provider_reply` registers this session's
+            # `cancel_event` in `_active_cancel_events[owner_session_id]`
+            # before ever calling this method.
+            cancel_event = self._active_cancel_events.get(owner_session_id)
             return (
                 repair_session.cancel_reason is not None
-                and self._stop_requested
+                and cancel_event is not None
+                and cancel_event.is_set()
                 and not repair_session.selection_committed
                 and repair_session.phase in {"checking", "repair_streaming"}
             )
@@ -4148,7 +5146,8 @@ class ConsoleChatController:
                 ConsoleRunState(
                     ConsoleRunStatus.STOPPED,
                     "Citation repair canceled.",
-                )
+                ),
+                session_id=owner_session_id,
             )
             if repair_session.cancel_reason == "user":
                 try:
@@ -4241,7 +5240,8 @@ class ConsoleChatController:
             ConsoleRunState(
                 ConsoleRunStatus.CHECKING_CITATIONS,
                 "Checking citations…",
-            )
+            ),
+            session_id=owner_session_id,
         )
         repaired_chunks: list[str] = []
         repair_output_available = False
@@ -4369,21 +5369,31 @@ class ConsoleChatController:
             variant_mode=variant_mode,
             prepare_retry=prepare_retry,
         )
-        self._mcp_provider = None
-        # A fresh per-run Event, captured by `should_cancel` below by
-        # closure (not read off `self` each time) -- see
-        # `_active_cancel_event`'s docstring for why this, rather than
-        # `_stop_requested` alone, is what makes a still-running bridge
-        # thread observe a Stop correctly (task-227).
-        cancel_event = threading.Event()
-        self._active_cancel_event = cancel_event
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running.")
-        )
+        # Resolve the run's OWNING session FIRST (Task 3b): every write
+        # below -- the per-session stream/cancel maps AND run state -- must
+        # target it explicitly rather than whatever the user currently has
+        # open (parallel-agents spec §2). Moved ahead of those writes
+        # (previously ran after them, back when they were single shared
+        # slots with no session to key by).
         try:
             session_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
+        self._active_assistant_message_ids[session_id] = assistant_message_id
+        self._active_stream_tasks[session_id] = asyncio.current_task()
+        self._stop_requested = False
+        self._mcp_provider = None
+        # A fresh per-run Event, captured by `should_cancel` below by
+        # closure (not read off `self` each time) -- see
+        # `_active_cancel_events`'s docstring for why this, rather than
+        # `_stop_requested` alone, is what makes a still-running bridge
+        # thread observe a Stop correctly (task-227).
+        cancel_event = threading.Event()
+        self._active_cancel_events[session_id] = cancel_event
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
+            session_id=session_id,
+        )
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
         elif prepare_retry:
@@ -4401,20 +5411,24 @@ class ConsoleChatController:
             agent_messages = agent_messages[1:]
 
         conversation_id = self._agent_conversation_id(session_id)
-        # noqa: E731 — tiny closure. Reads BOTH signals: `_stop_requested`
-        # for same-tick responsiveness (and test doubles that flip it
-        # directly), and `cancel_event` -- captured by value, not via
-        # `self._active_cancel_event` -- for correctness once this run's
+        # noqa: E731 — tiny closure. Fix round 1 (Critical 1): reads ONLY
+        # `cancel_event` -- captured by value, not via `self.
+        # _active_cancel_events[session_id]` -- never the shared
+        # `_stop_requested` flag. `_stop_requested` is GLOBAL (set by ANY
+        # session's Stop/Close via `_signal_stop`), so OR'ing it in here
+        # let stopping an unrelated session silently cancel THIS run too.
+        # `cancel_event` alone is still correct once this run's own
         # `finally` below has already reset `_stop_requested` while the
         # bridge's background thread is still running (task-227: an
         # `asyncio.to_thread` call survives Task cancellation, so the
         # coroutine can finish handling a Stop and reset its own shared
         # bookkeeping well before the OS thread it detached from actually
-        # returns). `stop_active_run`/`close_session`/`shutdown` all set
-        # `cancel_event` via `_signal_stop()` the moment Stop is
-        # requested, and nothing ever clears it again for this run, so a
-        # late poll from the surviving thread still sees the cancellation.
-        should_cancel = lambda: self._stop_requested or cancel_event.is_set()  # noqa: E731
+        # returns) -- `stop_active_run`/`close_session`/`shutdown` all set
+        # THIS session's `cancel_event` via `_signal_stop(session_id=...)`
+        # the moment Stop is requested, and nothing ever clears it again
+        # for this run, so a late poll from the surviving thread still
+        # sees the cancellation regardless of `_stop_requested`'s state.
+        should_cancel = lambda: cancel_event.is_set()  # noqa: E731
 
         # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
         # on the running main loop, BEFORE the bridge is dispatched onto
@@ -4437,7 +5451,9 @@ class ConsoleChatController:
         # outside this task's file scope, so keeping that function
         # byte-identical and building the run-level hook separately here
         # is the lower-blast-radius choice.
-        mcp_provider, _unused_mcp_only_review_hook = await self._compose_mcp_provider()
+        mcp_provider, _unused_mcp_only_review_hook = await self._compose_mcp_provider(
+            session_id
+        )
         self._mcp_provider = mcp_provider
 
         # task-545/T6: build THIS run's built-in permission gate and hand
@@ -4459,11 +5475,16 @@ class ConsoleChatController:
         # the bridge's registry actually dispatches through (its `_tools`
         # dict is stateless data rebuilt identically by any instance).
         builtin_review_provider = BuiltinToolProvider(gate=builtin_gate)
+        # Task 9: bind THIS run's owning session id into the approval
+        # bridge so `request_mcp_approvals` can (a) scope its cancellation
+        # check to this run's own cancel event rather than falling back to
+        # whichever session is currently VIEWED (finding #1), and (b) park
+        # rather than mount when `session_id` is not the active session.
         review_hook = build_tool_review_hook(
             builtin_gate,
             builtin_review_provider,
             mcp_provider,
-            self.request_mcp_approvals,
+            functools.partial(self.request_mcp_approvals, session_id=session_id),
         )
 
         # Swap site: the agent loop runs synchronously on a worker thread via
@@ -4495,7 +5516,9 @@ class ConsoleChatController:
                 review_tool_calls=review_hook,
                 turn_skill_bindings=skill_bindings,
                 turn_bundle_block=skill_bundle_block,
-                request_skill_install_confirm=self.request_skill_install_confirm,
+                request_skill_install_confirm=functools.partial(
+                    self.request_skill_install_confirm, session_id=session_id
+                ),
                 # Advertised must equal usable (the #847 lesson, restated in
                 # the run_skill_script docstring below): only pass the
                 # confirm callback -- and therefore only let the bridge
@@ -4505,19 +5528,21 @@ class ConsoleChatController:
                 # auto-deny every call, offering the model a tool it can
                 # never successfully use.
                 request_skill_script_confirm=(
-                    self.request_skill_script_confirm
+                    functools.partial(
+                        self.request_skill_script_confirm, session_id=session_id
+                    )
                     if self.set_pending_skill_script is not None
                     else None
                 ),
             )
         except asyncio.CancelledError:
-            if self._stop_requested:
+            if cancel_event.is_set():
                 try:
                     stopped = self._mark_stream_stopped(
                         assistant_message_id, visible_copy="Response stopped."
                     )
                 except KeyError:
-                    return self._session_closed_result()
+                    return self._session_closed_result(session_id=session_id)
                 # task-543: this is the dominant user-Stop path --
                 # ``task.cancel()`` raised before ``(run_id, outcome)`` ever
                 # bound, so recover the active run's id via the bridge's
@@ -4538,7 +5563,7 @@ class ConsoleChatController:
             # (append_steps/set_status), and `supersede_run_tree` are not
             # covered). Left uncaught here, run_state would stay STREAMING
             # forever and every future send on every session would be
-            # rejected ("A Console run is already running.") until app
+            # rejected ("A run is already running in this tab.") until app
             # restart (Plan-B Task 6 Critical 1). Mirror the legacy stream
             # path's catch-all above, including the Task-1 variant-restore
             # semantics: `begin_variant_stream`/`prepare_message_retry`
@@ -4557,23 +5582,33 @@ class ConsoleChatController:
             try:
                 self.store.mark_message_failed(assistant_message_id)
             except KeyError:
-                return self._session_closed_result()
+                return self._session_closed_result(session_id=session_id)
             self._append_failure_system_row(session_id, visible_copy)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+                session_id=session_id,
+            )
             return ConsoleSubmitResult(True, True, visible_copy)
         finally:
-            if self._active_cancel_event is cancel_event:
-                # NOT cancel_event.clear(): the closure above captured
-                # this exact Event object by value, so any still-running
-                # bridge thread keeps observing whatever it was last set
-                # to, forever, regardless of this attribute now pointing
-                # elsewhere (or nowhere) for the NEXT run (task-227).
-                self._active_cancel_event = None
+            # Task 3b: this finally intentionally pops NONE of the three
+            # per-session entries (stream task, assistant message id,
+            # cancel event) -- `_finalize_agent_reply` below (and, through
+            # it, `_finalize_agent_success`'s citation-repair post-
+            # generation check) still runs AFTER this try/finally, on this
+            # SAME task, and both `owns_request()` (stream task/assistant
+            # message id) and `cancellation_requested()` (cancel_event,
+            # NOT clear()'d for the same reason noted where it was created
+            # above -- task-227) need to see this run as still live and
+            # still cancellable. The wrapper (`_stream_assistant_response_
+            # inner`), which awaits this entire call including
+            # `_finalize_agent_reply`, is what clears every per-session
+            # entry once everything has actually finished.
+            run_state = self.run_state_for(session_id)
             logger.info(
                 "console agent reply end",
                 assistant_message_id=assistant_message_id,
-                run_status=self.run_state.status.value,
-                run_copy=self.run_state.visible_copy,
+                run_status=run_state.status.value,
+                run_copy=run_state.visible_copy,
             )
 
         # Captured here, before `_finalize_agent_reply` runs: this run's own
@@ -4650,7 +5685,8 @@ class ConsoleChatController:
             # fallback -- correct).
             self._record_run_assistant_message(run_id, current)
             self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
+                ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped."),
+                session_id=session_id,
             )
             return ConsoleSubmitResult(True, True, current.content if current is not None else "")
 
@@ -4738,7 +5774,10 @@ class ConsoleChatController:
         else:
             failed = self._append_failed_assistant(session_id, visible_copy)
         self._record_run_assistant_message(run_id, failed)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+            session_id=session_id,
+        )
         return ConsoleSubmitResult(True, True, failed.content)
 
     def _finalize_agent_failure(
@@ -4769,7 +5808,10 @@ class ConsoleChatController:
             failed = self.store.mark_message_failed(assistant_message_id)
             self._record_run_assistant_message(run_id, failed)
             self._append_failure_system_row(session_id, visible_copy)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+                session_id=session_id,
+            )
             return ConsoleSubmitResult(True, True, failed.content)
 
         runtime_written = self._find_runtime_written_assistant(session_id)
@@ -4779,7 +5821,10 @@ class ConsoleChatController:
         else:
             failed = self._append_failed_assistant(session_id, visible_copy)
         self._record_run_assistant_message(run_id, failed)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+            session_id=session_id,
+        )
         return ConsoleSubmitResult(True, True, failed.content)
 
     async def _finalize_agent_success(
@@ -4818,14 +5863,20 @@ class ConsoleChatController:
                         stream_signals=stream_signals,
                     )
                 except KeyError:
-                    return self._session_closed_result()
+                    # F4 fix (Qodo wave): `session_id` is a REQUIRED
+                    # parameter of this method (always known, never
+                    # re-derived) -- the bare no-arg call defaulted to
+                    # whatever session is ACTIVE right now, wrongly
+                    # stamping a STOPPED run state on an unrelated live
+                    # session instead of this run's own owning session.
+                    return self._session_closed_result(session_id=session_id)
                 if selection.state == "canceled":
                     completed = self._ensure_assistant_placeholder(
                         assistant_message_id,
                         session_id,
                     )
                     if completed is None:
-                        return self._session_closed_result()
+                        return self._session_closed_result(session_id=session_id)
                     self._record_run_assistant_message(run_id, completed)
                     return ConsoleSubmitResult(
                         True,
@@ -4834,21 +5885,30 @@ class ConsoleChatController:
                     )
             completed = self._complete_agent_message(assistant_message_id, variant_mode, outcome)
             self._record_run_assistant_message(run_id, completed)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
+                session_id=session_id,
+            )
             return ConsoleSubmitResult(True, True, completed.content)
 
         runtime_written = self._find_runtime_written_assistant(session_id)
         if runtime_written is not None and runtime_written.status in {"pending", "streaming"}:
             completed = self._complete_agent_message(runtime_written.id, variant_mode=False, outcome=outcome)
             self._record_run_assistant_message(run_id, completed)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
+                session_id=session_id,
+            )
             return ConsoleSubmitResult(True, True, completed.content)
 
         final_text = getattr(outcome, "final_text", "") or "No response was generated."
         completed = self.store.append_message(
             session_id, role=ConsoleMessageRole.ASSISTANT, content=final_text)
         self._record_run_assistant_message(run_id, completed)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
+            session_id=session_id,
+        )
         return ConsoleSubmitResult(True, True, completed.content)
 
     def _record_run_assistant_message(
@@ -5231,53 +6291,208 @@ class ConsoleChatController:
                 stopped = self.store.mark_message_stopped(assistant_message_id)
             except ValueError:
                 stopped = self.store.get_message(assistant_message_id)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy))
+        # Derive the owning session the same way `_active_stream_belongs_to_
+        # session`/`streaming_session_id` do, rather than requiring every
+        # caller to thread it through -- `assistant_message_id` is stable
+        # even once the run finishes, so this is always resolvable unless
+        # the session was closed out from under the run (in which case
+        # there is nothing left to attribute the STOPPED stamp to).
+        try:
+            owner_id = self.store.session_id_for_message(assistant_message_id)
+        except KeyError:
+            owner_id = None
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
+            session_id=owner_id,
+        )
         return stopped
 
-    def _set_run_state(self, run_state: ConsoleRunState) -> None:
-        self.run_state = run_state
-        self.run_state_history.append(run_state.status)
+    def _set_run_state(
+        self, run_state: ConsoleRunState, *, session_id: str | None = None
+    ) -> None:
+        """Write ``run_state`` for ``session_id`` (default: the active session).
 
-    def _clear_terminal_run_state(self) -> None:
-        """Clear stale terminal status copy when the active session changes."""
-        if self.run_state.status in {
+        Parallel-agents spec §2: this is the ONLY path that mutates the
+        per-session run-state map -- ``run_state``/``run_state_history``
+        stay read-only facades (see their property definitions near
+        ``__init__``). ``session_id=None`` preserves every pre-existing
+        call site's behavior (targets whatever session is currently active);
+        callers that know the run's OWNING session (which may not be the
+        active one once a background run outlives a session switch) pass it
+        explicitly.
+        """
+        target = session_id if session_id is not None else (
+            self.store.active_session_id or ""
+        )
+        # Task 10 (background completion toasts): captured BEFORE the
+        # overwrite below so the once-guard downstream can tell a genuine
+        # transition INTO a terminal outcome (toast) apart from a
+        # defensive re-stamp of the SAME terminal status onto an already-
+        # terminal session (no toast -- the brief's own re-set test pins
+        # this).
+        previous_status = self.run_state_for(target).status
+        self._run_states[target] = run_state
+        self.run_state_history_for(target).append(run_state.status)
+        # Task 9 finding #2 (deferred from Task 7 review): a terminal run
+        # has no live approval left to decide, so the pending-approval flag
+        # must be discarded for ANY terminal transition -- including the
+        # currently ACTIVE session's own. Pre-Task-9 this discard lived
+        # ONLY inside the non-active branch below (alongside the unvisited-
+        # outcome stamp), so a pending flag on the session you were actually
+        # LOOKING AT survived its own run ending, leaving a misleading
+        # NEEDS_APPROVAL badge with no round left behind it. Kept as its own
+        # unconditional block, separate from the unvisited-outcome stamp,
+        # which deliberately STAYS non-active-only (the viewed session's own
+        # COMPLETED/FAILED transition is visible live in its transcript and
+        # must never grow a stale "unvisited" fleet marker on itself).
+        if run_state.status in {
             ConsoleRunStatus.BLOCKED,
             ConsoleRunStatus.COMPLETED,
             ConsoleRunStatus.FAILED,
             ConsoleRunStatus.STOPPED,
         }:
-            self._set_run_state(ConsoleRunState())
+            # F2b fix (Qodo wave): this call always runs on the main
+            # thread today, but guard it with the same lock as every other
+            # `_pending_approvals` mutation for consistency (and so it
+            # stays correct if a future caller ever moves this off-thread).
+            with self._approval_state_lock:
+                self._pending_approvals.discard(target)
+        # Parallel-agents spec §6: stamp an unvisited terminal outcome, but
+        # ONLY for a session other than the currently active (viewed) one --
+        # the viewed session's own COMPLETED/FAILED transition is visible
+        # live in its transcript and must never grow a stale "unvisited"
+        # fleet marker on itself. `mark_session_visited` is the sole path
+        # that clears an entry stamped here.
+        if target != (self.store.active_session_id or ""):
+            if run_state.status is ConsoleRunStatus.COMPLETED:
+                self._unvisited_outcomes[target] = ConsoleRunMarker.FINISHED_OK
+            elif run_state.status is ConsoleRunStatus.FAILED:
+                self._unvisited_outcomes[target] = ConsoleRunMarker.FINISHED_FAILED
+            # Task 10 (background completion toasts, parallel-agents spec):
+            # ONE toast on a non-active session's run finishing/failing --
+            # the viewed session's own terminal transition is visible live
+            # in its transcript and gets none (same "user is watching" rule
+            # as the unvisited-outcome stamp just above). Once-guarded on
+            # the transition INTO a terminal state: `previous_status` was
+            # NOT already one of the four terminal statuses, so re-setting
+            # the same COMPLETED/FAILED status again (e.g. a defensive
+            # re-stamp) does not re-toast.
+            if (
+                run_state.status in (ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED)
+                and previous_status
+                not in {
+                    ConsoleRunStatus.BLOCKED,
+                    ConsoleRunStatus.COMPLETED,
+                    ConsoleRunStatus.FAILED,
+                    ConsoleRunStatus.STOPPED,
+                }
+                and self.notify_run_outcome is not None
+            ):
+                self.notify_run_outcome(target, run_state.status)
+
+    def _clear_terminal_run_state(self, session_id: str | None = None) -> None:
+        """Clear stale terminal status copy for ``session_id`` (default: active).
+
+        Parallel-agents spec §2: terminal-only guard preserved verbatim --
+        a NON-terminal (e.g. STREAMING) run is never reset by this, so a
+        background run in progress on another session is untouched when the
+        viewed session changes.
+        """
+        target = session_id if session_id is not None else (
+            self.store.active_session_id or ""
+        )
+        if self.run_state_for(target).status in {
+            ConsoleRunStatus.BLOCKED,
+            ConsoleRunStatus.COMPLETED,
+            ConsoleRunStatus.FAILED,
+            ConsoleRunStatus.STOPPED,
+        }:
+            self._set_run_state(ConsoleRunState(), session_id=target)
 
     def _active_stream_belongs_to_session(self, session_id: str) -> bool:
-        if self._active_assistant_message_id is None:
-            return False
-        try:
-            return (
-                self.store.session_id_for_message(self._active_assistant_message_id)
-                == session_id
-            )
-        except KeyError:
-            return False
+        """Whether ``session_id`` has its own registered in-flight stream.
+
+        Task 3b: a direct membership check now that the underlying map is
+        keyed by session id -- no lookup (or ``KeyError`` guard) needed.
+        """
+        return session_id in self._active_assistant_message_ids
 
     def streaming_session_id(self) -> str | None:
-        """Return the session with an in-flight stream, for tab status glyphs."""
-        if self._active_assistant_message_id is None:
-            return None
-        try:
-            return self.store.session_id_for_message(self._active_assistant_message_id)
-        except KeyError:
-            return None
+        """Return A session with an in-flight stream, for tab status glyphs.
 
-    def _session_closed_result(self) -> ConsoleSubmitResult:
+        Task 3b: this single-value contract predates true concurrency
+        (Task 3) -- under concurrent runs there can be MULTIPLE streaming
+        sessions at once, and this still returns only one. Prefers the
+        ACTIVE (viewed) session when it has a live entry (keeps today's
+        "the tab you're looking at shows the spinner" behavior), else an
+        arbitrary (insertion-order) live entry. Full multi-session tab/
+        fleet markers are PA-T8's job; this just keeps the existing
+        single-glyph caller (``console_session_surface``'s tab strip) from
+        going stale now that the underlying map is per-session.
+        """
+        active = self.store.active_session_id
+        if active is not None and active in self._active_assistant_message_ids:
+            return active
+        for session_id in self._active_assistant_message_ids:
+            return session_id
+        return None
+
+    def _session_closed_result(
+        self, *, session_id: str | None = None
+    ) -> ConsoleSubmitResult:
+        """Result for a KeyError caused by the message's session vanishing mid-run.
+
+        ``session_id`` is the run's owning session when the caller still has
+        it in scope (most call sites do -- ``owner_id``/``session_id``
+        resolved earlier in the same method); ``None`` only where the very
+        first lookup of that owning session is what failed, i.e. there is
+        genuinely nothing to attribute the STOPPED stamp to. Either way the
+        owning session no longer exists in the store (``close_session``
+        purges it), so this write is at worst an orphaned map entry -- never
+        a stamp on a live, currently-viewed session.
+        """
         visible_copy = "Session closed."
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
+            session_id=session_id,
+        )
         return ConsoleSubmitResult(True, True, visible_copy)
 
-    def _active_run_rejection(self) -> ConsoleSubmitResult | None:
-        if self.run_state.is_send_allowed:
+    def _active_run_rejection(
+        self, *, session_id: str | None = None
+    ) -> ConsoleSubmitResult | None:
+        """Defense-in-depth double-send guard for ``submit_draft``.
+
+        F4 fix (Qodo wave): accepts an optional ``session_id`` so
+        ``submit_draft`` can check the DISPATCHED session's own run state
+        rather than whichever session happens to be active right now (the
+        two can differ once a session switch races a background
+        dispatch -- see ``submit_draft``'s own docstring). Every
+        pre-existing caller (``retry_message``/``continue_from_message``/
+        etc., which operate only on the active session by construction --
+        each already blocks with "Open the original session..." if a
+        target message belongs elsewhere) omits ``session_id`` and keeps
+        checking the active session exactly as before.
+
+        Args:
+            session_id: The session to check, or ``None``/empty to check
+                the currently active session (the pre-fix behavior).
+
+        Returns:
+            ``None`` when a new send may proceed; otherwise a blocked
+            ``ConsoleSubmitResult`` carrying the refusal copy.
+        """
+        target_id = session_id if session_id else (self.store.active_session_id or "")
+        if self.run_state_for(target_id).is_send_allowed:
             return None
         return ConsoleSubmitResult(
             accepted=False,
             should_clear_draft=False,
-            visible_copy="A Console run is already running.",
+            # Must match the screen gate's `send_refusal_copy` own-session
+            # copy (parallel-agents spec §4) -- a rapid double-send can hit
+            # this internal defense-in-depth check instead of the screen's
+            # gate (the loser of the exclusive-worker creation race), and a
+            # mismatched copy there would read as two different bugs instead
+            # of one lost race.
+            visible_copy="A run is already running in this tab.",
         )

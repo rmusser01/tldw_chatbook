@@ -21,7 +21,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 
-ALREADY_RUNNING_COPY = "A Console run is already running."
+ALREADY_RUNNING_COPY = "A run is already running in this tab."
 
 
 def _build_screen():
@@ -125,10 +125,13 @@ async def test_mid_run_action_notifies_instead_of_spawning(action_id, target):
 )
 async def test_idle_action_still_spawns_console_run_worker(action_id, target):
     """Regression guard: with no active run, the actions dispatch exactly one
-    worker in the console-run group."""
+    worker in THIS session's per-session console-run group (parallel-agents
+    spec Sec3 — group=f"console-run-{session_id}", not the shared literal)."""
     app, screen = _build_screen()
     failed, completed = _seed_messages(screen)
     spawned, notices = _instrument(app, screen)
+    controller = screen._ensure_console_chat_controller()
+    active_session_id = controller.store.active_session_id
 
     message = failed if target == "failed" else completed
     handled = await screen.handle_console_message_action(
@@ -137,6 +140,8 @@ async def test_idle_action_still_spawns_console_run_worker(action_id, target):
 
     assert handled is True
     assert len(spawned) == 1
-    assert spawned[0].get("group") == "console-run"
+    group = spawned[0].get("group")
+    assert isinstance(group, str) and group.startswith("console-run-"), group
+    assert group == f"console-run-{active_session_id}", group
     assert spawned[0].get("exclusive") is True
     assert not any(ALREADY_RUNNING_COPY in note for note in notices)
