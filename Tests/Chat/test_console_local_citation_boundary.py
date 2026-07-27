@@ -73,6 +73,12 @@ _PRIVATE_QUERY = "PRIVATE_QUERY_SENTINEL_TASK_553_14"
 _PRIVATE_TITLE = "PRIVATE_TITLE_SENTINEL_TASK_553_14"
 _PRIVATE_SNAPSHOT = "PRIVATE_SNAPSHOT_SENTINEL_TASK_553_14"
 _PRIVATE_EXCEPTION = "PRIVATE_EXCEPTION_SENTINEL_TASK_553_14"
+_CANCEL_ROW_PERSISTENCE_EXCEPTION = (
+    "CANCEL_ROW_PERSISTENCE_EXCEPTION_SENTINEL_TASK_553_15"
+)
+_CANCEL_ROW_PERSISTENCE_FAILURE_CODE = (
+    "citation_repair_cancel_record_persistence_failed"
+)
 _MISSING = object()
 _OMITTED = object()
 
@@ -180,6 +186,23 @@ class _ReadyCitationPersistence:
         return True
 
 
+class _CancelRowFailingPersistence(_ReadyCitationPersistence):
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_attempts: list[dict[str, Any]] = []
+        self.cancel_row_attempts = 0
+
+    def create_message(self, **kwargs: Any) -> str:
+        self.create_attempts.append(dict(kwargs))
+        if (
+            kwargs["sender"] == ConsoleMessageRole.SYSTEM.value
+            and kwargs["content"] == "Citation repair canceled by user."
+        ):
+            self.cancel_row_attempts += 1
+            raise RuntimeError(_CANCEL_ROW_PERSISTENCE_EXCEPTION)
+        return super().create_message(**kwargs)
+
+
 class _RecordingGateway:
     def __init__(
         self,
@@ -219,6 +242,7 @@ class _RecordingCitationStore(ConsoleChatStore):
         self.message_append_calls: list[dict[str, Any]] = []
         self.completion_calls: list[str] = []
         self.stopped_calls: list[str] = []
+        self.failed_calls: list[str] = []
         self.events: list[str] | None = None
 
     def append_message(self, session_id, *, role, content, **kwargs):
@@ -248,6 +272,10 @@ class _RecordingCitationStore(ConsoleChatStore):
     def mark_message_stopped(self, message_id):
         self.stopped_calls.append(message_id)
         return super().mark_message_stopped(message_id)
+
+    def mark_message_failed(self, message_id):
+        self.failed_calls.append(message_id)
+        return super().mark_message_failed(message_id)
 
 
 class _ScriptedCitationGateway:
@@ -2015,6 +2043,102 @@ async def test_citation_repair_stop_during_collection_cancels_without_stopping_m
         persistence=None,
         initial_body=initial_body,
     )
+
+
+@pytest.mark.parametrize("agent", (False, True), ids=("direct", "agent"))
+@pytest.mark.asyncio
+async def test_citation_repair_cancel_row_persistence_failure_is_fail_soft(
+    agent: bool,
+):
+    persistence = _CancelRowFailingPersistence()
+    controller, store, gateway, bridge, initial_body, _repaired_body = (
+        _controlled_citation_repair(
+            agent=agent,
+            persistence=persistence,
+            pause_before_first_chunk=True,
+        )
+    )
+    captured_logs = []
+    sink_id = loguru_logger.add(
+        captured_logs.append,
+        level="WARNING",
+        format="{message}",
+    )
+    try:
+        task = asyncio.create_task(controller.submit_draft("question"))
+        await gateway.repair_started.wait()
+
+        assert controller.stop_active_run() is True
+        result = await task
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assistant = _assistant(store)
+    assert result.accepted is True
+    assert result.visible_copy == assistant.content == initial_body
+    assert assistant.status == "complete"
+    assert assistant.persisted_message_id is not None
+    assert assistant.citation_presentation == ConsoleCitationPresentation(
+        phase=ConsoleCitationPhase.SELECTED,
+        notice_code=ConsoleCitationNoticeCode.CANCELED,
+        original_attempt_available=False,
+    )
+    assert store.completion_calls == [assistant.id]
+    assert store.stopped_calls == []
+    assert store.failed_calls == []
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+
+    system_contents = [
+        message.content
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.SYSTEM
+    ]
+    assert "Response stopped by user." not in system_contents
+    assert all(
+        not content.startswith("Provider stream failed:") for content in system_contents
+    )
+    assert system_contents.count("Citation repair canceled by user.") <= 1
+    cancel_appends = [
+        call
+        for call in store.message_append_calls
+        if call["role"] is ConsoleMessageRole.SYSTEM
+        and call["content"] == "Citation repair canceled by user."
+    ]
+    assert len(cancel_appends) == 1
+    assert cancel_appends[0]["kwargs"]["persist"] is True
+    assert persistence.cancel_row_attempts == 1
+    assistant_writes = [
+        call
+        for call in persistence.create_calls
+        if call["sender"] == ConsoleMessageRole.ASSISTANT.value
+    ]
+    assert len(assistant_writes) == 1
+    assert assistant_writes[0]["content"] == initial_body
+    cancel_attempt = next(
+        call
+        for call in persistence.create_attempts
+        if call["sender"] == ConsoleMessageRole.SYSTEM.value
+    )
+    assert persistence.create_attempts.index(
+        next(
+            call
+            for call in persistence.create_attempts
+            if call["sender"] == ConsoleMessageRole.ASSISTANT.value
+        )
+    ) < persistence.create_attempts.index(cancel_attempt)
+    assert cancel_attempt["parent_message_id"] == assistant.persisted_message_id
+
+    if agent:
+        assert bridge is not None
+        assert bridge.anchors == [
+            ("run-console-terminal", assistant.persisted_message_id)
+        ]
+    else:
+        assert bridge is None
+
+    logs = "\n".join(str(record) for record in captured_logs)
+    assert _CANCEL_ROW_PERSISTENCE_FAILURE_CODE in logs
+    assert _CANCEL_ROW_PERSISTENCE_EXCEPTION not in logs
 
 
 @pytest.mark.asyncio

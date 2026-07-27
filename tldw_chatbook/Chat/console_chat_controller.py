@@ -4034,12 +4034,18 @@ class ConsoleChatController:
                 )
             )
             if repair_session.cancel_reason == "user":
-                self.store.append_message(
-                    owner_session_id,
-                    role=ConsoleMessageRole.SYSTEM,
-                    content="Citation repair canceled by user.",
-                    persist=self.store.persistence is not None,
-                )
+                try:
+                    self.store.append_message(
+                        owner_session_id,
+                        role=ConsoleMessageRole.SYSTEM,
+                        content="Citation repair canceled by user.",
+                        persist=self.store.persistence is not None,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Console citation repair cancellation record unavailable; "
+                        "reason=citation_repair_cancel_record_persistence_failed"
+                    )
             return ConsoleCitationSelectionOutcome(
                 completed.content,
                 "canceled",
