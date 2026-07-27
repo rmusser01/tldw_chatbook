@@ -70,7 +70,7 @@ def _has_known_parakeet_v2_receipt(model_dir: Path) -> bool:
         RecursionError,
         TypeError,
         UnicodeDecodeError,
-        json.JSONDecodeError,
+        ValueError,
     ):
         return False
     return (

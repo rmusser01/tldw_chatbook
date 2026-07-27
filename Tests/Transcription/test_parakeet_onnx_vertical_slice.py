@@ -213,6 +213,10 @@ def test_parakeet_onnx_rejects_known_v2_bundle_when_v3_is_selected(
         pytest.param("{", id="malformed"),
         pytest.param(("[" * 30_000) + ("]" * 30_000), id="excessively-nested"),
         pytest.param(
+            '{"repository": ' + ("1" * 5_000) + "}",
+            id="oversized-integer-token",
+        ),
+        pytest.param(
             json.dumps(_known_v2_receipt()) + (" " * (1024 * 1024)),
             id="oversized-valid-known-v2",
         ),

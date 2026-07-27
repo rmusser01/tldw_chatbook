@@ -2303,11 +2303,14 @@ class LibraryIngestQueueMixin:
             )
             options["extract_images"] = flat_opts.get("extract_images", False)
         elif group == "audio_video":
-            target_language = flat_opts.get(
-                "translation_target_language"
-            ) or flat_opts.get("target_language")
+            provider = flat_opts.get("transcription_provider")
+            if provider is None:
+                provider = "default"
+            target_language = flat_opts.get("translation_target_language")
+            if target_language is None:
+                target_language = flat_opts.get("target_language")
             route = resolve_batch_stt_route(
-                provider=flat_opts.get("transcription_provider") or "default",
+                provider=provider,
                 language=flat_opts.get("language"),
                 target_language=target_language,
             )

@@ -239,6 +239,26 @@ class TestIngestJobOptions:
         assert options["language"] == "ja"
         assert options["translation_target_language"] == "en"
 
+    def test_explicit_empty_translation_target_does_not_fall_back_to_alias(
+        self,
+    ) -> None:
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options={
+                "audio_video": {
+                    "transcription_provider": "faster-whisper",
+                    "language": "ja",
+                    "translation_target_language": "",
+                    "target_language": "fr",
+                },
+            },
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["translation_target_language"] is None
+
     def test_untouched_audio_form_snapshot_resolves_closed_gate_default(self) -> None:
         provider_field = next(
             field
@@ -410,6 +430,43 @@ def test_ingest_job_options_detects_type_group(
                 "language": 7,
             },
             "language",
+        ),
+        (
+            {
+                "transcription_provider": 0,
+                "language": "en",
+            },
+            "provider",
+        ),
+        (
+            {
+                "transcription_provider": False,
+                "language": "en",
+            },
+            "provider",
+        ),
+        (
+            {
+                "transcription_provider": "",
+                "language": "en",
+            },
+            "Unsupported batch STT provider",
+        ),
+        (
+            {
+                "transcription_provider": "faster-whisper",
+                "language": "en",
+                "translation_target_language": 0,
+            },
+            "target_language",
+        ),
+        (
+            {
+                "transcription_provider": "faster-whisper",
+                "language": "en",
+                "target_language": False,
+            },
+            "target_language",
         ),
     ],
 )
