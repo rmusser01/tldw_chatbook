@@ -200,6 +200,12 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "Local Kanban supports private files and exact in-memory targets.",
     ),
+    "notes.file_notes_replica": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notes/file_notes_replica",
+        _PRIVATE_OR_MEMORY,
+        "The File Notes recovery replica contains private note bytes and "
+        "supports private files or an exact in-memory test target.",
+    ),
     "notes.library_parent": SQLiteOwnerPolicy(
         "tldw_chatbook/Notes/Notes_Library",
         _PRIVATE_FILE,

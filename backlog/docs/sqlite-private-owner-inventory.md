@@ -55,6 +55,7 @@ Classifications have these meanings:
 | C34 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_backup_to | tts.profile_backup | private_file | backup destination | Migrated via `connect_private_sqlite`. Open the already-created private temporary destination through the checked writable seam before online backup. |
 | C35 | tldw_chatbook/TTS/profile_repository | TTSProfileRepository._worker_validate_standalone_snapshot | tts.profile_snapshot | read_only_uri | immutable integrity read | Migrated via `connect_private_sqlite`. Run full integrity checks through a validated immutable read-only handle. |
 | C36 | tldw_chatbook/DB/Subscriptions_DB | ensure_site_configs_schema | db.subscriptions.site_configs | private_file | declare one table | Migrated via `connect_private_sqlite`. Declares `site_configs` on a caller-supplied path without opening the whole `SubscriptionsDB`, so the one table `SiteConfigManager` needs exists without imposing ~15 unrelated tables on that file. |
+| C37 | tldw_chatbook/Notes/file_notes_replica | FileNotesReplica.__init__ | notes.file_notes_replica | private_file, memory | read/write recovery replica | Migrated via `connect_private_sqlite`. The independent File Notes replica stores exact private note bytes, so file targets use the checked private boundary while preserving the exact in-memory test target. |
 
 ## SQLite backup and restore inventory
 
@@ -143,7 +144,7 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The migrated boundary retains the 35 classified connection owners and fifteen
+The migrated boundary retains 37 classified connection sites and sixteen
 classified backup/restore operations. Production has one raw
 `sqlite3.connect` site and one direct `Connection.backup()` site, both inside
 `DB/private_sqlite.py`; Settings has no SQLite database `shutil.copy2()` site.
