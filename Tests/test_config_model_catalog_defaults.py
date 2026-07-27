@@ -1,6 +1,28 @@
+import os
+from contextlib import contextmanager
 import tomllib
 
+from tldw_chatbook import config as config_module
 from tldw_chatbook.config import API_MODELS_BY_PROVIDER, CONFIG_TOML_CONTENT
+
+
+@contextmanager
+def _temporary_config(tmp_path, monkeypatch, toml_text):
+    """Load settings from an isolated scratch config and restore both caches."""
+    config_path = tmp_path / "provider-model-defaults.toml"
+    config_path.write_text(toml_text, encoding="utf-8")
+    original_env = os.environ.get("TLDW_CONFIG_PATH")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    try:
+        yield config_module.load_settings(force_reload=True)
+    finally:
+        if original_env is not None:
+            monkeypatch.setenv("TLDW_CONFIG_PATH", original_env)
+        else:
+            monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+        config_module.load_settings(force_reload=True)
 
 
 def test_zai_provider_and_settings_defaults_exist():
@@ -57,3 +79,28 @@ def test_bundled_provider_defaults_use_current_models():
 
     for provider in ("DeepSeek", "Anthropic", "OpenAI"):
         assert API_MODELS_BY_PROVIDER[provider] == providers[provider]
+
+
+def test_load_settings_uses_current_models_when_legacy_api_models_are_omitted(
+    tmp_path, monkeypatch
+):
+    with _temporary_config(tmp_path, monkeypatch, "[API]\n") as settings:
+        assert settings["anthropic_api"]["model"] == "claude-sonnet-5"
+        assert settings["deepseek_api"]["model"] == "deepseek-v4-flash"
+        assert settings["openai_api"]["model"] == "gpt-5.6-terra"
+
+
+def test_load_settings_preserves_explicit_legacy_api_models(tmp_path, monkeypatch):
+    explicit_models = {
+        "anthropic_model": "user-anthropic-model",
+        "deepseek_model": "user-deepseek-model",
+        "openai_model": "user-openai-model",
+    }
+    config_text = "[API]\n" + "\n".join(
+        f'{key} = "{model}"' for key, model in explicit_models.items()
+    )
+
+    with _temporary_config(tmp_path, monkeypatch, config_text) as settings:
+        assert settings["anthropic_api"]["model"] == explicit_models["anthropic_model"]
+        assert settings["deepseek_api"]["model"] == explicit_models["deepseek_model"]
+        assert settings["openai_api"]["model"] == explicit_models["openai_model"]
