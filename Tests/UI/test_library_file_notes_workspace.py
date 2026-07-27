@@ -25,7 +25,6 @@ from tldw_chatbook.Library.library_shell_state import (  # noqa: E402
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
 from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     FileNotesSessionOwner,
-    SessionBinding,
 )
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
     FileNotesService,
@@ -274,7 +273,7 @@ async def test_root_transition_rebinds_after_owned_replica_reopens(
 
 
 @pytest.mark.asyncio
-async def test_stale_initialization_cannot_reselect_root_after_transition(
+async def test_delayed_old_workspace_cannot_replace_current_workspace_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -283,38 +282,87 @@ async def test_stale_initialization_cannot_reselect_root_after_transition(
     old_root.mkdir()
     new_root.mkdir()
     owner = FileNotesSessionOwner()
-    replica = FileNotesReplica(":memory:")
-    old_select_started = threading.Event()
-    release_old_select = threading.Event()
-    old_select_finished = threading.Event()
-    new_select_finished = threading.Event()
-    real_select_root = FileNotesSessionOwner.select_root
+    old_replica = FileNotesReplica(":memory:")
+    new_replica = FileNotesReplica(":memory:")
+    old_canonical_started = threading.Event()
+    release_old_canonical = threading.Event()
+    real_canonical_root = LibraryFileNotesWorkspace._canonical_root
 
-    def delayed_select_root(
-        candidate_owner: FileNotesSessionOwner,
-        root: str | Path,
-    ) -> SessionBinding:
-        canonical = Path(root).expanduser().resolve(strict=False)
-        if (
-            candidate_owner is owner
-            and canonical == old_root
-            and not old_select_started.is_set()
-        ):
-            old_select_started.set()
-            assert release_old_select.wait(timeout=5)
-            binding = real_select_root(candidate_owner, root)
-            old_select_finished.set()
-            return binding
-        binding = real_select_root(candidate_owner, root)
-        if candidate_owner is owner and canonical == new_root:
-            new_select_finished.set()
-        return binding
+    def delayed_canonical_root(value: object) -> Path | None:
+        canonical = real_canonical_root(value)
+        if canonical == old_root and not old_canonical_started.is_set():
+            old_canonical_started.set()
+            assert release_old_canonical.wait(timeout=5)
+        return canonical
 
     monkeypatch.setattr(
-        FileNotesSessionOwner,
-        "select_root",
-        delayed_select_root,
+        LibraryFileNotesWorkspace,
+        "_canonical_root",
+        staticmethod(delayed_canonical_root),
     )
+    old_workspace = LibraryFileNotesWorkspace(
+        root=old_root,
+        replica=old_replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+    new_workspace = LibraryFileNotesWorkspace(
+        root=new_root,
+        replica=new_replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+    old_workspace._active = True
+    old_initialization = asyncio.create_task(old_workspace._initialize())
+
+    try:
+        assert await asyncio.to_thread(old_canonical_started.wait, 1)
+        async with _WorkspaceHarness(new_workspace).run_test() as pilot:
+            await _wait_until(
+                pilot,
+                lambda: new_workspace.initialized,
+                "current workspace did not initialize",
+            )
+            current_service = new_workspace._service
+            current_binding = new_workspace._session_binding
+            assert current_service is not None
+            assert current_binding is not None
+            assert current_service.create_file("before.md", "before").status == "ok"
+
+            release_old_canonical.set()
+            await old_initialization
+
+            assert current_service.create_file("after.md", "after").status == "ok"
+            assert [
+                item.change.relative_path
+                for item in owner.snapshot(current_binding).changes
+            ] == ["before.md", "after.md"]
+            assert current_service.session_changes == tuple(
+                item.change for item in owner.snapshot(current_binding).changes
+            )
+    finally:
+        release_old_canonical.set()
+        if not old_initialization.done():
+            await old_initialization
+        old_workspace._active = False
+        await old_workspace.shutdown()
+        await new_workspace.shutdown()
+        owner.shutdown()
+        old_replica.close()
+        new_replica.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_root_persistence_keeps_old_owner_log_and_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    old_root.mkdir()
+    new_root.mkdir()
+    owner = FileNotesSessionOwner()
+    replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(
         root=old_root,
         replica=replica,
@@ -322,33 +370,105 @@ async def test_stale_initialization_cannot_reselect_root_after_transition(
         poll_interval=10,
     )
 
+    def fail_persistence(*_args: object, **_kwargs: object) -> None:
+        raise OSError("forced persistence failure")
+
+    monkeypatch.setattr(
+        workspace_module,
+        "save_setting_to_cli_config",
+        fail_persistence,
+    )
     async with _WorkspaceHarness(workspace).run_test() as pilot:
         await _wait_until(
             pilot,
-            old_select_started.is_set,
-            "stale initialization did not reach root selection",
+            lambda: workspace.initialized,
+            "old workspace did not initialize",
         )
+        old_service = workspace._service
+        old_binding = workspace._session_binding
+        assert old_service is not None
+        assert old_binding is not None
+        assert old_service.create_file("before.md", "before").status == "ok"
+
+        with pytest.raises(OSError, match="forced persistence failure"):
+            await workspace.set_root(new_root)
+
+        assert workspace.root == old_root.resolve()
+        assert workspace._service is old_service
+        assert workspace._session_binding == old_binding
+        assert old_service.create_file("after.md", "after").status == "ok"
+        assert [
+            item.change.relative_path
+            for item in owner.snapshot(old_binding).changes
+        ] == ["before.md", "after.md"]
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_candidate_scan_keeps_old_owner_log_and_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    old_root.mkdir()
+    new_root.mkdir()
+    owner = FileNotesSessionOwner()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=old_root,
+        replica=replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+    candidate_scan_started = threading.Event()
+    release_candidate_scan = threading.Event()
+    real_scan = FileNotesService.scan
+
+    def delayed_candidate_scan(service: FileNotesService):
+        if service.root == new_root.resolve():
+            candidate_scan_started.set()
+            assert release_candidate_scan.wait(timeout=5)
+        return real_scan(service)
+
+    monkeypatch.setattr(FileNotesService, "scan", delayed_candidate_scan)
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized,
+            "old workspace did not initialize",
+        )
+        old_service = workspace._service
+        old_binding = workspace._session_binding
+        assert old_service is not None
+        assert old_binding is not None
+        assert old_service.create_file("before.md", "before").status == "ok"
+
         transition = asyncio.create_task(
             workspace.set_root(new_root, persist=False)
         )
-        await asyncio.to_thread(new_select_finished.wait, 0.2)
-        release_old_select.set()
         await _wait_until(
             pilot,
-            old_select_finished.is_set,
-            "stale initialization did not finish",
+            candidate_scan_started.is_set,
+            "candidate scan did not start",
         )
-        assert await transition
+        workspace.on_unmount()
+        release_candidate_scan.set()
+        assert not await transition
 
-        service = workspace._service
-        assert service is not None
-        assert service.create_file("current.md", "current").status == "ok"
-        workspace._refresh_session_changes()
-        assert (
-            _static_text(workspace, "#file-notes-session-changes")
-            == "Session Git (1)"
-        )
+        assert workspace.root == old_root.resolve()
+        assert workspace._service is old_service
+        assert workspace._session_binding == old_binding
+        assert old_service.create_file("after.md", "after").status == "ok"
+        assert [
+            item.change.relative_path
+            for item in owner.snapshot(old_binding).changes
+        ] == ["before.md", "after.md"]
 
+    release_candidate_scan.set()
     await workspace.shutdown()
     owner.shutdown()
     replica.close()

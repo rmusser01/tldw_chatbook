@@ -1200,6 +1200,17 @@ class FileNotesService:
     def _record_session_change(self, change: SessionChange) -> None:
         self._session_owner.record_change(self._session_binding, change)
 
+    def _bind_session_owner(
+        self,
+        owner: FileNotesSessionOwner,
+        binding: SessionBinding,
+    ) -> None:
+        """Bind a scanned, unpublished service to the process session owner."""
+        if binding.root_key != self.root_key:
+            raise ValueError("session binding belongs to another File Notes root")
+        self._session_owner = owner
+        self._session_binding = binding
+
     def _upsert_opened(self, opened: OpenedFileNote) -> str | None:
         return self._upsert_bytes(
             opened.relative_path,

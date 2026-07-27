@@ -187,6 +187,7 @@ class LibraryFileNotesWorkspace(Vertical):
             FileNotesSessionOwner() if session_owner is None else session_owner
         )
         self._owns_session_owner = session_owner is None
+        self._initial_session_binding = self._session_owner.current_binding()
         self._session_binding: SessionBinding | None = None
         self._service: FileNotesService | None = None
         self._runtime_warning = ""
@@ -451,11 +452,17 @@ class LibraryFileNotesWorkspace(Vertical):
 
     async def _initialize(self) -> None:
         generation = self._root_generation
+        expected_binding = (
+            self._session_binding
+            if self._session_binding is not None
+            else self._initial_session_binding
+        )
         previous_service = self._service
         was_initialized = self._initialized
         root, replica, service, warning = await asyncio.to_thread(
             self._build_runtime,
             generation,
+            expected_binding,
         )
         if not self._active or generation != self._root_generation:
             return
@@ -505,6 +512,7 @@ class LibraryFileNotesWorkspace(Vertical):
     def _build_runtime(
         self,
         expected_generation: int,
+        expected_binding: SessionBinding | None,
         *,
         bind_session: bool = True,
     ) -> tuple[
@@ -539,9 +547,14 @@ class LibraryFileNotesWorkspace(Vertical):
             generation_is_current = expected_generation == self._root_generation
             if not bind_session or not generation_is_current:
                 return root, replica, self._service, warning
-            binding = (
-                None if root is None else self._session_owner.select_root(root)
-            )
+            binding = None
+            if root is not None:
+                binding = self._session_owner.try_select_root(
+                    root,
+                    expected_binding=expected_binding,
+                )
+                if binding is None:
+                    return root, replica, None, warning
             service = self._service
             if root is None:
                 service = None
@@ -562,17 +575,34 @@ class LibraryFileNotesWorkspace(Vertical):
             self._session_binding = binding
             return root, replica, service, warning
 
-    def _select_root_binding(
+    def _commit_root_candidate(
         self,
         root: Path,
+        service: FileNotesService,
         generation: int,
-    ) -> SessionBinding | None:
+        expected_binding: SessionBinding | None,
+    ) -> bool:
         with self._runtime_lock:
-            if self._shutdown or generation != self._root_generation:
-                return None
-            binding = self._session_owner.select_root(root)
+            if (
+                self._shutdown
+                or not self._active
+                or generation != self._root_generation
+                or service.root_key != str(root)
+            ):
+                return False
+            binding = self._session_owner.try_select_root(
+                root,
+                expected_binding=expected_binding,
+            )
+            if binding is None:
+                return False
+            service._bind_session_owner(self._session_owner, binding)
+            self._root = root
             self._session_binding = binding
-            return binding
+            self._service = service
+            self._clear_open_document()
+            self._initialized = True
+            return True
 
     async def _load_deleted_paths(
         self,
@@ -849,6 +879,11 @@ class LibraryFileNotesWorkspace(Vertical):
             return False
         if not self._active or self._path_transitioning or self._shutdown:
             return False
+        expected_binding = (
+            self._session_binding
+            if self._session_binding is not None
+            else self._initial_session_binding
+        )
         self._root_generation += 1
         generation = self._root_generation
         self._root_transitioning = True
@@ -862,26 +897,25 @@ class LibraryFileNotesWorkspace(Vertical):
                 _, replica, _, warning = await asyncio.to_thread(
                     self._build_runtime,
                     generation,
+                    expected_binding,
                     bind_session=False,
                 )
                 if not self._active or generation != self._root_generation:
                     return False
                 self._replica = replica
                 self._runtime_warning = warning
-            binding = await asyncio.to_thread(
-                self._select_root_binding,
-                canonical,
-                generation,
-            )
-            if binding is None:
-                return False
             service = await asyncio.to_thread(
                 FileNotesService,
                 canonical,
                 self._replica,
                 operation_lock=self._service_lock,
-                session_owner=self._session_owner,
-                session_binding=binding,
+            )
+            if not self._active or generation != self._root_generation:
+                return False
+            result = await asyncio.to_thread(service.scan)
+            deleted = await self._load_deleted_paths(
+                replica=self._replica,
+                service=service,
             )
             if not self._active or generation != self._root_generation:
                 return False
@@ -894,18 +928,13 @@ class LibraryFileNotesWorkspace(Vertical):
                 )
                 if not self._active or generation != self._root_generation:
                     return False
-            result = await asyncio.to_thread(service.scan)
-            deleted = await self._load_deleted_paths(
-                replica=self._replica,
-                service=service,
-            )
-            if not self._active or generation != self._root_generation:
+            if not self._commit_root_candidate(
+                canonical,
+                service,
+                generation,
+                expected_binding,
+            ):
                 return False
-            self._root = canonical
-            self._session_binding = binding
-            self._service = service
-            self._clear_open_document()
-            self._initialized = True
             self._apply_scan(result, deleted)
             return True
         finally:

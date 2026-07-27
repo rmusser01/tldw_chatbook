@@ -27,6 +27,48 @@ def test_same_root_keeps_session_and_different_root_resets_it(
     assert owner.record_change(first, SessionChange("modified", "late.md")) is False
 
 
+def test_checked_root_selection_preserves_unexpected_or_same_root_state(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    assert owner.current_binding() is None
+
+    first = owner.try_select_root(
+        tmp_path / "a",
+        expected_binding=None,
+    )
+    assert first is not None
+    assert owner.record_change(first, SessionChange("modified", "one.md"))
+
+    assert (
+        owner.try_select_root(
+            tmp_path / "a",
+            expected_binding=None,
+        )
+        == first
+    )
+    assert (
+        owner.try_select_root(
+            tmp_path / "b",
+            expected_binding=None,
+        )
+        is None
+    )
+    assert owner.current_binding() == first
+    assert [item.change.relative_path for item in owner.snapshot(first).changes] == [
+        "one.md"
+    ]
+
+    second = owner.try_select_root(
+        tmp_path / "b",
+        expected_binding=first,
+    )
+    assert second is not None
+    assert second.generation == first.generation + 1
+    assert owner.current_binding() == second
+    assert owner.snapshot(second).changes == ()
+
+
 def test_recorder_assigns_one_monotonic_sequence_under_threads(
     tmp_path: Path,
 ) -> None:

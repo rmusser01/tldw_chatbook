@@ -139,13 +139,33 @@ class FileNotesSessionOwner:
         with self._lock:
             if self._shutdown:
                 raise RuntimeError("File Notes session owner is shut down")
+            return self._select_root_locked(root_key)
+
+    def current_binding(self) -> SessionBinding | None:
+        """Return the currently selected immutable root binding, if any."""
+        with self._lock:
+            return self._binding
+
+    def try_select_root(
+        self,
+        root: str | Path,
+        *,
+        expected_binding: SessionBinding | None,
+    ) -> SessionBinding | None:
+        """Select a root only if shared owner state still matches expectation.
+
+        A concurrently selected identical root is safe to share and returns its
+        existing binding. A different unexpected root is never replaced.
+        """
+        root_key = str(Path(root).expanduser().resolve(strict=False))
+        with self._lock:
+            if self._shutdown:
+                return None
             if self._binding is not None and self._binding.root_key == root_key:
                 return self._binding
-            self._generation += 1
-            self._binding = SessionBinding(root_key, self._generation)
-            self._changes.clear()
-            self._next_sequence = 1
-            return self._binding
+            if self._binding != expected_binding:
+                return None
+            return self._select_root_locked(root_key)
 
     def record_change(
         self,
@@ -257,3 +277,12 @@ class FileNotesSessionOwner:
         with self._lock:
             if self._status_token is token:
                 self._status_token = None
+
+    def _select_root_locked(self, root_key: str) -> SessionBinding:
+        if self._binding is not None and self._binding.root_key == root_key:
+            return self._binding
+        self._generation += 1
+        self._binding = SessionBinding(root_key, self._generation)
+        self._changes.clear()
+        self._next_sequence = 1
+        return self._binding
