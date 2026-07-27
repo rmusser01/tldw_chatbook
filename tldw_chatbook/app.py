@@ -2321,11 +2321,12 @@ class LibraryIngestQueueMixin:
                 else ""
             )
             options["transcription_model_dir"] = selected_model_dir or None
-            options["transcription_model"] = (
-                route.model
-                or flat_opts.get("model")
-                or flat_opts.get("transcription_model")
-            )
+            selected_model = route.model
+            if selected_model is None and route.requested_provider != "default":
+                selected_model = flat_opts.get("model") or flat_opts.get(
+                    "transcription_model"
+                )
+            options["transcription_model"] = selected_model
             options["language"] = route.requested_language
             options["translation_target_language"] = route.target_language
             options["transcription_precision"] = route.precision

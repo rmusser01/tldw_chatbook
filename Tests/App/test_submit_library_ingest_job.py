@@ -197,25 +197,31 @@ class TestIngestJobOptions:
         assert options["language"] == "en"
         assert options["transcription_model_dir"] is None
 
-    def test_semantic_default_stays_on_faster_whisper_and_drops_stale_directory(
-        self,
+    @pytest.mark.parametrize(
+        "provider",
+        [None, "default"],
+        ids=["absent-provider", "explicit-default"],
+    )
+    def test_semantic_default_stays_on_faster_whisper_and_drops_stale_model(
+        self, provider: str | None
     ) -> None:
         app = _minimal_app()
+        audio_options = {
+            "transcription_model_dir": "/models/parakeet-v2-int8",
+            "transcription_model": "small",
+            "language": " FR ",
+        }
+        if provider is not None:
+            audio_options["transcription_provider"] = provider
         job = _make_job(
             source_path="/tmp/test.mp3",
-            ingest_options={
-                "audio_video": {
-                    "transcription_model_dir": "/models/parakeet-v2-int8",
-                    "transcription_model": "small",
-                    "language": " FR ",
-                },
-            },
+            ingest_options={"audio_video": audio_options},
         )
 
         options = app._ingest_job_options(job)
 
         assert options["transcription_provider"] == "faster-whisper"
-        assert options["transcription_model"] == "small"
+        assert options["transcription_model"] is None
         assert options["transcription_model_dir"] is None
         assert options["language"] == "fr"
         assert options["transcription_precision"] == "int8"
@@ -228,6 +234,7 @@ class TestIngestJobOptions:
             ingest_options={
                 "audio_video": {
                     "transcription_provider": "faster-whisper",
+                    "transcription_model": "small",
                     "language": " JA ",
                     "target_language": " EN ",
                 },
@@ -236,6 +243,7 @@ class TestIngestJobOptions:
 
         options = app._ingest_job_options(job)
 
+        assert options["transcription_model"] == "small"
         assert options["language"] == "ja"
         assert options["translation_target_language"] == "en"
 
