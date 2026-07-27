@@ -1,5 +1,5 @@
 ---
-id: TASK-841
+id: TASK-849
 title: Agent-created directory can shadow a not-yet-created state file
 status: To Do
 assignee: []
