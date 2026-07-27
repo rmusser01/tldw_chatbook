@@ -212,10 +212,7 @@ def _openai_use_responses_api(
     return (
         normalized_reasoning_effort is not None
         and (normalized_reasoning_effort != "none" or not is_gpt_5_6_model)
-    ) or (
-        _is_present_setting(reasoning_summary)
-        or _is_present_setting(verbosity)
-    )
+    ) or (_is_present_setting(reasoning_summary) or _is_present_setting(verbosity))
 
 
 _OPENAI_REASONING_MODEL_FAMILIES = ("o1", "o3", "o4", "gpt-5")
@@ -593,9 +590,7 @@ def chat_with_openai(
         api_messages.append({"role": "system", "content": system_message})
     api_messages.extend(input_data)
 
-    normalized_reasoning_effort = _normalize_openai_reasoning_effort(
-        reasoning_effort
-    )
+    normalized_reasoning_effort = _normalize_openai_reasoning_effort(reasoning_effort)
     is_gpt_5_6_model = _is_openai_gpt_5_6_model(final_model)
     use_responses_api = _openai_use_responses_api(
         normalized_reasoning_effort,

@@ -560,7 +560,9 @@ class TestProviderRequestPayloads:
         assert captured["json"]["messages"] == [{"role": "user", "content": "test"}]
         assert captured["json"]["max_tokens"] == 128
 
-    def test_gpt_5_6_defaults_to_chat_completions_with_function_tools(self, monkeypatch):
+    def test_gpt_5_6_defaults_to_chat_completions_with_function_tools(
+        self, monkeypatch
+    ):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
         captured = {}
