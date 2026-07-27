@@ -79,6 +79,33 @@ def _ensure_nltk():
         from nltk.tokenize import sent_tokenize as _sent_tokenize
     except ImportError:
         return None
+
+    # Installed is not the same as usable. nltk's sentence tokeniser needs the
+    # 'punkt' corpus, which is a RUNTIME DOWNLOAD rather than part of the
+    # package, so a machine can have nltk and still raise LookupError deep in a
+    # chunking call. That surfaced as an internal-looking error on the semantic
+    # method while the very same call succeeded elsewhere, purely on what
+    # happened to be cached (task-842).
+    #
+    # Probe once, here, and keep the regex fallback when the data is missing:
+    # simpler sentence splitting is a better outcome than a failed ingest, and
+    # this is the same fallback already used when nltk is absent entirely.
+    try:
+        _sent_tokenize("Probe sentence one. Probe sentence two.")
+    except LookupError:
+        logger.warning(
+            "nltk is installed but its 'punkt' tokeniser data is not, so "
+            "sentence splitting will use the simpler built-in fallback. To get "
+            "nltk's tokeniser, run: python -m nltk.downloader punkt punkt_tab"
+        )
+        return None
+    except Exception:
+        logger.opt(exception=True).debug(
+            "nltk sentence tokeniser probe failed unexpectedly; using the "
+            "built-in fallback."
+        )
+        return None
+
     # Bind `sent_tokenize` BEFORE the gate global (`nltk`), so a racing thread
     # that observes `nltk is not None` never finds `sent_tokenize` still the
     # regex fallback.

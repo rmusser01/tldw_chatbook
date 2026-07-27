@@ -69,3 +69,37 @@ class TestEveryChunkingMethodReturnsUsableText:
         assert _chunk_to_text({"heading": "H", "body": "B"})
         assert _chunk_to_text({"text": "plain"}) == "plain"
         assert _chunk_to_text("already a string") == "already a string"
+
+
+class TestSemanticChunkingWithoutNltkData:
+    """Semantic chunking must degrade, not raise, when its corpus is absent.
+
+    nltk's sentence tokeniser needs the 'punkt' corpus, which is a runtime
+    download rather than part of the package. A machine could therefore have
+    nltk installed and still raise LookupError deep inside a chunking call --
+    the same call succeeding or failing purely on what happened to be cached
+    (task-842). A simpler sentence split is a better outcome than a failed
+    ingest, and the fallback already existed for the nltk-absent case.
+    """
+
+    def test_semantic_falls_back_instead_of_raising(self, tmp_path, monkeypatch):
+        import importlib
+
+        # An empty NLTK_DATA dir makes punkt definitively unavailable.
+        monkeypatch.setenv("NLTK_DATA", str(tmp_path))
+        import tldw_chatbook.Chunking.Chunk_Lib as chunk_lib
+
+        importlib.reload(chunk_lib)
+
+        from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
+
+        prose = (
+            "The first sentence is here. The second follows it. A third arrives. "
+            "A fourth sentence appears. A fifth concludes."
+        ) * 2
+        chunks = ChunkingService().chunk_text(
+            prose, chunk_size=20, chunk_overlap=5, method="semantic"
+        )
+
+        assert chunks, "semantic chunking produced nothing without punkt data"
+        assert all(isinstance(c.get("text"), str) and c["text"].strip() for c in chunks)
