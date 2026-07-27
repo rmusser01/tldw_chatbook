@@ -1443,6 +1443,70 @@ def test_acquire_forces_adoption_after_ordinary_residual_state_failure(
         assert recovered.acquired is True
 
 
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(15)])
+def test_acquire_replaces_stale_closed_handle_with_live_residual(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt: BaseException,
+) -> None:
+    local_handle = _NonClosingHandle()
+    stale_handle = _RecordingHandle()
+    stale_handle.close()
+
+    class StaleHandleLease(ProfileStoreLease):
+        def __init__(self, database_path: Path) -> None:
+            self.inject_stale_handle = False
+            self.assignment_attempts = 0
+            super().__init__(database_path, ProfileStoreLockMode.EXCLUSIVE)
+            self.inject_stale_handle = True
+
+        def __setattr__(self, name: str, value: object) -> None:
+            if (
+                name == "_handle"
+                and value is local_handle
+                and getattr(self, "inject_stale_handle", False)
+            ):
+                object.__setattr__(
+                    self,
+                    "assignment_attempts",
+                    self.assignment_attempts + 1,
+                )
+                if self.assignment_attempts == 1:
+                    object.__setattr__(self, "_handle", stale_handle)
+                    raise interrupt
+                if self.assignment_attempts == 2:
+                    raise RuntimeError("adoption-private-secret")
+            super().__setattr__(name, value)
+
+    _patch_open(monkeypatch, local_handle)
+    monkeypatch.setattr(portalocker, "lock", lambda current_handle, flags: None)
+    monkeypatch.setattr(portalocker, "unlock", lambda current_handle: None)
+    lease = StaleHandleLease(tmp_path / "profiles.sqlite3")
+
+    try:
+        with pytest.raises(type(interrupt)) as exc_info:
+            lease.acquire()
+
+        assert exc_info.value is interrupt
+        assert lease.assignment_attempts == 2
+        assert stale_handle.closed is True
+        assert local_handle.closed is False
+        assert lease._handle is local_handle
+        assert lease.acquired is True
+
+        local_handle.fail_close = False
+        lease.release()
+        assert local_handle.closed is True
+        assert lease._handle is None
+        assert lease.acquired is False
+    finally:
+        local_handle.fail_close = False
+        if lease._handle is local_handle:
+            lease.release()
+        elif not local_handle.closed:
+            local_handle.close()
+
+
 def test_acquire_recovery_never_overwrites_different_live_handle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

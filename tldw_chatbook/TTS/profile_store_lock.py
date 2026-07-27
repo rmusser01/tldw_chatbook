@@ -39,6 +39,17 @@ def _normalize_timing(value: object) -> float | None:
     return normalized
 
 
+def _residual_target_is_replaceable(
+    current_handle: BinaryIO | None,
+    residual_handle: BinaryIO,
+) -> bool:
+    """Return whether a live residual may replace the current handle state."""
+
+    if current_handle is None or current_handle is residual_handle:
+        return True
+    return current_handle.closed
+
+
 def _unlock_and_close(
     handle: BinaryIO,
     *,
@@ -254,6 +265,7 @@ class ProfileStoreLease:
         cleanup_error: BaseException | None = None
         state_error: BaseException | None = None
         recovery_error: BaseException | None = None
+        state_inspection_error: BaseException | None = None
         retry_cleanup_error: BaseException | None = None
         forced_state_error: BaseException | None = None
         if handle is not None:
@@ -275,10 +287,18 @@ class ProfileStoreLease:
                         recovery_error = candidate
                         break
 
-            current_handle = self._handle
-            state_needs_forced_repair = (
-                handle.closed and current_handle is handle
-            ) or (not handle.closed and current_handle is None)
+            state_needs_forced_repair = False
+            try:
+                current_handle = self._handle
+                if handle.closed:
+                    state_needs_forced_repair = current_handle is handle
+                else:
+                    state_needs_forced_repair = (
+                        current_handle is not handle
+                        and _residual_target_is_replaceable(current_handle, handle)
+                    )
+            except BaseException as error:
+                state_inspection_error = error
             if recovery_error is not None or state_needs_forced_repair:
                 # Recovery promises at most one control-flow interruption.
                 # Retry cleanup after an interruption or untruthful normal state
@@ -292,6 +312,7 @@ class ProfileStoreLease:
         _raise_recovery_failure(
             primary_error,
             recovery_error,
+            state_inspection_error,
             cleanup_error,
             state_error,
             retry_cleanup_error,
@@ -312,10 +333,11 @@ class ProfileStoreLease:
         return None
 
     def _retain_residual_handle(self, handle: BinaryIO) -> BaseException | None:
-        """Conservatively retain a non-closed handle without overwriting another."""
+        """Retain a residual handle without overwriting another live handle."""
 
         try:
-            if self._handle is None or self._handle is handle:
+            current_handle = self._handle
+            if _residual_target_is_replaceable(current_handle, handle):
                 self._handle = handle
         except BaseException as error:
             return error
@@ -329,7 +351,7 @@ class ProfileStoreLease:
             if handle.closed:
                 if current_handle is handle:
                     object.__setattr__(self, "_handle", None)
-            elif current_handle is None or current_handle is handle:
+            elif _residual_target_is_replaceable(current_handle, handle):
                 object.__setattr__(self, "_handle", handle)
         except BaseException as error:
             return error
