@@ -2683,7 +2683,7 @@ def test_sqlite_opens_under_the_unresolved_platform_temporary_directory():
         connection = connect_private_sqlite("db.base", target)
         try:
             connection.execute("CREATE TABLE probe (value INTEGER)")
-            connection.execute("INSERT INTO probe VALUES (950)")
+            connection.execute("INSERT INTO probe VALUES (?)", (950,))
             connection.commit()
             assert connection.execute("SELECT value FROM probe").fetchone() == (950,)
         finally:

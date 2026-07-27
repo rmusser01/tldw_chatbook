@@ -90,7 +90,11 @@ def lexical_path(path: PathInput) -> Path:
 
 
 def _posix_guards_available() -> bool:
-    required_dir_fd = {os.open, os.stat, os.mkdir}
+    # `os.readlink` joined this set when trusted-symlink traversal was added:
+    # the walk now depends on it being descriptor-relative, and a platform
+    # without that support must fall through to the unverified-platform
+    # branch rather than raising TypeError out of the walk.
+    required_dir_fd = {os.open, os.stat, os.mkdir, os.readlink}
     return (
         os.name == "posix"
         and _NOFOLLOW != 0
@@ -181,9 +185,13 @@ def _read_trusted_symlink(
         raise _private_path_error_from_oserror(selected, exc) from None
     if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
         raise _private_path_error_from_oserror(selected, exc) from None
+    # `TypeError` as well as `OSError`: `os.readlink` raises TypeError, not
+    # OSError, on a build where it does not accept `dir_fd`. The probe above
+    # should stop us reaching here on such a platform, but a guard that
+    # crashes rather than refusing is the wrong failure mode -- fail closed.
     try:
         return os.readlink(component, dir_fd=parent_fd)
-    except OSError:
+    except (OSError, TypeError):
         raise _private_path_error_from_oserror(selected, exc) from None
 
 
