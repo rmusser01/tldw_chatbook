@@ -64,10 +64,11 @@ source before this specification was written.
 - The route registry maps the legacy CCP route to `PersonasScreen` with
   canonical tab `personas`; app handlers guarded by `current_tab == TAB_CCP`
   cannot run after successful canonical navigation.
-- The legacy `notes`, `prompts`, and `skills` routes resolve to Library.
+- The legacy `notes`, `prompts`, `skills`, and retired `ingest` routes resolve
+  to Library.
 - The legacy Tools & Settings route resolves to MCP.
-- Search, Media, Media Ingest, Evals, LLM, Personas, and Chat use registered
-  production screens.
+- Search, Media, Evals, LLM, Personas, and Chat use registered production
+  screens.
 
 ### Destination ownership
 
@@ -81,8 +82,8 @@ source before this specification was written.
   center-pane state. It does not read the root CCP reactives.
 - `SearchScreen` saves and restores the actual query, mode, and active
   `TabbedContent` tab from `SearchRAGWindow`.
-- `MediaIngestScreen` mounts `MediaIngestWindowRebuilt`, whose tabs and runtime
-  view are destination-owned.
+- The standalone Ingest screen was retired by TASK-684.4. The `ingest` route
+  resolves to Library, whose Import media canvas owns the active ingest view.
 - `EvalsScreen` owns the workbench and has no collapsible app sidebar.
 - The production Lab `LLMScreen` owns the lifted Models rail and drives the
   deferred real `LLMManagementWindow`, which owns `active_view` and supported
@@ -141,15 +142,18 @@ compatibility cache.
 
 #### Shared TLDW API request context
 
-`tldw_api_events` stores `request_model` and `overwrite_db` in
-`app._last_tldw_api_request_context` before starting a worker.
-`handle_tldw_api_worker_success()` later reads that shared field. A second
-request can replace the field before the first worker completes, causing the
-first result to be ingested under the second request's options.
+The rebuilt MediaIngestScreen and its `tldw_api_events.py` producer were
+deleted by TASK-684.4 when the `ingest` route moved to Library. Latest `dev`
+has no producer for the old `api_calls` worker group and no matching
+`#tldw-api-*` widgets. It still retains
+`app._last_tldw_api_request_context`, payload-bearing success/failure
+consumers, a worker-registry branch, and compatibility exports.
 
-The worker closure already captures the original request. Its result must
-carry the corresponding immutable context to completion; no app field is
-needed.
+Those remnants cannot complete a request and do not protect any compatibility
+contract. Recreating a producer or adding an envelope would revive an obsolete
+second ingest implementation. The correct boundary is deletion: Library's
+ingest queue, server request mapping, and public server batch cancellation
+remain the live production path.
 
 ## Goals
 
@@ -320,7 +324,7 @@ correct destination-owned field with a similar name.
 | 56 | `chat_settings_mode` | Delete | Toggle belongs to the unmounted legacy sidebar; native Console has no root basic/advanced mode. |
 | 57 | `chat_settings_search_query` | Delete | No production references. |
 | 58 | `search_active_sub_tab` | Delete | Old pane switcher; production `SearchScreen` owns actual `TabbedContent.active`. |
-| 59 | `ingest_active_view` | Delete | Rebuilt ingest window owns its current tab; root watcher already exits for rebuilt UI. |
+| 59 | `ingest_active_view` | Delete | The standalone Ingest route is retired; Library's Import media canvas owns current ingest view state. |
 | 60 | `tools_settings_active_view` | Delete | Legacy Tools route now resolves to MCP. |
 | 61 | `llm_active_view` | Delete | `LLMManagementWindow.active_view` is the live owner. |
 
@@ -518,50 +522,27 @@ These root reactives are pure deletion slices:
 
 - Notes state and timer cleanup defer to Library's existing owner;
 - Search state is read from and restored to actual production controls;
-- rebuilt Media Ingest owns its active tab;
+- Library owns the Import media canvas reached through the retired `ingest`
+  alias;
 - legacy Tools state is removed because the route resolves to MCP;
 - Evals removes the no-op sidebar state and watcher.
 
 No replacement store or compatibility property is introduced.
 
-### TLDW API worker result envelope
+### Retired TLDW API worker pipeline
 
-The TLDW API worker returns a frozen result envelope with two `repr=False`
-fields:
+No result-envelope contract is introduced for a worker group that production
+cannot schedule. The `api_calls` registry branch, its media-ingest completion
+module, the two compatibility exports, and
+`app._last_tldw_api_request_context` are deleted together. Structural coverage
+rejects their selectors, group name, imports, exports, root access, and dynamic
+access.
 
-1. the API response value;
-2. a frozen, detached ingestion-fallback context.
-
-The fallback context contains only values the success handler actually reads:
-
-- normalized immutable keywords;
-- author text;
-- custom prompt text;
-- `overwrite_db`.
-
-It does not retain the mutable request model. Mutable collections are detached
-into immutable primitives when the worker is launched. Every fallback field
-is excluded from the context's `repr`, and the enclosing context and response
-are excluded from the envelope's `repr`. The response can contain processed
-content. Default representations therefore expose neither response nor
-fallback payload.
-
-The success handler validates and unwraps the envelope and uses those exact
-fallback fields before any presentation lookup. Valid durable ingestion
-continues when the originating screen has been unmounted; loading, button, and
-status settlement is best-effort presentation against the matching mounted
-owner. It never reads `app._last_tldw_api_request_context`.
-
-The production submit path calls one module-level, app-independent async
-executor with explicit client, media type, request, local-file, and detached
-fallback inputs. Two concurrent workers therefore cannot exchange request
-options. Failure and public Textual-worker cancellation do not leave shared
-context to be consumed by a later worker.
-
-The envelope and context contain no credentials, raw request headers, tokens,
-or filesystem secrets. Diagnostics identify only the operation, media type,
-and failure category; they do not render the envelope, response body, custom
-prompt, author, or keywords.
+This does not remove server-backed ingestion. Library owns the production
+ingest form, queue, local/server request mapping, result rows, and the public
+server batch-cancellation seam. Direct tests retain the pure server request
+contract; a normal mounted `TldwCli` proves the legacy `ingest` alias reaches
+Library without importing or querying the retired pipeline.
 
 ## Non-Reactive Companion Ledger
 
@@ -580,7 +561,7 @@ reactives or exposed by the same ownership trace.
 | `media_search_current_page`, `media_search_total_pages`, `current_sidebar_media_item` | Delete in TASK-650 with the legacy Chat slice | These fields are exclusive to the dormant Chat media sidebar and its handlers. |
 | `_media_search_timers`, `_media_search_generation`, `_initial_media_view` | Delete in TASK-652 with the Media slice | These fields back the duplicate app-root Media search/navigation path; live `MediaWindow` owns current searches and view state. |
 | `_initial_search_sub_tab_view`, `_initial_ingest_view`, `_initial_tools_settings_view`, `_initial_llm_view` | Delete with their root navigation slices | Legacy initializer defaults. |
-| `_last_tldw_api_request_context` | Replace with immutable worker result envelope | Shared last-request state can cross-contaminate concurrent completions. |
+| `_last_tldw_api_request_context`, `api_calls` routing, and `media_ingest_workers.py` | Delete together | Their MediaIngestScreen/producer was retired; retaining or rebuilding consumers creates a false second ingest owner and preserves payload-bearing diagnostics. |
 | `TldwCli.query_one()` fallback into the active screen | Explicitly excluded; requires a separate handler/lifecycle decomposition | It is a broad coupling seam, but process managers and legacy non-state handlers still depend on it. Removing it here would expand beyond the verified state slices. New code in this tranche must not add callers. |
 | LLM server process handles and server-worker registry | Explicitly retained for this tranche | Service/process lifecycle is excluded by ADR-033; destination event registration may depend on them explicitly without moving their ownership. |
 | Duplicate `_wire_writing_services()` and `_wire_chat_conversation_services()` calls | Explicitly excluded under ADR-033 | Verified construction/lifecycle defect, but not a destination reactive or worker-context handoff. It requires its own service-lifecycle design. |
@@ -662,11 +643,11 @@ Each slice adds the narrowest relevant checks:
 - stale provider claims cannot acknowledge or release a newer selection;
 - native Console snapshot restore preserves actual rail/session settings
   without root sidebar fields;
-- Personas, Library, Search, rebuilt Ingest, MCP, and Evals continue through
-  registered production routes;
-- two interleaved TLDW API worker result envelopes retain their own detached
-  keywords, author, custom-prompt fallback, and overwrite flag without
-  retaining either mutable request model;
+- Personas, Library, Search, MCP, and Evals continue through registered
+  production routes, and the retired Ingest alias continues through Library;
+- the retired `api_calls` worker group, shared TLDW API request context,
+  payload-bearing completion handlers, and compatibility exports are absent
+  while Library remains the live ingest owner;
 - invalid or stale async completion settles resources/claims without applying
   stale UI.
 
@@ -679,8 +660,8 @@ AST checks:
 - inspect string `getattr()`/`setattr()` and handler `reactive_attr` values;
 - allow the same field name on a destination owner;
 - verify `button_handler_map` is absent after its slice;
-- verify the TLDW API success path does not read
-  `_last_tldw_api_request_context`;
+- verify no TLDW API completion path, `api_calls` group, selector, or
+  `_last_tldw_api_request_context` root access remains;
 - verify new production-app tests contain none of the prohibited surrogate
   patterns.
 
@@ -723,8 +704,8 @@ The tranche makes no broad startup or recompose performance claim.
   to the legacy root handler.
 - Provider validation failure is terminal for the exact claimed intent.
   Transient Console readiness releases only that exact claim.
-- TLDW API success rejects a malformed result envelope before ingestion.
-  It never guesses using a global “last request.”
+- no retired TLDW API completion can be routed or guess using a global “last
+  request”; Library's live queue owns ingestion and cancellation;
 - Logging names operations and reason categories, not private payloads.
 
 ## Implementation Slices and Dependency Order
@@ -763,14 +744,14 @@ with the existing ADRs linked in its plan.
    Keep `MediaWindow` as the view/selection owner and prove one mutation per
    event.
 
-7. **Remove retired Notes, Search, rebuilt-Ingest, Tools, and Evals root
+7. **Remove retired Notes, Search, Ingest, Tools, and Evals root
    state.**
    Delete no-op watchers, defaults, timers, and dead initializer paths while
-   preserving their production destinations.
+   preserving their current production owners and route aliases.
 
-8. **Replace shared TLDW API request context with an immutable result
-   envelope.**
-   Prove interleaved completions cannot exchange request options.
+8. **Retire the unreachable TLDW API worker context and handlers.**
+   Delete the orphaned `api_calls` graph instead of rebuilding a producer,
+   while preserving Library's live ingest request/cancellation behavior.
 
 9. **Run the final ownership and installed-distribution sentinels.**
    Freeze the exact retained root-reactive set, run the authorized integrated
@@ -791,8 +772,8 @@ combine service lifecycle or broad query-boundary removal into these slices.
 | 5 | TASK-651 | `Docs/superpowers/plans/2026-07-26-task-651-remove-legacy-ccp-prompt-root-state.md` | TASK-647 |
 | 6 | TASK-652 | `Docs/superpowers/plans/2026-07-26-task-652-media-destination-state.md` | TASK-647 |
 | 7 | TASK-904 | `Docs/superpowers/plans/2026-07-26-task-904-retired-destination-root-state.md` | TASK-647 |
-| 8 | TASK-905 | `Docs/superpowers/plans/2026-07-26-task-905-tldw-api-result-envelope.md` | TASK-647 |
-| 9 | TASK-906 | `Docs/superpowers/plans/2026-07-26-task-906-reactive-ownership-closeout.md` | TASK-647–654 |
+| 8 | TASK-905 | `Docs/superpowers/plans/2026-07-26-task-905-retire-tldw-api-worker-pipeline.md` | TASK-647 |
+| 9 | TASK-906 | `Docs/superpowers/plans/2026-07-26-task-906-reactive-ownership-closeout.md` | TASK-647–652, TASK-904, TASK-905 |
 
 ## ADR Check
 
@@ -819,12 +800,13 @@ The tranche is complete only when:
 - `TldwCli` has exactly the approved app-owned reactive set plus any unrelated
   descriptors introduced by separately approved work; none of the 59
   remove/move names remain root descriptors or root accesses;
-- Settings, Console, Media, Personas, Library, Search, rebuilt Ingest, MCP,
-  Evals, and LLM pass their production-route checks;
+- Settings, Console, Media, Personas, Library, Search, MCP, Evals, and LLM pass
+  their production-route checks, including the retired Ingest alias to Library;
 - LLM production actions are live from their destination;
 - one Media mutation event cannot apply twice;
 - provider commands have one explicit durable/session/handoff interpretation;
-- TLDW API completions cannot read another request's options;
+- the retired TLDW API worker graph and shared request context are absent,
+  while Library remains the only production ingest owner;
 - snapshots and diagnostics remain payload-safe;
 - source, authorized integration, formatting/static, and installed-wheel gates
   pass without surrogate applications.
