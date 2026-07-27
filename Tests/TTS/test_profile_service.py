@@ -784,6 +784,35 @@ async def test_availability_applies_exact_allowlist_before_capability_lookup() -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("snapshot_state", ("complete", "unverified"))
+async def test_availability_rejects_wrong_provider_snapshot_before_classification(
+    snapshot_state: str,
+) -> None:
+    tts_service = _FakeTTSService(
+        _capability_snapshot(
+            provider_id="future_native",
+            state=snapshot_state,
+            models=(_model("model-a"),),
+        )
+    )
+    service, repository, tts_service = _service(tts_service=tts_service)
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.observe_availability(
+            TTSProfilePageSnapshot(
+                repository_generation=repository.generation,
+                profiles=(_profile(),),
+                total=1,
+            )
+        )
+
+    _assert_safe_service_error(caught.value, "operation_failed")
+    assert tts_service.capability_calls == [("audio_cpp", ())]
+    assert tts_service.revision_decisions == []
+    assert tts_service.revision_reads == []
+
+
+@pytest.mark.asyncio
 async def test_all_unsupported_profiles_do_not_observe_capabilities() -> None:
     unsupported = _profile(
         provider_id="future_native",
@@ -990,7 +1019,11 @@ async def test_later_reconfiguration_does_not_roll_back_admitted_create() -> Non
         "hostile_envelope",
         "hostile_value",
         "wrong_generation",
+        "changed_display_name",
+        "changed_normalized_name",
         "changed_generation_fields",
+        "noncanonical_speed",
+        "mutable_options",
         "wrong_revision",
     ),
 )
@@ -1015,6 +1048,20 @@ async def test_create_from_artifact_rejects_hostile_repository_result(
             generation=repository.generation + 1,
             value=persisted,
         )
+    elif invalid_result == "changed_display_name":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(
+                persisted,
+                display_name="Different",
+                normalized_name="different",
+            ),
+        )
+    elif invalid_result == "changed_normalized_name":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, normalized_name="different"),
+        )
     elif invalid_result == "changed_generation_fields":
         repository.create_result = ProfileStoreResult(
             generation=repository.generation,
@@ -1022,6 +1069,16 @@ async def test_create_from_artifact_rejects_hostile_repository_result(
                 persisted,
                 model_id="https://user:credential@example.test/private/path",
             ),
+        )
+    elif invalid_result == "noncanonical_speed":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, speed=1),
+        )
+    elif invalid_result == "mutable_options":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, options={}),
         )
     else:
         repository.create_result = ProfileStoreResult(
@@ -1045,6 +1102,33 @@ async def test_create_from_artifact_rejects_hostile_repository_result(
     )
     assert tts_service.revision_decisions == [("audio_cpp", 3)]
     assert [name for name, _value in repository.calls] == ["create"]
+
+
+@pytest.mark.asyncio
+async def test_create_from_artifact_returns_canonical_copy_of_repository_profile() -> (
+    None
+):
+    repository = _FakeRepository()
+    persisted = _profile(
+        display_name="Saved",
+        model_id="selected-model",
+        voice_id="selected-voice",
+    )
+    repository.create_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=persisted,
+    )
+    service, _repository, _tts_service = _service(repository=repository)
+
+    loaded = await service.create_from_artifact(
+        "Saved",
+        _artifact(selection=_selection()),
+    )
+
+    assert loaded.profile == persisted
+    assert loaded.profile is not persisted
+    assert type(loaded.profile.speed) is float
+    assert type(loaded.profile.options) is MappingProxyType
 
 
 def test_profile_service_error_codes_are_bounded_and_value_independent() -> None:
@@ -1120,7 +1204,11 @@ async def test_rename_only_is_derived_from_loaded_generation_fields() -> None:
         "hostile_envelope",
         "hostile_value",
         "wrong_generation",
+        "changed_display_name",
+        "changed_normalized_name",
         "changed_generation_fields",
+        "noncanonical_speed",
+        "mutable_options",
         "changed_profile_id",
         "wrong_revision",
     ),
@@ -1159,6 +1247,20 @@ async def test_update_rejects_hostile_repository_result(
             generation=repository.generation + 1,
             value=persisted,
         )
+    elif invalid_result == "changed_display_name":
+        repository.update_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(
+                persisted,
+                display_name="Different",
+                normalized_name="different",
+            ),
+        )
+    elif invalid_result == "changed_normalized_name":
+        repository.update_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, normalized_name="different"),
+        )
     elif invalid_result == "changed_generation_fields":
         repository.update_result = ProfileStoreResult(
             generation=repository.generation,
@@ -1166,6 +1268,16 @@ async def test_update_rejects_hostile_repository_result(
                 persisted,
                 model_id="https://user:credential@example.test/private/path",
             ),
+        )
+    elif invalid_result == "noncanonical_speed":
+        repository.update_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, speed=1),
+        )
+    elif invalid_result == "mutable_options":
+        repository.update_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, options={}),
         )
     elif invalid_result == "changed_profile_id":
         repository.update_result = ProfileStoreResult(
@@ -1512,7 +1624,11 @@ async def test_duplicate_copies_immutable_loaded_version_at_revision_one() -> No
         "hostile_envelope",
         "hostile_value",
         "wrong_generation",
+        "changed_display_name",
+        "changed_normalized_name",
         "changed_generation_fields",
+        "noncanonical_speed",
+        "mutable_options",
         "reused_profile_id",
         "wrong_revision",
     ),
@@ -1541,6 +1657,20 @@ async def test_duplicate_rejects_hostile_repository_result(
             generation=repository.generation + 1,
             value=persisted,
         )
+    elif invalid_result == "changed_display_name":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(
+                persisted,
+                display_name="Different",
+                normalized_name="different",
+            ),
+        )
+    elif invalid_result == "changed_normalized_name":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, normalized_name="different"),
+        )
     elif invalid_result == "changed_generation_fields":
         repository.create_result = ProfileStoreResult(
             generation=repository.generation,
@@ -1548,6 +1678,16 @@ async def test_duplicate_rejects_hostile_repository_result(
                 persisted,
                 model_id="https://user:credential@example.test/private/path",
             ),
+        )
+    elif invalid_result == "noncanonical_speed":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, speed=1),
+        )
+    elif invalid_result == "mutable_options":
+        repository.create_result = ProfileStoreResult(
+            generation=repository.generation,
+            value=_forged_profile(persisted, options={}),
         )
     elif invalid_result == "reused_profile_id":
         repository.create_result = ProfileStoreResult(
@@ -1890,6 +2030,41 @@ async def test_availability_rejects_generation_change_during_capability_work() -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("evidence_state", ("available", "unavailable"))
+async def test_stale_complete_availability_uses_writer_ordered_decision_first(
+    evidence_state: str,
+) -> None:
+    models = (_model("model-a"),) if evidence_state == "available" else ()
+    tts_service = _FakeTTSService(
+        _capability_snapshot(
+            configuration_revision=3,
+            models=models,
+        )
+    )
+    tts_service.revision = 4
+    service, repository, tts_service = _service(tts_service=tts_service)
+
+    with pytest.raises(ProfileServiceError) as caught:
+        await service.observe_availability(
+            TTSProfilePageSnapshot(
+                repository_generation=repository.generation,
+                profiles=(_profile(),),
+                total=1,
+            )
+        )
+
+    _assert_safe_service_error(
+        caught.value,
+        "stale_configuration",
+        "credential",
+        "/private/path",
+    )
+    assert tts_service.capability_calls == [("audio_cpp", ())]
+    assert tts_service.revision_decisions == [("audio_cpp", 3)]
+    assert tts_service.revision_reads == []
+
+
+@pytest.mark.asyncio
 async def test_availability_rejects_snapshot_after_configuration_change() -> None:
     tts_service = _FakeTTSService(
         _capability_snapshot(
@@ -1897,8 +2072,8 @@ async def test_availability_rejects_snapshot_after_configuration_change() -> Non
             models=(_model("model-a"),),
         )
     )
-    tts_service.revision = 4
-    service, repository, _tts_service = _service(tts_service=tts_service)
+    tts_service.reconfigure_after_decision = True
+    service, repository, tts_service = _service(tts_service=tts_service)
 
     with pytest.raises(ProfileServiceError) as caught:
         await service.observe_availability(
@@ -1910,6 +2085,8 @@ async def test_availability_rejects_snapshot_after_configuration_change() -> Non
         )
 
     _assert_safe_service_error(caught.value, "stale_configuration")
+    assert tts_service.revision_decisions == [("audio_cpp", 3)]
+    assert tts_service.revision_reads == ["audio_cpp"]
 
 
 @pytest.mark.asyncio
@@ -2006,7 +2183,7 @@ async def test_unverified_snapshot_classifies_each_row_from_its_exact_evidence()
             voice_results=voice_results,
         )
     )
-    service, repository, _tts_service = _service(tts_service=tts_service)
+    service, repository, tts_service = _service(tts_service=tts_service)
 
     observed = await service.observe_availability(
         TTSProfilePageSnapshot(
@@ -2026,6 +2203,7 @@ async def test_unverified_snapshot_classifies_each_row_from_its_exact_evidence()
         "unavailable",
         "unverified",
     )
+    assert tts_service.revision_decisions == []
 
 
 @pytest.mark.asyncio

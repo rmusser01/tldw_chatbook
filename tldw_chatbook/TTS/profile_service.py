@@ -196,6 +196,27 @@ def _selection_is_profile_safe(
     )
 
 
+def _matches_exact_canonical_value(value: object, canonical: object) -> bool:
+    if type(value) is not type(canonical):
+        return False
+    if isinstance(canonical, Mapping):
+        value_mapping = cast(Mapping[object, object], value)
+        if len(value_mapping) != len(canonical):
+            return False
+        return all(
+            key in value_mapping
+            and _matches_exact_canonical_value(value_mapping[key], item)
+            for key, item in canonical.items()
+        )
+    if isinstance(canonical, tuple):
+        value_sequence = cast(tuple[object, ...], value)
+        return len(value_sequence) == len(canonical) and all(
+            _matches_exact_canonical_value(actual, expected)
+            for actual, expected in zip(value_sequence, canonical, strict=True)
+        )
+    return value == canonical
+
+
 def _profile_is_structurally_supported(profile: TTSGenerationProfile) -> bool:
     return _selection_is_profile_safe(
         profile.provider_id,
@@ -458,6 +479,13 @@ class TTSProfileService:
             failed = True
         if failed or type(snapshot) is not TTSNativeCapabilitySnapshot:
             raise ProfileServiceError("operation_failed")
+        if snapshot.provider_id != _PROFILE_PROVIDER_ID:
+            raise ProfileServiceError("operation_failed")
+        if snapshot.state == "complete":
+            await self._require_configuration_revision(
+                _PROFILE_PROVIDER_ID,
+                snapshot.configuration_revision,
+            )
 
         availability = tuple(
             self._classify_profile(profile, snapshot) for profile in page.profiles
@@ -783,23 +811,40 @@ class TTSProfileService:
                 updated_at=profile.updated_at,
             )
             valid = (
-                revalidated == profile
-                and cls._generation_fields_match(profile, draft)
-                and profile.revision == expected_revision
+                profile.profile_id == revalidated.profile_id
+                and profile.display_name == revalidated.display_name
+                and profile.normalized_name == revalidated.normalized_name
+                and profile.provider_id == revalidated.provider_id
+                and profile.model_id == revalidated.model_id
+                and profile.voice_id == revalidated.voice_id
+                and profile.response_format == revalidated.response_format
+                and type(profile.speed) is float
+                and profile.speed == revalidated.speed
+                and _matches_exact_canonical_value(
+                    profile.options,
+                    revalidated.options,
+                )
+                and profile.revision == revalidated.revision
+                and profile.created_at == revalidated.created_at
+                and profile.updated_at == revalidated.updated_at
+                and revalidated.display_name == draft.display_name
+                and revalidated.normalized_name == draft.normalized_name
+                and cls._generation_fields_match(revalidated, draft)
+                and revalidated.revision == expected_revision
                 and (
                     required_profile_id is None
-                    or profile.profile_id == required_profile_id
+                    or revalidated.profile_id == required_profile_id
                 )
                 and (
                     forbidden_profile_id is None
-                    or profile.profile_id != forbidden_profile_id
+                    or revalidated.profile_id != forbidden_profile_id
                 )
             )
         except Exception:  # noqa: BLE001 - hostile results fail closed
             validation_failed = True
         if validation_failed or not valid:
             raise ProfileServiceError("operation_failed")
-        return profile
+        return revalidated
 
     def _current_configuration_revision(self) -> int:
         failed = False
