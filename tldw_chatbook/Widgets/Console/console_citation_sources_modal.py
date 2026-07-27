@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-import re
-import unicodedata
 from typing import Any
 
 from rich.text import Text
@@ -37,7 +35,6 @@ OPEN_SOURCE_TYPES = {
     "notes": "notes",
     "chat_history": "conversations",
 }
-_URI_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,18 +82,9 @@ def selected_valid_evidence_ordinals(trace: CitationTrace) -> tuple[int, ...]:
 def _safe_source_identifier(value: object) -> str | None:
     """Return an inert bounded identifier without coercing untrusted JSON."""
 
-    if type(value) is not str or not value or value.strip() != value:
+    if type(value) is not str or not value:
         return None
     if len(value.encode("utf-8")) > EXTERNAL_OPAQUE_ID_UTF8_BYTES_MAX:
-        return None
-    if any(unicodedata.category(character).startswith("C") for character in value):
-        return None
-    if (
-        _URI_SCHEME.match(value) is not None
-        or "/" in value
-        or "\\" in value
-        or value.startswith(("~", "."))
-    ):
         return None
     return value
 

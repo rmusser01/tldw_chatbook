@@ -266,29 +266,56 @@ def test_hydrated_rows_return_unavailable_instead_of_partial_graph() -> None:
 
 
 @pytest.mark.parametrize(
-    ("identity", "expected_kind", "expected_id"),
+    ("identity", "expected_kind", "expected_id", "expected_open_type"),
     [
         (
             {"source_kind": "web_content", "source_id": "web-1"},
             "web_content",
             "web-1",
-        ),
-        ({"source_kind": 7, "source_id": "media-2"}, None, "media-2"),
-        ({"source_kind": "media_db", "source_id": ""}, "media_db", None),
-        ({"source_kind": "media_db", "source_id": "x" * 257}, "media_db", None),
-        (
-            {"source_kind": "media_db", "source_id": "https://example.invalid/2"},
-            "media_db",
             None,
         ),
-        ({"source_kind": "media_db", "source_id": "../private/2"}, "media_db", None),
-        ({"source_kind": "media_db", "source_id": "media-\n2"}, "media_db", None),
+        ({"source_kind": 7, "source_id": "media-2"}, None, "media-2", None),
+        ({"source_kind": "media_db", "source_id": ""}, "media_db", None, None),
+        (
+            {"source_kind": "media_db", "source_id": "x" * 257},
+            "media_db",
+            None,
+            None,
+        ),
+        (
+            {
+                "source_kind": "media_db",
+                "source_id": " https://example.invalid/2 ",
+            },
+            "media_db",
+            " https://example.invalid/2 ",
+            "media",
+        ),
+        (
+            {"source_kind": "media_db", "source_id": "../private\\2"},
+            "media_db",
+            "../private\\2",
+            "media",
+        ),
+        (
+            {"source_kind": "media_db", "source_id": "media-\n2"},
+            "media_db",
+            "media-\n2",
+            "media",
+        ),
+        (
+            {"source_kind": " media_db ", "source_id": "media-2"},
+            " media_db ",
+            "media-2",
+            None,
+        ),
     ],
 )
-def test_unsupported_or_malformed_identity_stays_visible_but_is_not_openable(
+def test_identity_values_are_exact_bounded_strings_and_mapping_is_static(
     identity: dict[str, object],
     expected_kind: str | None,
     expected_id: str | None,
+    expected_open_type: str | None,
 ) -> None:
     result = _hydration_result(
         identities={
@@ -304,7 +331,7 @@ def test_unsupported_or_malformed_identity_stays_visible_but_is_not_openable(
     assert rows[0].snapshot_text.startswith("[link]")
     assert rows[0].source_kind == expected_kind
     assert rows[0].source_id == expected_id
-    assert rows[0].open_source_type is None
+    assert rows[0].open_source_type == expected_open_type
 
 
 class _FakeStore:
