@@ -6,16 +6,31 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.config import DEFAULT_CONFIG_PATH
-
 from .unified_control_models import ConfiguredServerTarget, TargetStatusMetadata
 
-DEFAULT_SERVER_TARGETS_PATH = DEFAULT_CONFIG_PATH.parent / "mcp_server_targets.json"
+_SERVER_TARGETS_FILENAME = "mcp_server_targets.json"
+
+
+def _default_server_targets_path() -> Path:
+    """Return this store's path when constructed with no explicit argument.
+
+    Derives from ``config.get_user_data_dir()`` -- the same directory every
+    real construction site (``app.py``) already passes explicitly -- rather
+    than a stale, eagerly-computed module constant. See
+    ``local_store._default_local_mcp_store_path`` for why this is resolved
+    lazily instead of baked in at import time (TASK-855).
+
+    Returns:
+        ``get_user_data_dir() / "mcp_server_targets.json"``.
+    """
+    from tldw_chatbook.config import get_user_data_dir
+
+    return get_user_data_dir() / _SERVER_TARGETS_FILENAME
 
 
 class ConfiguredServerTargetStore:
     def __init__(self, path: str | Path | None = None) -> None:
-        self.path = Path(path or DEFAULT_SERVER_TARGETS_PATH)
+        self.path = Path(path) if path else _default_server_targets_path()
 
     def load(self) -> list[ConfiguredServerTarget]:
         payload = self._read_payload()
