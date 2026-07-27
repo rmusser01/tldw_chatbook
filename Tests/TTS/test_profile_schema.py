@@ -261,6 +261,7 @@ def test_v1_schema_has_required_constraints_and_index(tmp_path: Path) -> None:
         "CREATE TABLE tts_generation_profiles (profile_id TEXT)",
         "CREATE TABLE unrelated (value TEXT)",
         "CREATE TABLE sqliteXlooks_internal (value TEXT)",
+        "CREATE VIEW unrelated_view AS SELECT 1 AS value",
     ],
 )
 def test_version_zero_nonempty_store_is_rejected_without_replacement(
@@ -758,6 +759,156 @@ def test_migration_control_flow_exception_rolls_back_and_closes_connection(
                 pass
 
 
+@pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit])
+def test_migration_rollback_control_flow_exception_wins_and_connection_closes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_type: type[BaseException],
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    signal = exception_type("rollback control flow")
+    real_connect = sqlite3.connect
+    rollback_attempts: list[sqlite3.Connection] = []
+    opened_connections: list[sqlite3.Connection] = []
+
+    class InterruptingRollback(sqlite3.Connection):
+        def rollback(self) -> None:
+            rollback_attempts.append(self)
+            super().rollback()
+            raise signal
+
+    def tracked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        kwargs["factory"] = InterruptingRollback
+        connection = real_connect(*args, **kwargs)  # type: ignore[arg-type]
+        opened_connections.append(connection)
+        return connection
+
+    def fail_after_ddl(connection: sqlite3.Connection) -> None:
+        connection.execute("CREATE TABLE half_schema (value TEXT)")
+        raise RuntimeError("ordinary migration failure")
+
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+    monkeypatch.setitem(MIGRATIONS, 0, fail_after_ddl)
+
+    with pytest.raises(exception_type) as caught:
+        open_profile_store(path)
+
+    assert caught.value is signal
+    assert len(rollback_attempts) == len(opened_connections) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        opened_connections[0].execute("SELECT 1")
+
+    second_writer = real_connect(path, timeout=0.1, isolation_level=None)
+    try:
+        second_writer.execute("BEGIN IMMEDIATE")
+        assert second_writer.execute("PRAGMA user_version").fetchone()[0] == 0
+        assert (
+            second_writer.execute(
+                "SELECT name FROM sqlite_schema "
+                "WHERE type = 'table' AND name = 'half_schema'"
+            ).fetchone()
+            is None
+        )
+        second_writer.rollback()
+    finally:
+        second_writer.close()
+
+
+def test_primary_migration_control_flow_signal_survives_cleanup_signals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    primary = KeyboardInterrupt("primary control flow")
+    rollback_signal = SystemExit("rollback control flow")
+    close_signal = KeyboardInterrupt("close control flow")
+    real_connect = sqlite3.connect
+    rollback_attempted = False
+    close_attempted = False
+
+    class InterruptingCleanup(sqlite3.Connection):
+        def rollback(self) -> None:
+            nonlocal rollback_attempted
+            rollback_attempted = True
+            super().rollback()
+            raise rollback_signal
+
+        def close(self) -> None:
+            nonlocal close_attempted
+            close_attempted = True
+            super().close()
+            raise close_signal
+
+    def tracked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        kwargs["factory"] = InterruptingCleanup
+        return real_connect(*args, **kwargs)  # type: ignore[arg-type]
+
+    def interrupt_after_ddl(connection: sqlite3.Connection) -> None:
+        connection.execute("CREATE TABLE half_schema (value TEXT)")
+        raise primary
+
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+    monkeypatch.setitem(MIGRATIONS, 0, interrupt_after_ddl)
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        open_profile_store(path)
+
+    assert caught.value is primary
+    assert rollback_attempted
+    assert close_attempted
+    check = real_connect(path)
+    try:
+        assert check.execute("PRAGMA user_version").fetchone()[0] == 0
+        assert (
+            check.execute(
+                "SELECT name FROM sqlite_schema "
+                "WHERE type = 'table' AND name = 'half_schema'"
+            ).fetchone()
+            is None
+        )
+    finally:
+        check.close()
+
+
+@pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit])
+def test_live_store_cleanup_close_control_flow_signal_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_type: type[BaseException],
+) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA user_version = 2")
+    connection.close()
+    signal = exception_type("live close control flow")
+    real_connect = sqlite3.connect
+    close_attempts: list[sqlite3.Connection] = []
+
+    class InterruptingClose(sqlite3.Connection):
+        def close(self) -> None:
+            close_attempts.append(self)
+            super().close()
+            raise signal
+
+    def tracked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        kwargs["factory"] = InterruptingClose
+        return real_connect(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+
+    with pytest.raises(exception_type) as caught:
+        open_profile_store(path)
+
+    assert caught.value is signal
+    assert len(close_attempts) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        close_attempts[0].execute("SELECT 1")
+    check = real_connect(path)
+    try:
+        assert check.execute("PRAGMA user_version").fetchone()[0] == 2
+    finally:
+        check.close()
+
+
 def test_profile_and_assignment_codecs_round_trip_exact_values(tmp_path: Path) -> None:
     profile = _profile()
     assignment = _assignment()
@@ -1191,6 +1342,226 @@ def test_candidate_control_flow_exception_closes_and_removes_private_snapshot(
     with pytest.raises(sqlite3.ProgrammingError):
         snapshot_connections[0].execute("SELECT 1")
     assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("fd_kind", ["snapshot", "source"])
+def test_candidate_fd_cleanup_control_flow_signal_is_preserved_after_all_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_type: type[BaseException],
+    fd_kind: str,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    connection.close()
+    signal = exception_type(f"{fd_kind} close control flow")
+    private_directory = tmp_path / "private-snapshots"
+    private_directory.mkdir()
+    real_mkstemp = profile_schema.tempfile.mkstemp
+    real_os_open = profile_schema.os.open
+    real_os_close = profile_schema.os.close
+    snapshot_paths: list[Path] = []
+    snapshot_fds: list[int] = []
+    source_fds: list[int] = []
+    close_attempts: list[int] = []
+
+    def tracked_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        kwargs["dir"] = private_directory
+        fd, name = real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+        snapshot_fds.append(fd)
+        snapshot_paths.append(Path(name))
+        return fd, name
+
+    def tracked_os_open(*args: object, **kwargs: object) -> int:
+        fd = real_os_open(*args, **kwargs)  # type: ignore[arg-type]
+        if Path(str(args[0])) == path:
+            source_fds.append(fd)
+        return fd
+
+    def interrupting_close(fd: int) -> None:
+        close_attempts.append(fd)
+        real_os_close(fd)
+        target_fds = snapshot_fds if fd_kind == "snapshot" else source_fds
+        if fd in target_fds:
+            raise signal
+
+    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(profile_schema.os, "open", tracked_os_open)
+    monkeypatch.setattr(profile_schema.os, "close", interrupting_close)
+
+    with pytest.raises(exception_type) as caught:
+        validate_profile_candidate(path)
+
+    assert caught.value is signal
+    assert len(snapshot_paths) == len(snapshot_fds) == len(source_fds) == 1
+    assert close_attempts == [snapshot_fds[0], source_fds[0]]
+    for fd in (*snapshot_fds, *source_fds):
+        with pytest.raises(OSError):
+            real_os_close(fd)
+    assert not snapshot_paths[0].exists()
+    assert list(private_directory.iterdir()) == []
+
+
+@pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit])
+def test_candidate_unlink_cleanup_control_flow_signal_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_type: type[BaseException],
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    connection.close()
+    signal = exception_type("unlink control flow")
+    private_directory = tmp_path / "private-snapshots"
+    private_directory.mkdir()
+    real_mkstemp = profile_schema.tempfile.mkstemp
+    real_unlink = profile_schema.os.unlink
+    snapshot_paths: list[Path] = []
+    unlink_attempts: list[Path] = []
+
+    def tracked_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        kwargs["dir"] = private_directory
+        fd, name = real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+        snapshot_paths.append(Path(name))
+        return fd, name
+
+    def interrupting_unlink(target: object) -> None:
+        target_path = Path(str(target))
+        unlink_attempts.append(target_path)
+        real_unlink(target)
+        if target_path in snapshot_paths:
+            raise signal
+
+    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(profile_schema.os, "unlink", interrupting_unlink)
+
+    with pytest.raises(exception_type) as caught:
+        validate_profile_candidate(path)
+
+    assert caught.value is signal
+    assert unlink_attempts == snapshot_paths
+    assert len(snapshot_paths) == 1
+    assert not snapshot_paths[0].exists()
+    assert list(private_directory.iterdir()) == []
+
+
+@pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit])
+def test_candidate_connection_cleanup_control_flow_signal_wins_ordinary_body_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_type: type[BaseException],
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    connection.close()
+    signal = exception_type("snapshot connection close control flow")
+    private_directory = tmp_path / "private-snapshots"
+    private_directory.mkdir()
+    real_mkstemp = profile_schema.tempfile.mkstemp
+    real_connect = sqlite3.connect
+    snapshot_paths: list[Path] = []
+    close_attempts: list[sqlite3.Connection] = []
+
+    class InterruptingClose(sqlite3.Connection):
+        def close(self) -> None:
+            close_attempts.append(self)
+            super().close()
+            raise signal
+
+    def tracked_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        kwargs["dir"] = private_directory
+        fd, name = real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+        snapshot_paths.append(Path(name))
+        return fd, name
+
+    def tracked_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        kwargs["factory"] = InterruptingClose
+        return real_connect(*args, **kwargs)  # type: ignore[arg-type]
+
+    def fail_schema(_connection: sqlite3.Connection) -> None:
+        raise ValueError("ordinary body failure")
+
+    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+    monkeypatch.setattr(profile_schema, "_validate_schema", fail_schema)
+
+    with pytest.raises(exception_type) as caught:
+        validate_profile_candidate(path)
+
+    assert caught.value is signal
+    assert len(close_attempts) == len(snapshot_paths) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        close_attempts[0].execute("SELECT 1")
+    assert not snapshot_paths[0].exists()
+    assert list(private_directory.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("body_mode", "expected_code"),
+    [
+        ("success", "schema_corrupt"),
+        ("structured_error", "corrupt_data"),
+        ("ordinary_error", "schema_corrupt"),
+    ],
+)
+def test_candidate_ordinary_cleanup_failure_maps_without_detail_leaks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    body_mode: str,
+    expected_code: str,
+) -> None:
+    path = tmp_path / "candidate.sqlite3"
+    connection = open_profile_store(path)
+    if body_mode == "structured_error":
+        row = encode_profile(_profile())
+        row["revision"] = 0
+        connection.execute(
+            """
+            INSERT INTO tts_generation_profiles VALUES (
+                :profile_id, :display_name, :normalized_name, :provider_id,
+                :model_id, :voice_id, :response_format, :speed, :options_json,
+                :revision, :created_at, :updated_at
+            )
+            """,
+            row,
+        )
+        connection.commit()
+    connection.close()
+
+    private_directory = tmp_path / "private-snapshots"
+    private_directory.mkdir()
+    real_mkstemp = profile_schema.tempfile.mkstemp
+    real_unlink = profile_schema.os.unlink
+    snapshot_paths: list[Path] = []
+
+    def tracked_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        kwargs["dir"] = private_directory
+        fd, name = real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+        snapshot_paths.append(Path(name))
+        return fd, name
+
+    def fail_after_unlink(target: object) -> None:
+        real_unlink(target)
+        raise RuntimeError("private cleanup detail")
+
+    monkeypatch.setattr(profile_schema.tempfile, "mkstemp", tracked_mkstemp)
+    monkeypatch.setattr(profile_schema.os, "unlink", fail_after_unlink)
+    if body_mode == "ordinary_error":
+
+        def fail_schema(_connection: sqlite3.Connection) -> None:
+            raise ValueError("private body detail")
+
+        monkeypatch.setattr(profile_schema, "_validate_schema", fail_schema)
+
+    with _safe_error(expected_code) as caught:
+        validate_profile_candidate(path)
+
+    assert "private cleanup detail" not in str(caught.value)
+    assert "private body detail" not in str(caught.value)
+    assert len(snapshot_paths) == 1
+    assert not snapshot_paths[0].exists()
+    assert list(private_directory.iterdir()) == []
 
 
 def test_candidate_rejects_invalid_domain_row(tmp_path: Path) -> None:

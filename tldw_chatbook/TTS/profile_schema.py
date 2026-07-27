@@ -406,6 +406,18 @@ def _user_tables(connection: sqlite3.Connection) -> set[str]:
     }
 
 
+def _user_schema_objects(connection: sqlite3.Connection) -> set[tuple[str, str]]:
+    return {
+        (row[0], row[1])
+        for row in connection.execute(
+            """
+            SELECT type, name FROM sqlite_schema
+            WHERE lower(substr(name, 1, 7)) != 'sqlite_'
+            """
+        )
+    }
+
+
 def _normalized_ddl(sql: str) -> str:
     return " ".join(sql.split())
 
@@ -588,7 +600,34 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         raise _repository_error("schema_corrupt") from None
 
 
+class _CleanupState:
+    """Run all cleanup actions while preserving the first control-flow signal."""
+
+    def __init__(self, primary_error: BaseException | None = None) -> None:
+        self.control_flow: BaseException | None = (
+            primary_error
+            if primary_error is not None and not isinstance(primary_error, Exception)
+            else None
+        )
+        self.ordinary_cleanup_failed = False
+
+    def attempt(self, action: Callable[[], object]) -> None:
+        try:
+            action()
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                if self.control_flow is None:
+                    self.control_flow = error
+            else:
+                self.ordinary_cleanup_failed = True
+
+    def raise_control_flow(self) -> None:
+        if self.control_flow is not None:
+            raise self.control_flow
+
+
 def _migrate_empty_store(connection: sqlite3.Connection) -> None:
+    body_error: BaseException | None = None
     try:
         connection.execute("BEGIN IMMEDIATE")
         version = 0
@@ -601,19 +640,21 @@ def _migrate_empty_store(connection: sqlite3.Connection) -> None:
             connection.execute(f"PRAGMA user_version = {version}")
         connection.commit()
     except BaseException as error:
-        try:
-            connection.rollback()
-        except BaseException:
-            pass
-        if not isinstance(error, Exception):
-            raise
-        raise _repository_error("migration_failed") from None
+        body_error = error
+
+    if body_error is None:
+        return
+    cleanup = _CleanupState(body_error)
+    cleanup.attempt(connection.rollback)
+    cleanup.raise_control_flow()
+    raise _repository_error("migration_failed") from None
 
 
 def open_profile_store(path: Path) -> sqlite3.Connection:
     """Open/configure a live store, migrating only a truly empty v0 database."""
 
     connection: sqlite3.Connection | None = None
+    body_error: BaseException | None = None
     try:
         if not isinstance(path, Path):
             raise _repository_error("operation_failed")
@@ -625,7 +666,7 @@ def open_profile_store(path: Path) -> sqlite3.Connection:
         if version > CURRENT_PROFILE_SCHEMA_VERSION:
             raise _repository_error("schema_unsupported")
         if version == 0:
-            if _user_tables(connection):
+            if _user_schema_objects(connection):
                 raise _repository_error("schema_partial")
             journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
             if journal_mode != "wal":
@@ -639,18 +680,20 @@ def open_profile_store(path: Path) -> sqlite3.Connection:
             if journal_mode != "wal":
                 raise _repository_error("schema_corrupt")
         _validate_schema(connection)
-        return connection
     except BaseException as error:
-        if connection is not None:
-            try:
-                connection.close()
-            except BaseException:
-                pass
-        if isinstance(error, ProfileRepositoryError):
-            raise
-        if isinstance(error, Exception):
-            raise _repository_error("schema_corrupt") from None
-        raise
+        body_error = error
+
+    if body_error is None:
+        assert connection is not None
+        return connection
+
+    cleanup = _CleanupState(body_error)
+    if connection is not None:
+        cleanup.attempt(connection.close)
+    cleanup.raise_control_flow()
+    if isinstance(body_error, ProfileRepositoryError):
+        raise body_error
+    raise _repository_error("schema_corrupt") from None
 
 
 def _validate_all_rows(connection: sqlite3.Connection) -> None:
@@ -736,13 +779,11 @@ def _copy_source_to_snapshot(source_fd: int, snapshot_fd: int) -> None:
     os.fsync(snapshot_fd)
 
 
-def _close_suppressing_errors(resource: object) -> bool:
+def _unlink_if_present(path: str) -> None:
     try:
-        close = getattr(resource, "close")
-        close()
-        return True
-    except BaseException:
-        return False
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
 
 
 def validate_profile_candidate(path: Path) -> None:
@@ -775,7 +816,7 @@ def validate_profile_candidate(path: Path) -> None:
     snapshot_fd: int | None = None
     snapshot_path: str | None = None
     connection: sqlite3.Connection | None = None
-    completed = False
+    body_error: BaseException | None = None
     try:
         path_state = _source_identity(os.stat(resolved_path))
         if not stat.S_ISREG(path_state[2]):
@@ -836,8 +877,6 @@ def validate_profile_candidate(path: Path) -> None:
             raise _repository_error("schema_unsupported")
         _validate_schema(connection)
         _validate_all_rows(connection)
-        connection.close()
-        connection = None
         if not _snapshot_is_unchanged(
             snapshot_fd,
             snapshot_path,
@@ -849,31 +888,23 @@ def validate_profile_candidate(path: Path) -> None:
             directory_state,
         ):
             raise ValueError
-        completed = True
-    except ProfileRepositoryError:
-        raise
-    except Exception:
+    except BaseException as error:
+        body_error = error
+
+    cleanup = _CleanupState(body_error)
+    if connection is not None:
+        cleanup.attempt(connection.close)
+    if snapshot_fd is not None:
+        cleanup.attempt(lambda: os.close(snapshot_fd))
+    if source_fd is not None:
+        cleanup.attempt(lambda: os.close(source_fd))
+    if snapshot_path is not None:
+        cleanup.attempt(lambda: _unlink_if_present(snapshot_path))
+    cleanup.raise_control_flow()
+
+    if body_error is not None:
+        if isinstance(body_error, ProfileRepositoryError):
+            raise body_error
         raise _repository_error("schema_corrupt") from None
-    finally:
-        cleanup_succeeded = True
-        if connection is not None:
-            cleanup_succeeded &= _close_suppressing_errors(connection)
-        if snapshot_fd is not None:
-            try:
-                os.close(snapshot_fd)
-            except BaseException:
-                cleanup_succeeded = False
-        if source_fd is not None:
-            try:
-                os.close(source_fd)
-            except BaseException:
-                cleanup_succeeded = False
-        if snapshot_path is not None:
-            try:
-                os.unlink(snapshot_path)
-            except FileNotFoundError:
-                pass
-            except BaseException:
-                cleanup_succeeded = False
-        if completed and not cleanup_succeeded:
-            raise _repository_error("schema_corrupt") from None
+    if cleanup.ordinary_cleanup_failed:
+        raise _repository_error("schema_corrupt") from None
