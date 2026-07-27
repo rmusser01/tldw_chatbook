@@ -65,11 +65,33 @@ def _unlock_and_close(
     return first_error
 
 
+def _raise_recovery_failure(
+    primary_error: BaseException | None,
+    *cleanup_errors: BaseException | None,
+) -> None:
+    """Apply stable error precedence after best-effort recovery."""
+
+    if primary_error is not None and not isinstance(primary_error, Exception):
+        raise primary_error
+    for cleanup_error in cleanup_errors:
+        if cleanup_error is not None and not isinstance(cleanup_error, Exception):
+            raise cleanup_error
+    if isinstance(primary_error, ProfileRepositoryError):
+        raise primary_error
+    if primary_error is not None or any(
+        cleanup_error is not None for cleanup_error in cleanup_errors
+    ):
+        raise ProfileRepositoryError("operation_failed")
+
+
 class ProfileStoreLease:
     """Own a shared or exclusive OS lock for one profile database.
 
     Construction only validates and canonicalizes the database path. The
     adjacent persistent lock file is opened when :meth:`acquire` runs.
+
+    Lease instances are synchronous and intentionally not thread-safe. One
+    repository worker must own each instance and serialize its method calls.
     """
 
     def __init__(
@@ -126,9 +148,10 @@ class ProfileStoreLease:
 
     @property
     def acquired(self) -> bool:
-        """Return whether this lease currently owns the OS lock."""
+        """Return whether a non-closed handle still requires cleanup."""
 
-        return self._handle is not None
+        handle = self._handle
+        return handle is not None and not handle.closed
 
     def acquire(self) -> ProfileStoreLease:
         """Synchronously acquire this lease and return it.
@@ -141,8 +164,13 @@ class ProfileStoreLease:
                 out, or cannot use the locking backend.
         """
 
-        if self._handle is not None:
-            raise ProfileRepositoryError("invalid_state")
+        existing_handle = self._handle
+        if existing_handle is not None:
+            if existing_handle.closed:
+                normalization_error = self._clear_handle_state(existing_handle)
+                _raise_recovery_failure(None, normalization_error)
+            else:
+                raise ProfileRepositoryError("invalid_state")
 
         timing_failed = False
         deadline = 0.0
@@ -155,7 +183,6 @@ class ProfileStoreLease:
 
         handle: BinaryIO | None = None
         may_be_locked = False
-        transferred = False
         primary_error: BaseException | None = None
         try:
             open_failed = False
@@ -200,7 +227,6 @@ class ProfileStoreLease:
                     raise ProfileRepositoryError("operation_failed")
                 if not contended:
                     self._handle = handle
-                    transferred = True
                     return self
 
                 attempted = True
@@ -227,33 +253,38 @@ class ProfileStoreLease:
 
         cleanup_error: BaseException | None = None
         state_error: BaseException | None = None
-        if handle is not None and not transferred:
+        if handle is not None:
             cleanup_error = _unlock_and_close(
                 handle,
                 may_be_locked=may_be_locked,
             )
-            if self._handle is handle:
-                state_error = self._clear_handle_state()
+            if handle.closed:
+                state_error = self._clear_handle_state(handle)
+            else:
+                state_error = self._retain_residual_handle(handle)
 
-        if primary_error is not None and not isinstance(primary_error, Exception):
-            raise primary_error
-        for candidate_error in (cleanup_error, state_error):
-            if candidate_error is not None and not isinstance(
-                candidate_error,
-                Exception,
-            ):
-                raise candidate_error
-        if isinstance(primary_error, ProfileRepositoryError):
-            raise primary_error
+        _raise_recovery_failure(primary_error, cleanup_error, state_error)
         raise ProfileRepositoryError("operation_failed")
 
-    def _clear_handle_state(self) -> BaseException | None:
-        """Clear acquired state even if a subclass interrupts assignment."""
+    def _clear_handle_state(self, expected_handle: BinaryIO) -> BaseException | None:
+        """Identity-normalize a matching closed handle."""
+
+        if not expected_handle.closed:
+            return None
+        try:
+            if self._handle is expected_handle:
+                self._handle = None
+        except BaseException as error:
+            return error
+        return None
+
+    def _retain_residual_handle(self, handle: BinaryIO) -> BaseException | None:
+        """Conservatively retain a non-closed handle without overwriting another."""
 
         try:
-            self._handle = None
+            if self._handle is None or self._handle is handle:
+                self._handle = handle
         except BaseException as error:
-            object.__setattr__(self, "_handle", None)
             return error
         return None
 
@@ -266,14 +297,18 @@ class ProfileStoreLease:
                 preserved after the remaining cleanup is attempted.
         """
 
-        handle: BinaryIO | None = None
+        handle = self._handle
+        if handle is None:
+            return
+        if handle.closed:
+            normalization_error = self._clear_handle_state(handle)
+            _raise_recovery_failure(None, normalization_error)
+            return
+
         primary_error: BaseException | None = None
         cleanup_error: BaseException | None = None
         cleanup_completed = False
         try:
-            handle = self._handle
-            if handle is None:
-                return
             cleanup_error = _unlock_and_close(handle, may_be_locked=True)
             cleanup_completed = True
         except BaseException as error:
@@ -285,22 +320,20 @@ class ProfileStoreLease:
                 handle,
                 may_be_locked=True,
             )
-        state_error = self._clear_handle_state()
 
-        errors = (
+        state_error: BaseException | None = None
+        if primary_error is None and handle.closed:
+            try:
+                state_error = self._clear_handle_state(handle)
+            except BaseException as error:
+                primary_error = error
+
+        _raise_recovery_failure(
             primary_error,
             cleanup_error,
             retry_cleanup_error,
             state_error,
         )
-        for candidate_error in errors:
-            if candidate_error is not None and not isinstance(
-                candidate_error,
-                Exception,
-            ):
-                raise candidate_error
-        if any(candidate_error is not None for candidate_error in errors):
-            raise ProfileRepositoryError("operation_failed")
 
     def __enter__(self) -> ProfileStoreLease:
         """Acquire and return this lease for a context manager."""

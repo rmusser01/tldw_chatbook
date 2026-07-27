@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import inspect
 import multiprocessing
+import sys
 import time
+from collections.abc import Callable
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import BinaryIO
+from types import FrameType
+from typing import Any, BinaryIO, Protocol
 
 import portalocker
 import pytest
@@ -20,6 +24,25 @@ class _IntSubclass(int):
 
 class _FloatSubclass(float):
     pass
+
+
+class _TraceFunction(Protocol):
+    def __call__(
+        self,
+        frame: FrameType,
+        event: str,
+        argument: Any,
+        /,
+    ) -> _TraceFunction | None: ...
+
+
+def _source_line(function: Callable[..., object], fragment: str) -> int:
+    lines, first_line = inspect.getsourcelines(function)
+    matches = [
+        first_line + offset for offset, line in enumerate(lines) if fragment in line
+    ]
+    assert len(matches) == 1
+    return matches[0]
 
 
 def _spawned_lease_holder(database_path: str, connection: Connection) -> None:
@@ -409,6 +432,17 @@ class _RecordingHandle:
         self.closed = True
         if self.close_error is not None:
             raise self.close_error
+
+
+class _NonClosingHandle(_RecordingHandle):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_close = True
+
+    def close(self) -> None:
+        if self.fail_close:
+            raise OSError("close-private-secret")
+        self.closed = True
 
 
 def _patch_open(
@@ -836,6 +870,50 @@ def test_ownership_transfer_interrupt_releases_real_lock(
                 handle.close()
 
 
+def test_acquire_interrupt_after_assignment_before_return_releases_real_lock(
+    tmp_path: Path,
+) -> None:
+    interrupt = KeyboardInterrupt()
+    target_line = _source_line(ProfileStoreLease.acquire, "return self")
+    lease = ProfileStoreLease(
+        tmp_path / "profiles.sqlite3",
+        ProfileStoreLockMode.EXCLUSIVE,
+    )
+
+    def interrupt_once(
+        frame: FrameType,
+        event: str,
+        argument: Any,
+    ) -> _TraceFunction | None:
+        if (
+            getattr(frame, "f_code", None) is ProfileStoreLease.acquire.__code__
+            and event == "line"
+            and getattr(frame, "f_lineno", None) == target_line
+        ):
+            sys.settrace(None)
+            raise interrupt
+        return interrupt_once
+
+    try:
+        sys.settrace(interrupt_once)
+        with pytest.raises(KeyboardInterrupt) as exc_info:
+            lease.acquire()
+        sys.settrace(None)
+
+        assert exc_info.value is interrupt
+        assert lease.acquired is False
+        with ProfileStoreLease(
+            tmp_path / "profiles.sqlite3",
+            ProfileStoreLockMode.EXCLUSIVE,
+            timeout_seconds=0.05,
+            check_interval_seconds=0.005,
+        ) as recovered:
+            assert recovered.acquired is True
+    finally:
+        sys.settrace(None)
+        lease.release()
+
+
 @pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(9)])
 def test_post_open_clock_base_exception_closes_handle_and_is_preserved(
     tmp_path: Path,
@@ -941,6 +1019,213 @@ def test_release_state_transition_interrupt_releases_real_lock(
             assert recovered.acquired is True
     finally:
         lease.interrupt_clear = False
+        lease.release()
+
+
+def test_release_interrupt_at_snapshot_keeps_state_truthful_and_retryable(
+    tmp_path: Path,
+) -> None:
+    interrupt = KeyboardInterrupt()
+    target_line = _source_line(ProfileStoreLease.release, "handle = self._handle")
+    database_path = tmp_path / "profiles.sqlite3"
+    lease = ProfileStoreLease(
+        database_path,
+        ProfileStoreLockMode.EXCLUSIVE,
+    ).acquire()
+    retained_handle = lease._handle
+    assert retained_handle is not None
+
+    def interrupt_once(
+        frame: FrameType,
+        event: str,
+        argument: Any,
+    ) -> _TraceFunction | None:
+        if (
+            getattr(frame, "f_code", None) is ProfileStoreLease.release.__code__
+            and event == "line"
+            and getattr(frame, "f_lineno", None) == target_line
+        ):
+            sys.settrace(None)
+            raise interrupt
+        return interrupt_once
+
+    try:
+        sys.settrace(interrupt_once)
+        with pytest.raises(KeyboardInterrupt) as exc_info:
+            lease.release()
+        sys.settrace(None)
+
+        assert exc_info.value is interrupt
+        assert lease.acquired is True
+        lease.release()
+        assert lease.acquired is False
+        with ProfileStoreLease(
+            database_path,
+            ProfileStoreLockMode.EXCLUSIVE,
+            timeout_seconds=0.05,
+            check_interval_seconds=0.005,
+        ) as recovered:
+            assert recovered.acquired is True
+    finally:
+        sys.settrace(None)
+        if not retained_handle.closed:
+            try:
+                portalocker.unlock(retained_handle)
+            finally:
+                retained_handle.close()
+
+
+@pytest.mark.parametrize("next_operation", ["release", "acquire"])
+def test_closed_residual_reports_not_acquired_and_normalizes_on_next_operation(
+    tmp_path: Path,
+    next_operation: str,
+) -> None:
+    interrupt = KeyboardInterrupt()
+
+    class InterruptingNormalizationLease(ProfileStoreLease):
+        def __init__(self, database_path: Path) -> None:
+            self.interrupt_normalization = False
+            super().__init__(database_path, ProfileStoreLockMode.EXCLUSIVE)
+
+        def _clear_handle_state(
+            self,
+            expected_handle: BinaryIO,
+        ) -> BaseException | None:
+            if self.interrupt_normalization:
+                self.interrupt_normalization = False
+                raise interrupt
+            return super()._clear_handle_state(expected_handle)
+
+    database_path = tmp_path / "profiles.sqlite3"
+    lease = InterruptingNormalizationLease(database_path)
+    lease.acquire()
+    retained_handle = lease._handle
+    assert retained_handle is not None
+    lease.interrupt_normalization = True
+
+    with pytest.raises(KeyboardInterrupt) as exc_info:
+        lease.release()
+
+    assert exc_info.value is interrupt
+    assert retained_handle.closed is True
+    assert lease.acquired is False
+    if next_operation == "release":
+        lease.release()
+    else:
+        lease.acquire()
+        assert lease.acquired is True
+        lease.release()
+    assert lease._handle is None
+    with ProfileStoreLease(
+        database_path,
+        ProfileStoreLockMode.EXCLUSIVE,
+        timeout_seconds=0.05,
+        check_interval_seconds=0.005,
+    ) as recovered:
+        assert recovered.acquired is True
+
+
+def test_release_retains_nonclosed_handle_conservatively(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handle = _NonClosingHandle()
+    _patch_open(monkeypatch, handle)
+    monkeypatch.setattr(portalocker, "lock", lambda current_handle, flags: None)
+    monkeypatch.setattr(portalocker, "unlock", lambda current_handle: None)
+    lease = ProfileStoreLease(
+        tmp_path / "profiles.sqlite3",
+        ProfileStoreLockMode.EXCLUSIVE,
+    ).acquire()
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as exc_info:
+            lease.release()
+
+        _assert_safe_repository_error(exc_info.value, "operation_failed")
+        assert lease.acquired is True
+        assert lease._handle is handle
+    finally:
+        handle.fail_close = False
+        lease.release()
+
+
+def test_acquire_recovery_adopts_nonclosed_handle_conservatively(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handle = _NonClosingHandle()
+    _patch_open(monkeypatch, handle)
+    monkeypatch.setattr(
+        portalocker,
+        "lock",
+        lambda current_handle, flags: (_ for _ in ()).throw(
+            portalocker.exceptions.LockException("backend-private-secret")
+        ),
+    )
+    monkeypatch.setattr(portalocker, "unlock", lambda current_handle: None)
+    lease = ProfileStoreLease(
+        tmp_path / "profiles.sqlite3",
+        ProfileStoreLockMode.EXCLUSIVE,
+    )
+
+    try:
+        with pytest.raises(ProfileRepositoryError) as exc_info:
+            lease.acquire()
+
+        _assert_safe_repository_error(
+            exc_info.value,
+            "operation_failed",
+            "backend-private-secret",
+        )
+        assert lease.acquired is True
+        assert lease._handle is handle
+    finally:
+        handle.fail_close = False
+        lease.release()
+
+
+def test_acquire_recovery_never_overwrites_different_live_handle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    interrupt = KeyboardInterrupt()
+    local_handle = _NonClosingHandle()
+    different_handle = _NonClosingHandle()
+
+    class ConflictingLease(ProfileStoreLease):
+        def __init__(self, database_path: Path) -> None:
+            self.inject_conflict = False
+            super().__init__(database_path, ProfileStoreLockMode.EXCLUSIVE)
+            self.inject_conflict = True
+
+        def __setattr__(self, name: str, value: object) -> None:
+            if (
+                name == "_handle"
+                and value is local_handle
+                and getattr(self, "inject_conflict", False)
+            ):
+                object.__setattr__(self, "_handle", different_handle)
+                raise interrupt
+            super().__setattr__(name, value)
+
+    _patch_open(monkeypatch, local_handle)
+    monkeypatch.setattr(portalocker, "lock", lambda current_handle, flags: None)
+    monkeypatch.setattr(portalocker, "unlock", lambda current_handle: None)
+    lease = ConflictingLease(tmp_path / "profiles.sqlite3")
+
+    try:
+        with pytest.raises(KeyboardInterrupt) as exc_info:
+            lease.acquire()
+
+        assert exc_info.value is interrupt
+        assert lease._handle is different_handle
+        assert lease.acquired is True
+        assert local_handle.closed is False
+    finally:
+        local_handle.fail_close = False
+        local_handle.close()
+        different_handle.fail_close = False
         lease.release()
 
 
