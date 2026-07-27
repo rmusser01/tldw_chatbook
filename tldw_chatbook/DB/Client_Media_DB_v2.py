@@ -8341,13 +8341,12 @@ def get_chunk_by_uuid(
     """
     if not isinstance(db_instance, MediaDatabase):
         raise TypeError("db_instance required.")
-    target_table = "UnvectorizedMediaChunks"
     try:
         query = (
-            f"SELECT c.id, c.uuid, c.media_id, c.chunk_text, c.chunk_index, "
-            f"c.start_char, c.end_char, c.chunk_type "
-            f"FROM {target_table} c JOIN Media m ON c.media_id = m.id "
-            f"WHERE c.uuid = ? AND c.deleted = 0 AND m.deleted = 0"
+            "SELECT c.id, c.uuid, c.media_id, c.chunk_text, c.chunk_index, "
+            "c.start_char, c.end_char, c.chunk_type "
+            "FROM UnvectorizedMediaChunks c JOIN Media m ON c.media_id = m.id "
+            "WHERE c.uuid = ? AND c.deleted = 0 AND m.deleted = 0"
         )
         cursor = db_instance.execute_query(query, (chunk_uuid,))
         result = cursor.fetchone()

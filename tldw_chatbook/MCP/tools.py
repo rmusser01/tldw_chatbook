@@ -16,6 +16,18 @@ from ..config import get_api_key
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..RAG_Search.simplified.search_service import SimplifiedRAGSearchService
+from ..Utils.input_validation import validate_number_range, validate_text_input
+
+# Bounds for `search_conversations`' free-text `query` / integer `limit`
+# inputs, mirroring the same query+limit validation shape already used for
+# the Library RAG search entry point (`Library/library_rag_state.py`'s
+# `LIBRARY_RAG_QUERY_MAX_LENGTH` / `LIBRARY_RAG_TOP_K_MAX`) rather than
+# inventing new bounds. An unvalidated `limit` reaches SQLite's `LIMIT ?`
+# directly (`ChaChaNotes_DB.search_conversations_by_content`); a negative
+# value there returns every matching row unbounded (SQLite's `LIMIT -1`
+# means "no limit").
+MAX_SEARCH_QUERY_LENGTH = 2000
+MAX_SEARCH_RESULTS_LIMIT = 100
 
 # `save_conversation_from_messages` (tldw_chatbook.Chat.Chat_Functions) and
 # `chat_with_provider` (tldw_chatbook.LLM_Calls.LLM_API_Calls) were both
@@ -169,7 +181,9 @@ class MCPTools:
 
         Returns:
             List of matching conversations, each with id/title/preview/
-            created/character_id/message_count.
+            created/character_id/message_count. A single-item list with an
+            ``error`` key if ``query``/``limit`` fail validation or the
+            search itself raises.
 
         Note:
             This used to call ``self.chachanotes_db.search_all_content``,
@@ -188,6 +202,31 @@ class MCPTools:
             conversation match ``query`` -- not fabricated from an
             unrelated field.
         """
+        if not isinstance(query, str) or not query.strip():
+            return [{"error": "query must be a non-empty string"}]
+        if not validate_text_input(
+            query, max_length=MAX_SEARCH_QUERY_LENGTH, allow_html=False
+        ):
+            return [
+                {
+                    "error": (
+                        "query must be plain text of at most "
+                        f"{MAX_SEARCH_QUERY_LENGTH} characters"
+                    )
+                }
+            ]
+        if not validate_number_range(
+            limit, min_val=1, max_val=MAX_SEARCH_RESULTS_LIMIT
+        ):
+            return [
+                {
+                    "error": (
+                        f"limit must be between 1 and {MAX_SEARCH_RESULTS_LIMIT}"
+                    )
+                }
+            ]
+        limit = int(limit)
+
         try:
             results = await asyncio.to_thread(
                 self.chachanotes_db.search_conversations_by_content,
