@@ -158,6 +158,63 @@ class _PipelineProfileService:
             raise
 
 
+class _StoreFailureProfileService:
+    def __init__(self, code: str) -> None:
+        self.code = code
+        self.list_calls: list[tuple[str | None, int]] = []
+
+    async def list_profiles(
+        self,
+        *,
+        search: str | None = None,
+        offset: int = 0,
+    ) -> TTSProfilePageSnapshot:
+        self.list_calls.append((search, offset))
+        raise ProfileRepositoryError(self.code)
+
+    async def observe_availability(
+        self,
+        page: TTSProfilePageSnapshot,
+    ) -> TTSProfileAvailabilitySnapshot:
+        raise AssertionError("availability must not run after store failure")
+
+
+class _CancellationResistantAvailabilityService(_PipelineProfileService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cleanup_started: list[asyncio.Event] = []
+        self.cleanup_releases: list[asyncio.Event] = []
+        self.cleanup_settled_by_unmount: list[int] = []
+
+    async def observe_availability(
+        self,
+        page: TTSProfilePageSnapshot,
+    ) -> TTSProfileAvailabilitySnapshot:
+        self.availability_calls.append(page)
+        future = asyncio.get_running_loop().create_future()
+        self.availability_futures.append(future)
+        started = asyncio.Event()
+        release = asyncio.Event()
+        self.cleanup_started.append(started)
+        self.cleanup_releases.append(release)
+        call_index = len(self.availability_futures) - 1
+        try:
+            return await future
+        except asyncio.CancelledError:
+            self.cancelled_availability_calls += 1
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                self.cleanup_settled_by_unmount.append(call_index)
+            return _availability(
+                page,
+                state="unavailable",
+                configuration_revision=99,
+                catalog_revision=99,
+            )
+
+
 class _ActionProfileService:
     def __init__(
         self,
@@ -433,6 +490,56 @@ async def test_profile_store_unavailable_isolated_to_stable_library_recovery() -
         assert app.query_one("#tts-generate-btn", Button)
 
 
+@pytest.mark.parametrize(
+    "store_code",
+    ["unavailable", "closed", "terminal", "restoring"],
+)
+@pytest.mark.asyncio
+async def test_refresh_reloads_service_after_store_level_list_failure(
+    store_code: str,
+) -> None:
+    failed_service = _StoreFailureProfileService(store_code)
+    replacement = _ActionProfileService(_profile(0))
+    app = _STTSHost(failed_service)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await pilot.click("#view-profiles-btn")
+        await _wait_until(pilot, lambda: len(failed_service.list_calls) == 1)
+
+        status = app.query_one("#stts-profile-status", Static)
+        await _wait_until(
+            pilot,
+            lambda: str(status.render()) == PROFILE_STORE_UNAVAILABLE_COPY,
+        )
+        assert app.profile_service_requests == 1
+        assert app.query_one("#stts-profile-table", DataTable).row_count == 0
+
+        app.profile_service = replacement
+        app.query_one("#stts-profile-refresh-btn", Button).press()
+        await _wait_until(pilot, lambda: app.profile_service_requests == 2)
+        await _wait_until(
+            pilot,
+            lambda: (
+                app.query_one(
+                    "#stts-profile-table",
+                    DataTable,
+                ).row_count
+                == 1
+            ),
+        )
+
+        assert failed_service.list_calls == [(None, 0)]
+        assert replacement.list_calls == [(None, 0)]
+        assert (
+            _table_cell(
+                app.query_one("#stts-profile-table", DataTable),
+                0,
+                0,
+            )
+            == "Voice 00"
+        )
+
+
 @pytest.mark.asyncio
 async def test_repository_page_renders_before_availability_and_selection_arms_actions() -> (
     None
@@ -526,6 +633,102 @@ async def test_search_debounces_before_one_active_and_one_latest_page_request(
         await _wait_until(pilot, lambda: len(service.availability_futures) == 2)
         service.availability_futures[1].set_result(_availability(latest_page))
         await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_cancellation_resistant_availability_keeps_one_cleanup_and_drains_latest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        profile_library_module,
+        "PROFILE_SEARCH_DEBOUNCE_SECONDS",
+        0.02,
+        raising=False,
+    )
+    service = _CancellationResistantAvailabilityService()
+    app = _STTSHost(service)
+    initial_page = _page(_profile(0), generation=5)
+    middle_page = _page(_profile(1), generation=6)
+    latest_page = _page(_profile(2), generation=7)
+    loop = asyncio.get_running_loop()
+    unhandled: list[dict[str, object]] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+
+    try:
+        async with app.run_test(size=(150, 55)) as pilot:
+            await pilot.click("#view-profiles-btn")
+            await _wait_until(pilot, lambda: len(service.list_futures) == 1)
+            service.list_futures[0].set_result(initial_page)
+            await _wait_until(
+                pilot,
+                lambda: len(service.availability_futures) == 1,
+            )
+            library = app.query_one(STTSProfileLibrary)
+            table = app.query_one("#stts-profile-table", DataTable)
+
+            search = app.query_one("#stts-profile-search", Input)
+            search.value = "middle"
+            await _wait_until(
+                pilot,
+                lambda: service.cleanup_started[0].is_set(),
+            )
+            assert not service.cleanup_releases[0].is_set()
+            await _wait_until(pilot, lambda: len(service.list_futures) == 2)
+            assert service.list_calls[-1] == ("middle", 0)
+
+            service.list_futures[1].set_result(middle_page)
+            await _wait_until(
+                pilot,
+                lambda: len(service.availability_futures) == 2,
+            )
+            search.value = "latest"
+            await _wait_until(
+                pilot,
+                lambda: service.cleanup_started[1].is_set(),
+            )
+            await pilot.pause(0.05)
+
+            assert len(service.list_futures) == 2
+            assert library._retained_cleanup_task is not None
+            assert library._active_page_task is not None
+            assert library._pending_page_request is not None
+            assert library._pending_page_request.search == "latest"
+
+            service.cleanup_releases[0].set()
+            await _wait_until(pilot, lambda: len(service.list_futures) == 3)
+            assert service.list_calls[-1] == ("latest", 0)
+            service.list_futures[2].set_result(latest_page)
+            await _wait_until(
+                pilot,
+                lambda: len(service.availability_futures) == 3,
+            )
+            service.availability_futures[2].set_result(_availability(latest_page))
+            await _wait_until(
+                pilot,
+                lambda: _table_cell(table, 0, 3) == "Available",
+            )
+
+            assert _table_cell(table, 0, 0) == "Voice 02"
+            assert library._retained_cleanup_task is not None
+            assert not service.cleanup_releases[1].is_set()
+            assert service.maximum_active_list_calls == 1
+
+            await pilot.click("#view-settings-btn")
+            await _wait_until(
+                pilot,
+                lambda: service.cleanup_settled_by_unmount == [1],
+            )
+            assert library.parent is None
+            assert library._active_page_task is None
+            assert library._retained_cleanup_task is None
+            assert _table_cell(table, 0, 0) == "Voice 02"
+            assert _table_cell(table, 0, 3) == "Available"
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    await asyncio.sleep(0)
+    assert unhandled == []
 
 
 @pytest.mark.asyncio

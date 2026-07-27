@@ -59,6 +59,19 @@ PROFILE_DELETE_PROTECTED_COPY = (
     "This profile is assigned and cannot be deleted. Remove its assignments "
     "before retrying."
 )
+_STORE_UNAVAILABLE_CODES = frozenset(
+    {
+        "closed",
+        "corrupt_data",
+        "invalid_state",
+        "restoring",
+        "schema_corrupt",
+        "schema_partial",
+        "schema_unsupported",
+        "terminal",
+        "unavailable",
+    }
+)
 _PROFILE_LOADING_COPY = "Loading voice profiles…"
 _PROFILE_EMPTY_COPY = (
     "No voice profiles match. Change the search or save a successful native "
@@ -166,17 +179,7 @@ def _error_copy(error: BaseException) -> str:
     if isinstance(error, ProfileRepositoryError):
         if code in {"conflict", "stale"}:
             return PROFILE_CONFLICT_COPY
-        if code in {
-            "closed",
-            "corrupt_data",
-            "invalid_state",
-            "restoring",
-            "schema_corrupt",
-            "schema_partial",
-            "schema_unsupported",
-            "terminal",
-            "unavailable",
-        }:
+        if code in _STORE_UNAVAILABLE_CODES:
             return PROFILE_STORE_UNAVAILABLE_COPY
     if isinstance(error, ProfileServiceError):
         if code in {"profile_unavailable", "unsupported_profile"}:
@@ -186,6 +189,13 @@ def _error_copy(error: BaseException) -> str:
     if isinstance(error, ProfileValidationError):
         return _PROFILE_VALIDATION_COPY
     return PROFILE_ACTION_FAILED_COPY
+
+
+def _is_store_unavailable(error: BaseException) -> bool:
+    return (
+        isinstance(error, ProfileRepositoryError)
+        and error.code in _STORE_UNAVAILABLE_CODES
+    )
 
 
 class TTSProfileEditorModal(ModalScreen[TTSProfileDraft | None]):
@@ -602,6 +612,9 @@ class STTSProfileLibrary(Widget):
         self._active_page_task: asyncio.Task[None] | None = None
         self._active_page_token: _PageRequest | None = None
         self._active_page_phase = "idle"
+        # Cleanup-only work has no current request token or publication
+        # authority. It is bounded separately from the one active pipeline.
+        self._retained_cleanup_task: asyncio.Task[None] | None = None
         self._pending_page_request: _PageRequest | None = None
         self._search_timer: Timer | None = None
         self._rendered_request: _PageRequest | None = None
@@ -685,17 +698,28 @@ class STTSProfileLibrary(Widget):
         self._search_timer = None
         if timer is not None:
             timer.stop()
-        task = self._active_page_task
-        if task is not None and not task.done():
-            task.cancel()
+        tasks = tuple(
+            task
+            for task in (
+                self._active_page_task,
+                self._retained_cleanup_task,
+            )
+            if task is not None
+        )
+        self._active_page_task = None
+        self._active_page_token = None
+        self._active_page_phase = "idle"
+        self._retained_cleanup_task = None
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        for task in tasks:
             try:
                 await task
             except asyncio.CancelledError:
-                pass
-        if self._active_page_task is task:
-            self._active_page_task = None
-            self._active_page_token = None
-            self._active_page_phase = "idle"
+                continue
+            except Exception:  # noqa: BLE001,S112 - settle cleanup safely
+                continue
 
     def _queue_page_request(
         self,
@@ -721,7 +745,10 @@ class STTSProfileLibrary(Widget):
         if task is not None and not task.done():
             self._pending_page_request = request
             if self._active_page_phase == "availability":
-                task.cancel()
+                if task.cancelling() == 0:
+                    task.cancel()
+                if self._retained_cleanup_slot_available():
+                    self._detach_active_cleanup(task)
             return
         self._start_page_pipeline(request)
 
@@ -736,9 +763,13 @@ class STTSProfileLibrary(Widget):
         self._active_page_phase = "service"
         task.add_done_callback(self._page_pipeline_done)
 
-    def _page_pipeline_done(self, task: asyncio.Task[None]) -> None:
+    @staticmethod
+    def _consume_page_task(task: asyncio.Task[None]) -> None:
         if not task.cancelled():
             task.exception()
+
+    def _page_pipeline_done(self, task: asyncio.Task[None]) -> None:
+        self._consume_page_task(task)
         if self._active_page_task is not task:
             return
         self._active_page_task = None
@@ -748,6 +779,52 @@ class STTSProfileLibrary(Widget):
         self._pending_page_request = None
         if self._live and request is not None:
             self._start_page_pipeline(request)
+
+    def _retained_cleanup_slot_available(self) -> bool:
+        retained = self._retained_cleanup_task
+        if retained is None:
+            return True
+        if not retained.done():
+            return False
+        self._consume_page_task(retained)
+        if self._retained_cleanup_task is retained:
+            self._retained_cleanup_task = None
+        return True
+
+    def _detach_active_cleanup(self, task: asyncio.Task[None]) -> None:
+        """Retain stale cleanup without granting page publication authority."""
+
+        if (
+            self._active_page_task is not task
+            or self._retained_cleanup_task is not None
+        ):
+            return
+        request = self._pending_page_request
+        self._pending_page_request = None
+        self._active_page_task = None
+        self._active_page_token = None
+        self._active_page_phase = "idle"
+        self._retained_cleanup_task = task
+        task.add_done_callback(self._retained_cleanup_done)
+        if self._live and request is not None:
+            self._start_page_pipeline(request)
+
+    def _retained_cleanup_done(self, task: asyncio.Task[None]) -> None:
+        self._consume_page_task(task)
+        if self._retained_cleanup_task is not task:
+            return
+        self._retained_cleanup_task = None
+        active = self._active_page_task
+        if (
+            self._live
+            and self._pending_page_request is not None
+            and active is not None
+            and not active.done()
+            and self._active_page_phase == "availability"
+        ):
+            if active.cancelling() == 0:
+                active.cancel()
+            self._detach_active_cleanup(active)
 
     async def _run_page_pipeline(self, request: _PageRequest) -> None:
         try:
@@ -770,9 +847,15 @@ class STTSProfileLibrary(Widget):
                 )
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 - publish bounded failure only
+            except Exception as error:  # noqa: BLE001 - bounded failure only
+                store_unavailable = _is_store_unavailable(error)
+                if store_unavailable and self._service is service:
+                    self._service = None
                 if self._request_is_current(request):
-                    self._set_status(_PROFILE_LOAD_FAILED_COPY)
+                    if store_unavailable:
+                        self._publish_unavailable()
+                    else:
+                        self._set_status(_PROFILE_LOAD_FAILED_COPY)
                 return
             if not self._page_can_publish(request, page):
                 return
