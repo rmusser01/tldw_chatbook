@@ -2,7 +2,7 @@
 id: TASK-996
 title: >-
   Watchlists tab strip activates the wrong section for a given click column
-status: Done
+status: Won't Do
 assignee: []
 created_date: '2026-07-27 22:00'
 labels:
@@ -10,7 +10,7 @@ labels:
   - bug
   - ui
   - uat
-priority: high
+priority: low
 dependencies: []
 ---
 
@@ -106,3 +106,22 @@ earlier commit did not incidentally fix it: green there too.
 
 Modified: `Tests/UI/test_destination_visual_parity_correction.py` only.
 <!-- SECTION:NOTES:END -->
+
+## Resolution: invalid — harness error, not an app defect
+
+**This task should not have been filed, and the fault is in how it was measured.**
+
+The implementer could not reproduce it and said so rather than inventing a fix: verified live over tmux across all six tabs twice, and in-harness at both 160x42 and 235x52, every column of every label routes to its own button. The modal `Create` button works too — a watchlist was created by clicking it.
+
+The controller then reproduced the *cause*. The UAT computed SGR click columns with `awk '{print index($0, LABEL)}'`, and `index()` counts **bytes**. Every line of this app carries three-byte box-drawing and arrow glyphs (`▊`, `▔`, `▼`), so the byte offset outruns the true column by three per glyph. Measured on one row:
+
+```
+New Source   char-col=169   byte-offset=181
+Filters      char-col=186   byte-offset=198
+```
+
+A click computed at 185 as "inside New Source" lands on `Filters`. Clicking at the true character column 174 opened the create-source form correctly. The same arithmetic explains the original report — clicking "Items" reached "Runs" because the tab row's glyphs had pushed the computed column into the next button.
+
+AC #2 asked for a test proven to fail against current code. That is unsatisfiable for a defect that does not exist, so it is left **unchecked**. The implementer instead proved the new tab-routing test's sensitivity by injecting an off-by-one into the tab handler — which is the right substitute.
+
+Recorded in `backlog/docs/lessons-live-verification.md` so the next UAT does not repeat it.
