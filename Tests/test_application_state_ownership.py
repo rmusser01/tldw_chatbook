@@ -154,6 +154,46 @@ LEGACY_MEDIA_ROOT_NAMES = (
     "_initial_media_view",
     "media_runtime_state",
 )
+RETIRED_DESTINATION_ROOT_NAMES = (
+    "current_selected_note_id",
+    "current_selected_note_version",
+    "current_selected_note_title",
+    "current_selected_note_content",
+    "notes_sort_by",
+    "notes_sort_ascending",
+    "notes_preview_mode",
+    "notes_auto_save_enabled",
+    "notes_auto_save_timer",
+    "notes_last_save_time",
+    "search_active_sub_tab",
+    "ingest_active_view",
+    "tools_settings_active_view",
+    "evals_sidebar_collapsed",
+    "_notes_search_timer",
+    "_initial_search_sub_tab_view",
+    "_initial_ingest_view",
+    "_initial_tools_settings_view",
+)
+RETIRED_DESTINATION_ROOT_METHOD_NAMES = (
+    "_activate_initial_ingest_view",
+    "handle_notes_auto_save_toggle",
+    *(f"watch_{name}" for name in RETIRED_DESTINATION_ROOT_NAMES),
+)
+RETIRED_APP_COMPANION_NAMES = (
+    "USE_REBUILT_INGEST",
+    "INGEST_NAV_BUTTON_IDS",
+    "INGEST_VIEW_IDS",
+    "ALL_INGEST_VIEW_IDS",
+    "SEARCH_NAV_RAG_QA",
+    "SEARCH_NAV_RAG_CHAT",
+    "SEARCH_NAV_RAG_MANAGEMENT",
+    "SEARCH_NAV_WEB_SEARCH",
+    "SEARCH_NAV_EMBEDDINGS_CREATE",
+    "SEARCH_NAV_EMBEDDINGS_MANAGE",
+    "PlaceholderWindow",
+)
+RETIRED_TAB_INITIALIZERS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "tab_initializers"
+RETIRED_TAB_INITIALIZERS_MODULE = "tldw_chatbook.Event_Handlers.tab_initializers"
 INGEST_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "ingest_events.py"
 INGEST_UTILS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "ingest_utils.py"
 WORKER_EVENTS_PATH = PRODUCTION_ROOT / "Event_Handlers" / "worker_events.py"
@@ -324,7 +364,29 @@ def _production_occurrences(
 def _is_root_app_expression(node: ast.AST) -> bool:
     """Return whether an expression denotes the production app root."""
     chain = _chain(node)
-    return chain in {"app", "app_instance", "self.app", "self.app_instance"}
+    return bool(chain) and chain.rsplit(".", 1)[-1] in {"app", "app_instance"}
+
+
+def _is_root_mapping_expression(
+    node: ast.AST,
+    root_predicate,
+) -> bool:
+    """Recognize direct, ``__dict__``, and ``vars`` root storage."""
+    if root_predicate(node):
+        return True
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr == "__dict__"
+        and root_predicate(node.value)
+    ):
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "vars"
+        and len(node.args) == 1
+        and root_predicate(node.args[0])
+    )
 
 
 def _root_app_occurrences(
@@ -355,12 +417,159 @@ def _root_app_occurrences(
             found.append((relative, f"dynamic_{node.func.id}", node.lineno))
         elif (
             isinstance(node, ast.Subscript)
-            and _is_root_app_expression(node.value)
+            and _is_root_mapping_expression(
+                node.value,
+                _is_root_app_expression,
+            )
             and isinstance(node.slice, ast.Constant)
             and node.slice.value == target
         ):
-            found.append((relative, "subscript", node.lineno))
+            found.append(
+                (
+                    relative,
+                    f"mapping_{type(node.ctx).__name__.lower()}",
+                    node.lineno,
+                )
+            )
     return found
+
+
+def _class_body_bound_names(node: ast.AST) -> tuple[str, ...]:
+    """Return names bound by one direct class-body assignment target."""
+    if isinstance(node, ast.Name):
+        return (node.id,)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return tuple(
+            name for element in node.elts for name in _class_body_bound_names(element)
+        )
+    return ()
+
+
+class _TldwCliRootOccurrenceCollector(ast.NodeVisitor):
+    """Collect only syntax that can store retired state on ``TldwCli``."""
+
+    def __init__(self, path: Path, target: str) -> None:
+        self.path = path
+        self.target = target
+        self.scopes: list[str] = []
+        self.nested_class_depth = 0
+        self.occurrences: list[tuple[str, str, tuple[str, ...], int]] = []
+
+    def _record(self, kind: str, lineno: int) -> None:
+        self.occurrences.append(
+            (
+                str(self.path.relative_to(PROJECT_ROOT)),
+                kind,
+                tuple(self.scopes),
+                lineno,
+            )
+        )
+
+    def collect(self, app_class: ast.ClassDef) -> None:
+        self.scopes.append(app_class.name)
+        for statement in app_class.body:
+            assignment_targets: tuple[ast.AST, ...] = ()
+            if isinstance(statement, ast.Assign):
+                assignment_targets = tuple(statement.targets)
+            elif isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+                assignment_targets = (statement.target,)
+            if any(
+                self.target in _class_body_bound_names(target)
+                for target in assignment_targets
+            ):
+                self._record("class_declaration", statement.lineno)
+            self.visit(statement)
+        self.scopes.pop()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        if len(self.scopes) == 1 and node.name == self.target:
+            self._record("class_definition", node.lineno)
+        self.scopes.append(node.name)
+        self.nested_class_depth += 1
+        self.generic_visit(node)
+        self.nested_class_depth -= 1
+        self.scopes.pop()
+
+    def _is_root_receiver(self, node: ast.AST) -> bool:
+        if _is_root_app_expression(node):
+            return True
+        return self.nested_class_depth == 0 and _chain(node) == "self"
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        if len(self.scopes) == 1 and node.name == self.target:
+            self._record("function_definition", node.lineno)
+        self.scopes.append(node.name)
+        self.generic_visit(node)
+        self.scopes.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        if len(self.scopes) == 1 and node.name == self.target:
+            self._record("async_function_definition", node.lineno)
+        self.scopes.append(node.name)
+        self.generic_visit(node)
+        self.scopes.pop()
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr == self.target and self._is_root_receiver(node.value):
+            self._record(
+                f"attribute_{type(node.ctx).__name__.lower()}",
+                node.lineno,
+            )
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id in {"getattr", "setattr", "delattr", "hasattr"}
+            and len(node.args) >= 2
+            and self._is_root_receiver(node.args[0])
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == self.target
+        ):
+            self._record(f"dynamic_{node.func.id}", node.lineno)
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        if (
+            _is_root_mapping_expression(
+                node.value,
+                self._is_root_receiver,
+            )
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == self.target
+        ):
+            self._record(
+                f"mapping_{type(node.ctx).__name__.lower()}",
+                node.lineno,
+            )
+        self.generic_visit(node)
+
+    def visit_keyword(self, node: ast.keyword) -> None:
+        if (
+            self.nested_class_depth == 0
+            and node.arg == "reactive_attr"
+            and isinstance(node.value, ast.Constant)
+            and node.value.value == self.target
+        ):
+            self._record("reactive_attr", node.lineno)
+        self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if (
+            self.nested_class_depth == 0
+            and self.target == "notes-auto-save-toggle"
+            and node.value in {self.target, f"#{self.target}"}
+        ):
+            self._record("selector_literal", node.lineno)
+
+
+def _tldw_cli_occurrences(
+    target: str,
+) -> list[tuple[str, str, tuple[str, ...], int]]:
+    """Collect root-owned syntax inside the production ``TldwCli`` class."""
+    collector = _TldwCliRootOccurrenceCollector(APP_PATH, target)
+    collector.collect(_class_definition(APP_PATH, "TldwCli"))
+    return collector.occurrences
 
 
 def _class_definition(path: Path, name: str) -> ast.ClassDef:
@@ -457,6 +666,166 @@ mapping["retired_state"]
     assert kinds.count("attribute_del") == 1
     assert kinds.count("dynamic_name") == 3
     assert kinds.count("subscript_name") == 1
+
+
+def test_root_app_guard_detects_chained_dynamic_and_mapping_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = PROJECT_ROOT / "synthetic-root-app-guard.py"
+    tree = ast.parse(
+        """screen.app.ingest_active_view
+self.window.app.ingest_active_view = value
+getattr(screen.app, "ingest_active_view")
+setattr(screen.app, "ingest_active_view", value)
+delattr(self.window.app, "ingest_active_view")
+hasattr(self.window.app, "ingest_active_view")
+screen.app.__dict__["ingest_active_view"]
+screen.app.__dict__["ingest_active_view"] = value
+del screen.app.__dict__["ingest_active_view"]
+vars(self.window.app)["ingest_active_view"]
+vars(self.window.app)["ingest_active_view"] = value
+del vars(self.window.app)["ingest_active_view"]
+destination.ingest_active_view
+"""
+    )
+    monkeypatch.setitem(globals(), "_parse", lambda _path: tree)
+
+    assert _is_root_app_expression(ast.parse("screen.app", mode="eval").body)
+    assert _is_root_app_expression(
+        ast.parse("self.window.app_instance", mode="eval").body
+    )
+    occurrences = _root_app_occurrences(path, "ingest_active_view")
+
+    assert {line for _path, _kind, line in occurrences} == set(range(1, 13))
+    assert sorted(kind for _path, kind, _line in occurrences) == sorted(
+        (
+            "attribute_load",
+            "attribute_store",
+            "dynamic_getattr",
+            "dynamic_setattr",
+            "dynamic_delattr",
+            "dynamic_hasattr",
+            "mapping_load",
+            "mapping_store",
+            "mapping_del",
+            "mapping_load",
+            "mapping_store",
+            "mapping_del",
+        )
+    )
+
+
+def test_tldw_cli_root_guard_detects_only_root_owned_syntax(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tree = ast.parse(
+        """class TldwCli:
+    ingest_active_view = None
+
+    def watch_ingest_active_view(self):
+        self.ingest_active_view
+        self.ingest_active_view = value
+        del self.ingest_active_view
+        getattr(self, "ingest_active_view")
+        setattr(self, "ingest_active_view", value)
+        delattr(self, "ingest_active_view")
+        hasattr(self, "ingest_active_view")
+        self.__dict__["ingest_active_view"]
+        self.__dict__["ingest_active_view"] = value
+        del self.__dict__["ingest_active_view"]
+        vars(self)["ingest_active_view"]
+        vars(self)["ingest_active_view"] = value
+        del vars(self)["ingest_active_view"]
+        handler(reactive_attr="ingest_active_view")
+        destination.ingest_active_view = value
+        ingest_active_view = value
+"""
+    )
+    app_class = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+    monkeypatch.setitem(
+        globals(),
+        "_class_definition",
+        lambda _path, _name: app_class,
+    )
+
+    occurrences = _tldw_cli_occurrences("ingest_active_view")
+    assert {line for _path, _kind, _scopes, line in occurrences} == {
+        2,
+        *range(5, 19),
+    }
+    assert all(line not in {19, 20} for _path, _kind, _scopes, line in occurrences)
+
+    method_occurrences = _tldw_cli_occurrences("watch_ingest_active_view")
+    assert [(kind, line) for _path, kind, _scopes, line in method_occurrences] == [
+        ("function_definition", 4)
+    ]
+
+
+def test_tldw_cli_root_guard_recognizes_bare_and_selector_notes_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tree = ast.parse(
+        """class TldwCli:
+    def handle(self):
+        self.query_one("#notes-auto-save-toggle")
+        register("notes-auto-save-toggle")
+"""
+    )
+    app_class = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+    monkeypatch.setitem(
+        globals(),
+        "_class_definition",
+        lambda _path, _name: app_class,
+    )
+
+    occurrences = _tldw_cli_occurrences("notes-auto-save-toggle")
+
+    assert [(kind, line) for _path, kind, _scopes, line in occurrences] == [
+        ("selector_literal", 3),
+        ("selector_literal", 4),
+    ]
+
+
+def test_tldw_cli_root_guard_ignores_nested_owner_self_but_detects_definitions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tree = ast.parse(
+        """class TldwCli:
+    def watch_ingest_active_view(self):
+        pass
+
+    class NestedOwner:
+        ingest_active_view = None
+
+        def mutate(self):
+            self.ingest_active_view = value
+            getattr(self, "ingest_active_view")
+            self.__dict__["ingest_active_view"] = value
+            handler(reactive_attr="ingest_active_view")
+
+        def watch_ingest_active_view(self):
+            pass
+
+    class ingest_active_view:
+        pass
+"""
+    )
+    app_class = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+    monkeypatch.setitem(
+        globals(),
+        "_class_definition",
+        lambda _path, _name: app_class,
+    )
+
+    state_occurrences = _tldw_cli_occurrences("ingest_active_view")
+    assert [(kind, line) for _path, kind, _scopes, line in state_occurrences] == [
+        ("class_definition", 17)
+    ]
+
+    method_occurrences = _tldw_cli_occurrences("watch_ingest_active_view")
+    assert [(kind, line) for _path, kind, _scopes, line in method_occurrences] == [
+        ("function_definition", 2)
+    ]
 
 
 def test_legacy_chat_composition_modules_imports_and_classes_are_absent() -> None:
@@ -604,6 +973,70 @@ def test_legacy_ccp_prompt_handlers_and_compatibility_exports_are_absent() -> No
         "CHARACTER_FILE_FILTERS",
     ):
         assert retired_name not in ingest_utils_source
+
+
+def test_retired_destination_root_state_and_handlers_are_absent() -> None:
+    """Reject root mirrors while allowing destination-owned view state."""
+    violations: dict[
+        str, list[tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]]
+    ] = {}
+    for name in RETIRED_DESTINATION_ROOT_NAMES:
+        occurrences: list[
+            tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]
+        ] = [*_tldw_cli_occurrences(name)]
+        for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+            occurrences.extend(_root_app_occurrences(path, name))
+        if occurrences:
+            violations[name] = occurrences
+
+    for method_name in RETIRED_DESTINATION_ROOT_METHOD_NAMES:
+        occurrences = _tldw_cli_occurrences(method_name)
+        if occurrences:
+            violations[method_name] = occurrences
+
+    notes_toggle_registration = _tldw_cli_occurrences("notes-auto-save-toggle")
+    if notes_toggle_registration:
+        violations["notes-auto-save-toggle"] = notes_toggle_registration
+
+    assert violations == {}
+
+
+def test_retired_destination_root_companions_are_absent() -> None:
+    """Keep directly orphaned constants and the lazy placeholder retired."""
+    violations = {
+        name: _occurrences(APP_PATH, name)
+        for name in RETIRED_APP_COMPANION_NAMES
+        if _occurrences(APP_PATH, name)
+    }
+
+    assert violations == {}
+
+
+def test_retired_tab_initializer_package_and_imports_stay_absent() -> None:
+    """Keep the already-deleted legacy initializer entrypoint from reviving."""
+    violations: list[tuple[str, str, int]] = []
+    if RETIRED_TAB_INITIALIZERS_PATH.exists():
+        violations.append(
+            (
+                str(RETIRED_TAB_INITIALIZERS_PATH.relative_to(PROJECT_ROOT)),
+                "retired_package",
+                1,
+            )
+        )
+
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        relative = str(path.relative_to(PROJECT_ROOT))
+        for node in ast.walk(_parse(path)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith(RETIRED_TAB_INITIALIZERS_MODULE):
+                        violations.append((relative, alias.name, node.lineno))
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if module.startswith(RETIRED_TAB_INITIALIZERS_MODULE):
+                    violations.append((relative, module, node.lineno))
+
+    assert violations == []
 
 
 def test_tldw_cli_does_not_render_or_retain_prompt_bodies() -> None:
