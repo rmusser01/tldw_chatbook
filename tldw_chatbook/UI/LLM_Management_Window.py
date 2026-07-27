@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 #
 # 3rd-Party Imports
-from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal, Vertical
 from textual.css.query import QueryError
@@ -270,25 +269,6 @@ class LLMManagementWindow(Container):
 
     def compose(self) -> ComposeResult:
         """Compose the LLM Management UI with sidebar navigation and content area."""
-        # Sidebar with navigation
-        with VerticalScroll(id="llm-sidebar"):
-            yield Static("LLM Options", classes="sidebar-title")
-            yield Button("Llama.cpp", id="nav-llama-cpp", classes="llm-nav-button")
-            yield Button("Llamafile", id="nav-llamafile", classes="llm-nav-button")
-            yield Button("Ollama", id="nav-ollama", classes="llm-nav-button")
-            yield Button("vLLM", id="nav-vllm", classes="llm-nav-button")
-            yield Button("ONNX", id="nav-onnx", classes="llm-nav-button")
-            yield Button(
-                "Transformers", id="nav-transformers", classes="llm-nav-button"
-            )
-            yield Button("MLX-LM", id="nav-mlx-lm", classes="llm-nav-button")
-            yield Button(
-                "Local Models", id="nav-local-models", classes="llm-nav-button"
-            )
-            yield Button(
-                "Download Models", id="nav-download-models", classes="llm-nav-button"
-            )
-
         # Main content area
         with Container(id="llm-main-content"):
             # Llama.cpp View
@@ -960,40 +940,9 @@ class LLMManagementWindow(Container):
                     self.app_instance, id="huggingface-model-browser"
                 )
 
-    @on(Button.Pressed, ".llm-nav-button")
-    def handle_nav_button(self, event: Button.Pressed) -> None:
-        """Handle navigation button clicks."""
-        button = event.button
-        if not button.id:
-            return
-
-        # Extract view name from button ID (nav-llama-cpp -> llama-cpp)
-        view_name = button.id.replace("nav-", "")
-
-        # Don't switch if already active
-        if view_name == self.active_view:
-            return
-
-        logger.debug(f"Switching LLM view to: {view_name}")
-
-        # Update active view (will trigger watcher)
-        self.active_view = view_name
-
     def watch_active_view(self, old_view: str, new_view: str) -> None:
         """React to active view changes."""
         logger.debug(f"LLM view changing from '{old_view}' to '{new_view}'")
-
-        # Update navigation buttons
-        for button in self.query(".llm-nav-button"):
-            button.remove_class("-active")
-
-        # Set active button
-        active_button_id = f"nav-{new_view}"
-        try:
-            active_button = self.query_one(f"#{active_button_id}", Button)
-            active_button.add_class("-active")
-        except QueryError:
-            logger.warning(f"Navigation button #{active_button_id} not found")
 
         # Update view visibility
         for view_id in self.view_mapping.values():

@@ -42,12 +42,21 @@ _LAB_SCREENS = (
 # test_lab_screen_composes_mode_strip_under_destination_header below would
 # raise NoActiveAppError for it. See
 # test_evals_composes_mode_strip_under_destination_header_via_real_app for
-# the equivalent coverage through a real running app. The other three
-# async tests below (_StripHarness-based, or exercising the real shell)
-# still parametrize/exercise all of _LAB_SCREENS including evals -- they
-# never call compose_content() directly.
+# the equivalent coverage through a real running app.
+#
+# "llm" is excluded for the same reason as of the Lab-frame PR2 adoption
+# (Task 6): LLMScreen now extends LabScreen, whose compose_content() only
+# enters `with Horizontal(id="lab-status-row"): ...` when lab_status_chips()
+# is non-empty -- and Models' status chip (running-server count) always is.
+# Entering that context manager needs an active Textual app for the same
+# reason evals' does. See
+# test_llm_composes_mode_strip_under_destination_header_via_real_app.
+#
+# The other three async tests below (_StripHarness-based, or exercising the
+# real shell) still parametrize/exercise all of _LAB_SCREENS including evals
+# and llm -- they never call compose_content() directly.
 _LAB_SCREENS_FLAT_COMPOSE = tuple(
-    entry for entry in _LAB_SCREENS if entry[0] != "evals"
+    entry for entry in _LAB_SCREENS if entry[0] not in ("evals", "llm")
 )
 
 
@@ -112,6 +121,41 @@ async def test_evals_composes_mode_strip_under_destination_header_via_real_app()
         header = screen.query_one("#evals-destination-header", DestinationHeader)
         strip = screen.query_one("#lab-mode-strip", LabModeStrip)
         assert strip.active_route == "evals"
+        # DestinationHeader precedes the mode strip in document order --
+        # the same structural contract the flat-pattern screens assert via
+        # widgets[0]/widgets[1] above.
+        header_index = list(screen.walk_children()).index(header)
+        strip_index = list(screen.walk_children()).index(strip)
+        assert header_index < strip_index
+
+
+@pytest.mark.asyncio
+async def test_llm_composes_mode_strip_under_destination_header_via_real_app():
+    """Equivalent of test_lab_screen_composes_mode_strip_under_destination_header
+    for Models (llm), whose compose_content() is now LabScreen's -- see
+    _LAB_SCREENS_FLAT_COMPOSE's comment -- and so cannot be driven via a bare
+    list(compose_content()) call outside a running app once a status row is
+    present."""
+    from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
+
+    class _LLMHarness(App[None]):
+        def __init__(self, app_instance):
+            super().__init__()
+            self._app_instance = app_instance
+
+        async def on_mount(self) -> None:
+            await self.push_screen(LLMScreen(self._app_instance))
+
+    app_instance = _build_test_app()
+    app = _LLMHarness(app_instance)
+
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_stack[-1]
+
+        header = screen.query_one("#lab-destination-header", DestinationHeader)
+        strip = screen.query_one("#lab-mode-strip", LabModeStrip)
+        assert strip.active_route == "llm"
         # DestinationHeader precedes the mode strip in document order --
         # the same structural contract the flat-pattern screens assert via
         # widgets[0]/widgets[1] above.
