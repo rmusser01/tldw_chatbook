@@ -222,7 +222,20 @@ class LabScreen(BaseAppScreen):
     # -- composition -----------------------------------------------------
 
     def compose_content(self) -> ComposeResult:
-        """Compose the frame: header row, mode strip, workbench."""
+        """Compose the frame's chrome around this mode's content.
+
+        The header and this mode's status chips share one unconditional
+        row; see the module docstring for why that row is not conditional.
+
+        The body is deliberately absent here: ``on_mount`` mounts it from
+        ``call_after_refresh`` so first paint is not blocked by composing
+        it (Models' body costs 488-787 ms).
+
+        Returns:
+            A ``ComposeResult`` yielding, in order: the header row (the
+            destination header plus one ``Static`` per status chip), the
+            mode strip, and the three-region ``LabWorkbench``.
+        """
         with Horizontal(id="lab-header-row"):
             yield DestinationHeader(
                 self.lab_header_state(),
