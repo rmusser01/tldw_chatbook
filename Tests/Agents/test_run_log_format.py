@@ -1,0 +1,82 @@
+"""Pure record codec: round-trip, adversarial content, partial tails."""
+
+from tldw_chatbook.Agents.run_log_format import (
+    RECORD_ANCHOR,
+    RunLogRecord,
+    encode_record,
+    iter_records,
+)
+
+
+def rec(number=1, content="hello", **kw):
+    base = dict(
+        number=number,
+        run_id="a3f9c1",
+        kind="primary",
+        type="tool_result",
+        ts="2026-07-27T18:22:31.004Z",
+        content=content,
+    )
+    base.update(kw)
+    return RunLogRecord(**base)
+
+
+def test_round_trip_preserves_content_exactly():
+    original = rec(content="line one\nline two\n")
+    (parsed,) = list(iter_records(encode_record(original)))
+    assert parsed.content == original.content
+    assert parsed.number == 1
+    assert parsed.run_id == "a3f9c1"
+
+
+def test_header_is_one_physical_line():
+    blob = encode_record(rec(tool="grep_files", status="ok", call_id="call_7"))
+    header = blob.split(b"\n", 1)[0].decode()
+    assert header.startswith(RECORD_ANCHOR + " ")
+    assert "tool=grep_files" in header
+    assert "bytes=5" in header
+
+
+def test_content_containing_the_anchor_does_not_corrupt_parsing():
+    # The whole point of bytes=N: content is sliced by length, never scanned.
+    evil = f"{RECORD_ANCHOR} 999999 run=x kind=primary type=model ts=z bytes=0\nnope"
+    blob = encode_record(rec(number=1, content=evil)) + encode_record(rec(number=2))
+    parsed = list(iter_records(blob))
+    assert len(parsed) == 2
+    assert parsed[0].content == evil
+    assert parsed[1].number == 2
+
+
+def test_multibyte_content_counts_bytes_not_characters():
+    original = rec(content="héllo — ✅")
+    blob = encode_record(original)
+    assert f"bytes={len(original.content.encode('utf-8'))}".encode() in blob
+    (parsed,) = list(iter_records(blob))
+    assert parsed.content == original.content
+
+
+def test_partial_trailing_record_is_ignored():
+    blob = encode_record(rec(number=1)) + encode_record(rec(number=2, content="abcdef"))
+    truncated = blob[:-3]  # content cut mid-write
+    parsed = list(iter_records(truncated))
+    assert [p.number for p in parsed] == [1]
+
+
+def test_record_missing_only_its_terminator_is_ignored():
+    blob = encode_record(rec(number=1))
+    parsed = list(iter_records(blob[:-1]))
+    assert parsed == []
+
+
+def test_truncated_field_round_trips_and_is_absent_otherwise():
+    assert b"truncated=" not in encode_record(rec())
+    blob = encode_record(rec(content="cut", truncated_from=9000))
+    assert b"truncated=9000" in blob
+    (parsed,) = list(iter_records(blob))
+    assert parsed.truncated_from == 9000
+
+
+def test_whitespace_in_header_values_is_sanitised():
+    # A header field containing a space or newline would break single-line parsing.
+    (parsed,) = list(iter_records(encode_record(rec(tool="bad name\nx"))))
+    assert " " not in parsed.tool and "\n" not in parsed.tool
