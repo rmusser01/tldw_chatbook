@@ -23,9 +23,9 @@ _FORBIDDEN_IMPORTS = (
     "tldw_chatbook.Local_Ingestion.transcription_service",
 )
 # The application package has its own pre-existing imports, including Textual.
-# This expanded inventory therefore applies to modules added by STT itself,
-# while the original planned boundary above remains an absolute assertion.
-_INCREMENTAL_FORBIDDEN_IMPORTS = (
+# This expanded inventory therefore applies to imports attempted and modules
+# added by STT itself, while the original boundary remains an absolute check.
+_EXPANDED_FORBIDDEN_IMPORTS = (
     *_FORBIDDEN_IMPORTS,
     "tldw_chatbook.config",
     "tldw_chatbook.DB",
@@ -92,24 +92,60 @@ def test_contract_import_boundary_covers_application_and_optional_dependencies()
         "portalocker",
     }
 
-    assert required_prefixes <= set(_INCREMENTAL_FORBIDDEN_IMPORTS)
+    assert required_prefixes <= set(_EXPANDED_FORBIDDEN_IMPORTS)
 
 
 def test_contracts_import_without_runtime_or_legacy_dependencies() -> None:
     script = textwrap.dedent(
         """
+        import builtins
+        import importlib.util
         import json
         import sys
 
         import tldw_chatbook
 
         baseline_modules = set(sys.modules)
-        import tldw_chatbook.STT.contracts
+        attempted_imports = set()
+        original_import = builtins.__import__
+
+        def recording_import(name, globals=None, locals=None, fromlist=(), level=0):
+            absolute_name = name
+            package = globals.get("__package__") if globals is not None else None
+            if level and package:
+                absolute_name = importlib.util.resolve_name(
+                    f"{'.' * level}{name}",
+                    package,
+                )
+            attempted_imports.add(absolute_name)
+            attempted_imports.update(
+                f"{absolute_name}.{requested_name}"
+                for requested_name in fromlist or ()
+                if requested_name != "*"
+            )
+            return original_import(name, globals, locals, fromlist, level)
+
+        builtins.__import__ = recording_import
+        try:
+            # Prove preloaded direct and from-list imports remain observable.
+            import rich
+            from tldw_chatbook import __version__
+
+            hook_probe_recorded = {
+                "rich",
+                "tldw_chatbook.__version__",
+            } <= attempted_imports
+            attempted_imports.clear()
+            import tldw_chatbook.STT.contracts
+        finally:
+            builtins.__import__ = original_import
 
         print(
             json.dumps(
                 {
                     "all": sorted(sys.modules),
+                    "attempted": sorted(attempted_imports),
+                    "hook_probe_recorded": hook_probe_recorded,
                     "incremental": sorted(set(sys.modules) - baseline_modules),
                 }
             )
@@ -126,6 +162,8 @@ def test_contracts_import_without_runtime_or_legacy_dependencies() -> None:
 
     assert completed.returncode == 0, completed.stderr
     imported = json.loads(completed.stdout)
+    assert imported["hook_probe_recorded"]
+
     imported_modules = set(imported["all"])
     unexpectedly_imported = {
         forbidden
@@ -137,10 +175,21 @@ def test_contracts_import_without_runtime_or_legacy_dependencies() -> None:
     }
     assert unexpectedly_imported == set()
 
+    attempted_imports = set(imported["attempted"])
+    forbidden_attempts = {
+        forbidden
+        for forbidden in _EXPANDED_FORBIDDEN_IMPORTS
+        if any(
+            module == forbidden or module.startswith(f"{forbidden}.")
+            for module in attempted_imports
+        )
+    }
+    assert forbidden_attempts == set()
+
     incremental_modules = set(imported["incremental"])
     incrementally_imported = {
         forbidden
-        for forbidden in _INCREMENTAL_FORBIDDEN_IMPORTS
+        for forbidden in _EXPANDED_FORBIDDEN_IMPORTS
         if any(
             module == forbidden or module.startswith(f"{forbidden}.")
             for module in incremental_modules
