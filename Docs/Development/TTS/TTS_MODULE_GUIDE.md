@@ -39,6 +39,11 @@ tldw_chatbook/TTS/
 ├── audio_cpp_contract.py    # Pinned JSON and PCM16 WAV validation
 ├── preferences.py           # Immutable global defaults and config mutations
 ├── request_admission.py     # Atomic preference/revision/lease admission
+├── profile_errors.py        # Value-independent profile/store failures
+├── profile_types.py         # Immutable profiles, assignments, and receipts
+├── profile_schema.py        # Dedicated versioned SQLite schema and codecs
+├── profile_store_lock.py    # Cooperative shared/exclusive process locking
+├── profile_repository.py    # Serialized CRUD, backup, and restore lifecycle
 ├── playground_types.py      # Immutable Playground request/artifact contracts
 ├── adapters/
 │   └── audio_cpp.py         # Native external audio.cpp adapter
@@ -80,6 +85,75 @@ shutdown. Registration is sealed at construction time.
 `TTSBackendBase`, `TTSBackendManager`, and the class-global legacy backend
 registry are compatibility-bridge internals. They are not the extension point
 for new providers.
+
+### Local generation profile repository (Slice 2A)
+
+Reusable generation profiles now have a dedicated, versioned SQLite ownership
+boundary. `TldwCli` constructs one initially closed `TTSProfileRepository` and
+opens it lazily for a profile-store consumer such as **Backup All**. The default
+file is `tldw_chatbook_tts_profiles.db` in the current Chatbook user data
+directory. An installation may instead set a validated path:
+
+```toml
+[database]
+tts_profiles_db_path = "/absolute/path/to/tts-profiles.db"
+```
+
+The store is local-only and separate from character cards, provider
+configuration, and conversation storage. Schema version 1 holds complete,
+immutable profile snapshots and authority-scoped assignment records. Profile
+display names are trimmed and have a unique key derived as
+`NFKC(display_name).casefold()`. Creates begin at revision 1; updates require
+the exact revision read by the editor and increment it atomically. A stale
+revision or normalized-name collision reports a conflict without overwriting
+the stored row. Assignment identity is the complete
+`(source, authority_id, character_id)` tuple, and a foreign-key restriction
+prevents deletion of an assigned profile.
+
+Every repository operation runs through one serialized off-event-loop worker,
+which owns at most one long-lived SQLite connection. An open repository keeps a
+cooperative shared lock next to the database, so multiple Chatbook processes
+may read and write through SQLite while each retains shared ownership. Restore
+must first quiesce admitted work and acquire a bounded exclusive lock. A second
+process that still holds a shared lock therefore prevents replacement and
+causes restore to fail before the live file is changed.
+
+Normal operations and results carry a monotonic lifecycle generation. Restore
+advances that generation when admitted, rejects new normal work while
+`restoring`, cancels queued older work, and prevents an already-running older
+result from being published. The public states are `open`, `restoring`,
+`unavailable`, and `closed`; definitive close is terminal.
+
+`TTSProfileRepository.backup_to()` uses SQLite's online-backup API, validates
+the completed standalone snapshot, and publishes it atomically at its
+destination. **Backup All** reaches the profile database only through this
+repository method; it never copies the open profile file. The databases in one
+Backup All directory are individually consistent snapshots taken during the
+run, not one cross-database atomic snapshot.
+
+Restore is an explicit, bounded repository operation. It validates a private
+snapshot of the candidate, stages it through SQLite online backup, performs
+schema, full-integrity, foreign-key, and domain-row checks, and creates a
+durable pre-restore recovery database before atomic replacement. Quiescence,
+candidate validation, exclusive-lock, recovery-backup, or replacement failure
+leaves the current store authoritative and rebinds it when safe. If replacement
+succeeds but shared-lock reacquisition or authoritative reopen fails, the
+repository reports `unavailable`, retains recovery evidence, and does not
+create a blank database. Corrupt, partial, unsupported-version, or missing
+established stores likewise fail closed instead of being recreated.
+
+Profiles persist generation selections, not connection or process
+configuration. Provider origins, credentials, API keys, custom headers, binary
+paths, `server.json` paths, health observations, message text, and raw local
+paths are excluded from profile data and safe repository diagnostics.
+
+This slice is storage infrastructure only. It does not yet provide an STTS
+profile-management library, character-assignment UI or authority acquisition,
+roleplay routing, profile/card portability or synchronization, legacy-provider
+profile execution, provider connection details, or managed audio.cpp process
+behavior. Those remain separately reviewed Slice 2B, Slice 3, Slice 4, and
+managed-process work. See
+[ADR-028](../../../backlog/decisions/028-character-tts-generation-profile-ownership.md).
 
 ### Global defaults and Console request admission
 

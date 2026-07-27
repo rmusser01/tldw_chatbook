@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-26
-Related Tasks: TASK-710, TASK-761
+Related Tasks: TASK-710, TASK-763
 Extends: ADR-023
 Supersedes: N/A
 
@@ -146,4 +146,4 @@ fail-closed behavior for later UI and runtime slices.
 - [Approved design](../../Docs/superpowers/specs/2026-07-25-character-tts-generation-profiles-design.md)
 - [ADR-023 — TTS adapter registry and audio.cpp runtime boundary](023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 - [TASK-710](<../tasks/task-710 - Make-external-audio.cpp-Console-TTS-settings-coherent.md>)
-- [TASK-761](<../tasks/task-761 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md>)
+- [TASK-763](<../tasks/task-763 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md>)

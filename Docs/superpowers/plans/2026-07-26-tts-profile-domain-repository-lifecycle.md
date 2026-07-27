@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, frozen dataclasses, SQLite 3, `concurrent.futures.ThreadPoolExecutor`, `asyncio`, portalocker, Textual workers, pytest/pytest-asyncio, Ruff, mypy, Backlog.md.
 
-**Task:** `TASK-761`
+**Task:** `TASK-763`
 
 **ADR required:** yes
 **ADR path:** `backlog/decisions/028-character-tts-generation-profile-ownership.md`
@@ -47,7 +47,7 @@ It does **not** implement:
 | File | Responsibility |
 | --- | --- |
 | `backlog/decisions/028-character-tts-generation-profile-ownership.md` | Canonical ownership, identity, lifecycle, and rollback decision |
-| `backlog/tasks/task-761 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md` | Atomic Slice 2A acceptance criteria and delivery evidence |
+| `backlog/tasks/task-763 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md` | Atomic Slice 2A acceptance criteria and delivery evidence |
 | `Docs/superpowers/specs/2026-07-25-character-tts-generation-profiles-design.md` | Approved design with the collision-free ADR-028 reference |
 | `tldw_chatbook/TTS/profile_errors.py` | Safe structured profile/repository failures |
 | `tldw_chatbook/TTS/profile_types.py` | Immutable domain values and boundary validation |
@@ -180,7 +180,7 @@ closed repository may not.
 
 - Modify: `Docs/superpowers/specs/2026-07-25-character-tts-generation-profiles-design.md`
 - Create: `backlog/decisions/028-character-tts-generation-profile-ownership.md`
-- Create: `backlog/tasks/task-761 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md`
+- Create: `backlog/tasks/task-763 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md`
 - Create: `Docs/superpowers/plans/2026-07-26-tts-profile-domain-repository-lifecycle.md`
 
 - [x] **Step 1: Commit the approved planning boundary**
@@ -190,7 +190,7 @@ git add \
   Docs/superpowers/specs/2026-07-25-character-tts-generation-profiles-design.md \
   Docs/superpowers/plans/2026-07-26-tts-profile-domain-repository-lifecycle.md \
   backlog/decisions/028-character-tts-generation-profile-ownership.md \
-  "backlog/tasks/task-761 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md"
+  "backlog/tasks/task-763 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md"
 git commit -m "docs(tts): plan generation profile repository lifecycle"
 ```
 
@@ -239,17 +239,17 @@ virtual environment.
 Run:
 
 ```bash
-backlog task 761 --plain
+backlog task 763 --plain
 rg -n "ADR-02(7|8)|027-character|028-character" \
   Docs/superpowers/specs/2026-07-25-character-tts-generation-profiles-design.md \
   backlog/decisions/028-character-tts-generation-profile-ownership.md \
-  "backlog/tasks/task-761 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md"
+  "backlog/tasks/task-763 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md"
 ```
 
-Expected: TASK-761 is In Progress; every profile-ownership reference uses
+Expected: TASK-763 is In Progress; every profile-ownership reference uses
 ADR-028; unrelated ADR-027 remains untouched.
 
-Verified: TASK-761 is In Progress, ADR-028 is linked consistently, and
+Verified: TASK-763 is In Progress, ADR-028 is linked consistently, and
 unrelated ADR-027 was not modified.
 
 ## Task 2: Add safe errors and immutable profile-domain validation
@@ -961,7 +961,7 @@ git commit -m "feat(tts): include profiles in Backup All"
 
 - Modify: `Docs/Development/TTS/TTS_MODULE_GUIDE.md`
 - Modify: `Docs/Features/Speech-Services-Guide.md`
-- Modify: `backlog/tasks/task-761 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md`
+- Modify: `backlog/tasks/task-763 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md`
 
 - [ ] **Step 1: Update documentation**
 
@@ -1062,7 +1062,7 @@ rather than fixing unrelated debt.
 
 Expected: record the exact result. If existing repository failures remain,
 compare the exact failures with an untouched `origin/dev` worktree. Do not mark
-TASK-761 Done unless the repository Definition of Done is genuinely satisfied.
+TASK-763 Done unless the repository Definition of Done is genuinely satisfied.
 
 - [ ] **Step 6: Perform privacy and scope audits**
 
@@ -1085,7 +1085,7 @@ origin, credential, or raw path. No managed-process behavior appears.
 Use `superpowers:requesting-code-review`. Address every validated finding with
 TDD and rerun the affected plus broad verification.
 
-- [ ] **Step 8: Update TASK-761**
+- [ ] **Step 8: Update TASK-763**
 
 Check each acceptance criterion only when evidence exists. Add concise
 Implementation Notes with:
@@ -1105,6 +1105,6 @@ Set status to Done only when every task DoD and repository DoD item is met.
 git add \
   Docs/Development/TTS/TTS_MODULE_GUIDE.md \
   Docs/Features/Speech-Services-Guide.md \
-  "backlog/tasks/task-761 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md"
+  "backlog/tasks/task-763 - Add-TTS-generation-profile-domain-and-repository-lifecycle.md"
 git commit -m "docs(tts): document profile repository lifecycle"
 ```
