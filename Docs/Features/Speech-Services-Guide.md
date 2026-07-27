@@ -59,6 +59,54 @@ Configure default TTS options:
 - API key management
 - Voice blend creation (Kokoro only)
 
+### Local generation profile storage
+
+Chatbook now has a local database boundary for reusable TTS generation
+profiles. The default file is `tldw_chatbook_tts_profiles.db` in the current
+Chatbook user data directory. Advanced installations may override it in the
+configuration file:
+
+```toml
+[database]
+tts_profiles_db_path = "/absolute/path/to/tts-profiles.db"
+```
+
+This is foundational storage, not a new profile-management screen. Speech
+Services does not yet offer an STTS profile library or controls to create,
+edit, delete, or assign profiles to characters. Character authority
+acquisition, assignment UI, roleplay voice routing, legacy-provider profile
+execution, and profile/card portability or synchronization are also deferred.
+Existing Playground and Console speech continue to use their current settings
+and request paths.
+
+Profiles are owned locally and contain generation choices, not provider
+connection details. They exclude server origins, credentials and API keys,
+binary or `server.json` paths, managed-process settings, message text, and
+provider health observations. Names compare uniquely after Unicode
+normalization and case folding. A saved edit must use the revision originally
+loaded, so a concurrent change is reported as a conflict instead of being
+silently overwritten.
+
+**Database Tools → Backup All Databases** includes the profile store when its
+repository is available. Chatbook creates that entry with SQLite's online
+backup mechanism rather than copying an open database file. Each database
+backup is internally consistent, but the collection is not a single
+cross-database atomic snapshot. If the profile backup cannot be produced, the
+operation reports a partial failure instead of claiming that profiles were
+backed up.
+
+Profile restore is an explicit, bounded repository operation; there is not yet
+a profile-specific restore control in Speech Services. The repository validates
+the candidate and creates a recovery copy before replacement. Failures before
+replacement preserve the current store. If replacement occurs but the new
+store cannot be safely reopened, profile storage remains unavailable with
+recovery evidence rather than silently creating an empty database. Do not
+replace an open profile database with a raw file copy.
+
+See
+[ADR-028](../../backlog/decisions/028-character-tts-generation-profile-ownership.md)
+for the ownership, privacy, backup, and deferred-scope decisions.
+
 ### Using an Existing audio.cpp Server
 
 Chatbook can connect the Playground to one compatible `audiocpp_server` that

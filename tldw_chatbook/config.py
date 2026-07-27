@@ -2232,6 +2232,7 @@ log_backup_count = 5
 
 [database]
 # scheduled_tasks_db_path = "/custom/path.db"  # optional override
+# tts_profiles_db_path = "/custom/path.db"  # optional override
 # Path to the ChaChaNotes (Character, Chat, Notes) database.
 chachanotes_db_path = "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
 # Path to the Prompts database.
@@ -4615,6 +4616,21 @@ def get_chachanotes_db_path() -> Path:
         user_dir = get_user_data_dir()
         db_path = user_dir / "tldw_chatbook_ChaChaNotes.db"
     return db_path
+
+
+def get_tts_profiles_db_path() -> Path:
+    """Return the validated local TTS generation-profile database path."""
+
+    custom_path = get_cli_setting("database", "tts_profiles_db_path", None)
+    if custom_path:
+        candidate = Path(str(custom_path))
+        if ".." in candidate.parts:
+            raise ValueError(
+                "TTS profiles database path cannot contain parent traversal"
+            )
+        candidate = candidate.expanduser()
+        return validate_path_simple(candidate, require_exists=False).resolve()
+    return get_user_data_dir() / "tldw_chatbook_tts_profiles.db"
 
 
 def get_prompts_db_path() -> Path:
