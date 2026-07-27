@@ -1333,6 +1333,131 @@ async def test_citation_repair_direct_initial_non_success_never_repairs(
     assert controller.run_state.status is ConsoleRunStatus.FAILED
 
 
+def _observe_clean_lifecycle_request(controller, store, observed):
+    def observe(call_index):
+        if call_index != 1:
+            return
+        observed.append(
+            {
+                "repair_session": controller._active_citation_repair_session,
+                "finalizers": dict(store._terminal_citation_finalizers),
+                "provisional_ids": set(store._provisional_terminal_selection_ids),
+                "deferred_ids": set(store._terminal_persistence_deferred_ids),
+            }
+        )
+
+    return observe
+
+
+def _assert_clean_lifecycle_call(controller, store, gateway, observed):
+    assert observed == [
+        {
+            "repair_session": None,
+            "finalizers": {},
+            "provisional_ids": set(),
+            "deferred_ids": set(),
+        }
+    ]
+    assert len(gateway.calls) == 2
+    assert gateway.calls[0]["signals"] is not _OMITTED
+    assert gateway.calls[1]["signals"] is _OMITTED
+    assert controller._active_citation_repair_session is None
+    assert store._terminal_citation_finalizers == {}
+    assert store._provisional_terminal_selection_ids == set()
+    assert store._terminal_persistence_deferred_ids == set()
+
+
+@pytest.mark.parametrize(
+    ("lifecycle", "replacement_body"),
+    (
+        ("regenerate", "regenerated reply without markers"),
+        ("edit_resend", "edited reply without markers"),
+        ("continue", "continued reply without markers"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_citation_repair_direct_completed_initial_does_not_leak_into_lifecycle(
+    lifecycle: str,
+    replacement_body: str,
+):
+    initial_body = "Original supported claim [S1]"
+    persistence = _ReadyCitationPersistence()
+    _result, controller, store, gateway, _contract = await _run_direct_citation_repair(
+        ((initial_body,), (replacement_body,)),
+        persistence=persistence,
+    )
+    initial_user = next(
+        message
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.USER
+    )
+    initial_assistant = _assistant(store)
+    assert initial_assistant.content == initial_body
+    _assert_no_terminal_state(store)
+    assert store._provisional_terminal_selection_ids == set()
+
+    observed = []
+    gateway.on_call = _observe_clean_lifecycle_request(controller, store, observed)
+    if lifecycle == "regenerate":
+        lifecycle_result = await controller.regenerate_message(initial_assistant.id)
+    elif lifecycle == "edit_resend":
+        lifecycle_result = await controller.edit_and_resend_message(
+            initial_user.id,
+            "edited question",
+        )
+    else:
+        lifecycle_result = await controller.continue_from_message(initial_assistant.id)
+
+    assert lifecycle_result.accepted is True
+    replacement = store.get_message(store.active_leaf(store.active_session_id))
+    assert replacement.id != initial_assistant.id
+    assert replacement.content == replacement_body
+    assert replacement.status == "complete"
+    assert replacement.variants is None
+    unchanged_initial = store.get_message(initial_assistant.id)
+    assert unchanged_initial.content == initial_body
+    assert unchanged_initial.variants is None
+    assert store.get_message(initial_user.id).content == "question with history"
+    if lifecycle == "edit_resend":
+        active_users = [
+            message.content
+            for message in store.messages_for_session(store.active_session_id)
+            if message.role is ConsoleMessageRole.USER
+        ]
+        assert active_users == ["edited question"]
+    _assert_clean_lifecycle_call(controller, store, gateway, observed)
+
+
+@pytest.mark.asyncio
+async def test_citation_repair_direct_failed_initial_does_not_leak_into_retry():
+    replacement_body = "retried reply without markers"
+    persistence = _ReadyCitationPersistence()
+    _result, controller, store, gateway, _contract = await _run_direct_citation_repair(
+        (
+            (RuntimeError("private initial failure"),),
+            (replacement_body,),
+        ),
+        persistence=persistence,
+    )
+    failed = _assistant(store)
+    assert failed.status == "failed"
+    _assert_no_terminal_state(store)
+    assert store._provisional_terminal_selection_ids == set()
+
+    observed = []
+    gateway.on_call = _observe_clean_lifecycle_request(controller, store, observed)
+    retry_result = await controller.retry_message(failed.id)
+
+    retried = store.get_message(failed.id)
+    assert retry_result.accepted is True
+    assert retried.id == failed.id
+    assert retried.content == replacement_body
+    assert retried.status == "complete"
+    assert retried.variants is None
+    assert store.completion_calls == [failed.id]
+    _assert_clean_lifecycle_call(controller, store, gateway, observed)
+
+
 class _AgentBridge:
     def __init__(
         self,
