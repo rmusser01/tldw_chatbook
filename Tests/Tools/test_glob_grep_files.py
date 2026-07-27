@@ -9,6 +9,7 @@ indirection to work around -- patching `fot._resolve_sandbox_config`
 reaches every caller directly.
 """
 
+import time
 from pathlib import Path
 
 import pytest
@@ -467,3 +468,98 @@ async def test_glob_files_consistent_with_read_file_on_a_dotted_root(tmp_path, m
 
     assert "error" in glob_result
     assert "error" in read_result
+
+
+# ---------------------------------------------------------------------------
+# Finding 1 (PR #953 review): `re.compile(pattern).search(line)` ran against
+# the FULL line, and Python's `re` has no match timeout. A
+# catastrophic-backtracking pattern (e.g. `(a+)+$`) burns CPU superlinearly
+# in input length, and since a timed-out tool call ABANDONS its worker
+# thread rather than killing it (`Agents/agent_service.py`'s
+# `_call_with_timeout` -- Python cannot kill a thread), that CPU burn
+# outlives the agent's own timeout report. `_MAX_GREP_LINE_SEARCH_CHARS`
+# bounds what `regex.search` actually sees; `_MAX_GREP_LINES_SCANNED` bounds
+# the total lines read across the whole call; `GrepFiles.timeout_seconds`
+# gives the run loop a much tighter ceiling than the run's own default.
+#
+# Locally reproduced (see the grep-dos-fix report for the full numbers):
+# `re.compile(r"(a+)+$").search("a" * 28 + "X\n")` -- the FULL, uncapped
+# line used below -- took ~11.7s and still found no match; capped to the
+# first 10 characters (all still `a`, the `X` falls outside the slice) it
+# matches in under a millisecond. Both cap tests below were verified by
+# mutation: temporarily undoing the corresponding cap in
+# `file_operation_tools.py` and re-running each test in isolation makes it
+# fail (the line-cap test exceeds its time budget; the total-scan test
+# returns far more than the capped count) -- not shipped in this suite,
+# since a genuinely uncapped run of the line-cap scenario would hang the
+# test for the better part of a minute.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_grep_files_search_input_is_bounded_to_a_capped_line_length(sandbox, monkeypatch):
+    """A pattern that is pathological against the FULL line completes
+    quickly once the regex only ever sees a length-capped slice of it.
+    """
+    monkeypatch.setattr(fot, "_MAX_GREP_LINE_SEARCH_CHARS", 10)
+    (sandbox / "danger.txt").write_text("a" * 28 + "X\n")
+
+    start = time.perf_counter()
+    result = await fot.GrepFiles().execute(pattern=r"(a+)+$", glob="danger.txt")
+    elapsed = time.perf_counter() - start
+
+    # The capped slice ("a" * 10, the "X" falls outside it) matches
+    # trivially and fast. Without the cap, the full line -- 28 a's then a
+    # mismatching "X" -- forces exhaustive backtracking that (a) takes
+    # over ten seconds and (b) still finds no match at all, since no
+    # position in the full line is immediately followed by end-of-string.
+    # Either symptom alone would catch a removed cap; asserting both pins
+    # the fix precisely rather than one that could pass by coincidence.
+    assert elapsed < 2.0, f"regex.search took {elapsed:.2f}s -- is the line-length cap applied?"
+    assert len(result["matches"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_grep_files_bounds_total_lines_scanned_across_the_whole_call(sandbox, monkeypatch):
+    """`_MAX_GREP_LINES_SCANNED` bounds AGGREGATE lines read across every
+    file in one invocation. `_MAX_MATCHES` and `_MAX_CANDIDATES` are both
+    set generously high here so neither of those -- not this new cap --
+    can explain a bounded result.
+    """
+    monkeypatch.setattr(fot, "_MAX_GREP_LINES_SCANNED", 30)
+    monkeypatch.setattr(fot, "_MAX_MATCHES", 10_000)
+    monkeypatch.setattr(fot, "_MAX_CANDIDATES", 10_000)
+    for i in range(5):
+        (sandbox / f"lines{i}.txt").write_text("x\n" * 20)
+
+    result = await fot.GrepFiles().execute(pattern="x", glob="lines*.txt")
+
+    # 5 files * 20 matching lines = 100 lines available; the scan must
+    # stop at exactly the 30-line cap rather than returning all of them.
+    assert len(result["matches"]) == 30
+
+
+def test_grep_files_declares_a_nonzero_timeout():
+    """`grep_files` must override the `Tool.timeout_seconds` 0.0 default --
+    a call that never times out never triggers `_call_with_timeout`'s
+    abandon-the-thread path in the first place, but nor does it ever hand
+    back control to the run loop.
+    """
+    assert GrepFiles().timeout_seconds > 0.0
+
+
+def test_grep_files_timeout_resolves_through_the_tool_catalog_registry():
+    """The per-tool override seam this PR adds
+    (`Tool.timeout_seconds` -> `BuiltinToolProvider.timeout_for` ->
+    `ToolCatalogRegistry.timeout_for`) must actually carry `GrepFiles`'s
+    value end to end -- not just be readable on the class directly.
+    """
+    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
+
+    provider = BuiltinToolProvider()
+    provider._tools["grep_files"] = GrepFiles()
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+
+    assert registry.timeout_for("grep_files") == GrepFiles().timeout_seconds
+    assert registry.timeout_for("grep_files") == 20.0

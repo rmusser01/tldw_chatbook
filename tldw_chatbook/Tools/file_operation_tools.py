@@ -7,6 +7,7 @@ These tools allow LLMs to perform safe file operations with proper validation.
 import re
 from pathlib import Path, PureWindowsPath
 from typing import Dict, Any
+
 from loguru import logger
 
 from . import Tool
@@ -559,6 +560,50 @@ _MAX_CANDIDATES = 20_000
 #: which bound the number of files/matches, not the size of any one file.
 _MAX_GREP_FILE_BYTES = 5_000_000
 
+#: Length cap on the slice of each line actually handed to `regex.search`
+#: in `GrepFiles.execute`. Python's `re` module has no match timeout, and a
+#: catastrophic-backtracking pattern (e.g. `(a+)+$`) burns CPU
+#: superlinearly in input length -- measured on this branch,
+#: `re.compile(r'(a+)+$').search('a' * 30 + 'X')` alone took ~47s, and the
+#: cost roughly doubles per additional character from there. Before this
+#: cap, the search ran against the FULL line while only the *stored*
+#: result was truncated (to 500 chars, below) -- and since
+#: `_MAX_GREP_FILE_BYTES` bounds one *file*, not one *line*, that full
+#: line could be up to ~5,000,000 characters for a file with no
+#: newlines. This is the only mitigation here that genuinely constrains
+#: that worst case, because a tool call that times out (see
+#: `GrepFiles.timeout_seconds` below) does NOT stop the search already in
+#: flight: `Agents/agent_service.py`'s `_call_with_timeout` abandons the
+#: still-running worker thread rather than killing it -- Python has no
+#: way to kill a thread. Capping the input size turns "scales with file
+#: size, effectively unbounded" into "bounded by a small, fixed
+#: constant" -- it does NOT make catastrophic backtracking fast. A
+#: sufficiently adversarial pattern run against even a
+#: `_MAX_GREP_LINE_SEARCH_CHARS`-length slice can still be expensive (our
+#: own repro above needed only 30 characters to already run ~47s); this
+#: constant shrinks the exposure, it does not eliminate it. A complete
+#: fix needs either a regex engine that supports match timeouts or
+#: running the search in a killable subprocess. The partial mitigation
+#: here is acceptable because `grep_files` carries the `"reads"` risk
+#: tag (see `GrepFiles.risk_tags`), which floors its permission to
+#: `ask`: a human approves every individual call, which is part of why
+#: this is an acceptable trade-off rather than a full fix.
+_MAX_GREP_LINE_SEARCH_CHARS = 500
+
+#: Total number of lines `GrepFiles.execute` will read across ALL
+#: candidate files in one invocation, independent of how many match or
+#: how many files are examined. `_MAX_GREP_FILE_BYTES` bounds a single
+#: file and `_MAX_CANDIDATES` bounds how many glob results are looked
+#: at, but neither bounds the total number of *lines* actually streamed
+#: and searched -- a large corpus of small-line files (each individually
+#: under the per-file byte cap) can still add up to an enormous line
+#: count. This bound stops that from extending one invocation's total
+#: CPU exposure. It is a *different* concern from
+#: `_MAX_GREP_LINE_SEARCH_CHARS` above: this one bounds the aggregate
+#: cost of many ordinary (non-pathological) per-line searches, not the
+#: cost of any single catastrophic one.
+_MAX_GREP_LINES_SCANNED = 200_000
+
 
 def _rejects_traversal(pattern: str) -> bool:
     """Whether a glob pattern tries to leave the sandbox root.
@@ -807,8 +852,40 @@ class GrepFiles(Tool):
         """Reading arbitrary sandbox file contents is a disclosure risk."""
         return ("reads",)
 
+    @property
+    def timeout_seconds(self) -> float:
+        """Modest per-call ceiling; does NOT stop a search already running.
+
+        A legitimate search over the candidate bound (`_MAX_CANDIDATES`
+        files, `_MAX_GREP_LINES_SCANNED` lines total) is comfortably fast:
+        locally measured, 200,000 lines against a realistic non-pathological
+        pattern complete in well under a second. 20s leaves generous
+        headroom above that for a slower disk or a loaded system, while
+        still being far tighter than the run's own default
+        (`RunBudget.max_tool_call_seconds`, 300s at defaults) -- so a
+        pathological call is reported back to the agent as timed out much
+        sooner. It does NOT bound how long a pathological pattern's search
+        itself keeps running: see `_MAX_GREP_LINE_SEARCH_CHARS` for that,
+        and note that `_call_with_timeout` (`Agents/agent_service.py`)
+        abandons the worker thread rather than killing it, so the search
+        keeps burning CPU in the background past this deadline regardless
+        of the value chosen here.
+
+        Returns:
+            20.0 seconds.
+        """
+        return 20.0
+
     async def execute(self, **kwargs) -> dict:
         """Search file contents under the sandbox root by regular expression.
+
+        The supplied `pattern` is compiled with Python's `re`, which has no
+        match timeout. To keep a catastrophic-backtracking pattern's worst
+        case finite and small rather than scaling with file size, each
+        line is searched only up to `_MAX_GREP_LINE_SEARCH_CHARS`, and the
+        total number of lines read across the whole call is capped at
+        `_MAX_GREP_LINES_SCANNED`. Neither bound makes such a pattern fast
+        -- see the comments on those constants -- only bounded.
 
         Args:
             pattern: Python regular expression to search for.
@@ -849,6 +926,12 @@ class GrepFiles(Tool):
             # Deliberately NOT sorted(candidates): materialising and sorting
             # the generator defeats _MAX_CANDIDATES on a broad pattern.
             examined = 0
+            # Total lines read across ALL files this invocation, checked
+            # alongside `examined`/`len(matches)` below so a corpus of many
+            # small-line files can't extend the invocation's total scan
+            # cost past _MAX_GREP_LINES_SCANNED even though each file
+            # individually stays under _MAX_GREP_FILE_BYTES.
+            lines_scanned = 0
             # Resolved ONCE for this call and reused for every candidate
             # below -- see the matching comment in GlobFiles.execute above.
             sensitive_ctx = resolve_sensitive_context()
@@ -867,7 +950,11 @@ class GrepFiles(Tool):
                 except (ValueError, NotImplementedError) as exc:
                     return {"error": f"invalid glob: {exc}"}
                 examined += 1
-                if len(matches) >= _MAX_MATCHES or examined > _MAX_CANDIDATES:
+                if (
+                    len(matches) >= _MAX_MATCHES
+                    or examined > _MAX_CANDIDATES
+                    or lines_scanned >= _MAX_GREP_LINES_SCANNED
+                ):
                     break
                 if not path.is_file() or not is_within(path, root, context=sensitive_ctx):
                     continue
@@ -895,7 +982,14 @@ class GrepFiles(Tool):
                 try:
                     with path.open("r", encoding="utf-8", errors="replace") as fh:
                         for number, line in enumerate(fh, start=1):
-                            if regex.search(line):
+                            lines_scanned += 1
+                            # Search only a length-capped slice of the line,
+                            # never the full line -- see
+                            # _MAX_GREP_LINE_SEARCH_CHARS above for why this
+                            # is the only genuine bound on a
+                            # catastrophic-backtracking pattern's worst-case
+                            # runtime, and what it does NOT buy.
+                            if regex.search(line[:_MAX_GREP_LINE_SEARCH_CHARS]):
                                 matches.append(
                                     {
                                         "path": str(path),
@@ -903,7 +997,10 @@ class GrepFiles(Tool):
                                         "line": line.rstrip("\n")[:500],
                                     }
                                 )
-                            if len(matches) >= _MAX_MATCHES:
+                            if (
+                                len(matches) >= _MAX_MATCHES
+                                or lines_scanned >= _MAX_GREP_LINES_SCANNED
+                            ):
                                 break
                 except OSError:
                     continue
