@@ -114,6 +114,24 @@ def _spawned_lease_holder(database_path: str, connection: Connection) -> None:
         connection.close()
 
 
+def _spawned_exclusive_attempt(database_path: str, connection: Connection) -> None:
+    lease = ProfileStoreLease(
+        Path(database_path),
+        ProfileStoreLockMode.EXCLUSIVE,
+        timeout_seconds=0.1,
+        check_interval_seconds=0.01,
+    )
+    try:
+        lease.acquire()
+    except ProfileRepositoryError as error:
+        connection.send(("error", error.code))
+    else:
+        connection.send(("acquired", None))
+        lease.release()
+    finally:
+        connection.close()
+
+
 def _assert_safe_repository_error(
     error: ProfileRepositoryError,
     code: str,
@@ -2253,6 +2271,56 @@ def test_spawned_shared_lease_blocks_parent_exclusive(tmp_path: Path) -> None:
                 process.join(5.0)
         child_connection.close()
         parent_connection.close()
+
+    assert process.exitcode == 0
+
+
+@pytest.mark.asyncio
+async def test_symlink_drift_cannot_replace_lock_seen_by_spawned_contender(
+    tmp_path: Path,
+) -> None:
+    active_path = tmp_path / "active.sqlite3"
+    alternate_path = tmp_path / "alternate.sqlite3"
+    configured_path = tmp_path / "configured.sqlite3"
+    active_connection = open_profile_store(active_path)
+    active_connection.close()
+    alternate_connection = open_profile_store(alternate_path)
+    alternate_connection.close()
+    configured_path.symlink_to(active_path)
+    repository = TTSProfileRepository(configured_path)
+    await repository.open()
+    configured_path.unlink()
+    configured_path.symlink_to(alternate_path)
+
+    context = multiprocessing.get_context("spawn")
+    parent_connection, child_connection = context.Pipe()
+    process = context.Process(
+        target=_spawned_exclusive_attempt,
+        args=(str(active_path), child_connection),
+    )
+    started = False
+    try:
+        with pytest.raises(ProfileRepositoryError) as caught:
+            await repository.backup_to(
+                active_path.with_name(f"{active_path.name}.lock")
+            )
+        _assert_safe_repository_error(caught.value, "backup_failed")
+
+        process.start()
+        started = True
+        child_connection.close()
+        ready = await asyncio.to_thread(parent_connection.poll, 5.0)
+        assert ready, "child did not report its exclusive-lock result"
+        assert parent_connection.recv() == ("error", "lock_timeout")
+    finally:
+        if started:
+            await asyncio.to_thread(process.join, 5.0)
+            if process.is_alive():
+                process.terminate()
+                await asyncio.to_thread(process.join, 5.0)
+        child_connection.close()
+        parent_connection.close()
+        await repository.close()
 
     assert process.exitcode == 0
 
