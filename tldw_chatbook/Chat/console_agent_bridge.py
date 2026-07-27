@@ -612,7 +612,9 @@ class _StreamingModelAdapter:
         # stable no matter when the override changed.
         resolved = get_internal_prompt("agents.subagent_system")
         _KNOWN_SUBAGENT_PREFIXES.add(resolved)
-        return any(content.startswith(prefix) for prefix in _KNOWN_SUBAGENT_PREFIXES)
+        return any(
+            content.startswith(prefix) for prefix in _KNOWN_SUBAGENT_PREFIXES
+        )
 
 
 def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -1091,17 +1093,14 @@ class ConsoleAgentBridge:
             except Exception as exc:  # pragma: no cover - defensive only
                 logger.warning(
                     "Failed to load schema for {tool_id}: {exc}",
-                    tool_id=entry.id,
-                    exc=exc,
+                    tool_id=entry.id, exc=exc,
                 )
                 continue
-            schemas.append(
-                {
-                    "name": schema.name,
-                    "description": schema.description,
-                    "parameters": schema.parameters,
-                }
-            )
+            schemas.append({
+                "name": schema.name,
+                "description": schema.description,
+                "parameters": schema.parameters,
+            })
         return schemas
 
     # -- run ------------------------------------------------------------
@@ -1281,10 +1280,7 @@ class ConsoleAgentBridge:
         # raises a bare ValueError("local_skill_exists:...") on collision, so
         # the install catch is broad.
         install_skill_tool = None
-        if (
-            self._skills_service is not None
-            and request_skill_install_confirm is not None
-        ):
+        if self._skills_service is not None and request_skill_install_confirm is not None:
             scope = self._skills_service
 
             def install_skill_tool(url: str) -> ToolResult:
@@ -1457,9 +1453,7 @@ class ConsoleAgentBridge:
                         f"{item['name']} ({item['size']} bytes)"
                         for item in outcome.output_files
                     )
-                    lines.append(
-                        f"produced {len(outcome.output_files)} file(s): {listed}"
-                    )
+                    lines.append(f"produced {len(outcome.output_files)} file(s): {listed}")
                     lines.append(f"output directory: {outcome.output_dir}")
                 return ToolResult(ok=True, content="\n".join(lines))
 
@@ -1624,8 +1618,9 @@ class ConsoleAgentBridge:
             for index in range(len(agent_messages) - 1, -1, -1):
                 message = agent_messages[index]
                 content = message.get("content")
-                if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
-                    content, str
+                if (
+                    message.get("role") == ConsoleMessageRole.USER.value
+                    and isinstance(content, str)
                 ):
                     run_messages = list(agent_messages)
                     run_messages[index] = {

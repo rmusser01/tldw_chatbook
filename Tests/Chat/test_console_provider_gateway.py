@@ -39,13 +39,9 @@ def test_normalize_llamacpp_base_url_strips_known_suffixes_to_root() -> None:
     root = "http://localhost:8080"
     assert normalize_llamacpp_base_url("http://localhost:8080/completion") == root
     assert normalize_llamacpp_base_url("http://localhost:8080/v1") == root
-    assert (
-        normalize_llamacpp_base_url("http://localhost:8080/v1/chat/completions") == root
-    )
+    assert normalize_llamacpp_base_url("http://localhost:8080/v1/chat/completions") == root
     assert normalize_llamacpp_base_url("http://localhost:8080") == root
-    assert (
-        normalize_llamacpp_base_url("localhost:8080/completion") == root
-    )  # scheme-less
+    assert normalize_llamacpp_base_url("localhost:8080/completion") == root  # scheme-less
     # a reverse-proxy prefix is NOT an exact suffix -> left unchanged
     assert (
         normalize_llamacpp_base_url("http://host/proxy/v1/chat/completions")
