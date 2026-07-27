@@ -13,6 +13,7 @@ labels:
 dependencies: []
 references:
   - Docs/superpowers/specs/2026-07-27-lazy-mlx-import-boundary-design.md
+  - Docs/superpowers/plans/2026-07-27-lazy-mlx-import-boundary.md
 priority: medium
 ---
 
@@ -29,3 +30,26 @@ Keep optional Parakeet and Lightning MLX backends from aborting Python during un
 - [ ] #3 Focused regression coverage reproduces the current config import path without temporary PYTHONPATH stubs
 - [ ] #4 TASK-553.15 verification no longer needs parakeet_mlx or lightning_whisper_mlx stubs
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Detailed plan:
+`Docs/superpowers/plans/2026-07-27-lazy-mlx-import-boundary.md`
+
+1. Add failing subprocess and loader-lifecycle regressions for non-importing
+   MLX discovery, first-use caching, and bounded import failure.
+2. Replace module-level native imports with `find_spec` flags and two explicit
+   lazy loaders.
+3. Route Lightning file transcription and Parakeet file, buffer, and streaming
+   model loads through those loaders.
+4. Remove the three ProductionApp `sys.modules` stubs and run only the
+   affected import, provider, MLX-loader, and app tests.
+5. Run touched-file Ruff and diff checks, review scope, and close the task.
+
+ADR required: no
+ADR path: N/A
+Reason: This defers existing optional imports to their point of use without
+changing provider ownership, dependencies, storage, schema, or service
+contracts.
+<!-- SECTION:PLAN:END -->
