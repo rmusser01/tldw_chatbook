@@ -112,6 +112,20 @@ class BenchConfig:
     inspector render every row (see their own duplicate-safe, index-keyed
     widget ids), and the run control stays blocked until the write path
     (which still validates unconditionally) accepts an edited config.
+
+    ``target_ids`` element-type validation (a list/tuple of non-empty
+    ``str``) is a SEPARATE check from the uniqueness one above and always
+    runs, regardless of ``strict`` -- task-1132 only ever gated the
+    uniqueness check; ``target_ids`` element shape was never validated
+    anywhere, on read or write, before or after that fix. It is worth
+    closing now because ``load_bench``'s read-leniency means this class
+    deliberately accepts more from stored data than it used to: a
+    corrupted ``config_data.target_ids`` entry (e.g. an int, or a nested
+    list) previously loaded without complaint and only failed later, deep
+    inside ``db.get_model(target_id)``, as an opaque sqlite
+    parameter-binding error far from the actual cause (``eval_models.id``
+    is ``TEXT``). Validating the shape here, unconditionally, turns that
+    into a clear failure at the boundary instead.
     """
 
     name: str
@@ -133,6 +147,24 @@ class BenchConfig:
             raise ValueError(f"top_k must be >= 1, got {self.top_k}")
         if self.concurrency < 1:
             raise ValueError(f"concurrency must be >= 1, got {self.concurrency}")
+        # Element-type validation, unlike the uniqueness check below, is NOT
+        # gated by `strict`: it must catch genuinely malformed data on every
+        # path, including the lenient `load_bench` read. It also has to run
+        # BEFORE the `set(self.target_ids)` call below -- an unhashable
+        # element (e.g. a nested list) would otherwise blow up that line
+        # with an opaque TypeError instead of the diagnosable ValueError
+        # this check produces.
+        if not isinstance(self.target_ids, (list, tuple)):
+            raise ValueError(
+                f"target_ids must be a list or tuple, got {self.target_ids!r} "
+                f"(type: {type(self.target_ids).__name__})"
+            )
+        for target_id in self.target_ids:
+            if not isinstance(target_id, str) or not target_id:
+                raise ValueError(
+                    f"target_ids elements must be non-empty strings, got "
+                    f"{target_id!r} (type: {type(target_id).__name__})"
+                )
         if strict and len(set(self.target_ids)) != len(self.target_ids):
             # Every per-target map downstream (WordBenchRunner's `clients`,
             # its preflight/canary dicts, storage.create_run_group's

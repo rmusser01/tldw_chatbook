@@ -680,6 +680,15 @@ def bench_with_duplicate_target_id(evals_db: EvalsDB) -> str:
     (`evals-bench-target-<id>`, `evals-inspector-target-<id>`), so a
     duplicate collided at mount time and failed to compose the whole pane
     -- not just the duplicated row.
+
+    Args:
+        evals_db: In-memory EvalsDB fixture, written to directly (bypassing
+            BenchConfig/save_bench) so it can carry a shape neither will
+            construct anymore.
+
+    Returns:
+        The `eval_tasks` row id (`task_id`) of the bench carrying the
+        duplicate `target_ids`.
     """
     target_id = _make_model(evals_db, "repeated-target")
     dataset_id = evals_db.create_dataset(
@@ -711,7 +720,13 @@ async def test_bench_with_duplicate_target_id_composes_without_raising(
     """Composes the real workbench (not just the id-derivation helper) with
     a bench carrying a genuine duplicate target id, and asserts both the
     detail pane's target table and the inspector's readiness list render
-    every row rather than raising out of compose()."""
+    every row rather than raising out of compose().
+
+    Args:
+        evals_app: The Evals screen's app-under-test fixture.
+        bench_with_duplicate_target_id: The `task_id` of the legacy bench
+            fixture above, carrying a genuine duplicate `target_id`.
+    """
     async with evals_app.run_test() as pilot:
         await pilot.pause()
         evals_app.screen.select(kind="bench", id=bench_with_duplicate_target_id)

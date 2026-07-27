@@ -173,4 +173,68 @@ Restored the fix afterward and reconfirmed all 182 tests in scope pass.
 Tests/Evals/word_bench Tests/UI/test_evals_results_grid.py -q` → 182
 passed (178 baseline + 4 new; the previously-erroring fixture now passes
 instead of erroring).
+
+**Follow-up (Qodo review, finding 2): `target_ids` element-type
+validation.** The review characterized `strict=False` as bypassing "the
+only validation that would catch malformed `target_ids`". That causation
+is wrong: `strict` in `BenchConfig.__post_init__` has only ever gated the
+*uniqueness* check above — `prompt_mode`, `top_k`, and `concurrency`
+validate unconditionally, and no check has EVER validated `target_ids`'
+element shape, on read or write, before or after this task's original fix.
+This was a **pre-existing gap**, not something this PR introduced.
+
+It was still worth closing here, because this PR's read-leniency means
+`BenchConfig` now deliberately accepts more from stored data than it used
+to: a corrupted `config_data.target_ids` entry (an int, a nested list, an
+empty string) loaded without complaint and only failed much later inside
+`db.get_model(target_id)` as an opaque sqlite parameter-binding error far
+from the cause (`eval_models.id` is `TEXT`).
+
+Added to `BenchConfig.__post_init__`, **ungated** (unlike the uniqueness
+check, which stays `strict`-gated exactly as before): `target_ids` must be
+a `list`/`tuple`, and every element must be a non-empty `str`, on every
+construction path including `load_bench`'s lenient one. Placed before the
+uniqueness check's `set(self.target_ids)` call specifically so an
+unhashable element (e.g. a nested list) fails with this check's
+diagnosable `ValueError` (naming the offending value and its type) rather
+than an opaque `TypeError` out of `set()`.
+
+Tests added: `test_bench_config_rejects_a_non_string_target_id`,
+`test_bench_config_rejects_a_non_string_target_id_even_when_lenient` (the
+key one — proves the check is NOT gated by `strict`), and
+`test_bench_config_rejects_target_ids_that_is_not_a_list_or_tuple` in
+`Tests/Evals/word_bench/test_models.py`; `test_load_bench_rejects_a_malformed_stored_target_id`
+in `Tests/Evals/word_bench/test_storage.py` (storage-level: a corrupted
+`eval_tasks.config_data.target_ids` fails at `load_bench` instead of
+loading silently). The pre-existing legacy-duplicate test and the plain
+round-trip test already covered "a legacy duplicate still loads" and "a
+valid bench is unaffected" respectively, so no new test was needed for
+those two.
+
+Revert-check: reverted only `models.py` to its pre-follow-up state (new
+tests left in place), reran the same scope — exactly 4 failures, all
+`Failed: DID NOT RAISE <class 'ValueError'>`, nothing else. Restored the
+fix and reconfirmed 150 passed. Fixed-code error text confirmed directly:
+`target_ids elements must be non-empty strings, got 123 (type: int)` and
+`target_ids must be a list or tuple, got 't1' (type: str)`.
+
+Also added Google-style `Args:`/`Returns:` sections to the
+`bench_with_duplicate_target_id` fixture and its consuming test in
+`Tests/UI/test_evals_bench_editor.py`, and to the three tests in
+`Tests/Evals/word_bench/test_storage.py`'s legacy-duplicate section
+(~112-170), per a separate Qodo docstring finding — prose preserved,
+structure added around it.
+
+**Files modified (this follow-up):**
+- `tldw_chatbook/Evals/word_bench/models.py` — ungated `target_ids`
+  element-type check in `__post_init__`; class docstring updated.
+- `Tests/Evals/word_bench/test_models.py` — 3 new tests.
+- `Tests/Evals/word_bench/test_storage.py` — 1 new test; Google-style
+  docstrings added to 3 existing tests.
+- `Tests/UI/test_evals_bench_editor.py` — Google-style docstrings added to
+  the `bench_with_duplicate_target_id` fixture and its consuming test.
+
+**Test result (this follow-up):** `pytest
+Tests/UI/test_evals_bench_editor.py Tests/Evals/word_bench -q` → 150
+passed (146 baseline in this narrower scope + 4 new).
 <!-- SECTION:NOTES:END -->
