@@ -4801,15 +4801,23 @@ Thank you for using tldw-chatbook! 🎉
     async def _reset_database_config_form(self) -> None:
         """Reset database configuration form to defaults."""
         try:
+            # Resolved through the same _DB_PATH_RESOLVERS the vacuum/
+            # backup/check workers use, not hardcoded literals (TASK-927).
+            # ignore_override=True discards any explicitly-configured
+            # custom path so "Reset" restores the pure profile-aware
+            # default, matching what Reset has always meant -- see
+            # _resolved_db_path_display (TASK-927 follow-up).
             self.query_one(
                 "#config-db-chachanotes-path", Input
-            ).value = "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"
+            ).value = self._resolved_db_path_display(
+                "chachanotes", ignore_override=True
+            )
             self.query_one(
                 "#config-db-prompts-path", Input
-            ).value = "~/.local/share/tldw_cli/tldw_cli_prompts.db"
+            ).value = self._resolved_db_path_display("prompts", ignore_override=True)
             self.query_one(
                 "#config-db-media-path", Input
-            ).value = "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
+            ).value = self._resolved_db_path_display("media", ignore_override=True)
             self.query_one(
                 "#config-db-base-dir", Input
             ).value = "~/.local/share/tldw_cli/"
@@ -6846,6 +6854,46 @@ Thank you for using tldw-chatbook! 🎉
         """Return canonical paths using the Chatbook importer's key contract."""
 
         return get_chatbook_database_paths()
+
+    def _resolved_db_path_display(
+        self, db_name: str, *, ignore_override: bool = False
+    ) -> str:
+        """Return the display value for a database-path config Input.
+
+        This is the *actual resolved* path -- the same one
+        ``_DB_PATH_RESOLVERS`` (and therefore the vacuum/backup/check
+        workers) would use -- not a hardcoded literal (TASK-927).
+
+        By default (``ignore_override=False``, used by
+        ``_compose_database_config_form``) an explicitly-configured custom
+        override is returned unchanged, exactly matching what the app will
+        actually use.
+
+        With ``ignore_override=True`` (used by
+        ``_reset_database_config_form``) this instead returns the pure
+        profile-aware default, discarding any configured override --
+        restoring what "Reset" has always meant. The resolvers themselves
+        (e.g. ``get_chachanotes_db_path(ignore_override=True)``) already
+        compute this in their own ``else`` branch, so this reuses that
+        single source of truth for the per-database filename rather than
+        duplicating it here (TASK-927 follow-up).
+        """
+        resolver = self._DB_PATH_RESOLVERS.get(db_name)
+        if resolver is None:
+            return ""
+        try:
+            db_path = (
+                resolver(ignore_override=True) if ignore_override else resolver()
+            )
+        except Exception as e:
+            logger.error(
+                "Could not resolve {}display path for {} database: {}",
+                "default " if ignore_override else "",
+                db_name,
+                e,
+            )
+            return ""
+        return str(db_path)
 
     def _validate_maintenance_path(self, path: Path, *, label: str) -> Optional[Path]:
         """Validate a path immediately before a backup/restore worker passes

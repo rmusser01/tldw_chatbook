@@ -1781,10 +1781,83 @@ async def test_resolved_db_path_display_preserves_an_explicit_custom_override(
         assert window._resolved_db_path_display("chachanotes") == str(custom_path)
 
 
+@pytest.mark.asyncio
+async def test_reset_discards_a_configured_custom_override_while_compose_reflects_it(
+    monkeypatch, temp_config_path
+):
+    """Coordinator follow-up (TASK-927): before this fix, Reset called the
+    same override-aware _resolved_db_path_display as Compose, so for a user
+    who had genuinely customized a database path -- the one case someone
+    actually reaches for the "Reset" button -- clicking it did nothing at
+    all. Reset must discard the override and restore the pure
+    profile-aware default; Compose must keep reflecting the override (what
+    the app will actually use). The two must differ whenever an override
+    is configured.
+
+    A real override is simulated by monkeypatching config.get_cli_setting
+    itself (special-cased to the one key under test, delegating to the
+    real implementation otherwise) rather than the config file, because the
+    per-test TLDW_CONFIG_PATH env var always wins over a config-file-based
+    override in this test app (see
+    test_resolved_db_path_display_preserves_an_explicit_custom_override
+    above for the same constraint). get_chachanotes_db_path's internal call
+    to get_cli_setting resolves via config.py's own module globals at call
+    time, so this reaches the real resolver logic -- unlike shadowing
+    _DB_PATH_RESOLVERS, which would replace that logic instead of
+    exercising it."""
+    import tldw_chatbook.config as config_module
+
+    custom_override = "/tmp/a-genuinely-custom-chachanotes-override-927.db"
+    real_get_cli_setting = config_module.get_cli_setting
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "database" and key == "chachanotes_db_path":
+            return custom_override
+        return real_get_cli_setting(section, key, default)
+
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
+        monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+
+        expected_override = str(Path(custom_override).expanduser().resolve())
+        expected_default = str(
+            config_module.get_chachanotes_db_path(ignore_override=True)
+        )
+        assert expected_override != expected_default, (
+            "test setup bug: override and default must differ to prove anything"
+        )
+
+        # Compose's mechanism: reflects the currently-effective (override) value.
+        compose_value = window._resolved_db_path_display("chachanotes")
+        assert compose_value == expected_override
+
+        # Reset's mechanism: discards the override, shows the pure default.
+        reset_value = window._resolved_db_path_display(
+            "chachanotes", ignore_override=True
+        )
+        assert reset_value == expected_default
+        assert reset_value != compose_value
+
+        # Exercise the real Reset code path end-to-end too, not just the
+        # helper: dirty the field the way a user's stale view would look,
+        # then confirm _reset_database_config_form() lands on the default,
+        # never the override.
+        chachanotes_input = window.query_one("#config-db-chachanotes-path", Input)
+        chachanotes_input.value = "/tmp/whatever-the-user-was-looking-at.db"
+        await window._reset_database_config_form()
+        assert chachanotes_input.value == expected_default
+        assert chachanotes_input.value != expected_override
+
+
 def test_compose_and_reset_database_config_form_reuse_the_resolver_helper():
     """Source-scan guard: both functions must go through
     _resolved_db_path_display (and therefore _DB_PATH_RESOLVERS) rather than
-    a hardcoded literal or some second, parallel mechanism (TASK-927)."""
+    a hardcoded literal or some second, parallel mechanism (TASK-927).
+    Reset must specifically pass ignore_override=True so it discards a
+    configured custom override instead of reflecting it back unchanged
+    (TASK-927 follow-up)."""
     import inspect
 
     compose_source = inspect.getsource(
@@ -1807,3 +1880,25 @@ def test_compose_and_reset_database_config_form_reuse_the_resolver_helper():
                 f"stale hardcoded literal {literal!r} still present in "
                 f"{label} form"
             )
+
+    # Strip comment-only lines first: a stale explanatory comment mentioning
+    # "ignore_override=True" (e.g. left behind by a careless revert) must
+    # not make this check pass when the actual call no longer passes it --
+    # confirmed to matter empirically while revert-checking this test.
+    def _code_lines(source: str) -> str:
+        return "\n".join(
+            line for line in source.splitlines() if not line.strip().startswith("#")
+        )
+
+    reset_code = _code_lines(reset_source)
+    compose_code = _code_lines(compose_source)
+
+    assert "ignore_override=True" in reset_code, (
+        "_reset_database_config_form must pass ignore_override=True so it "
+        "discards a configured custom override instead of reflecting it "
+        "back unchanged"
+    )
+    assert "ignore_override=True" not in compose_code, (
+        "_compose_database_config_form must keep reflecting the "
+        "currently-effective (override-aware) value, not the pure default"
+    )
