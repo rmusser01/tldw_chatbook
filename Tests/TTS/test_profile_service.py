@@ -116,6 +116,21 @@ def _forged_loaded_profile(
     return forged
 
 
+def _forged_page_snapshot(
+    *,
+    repository_generation: object,
+    profiles: object,
+    total: object,
+) -> TTSProfilePageSnapshot:
+    """Build an adversarial exact page without service-value validation."""
+
+    forged = object.__new__(TTSProfilePageSnapshot)
+    object.__setattr__(forged, "repository_generation", repository_generation)
+    object.__setattr__(forged, "profiles", profiles)
+    object.__setattr__(forged, "total", total)
+    return forged
+
+
 def _forged_capability_snapshot(
     snapshot: TTSNativeCapabilitySnapshot,
     **updates: object,
@@ -154,6 +169,20 @@ class _AlwaysEqualStr(str):
         return False
 
     __hash__ = str.__hash__
+
+
+class _GenerationAdvancingMapping(dict[str, Any]):
+    def __init__(self, advance: Callable[[], None]) -> None:
+        super().__init__()
+        self._advance = advance
+
+    def __iter__(self) -> Iterator[str]:
+        self._advance()
+        return super().__iter__()
+
+    def items(self) -> Any:
+        self._advance()
+        return super().items()
 
 
 def _model(
@@ -571,6 +600,20 @@ def _service(
     )
 
 
+def _profile_advancing_repository_generation(
+    repository: _FakeRepository,
+    profile: TTSGenerationProfile,
+) -> TTSGenerationProfile:
+    next_generation = repository.generation + 1
+    options = _GenerationAdvancingMapping(
+        lambda: setattr(repository, "generation", next_generation)
+    )
+    return _forged_profile(
+        profile,
+        options=MappingProxyType(options),
+    )
+
+
 def _assert_safe_service_error(
     error: ProfileServiceError,
     code: str,
@@ -846,6 +889,32 @@ async def test_list_profiles_delegates_with_fixed_fifty_row_limit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_profiles_rechecks_generation_after_profile_canonicalization() -> (
+    None
+):
+    repository = _FakeRepository()
+    repository.page = TTSProfilePage(
+        profiles=(
+            _profile_advancing_repository_generation(
+                repository,
+                _profile(),
+            ),
+        ),
+        total=1,
+    )
+    service, repository, tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.list_profiles()
+
+    assert caught.value.code == "stale"
+    assert [name for name, _value in repository.calls] == ["list"]
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert tts_service.revision_reads == []
+
+
+@pytest.mark.asyncio
 async def test_list_profiles_rejects_forged_mutable_profile_safely() -> None:
     repository = _FakeRepository()
     repository.page = TTSProfilePage(
@@ -895,6 +964,98 @@ async def test_list_profiles_rejects_hostile_repository_result_safely() -> None:
         "submitted text",
     )
     assert [name for name, _value in repository.calls] == ["list"]
+
+
+@pytest.mark.asyncio
+async def test_availability_rejects_forged_page_over_fifty_before_tts_work() -> None:
+    service, repository, tts_service = _service()
+    profiles = tuple(
+        _profile(
+            profile_id=UUID(int=index + 1),
+            display_name=f"Profile {index + 1}",
+        )
+        for index in range(51)
+    )
+    page = _forged_page_snapshot(
+        repository_generation=repository.generation,
+        profiles=profiles,
+        total=len(profiles),
+    )
+
+    with pytest.raises(ProfileValidationError) as caught:
+        await service.observe_availability(page)
+
+    assert caught.value.code == "profiles"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert tts_service.revision_reads == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hostile_value", ("container", "profile"))
+async def test_availability_sanitizes_hostile_forged_page_before_tts_work(
+    hostile_value: str,
+) -> None:
+    service, repository, tts_service = _service()
+    profiles: object
+    if hostile_value == "container":
+        profiles = _ExplodingSequence()
+    else:
+        profiles = (
+            _forged_profile(
+                _profile(),
+                model_id=_ExplodingStr("model-a"),
+            ),
+        )
+    page = _forged_page_snapshot(
+        repository_generation=repository.generation,
+        profiles=profiles,
+        total=1,
+    )
+
+    with pytest.raises(ProfileValidationError) as caught:
+        await service.observe_availability(page)
+
+    assert caught.value.code == "profiles"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    visible = " ".join(
+        (
+            str(caught.value),
+            repr(caught.value),
+            "".join(traceback.format_exception(caught.value)),
+        )
+    )
+    assert "credential" not in visible
+    assert "/private/path" not in visible
+    assert "submitted text" not in visible
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert tts_service.revision_reads == []
+
+
+@pytest.mark.asyncio
+async def test_availability_rechecks_generation_after_page_canonicalization() -> None:
+    service, repository, tts_service = _service()
+    profile = _profile_advancing_repository_generation(
+        repository,
+        _profile(),
+    )
+    page = _forged_page_snapshot(
+        repository_generation=repository.generation,
+        profiles=(profile,),
+        total=1,
+    )
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.observe_availability(page)
+
+    assert caught.value.code == "stale"
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert tts_service.revision_reads == []
 
 
 @pytest.mark.asyncio
@@ -1260,6 +1421,34 @@ async def test_later_reconfiguration_does_not_roll_back_admitted_create() -> Non
 
 
 @pytest.mark.asyncio
+async def test_create_rechecks_generation_after_profile_canonicalization() -> None:
+    repository = _FakeRepository()
+    persisted = _profile_advancing_repository_generation(
+        repository,
+        _profile(
+            display_name="Saved",
+            model_id="selected-model",
+            voice_id="selected-voice",
+        ),
+    )
+    repository.create_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=persisted,
+    )
+    service, repository, tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.create_from_artifact(
+            "Saved",
+            _artifact(selection=_selection()),
+        )
+
+    assert caught.value.code == "stale"
+    assert tts_service.revision_decisions == [("audio_cpp", 3)]
+    assert [name for name, _value in repository.calls] == ["create"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "invalid_result",
     (
@@ -1582,6 +1771,45 @@ async def test_update_rejects_hostile_repository_result(
         "/private/path",
         "submitted text",
     )
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+    assert [name for name, _value in repository.calls] == ["update"]
+
+
+@pytest.mark.asyncio
+async def test_update_rechecks_generation_after_profile_canonicalization() -> None:
+    repository = _FakeRepository()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(revision=4),
+    )
+    draft = TTSProfileDraft(
+        display_name="Renamed",
+        provider_id=loaded.profile.provider_id,
+        model_id=loaded.profile.model_id,
+        voice_id=loaded.profile.voice_id,
+        response_format=loaded.profile.response_format,
+        speed=loaded.profile.speed,
+        options=loaded.profile.options,
+    )
+    persisted = _profile_advancing_repository_generation(
+        repository,
+        _profile(
+            profile_id=loaded.profile.profile_id,
+            display_name=draft.display_name,
+            revision=loaded.profile.revision + 1,
+        ),
+    )
+    repository.update_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=persisted,
+    )
+    service, repository, tts_service = _service(repository=repository)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.update_profile(loaded, draft)
+
+    assert caught.value.code == "stale"
     assert tts_service.capability_calls == []
     assert tts_service.revision_decisions == []
     assert [name for name, _value in repository.calls] == ["update"]
@@ -2044,6 +2272,38 @@ async def test_duplicate_rejects_hostile_repository_result(
         "/private/path",
         "submitted text",
     )
+    assert tts_service.capability_calls == [("audio_cpp", ())]
+    assert tts_service.revision_decisions == [("audio_cpp", 3)]
+    assert [name for name, _value in repository.calls] == ["create"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_rechecks_generation_after_profile_canonicalization() -> None:
+    repository = _FakeRepository()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(),
+    )
+    persisted = _profile_advancing_repository_generation(
+        repository,
+        _profile(
+            profile_id=_DUPLICATE_ID,
+            display_name="Duplicate",
+        ),
+    )
+    repository.create_result = ProfileStoreResult(
+        generation=repository.generation,
+        value=persisted,
+    )
+    service, repository, tts_service = _service(
+        repository=repository,
+        tts_service=_FakeTTSService(_capability_snapshot(models=(_model("model-a"),))),
+    )
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await service.duplicate_profile(loaded, "Duplicate")
+
+    assert caught.value.code == "stale"
     assert tts_service.capability_calls == [("audio_cpp", ())]
     assert tts_service.revision_decisions == [("audio_cpp", 3)]
     assert [name for name, _value in repository.calls] == ["create"]

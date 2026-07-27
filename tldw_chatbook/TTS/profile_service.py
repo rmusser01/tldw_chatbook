@@ -646,6 +646,7 @@ class TTSProfileService:
             validation_failed = True
         if validation_failed or snapshot is None:
             raise ProfileServiceError("operation_failed")
+        self._require_repository_generation(generation)
         return snapshot
 
     async def observe_availability(
@@ -656,7 +657,25 @@ class TTSProfileService:
 
         if type(page) is not TTSProfilePageSnapshot:
             raise ProfileValidationError("profiles")
-        self._require_repository_generation(page.repository_generation)
+        expected_generation = _validate_nonnegative_integer(
+            page.repository_generation,
+            "generation",
+        )
+        self._require_repository_generation(expected_generation)
+        canonical_page: TTSProfilePageSnapshot | None = None
+        validation_failed = False
+        try:
+            canonical_page = TTSProfilePageSnapshot(
+                repository_generation=expected_generation,
+                profiles=page.profiles,
+                total=page.total,
+            )
+        except Exception:  # noqa: BLE001 - forged page values fail closed
+            validation_failed = True
+        if validation_failed or canonical_page is None:
+            raise ProfileValidationError("profiles")
+        self._require_repository_generation(expected_generation)
+        page = canonical_page
 
         supported_profiles = tuple(
             profile
@@ -772,6 +791,7 @@ class TTSProfileService:
             draft,
             expected_revision=1,
         )
+        self._require_repository_generation(repository_generation)
         return LoadedTTSProfile(
             repository_generation=repository_generation,
             profile=profile,
@@ -821,6 +841,7 @@ class TTSProfileService:
             expected_revision=loaded_profile.revision + 1,
             required_profile_id=loaded_profile.profile_id,
         )
+        self._require_repository_generation(loaded.repository_generation)
         return LoadedTTSProfile(
             repository_generation=loaded.repository_generation,
             profile=profile,
@@ -876,6 +897,7 @@ class TTSProfileService:
             expected_revision=1,
             forbidden_profile_id=source.profile_id,
         )
+        self._require_repository_generation(loaded.repository_generation)
         return LoadedTTSProfile(
             repository_generation=loaded.repository_generation,
             profile=profile,
