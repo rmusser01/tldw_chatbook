@@ -5138,6 +5138,14 @@ class SettingsScreen(BaseAppScreen):
         return divider
 
     def _config_path(self) -> Path:
+        """Return the active CLI config path.
+
+        Thin wrapper kept only so call sites in this module read naturally
+        (``self._config_path()``); it must delegate to the shared effective-
+        path resolver rather than re-spell the override/validate logic,
+        since a second hand-copy would drift the moment either
+        implementation changed -- see task-851 review finding 5.
+        """
         return validate_path_simple(
             get_cli_config_path(),
             require_exists=False,

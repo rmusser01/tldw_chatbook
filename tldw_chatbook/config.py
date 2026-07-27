@@ -51,6 +51,7 @@ from tldw_chatbook.Utils.private_paths import (
     secure_private_directory,
     verify_trusted_directory,
 )
+from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
 #
 #######################################################################################################################
 #
@@ -121,6 +122,17 @@ def _report_config_path_posture(
 _ENCRYPTION_PASSWORD = None  # Cached password for the session
 _ENCRYPTION_MODULE = None  # Lazily loaded encryption module
 _CONFIG_GENERATION = 0
+
+#: Permission mode used the first time an encryption-related rewrite of the
+#: config file creates it from scratch (no pre-existing file whose mode can
+#: be preserved). The config file can hold plaintext API keys and the
+#: encryption password verifier, so a freshly created one gets a
+#: user-only-readable mode rather than ``atomic_write_text``'s generic
+#: 0o644 default. Every encryption entry point passes this alongside
+#: ``preserve_existing_mode=True`` so an already-existing file's mode
+#: (e.g. a user-tightened 0o600) is never widened by the rewrite -- see
+#: task-851 review finding 2.
+CONFIG_SECRETS_FILE_MODE = 0o600
 
 # --- Chunking Settings (Default, can be overridden by TOML) ---
 global_default_chunk_language = "en"
@@ -586,43 +598,11 @@ def encrypt_api_keys_in_config(
                 # Recursively encrypt nested dictionaries
                 result[key] = encrypt_sensitive_fields(value)
             elif isinstance(value, str) and value.strip():
-                # Check if this is a sensitive field
-                key_lower = key.lower()
-                # Check exact matches and also patterns
-                sensitive_exact = [
-                    "api_key",
-                    "apikey",
-                    "api-key",
-                    "secret",
-                    "token",
-                    "password",
-                    "auth_token",
-                    "api_token",
-                    "access_token",
-                    "secret_key",
-                    "refresh_token",
-                    "client_secret",
-                ]
-                # Also check if key contains these patterns
-                sensitive_patterns = [
-                    "api_key",
-                    "apikey",
-                    "api-key",
-                    "_key",
-                    "_token",
-                    "_secret",
-                    "_password",
-                ]
-
-                is_sensitive = key_lower in sensitive_exact
-                if not is_sensitive:
-                    # Check if key contains any sensitive pattern
-                    for pattern in sensitive_patterns:
-                        if pattern in key_lower:
-                            is_sensitive = True
-                            break
-
-                if is_sensitive:
+                # Check if this is a sensitive field, using the same
+                # predicate every other encryption/redaction/reporting path
+                # in the app uses (see Utils/sensitive_config_keys.py for
+                # why this used to disagree with itself).
+                if is_sensitive_config_key(key):
                     # Skip if already encrypted or is a placeholder
                     if not (
                         enc_module.is_encrypted(value)
@@ -3758,39 +3738,9 @@ def load_cli_config_and_ensure_existence(
     return _load_cli_config_bootstrap(force_reload=force_reload).config
 
 
-def _is_sensitive_setting_key(key: Any) -> bool:
-    key_lower = str(key).lower()
-    sensitive_exact = [
-        "api_key",
-        "apikey",
-        "api-key",
-        "secret",
-        "token",
-        "password",
-        "auth_token",
-        "api_token",
-        "access_token",
-        "secret_key",
-        "refresh_token",
-        "client_secret",
-    ]
-    sensitive_patterns = [
-        "api_key",
-        "apikey",
-        "api-key",
-        "_key",
-        "_token",
-        "_secret",
-        "_password",
-    ]
-    return key_lower in sensitive_exact or any(
-        pattern in key_lower for pattern in sensitive_patterns
-    )
-
-
 def _setting_value_for_log(key: Any, value: Any) -> str:
     """Return a safe representation of a config setting value for logs."""
-    if _is_sensitive_setting_key(key):
+    if is_sensitive_config_key(key):
         return repr("<redacted>")
     return repr(value)
 
@@ -3802,7 +3752,7 @@ def _maybe_encrypt_setting_value(
     if not (
         isinstance(encryption_config, dict)
         and encryption_config.get("enabled", False)
-        and _is_sensitive_setting_key(key)
+        and is_sensitive_config_key(key)
         and isinstance(value, str)
         and value
         and not value.startswith("enc:")
@@ -4088,7 +4038,7 @@ def _contains_unencrypted_sensitive_value(config_data: Mapping[str, Any]) -> boo
                 return True
             continue
         if not (
-            _is_sensitive_setting_key(key)
+            is_sensitive_config_key(key)
             and isinstance(value, str)
             and value.strip()
         ):

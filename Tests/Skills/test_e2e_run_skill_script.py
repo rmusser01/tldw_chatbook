@@ -163,12 +163,13 @@ def e2e_bridge_env(tmp_path, monkeypatch) -> Callable[..., _E2EEnv]:
         policy_enabled: bool = True,
         trusted: bool = True,
     ) -> _E2EEnv:
+        marker_path = tmp_path / "marker.json"
         trust_service = SkillTrustService(
             skills_dir=tmp_path / "skills",
             trust_store=SkillTrustStore(
                 store_dir=tmp_path / "trust",
                 marker_store=FileSkillTrustGenerationMarkerStore(
-                    tmp_path / "marker.json"
+                    marker_path, store_dir=marker_path.parent
                 ),
             ),
         )

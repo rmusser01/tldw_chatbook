@@ -5,10 +5,19 @@ Tests AES-256-GCM encryption with scrypt key derivation.
 """
 
 import base64
+import sys
+
 import pytest
 from unittest.mock import patch
 
 from tldw_chatbook.Utils.config_encryption import ConfigEncryption, config_encryption
+
+if sys.version_info < (3, 11):
+    import tomli as tomllib
+else:
+    import tomllib
+
+from tldw_chatbook.config import CONFIG_TOML_CONTENT, DEFAULT_APP_TTS_CONFIG
 
 
 class TestConfigEncryption:
@@ -468,6 +477,68 @@ class TestConfigEncryptionEdgeCases:
 
         for i in range(10):
             assert results_dict[i] == f"test_{i}"
+
+
+class TestDetectApiKeysRealProviderNames:
+    """Regression coverage for task-852.
+
+    ``detect_api_keys`` used to match only six literal key names
+    (``api_key``, ``apikey``, ``api-key``, ``secret``, ``token``,
+    ``password``), so a config populated with this app's actual
+    provider-key field names -- all prefixed or suffixed -- reported
+    nothing worth encrypting. These tests read the real key names out of
+    ``CONFIG_TOML_CONTENT`` / ``DEFAULT_APP_TTS_CONFIG`` rather than
+    re-typing a hand-picked literal list, so a future rename of those
+    fields fails this test instead of silently going vacuous.
+    """
+
+    @pytest.fixture
+    def encryptor(self):
+        return ConfigEncryption()
+
+    def test_detects_config_full_of_real_plaintext_provider_keys(self, encryptor):
+        default_config = tomllib.loads(CONFIG_TOML_CONTENT)
+        search_engines = default_config["SearchEngines"]
+        search_key_name = next(
+            key for key in search_engines if key.endswith("_api_key")
+        )
+        assert "auth_token" in default_config["tldw_api"]
+        assert "api_token" in default_config["github"]
+
+        config = {
+            "SearchEngines": {search_key_name: "search-engine-plaintext-secret"},
+            "tldw_api": {"auth_token": "tldw-api-plaintext-secret"},
+            "github": {"api_token": "github-plaintext-secret"},
+        }
+        assert encryptor.detect_api_keys(config) is True
+
+    def test_detects_tts_fallback_key_family(self, encryptor):
+        fallback_key_names = [
+            key
+            for key in DEFAULT_APP_TTS_CONFIG
+            if "api_key" in key.lower()
+        ]
+        assert fallback_key_names, "expected the *_fallback API key family to exist"
+        config = {
+            "app_tts": {name: "fallback-plaintext-secret" for name in fallback_key_names}
+        }
+        assert encryptor.detect_api_keys(config) is True
+
+    def test_ignores_env_var_name_and_max_tokens_only_config(self, encryptor):
+        default_config = tomllib.loads(CONFIG_TOML_CONTENT)
+        openai_section = default_config["api_settings"]["openai"]
+        assert "api_key_env_var" in openai_section
+        assert "max_tokens" in openai_section
+
+        config = {
+            "api_settings": {
+                "openai": {
+                    "api_key_env_var": "OPENAI_API_KEY",
+                    "max_tokens": 4096,
+                }
+            }
+        }
+        assert encryptor.detect_api_keys(config) is False
 
 
 if __name__ == "__main__":

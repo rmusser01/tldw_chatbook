@@ -113,16 +113,31 @@ class SkillTrustGenerationMarkerStore(Protocol):
 
 @dataclass(slots=True)
 class FileSkillTrustGenerationMarkerStore:
-    """Reduced-protection marker store intended for tests and explicit recovery."""
+    """Reduced-protection marker store intended for tests and explicit recovery.
+
+    Attributes:
+        marker_path: File path for the persisted marker.
+        store_dir: The trust store's own directory -- the real containing
+            directory ``marker_path`` must resolve inside. This is passed in
+            independently rather than derived as ``marker_path.parent``: a
+            containment check against a candidate's own parent is true by
+            construction (a path is always inside its own parent) and so
+            rejects nothing, letting a misconfigured or attacker-controlled
+            ``marker_path`` point anywhere on disk. Callers that legitimately
+            keep the marker file directly under the trust store (the only
+            supported layout, e.g. ``build_skill_trust_marker_store_with_fallback``)
+            simply pass that same directory as ``store_dir``.
+    """
 
     marker_path: Path
+    store_dir: Path
 
     def load_marker(self) -> dict[str, Any] | None:
         """Load the file-backed generation marker if it exists."""
 
         marker_path = _validated_trust_file_path(
             self.marker_path,
-            base_dir=self.marker_path.parent,
+            base_dir=self.store_dir,
         )
         if not marker_path.exists():
             return None
@@ -138,12 +153,27 @@ class FileSkillTrustGenerationMarkerStore:
             "generation": generation,
             "manifest_digest": manifest_digest,
         }
-        _atomic_write_json(self.marker_path, payload, base_dir=self.marker_path.parent)
+        _atomic_write_json(self.marker_path, payload, base_dir=self.store_dir)
 
     def clear(self) -> None:
-        """Remove the on-disk marker file (missing-ok, no raise)."""
+        """Remove the on-disk marker file (missing-ok, no raise).
+
+        Validates ``marker_path`` against ``store_dir`` the same way
+        ``load_marker``/``save_marker`` do before touching disk, so an
+        unsafe or misconfigured path (symlink escape, path outside the
+        trust store) is refused rather than unlinked -- see task-851
+        review finding 4. Invalid paths are treated the same as "nothing
+        to clear": this method stays non-raising by contract.
+        """
         try:
-            self.marker_path.unlink(missing_ok=True)
+            marker_path = _validated_trust_file_path(
+                self.marker_path,
+                base_dir=self.store_dir,
+            )
+        except ValueError:
+            return
+        try:
+            marker_path.unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -234,17 +264,38 @@ class KeyringSkillTrustGenerationMarkerStore:
 def build_skill_trust_marker_store_with_fallback(
     *,
     fallback_marker_path: Path,
+    store_dir: Path,
     keyring_backend: Any | None = None,
     account_scope: str = "",
 ) -> tuple[SkillTrustGenerationMarkerStore, bool]:
-    """Return a marker store and whether reduced rollback protection is active."""
+    """Return a marker store and whether reduced rollback protection is active.
+
+    Args:
+        fallback_marker_path: File path for the reduced-protection marker,
+            used only when no secure OS keyring backend is available.
+        store_dir: The trust store's own directory -- the real containing
+            directory used to validate that ``fallback_marker_path`` stays
+            inside the trust store. See ``FileSkillTrustGenerationMarkerStore``
+            for why this must be an independently supplied real directory
+            rather than derived from ``fallback_marker_path`` itself.
+        keyring_backend: Optional keyring backend override, primarily for tests.
+        account_scope: Per-profile keyring account scope suffix.
+
+    Returns:
+        A tuple of ``(marker_store, reduced_rollback_protection)``.
+    """
 
     try:
         return KeyringSkillTrustGenerationMarkerStore(
             keyring_backend=keyring_backend, account_scope=account_scope
         ), False
     except Exception:
-        return FileSkillTrustGenerationMarkerStore(fallback_marker_path), True
+        return (
+            FileSkillTrustGenerationMarkerStore(
+                fallback_marker_path, store_dir=store_dir
+            ),
+            True,
+        )
 
 
 @dataclass(slots=True, repr=False)

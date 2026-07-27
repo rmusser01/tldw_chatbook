@@ -9,7 +9,9 @@ from tldw_chatbook.Skills_Interop.skill_trust_store import (
 
 
 def _service(tmp_path, marker=None):
-    marker = marker or FileSkillTrustGenerationMarkerStore(tmp_path / "trust" / "marker.json")
+    marker = marker or FileSkillTrustGenerationMarkerStore(
+        tmp_path / "trust" / "marker.json", store_dir=tmp_path / "trust"
+    )
     (tmp_path / "trust").mkdir(parents=True, exist_ok=True)
     (tmp_path / "skills").mkdir(parents=True, exist_ok=True)
     return SkillTrustService(
@@ -25,7 +27,9 @@ def test_posture_needs_setup_on_pristine(tmp_path):
 
 
 def test_posture_needs_resetup_when_marker_present_but_no_manifest(tmp_path):
-    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "trust" / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(
+        tmp_path / "trust" / "marker.json", store_dir=tmp_path / "trust"
+    )
     (tmp_path / "trust").mkdir(parents=True, exist_ok=True)
     marker.save_marker(generation=1, manifest_digest="d")  # foreign/inherited marker
     svc = _service(tmp_path, marker=marker)
@@ -73,7 +77,9 @@ def test_posture_unavailable_beats_needs_setup_when_no_manifest_and_marker_raise
 
 
 def test_reset_then_bootstrap_recovers_from_poison(tmp_path):
-    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "trust" / "marker.json")
+    marker = FileSkillTrustGenerationMarkerStore(
+        tmp_path / "trust" / "marker.json", store_dir=tmp_path / "trust"
+    )
     (tmp_path / "trust").mkdir(parents=True, exist_ok=True)
     marker.save_marker(generation=9, manifest_digest="stale")  # poison
     svc = _service(tmp_path, marker=marker)

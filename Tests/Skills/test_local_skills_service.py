@@ -50,11 +50,14 @@ Missing valid Agent Skills metadata.
 
 
 def _trusted_local_service(tmp_path):
+    marker_path = tmp_path / "marker.json"
     trust_service = SkillTrustService(
         skills_dir=tmp_path / "skills",
         trust_store=SkillTrustStore(
             store_dir=tmp_path / "trust",
-            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                marker_path, store_dir=marker_path.parent
+            ),
         ),
     )
     trust_service.unlock_with_passphrase("passphrase", salt=b"7" * 32)
