@@ -1,5 +1,5 @@
 ---
-id: TASK-545
+id: TASK-942
 title: Deliver runnable Parakeet ONNX batch transcription vertical slice
 status: Done
 assignee:
