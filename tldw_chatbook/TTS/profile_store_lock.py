@@ -50,6 +50,17 @@ def _residual_target_is_replaceable(
     return current_handle.closed
 
 
+def _handle_requires_cleanup(handle: BinaryIO | None) -> bool:
+    """Conservatively report whether a represented handle may still be live."""
+
+    if handle is None:
+        return False
+    try:
+        return not handle.closed
+    except BaseException:
+        return True
+
+
 def _unlock_and_close(
     handle: BinaryIO,
     *,
@@ -150,6 +161,7 @@ class ProfileStoreLease:
         self.timeout_seconds = normalized_timeout
         self.check_interval_seconds = normalized_check_interval
         self._handle: BinaryIO | None = None
+        self._residual_handle: BinaryIO | None = None
 
     @property
     def lock_path(self) -> Path:
@@ -159,10 +171,13 @@ class ProfileStoreLease:
 
     @property
     def acquired(self) -> bool:
-        """Return whether a non-closed handle still requires cleanup."""
+        """Return whether any represented handle may still require cleanup."""
 
-        handle = self._handle
-        return handle is not None and not handle.closed
+        handle = object.__getattribute__(self, "_handle")
+        residual_handle = object.__getattribute__(self, "_residual_handle")
+        return _handle_requires_cleanup(handle) or _handle_requires_cleanup(
+            residual_handle
+        )
 
     def acquire(self) -> ProfileStoreLease:
         """Synchronously acquire this lease and return it.
@@ -175,13 +190,20 @@ class ProfileStoreLease:
                 out, or cannot use the locking backend.
         """
 
-        existing_handle = self._handle
-        if existing_handle is not None:
-            if existing_handle.closed:
-                normalization_error = self._clear_handle_state(existing_handle)
-                _raise_recovery_failure(None, normalization_error)
-            else:
+        existing_handles = (
+            object.__getattribute__(self, "_handle"),
+            object.__getattribute__(self, "_residual_handle"),
+        )
+        normalized_ids: set[int] = set()
+        for existing_handle in existing_handles:
+            if existing_handle is None or id(existing_handle) in normalized_ids:
+                continue
+            normalized_ids.add(id(existing_handle))
+            if _handle_requires_cleanup(existing_handle):
                 raise ProfileRepositoryError("invalid_state")
+            normalization_error = self._clear_handle_state(existing_handle)
+            self._force_clear_represented_handle(existing_handle)
+            _raise_recovery_failure(None, normalization_error)
 
         timing_failed = False
         deadline = 0.0
@@ -195,94 +217,118 @@ class ProfileStoreLease:
         handle: BinaryIO | None = None
         may_be_locked = False
         primary_error: BaseException | None = None
+        recovery_errors: list[BaseException] = []
         try:
-            open_failed = False
             try:
-                handle = cast(BinaryIO, self.lock_path.open("a+b"))
-            except Exception:
-                open_failed = True
-            if open_failed or handle is None:
-                raise ProfileRepositoryError("operation_failed")
+                open_failed = False
+                try:
+                    handle = cast(BinaryIO, self.lock_path.open("a+b"))
+                except Exception:
+                    open_failed = True
+                if open_failed or handle is None:
+                    raise ProfileRepositoryError("operation_failed")
 
-            flags = portalocker.LockFlags.NON_BLOCKING
-            flags |= (
-                portalocker.LockFlags.SHARED
-                if self.mode is ProfileStoreLockMode.SHARED
-                else portalocker.LockFlags.EXCLUSIVE
-            )
-            attempted = False
-            while True:
-                if attempted:
-                    deadline_failed = False
-                    deadline_reached = False
+                flags = portalocker.LockFlags.NON_BLOCKING
+                flags |= (
+                    portalocker.LockFlags.SHARED
+                    if self.mode is ProfileStoreLockMode.SHARED
+                    else portalocker.LockFlags.EXCLUSIVE
+                )
+                attempted = False
+                while True:
+                    if attempted:
+                        deadline_failed = False
+                        deadline_reached = False
+                        try:
+                            deadline_reached = time.monotonic() >= deadline
+                        except Exception:
+                            deadline_failed = True
+                        if deadline_failed:
+                            raise ProfileRepositoryError("operation_failed")
+                        if deadline_reached:
+                            raise ProfileRepositoryError("lock_timeout")
+
+                    contended = False
+                    backend_failed = False
+                    may_be_locked = True
                     try:
-                        deadline_reached = time.monotonic() >= deadline
+                        portalocker.lock(handle, flags)
+                    except portalocker.exceptions.AlreadyLocked:
+                        may_be_locked = False
+                        contended = True
                     except Exception:
-                        deadline_failed = True
-                    if deadline_failed:
+                        backend_failed = True
+                    if backend_failed:
                         raise ProfileRepositoryError("operation_failed")
-                    if deadline_reached:
+                    if not contended:
+                        self._handle = handle
+                        return self
+
+                    attempted = True
+                    clock_failed = False
+                    remaining = 0.0
+                    try:
+                        remaining = deadline - time.monotonic()
+                    except Exception:
+                        clock_failed = True
+                    if clock_failed:
+                        raise ProfileRepositoryError("operation_failed")
+                    if remaining <= 0:
                         raise ProfileRepositoryError("lock_timeout")
 
-                contended = False
-                backend_failed = False
-                may_be_locked = True
-                try:
-                    portalocker.lock(handle, flags)
-                except portalocker.exceptions.AlreadyLocked:
-                    may_be_locked = False
-                    contended = True
-                except Exception:
-                    backend_failed = True
-                if backend_failed:
-                    raise ProfileRepositoryError("operation_failed")
-                if not contended:
-                    self._handle = handle
-                    return self
+                    sleep_failed = False
+                    try:
+                        time.sleep(min(self.check_interval_seconds, remaining))
+                    except Exception:
+                        sleep_failed = True
+                    if sleep_failed:
+                        raise ProfileRepositoryError("operation_failed")
+            except BaseException as error:
+                primary_error = error
 
-                attempted = True
-                clock_failed = False
-                remaining = 0.0
-                try:
-                    remaining = deadline - time.monotonic()
-                except Exception:
-                    clock_failed = True
-                if clock_failed:
-                    raise ProfileRepositoryError("operation_failed")
-                if remaining <= 0:
-                    raise ProfileRepositoryError("lock_timeout")
-
-                sleep_failed = False
-                try:
-                    time.sleep(min(self.check_interval_seconds, remaining))
-                except Exception:
-                    sleep_failed = True
-                if sleep_failed:
-                    raise ProfileRepositoryError("operation_failed")
+            if handle is not None:
+                self._recover_acquisition_with_replay(
+                    handle,
+                    may_be_locked=may_be_locked,
+                    errors=recovery_errors,
+                )
         except BaseException as error:
-            primary_error = error
-
-        recovery_errors: list[BaseException] = []
-        if handle is not None:
-            try:
+            recovery_errors.append(error)
+            if handle is not None:
                 self._recover_acquisition_handle(
                     handle,
                     may_be_locked=may_be_locked,
                     errors=recovery_errors,
                 )
-            except BaseException as error:
-                recovery_errors.append(error)
-                if not isinstance(error, Exception):
-                    # A complete recovery operation is replayed only after its
-                    # one promised control-flow interruption has been consumed.
-                    self._recover_acquisition_handle(
-                        handle,
-                        may_be_locked=may_be_locked,
-                        errors=recovery_errors,
-                    )
 
         _raise_recovery_failure(primary_error, *recovery_errors)
         raise ProfileRepositoryError("operation_failed")
+
+    def _recover_acquisition_with_replay(
+        self,
+        handle: BinaryIO,
+        *,
+        may_be_locked: bool,
+        errors: list[BaseException],
+    ) -> None:
+        """Run complete acquisition recovery, replaying one aborted control path."""
+
+        try:
+            self._recover_acquisition_handle(
+                handle,
+                may_be_locked=may_be_locked,
+                errors=errors,
+            )
+        except BaseException as error:
+            errors.append(error)
+            if not isinstance(error, Exception):
+                # A complete recovery operation is replayed only after its one
+                # promised control-flow interruption has been consumed.
+                self._recover_acquisition_handle(
+                    handle,
+                    may_be_locked=may_be_locked,
+                    errors=errors,
+                )
 
     def _recover_acquisition_handle(
         self,
@@ -320,6 +366,8 @@ class ProfileStoreLease:
         try:
             if self._handle is expected_handle:
                 self._handle = None
+            if object.__getattribute__(self, "_residual_handle") is expected_handle:
+                object.__setattr__(self, "_residual_handle", None)
         except BaseException as error:
             return error
         return None
@@ -338,16 +386,57 @@ class ProfileStoreLease:
     def _force_recovery_state(self, handle: BinaryIO) -> BaseException | None:
         """Force identity-safe state after one interrupted recovery attempt."""
 
+        inspection_error: BaseException | None = None
         try:
-            current_handle = self._handle
-            if handle.closed:
-                if current_handle is handle:
-                    object.__setattr__(self, "_handle", None)
-            elif _residual_target_is_replaceable(current_handle, handle):
+            current_handle = object.__getattribute__(self, "_handle")
+            residual_handle = object.__getattribute__(self, "_residual_handle")
+            try:
+                handle_closed = handle.closed
+            except Exception as error:
+                handle_closed = False
+                inspection_error = error
+
+            if handle_closed:
+                self._force_clear_represented_handle(handle)
+                return inspection_error
+
+            try:
+                replace_current = _residual_target_is_replaceable(
+                    current_handle,
+                    handle,
+                )
+            except Exception as error:
+                replace_current = False
+                inspection_error = error
+
+            if replace_current:
                 object.__setattr__(self, "_handle", handle)
+                if residual_handle is handle:
+                    object.__setattr__(self, "_residual_handle", None)
+                return inspection_error
+
+            try:
+                replace_residual = _residual_target_is_replaceable(
+                    residual_handle,
+                    handle,
+                )
+            except Exception as error:
+                replace_residual = False
+                if inspection_error is None:
+                    inspection_error = error
+            if replace_residual:
+                object.__setattr__(self, "_residual_handle", handle)
         except Exception as error:
             return error
-        return None
+        return inspection_error
+
+    def _force_clear_represented_handle(self, handle: BinaryIO) -> None:
+        """Clear every internal state slot matching one closed handle."""
+
+        if object.__getattribute__(self, "_handle") is handle:
+            object.__setattr__(self, "_handle", None)
+        if object.__getattribute__(self, "_residual_handle") is handle:
+            object.__setattr__(self, "_residual_handle", None)
 
     def release(self) -> None:
         """Synchronously unlock and close this lease idempotently.
@@ -358,43 +447,59 @@ class ProfileStoreLease:
                 preserved after the remaining cleanup is attempted.
         """
 
-        handle = self._handle
-        if handle is None:
-            return
-        if handle.closed:
-            normalization_error = self._clear_handle_state(handle)
-            _raise_recovery_failure(None, normalization_error)
-            return
+        handle = object.__getattribute__(self, "_handle")
+        residual_handle = object.__getattribute__(self, "_residual_handle")
+        represented_handles: list[BinaryIO] = []
+        for represented_handle in (handle, residual_handle):
+            if represented_handle is not None and all(
+                represented_handle is not existing for existing in represented_handles
+            ):
+                represented_handles.append(represented_handle)
 
-        primary_error: BaseException | None = None
-        cleanup_error: BaseException | None = None
-        cleanup_completed = False
-        try:
-            cleanup_error = _unlock_and_close(handle, may_be_locked=True)
-            cleanup_completed = True
-        except BaseException as error:
-            primary_error = error
-
-        retry_cleanup_error: BaseException | None = None
-        if handle is not None and not cleanup_completed:
-            retry_cleanup_error = _unlock_and_close(
-                handle,
-                may_be_locked=True,
-            )
-
-        state_error: BaseException | None = None
-        if primary_error is None and handle.closed:
+        errors: list[BaseException] = []
+        for represented_handle in represented_handles:
             try:
-                state_error = self._clear_handle_state(handle)
+                self._release_represented_handle(represented_handle, errors)
             except BaseException as error:
-                primary_error = error
+                errors.append(error)
+                if not isinstance(error, Exception):
+                    self._release_represented_handle(represented_handle, errors)
 
-        _raise_recovery_failure(
-            primary_error,
-            cleanup_error,
-            retry_cleanup_error,
-            state_error,
-        )
+        _raise_recovery_failure(None, *errors)
+
+    def _release_represented_handle(
+        self,
+        handle: BinaryIO,
+        errors: list[BaseException],
+    ) -> None:
+        """Best-effort clean and clear one represented handle."""
+
+        try:
+            handle_closed = handle.closed
+        except BaseException as error:
+            errors.append(error)
+            return
+        if handle_closed:
+            state_error = self._clear_handle_state(handle)
+            if state_error is not None:
+                errors.append(state_error)
+            self._force_clear_represented_handle(handle)
+            return
+
+        cleanup_error = _unlock_and_close(handle, may_be_locked=True)
+        if cleanup_error is not None:
+            errors.append(cleanup_error)
+
+        try:
+            handle_closed = handle.closed
+        except BaseException as error:
+            errors.append(error)
+            return
+        if handle_closed:
+            state_error = self._clear_handle_state(handle)
+            if state_error is not None:
+                errors.append(state_error)
+            self._force_clear_represented_handle(handle)
 
     def __enter__(self) -> ProfileStoreLease:
         """Acquire and return this lease for a context manager."""
