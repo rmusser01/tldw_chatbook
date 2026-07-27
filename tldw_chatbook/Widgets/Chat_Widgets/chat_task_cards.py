@@ -43,7 +43,13 @@ class ChatTaskCards(Container):
         calls = approval.get("calls") if isinstance(approval, dict) else None
         if calls:
             approval_card.set_batch(
-                calls, timeout_seconds=approval.get("timeout_seconds", 0.0)
+                calls,
+                timeout_seconds=approval.get("timeout_seconds", 0.0),
+                # Task 9 fix round 1: round-trip the round's stamped id so
+                # a decision on THIS card resolves THIS round, never
+                # "whichever session is active" -- see
+                # `ConsoleChatController.resolve_pending_approval`.
+                round_id=approval.get("round_id"),
             )
         else:
             approval_card.set_approval(approval)

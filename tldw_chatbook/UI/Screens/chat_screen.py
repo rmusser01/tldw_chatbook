@@ -15373,11 +15373,20 @@ class ChatScreen(BaseAppScreen):
     def handle_console_approval_decided(
         self, event: ChatApprovalCard.ApprovalDecided
     ) -> None:
-        """Forward the user's batch decisions to the controller's waiting worker thread."""
+        """Forward the user's batch decisions to the controller's waiting worker thread.
+
+        Task 9 fix round 1: forwards ``event.round_id`` too -- this message
+        is delivered asynchronously (it can arrive after a `switch_session`
+        already moved the active session elsewhere), so
+        `resolve_pending_approval` must resolve the round the card was
+        actually showing, never "whichever session is active right now".
+        """
         event.stop()
         controller = self._console_chat_controller
         if controller is not None:
-            controller.resolve_pending_approval(event.decisions)
+            controller.resolve_pending_approval(
+                event.decisions, round_id=event.round_id
+            )
 
     @on(SkillInstallConfirmCard.InstallDecided)
     def handle_console_skill_install_decided(

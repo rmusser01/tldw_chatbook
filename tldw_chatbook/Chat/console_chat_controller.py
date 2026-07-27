@@ -754,21 +754,26 @@ class ConsoleChatController:
         #: ``"timeout"``. Defaults to reading ``[mcp] approval_timeout_
         #: seconds`` (T2's ``approval_timeout_seconds``) when unset.
         self.mcp_approval_timeout_seconds: Callable[[], float] | None = None
-        #: Task 9: each batch-approval round's release signal + shared
-        #: decisions holder, keyed by its OWNING session id (falling back to
-        #: whatever session was active at call time for a legacy caller that
-        #: never threads ``session_id`` through -- see ``request_mcp_
-        #: approvals``' own docstring). Superseded the pre-Task-9 single
-        #: ``_pending_approval_event``/``_pending_approval_decisions`` pair,
-        #: which could only ever track ONE round at a time controller-wide --
-        #: fatal once two sessions can each have their own concurrent
-        #: pending approval (a background session's round would silently
-        #: clobber the viewed session's own event/decisions objects mid-
-        #: wait). Read/written from the UI thread by ``resolve_pending_
-        #: approval`` (always resolves the round for the CURRENTLY ACTIVE
-        #: session -- a parked round's card can only ever be interacted with
-        #: once its owning session is visited, i.e. once it IS the active
-        #: session).
+        #: Task 9 (Fix round 1): each batch-approval round's release signal
+        #: + shared decisions holder + owning session id, keyed by a
+        #: freshly minted ROUND id (``uuid4()``, stamped into the payload
+        #: as ``"round_id"`` and round-tripped through ``ChatApprovalCard``
+        #: -> ``ApprovalDecided`` -> ``resolve_pending_approval``) --
+        #: mirrors ``_pending_skill_script_rounds``'s identical
+        #: ``request_id``-keyed design. Superseded TWO earlier, both-wrong
+        #: shapes: the pre-Task-9 single ``_pending_approval_event``/
+        #: ``_pending_approval_decisions`` pair (only ever tracked ONE
+        #: round controller-wide -- fatal once two sessions can each have
+        #: their own concurrent pending approval), and this task's own
+        #: first draft keyed by session id alone (still wrong: `Approval
+        #: Decided` travels as an async Textual message, so a
+        #: `switch_session` landing in the gap between the user's click and
+        #: the handler running could resolve session A's decision against
+        #: session B's completely different batch -- review CRITICAL
+        #: finding, fix round 1). Read/written from the UI thread by
+        #: ``resolve_pending_approval``, which resolves ONLY the round
+        #: whose id was stamped onto the card the user actually decided --
+        #: never "whichever session happens to be active right now".
         self._pending_approval_rounds: dict[str, dict[str, Any]] = {}
         #: Task 9: retained payload for a PARKED round (session_id !=
         #: active_session_id at round-start), keyed by owning session id --
@@ -1755,29 +1760,34 @@ class ConsoleChatController:
 
         Builds a fresh ``threading.Event`` + shared decisions dict (stored
         under this round's own entry in ``_pending_approval_rounds``, keyed
-        by ``session_id`` -- see that map's own docstring for why a single
-        shared slot could not survive concurrent sessions), then either
-        MOUNTS the card immediately (``session_id`` is the currently
-        ACTIVE/viewed session, or unknown -- legacy no-session callers keep
-        the pre-Task-9 always-mount behavior) or PARKS it (``session_id``
-        is a DIFFERENT, background session -- Task 9: the retained
-        ``payload`` goes into ``_parked_approval_payloads`` for
-        ``switch_session`` to mount later, and ``park_pending_approval``
-        fires the fleet badge + one-shot toast instead of touching the
-        mounted-card slot). Either way it then polls ``event.wait(1.0)``
-        re-checking this run's OWN cancel signal (``_is_session_
-        cancelled``) and a deadline every second until one of three things
-        happens: the user submits a decision (``resolve_pending_approval``,
-        called from the UI thread once this round's session is the active
-        one, sets the Event), the run is cancelled/torn down (``_is_
-        session_cancelled`` -- F5 fix, Qodo wave: this round's OWN cancel
-        event, or real process teardown via ``_shutdown_requested``, never
-        any OTHER session's bare Stop -- see that method's own docstring),
-        or the configured approval timeout elapses. Whichever unique
-        ``llm_name`` never received an explicit decision by then fails
-        closed to ``"deny"`` (cancellation) or ``"timeout"`` (deadline) --
-        see ``MCPToolProvider._apply_verdict`` for how each decision string
-        is consumed. The mounted card (if any) is always cleared afterwards
+        by a freshly minted ``round_id`` -- see that map's own docstring
+        for why a single shared slot, or a slot keyed by session id alone,
+        could not survive concurrent sessions or same-session round
+        replacement). Either MOUNTS the card immediately (``session_id`` is
+        the currently ACTIVE/viewed session, or unknown -- legacy
+        no-session callers keep the pre-Task-9 always-mount behavior) or
+        PARKS it (``session_id`` is a DIFFERENT, background session --
+        Task 9: the retained ``payload`` goes into
+        ``_parked_approval_payloads`` for ``switch_session`` to mount
+        later, and ``park_pending_approval`` fires the fleet badge +
+        one-shot toast instead of touching the mounted-card slot). Either
+        way it then polls ``event.wait(1.0)`` re-checking this run's OWN
+        cancel signal (``_is_session_cancelled``) and a deadline every
+        second until one of three things happens: the user submits a
+        decision (``resolve_pending_approval``, called from the UI thread
+        once the card's own stamped ``round_id`` is delivered back, sets
+        the Event -- Fix round 1: NOT "whichever round belongs to the
+        active session", see ``resolve_pending_approval``'s own docstring
+        for why that was a real cross-session misattribution hazard), the
+        run is cancelled/torn down (``_is_session_cancelled`` -- F5 fix,
+        Qodo wave: this round's OWN cancel event, or real process teardown
+        via ``_shutdown_requested``, never any OTHER session's bare Stop --
+        see that method's own docstring), or the configured approval
+        timeout elapses. Whichever unique ``llm_name`` never received an
+        explicit decision by then fails closed to ``"deny"``
+        (cancellation) or ``"timeout"`` (deadline) -- see
+        ``MCPToolProvider._apply_verdict`` for how each decision string is
+        consumed. The mounted card (if any) is always cleared afterwards
         (``finally``), regardless of outcome -- but ONLY if this round's
         session is STILL the active one at that moment, so a background
         round resolving (timeout/cancel) while some OTHER session's card is
@@ -1810,17 +1820,35 @@ class ConsoleChatController:
 
         event = threading.Event()
         decisions: dict[str, str] = {}
-        round_key = session_id if session_id is not None else (
+        # Fix round 1 (review CRITICAL finding): keyed by a freshly minted
+        # ROUND id, not by session id (or the active session) -- a session-
+        # keyed slot is ambiguous the moment either (a) the ACTIVE session
+        # changes between this round starting and the user's decision
+        # arriving (`ApprovalDecided` travels as an async Textual message,
+        # so a `switch_session` can land in that gap), or (b) a second
+        # round starts for the SAME session before a first round's stale
+        # decision message is delivered -- either way a session-keyed slot
+        # would let a stale/misdirected decision resolve the WRONG round.
+        # `round_id` is stamped into `payload` below, round-trips through
+        # `ChatApprovalCard.set_batch` -> `ApprovalDecided` ->
+        # `resolve_pending_approval`, and is the ONLY thing that round is
+        # ever resolved by -- mirrors `_pending_skill_script_rounds`'
+        # identical `request_id`-keyed defense.
+        round_id = str(uuid4())
+        owning_session_id = session_id if session_id is not None else (
             self.store.active_session_id or ""
         )
-        self._pending_approval_rounds[round_key] = {
+        self._pending_approval_rounds[round_id] = {
             "event": event,
             "decisions": decisions,
+            "session_id": owning_session_id,
         }
 
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
         deadline = time.monotonic() + timeout_seconds
         payload = {
+            "round_id": round_id,
+            "session_id": owning_session_id,
             "calls": [
                 {
                     "llm_name": call.llm_name,
@@ -1908,7 +1936,7 @@ class ConsoleChatController:
             # a second source of truth.
             return {name: decisions.get(name, "deny") for name in unique_names}
         finally:
-            self._pending_approval_rounds.pop(round_key, None)
+            self._pending_approval_rounds.pop(round_id, None)
             if session_id is not None:
                 self._parked_approval_payloads.pop(session_id, None)
                 self.set_run_pending_approval(session_id, False)
@@ -2112,28 +2140,64 @@ class ConsoleChatController:
         self._publish_mcp_inspector_counts(len(catalog), provider.not_connected_count)
         return provider, build_mcp_review_hook(provider, bound_request_approvals)
 
-    def resolve_pending_approval(self, decisions: dict[str, str]) -> None:
+    def resolve_pending_approval(
+        self, decisions: dict[str, str], *, round_id: str | None = None
+    ) -> None:
         """UI THREAD: apply the user's batch decision, releasing the waiting worker thread.
 
         Called by ``ChatScreen``'s ``ChatApprovalCard.ApprovalDecided``
-        handler. Resolves the round for the CURRENTLY ACTIVE session --
-        Task 9: a parked round's card can only ever be mounted (and
-        therefore interacted with) once its owning session is the one
-        being viewed, so "the round belonging to whatever session is
-        active right now" is always the correct (and only reachable)
-        target. A no-op when there is no round pending for that session
-        (e.g. a stale message arriving after a timeout/cancellation
-        already resolved and cleared it, or -- pre-Task-9 compatible --
-        simply no round at all).
+        handler, which forwards ``event.round_id`` -- the SAME id
+        ``request_mcp_approvals`` stamped into the payload the card was
+        built from (``ChatApprovalCard.set_batch`` stashes it;
+        ``_submit_batch_decisions`` echoes it back on submit, mirroring
+        ``resolve_pending_skill_script``'s identical ``request_id``
+        round-trip).
+
+        Fix round 1 (review CRITICAL finding): resolves ONLY the round
+        whose id matches ``round_id`` -- never "whichever round belongs to
+        the currently active session". ``ApprovalDecided`` travels as an
+        async Textual message: a ``switch_session`` landing in the gap
+        between the user's click and this handler running would otherwise
+        let session A's decision resolve session B's completely different,
+        unreviewed batch (or, for the same session, let a STALE decision
+        from an already-ended round 1 resolve a newer round 2 that
+        happened to arm before the stale message was delivered). A
+        mismatched or stale ``round_id`` -- including one belonging to a
+        round that already resolved and was popped -- is a safe no-op: the
+        real round (if any) stays pending and its card re-derives
+        unchanged on the next visit; nothing is ever auto-approved or
+        denied-by-accident here.
+
+        ``round_id=None`` preserves the pre-fix-round-1 fallback for
+        direct/legacy callers with no token to pass (e.g. existing tests
+        that call this immediately after arming a round with no session
+        switch in between): resolves whichever round belongs to the
+        CURRENTLY ACTIVE session, matching every such caller's existing
+        expectations. Production (``ChatApprovalCard``/``ChatScreen``)
+        always passes the real ``round_id`` now.
+
+        A no-op when there is no matching round at all (e.g. a stale
+        message arriving after a timeout/cancellation already resolved and
+        cleared it, or -- with no ``round_id`` -- simply no round pending
+        for the active session).
 
         NOTE: Snapshots the round's ``decisions``/``event`` into locals to
         avoid TOCTOU race: the worker thread's ``finally`` block pops the
         round entry out of ``_pending_approval_rounds`` concurrently. Guard
         and act only on the snapshots.
         """
-        round_state = self._pending_approval_rounds.get(
-            self.store.active_session_id or ""
-        )
+        if round_id is not None:
+            round_state = self._pending_approval_rounds.get(round_id)
+        else:
+            active = self.store.active_session_id or ""
+            round_state = next(
+                (
+                    state
+                    for state in self._pending_approval_rounds.values()
+                    if state.get("session_id") == active
+                ),
+                None,
+            )
         if round_state is None:
             return
         # Snapshot both at once to prevent TOCTOU race with worker thread's finally block

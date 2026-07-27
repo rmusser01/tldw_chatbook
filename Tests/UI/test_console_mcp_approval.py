@@ -72,6 +72,7 @@ class _CardHarnessApp(App[None]):
     def __init__(self) -> None:
         super().__init__()
         self.decided: list[dict[str, str]] = []
+        self.decided_round_ids: list[str | None] = []
 
     def compose(self) -> ComposeResult:
         yield ChatApprovalCard()
@@ -79,6 +80,7 @@ class _CardHarnessApp(App[None]):
     @on(ChatApprovalCard.ApprovalDecided)
     def _capture_decision(self, event: ChatApprovalCard.ApprovalDecided) -> None:
         self.decided.append(event.decisions)
+        self.decided_round_ids.append(event.round_id)
 
 
 def _sample_calls() -> list[dict]:
@@ -450,6 +452,25 @@ async def test_submit_posts_approval_decided_with_per_row_decisions():
         assert app.decided == [
             {"mcp__srv_a__search": "approve_once", "mcp__srv_b__write": "deny"}
         ]
+
+
+@pytest.mark.asyncio
+async def test_submit_echoes_back_the_round_id_stamped_by_set_batch():
+    """Task 9 fix round 1: `set_batch`'s `round_id` must round-trip
+    unchanged through `ApprovalDecided` -- this is what lets
+    `ConsoleChatController.resolve_pending_approval` resolve the EXACT
+    round the user decided, rather than guessing from whatever session
+    happens to be active when the message is handled."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=45.0, round_id="round-xyz")
+        await pilot.pause()
+
+        app.query_one("#approval-submit", Button).press()
+        await pilot.pause()
+
+        assert app.decided_round_ids == ["round-xyz"]
 
 
 @pytest.mark.asyncio
@@ -1047,6 +1068,134 @@ def test_request_mcp_approvals_own_session_cancel_event_denies_the_round():
     assert decisions == {"mcp__srv__tool": "deny"}
 
 
+def test_resolve_pending_approval_by_round_id_survives_a_mid_flight_session_switch():
+    """CRITICAL (review round 1): `ApprovalDecided` travels as an async
+    Textual message -- a `switch_session` landing in the gap between the
+    user's click and the handler running must NOT let session A's decision
+    resolve session B's completely different, unreviewed batch.
+    `resolve_pending_approval` now resolves by the `round_id` stamped onto
+    the card at mount time (exactly what `ChatApprovalCard.set_batch`/
+    `ApprovalDecided` round-trip), never by "whichever session is active
+    right now"."""
+    controller, store = _build_controller()
+    session_a = store.create_session(title="A").id
+    session_b = store.create_session(title="B").id
+    store.switch_session(session_a)
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    result_a: dict[str, dict[str, str]] = {}
+
+    def _run_round_a() -> None:
+        result_a["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__a__tool")], session_id=session_a
+        )
+
+    worker_a = threading.Thread(target=_run_round_a)
+    worker_a.start()
+    time.sleep(0.1)
+    # A is active at round-start, so it mounted immediately -- capture the
+    # round_id the real ChatApprovalCard would have stashed via set_batch.
+    assert mounted and mounted[-1] is not None
+    round_id_a = mounted[-1]["round_id"]
+
+    # Session B gets its own, completely independent pending round (parked,
+    # since B isn't active).
+    result_b: dict[str, dict[str, str]] = {}
+
+    def _run_round_b() -> None:
+        result_b["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__b__tool")], session_id=session_b
+        )
+
+    worker_b = threading.Thread(target=_run_round_b)
+    worker_b.start()
+    time.sleep(0.1)
+    round_id_b = controller._parked_approval_payloads[session_b]["round_id"]
+    assert round_id_b != round_id_a
+
+    # The user clicked "Submit" on A's card, but before the resulting
+    # ApprovalDecided message is handled, a switch_session moved the
+    # ACTIVE session to B -- exactly the async-message race under review.
+    store.switch_session(session_b)
+
+    controller.resolve_pending_approval(
+        {"mcp__a__tool": "approve_once"}, round_id=round_id_a
+    )
+    worker_a.join(timeout=2.0)
+
+    assert result_a["decisions"] == {"mcp__a__tool": "approve_once"}
+    assert "decisions" not in result_b  # B's round is completely untouched
+
+    # Clean up B's still-waiting round rather than leaving a live thread
+    # blocked for the rest of its 30s timeout.
+    controller.resolve_pending_approval(
+        {"mcp__b__tool": "deny"}, round_id=round_id_b
+    )
+    worker_b.join(timeout=2.0)
+    assert result_b["decisions"] == {"mcp__b__tool": "deny"}
+
+
+def test_resolve_pending_approval_ignores_a_stale_or_unknown_round_id():
+    """A `round_id` that doesn't match any currently-armed round (a
+    fabricated/unknown id, or one whose round already resolved and was
+    popped) is a safe no-op -- the request just returns, no round is
+    touched, nothing raises."""
+    controller, _ = _build_controller()
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "deny"}, round_id="not-a-real-round"
+    )  # must not raise
+
+
+def test_resolve_pending_approval_stale_round_id_never_resolves_a_newer_round_for_the_same_session():
+    """Mirrors `resolve_pending_skill_script`'s identical defended scenario:
+    round 1 for session A times out (its round_id is popped), round 2 arms
+    for the SAME session immediately after -- a late decision carrying
+    round 1's now-stale id must never resolve round 2."""
+    controller, store = _build_controller()
+    session_a = store.create_session(title="A").id
+    controller.app = _FakeApp()
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
+    controller.mcp_approval_timeout_seconds = lambda: 0.05
+
+    round_1_decisions = controller.request_mcp_approvals(
+        [_pending(llm_name="mcp__srv__tool")], session_id=session_a
+    )
+    assert round_1_decisions == {"mcp__srv__tool": "timeout"}
+    stale_round_id = mounted[0]["round_id"]
+
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+    result_2: dict[str, dict[str, str]] = {}
+
+    def _run_round_2() -> None:
+        result_2["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__srv__tool")], session_id=session_a
+        )
+
+    worker = threading.Thread(target=_run_round_2)
+    worker.start()
+    time.sleep(0.1)
+    round_2_id = mounted[-1]["round_id"]
+    assert round_2_id != stale_round_id
+
+    # The stale decision (round 1's id) must not touch round 2.
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "deny"}, round_id=stale_round_id
+    )
+    time.sleep(0.1)
+    assert "decisions" not in result_2
+
+    # Round 2 still resolves normally via its OWN id.
+    controller.resolve_pending_approval(
+        {"mcp__srv__tool": "approve_once"}, round_id=round_2_id
+    )
+    worker.join(timeout=2.0)
+    assert result_2["decisions"] == {"mcp__srv__tool": "approve_once"}
+
+
 def test_resolve_pending_approval_without_active_round_is_a_noop():
     controller, _ = _build_controller()
     controller.resolve_pending_approval({"mcp__srv__tool": "deny"})  # must not raise
@@ -1143,10 +1292,17 @@ def test_chat_screen_forwards_approval_decided_to_controller(mock_chat_host):
     controller = Mock()
     screen._console_chat_controller = controller
 
-    event = ChatApprovalCard.ApprovalDecided({"mcp__a__b": "deny"})
+    # Task 9 fix round 1: the event's round_id must forward too --
+    # resolve_pending_approval resolves BY that id, never by "whichever
+    # session is active".
+    event = ChatApprovalCard.ApprovalDecided(
+        {"mcp__a__b": "deny"}, round_id="round-123"
+    )
     screen.handle_console_approval_decided(event)
 
-    controller.resolve_pending_approval.assert_called_once_with({"mcp__a__b": "deny"})
+    controller.resolve_pending_approval.assert_called_once_with(
+        {"mcp__a__b": "deny"}, round_id="round-123"
+    )
 
 
 def test_chat_screen_approval_decided_handler_tolerates_no_controller(mock_chat_host):
