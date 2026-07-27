@@ -13,6 +13,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Static
 
+from tldw_chatbook.UI.Navigation.pending_handoff_store import PendingHandoffStore
 from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
 from Tests.UI.test_screen_navigation import _build_test_app
 
@@ -216,6 +217,12 @@ async def test_study_screen_mounts_destination_header_and_boxes_library():
         runtime_backend=None,
         app_config={},
         notify=lambda *args, **kwargs: None,
+        # StudyScreen.on_mount -> _apply_pending_scope_handoff reads this
+        # unconditionally (study_screen.py:1172, :1196), as artifacts_screen
+        # and chat_screen do. The real app always has one
+        # (app.py:3667), so a fake without it is the fake being wrong, not
+        # the screen being unguarded -- give it a real, empty store.
+        pending_handoffs=PendingHandoffStore(),
     )
     app = _StudyHarness(app_instance)
 
