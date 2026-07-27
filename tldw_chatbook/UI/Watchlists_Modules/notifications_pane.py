@@ -47,6 +47,15 @@ class NotificationsPane(RecomposeCaptureGuard, Vertical):
     notifications = reactive[list[dict[str, Any]]]([], recompose=True)
     selected_notification = reactive[dict[str, Any] | None](None, recompose=True)
 
+    #: task-876: Rich's own terminal-agnostic "current item" idiom (see
+    #: `snippet_editor.py`'s `_WHITESPACE_MARKER_STYLE` and
+    #: `library_media_viewer.py`'s search-match highlighting), used here
+    #: because a `DataTable` cell's `Text` cannot reference Textual CSS
+    #: variables ($ds-focus-bg etc.) the way a widget's own styles can.
+    #: `selected_notification` is `recompose=True`, so -- unlike
+    #: Sources/RunsPane below -- this can be applied entirely in `compose()`.
+    _SELECTED_ROW_STYLE = "reverse bold"
+
     def compose(self):
         yield Static(
             "Local client inbox · stored on this device",
@@ -69,16 +78,27 @@ class NotificationsPane(RecomposeCaptureGuard, Vertical):
                 disabled=self.selected_notification is None,
             )
 
+        selected_id = (
+            str(self.selected_notification.get("id"))
+            if self.selected_notification
+            else None
+        )
         table = DataTable(id="notifications-table")
         table.add_columns("Status", "Title", "Category", "Severity", "Created")
         for notification in self.notifications:
+            row_id = str(notification.get("id"))
+            # Distinguishable from the DataTable's own focus cursor, which
+            # is a keyboard-navigation affordance that always sits
+            # somewhere -- including on a row this pane does not consider
+            # selected (task-876).
+            style = self._SELECTED_ROW_STYLE if row_id == selected_id else ""
             table.add_row(
-                "Read" if notification.get("is_read") else "Unread",
-                Text(str(notification.get("title") or "Notification")),
-                Text(str(notification.get("category") or "-")),
-                Text(str(notification.get("severity") or "-")),
-                Text(str(notification.get("created_at") or "-")),
-                key=str(notification.get("id")),
+                Text("Read" if notification.get("is_read") else "Unread", style=style),
+                Text(str(notification.get("title") or "Notification"), style=style),
+                Text(str(notification.get("category") or "-"), style=style),
+                Text(str(notification.get("severity") or "-"), style=style),
+                Text(str(notification.get("created_at") or "-"), style=style),
+                key=row_id,
             )
         yield table
 

@@ -12,6 +12,7 @@ from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import Button
 from textual.widgets import Collapsible
+from textual.widgets import DataTable
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import (
@@ -48,7 +49,10 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
+from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
+from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
 from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
@@ -2862,6 +2866,197 @@ async def test_watchlists_feed_source_row_stays_one_row_however_long_the_name():
         feeds = screen.query_one("#wl-region-feeds")
         assert feeds.region.contains_region(row.region), (
             f"the row should sit inside FEEDS: feeds={feeds.region} row={row.region}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_tree_selection_is_visually_distinct_against_the_bundle():
+    """task-876: the tree node matching `tree_scope` must be visually
+    distinguished from its siblings under the REAL stylesheet.
+
+    A bare `App` would pass this even if `.watchlist-tree-watchlist.is-active`
+    carried no rule at all -- the exact LabModeStrip/Watchlists-tab-strip
+    failure mode this program has already hit twice. Loads the production
+    bundle (`_visual_destination_harness`) and reads the resolved styles
+    Textual actually computed, not a bare class-presence check.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(
+            screen, pilot, f"#wl-tree-node-watchlist-{watchlist['id']}"
+        )
+
+        all_button = screen.query_one("#wl-tree-node-all", Button)
+        watchlist_button = screen.query_one(
+            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
+        )
+
+        # Resting state: `tree_scope` defaults to "all", so the "All
+        # sources" root starts active and must already read differently
+        # from its as-yet-unselected "Morning AI Brief" sibling. `text_style`
+        # is NOT part of this comparison: Textual's own default Button
+        # variant (`-style-default`) is unconditionally bold, so both nodes
+        # already agree on that regardless of `is-active` -- background and
+        # foreground colour are what this CSS actually changes.
+        assert all_button.has_class("is-active")
+        assert not watchlist_button.has_class("is-active")
+        assert all_button.styles.background != watchlist_button.styles.background, (
+            "the active root must not share its background with an inactive "
+            "sibling under the production stylesheet"
+        )
+        assert all_button.styles.color != watchlist_button.styles.color
+
+        # Click the watchlist node: the highlight must MOVE, not merely
+        # duplicate onto a second node. `active_scope` is `recompose=True`
+        # on `WatchlistTree` itself, so the click swaps in brand new button
+        # instances -- the `all_button`/`watchlist_button` references above
+        # are now stale and must be re-queried, not reused.
+        await pilot.click(f"#wl-tree-node-watchlist-{watchlist['id']}")
+        await pilot.pause()
+
+        all_button = screen.query_one("#wl-tree-node-all", Button)
+        watchlist_button = screen.query_one(
+            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
+        )
+        assert watchlist_button.has_class("is-active")
+        assert not all_button.has_class("is-active")
+        assert all_button.styles.background != watchlist_button.styles.background
+        assert all_button.styles.color != watchlist_button.styles.color
+
+        # And the label itself must actually be painted, not clipped away by
+        # the border-round-in-a-one-row-strip defect this program has
+        # already hit twice (task-875) -- `render_line()` would not catch a
+        # regression of that shape; the compositor is ground truth.
+        _assert_label_intact_on_screen(
+            watchlist_button, "Morning AI Brief", context="tree watchlist node"
+        )
+
+
+def _row_reverse_video(strips, region, needle: str) -> bool | None:
+    """Whether ANY segment in the row containing `needle` renders reverse
+    video, or `None` if `needle` is not on screen inside `region` at all.
+    """
+    for y in range(region.y, region.y + region.height):
+        if not (0 <= y < len(strips)):
+            continue
+        row_segments = strips[y]
+        row_text = "".join(segment.text for segment in row_segments)
+        if needle in row_text:
+            return any(
+                bool(getattr(segment.style, "reverse", False))
+                for segment in row_segments
+            )
+    return None
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_selected_row_renders_reverse_video_under_the_bundle():
+    """task-876, AC #6: confirm the Sources selection highlight is real
+    painted output, not just a Python-side style attribute, under the
+    production stylesheet + theme (`SourcesPane`/`RunsPane`/
+    `NotificationsPane` share the identical mechanism -- a `reverse bold`
+    Rich `Text` style baked into the selected row's cells, since a
+    DataTable cell cannot reference Textual CSS variables; see
+    `SourcesPane._SELECTED_ROW_STYLE`'s docstring).
+
+    Does not also assert against a second, merely-focused row: this
+    destination's `#sources-toolbar` currently claims nearly all of
+    `SourcesPane`'s vertical budget in the full shell (measured: 33 of 34
+    rows at 160x60), leaving the table only 1 visible row regardless of
+    terminal size -- a real, pre-existing layout defect unrelated to this
+    task's CSS-vs-bare-App concern. The per-pane unit tests in
+    Tests/Watchlists/test_watchlists_*_pane.py already cover "does the
+    highlight move / does an unselected row stay unstyled" with two rows
+    both on screen; this test only needs to confirm the SAME mechanism
+    still renders as reverse video once real CSS/theme are in the loop.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+
+        sources_pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        sources_pane.sources = [
+            {"id": 1, "name": "AI News RSS", "source_type": "rss", "active": True},
+        ]
+        await pilot.pause()
+        sources_pane.select_source_by_id("1")
+        await pilot.pause()
+
+        table = sources_pane.query_one("#sources-table", DataTable)
+        strips = screen._compositor.render_strips()
+        assert _row_reverse_video(strips, table.region, "AI News RSS") is True, (
+            "the selected row must actually paint as reverse video under the "
+            "production stylesheet, not just carry the style in Python"
+        )
+
+
+@pytest.mark.asyncio
+async def test_runs_pane_selected_row_renders_reverse_video_under_the_bundle():
+    """Same confirmation as the Sources pane test above, for `RunsPane`."""
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "runs"
+        await pilot.pause(0.2)
+
+        runs_pane = screen.query_one("#watchlists-runs-pane", RunsPane)
+        runs_pane.runs = [
+            {"id": "run-1", "source_title": "AI News RSS", "status": "completed"},
+        ]
+        await pilot.pause()
+        runs_pane.select_run_by_id("run-1")
+        await pilot.pause()
+
+        table = runs_pane.query_one("#runs-table", DataTable)
+        strips = screen._compositor.render_strips()
+        assert _row_reverse_video(strips, table.region, "AI News RSS") is True, (
+            "the selected run row must actually paint as reverse video under "
+            "the production stylesheet"
+        )
+
+
+@pytest.mark.asyncio
+async def test_notifications_pane_selected_row_renders_reverse_video_under_the_bundle():
+    """Same confirmation as the Sources pane test above, for
+    `NotificationsPane` -- whose `selected_notification` is `recompose=True`
+    (unlike Sources/Runs), so the highlight is applied entirely in
+    `compose()` rather than via a targeted `update_cell`.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "notifications"
+        await pilot.pause(0.2)
+
+        notifications_pane = screen.query_one(
+            "#watchlists-notifications-pane", NotificationsPane
+        )
+        notifications_pane.notifications = [
+            {"id": 1, "title": "Research complete", "category": "research"},
+        ]
+        await pilot.pause()
+        notifications_pane.select_notification_by_id("1")
+        await pilot.pause()
+
+        table = notifications_pane.query_one("#notifications-table", DataTable)
+        strips = screen._compositor.render_strips()
+        assert _row_reverse_video(strips, table.region, "Research complete") is True, (
+            "the selected notification row must actually paint as reverse "
+            "video under the production stylesheet"
         )
 
 

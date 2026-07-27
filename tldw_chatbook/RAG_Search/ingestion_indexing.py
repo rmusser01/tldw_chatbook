@@ -58,7 +58,7 @@ from typing import (
 
 from loguru import logger
 
-from ..config import get_cli_setting, get_user_data_dir
+from ..config import get_cli_setting
 from ..Utils.optional_deps import embeddings_rag_deps_installed
 
 logger = logger.bind(module="ingestion_indexing")
@@ -640,8 +640,9 @@ def _default_indexing_db() -> Optional[Any]:
     """Create the default RAG indexing-state DB under the user data dir."""
     try:
         from ..DB.RAG_Indexing_DB import RAGIndexingDB
+        from ..config import get_rag_indexing_db_path
 
-        return RAGIndexingDB(get_user_data_dir() / DEFAULT_INDEXING_DB_FILENAME)
+        return RAGIndexingDB(get_rag_indexing_db_path())
     except Exception as e:
         logger.warning(
             f"Could not open RAG indexing-state DB (indexing will not be incremental): {e}"

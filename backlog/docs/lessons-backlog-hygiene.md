@@ -109,6 +109,30 @@ never moved off `To Do`. Found only by auditing every task in the programme at t
 
 ---
 
+## Verify a reported bug still exists before filing it
+
+**What happened.** A whole-branch reviewer flagged that `LabModeStrip`'s active-mode
+label was invisible — "the second occurrence" of a one-row strip inheriting the global
+`.is-active { border: round }` and clipping its own text row. The claim was accurate
+about the mechanism and the file, so it was filed as a task (864, renumbered 875) and
+carried through a PR body and two memory notes.
+
+It had already been fixed. Commit `880febc05`, four days earlier, moved the chip rules
+app-tier into a new `css/features/_lab.tcss` for exactly this reason. The task was
+implemented by confirming the existing fix and changing no production code.
+
+The reviewer was not wrong about the bug class — the Watchlists tab strip really did
+have it, and really was fixed in the same programme. What went unchecked was whether
+the *second* instance was still live on current `dev`.
+
+**What to do.** A finding about code the current task does not touch is a **report, not
+a filing**. Before it becomes a task, grep `origin/dev` for the fix, not just for the
+bug: `git log -S'<the selector or symbol>' origin/dev -- <path>`. This is cheap, and the
+alternative is a task that reaches an implementer, consumes a full cycle, and closes as
+"already fixed" — plus stale claims in whatever PR body and notes quoted it in between.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`

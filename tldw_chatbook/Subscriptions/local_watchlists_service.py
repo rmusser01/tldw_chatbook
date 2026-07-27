@@ -391,7 +391,6 @@ class LocalWatchlistsService:
         self, *, job_id: Any = None, source_id: Any = None
     ) -> list[dict[str, Any]]:
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         resolved_job_id = job_id if job_id is not None else source_id
         cursor = db.conn.cursor()
         if resolved_job_id is None:
@@ -414,7 +413,6 @@ class LocalWatchlistsService:
 
     async def get_alert_rule(self, rule_id: Any) -> dict[str, Any]:
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         cursor = db.conn.cursor()
         cursor.execute(
             "SELECT * FROM local_watchlist_alert_rules WHERE id = ?", (int(rule_id),)
@@ -444,7 +442,6 @@ class LocalWatchlistsService:
         ):
             raise KeyError(f"Subscription not found: {resolved_job_id}")
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         now = self._utc_now()
         with db.transaction() as conn:
             cursor = conn.cursor()
@@ -471,7 +468,6 @@ class LocalWatchlistsService:
 
     async def update_alert_rule(self, rule_id: Any, **fields: Any) -> dict[str, Any]:
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         current = await self.get_alert_rule(rule_id)
         updates: dict[str, Any] = {}
         if "name" in fields:
@@ -516,7 +512,6 @@ class LocalWatchlistsService:
 
     async def delete_alert_rule(self, rule_id: Any) -> dict[str, Any]:
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         with db.transaction() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -956,26 +951,6 @@ class LocalWatchlistsService:
         return []
 
     @staticmethod
-    def _ensure_alert_rule_schema(db: SubscriptionsDB) -> None:
-        with db.transaction() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS local_watchlist_alert_rules (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id INTEGER,
-                    name TEXT NOT NULL,
-                    enabled INTEGER NOT NULL DEFAULT 1,
-                    condition_type TEXT NOT NULL,
-                    condition_value_json TEXT NOT NULL DEFAULT '{}',
-                    severity TEXT NOT NULL DEFAULT 'warning',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY (job_id) REFERENCES subscriptions(id) ON DELETE CASCADE
-                )
-                """
-            )
-
-    @staticmethod
     def _run_row_to_dict(row: Mapping[str, Any]) -> dict[str, Any]:
         payload = dict(row)
         stats: dict[str, Any] = {}
@@ -1053,7 +1028,6 @@ class LocalWatchlistsService:
         status: str,
     ) -> list[dict[str, Any]]:
         db = self._db()
-        self._ensure_alert_rule_schema(db)
         rules = db.conn.execute(
             """
             SELECT * FROM local_watchlist_alert_rules

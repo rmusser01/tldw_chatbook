@@ -11,6 +11,7 @@ from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
+    BreadcrumbScopeSelected,
     CheckNowRequested,
     InspectorPane,
     PreviewRequested,
@@ -434,3 +435,121 @@ async def test_feeds_heading_escapes_an_untrusted_source_name():
         assert heading == "Feeds in [bold red]Not Actually Bold[/bold red] (1)"
         summary = _static_text(screen.query_one("#wc-watchlists-summary", Static))
         assert "[bold red]Not Actually Bold[/bold red]" in summary
+
+
+# --- task-876: the tree's own selection highlight --------------------------
+#
+# `WatchlistTree` never read `tree_scope`, so nothing in the rail showed
+# which node the centre was scoped to. `_apply_tree_scope` is the single
+# reconciliation point for BOTH a real tree click (`_on_tree_scope_changed`)
+# and a breadcrumb promotion (`handle_breadcrumb_scope_selected`); these
+# confirm the highlight follows either path, and survives the two rebuild
+# paths (section switch, rail toggle) Phase C already had to fix once for
+# `expanded`.
+
+
+@pytest.mark.asyncio
+async def test_breadcrumb_promotion_moves_the_tree_highlight_same_as_a_click():
+    # Seeded *before* the screen mounts, like
+    # `test_feeds_heading_names_the_scope_with_a_live_count` above: the
+    # mounted `WatchlistTree` captures its own `_watchlists` once, from
+    # whatever `_load_tree_data` populated `_tree_watchlists` with by the
+    # time IT (not this test) last rebuilt the tree -- setting
+    # `screen._tree_watchlists` after mount would not reach the
+    # already-constructed tree instance's own copy.
+    app = _build_test_app()
+    morning = app.watchlist_bundle_service.create("Morning AI Brief")
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        for _ in range(20):
+            await pilot.pause()
+            if host.screen_stack[-1].query(f"#wl-tree-node-watchlist-{morning['id']}"):
+                break
+        screen = host.screen_stack[-1]
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=morning["id"]))
+        )
+        await pilot.pause()
+        assert screen.query_one(
+            f"#wl-tree-node-watchlist-{morning['id']}", Button
+        ).has_class("is-active")
+
+        # Promote a breadcrumb back to "all" -- a path that never touches
+        # the tree widget directly (see `handle_breadcrumb_scope_selected`)
+        # -- and confirm the SAME tree instance updates exactly as a real
+        # click would.
+        screen.post_message(BreadcrumbScopeSelected(TreeScope(kind="all")))
+        await pilot.pause()
+        assert screen.query_one("#wl-tree-node-all", Button).has_class("is-active")
+        assert not screen.query_one(
+            f"#wl-tree-node-watchlist-{morning['id']}", Button
+        ).has_class("is-active")
+
+
+@pytest.mark.asyncio
+async def test_tree_highlight_survives_a_section_switch_and_a_rail_toggle():
+    """Both a section switch (`watch_active_section`) and a rail toggle
+    (`action_toggle_left_rail`) rebuild the whole workbench, constructing a
+    brand new `WatchlistTree` -- the same class of bug Phase C already fixed
+    once for `expanded`/`active_tag`. Do not assume the fix generalizes;
+    test it (task-876, AC #3).
+    """
+    app = _build_test_app()
+    morning = app.watchlist_bundle_service.create("Morning AI Brief")
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        for _ in range(20):
+            await pilot.pause()
+            if host.screen_stack[-1].query(f"#wl-tree-node-watchlist-{morning['id']}"):
+                break
+        screen = host.screen_stack[-1]
+
+        screen.post_message(
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=morning["id"]))
+        )
+        await pilot.pause()
+        assert screen.query_one(
+            f"#wl-tree-node-watchlist-{morning['id']}", Button
+        ).has_class("is-active")
+
+        screen.active_section = "sources"
+        await pilot.pause()
+        assert screen.query_one(
+            f"#wl-tree-node-watchlist-{morning['id']}", Button
+        ).has_class("is-active"), "the highlight must survive a section switch"
+
+        screen.action_toggle_left_rail()
+        await pilot.pause()
+        assert not screen.query("#wl-tree"), "the rail should now be collapsed"
+
+        screen.action_toggle_left_rail()
+        await pilot.pause()
+        assert screen.query_one(
+            f"#wl-tree-node-watchlist-{morning['id']}", Button
+        ).has_class("is-active"), "the highlight must survive a rail toggle"
+
+
+@pytest.mark.asyncio
+async def test_load_tree_data_failure_notifies_the_user():
+    """A real database failure in `_load_tree_data` must not render
+    identically to "you have zero watchlists" -- two empty tree roots and no
+    message (task-876). Mirrors every sibling loader's own error-notify
+    behaviour (`_load_sources`/`_load_runs`/`_load_notifications`, etc.).
+    """
+    app = _build_test_app()
+    app.watchlist_bundle_service.list_watchlists = Mock(side_effect=RuntimeError("boom"))
+    app.notify = Mock()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        for _ in range(20):
+            await pilot.pause()
+            if app.notify.called:
+                break
+
+        assert app.notify.called, "a tree-load failure must notify the user"
+        _args, kwargs = app.notify.call_args
+        assert kwargs.get("severity") == "error"
+        screen = host.screen_stack[-1]
+        assert screen.query_one("#wl-tree-node-all", Button)
+        assert screen.query_one("#wl-tree-node-unassigned", Button)

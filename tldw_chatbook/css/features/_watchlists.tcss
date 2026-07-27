@@ -377,6 +377,55 @@
     border: none;
 }
 
+/* Left-rail tree selection highlight (task-876).
+ *
+ * `WatchlistTree` rendered every node as a `compact=True` Button and never
+ * read `tree_scope`, so nothing in the rail showed which node the centre
+ * was scoped to -- the Feeds heading ("Feeds in Morning AI Brief (1)") was
+ * the only feedback at all. This does not have the LabModeStrip/tab-strip
+ * border-clipping defect -- `compact=True` already forces `border: none
+ * !important` (Textual's own Button CSS), so the bundle's global
+ * `.is-active { border: round $ds-action-focus; }` never gets a chance to
+ * clip anything here. What it DOES need, same as every other `.is-active`
+ * consumer in this file, is a legible look: the bare global rule only adds
+ * `text-style: bold`, which is too subtle against three different node
+ * classes sitting one row apart with no other affordance.
+ *
+ * Scoped with the `.watchlist-tree` ancestor class (matching the
+ * `.watchlists-tab-strip .watchlists-tab.is-active` idiom just above)
+ * purely for extra specificity headroom, not because it is required here.
+ */
+.watchlist-tree .watchlist-tree-root.is-active,
+.watchlist-tree .watchlist-tree-watchlist.is-active,
+.watchlist-tree .watchlist-tree-source.is-active {
+    border: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+/* Focus must not impersonate the active node (bold, no underline above):
+ * the app's global `Button:focus` rule (components/_buttons.tcss) grants
+ * `bold underline` to ANY focused button, active or not -- exactly the
+ * ambiguity the Watchlists tab strip and Lab/MCP mode strips already guard
+ * against. Kept a flat "bold, no underline" for the active node whether or
+ * not it also holds focus (rather than the tab-strip's flip to a second
+ * palette) since a tree node has no separate "resting active" appearance to
+ * preserve.
+ */
+.watchlist-tree .watchlist-tree-root.is-active:focus,
+.watchlist-tree .watchlist-tree-watchlist.is-active:focus,
+.watchlist-tree .watchlist-tree-source.is-active:focus,
+.watchlist-tree .watchlist-tree-root.is-active:hover:focus,
+.watchlist-tree .watchlist-tree-watchlist.is-active:hover:focus,
+.watchlist-tree .watchlist-tree-source.is-active:hover:focus {
+    border: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+    outline: none;
+}
+
 /* One scoped source per row in FEEDS (Task 7, fix round 1, Finding 1).
  *
  * `height: 1` is the load-bearing part: `.watchlists-region-feeds` is capped

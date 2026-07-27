@@ -1,6 +1,7 @@
 """Tests for the Watchlists runs pane."""
 
 import pytest
+from rich.style import Style
 from textual.app import App, ComposeResult
 from textual.widgets import Button, DataTable, Static
 
@@ -201,3 +202,50 @@ async def test_runs_pane_renders_run_detail():
 
         logs = pane.query_one("#runs-detail-logs", Static)
         assert "Scrape started" in str(logs.renderable)
+
+
+# --- task-876: selected row is distinguishable from a merely-focused one ---
+# See the identical section in test_watchlists_sources_pane.py for context.
+
+
+def _cell_style(table: DataTable, row_key: str, column_index: int) -> Style:
+    column_key = list(table.columns.keys())[column_index]
+    raw_style = table.get_cell(row_key, column_key).style
+    return Style.parse(raw_style) if isinstance(raw_style, str) else raw_style
+
+
+@pytest.mark.asyncio
+async def test_selected_run_row_is_styled_distinctly_from_others(sample_runs):
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = sample_runs
+        pane.select_run_by_id("run-1")
+        await pilot.pause()
+
+        table = pane.query_one("#runs-table", DataTable)
+        assert _cell_style(table, "run-1", 0).reverse
+        assert not _cell_style(table, "run-2", 0).reverse
+
+
+@pytest.mark.asyncio
+async def test_run_selection_highlight_moves_without_rebuilding_the_table(sample_runs):
+    """Mirrors `SourcesPane`'s identical test: `selected_run` is not
+    `recompose=True`, so the highlight moves via a targeted `update_cell`.
+    """
+    app = RunsPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(RunsPane)
+        pane.runs = sample_runs
+        pane.select_run_by_id("run-1")
+        await pilot.pause()
+
+        table = pane.query_one("#runs-table", DataTable)
+        assert _cell_style(table, "run-1", 0).reverse
+
+        pane.select_run_by_id("run-2")
+        await pilot.pause()
+
+        assert pane.query_one("#runs-table", DataTable) is table
+        assert not _cell_style(table, "run-1", 0).reverse
+        assert _cell_style(table, "run-2", 0).reverse

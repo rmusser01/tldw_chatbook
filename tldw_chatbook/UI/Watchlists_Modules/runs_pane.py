@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from rich.text import Text
 from textual import work
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
@@ -42,11 +43,20 @@ class RerunRunRequested(Message):
 class RunsPane(RecomposeCaptureGuard, Vertical):
     """Run list and run inspector for watchlists."""
 
+    #: task-876: same Rich terminal-agnostic "current item" idiom as
+    #: `SourcesPane._SELECTED_ROW_STYLE` -- see that attribute's docstring.
+    _SELECTED_ROW_STYLE = "reverse bold"
+
     runs = reactive[list[dict[str, Any]]]([], recompose=True)
     selected_run = reactive[dict[str, Any] | None](None)
     run_items = reactive[list[dict[str, Any]]]([], recompose=True)
     run_logs = reactive("", recompose=True)
     runtime_backend = reactive("local")
+
+    # Plain attribute, not a reactive: mirrors SourcesPane's
+    # `_highlighted_source_key` for the identical reason -- see that
+    # attribute's docstring.
+    _highlighted_run_key: str | None = None
 
     def compose(self):
         with Horizontal(id="runs-toolbar", classes="destination-filter-strip"):
@@ -54,22 +64,20 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             yield Button("Cancel run", id="runs-cancel-button", disabled=True)
             yield Button("Re-run source", id="runs-rerun-button", disabled=True)
 
+        selected_key = str(self.selected_run.get("id")) if self.selected_run else None
         table = DataTable(id="runs-table")
         table.add_columns(
             "Source / Job", "Status", "Started", "Duration", "Found", "Processed", "Filtered", "Errors"
         )
         for run in self.runs:
+            row_key = str(run.get("id") or id(run))
             table.add_row(
-                str(run.get("source_title") or run.get("job_name") or "Untitled"),
-                str(run.get("status") or "-"),
-                str(run.get("started_at") or "-"),
-                str(run.get("duration") or "-"),
-                str(run.get("found_count") or "0"),
-                str(run.get("processed_count") or "0"),
-                str(run.get("filtered_count") or "0"),
-                str(run.get("error_count") or "0"),
-                key=str(run.get("id") or id(run)),
+                *self._run_row_cells(run, row_key == selected_key),
+                key=row_key,
             )
+        # See `SourcesPane.compose()`'s identical assignment for why this is
+        # authoritative going forward.
+        self._highlighted_run_key = selected_key
         yield table
 
         selected_run = self.selected_run
@@ -91,6 +99,25 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
             yield items_table
             yield Static("Logs", classes="pane-title")
             yield Static(self.run_logs, id="runs-detail-logs")
+
+    @staticmethod
+    def _run_row_cells(run: dict[str, Any], highlighted: bool) -> tuple[Text, ...]:
+        """One row's cell values, styled if `highlighted` (task-876).
+
+        Shared between `compose()` and `_update_selection_highlight` so both
+        draw an identical row -- see `SourcesPane._source_row_cells`.
+        """
+        style = RunsPane._SELECTED_ROW_STYLE if highlighted else ""
+        return (
+            Text(str(run.get("source_title") or run.get("job_name") or "Untitled"), style=style),
+            Text(str(run.get("status") or "-"), style=style),
+            Text(str(run.get("started_at") or "-"), style=style),
+            Text(str(run.get("duration") or "-"), style=style),
+            Text(str(run.get("found_count") or "0"), style=style),
+            Text(str(run.get("processed_count") or "0"), style=style),
+            Text(str(run.get("filtered_count") or "0"), style=style),
+            Text(str(run.get("error_count") or "0"), style=style),
+        )
 
     @staticmethod
     def _stats_text(run: dict[str, Any] | None) -> str:
@@ -127,8 +154,45 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
         if self.is_mounted:
             self.post_message(RunSelected(run))
         self._update_action_buttons()
+        self._update_selection_highlight(run)
         if run and str(run.get("status", "")).lower() == "running":
             self._start_run_poll(run)
+
+    def _update_selection_highlight(self, run: dict[str, Any] | None) -> None:
+        """Move the table's selected-row highlight without rebuilding it.
+
+        Mirrors `SourcesPane._update_selection_highlight` -- see that
+        method's docstring; `selected_run` is not `recompose=True` for the
+        same reason `selected_source` is not.
+        """
+        new_key = str(run.get("id")) if run else None
+        old_key = self._highlighted_run_key
+        if new_key == old_key:
+            return
+        try:
+            table = self.query_one("#runs-table", DataTable)
+        except Exception:
+            self._highlighted_run_key = new_key
+            return
+        try:
+            column_keys = list(table.columns.keys())
+        except Exception:
+            column_keys = []
+        for row_key, highlighted in ((old_key, False), (new_key, True)):
+            if row_key is None:
+                continue
+            candidate = next(
+                (r for r in self.runs if str(r.get("id") or "") == row_key), None
+            )
+            if candidate is None:
+                continue
+            cells = self._run_row_cells(candidate, highlighted)
+            for column_key, value in zip(column_keys, cells):
+                try:
+                    table.update_cell(row_key, column_key, value, update_width=False)
+                except Exception:
+                    pass
+        self._highlighted_run_key = new_key
 
     def _update_action_buttons(self) -> None:
         try:
