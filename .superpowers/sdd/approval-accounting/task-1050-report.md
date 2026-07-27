@@ -227,3 +227,94 @@ New tests added (all additive, no existing test modified):
 - `Tests/UI/test_console_mcp_approval.py`
 - `Tests/UI/test_skill_install_concurrent_confirms.py`
 - `Tests/Chat/test_skill_script_concurrent_confirms.py`
+
+## Fix round 1 (review)
+
+**Reviewer's finding (CRITICAL, reproduced live against the committed
+code):** the payload-pop guard shipped in the initial commit was
+`if not still_armed_same_session or stored_is_this_round: pop`, in all
+three bridges (`console_chat_controller.py`, MCP ~2262-2269, skill-install
+~2686-2697, skill-script ~2907-2916). The `_parked_*_payloads` maps are
+each a SINGLE per-session slot that always holds whichever round's payload
+was **last written** -- arming always overwrites it, never merges. So
+`stored_is_this_round` is true exactly when the completing round is the
+**newest-armed** one for that session, which is also precisely the case
+where an **older** sibling round can still be outstanding. Since arming a
+round re-mounts/re-parks its card (which typically gets decided before an
+already-waiting sibling does), "newest resolves first" is the *natural*
+live ordering, not an edge case. When that happens, the OR-clause's second
+disjunct fired and popped the slot -- clearing the only remaining payload
+even though the older round was still armed. The round-keyed badge
+(Defect A) still correctly stayed lit (◆), but `switch_session`'s re-derive
+then found nothing in the payload map and mounted `None`, leaving the
+still-outstanding older round unresolvable until its own timeout --
+exactly the class of bug Defect B was meant to close, reintroduced for the
+opposite resolution order.
+
+**Fix:** dropped the `or stored_is_this_round` clause in all three
+bridges. The guard is now `if not still_armed_same_session: pop` --
+identical in shape (and now literally consistent with) each bridge's own
+mounted-card clear guard, which was already order-independent. This is an
+explicitly accepted scope limitation, not a new defect: because the slot
+is single-payload, "last-armed-wins" now applies regardless of resolution
+order -- resolving the newest round first leaves that (now-stale, already-
+decided) round's payload sitting in the slot rather than `None`, so a
+remount still shows *something* recoverable-looking rather than nothing,
+but it is not necessarily the still-live older round's own payload.
+Per-round payload storage (replacing the single per-session slot) would
+close this fully but is a larger structural change explicitly out of scope
+for this fix round.
+
+All four pre-existing same-session (older-resolves-first) tests added in
+the initial commit needed **zero changes** -- the reviewer's own hand-trace
+predicted this and it held: `not still_armed_same_session` alone still
+correctly withholds the pop while a sibling is armed and still correctly
+pops once the last round resolves, regardless of which disjunct used to
+also fire.
+
+**New tests added:**
+- `Tests/UI/test_console_mcp_approval.py::
+  test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated`
+  -- reverse-ordering counterpart to the existing same-session MCP test.
+- `Tests/UI/test_skill_install_concurrent_confirms.py::
+  test_two_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated`
+  -- same shape, skill-install bridge.
+- `Tests/Chat/test_skill_script_concurrent_confirms.py`'s existing
+  same-session test docstring extended with a symmetry note (per review's
+  "at minimum MCP + one skill bridge" allowance) explaining why
+  `request_skill_script_confirm`'s byte-for-byte-identical guard shape
+  makes a third copy of the reverse-ordering test redundant rather than
+  additive.
+- `Tests/UI/test_console_mcp_approval.py::
+  test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_badge_up`
+  (minor review finding): added two data-level assertions --
+  `controller._pending_approvals[background] == {mcp_round_id}` right
+  after the MCP round parks (before the skill-install round arms), and
+  `== {mcp_round_id, install_request_id}` once both are armed -- locking
+  in that arming never double-counts a round id.
+
+**Re-verification** (worktree venv, one foreground `pytest -q` call per
+gate, same import-path check as the initial pass):
+
+Gate 1 (`Tests/UI/test_console_mcp_approval.py
+Tests/UI/test_skill_install_concurrent_confirms.py
+Tests/Chat/test_skill_script_concurrent_confirms.py
+Tests/Chat/test_console_run_markers.py Tests/UI/test_console_parallel_runs.py`):
+
+```
+81 passed, 2 failed in 56.14s
+```
+
+The 2 failures are the same two named pre-existing baseline failures as the
+initial pass (CSS-geometry batch-row test, mcp cancellation execution-log
+test) -- unchanged in content/assertion, only the pass count grew (79 ->
+81) from the 2 new tests.
+
+Gate 2 (`Tests/Chat/test_console_run_state_per_session.py
+Tests/UI/test_console_skill_install_confirm.py`):
+
+```
+32 passed in 5.63s
+```
+
+`ruff check` on the touched controller/test files: all checks passed.

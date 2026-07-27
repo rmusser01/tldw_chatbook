@@ -138,7 +138,22 @@ def test_two_rounds_for_the_same_session_keep_badge_and_payload_until_both_resol
     payload under that key. The EARLIER round resolving first must not
     clear the badge (the sibling round is still outstanding) nor discard
     the NEWER round's still-armed payload; only resolving the LAST one
-    does either."""
+    does either.
+
+    Fix round 1 (review) note on symmetry: the reverse-ordering case
+    (resolving the NEWER round first must leave the slot populated
+    rather than popped, since the guard is order-independent -- "no
+    armed round left for this session", not "is the stored payload still
+    mine") is exercised directly for the MCP bridge
+    (`test_console_mcp_approval.py::
+    test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated`)
+    and the skill-install bridge
+    (`test_skill_install_concurrent_confirms.py::
+    test_two_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated`).
+    `request_skill_script_confirm`'s teardown guard is byte-for-byte the
+    same shape (`if not still_armed_same_session: pop`, no per-round
+    identity check), so it is symmetric by construction -- not
+    duplicated a third time here."""
     session_id = controller.store.create_session(title="S").id
     controller.store.switch_session(session_id)
 

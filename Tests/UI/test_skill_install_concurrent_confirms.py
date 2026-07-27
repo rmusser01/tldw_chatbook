@@ -200,6 +200,57 @@ def test_two_rounds_for_the_same_session_keep_badge_and_payload_until_both_resol
     assert controller.session_a not in controller._parked_skill_install_payloads
 
 
+def test_two_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated(
+    controller,
+):
+    """TASK-1050 fix round 1 (review): reverse-ordering counterpart to the
+    sibling test above (mirrors `test_console_mcp_approval.py`'s identical
+    MCP-bridge test). `_parked_skill_install_payloads` is a SINGLE
+    per-session slot holding whichever round's payload was LAST WRITTEN,
+    so resolving the NEWER (newest-armed) round FIRST -- the natural live
+    ordering, since arming a round re-mounts its card, which typically
+    gets decided before an already-waiting sibling does -- must not pop
+    the slot while the OLDER round is still outstanding: the badge must
+    stay up and the slot must still hold a payload (remount still works,
+    even though it is round 2's own now-stale payload rather than round
+    1's -- the accepted single-slot scope). Only resolving the older,
+    now-last round clears both."""
+    results = {}
+    t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
+    id1 = controller.pending_skill_install_ids()[0]
+
+    t2 = _arm(controller, "https://x/two", controller.session_a, results, "two")
+    assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 2)
+    id2 = [i for i in controller.pending_skill_install_ids() if i != id1][0]
+
+    # Round 2 (the NEWER round) resolves FIRST -- round 1 is still
+    # outstanding, so the badge must stay up and the slot must still hold
+    # a payload.
+    controller.resolve_pending_skill_install(True, request_id=id2)
+    t2.join(timeout=5)
+    assert results["two"] is True
+    assert (
+        controller.run_marker_for(controller.session_a)
+        is ConsoleRunMarker.NEEDS_APPROVAL
+    )
+    assert controller.session_a in controller._pending_approvals
+    assert controller.session_a in controller._parked_skill_install_payloads, (
+        "the parked slot must still hold a payload -- popping it here "
+        "would strand the still-armed older round unresolvable on the "
+        "next switch-away/back"
+    )
+
+    # Round 1 (the OLDER round, now the LAST one armed) resolves -- only
+    # now do both the badge and the parked slot clear.
+    controller.resolve_pending_skill_install(False, request_id=id1)
+    t1.join(timeout=5)
+    assert results["one"] is False
+    assert controller.run_marker_for(controller.session_a) is ConsoleRunMarker.NONE
+    assert controller.session_a not in controller._pending_approvals
+    assert controller.session_a not in controller._parked_skill_install_payloads
+
+
 def test_stale_request_id_with_both_rounds_live_resolves_neither(controller):
     """Security-critical, mirrors `resolve_pending_skill_script`'s stale-id
     hazard: a resolve carrying a PRIOR/unrelated round's id must not

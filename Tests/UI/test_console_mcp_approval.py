@@ -1131,6 +1131,12 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     assert background in controller._pending_approvals
     assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
     mcp_round_id = controller._parked_approval_payloads[background]["round_id"]
+    # (Minor, review) Data-level check: after just the MCP round has
+    # parked, the round-keyed set for this session is EXACTLY the
+    # singleton of its own round id -- locks in that arming never
+    # double-counts (e.g. via both `add_pending_round` and a stray
+    # legacy-shim call landing on the same session).
+    assert controller._pending_approvals[background] == {mcp_round_id}
 
     install_worker = threading.Thread(target=_run_install)
     install_worker.start()
@@ -1138,6 +1144,11 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     install_request_id = controller._parked_skill_install_payloads[background][
         "request_id"
     ]
+    # Both rounds' ids are now tracked, still with no double-count.
+    assert controller._pending_approvals[background] == {
+        mcp_round_id,
+        install_request_id,
+    }
 
     # The MCP round resolves FIRST -- the skill-install round is still
     # outstanding for the same session, so the badge must stay up and the
@@ -1294,7 +1305,10 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
     still-live payload -- a switch-away/back would then remount `None`
     and the second round would sit unresolvable until its timeout. The
     teardown must only pop when it is the LAST armed round for the
-    session, or the stored payload is still its own."""
+    session (fix round 1, review: an earlier draft also popped whenever
+    the stored payload was still "its own" id, but that condition is
+    true exactly for the newest-armed round -- see the reverse-ordering
+    sibling test below for why that reintroduced the same eviction)."""
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     store.switch_session(session_a)
@@ -1346,6 +1360,86 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
     )
     worker_2.join(timeout=2.0)
     assert result_2["decisions"] == {"mcp__two__tool": "approve_once"}
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
+    assert session_a not in controller._pending_approvals
+    assert session_a not in controller._parked_approval_payloads
+
+
+def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated():
+    """TASK-1050 fix round 1 (review): reverse-ordering counterpart to the
+    sibling test above. `_parked_approval_payloads` is a SINGLE
+    per-session slot always holding whichever round's payload was LAST
+    WRITTEN (arming overwrites it) -- so "the stored payload is still
+    this round's own id" is true exactly when THIS round is the
+    newest-armed one, which is also the common case where an OLDER
+    sibling round is still outstanding (arming a round re-mounts its
+    card, which typically gets decided before an already-waiting sibling
+    does -- this is the NATURAL live ordering, not an edge case). An
+    earlier draft of the Defect B fix popped the slot whenever that
+    condition held, which discarded the still-armed OLDER round's only
+    remaining payload the moment the NEWER round resolved first -- a
+    switch-away/back would then re-derive from the now-empty map and
+    mount `None`, leaving the older round unresolvable until its
+    timeout. The fix now pops ONLY when no armed round remains for the
+    session at all (order-independent), so resolving the newer round
+    first must leave the slot populated (remount still works) and the
+    badge up; only resolving the older (now last) round clears both."""
+    controller, store = _build_controller()
+    session_a = store.create_session(title="A").id
+    store.switch_session(session_a)
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    result_1: dict[str, dict[str, str]] = {}
+    result_2: dict[str, dict[str, str]] = {}
+
+    def _run_round_1() -> None:
+        result_1["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__one__tool")], session_id=session_a
+        )
+
+    worker_1 = threading.Thread(target=_run_round_1)
+    worker_1.start()
+    time.sleep(0.1)
+    round_id_1 = controller._parked_approval_payloads[session_a]["round_id"]
+
+    def _run_round_2() -> None:
+        result_2["decisions"] = controller.request_mcp_approvals(
+            [_pending(llm_name="mcp__two__tool")], session_id=session_a
+        )
+
+    worker_2 = threading.Thread(target=_run_round_2)
+    worker_2.start()
+    time.sleep(0.1)
+    round_id_2 = controller._parked_approval_payloads[session_a]["round_id"]
+    assert round_id_2 != round_id_1
+
+    # Round 2 (the NEWER, newest-armed round) resolves FIRST -- round 1 is
+    # still outstanding, so the badge must stay up AND the parked slot
+    # must still hold a payload (not popped to `None`), even though it is
+    # (per the accepted single-slot scope) round 2's own now-stale
+    # payload rather than round 1's.
+    controller.resolve_pending_approval(
+        {"mcp__two__tool": "approve_once"}, round_id=round_id_2
+    )
+    worker_2.join(timeout=2.0)
+    assert result_2["decisions"] == {"mcp__two__tool": "approve_once"}
+    assert controller.run_marker_for(session_a) is ConsoleRunMarker.NEEDS_APPROVAL
+    assert session_a in controller._pending_approvals
+    assert session_a in controller._parked_approval_payloads, (
+        "the parked slot must still hold a payload -- popping it here "
+        "would strand the still-armed older round unresolvable on the "
+        "next switch-away/back"
+    )
+
+    # Round 1 (the OLDER round, now the LAST one armed) resolves -- only
+    # now do both the badge and the parked slot clear.
+    controller.resolve_pending_approval(
+        {"mcp__one__tool": "deny"}, round_id=round_id_1
+    )
+    worker_1.join(timeout=2.0)
+    assert result_1["decisions"] == {"mcp__one__tool": "deny"}
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
     assert session_a not in controller._pending_approvals
     assert session_a not in controller._parked_approval_payloads

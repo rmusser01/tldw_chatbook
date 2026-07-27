@@ -2244,29 +2244,37 @@ class ConsoleChatController:
             # this worker thread tears the round down.
             with self._approval_state_lock:
                 self._pending_approval_rounds.pop(round_id, None)
-                # TASK-1050 (Defect B): mirrors `request_skill_install_
-                # confirm`'s/`request_skill_script_confirm`'s identical
-                # guard -- a SECOND MCP round for the SAME session
-                # overwrites `_parked_approval_payloads[session_id]` (it is
-                # keyed by session id alone, not by round id), so an
-                # unconditional pop here would let the EARLIER round's
-                # teardown discard the NEWER round's still-armed retained
-                # payload. Only pop when either (a) this is the LAST
-                # armed MCP round for the session, or (b) the payload
-                # currently stored under this session's key is still THIS
-                # round's own (i.e. nothing has overwritten it since).
+                # TASK-1050 (Defect B) fix round 1 (review): `_parked_
+                # approval_payloads` is a SINGLE per-session slot that
+                # always holds whichever round's payload was LAST WRITTEN
+                # (arming always overwrites it) -- mirrors `request_skill_
+                # install_confirm`'s/`request_skill_script_confirm`'s
+                # identical guard. The original fix also popped whenever
+                # the STORED payload was still this round's own id, on the
+                # theory that meant "nothing has overwritten it since" --
+                # but that condition is true exactly when THIS round is
+                # the newest-armed one, which is also the common case where
+                # an OLDER sibling round is still outstanding (arming a
+                # round re-mounts/re-parks its card, which typically gets
+                # decided before an already-waiting sibling does). Popping
+                # there discarded the still-armed OLDER round's only
+                # remaining payload, so a switch-away/back re-derive found
+                # nothing and mounted `None` -- the reviewer reproduced
+                # this live. Only the order-independent "no armed round
+                # left for this session" test is safe: pop ONLY when this
+                # is the LAST armed MCP round for the session. (Accepted
+                # scope limitation: because the slot is single-payload,
+                # last-armed-wins regardless of resolution order -- a
+                # remount after the newest round resolves first shows the
+                # newest round's now-stale payload, not the still-live
+                # older round's; per-round payload storage is a larger
+                # change out of scope here.)
                 still_armed_same_session = session_id is not None and any(
                     state.get("session_id") == session_id
                     for state in self._pending_approval_rounds.values()
                 )
-                if session_id is not None:
-                    stored_payload = self._parked_approval_payloads.get(session_id)
-                    stored_is_this_round = (
-                        stored_payload is not None
-                        and stored_payload.get("round_id") == round_id
-                    )
-                    if not still_armed_same_session or stored_is_this_round:
-                        self._parked_approval_payloads.pop(session_id, None)
+                if session_id is not None and not still_armed_same_session:
+                    self._parked_approval_payloads.pop(session_id, None)
             if session_id is not None:
                 # TASK-1050 (Defect A): discard ONLY this round's own id --
                 # the badge clears only once every bridge round for this
@@ -2676,25 +2684,28 @@ class ConsoleChatController:
                     for state in self._pending_skill_install_rounds.values()
                 )
             if session_id is not None:
-                # TASK-1050 (Defect B): a SECOND skill-install round for the
-                # SAME session overwrites `_parked_skill_install_payloads
-                # [session_id]` (keyed by session id alone, not by round
-                # id) -- an unconditional pop here would let the EARLIER
-                # round's teardown discard the NEWER round's still-armed
-                # retained payload, leaving it unresolvable-until-timeout
-                # after a switch-away/back remounts `None`. Only pop when
-                # either (a) this is the LAST armed round for the session,
-                # or (b) the payload currently stored under this session's
-                # key is still THIS round's own.
+                # TASK-1050 (Defect B) fix round 1 (review): `_parked_
+                # skill_install_payloads` is a SINGLE per-session slot
+                # holding whichever round's payload was LAST WRITTEN
+                # (arming overwrites it) -- an unconditional pop here would
+                # let the EARLIER round's teardown discard the NEWER
+                # round's still-armed retained payload. The original fix
+                # also popped whenever the stored payload was still this
+                # round's own id ("nothing has overwritten it since"), but
+                # that is true exactly when THIS round is the newest-armed
+                # one -- which is also the common case where an OLDER
+                # sibling is still outstanding (arming re-mounts/re-parks a
+                # card, which typically gets decided before an
+                # already-waiting sibling does). Popping there discarded
+                # the still-armed OLDER round's only remaining payload
+                # (reviewer reproduced live). Only the order-independent
+                # "no armed round left for this session" test is safe: pop
+                # ONLY when this is the LAST armed round for the session.
+                # (Accepted scope limitation: last-armed-wins regardless of
+                # resolution order -- see `request_mcp_approvals`' mirror
+                # of this comment for the full rationale.)
                 with self._approval_state_lock:
-                    stored_payload = self._parked_skill_install_payloads.get(
-                        session_id
-                    )
-                    stored_is_this_round = (
-                        stored_payload is not None
-                        and stored_payload.get("request_id") == request_id
-                    )
-                    if not still_armed_same_session or stored_is_this_round:
+                    if not still_armed_same_session:
                         self._parked_skill_install_payloads.pop(session_id, None)
                 # TASK-1050 (Defect A): discard ONLY this round's own id --
                 # the badge clears only once every bridge round for this
@@ -2894,25 +2905,22 @@ class ConsoleChatController:
                     for state in self._pending_skill_script_rounds.values()
                 )
             if session_id is not None:
-                # TASK-1050 (Defect B): mirrors `request_skill_install_
-                # confirm`'s identical guard -- a SECOND skill-script round
-                # for the SAME session overwrites `_parked_skill_script_
-                # payloads[session_id]` (keyed by session id alone), so an
-                # unconditional pop here would let the EARLIER round's
-                # teardown discard the NEWER round's still-armed retained
-                # payload. Only pop when either (a) this is the LAST armed
-                # round for the session, or (b) the payload currently
-                # stored under this session's key is still THIS round's
-                # own.
+                # TASK-1050 (Defect B) fix round 1 (review): mirrors
+                # `request_skill_install_confirm`'s identical guard --
+                # `_parked_skill_script_payloads` is a SINGLE per-session
+                # slot holding whichever round's payload was LAST WRITTEN.
+                # The original fix also popped whenever the stored payload
+                # was still this round's own id, but that is true exactly
+                # when THIS round is the newest-armed one -- which is also
+                # the common case where an OLDER sibling is still
+                # outstanding. Popping there discarded the still-armed
+                # OLDER round's only remaining payload (reviewer reproduced
+                # live). Only pop when this is the LAST armed round for the
+                # session -- see `request_mcp_approvals`' mirror of this
+                # comment for the full rationale and the accepted
+                # single-slot/last-armed-wins scope limitation.
                 with self._approval_state_lock:
-                    stored_payload = self._parked_skill_script_payloads.get(
-                        session_id
-                    )
-                    stored_is_this_round = (
-                        stored_payload is not None
-                        and stored_payload.get("request_id") == request_id
-                    )
-                    if not still_armed_same_session or stored_is_this_round:
+                    if not still_armed_same_session:
                         self._parked_skill_script_payloads.pop(session_id, None)
                 # TASK-1050 (Defect A): discard ONLY this round's own id --
                 # the badge clears only once every bridge round for this
