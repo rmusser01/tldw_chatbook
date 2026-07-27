@@ -6,6 +6,12 @@ Library, and Personas while living in a Console-private namespace and
 importing from the Chat layer. This module carries no Chat import and no
 Console vocabulary; ``ConsoleRailHandle`` subclasses it and keeps its own.
 
+The section-header half of that extraction is finished (task-833): every
+consumer imports ``DestinationRailSectionHeader`` from here directly and
+the ``console_rail_section`` alias shim is gone, so the claim that this
+widget left Console's private namespace now holds for existing callers and
+not only new ones.
+
 The ``.console-rail-*`` CSS class names are retained deliberately so the
 generated bundle sees no diff. The TCSS references these widgets only by
 class, never by type, so the new type names are invisible to CSS. Renaming

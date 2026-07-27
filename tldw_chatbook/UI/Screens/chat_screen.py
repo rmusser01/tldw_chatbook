@@ -334,9 +334,9 @@ from ...Widgets.Console.console_system_prompt_modal import ConsoleSystemPromptMo
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
 )
-from ...Widgets.Console.console_rail_section import (
-    CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
-    ConsoleRailSectionHeader,
+from ...Widgets.destination_rail import (
+    RAIL_SECTION_TOGGLE_PREFIX,
+    DestinationRailSectionHeader,
 )
 from ...Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
@@ -3083,7 +3083,7 @@ class ChatScreen(BaseAppScreen):
             agent_body = self.query_one("#console-rail-section-body-agent")
             agent_body.styles.display = "block" if section_open else "none"
             agent_header = self.query_one(
-                "#console-rail-section-header-agent", ConsoleRailSectionHeader
+                "#console-rail-section-header-agent", DestinationRailSectionHeader
             )
             agent_header.sync_open(section_open)
         except (NoMatches, QueryError):
@@ -7611,7 +7611,7 @@ class ChatScreen(BaseAppScreen):
             body = self.query_one(f"#console-rail-section-body-{section_id}")
             header = self.query_one(
                 f"#console-rail-section-header-{section_id}",
-                ConsoleRailSectionHeader,
+                DestinationRailSectionHeader,
             )
         except (NoMatches, QueryError):
             return
@@ -9688,7 +9688,7 @@ class ChatScreen(BaseAppScreen):
                         classes="console-left-rail-body",
                     ):
                         # Section 1: Session (workspace + conversations).
-                        yield ConsoleRailSectionHeader(
+                        yield DestinationRailSectionHeader(
                             "Session",
                             section_id="session",
                             open=rail_state.session_open,
@@ -9719,7 +9719,7 @@ class ChatScreen(BaseAppScreen):
 
                         # Section 2: Model (provider/model readout lines plus a
                         # Configure shortcut into the Console session settings).
-                        yield ConsoleRailSectionHeader(
+                        yield DestinationRailSectionHeader(
                             "Model",
                             section_id="model",
                             open=rail_state.model_open,
@@ -9850,7 +9850,7 @@ class ChatScreen(BaseAppScreen):
                         # Section 3: Agent (run inspector -- the watch-and-drill
                         # surface for the live/most-recent agent run and its
                         # historical sub-agent runs).
-                        yield ConsoleRailSectionHeader(
+                        yield DestinationRailSectionHeader(
                             "Agent",
                             section_id="agent",
                             open=rail_state.agent_open,
@@ -9914,7 +9914,7 @@ class ChatScreen(BaseAppScreen):
                             yield back_button
 
                         # Section 4: Details (storage, sync, handoff plumbing).
-                        yield ConsoleRailSectionHeader(
+                        yield DestinationRailSectionHeader(
                             "Details",
                             section_id="details",
                             open=rail_state.details_open,
@@ -9944,7 +9944,7 @@ class ChatScreen(BaseAppScreen):
                             )
                             or {}
                         ):
-                            yield ConsoleRailSectionHeader(
+                            yield DestinationRailSectionHeader(
                                 "Character",
                                 section_id="character",
                                 open=rail_state.character_open,
@@ -15976,10 +15976,10 @@ class ChatScreen(BaseAppScreen):
                 group="console-sync",
             )
             return
-        if button_id and button_id.startswith(CONSOLE_RAIL_SECTION_TOGGLE_PREFIX):
+        if button_id and button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
             event.stop()
             self._toggle_console_rail_section(
-                button_id.removeprefix(CONSOLE_RAIL_SECTION_TOGGLE_PREFIX)
+                button_id.removeprefix(RAIL_SECTION_TOGGLE_PREFIX)
             )
             return
         if button_id == "console-new-chat-tab":

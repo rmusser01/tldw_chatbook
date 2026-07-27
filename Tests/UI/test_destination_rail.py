@@ -180,16 +180,6 @@ async def test_console_handle_leaves_left_side_text_alone():
         assert str(app.query_one("#console-rail-badge", Static).renderable) == "1 approval"
 
 
-def test_console_section_header_is_the_shared_widget():
-    from tldw_chatbook.Widgets.Console.console_rail_section import (
-        CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
-        ConsoleRailSectionHeader,
-    )
-
-    assert ConsoleRailSectionHeader is DestinationRailSectionHeader
-    assert CONSOLE_RAIL_SECTION_TOGGLE_PREFIX == RAIL_SECTION_TOGGLE_PREFIX
-
-
 @pytest.mark.asyncio
 async def test_derived_tooltip_follows_a_label_change_from_sync_state():
     """A tooltip derived from the label must not go stale when the label changes.

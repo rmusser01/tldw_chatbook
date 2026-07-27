@@ -17,7 +17,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LibraryRailSectionState,
     LibraryShellState,
 )
-from tldw_chatbook.Widgets.Console.console_rail_section import ConsoleRailSectionHeader
+from tldw_chatbook.Widgets.destination_rail import DestinationRailSectionHeader
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 LIBRARY_RAIL_ROW_PREFIX = "library-row-"
@@ -162,7 +162,7 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
             yield from self._compose_section(section)
 
         details_open = self._section_open("details")
-        yield ConsoleRailSectionHeader(
+        yield DestinationRailSectionHeader(
             "Details",
             section_id="library-details",
             open=details_open,
@@ -199,7 +199,7 @@ class LibraryRail(RecomposeCaptureGuard, Vertical):
 
     def _compose_section(self, section: LibraryRailSectionState) -> ComposeResult:
         open_state = self._section_open(section.section_id)
-        yield ConsoleRailSectionHeader(
+        yield DestinationRailSectionHeader(
             section.title,
             section_id=f"library-{section.section_id}",
             open=open_state,
