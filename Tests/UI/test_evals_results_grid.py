@@ -860,6 +860,45 @@ async def test_sort_key_registers_and_reorders_by_spread(evals_app, clean_run_gr
 
 
 @pytest.mark.asyncio
+async def test_ascending_sort_still_puts_undefined_spread_rows_last(
+    evals_app, mixed_run_group
+):
+    """Spread is a Jensen-Shannon divergence, always >= 0, so a row with
+    fewer than two captured cells (no defined spread) used to sort with a
+    -1.0 sentinel -- below every real value by construction. That is
+    correct for descending (see test_sort_key_registers_and_reorders_by_
+    spread) but was backwards for ascending: the sentinel's ``reverse=
+    False`` path put undefined rows FIRST, presenting "no measurement at
+    all" as "the least disagreement". ``mixed_run_group`` has exactly one
+    row with a real spread (s1: near-tie base vs. clear-winner steered,
+    both captured) and two with fewer than two captured cells (s2: one
+    CellError: only steered captured; s3: base never run: only steered
+    captured) -- so this fails against the pre-fix sentinel/reverse
+    scheme, which would put s2/s3 ahead of s1 in ascending order."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, mixed_run_group["group_id"])
+        table = grid.query_one("#evals-grid-table", DataTable)
+        table.focus()
+
+        await pilot.press("s")  # none -> desc
+        await pilot.pause()
+        await pilot.press("s")  # desc -> asc
+        await pilot.pause()
+
+        state = str(grid.query_one("#evals-grid-state").renderable)
+        assert "Sort: spread ▲" in state
+
+        real_index = table.get_row_index("s1")
+        undefined_indexes = [table.get_row_index(sid) for sid in ("s2", "s3")]
+        assert all(real_index < idx for idx in undefined_indexes), (
+            "row with a real spread (s1) must sort before every "
+            f"undefined-spread row in ascending mode: real={real_index}, "
+            f"undefined={undefined_indexes}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_grid_autofocuses_its_table_so_shortcuts_work_without_a_manual_focus(
     evals_app, mixed_run_group
 ):

@@ -203,6 +203,12 @@ def render_token(token: str) -> str:
     grid about token-level behaviour and must not look identical -- a bare
     ``a`` vs. `` a`` in a terminal cell is nearly impossible to tell apart,
     especially with the cell-padding a ``DataTable`` adds.
+
+    Args:
+        token: The raw token text, exactly as captured.
+
+    Returns:
+        The token wrapped in literal double quotes, e.g. ``'" a"'``.
     """
     return f'"{token}"'
 
@@ -223,6 +229,16 @@ def render_probe_reading(reading: "analysis.ProbeReading") -> str:
     engine's own logprob-to-probability conversion, reused for display
     exactly as the engine defines it rather than this module calling
     ``math.exp`` on a bare logprob itself.
+
+    Args:
+        reading: The resolved probe reading (``analysis.resolve_probe``'s
+            result) to format.
+
+    Returns:
+        A short display string: ``"never observed"``, a bounded
+        ``"< <logprob>"`` (or ``FAILED_MARK`` if even the bound is
+        missing), or the observed ``"<logprob>  <percent>%"`` /
+        ``"<logprob>"`` form when no matched token is available.
     """
     if reading.state == "never_observed":
         return "never observed"
@@ -1092,10 +1108,21 @@ class ResultsGrid(Vertical):
         readings across a row is not a number the engine computes, and this
         module adds no arithmetic beyond formatting). Rows with fewer than
         two successfully captured cells have no defined spread and sort
-        last in descending order.
+        last, in BOTH directions -- a row with no measurement at all must
+        never present as "the least disagreement" just because ascending
+        order puts small numbers first.
+
+        Sorting on a ``(is_undefined, signed_spread)`` tuple (rather than a
+        direction-dependent sentinel value combined with ``sorted``'s
+        ``reverse``) keeps that guarantee direction-independent by
+        construction: the undefined flag alone decides last-place, and the
+        direction (asc/desc) only ever flips the sign of a REAL spread, so
+        it can never move an undefined row ahead of a defined one.
         """
 
-        def sort_key(snippet: dict[str, Any]) -> float:
+        sign = -1.0 if self._sort_mode == "desc" else 1.0
+
+        def sort_key(snippet: dict[str, Any]) -> tuple[bool, float]:
             sid = snippet["id"]
             caps = [
                 cells.get((sid, target["id"]))
@@ -1103,10 +1130,13 @@ class ResultsGrid(Vertical):
             ]
             valid = [c for c in caps if isinstance(c, CellCapture)]
             if len(valid) < 2:
-                return -1.0
-            return analysis.spread(valid)
+                # ``is_undefined=True`` sorts after ``False`` regardless of
+                # the spread placeholder's sign, so this row trails in
+                # every mode without needing its own ``reverse`` handling.
+                return (True, 0.0)
+            return (False, analysis.spread(valid) * sign)
 
-        return sorted(snippets, key=sort_key, reverse=(self._sort_mode == "desc"))
+        return sorted(snippets, key=sort_key)
 
     def _ever_observed_active_probe(
         self,

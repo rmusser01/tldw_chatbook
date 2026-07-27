@@ -157,6 +157,15 @@ def configured_llama_cpp_url(app_config: Optional[Mapping[str, Any]]) -> Optiona
     (or an OpenAI-shaped ``/v1``), and handing either to
     ``WordBenchCaptureClient`` verbatim produces a doubled path that fails
     every cell of the one-click sample bench.
+
+    Args:
+        app_config: The app's config mapping, or ``None``. Read via
+            ``api_settings.llama_cpp.api_url``; any other shape (missing
+            section, non-string/blank value) is treated as unset.
+
+    Returns:
+        The normalised root URL, or ``None`` if no ``llama_cpp`` endpoint
+        is configured.
     """
     url = _llama_cpp_settings(app_config).get("api_url")
     if not isinstance(url, str) or not url.strip():
@@ -171,15 +180,23 @@ def _configured_llama_cpp_model_id(app_config: Optional[Mapping[str, Any]]) -> s
 
 
 def _configured_llama_cpp_api_key(app_config: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """The llama.cpp API key to send, env-first per this project's
+    documented precedence (env vars -> config.toml -> defaults; see
+    CLAUDE.md). ``LLAMA_CPP_API_KEY`` is the same env var name
+    ``config.py``'s own ``llama_cpp`` template documents as
+    ``api_key_env_var``, so a value set there always wins over whatever is
+    committed to ``config.toml``, matching how every other provider in
+    this app resolves credentials.
+    """
     settings = _llama_cpp_settings(app_config)
-    configured = settings.get("api_key")
-    if isinstance(configured, str) and is_valid_provider_api_key(configured):
-        return configured.strip()
     env_var = settings.get("api_key_env_var")
     env_name = env_var.strip() if isinstance(env_var, str) and env_var.strip() else "LLAMA_CPP_API_KEY"
     env_value = os.environ.get(env_name)
     if env_value and is_valid_provider_api_key(env_value):
         return env_value.strip()
+    configured = settings.get("api_key")
+    if isinstance(configured, str) and is_valid_provider_api_key(configured):
+        return configured.strip()
     return None
 
 
@@ -221,6 +238,12 @@ def resolve_sample_target(
             genuinely needs a row to point a run at -- passes ``True``.
             Ask ``provider_is_configured`` whether a row WOULD be
             resolvable; it answers without writing.
+
+    Returns:
+        The resolved ``eval_models`` row (a real, DB-backed dict), or
+        ``None`` if there is nothing to reuse and either ``create`` is
+        ``False`` or no ``llama_cpp`` endpoint is configured to mint one
+        from.
     """
     db = view_model.db
     if db is None:

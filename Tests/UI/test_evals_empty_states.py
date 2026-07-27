@@ -217,6 +217,31 @@ def test_configured_llama_cpp_url_is_the_url_the_real_client_is_built_with(db, v
     assert url == "http://localhost:8080/v1/completions"
 
 
+def test_configured_llama_cpp_api_key_prefers_the_env_var_over_config(monkeypatch):
+    """CLAUDE.md's documented precedence is env vars -> config.toml ->
+    defaults. ``LLAMA_CPP_API_KEY`` is the same env var name config.py's
+    own llama_cpp template documents via ``api_key_env_var``, so a value
+    set there must win over whatever is committed to config.toml -- not
+    the reverse, which would mean a real secret exported for a session
+    (or a CI override) is silently ignored in favour of a stale key
+    checked into a shared config file."""
+    monkeypatch.setenv("LLAMA_CPP_API_KEY", "env-key-value")
+    app_config = {
+        "api_settings": {"llama_cpp": {"api_key": "config-key-value"}}
+    }
+    assert sample_bench._configured_llama_cpp_api_key(app_config) == "env-key-value"
+
+
+def test_configured_llama_cpp_api_key_falls_back_to_config_when_env_is_absent(monkeypatch):
+    """The config value is still honoured -- it is a fallback, not dead
+    code -- when the environment variable is not set at all."""
+    monkeypatch.delenv("LLAMA_CPP_API_KEY", raising=False)
+    app_config = {
+        "api_settings": {"llama_cpp": {"api_key": "config-key-value"}}
+    }
+    assert sample_bench._configured_llama_cpp_api_key(app_config) == "config-key-value"
+
+
 def test_creating_the_sample_bench_twice_does_not_collide_on_unique_names(db, view_model):
     """eval_tasks.name and eval_datasets.name are UNIQUE with no
     deleted_at exemption (Evals_DB.py's schema) -- a bare literal name

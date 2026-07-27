@@ -136,6 +136,9 @@ def truncated_mass(cap: CellCapture, k: Optional[int] = None) -> float:
         k: Truncate to this many top-ranked tokens first (see
             ``effective_k``). ``None`` reproduces the cell's own native
             ``truncated_mass``.
+
+    Returns:
+        The unobserved probability mass at ``k``, in ``[0.0, 1.0]``.
     """
     return _distribution(cap, k)[-1]
 
