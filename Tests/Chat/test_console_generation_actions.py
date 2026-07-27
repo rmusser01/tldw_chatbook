@@ -1280,7 +1280,11 @@ async def test_generate_image_handler_restores_draft_when_batch_raises(monkeypat
 
     system_messages: list[str] = []
 
-    async def _fake_append_system(text: str) -> None:
+    async def _fake_append_system(text: str, *, session_id: str | None = None) -> None:
+        # Task 4 (background-write audit): the real handler now threads
+        # `session_id=session.id` explicitly on every append in this path
+        # (the batch's owning session, captured before the raising call) --
+        # this fake must accept the same keyword the real method does.
         system_messages.append(text)
 
     screen._append_native_console_system_message = _fake_append_system

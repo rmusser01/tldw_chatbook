@@ -6,6 +6,8 @@ import asyncio
 
 import pytest
 
+from textual.widgets import Static
+
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -15,6 +17,21 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunState,
     ConsoleRunStatus,
 )
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+
+def _transcript_text(console) -> str:
+    """Return the plain text of every Static descendant of the native
+    transcript widget -- scoped to the transcript itself (not the whole
+    screen), so mode-bar/rail text changes elsewhere can't make an
+    equality assertion on this flaky.
+    """
+    transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    return " ".join(
+        getattr(widget.renderable, "plain", str(widget.renderable))
+        for widget in transcript.query(Static)
+        if widget.display and hasattr(widget, "renderable")
+    )
 
 
 @pytest.mark.asyncio
@@ -204,3 +221,98 @@ async def test_stop_visible_action_only_cancels_viewed_session_background_comple
         release_b.set()
         await pilot.pause(0.2)
         assert controller.run_state_for(session_b).status is ConsoleRunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_background_run_never_mutates_viewed_transcript() -> None:
+    """Task 4 (background-write audit): the real seam the audit found is
+    ``ChatScreen._append_native_console_system_message``, the function every
+    slash-command handler funnels its system-row output through (the
+    "candidates ... callbacks that append/patch transcript widgets" grep in
+    the task brief -- ``_append_.*message``). Its previous behavior always
+    resolved "the store's currently ACTIVE session" via
+    ``store.ensure_session()``, even for callers (like ``/generate-image``'s
+    failure path) that had already anchored themselves to a specific
+    OWNING session before an ``asyncio.to_thread`` await let the user
+    switch tabs. Driving the gated ``session_id=`` keyword directly (the
+    same seam ``_console_command_generate_image`` now uses) proves a
+    background session's append can never land on the viewed transcript --
+    and, per the store-first design, that switching to the background
+    session later reveals it with no separate replay mechanism needed.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # keep viewing the first session
+
+        before = _transcript_text(console)
+        # Drive the audited append path for the BACKGROUND session directly,
+        # via the real gated seam (not the illustrative
+        # `_apply_console_stream_delta` name from the brief -- there is no
+        # such method; this IS the method the audit found and fixed).
+        await console._append_native_console_system_message(
+            "SHOULD-NOT-APPEAR", session_id=background
+        )
+        await pilot.pause(0.2)
+        after = _transcript_text(console)
+        assert "SHOULD-NOT-APPEAR" not in after
+        assert before == after
+
+        # Store-first: the row IS there for the background session -- no
+        # deferred-replay mechanism needed, switching tabs just rebuilds the
+        # view from the store.
+        store.switch_session(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+        assert "SHOULD-NOT-APPEAR" in _transcript_text(console)
+
+
+@pytest.mark.asyncio
+async def test_background_run_sensitivity_reverting_the_gate_fails() -> None:
+    """Sensitivity check for the test above (TDD requirement): with the
+    ``session_id`` gate temporarily bypassed -- reproducing the pre-fix
+    behavior where the append always targeted whatever session is active
+    RIGHT NOW instead of the caller-supplied owning session -- the SAME
+    background-session append DOES leak onto the viewed transcript. This
+    proves the prior test is actually exercising the gate rather than
+    passing vacuously.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        # Reproduce the pre-fix seam: ignore the caller-supplied
+        # `session_id` and always append to the currently-active session
+        # (exactly what `_append_native_console_system_message` did before
+        # Task 4's fix).
+        async def leaky_append(message: str, *, session_id: str | None = None) -> None:
+            active = store.ensure_session()
+            store.append_message(
+                active.id, role=ConsoleMessageRole.SYSTEM, content=message
+            )
+            await console._sync_native_console_chat_ui()
+
+        console._append_native_console_system_message = leaky_append
+        try:
+            await console._append_native_console_system_message(
+                "SHOULD-LEAK", session_id=background
+            )
+            await pilot.pause(0.2)
+            assert "SHOULD-LEAK" in _transcript_text(console)
+        finally:
+            del console._append_native_console_system_message

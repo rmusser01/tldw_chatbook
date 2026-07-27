@@ -10999,20 +10999,55 @@ class ChatScreen(BaseAppScreen):
             streaming_session_id=streaming_session_id,
         )
 
-    async def _append_native_console_system_message(self, message: str) -> None:
-        """Append a system message to native Console state and refresh the bridge."""
+    async def _append_native_console_system_message(
+        self, message: str, *, session_id: str | None = None
+    ) -> None:
+        """Append a system message to native Console state and refresh the bridge.
+
+        Task 4 (background-write audit): most callers are synchronous
+        command handlers with no ``await`` between "the user's intended
+        session" and this call, so the default (``session_id=None``,
+        resolving whichever session is active RIGHT NOW via
+        ``store.ensure_session``) is safe -- there is no gap in which the
+        active session could have changed underneath them.
+
+        A handler that spans a real await gap while already anchored to a
+        specific session (e.g. `/generate-image`'s in-flight batch, tracked
+        per session in ``_console_imagegen_inflight_sessions``) must pass
+        that session's id explicitly instead -- re-resolving "active" at
+        append time would let a session switch during the awaited work
+        misattribute the row to whatever the user is looking at NOW rather
+        than the session that actually produced it. The resync below is
+        unconditional either way and stays harmless: it only ever renders
+        the store's CURRENTLY active session, so a background session's
+        just-appended row simply doesn't show until the user visits it
+        (store-first discipline; no view write needs gating here beyond
+        that existing pull-based rebuild).
+        """
         store = self._ensure_console_chat_store()
-        session = store.ensure_session(
-            title=self._console_initial_session_title_for_workspace(
-                store.workspace_context.active_workspace_id
-            ),
-            workspace_id=store.workspace_context.active_workspace_id,
-        )
-        store.append_message(
-            session.id,
-            role=ConsoleMessageRole.SYSTEM,
-            content=message,
-        )
+        if session_id is not None:
+            try:
+                store.append_message(
+                    session_id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=message,
+                )
+            except KeyError:
+                # Session vanished (closed) before its background operation's
+                # outcome could be attributed to it -- nothing to append to.
+                pass
+        else:
+            session = store.ensure_session(
+                title=self._console_initial_session_title_for_workspace(
+                    store.workspace_context.active_workspace_id
+                ),
+                workspace_id=store.workspace_context.active_workspace_id,
+            )
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.SYSTEM,
+                content=message,
+            )
         await self._sync_native_console_chat_ui()
 
     def _start_console_transcript_sync_timer(self) -> None:
@@ -12075,14 +12110,24 @@ class ChatScreen(BaseAppScreen):
             prepare_generation_request, args, conversation_pairs, llm_context
         )
         if isinstance(prepared, GenerationRefusal):
-            await self._append_native_console_system_message(prepared.reason)
+            # Task 4 (background-write audit): every append below threads
+            # `session_id=session.id` explicitly -- this handler already
+            # spans real await gaps (the two `asyncio.to_thread` calls
+            # above/below), and `session` is this batch's owning session,
+            # captured once at the top. Re-resolving "active" implicitly
+            # (the old behavior) would misattribute the outcome to whatever
+            # session the user switched to while the batch was running.
+            await self._append_native_console_system_message(
+                prepared.reason, session_id=session.id
+            )
             return
         backend = args.backend or cfg.default_backend
         if not backend:
             await self._append_native_console_system_message(
                 "No image generation backend configured. Set "
                 "[image_generation].default_backend, or use "
-                "/generate-image :backend <prompt>."
+                "/generate-image :backend <prompt>.",
+                session_id=session.id,
             )
             return
         catalog = list_image_models_for_catalog()
@@ -12092,13 +12137,15 @@ class ChatScreen(BaseAppScreen):
         if entry is None or not entry.get("is_configured"):
             await self._append_native_console_system_message(
                 f"Image backend '{backend}' is not enabled/configured. "
-                "Check [image_generation] settings."
+                "Check [image_generation] settings.",
+                session_id=session.id,
             )
             return
         inflight = self._console_imagegen_inflight_sessions()
         if session.id in inflight:
             await self._append_native_console_system_message(
-                "An image generation is already running for this session."
+                "An image generation is already running for this session.",
+                session_id=session.id,
             )
             return
         inflight.add(session.id)
@@ -12128,7 +12175,7 @@ class ChatScreen(BaseAppScreen):
                     composer.insert_text_as_paste(saved_draft)
                 detail = "; ".join(batch.errors) or "unknown error"
                 await self._append_native_console_system_message(
-                    f"Image generation failed: {detail}"
+                    f"Image generation failed: {detail}", session_id=session.id
                 )
                 return
             store.append_generation_message(
@@ -12161,7 +12208,7 @@ class ChatScreen(BaseAppScreen):
                 f"Image generation batch raised for session {session.id}: {exc}"
             )
             await self._append_native_console_system_message(
-                f"Image generation failed: {exc}"
+                f"Image generation failed: {exc}", session_id=session.id
             )
         finally:
             inflight.discard(session.id)
