@@ -6,12 +6,15 @@ from typing import Any
 
 import pytest
 
+from tldw_chatbook.Library.ingest_capabilities import get_capabilities
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
     IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
 )
+from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.app import TldwCli
 
 
@@ -237,6 +240,37 @@ class TestIngestJobOptions:
 
         assert options["language"] == "ja"
         assert options["translation_target_language"] == "en"
+
+    def test_untouched_audio_form_snapshot_resolves_closed_gate_default(self) -> None:
+        provider_field = next(
+            field
+            for field in get_capabilities("audio_video").fields
+            if field.name == "transcription_provider"
+        )
+        screen = object.__new__(LibraryScreen)
+        screen._library_ingest_form = LibraryIngestFormState()
+        snapshot = screen._build_ingest_options_snapshot()
+        submitted_audio_options = snapshot.get("audio_video", {})
+
+        assert provider_field.default == "default"
+        assert submitted_audio_options.get("transcription_provider") not in {
+            "parakeet-onnx",
+            "faster-whisper",
+        }
+
+        app = _minimal_app()
+        job = _make_job(
+            source_path="/tmp/test.mp3",
+            ingest_options=snapshot,
+        )
+
+        options = app._ingest_job_options(job)
+
+        assert options["transcription_provider"] == "faster-whisper"
+        assert options["transcription_model_dir"] is None
+        assert options["language"] == "en"
+        assert options["transcription_precision"] == "int8"
+        assert options["transcription_local_files_only"] is True
 
     def test_ebook_group_options(self) -> None:
         app = _minimal_app()
