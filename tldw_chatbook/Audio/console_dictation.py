@@ -13,6 +13,7 @@ from tldw_chatbook.Local_Ingestion.parakeet_v2_installer import (
     parakeet_v2_install_dir,
     verify_parakeet_v2_bundle,
 )
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 
 CONSOLE_DICTATION_SAMPLE_RATE = 16_000
@@ -82,6 +83,12 @@ class ConsoleDictationSession:
                 configured = Path(str(configured_value).strip())
 
         if configured is not None:
+            try:
+                configured = validate_path_simple(configured, require_exists=True)
+            except (OSError, ValueError) as exc:
+                raise ConsoleDictationError(
+                    "The configured Parakeet v2 model folder path is invalid."
+                ) from exc
             if not self._required_files_present(configured):
                 raise ConsoleDictationError(
                     "Parakeet v2 model files are missing from the configured folder."
@@ -134,7 +141,15 @@ class ConsoleDictationSession:
         *,
         on_buffer_limit: Callable[[], None] | None = None,
     ) -> None:
-        """Start capture from the default microphone."""
+        """Start capture from the default microphone.
+
+        Args:
+            on_buffer_limit: Callback invoked when the bounded PCM buffer is full.
+
+        Raises:
+            ConsoleDictationError: The model, dependencies, or microphone are
+                unavailable, or a capture is already active.
+        """
         if self._recorder is not None:
             raise ConsoleDictationError("Microphone dictation is already recording.")
         self.model_dir = self._resolve_model_dir()
@@ -155,17 +170,25 @@ class ConsoleDictationSession:
         self._recorder = recorder
 
     def stop_and_transcribe(self) -> str:
-        """Stop capture and return a stripped English transcript."""
+        """Stop capture and return a stripped English transcript.
+
+        Returns:
+            The non-empty English transcript.
+
+        Raises:
+            ConsoleDictationError: Capture cannot stop, no audio was captured,
+                or local transcription fails.
+        """
         recorder = self._recorder
         if recorder is None:
             raise ConsoleDictationError("Microphone dictation is not recording.")
-        self._recorder = None
         try:
             audio_data = recorder.stop_recording()
         except Exception as exc:
             raise ConsoleDictationError(
                 f"Could not stop microphone recording: {exc}"
             ) from exc
+        self._recorder = None
         if not audio_data:
             raise ConsoleDictationError("No audio was captured from the microphone.")
         if self.model_dir is None:

@@ -3972,6 +3972,7 @@ class ChatScreen(BaseAppScreen):
         try:
             transcript = await asyncio.to_thread(session.stop_and_transcribe)
         except Exception as exc:
+            await asyncio.to_thread(session.discard)
             self._notify_console_dictation_error(exc)
             return
         if not self.is_mounted:

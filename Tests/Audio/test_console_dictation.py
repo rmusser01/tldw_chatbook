@@ -174,6 +174,43 @@ def test_session_reports_empty_audio_without_transcribing(tmp_path):
     transcriber.transcribe_buffer.assert_not_called()
 
 
+def test_session_retains_recorder_when_stop_fails_for_cleanup(tmp_path):
+    recorder = FakeRecorder()
+    recorder.stop_recording.side_effect = RuntimeError("device stop failed")
+    session = ConsoleDictationSession(
+        model_dir=_model_dir(tmp_path),
+        recorder_factory=lambda **kwargs: recorder,
+        transcription_service=Mock(),
+    )
+    session.start()
+
+    with pytest.raises(ConsoleDictationError, match="device stop failed"):
+        session.stop_and_transcribe()
+
+    assert session._recorder is recorder
+    recorder.stop_recording.side_effect = None
+    session.discard()
+    assert recorder.stop_recording.call_count == 2
+
+
+def test_session_rejects_unvalidated_configured_model_path(tmp_path):
+    model_dir = _model_dir(tmp_path)
+    nested = model_dir / "unused"
+    nested.mkdir()
+    traversal_path = nested / ".." / ".." / model_dir.name
+    recorder_factory = Mock(return_value=FakeRecorder())
+    session = ConsoleDictationSession(
+        model_dir=traversal_path,
+        recorder_factory=recorder_factory,
+        transcription_service=Mock(),
+    )
+
+    with pytest.raises(ConsoleDictationError, match="invalid"):
+        session.start()
+
+    recorder_factory.assert_not_called()
+
+
 def test_session_discard_stops_capture_without_transcribing(tmp_path):
     recorder = FakeRecorder()
     transcriber = Mock()

@@ -25,7 +25,17 @@ _LAZY_DICTATION_EXPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    """Load the legacy live-dictation stack only when explicitly requested."""
+    """Load the legacy live-dictation stack only when explicitly requested.
+
+    Args:
+        name: Package attribute requested by the caller.
+
+    Returns:
+        The lazily imported legacy dictation attribute.
+
+    Raises:
+        AttributeError: The requested name is not a supported lazy export.
+    """
     if name not in _LAZY_DICTATION_EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     value = getattr(import_module(".dictation_service", __name__), name)

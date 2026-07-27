@@ -223,4 +223,6 @@ async def test_console_mic_failures_are_visible_preserve_draft_and_recover_idle(
                 message in str(call.args[0]) and call.kwargs.get("severity") == "error"
                 for call in notify.call_args_list
             )
+            if stage == "stop":
+                assert fake.discard_calls == 1
             notify.reset_mock()

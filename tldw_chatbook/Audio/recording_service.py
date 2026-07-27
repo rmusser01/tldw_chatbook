@@ -120,7 +120,8 @@ class AudioRecordingService:
             use_vad: Whether to use Voice Activity Detection
             vad_aggressiveness: VAD aggressiveness (0-3, higher is more aggressive)
             max_buffer_bytes: Optional hard limit for retained PCM bytes
-            on_buffer_limit: Optional callback invoked once when the limit is reached
+            on_buffer_limit: Optional callback invoked once on a daemon
+                notification thread when the limit is reached
         """
         # Check for numpy requirement first
         if not NUMPY_AVAILABLE:
@@ -492,11 +493,25 @@ class AudioRecordingService:
             self.is_recording = False
             if not self._buffer_limit_reached:
                 self._buffer_limit_reached = True
-                if self.on_buffer_limit:
-                    try:
-                        self.on_buffer_limit()
-                    except Exception as e:
-                        logger.error(f"Buffer limit callback error: {e}")
+                self._notify_buffer_limit()
+
+    def _notify_buffer_limit(self) -> None:
+        """Invoke the buffer-limit callback away from the recording thread."""
+        callback = self.on_buffer_limit
+        if callback is None:
+            return
+
+        def invoke() -> None:
+            try:
+                callback()
+            except Exception as e:
+                logger.error(f"Buffer limit callback error: {e}")
+
+        threading.Thread(
+            target=invoke,
+            name="AudioBufferLimitCallback",
+            daemon=True,
+        ).start()
 
     def stop_recording(self) -> Optional[bytes]:
         """

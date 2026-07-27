@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-27 15:52'
-updated_date: '2026-07-27 16:21'
+updated_date: '2026-07-27 17:30'
 labels:
   - stt
   - dictation
@@ -54,5 +54,5 @@ Reason: ADR-025 already governs English Parakeet v2 INT8 dictation, memory-only 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the Console Mic vertical slice with idle/recording/transcribing states, a strict 60-second and PCM-byte recording bound, off-event-loop capture/transcription, direct memory-only Parakeet ONNX buffer inference, explicit English Parakeet v2 INT8 routing, configured-or-verified local model resolution with no downloads, caret insertion without auto-send, and clear failure recovery that preserves drafts. Kept optional audio/STT imports lazy, updated Console layout and transcription documentation, and left parent TASK-603 open. Verification: Ruff passed; git diff --check passed; 146 focused audio/transcription/UI tests passed; a real Parakeet v2 INT8 buffer smoke produced the expected transcript. Live microphone hardware was not exercised in this environment because its optional recording backend is not installed.
+Implemented the Console Mic vertical slice with idle/recording/transcribing states, a strict 60-second and PCM-byte recording bound, off-event-loop capture/transcription, direct memory-only Parakeet ONNX buffer inference, explicit English Parakeet v2 INT8 routing, configured-or-verified local model resolution with no downloads, caret insertion without auto-send, and clear failure recovery that preserves drafts. Kept optional audio/STT imports lazy, updated Console layout and transcription documentation, and left parent TASK-603 open. PR review hardening now validates configured model paths through validate_path_simple, retains the recorder handle after stop failures so cleanup can retry, performs best-effort Console cleanup before error recovery, dispatches buffer-limit callbacks away from the recording thread, and documents the public APIs in Google style. Verification: Ruff and diff checks passed; 149 focused audio/transcription/UI tests passed; a real Parakeet v2 INT8 buffer smoke produced the expected transcript. Live microphone hardware was not exercised in this environment because its optional recording backend is not installed.
 <!-- SECTION:NOTES:END -->

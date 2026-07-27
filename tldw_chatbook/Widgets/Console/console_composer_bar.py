@@ -445,7 +445,11 @@ class ConsoleComposerBar(Horizontal):
             self._refresh_visible_draft()
 
     def sync_dictation_state(self, state: _DictationState) -> None:
-        """Refresh the microphone action for the current one-shot lifecycle."""
+        """Refresh the microphone action for the current one-shot lifecycle.
+
+        Args:
+            state: Current one-shot dictation lifecycle state.
+        """
         self._dictation_state = state
         try:
             button = self.query_one("#console-dictation", Button)
