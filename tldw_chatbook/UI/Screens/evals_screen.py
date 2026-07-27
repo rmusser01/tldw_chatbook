@@ -196,12 +196,20 @@ class EvalsScreen(BaseAppScreen):
         its in-flight DB rows (see
         ``sample_bench._mark_orphaned_runs_cancelled`` for the cleanup that
         path needs).
+
+        The worker is handed as a CALLABLE, not a pre-built coroutine:
+        ``exclusive=True`` cancels the superseded worker's Task before its
+        first step, and a coroutine object constructed at the call site is
+        then never awaited at all (``RuntimeWarning: coroutine ... was
+        never awaited``). Textual only calls the callable when the worker
+        actually starts, so in the very race this docstring describes no
+        orphan coroutine is created.
         """
         event.stop()
         if self._sample_bench_running:
             return
         self.run_worker(
-            self._create_sample_bench_worker(),
+            self._create_sample_bench_worker,
             exclusive=True,
             group="evals-sample-bench",
         )

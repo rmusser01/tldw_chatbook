@@ -19,10 +19,10 @@ user reading a high percentage next to the word "Coverage" would
 reasonably expect "well measured", the opposite of what a high
 ``truncated_mass`` means. The internal lens key/Select value stays
 ``"coverage"`` for stability; only the displayed label changed, and the
-number itself is still exactly the plan's ``truncated_mass``), and Δ
-baseline. Three of them would misrepresent the engine if rendered
-naively, and each is pinned by a test in
-``Tests/UI/test_evals_results_grid.py``:
+quantity is still the plan's unobserved mass -- read at the shared
+effective K, see 4 below), and Δ baseline. Four of them would
+misrepresent the engine if rendered naively, and each is pinned by a test
+in ``Tests/UI/test_evals_results_grid.py``:
 
 1. **A bare Top-1 winner on a near-tie.** Two identical requests to the same
    server, seconds apart at the same neutral sampler, returned the top two
@@ -50,6 +50,20 @@ naively, and each is pinned by a test in
    ``analysis.effective_k`` ONCE per render over every successfully
    captured cell and passes it into every ``analysis.entropy`` call, and
    the grid header states that effective K.
+4. **Truncation at each cell's own native K.** Same failure as 3, one lens
+   over, and it shipped there first: ``CellCapture.truncated_mass`` is
+   computed over each cell's FULL native top-K, so a K=20 and a K=5 cell
+   holding the same distribution over the first 5 ranks rendered 1% vs 2%
+   while the header advertised ``K 5``. The lens now reads
+   ``analysis.truncated_mass(cap, k=effective_k)`` -- the same shared K
+   the header states and entropy uses.
+
+A fifth misrepresentation is not about a number but about its label: the
+Probe lens can only show ONE probe per cell, so the state line NAMES the
+active probe (``_lens_description``) and ``#evals-probe-selector`` (mounted
+when a bench configures more than one) makes the others reachable.
+Unattributable numbers -- a column of ``-1.83  16.0%`` with no way to tell
+which probe produced them -- are their own kind of false precision.
 
 Cell states, never conflated (see each lens's own render function):
 
@@ -106,7 +120,7 @@ from textual.message import Message
 from textual.widgets import DataTable, Select, Static
 
 from ...Evals.word_bench import analysis
-from ...Evals.word_bench.models import CellCapture, CellError, PreflightResult, TokenProb
+from ...Evals.word_bench.models import CellCapture, CellError, PreflightResult
 from ...Evals.word_bench.storage import load_grid
 from ...Third_Party.textual_fspicker import FileSave, Filters
 from ...Utils.path_validation import validate_path_simple
@@ -193,21 +207,22 @@ def render_token(token: str) -> str:
     return f'"{token}"'
 
 
-def render_probe_reading(
-    reading: "analysis.ProbeReading", matched: Optional[TokenProb]
-) -> str:
+def render_probe_reading(reading: "analysis.ProbeReading") -> str:
     """Format one probe reading, shared between the Probe lens
     (``_render_cell``) and the focused-cell inspector
     (``inspector.EvalsCellInspector``) so the two never disagree about what
     "observed" / "bounded" / "never observed" look like.
 
-    ``matched`` is the ``TokenProb`` ``resolve_probe`` matched inside the
-    cell's own ``top_k`` (``None`` unless ``reading.state == "observed"``),
-    passed in rather than re-derived here so this function needs no access
-    to the cell itself. Its ``.prob`` property is the engine's own
-    logprob-to-probability conversion (``models.TokenProb.prob``) -- reused
-    for display exactly as the engine defines it, rather than this module
-    calling ``math.exp`` on a bare logprob itself.
+    The percentage comes from ``reading.matched`` -- the ``TokenProb``
+    ``analysis.resolve_probe`` itself matched inside the cell's ``top_k``.
+    Both call sites used to re-derive that with a hand-copied
+    ``token == probe`` predicate; reading it off the ``ProbeReading``
+    instead means a change to the engine's matching rule (e.g. to the
+    bytes-based ``TokenProb.identity()`` the rest of ``analysis`` aligns
+    on) reaches every renderer automatically. ``TokenProb.prob`` is the
+    engine's own logprob-to-probability conversion, reused for display
+    exactly as the engine defines it rather than this module calling
+    ``math.exp`` on a bare logprob itself.
     """
     if reading.state == "never_observed":
         return "never observed"
@@ -216,8 +231,8 @@ def render_probe_reading(
             return FAILED_MARK
         return f"< {reading.logprob:.2f}"
     # observed
-    if matched is not None:
-        return f"{reading.logprob:.2f}  {matched.prob * 100:.1f}%"
+    if reading.matched is not None:
+        return f"{reading.logprob:.2f}  {reading.matched.prob * 100:.1f}%"
     return f"{reading.logprob:.2f}"
 
 
@@ -290,6 +305,14 @@ class ResultsGrid(Vertical):
         self._baseline_mode: BaselineMode = "column"
         self._baseline_index: int = 0
         self._sort_mode: SortMode = "none"
+        #: Which of the bench's configured probes the Probe lens reads.
+        #: The lens can only show one at a time, so WHICH one must be
+        #: switchable (``#evals-probe-selector``, mounted only when there
+        #: is more than one) and, always, NAMED in the state line -- a
+        #: column of bare ``-1.83  16.0%`` readings a user cannot attribute
+        #: to a probe is unattributable data, and the other probes would
+        #: otherwise be unreachable from the grid entirely.
+        self._probe_index: int = 0
 
     # -- compose -----------------------------------------------------
 
@@ -313,6 +336,15 @@ class ResultsGrid(Vertical):
 
         snapshot = self._grid["snapshot"]
         if not snapshot.get("snippets") or not snapshot.get("targets"):
+            # Drop the loaded grid: this branch yields NO DataTable, and
+            # ``on_mount`` (plus every lens/baseline/sort action and the
+            # export path) keys off ``self._grid is None`` to decide there
+            # is a table to render. Leaving it populated made the friendly
+            # empty state dead on arrival -- ``_render_table``'s
+            # ``query_one("#evals-grid-table")`` raised ``NoMatches`` out
+            # of ``on_mount``, taking the app down on the one input this
+            # branch exists to handle.
+            self._grid = None
             yield Static(
                 "This run has no snippets or no targets to render.",
                 id="evals-grid-empty",
@@ -341,6 +373,20 @@ class ResultsGrid(Vertical):
                 id="evals-baseline-selector",
                 allow_blank=False,
             )
+            probes = tuple(snapshot.get("probes") or ())
+            if len(probes) > 1:
+                # Only when there is a choice to make: a one-option Select
+                # is noise, and the single probe is already named in the
+                # state line either way (see _render_header).
+                yield Select(
+                    [
+                        (_safe_cell(f"Probe · {render_token(p)}"), index)
+                        for index, p in enumerate(probes)
+                    ],
+                    value=min(self._probe_index, len(probes) - 1),
+                    id="evals-probe-selector",
+                    allow_blank=False,
+                )
         yield DataTable(id="evals-grid-table", cursor_type="cell", zebra_stripes=True)
 
     def on_mount(self) -> None:
@@ -411,6 +457,28 @@ class ResultsGrid(Vertical):
                 return index
         return 0
 
+    def _lens_description(self) -> str:
+        """The active lens, with the Probe lens's own probe NAMED.
+
+        The Probe lens can only render one probe per cell. Saying just
+        "Lens: Probe" above a column of ``-1.83  16.0%`` leaves the reader
+        unable to attribute the number to a probe at all -- and with more
+        than one configured, which of them is showing is a real choice the
+        reader has to be able to see (and, via ``#evals-probe-selector``,
+        change).
+        """
+        label = LENS_LABELS[self._lens]
+        if self._lens != "probe":
+            return label
+        probes = self._probes()
+        if not probes:
+            return f"{label} (no probes configured)"
+        probe = self._active_probe()
+        if len(probes) == 1:
+            return f"{label} ({render_token(probe)})"
+        position = min(self._probe_index, len(probes) - 1) + 1
+        return f"{label} ({render_token(probe)} · {position} of {len(probes)})"
+
     def _baseline_description(self) -> str:
         if self._baseline_mode == "column":
             targets = self._grid["snapshot"].get("targets") or []
@@ -448,7 +516,32 @@ class ResultsGrid(Vertical):
         self._render_table()
         self._render_header()
 
+    @on(Select.Changed, "#evals-probe-selector")
+    def _on_probe_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if event.value == self._probe_index:
+            return
+        self._probe_index = event.value
+        self._render_table()
+        self._render_header()
+
+    def _probes(self) -> tuple[str, ...]:
+        if self._grid is None:
+            return ()
+        return tuple(self._grid["snapshot"].get("probes") or ())
+
+    def _active_probe(self) -> Optional[str]:
+        """The one probe the Probe lens reads, or ``None`` when the bench
+        configured none. Clamped, so a stale ``_probe_index`` can never
+        index past a shorter probe tuple."""
+        probes = self._probes()
+        if not probes:
+            return None
+        return probes[min(self._probe_index, len(probes) - 1)]
+
     def action_cycle_lens(self) -> None:
+        if self._grid is None:
+            return
         idx = LENS_ORDER.index(self._lens)
         next_lens = LENS_ORDER[(idx + 1) % len(LENS_ORDER)]
         self.query_one("#evals-lens-selector", Select).value = next_lens
@@ -460,6 +553,8 @@ class ResultsGrid(Vertical):
         dropdown's job -- this keyboard shortcut only does the coarse
         column/row switch the design spec asks for ("switchable between a
         column and a row")."""
+        if self._grid is None:
+            return
         new_mode: BaselineMode = "row" if self._baseline_mode == "column" else "column"
         rows = self._grid["snapshot"]["targets" if new_mode == "column" else "snippets"]
         if not rows:
@@ -470,6 +565,8 @@ class ResultsGrid(Vertical):
         )
 
     def action_cycle_sort(self) -> None:
+        if self._grid is None:
+            return
         order: dict[SortMode, SortMode] = {"none": "desc", "desc": "asc", "asc": "none"}
         self._sort_mode = order[self._sort_mode]
         self._render_table()
@@ -655,7 +752,7 @@ class ResultsGrid(Vertical):
             self._sort_mode
         ]
         state = (
-            f"Lens: {LENS_LABELS[self._lens]}   "
+            f"Lens: {self._lens_description()}   "
             f"Baseline: {self._baseline_description()}   "
             f"Sort: {sort_label}"
         )
@@ -708,7 +805,6 @@ class ResultsGrid(Vertical):
         preflight: dict[str, PreflightResult] = self._grid.get("preflight") or {}
         targets = snapshot.get("targets") or []
         snippets = snapshot.get("snippets") or []
-        probes = tuple(snapshot.get("probes") or ())
 
         show_delta_extras = self._lens == "delta"
         baseline_target_id = (
@@ -731,8 +827,9 @@ class ResultsGrid(Vertical):
             key: cap for key, cap in cells.items() if isinstance(cap, CellCapture)
         }
         effective_k = analysis.effective_k(list(caps_by_capture.values()))
-        ever_observed_first_probe = self._ever_observed_first_probe(
-            targets, snippets, cells, probes
+        active_probe = self._active_probe()
+        ever_observed_active_probe = self._ever_observed_active_probe(
+            targets, snippets, cells, active_probe
         )
 
         row_order = list(snippets)
@@ -765,8 +862,8 @@ class ResultsGrid(Vertical):
                     cap_or_err=cap_or_err,
                     cells=cells,
                     effective_k=effective_k,
-                    probes=probes,
-                    ever_observed_first_probe=ever_observed_first_probe,
+                    probe=active_probe,
+                    ever_observed_active_probe=ever_observed_active_probe,
                 )
                 row.append(text)
                 if show_delta_extras and divergence_value is not None:
@@ -794,8 +891,8 @@ class ResultsGrid(Vertical):
         cap_or_err: CellCapture | CellError | None,
         cells: dict[tuple[str, str], CellCapture | CellError],
         effective_k: int,
-        probes: tuple[str, ...],
-        ever_observed_first_probe: dict[str, bool],
+        probe: Optional[str],
+        ever_observed_active_probe: dict[str, bool],
     ) -> tuple[str, Optional[float]]:
         """Renders one cell for the active lens.
 
@@ -819,20 +916,24 @@ class ResultsGrid(Vertical):
         if lens == "entropy":
             return f"{analysis.entropy(cap, k=effective_k):.2f}", None
         if lens == "coverage":
-            return f"{cap.truncated_mass * 100:.0f}%", None
+            # analysis.truncated_mass at the SHARED effective K, not
+            # CellCapture.truncated_mass's own native-K figure -- the
+            # header states this K, and two cells with identical
+            # behaviour at it must not read as a 2x difference purely
+            # from their requested K (see analysis.truncated_mass).
+            return (
+                f"{analysis.truncated_mass(cap, k=effective_k) * 100:.0f}%",
+                None,
+            )
         if lens == "probe":
-            if not probes:
+            if probe is None:
                 return "n/a", None
-            probe = probes[0]
+            # `reading.matched` carries the TokenProb resolve_probe itself
+            # matched -- never re-derived here (see render_probe_reading).
             reading = analysis.resolve_probe(
-                cap, probe, ever_observed=ever_observed_first_probe.get(tid, False)
+                cap, probe, ever_observed=ever_observed_active_probe.get(tid, False)
             )
-            matched = (
-                next((t for t in cap.top_k if t.token == probe), None)
-                if reading.state == "observed"
-                else None
-            )
-            return render_probe_reading(reading, matched), None
+            return render_probe_reading(reading), None
         return "", None  # pragma: no cover -- exhaustive over LensKey
 
     def _render_top1(self, cap: CellCapture) -> str:
@@ -984,21 +1085,20 @@ class ResultsGrid(Vertical):
 
         return sorted(snippets, key=sort_key, reverse=(self._sort_mode == "desc"))
 
-    def _ever_observed_first_probe(
+    def _ever_observed_active_probe(
         self,
         targets: list[dict[str, Any]],
         snippets: list[dict[str, Any]],
         cells: dict[tuple[str, str], CellCapture | CellError],
-        probes: tuple[str, ...],
+        probe: Optional[str],
     ) -> dict[str, bool]:
-        """``{target_id: bool}`` for whether ``probes[0]`` was EVER observed
-        in that target's top-K across the whole run -- computed once per
-        table render (not once per cell) and threaded into every
-        ``analysis.resolve_probe`` call for the Probe lens, per its own
-        ``ever_observed`` contract."""
-        if not probes:
+        """``{target_id: bool}`` for whether the Probe lens's ACTIVE probe
+        (``_active_probe``) was EVER observed in that target's top-K across
+        the whole run -- computed once per table render (not once per cell)
+        and threaded into every ``analysis.resolve_probe`` call for the
+        Probe lens, per its own ``ever_observed`` contract."""
+        if probe is None:
             return {}
-        probe = probes[0]
         result: dict[str, bool] = {}
         for target in targets:
             tid = target["id"]

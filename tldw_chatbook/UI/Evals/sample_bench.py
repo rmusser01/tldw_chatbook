@@ -45,6 +45,7 @@ import os
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional
+from urllib.parse import urlparse, urlunparse
 
 from loguru import logger
 
@@ -99,15 +100,69 @@ def _llama_cpp_settings(app_config: Optional[Mapping[str, Any]]) -> Mapping[str,
     return section if isinstance(section, Mapping) else {}
 
 
+#: Endpoint paths a real ``api_url`` is commonly configured with, stripped
+#: back to the bare ROOT ``WordBenchCaptureClient`` needs (it appends
+#: ``/v1/completions`` / ``/v1/chat/completions`` itself -- see
+#: ``_normalize_llama_cpp_root``). Ordered longest-first so the first match
+#: is the most specific one. ``/completion`` (singular) is llama.cpp's OWN
+#: native completion endpoint and is what this machine's real config
+#: carries; without stripping it the client would request
+#: ``.../completion/v1/completions`` -> 404 -> a grid of ``CellError``
+#: cells blaming the server for what is really a URL shape.
+_LLAMA_CPP_ENDPOINT_SUFFIXES: tuple[str, ...] = (
+    "/v1/chat/completions",
+    "/v1/completions",
+    "/chat/completions",
+    "/completions",
+    "/completion",
+    "/v1",
+)
+
+
+def _normalize_llama_cpp_root(url: str) -> str:
+    """Reduce a configured llama.cpp ``api_url`` to the bare root.
+
+    ``WordBenchCaptureClient`` is documented to take a ROOT and append its
+    own path, so a configured value that already carries an endpoint path
+    would double up. Only the recognised suffixes in
+    ``_LLAMA_CPP_ENDPOINT_SUFFIXES`` are removed, and only from a value
+    that parses as an absolute ``scheme://host`` URL -- anything else is
+    returned as-is (minus a trailing slash) rather than guessed at.
+    Query strings and fragments are dropped: a ROOT has neither, and
+    carrying one through would corrupt the appended path.
+    """
+    stripped = url.strip()
+    parsed = urlparse(stripped)
+    if not parsed.scheme or not parsed.netloc:
+        return stripped.rstrip("/") or stripped
+    path = parsed.path.rstrip("/")
+    lowered = path.lower()
+    for suffix in _LLAMA_CPP_ENDPOINT_SUFFIXES:
+        if lowered.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    return urlunparse((parsed.scheme, parsed.netloc, path.rstrip("/"), "", "", ""))
+
+
 def configured_llama_cpp_url(app_config: Optional[Mapping[str, Any]]) -> Optional[str]:
-    """The user's configured llama.cpp root URL, or ``None`` if unset.
+    """The user's configured llama.cpp ROOT URL, or ``None`` if unset.
 
     Reads ``api_settings.llama_cpp.api_url`` directly -- config only, never a
     network call, so this is safe to call from a passive render path (the
     library rail composes on every selection change).
+
+    The configured value is normalised to a bare root (see
+    ``_normalize_llama_cpp_root``): the config template documents a root,
+    but real in-use configs carry llama.cpp's own ``/completion`` endpoint
+    (or an OpenAI-shaped ``/v1``), and handing either to
+    ``WordBenchCaptureClient`` verbatim produces a doubled path that fails
+    every cell of the one-click sample bench.
     """
     url = _llama_cpp_settings(app_config).get("api_url")
-    return url.strip() if isinstance(url, str) and url.strip() else None
+    if not isinstance(url, str) or not url.strip():
+        return None
+    normalized = _normalize_llama_cpp_root(url)
+    return normalized or None
 
 
 def _configured_llama_cpp_model_id(app_config: Optional[Mapping[str, Any]]) -> str:
@@ -128,28 +183,54 @@ def _configured_llama_cpp_api_key(app_config: Optional[Mapping[str, Any]]) -> Op
     return None
 
 
+def _existing_sample_target(db: EvalsDB) -> Optional[dict[str, Any]]:
+    """The already-registered ``llama_cpp`` ``eval_models`` row, if any.
+
+    A pure read, shared by the gate and the resolver so the two can never
+    disagree about what "already configured" means.
+    """
+    existing = db.list_models(provider="llama_cpp")
+    return existing[0] if existing else None
+
+
 def resolve_sample_target(
-    view_model: EvalsViewModel, app_config: Optional[Mapping[str, Any]]
+    view_model: EvalsViewModel,
+    app_config: Optional[Mapping[str, Any]],
+    *,
+    create: bool = False,
 ) -> Optional[dict[str, Any]]:
     """The ``eval_models`` row the sample bench will target, or ``None``.
 
     Reuses an existing ``llama_cpp`` row if one is already registered (real,
     already-configured data -- no invention needed); otherwise mints a new
-    one from the configured ``llama_cpp`` endpoint, but only when that
-    endpoint is actually declared in config (``configured_llama_cpp_url``
-    returns non-``None``). Returns ``None`` when neither is available --
-    callers must not create a bench pointing at an invented target (see the
-    module docstring).
+    one from the configured ``llama_cpp`` endpoint, but ONLY when
+    ``create=True`` AND that endpoint is actually declared in config
+    (``configured_llama_cpp_url`` returns non-``None``). Returns ``None``
+    when neither is available -- callers must not create a bench pointing
+    at an invented target (see the module docstring).
+
+    Args:
+        create: Whether this call may WRITE a new ``eval_models`` row.
+            Defaults to ``False`` -- a predicate that mutates the database
+            is the defect this parameter exists to prevent: the library
+            rail's gate runs inside ``compose()``, so with creation on by
+            default merely OPENING the Evals screen persisted an invented
+            target row on every fresh install (``config.py`` ships an
+            ``api_url`` default, so the condition is near-universal).
+            Only ``create_and_run_sample_bench`` -- the click path that
+            genuinely needs a row to point a run at -- passes ``True``.
+            Ask ``provider_is_configured`` whether a row WOULD be
+            resolvable; it answers without writing.
     """
     db = view_model.db
     if db is None:
         return None
-    existing = db.list_models(provider="llama_cpp")
-    if existing:
-        return existing[0]
+    existing = _existing_sample_target(db)
+    if existing is not None:
+        return existing
 
     url = configured_llama_cpp_url(app_config)
-    if url is None:
+    if url is None or not create:
         return None
     # eval_models.model_id is NOT NULL and Evals_DB.create_model rejects an
     # empty string outright -- but llama.cpp's own config convention is
@@ -171,12 +252,24 @@ def provider_is_configured(
     """Whether the sample bench (and, per requirement 1, the normal rail)
     has a real target to work with.
 
-    Deliberately the SAME check ``resolve_sample_target`` itself would
-    succeed or fail on -- a single source of truth, so this function can
-    never say "configured" while the button it gates would fail to find a
-    target, or vice versa.
+    **A question, never a mutation.** This is called from
+    ``LibraryRail._benches_section_body`` inside ``compose()``: rendering
+    the screen must perform no writes. It therefore asks the same two
+    conditions ``resolve_sample_target(..., create=True)`` succeeds on --
+    an existing ``llama_cpp`` row, or a configured endpoint it could mint
+    one from -- WITHOUT minting anything. The equivalence is pinned by
+    ``test_provider_is_configured_matches_resolve_sample_target_exactly``
+    (and its read-only companion) in
+    ``Tests/UI/test_evals_empty_states.py``, so this can never say
+    "configured" while the button it gates would fail to find a target, or
+    vice versa.
     """
-    return resolve_sample_target(view_model, app_config) is not None
+    db = view_model.db
+    if db is None:
+        return False
+    if _existing_sample_target(db) is not None:
+        return True
+    return configured_llama_cpp_url(app_config) is not None
 
 
 @dataclass(frozen=True)
@@ -295,7 +388,10 @@ async def create_and_run_sample_bench(
     if db is None:
         raise RuntimeError("The evaluation service is unavailable.")
 
-    target_row = resolve_sample_target(view_model, app_config)
+    # create=True: this IS the click path, the one place a real target row
+    # may be persisted (see resolve_sample_target's own `create` docs --
+    # the rail's render-time gate must never reach this).
+    target_row = resolve_sample_target(view_model, app_config, create=True)
     if target_row is None:
         raise RuntimeError(
             "No configured target is available for the sample bench."

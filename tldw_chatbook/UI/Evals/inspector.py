@@ -327,17 +327,16 @@ class EvalsCellInspector(Vertical):
                 lines.append("")
                 lines.append("Probes:")
                 for probe in event.probes:
+                    # The matched TokenProb rides on the reading itself
+                    # (analysis.ProbeReading.matched) -- never re-derived
+                    # here with a second copy of resolve_probe's match
+                    # rule, which would silently keep the old rule if the
+                    # engine's ever changed.
                     reading = analysis.resolve_probe(
                         cell, probe, ever_observed=event.ever_observed.get(probe, False)
                     )
-                    matched = (
-                        next((t for t in cell.top_k if t.token == probe), None)
-                        if reading.state == "observed"
-                        else None
-                    )
                     lines.append(
-                        f"  {render_token(probe)}: "
-                        f"{render_probe_reading(reading, matched)}"
+                        f"  {render_token(probe)}: {render_probe_reading(reading)}"
                     )
 
         body.update("\n".join(lines))

@@ -32,7 +32,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterable, Literal, Optional, Sequence
 
-from .models import CellCapture
+from .models import CellCapture, TokenProb
 
 #: Combined truncated mass above which a divergence is flagged as resting on
 #: a material amount of extrapolation. 0.25 is a judgment call, not derived:
@@ -74,11 +74,21 @@ class ProbeReading:
     run -- most likely it is not a single token in that model's vocabulary,
     and rendering it as a bound would invite a cross-model comparison that
     means nothing.
+
+    ``matched`` is the ``TokenProb`` ``resolve_probe`` actually matched --
+    carried here rather than discarded so that no caller has to re-derive
+    it with a hand-copied predicate. Two did (the Probe lens and the
+    focused-cell inspector), which meant a change to the matching rule --
+    most obviously moving it to the bytes-based ``TokenProb.identity()``
+    the rest of this module aligns on -- would silently not reach them,
+    detaching the displayed probability from the state that labelled it.
+    ``None`` in every state but ``observed``.
     """
 
     probe: str
     state: ProbeState
     logprob: Optional[float]
+    matched: Optional[TokenProb] = None
 
 
 def _distribution(cap: CellCapture, k: Optional[int] = None) -> list[float]:
@@ -106,6 +116,28 @@ def entropy(cap: CellCapture, k: Optional[int] = None) -> float:
             entropy across cells or targets with different K.
     """
     return -sum(p * math.log(p) for p in _distribution(cap, k) if p > 0.0)
+
+
+def truncated_mass(cap: CellCapture, k: Optional[int] = None) -> float:
+    """Unobserved ("other") probability mass, truncated to a shared ``k``.
+
+    ``CellCapture.truncated_mass`` is the same quantity over each cell's
+    FULL native top-K, which makes it incomparable across cells requested
+    at different K -- exactly the bias ``divergence()`` cuts to ``min(K)``
+    for and ``entropy()`` takes a shared ``k`` for. A Truncation column
+    reading each cell's native figure while its header states the shared
+    effective K reports two cells with provably identical behaviour at
+    that K (a K=20 and a K=5 cell holding the same distribution over the
+    first 5 ranks) as 1% against 2% -- the "one target looks artificially
+    more/less measured with no behavioural difference" failure the shared-K
+    discipline exists to prevent.
+
+    Args:
+        k: Truncate to this many top-ranked tokens first (see
+            ``effective_k``). ``None`` reproduces the cell's own native
+            ``truncated_mass``.
+    """
+    return _distribution(cap, k)[-1]
 
 
 def effective_k(caps: Sequence[CellCapture]) -> int:
@@ -240,10 +272,18 @@ def resolve_probe(
         ever_observed: whether this probe appeared in top-K in ANY cell for
             this target across the run. Distinguishes "unlikely here" from
             "not a token in this vocabulary".
+
+    Returns:
+        A ``ProbeReading`` carrying the matched ``TokenProb`` itself (see
+        ``ProbeReading.matched``), so a caller rendering the probe's
+        probability reads the token THIS function matched rather than
+        re-running the match rule with its own copy of the predicate.
     """
     for tok in cap.top_k:
         if tok.token == probe:
-            return ProbeReading(probe=probe, state="observed", logprob=tok.logprob)
+            return ProbeReading(
+                probe=probe, state="observed", logprob=tok.logprob, matched=tok
+            )
     if not ever_observed:
         return ProbeReading(probe=probe, state="never_observed", logprob=None)
     bound = cap.top_k[-1].logprob if cap.top_k else None

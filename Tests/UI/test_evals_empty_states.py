@@ -81,7 +81,7 @@ def test_provider_configured_when_llama_cpp_url_is_set(view_model):
 
 def test_resolve_sample_target_creates_a_real_eval_models_row(db, view_model):
     app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080", "model": "m"}}}
-    target = sample_bench.resolve_sample_target(view_model, app_config)
+    target = sample_bench.resolve_sample_target(view_model, app_config, create=True)
     assert target is not None
     assert target["provider"] == "llama_cpp"
     assert target["model_id"] == "m"
@@ -110,13 +110,111 @@ def test_resolve_sample_target_ignores_a_non_llama_cpp_row_and_still_needs_a_con
     assert sample_bench.resolve_sample_target(view_model, {}) is None
 
 
-def test_provider_is_configured_matches_resolve_sample_target_exactly(view_model):
+def test_provider_is_configured_matches_resolve_sample_target_exactly():
     """Single source of truth: the gate can never say "configured" while
-    the resolver itself would fail, or vice versa."""
-    for app_config in ({}, {"api_settings": {"llama_cpp": {"api_url": "http://x:1"}}}):
-        assert sample_bench.provider_is_configured(view_model, app_config) is (
-            sample_bench.resolve_sample_target(view_model, app_config) is not None
+    the resolver itself would fail, or vice versa.
+
+    Each case gets a FRESH database, so the gate is always evaluated
+    against the state a first-ever render sees -- the previous version
+    reused one view_model, which meant the resolver's own row creation
+    could have been what made a later gate call true.
+    """
+    cases = (
+        ({}, False),
+        ({"api_settings": {"llama_cpp": {"api_url": "http://x:1"}}}, True),
+        ({"api_settings": {"llama_cpp": {"api_url": "   "}}}, False),
+        ({"api_settings": {}}, False),
+    )
+    for app_config, expected in cases:
+        gate_vm = EvalsViewModel(EvalsDB(db_path=":memory:", client_id="test"))
+        resolver_vm = EvalsViewModel(EvalsDB(db_path=":memory:", client_id="test"))
+        gate = sample_bench.provider_is_configured(gate_vm, app_config)
+        resolved = sample_bench.resolve_sample_target(
+            resolver_vm, app_config, create=True
         )
+        assert gate is expected, app_config
+        assert gate is (resolved is not None), app_config
+
+
+def test_provider_is_configured_never_writes_to_the_database(db, view_model):
+    """C1: the gate is called from ``LibraryRail._benches_section_body``
+    inside ``compose()``. It must answer the question without persisting
+    anything -- ``resolve_sample_target``'s creation path used to run
+    here, so merely OPENING the Evals screen minted a phantom
+    ``eval_models`` row (config.py ships an api_url default, so this fired
+    for essentially every fresh install).
+    """
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    assert db.list_models() == []
+
+    assert sample_bench.provider_is_configured(view_model, app_config) is True
+    assert sample_bench.provider_is_configured(view_model, app_config) is True
+
+    assert db.list_models() == [], (
+        "the read-only gate persisted an eval_models row: "
+        f"{[(m['name'], m['provider']) for m in db.list_models()]}"
+    )
+
+
+def test_resolve_sample_target_does_not_create_a_row_unless_asked(db, view_model):
+    """The default is read-only. Only the click path (``create=True``,
+    from ``create_and_run_sample_bench``) may mint a target row."""
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    assert sample_bench.resolve_sample_target(view_model, app_config) is None
+    assert db.list_models() == []
+
+    created = sample_bench.resolve_sample_target(view_model, app_config, create=True)
+    assert created is not None
+    assert len(db.list_models()) == 1
+
+
+@pytest.mark.parametrize(
+    "configured, expected",
+    [
+        # A bare root -- the config template's own documented shape.
+        ("http://localhost:8080", "http://localhost:8080"),
+        # Trailing slash.
+        ("http://localhost:8080/", "http://localhost:8080"),
+        # llama.cpp's OWN native endpoint -- this machine's real config.
+        ("http://localhost:8080/completion", "http://localhost:8080"),
+        ("http://localhost:8080/completion/", "http://localhost:8080"),
+        # OpenAI-compat prefix, with and without the endpoint itself.
+        ("http://localhost:8080/v1", "http://localhost:8080"),
+        ("http://localhost:8080/v1/completions", "http://localhost:8080"),
+        ("http://localhost:8080/v1/chat/completions", "http://localhost:8080"),
+        # A non-root deployment behind a path prefix keeps that prefix.
+        ("https://host/llama/v1", "https://host/llama"),
+        # Whitespace is not a configuration.
+        ("  http://localhost:8080/v1  ", "http://localhost:8080"),
+    ],
+)
+def test_configured_llama_cpp_url_normalizes_to_the_root_the_client_needs(
+    configured, expected
+):
+    """I4: ``WordBenchCaptureClient`` appends ``/v1/completions`` to whatever
+    it is given, so a configured value carrying an endpoint path produced
+    ``http://localhost:8080/completion/v1/completions`` -> 404 -> four
+    CellError cells on the flagship one-click path, blaming the user's
+    server for what was really a URL shape."""
+    app_config = {"api_settings": {"llama_cpp": {"api_url": configured}}}
+    assert sample_bench.configured_llama_cpp_url(app_config) == expected
+
+
+def test_configured_llama_cpp_url_is_the_url_the_real_client_is_built_with(db, view_model):
+    """The normalisation has to reach the CLIENT, not just the getter --
+    pins the production factory (``client_factory=None``) against a
+    path-carrying config, since that is the seam every sample-bench cell
+    actually goes through."""
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080/completion"}}}
+    factory = sample_bench._default_client_factory(app_config)
+    client = factory(None)
+    url, _payload = client._build_request(
+        "snippet",
+        sample_bench.Target(id="t", name="t", provider="llama_cpp", model_id="m"),
+        "raw",
+        5,
+    )
+    assert url == "http://localhost:8080/v1/completions"
 
 
 def test_creating_the_sample_bench_twice_does_not_collide_on_unique_names(db, view_model):
@@ -333,7 +431,6 @@ async def test_no_providers_routes_the_benches_section_to_settings(no_provider_a
         assert pilot.app.navigated_to == ["settings"]
 
 
-@pytest.mark.asyncio
 def _seed_classic_task(evals_db: EvalsDB) -> None:
     dataset_id = evals_db.create_dataset(
         name="mmlu-500", format="custom", source_path="inline:mmlu-500"
@@ -397,6 +494,55 @@ async def test_sample_bench_offer_is_reachable_alongside_a_classic_task(
         button = screen.query_one("#evals-create-sample-bench")
         rail = screen.query_one("#evals-library-pane")
         assert rail.region.contains_region(button.region)
+
+
+@pytest.mark.asyncio
+async def test_opening_the_evals_screen_creates_no_eval_models_row(evals_db: EvalsDB):
+    """C1, through the real screen: the Benches section's provider gate runs
+    inside ``compose()``. With a configured api_url (config.py ships one by
+    default, so this is the near-universal fresh-install condition) that
+    gate used to mint a persistent "Sample target (llama.cpp) <hex>" row
+    with an invented model_id -- with no user interaction whatsoever.
+    Rendering must perform no writes."""
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    app = EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
+    assert evals_db.list_models() == []
+
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen = pilot.app.screen
+        # The offer IS shown -- the gate still answers "configured" -- so
+        # this test cannot pass by simply disabling the feature.
+        assert screen.query_one("#evals-create-sample-bench")
+        # And a selection change recomposes the rail, running the gate
+        # again: still no writes.
+        screen.select(kind="none")
+        await pilot.pause()
+
+        assert evals_db.list_models() == [], (
+            "merely opening the Evals screen persisted an eval_models row: "
+            f"{[(m['name'], m['provider'], m['model_id']) for m in evals_db.list_models()]}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_clicking_create_sample_bench_does_create_the_target_row(configured_app, evals_db):
+    """The other half of C1: creation moved to the click path, so it must
+    still happen there. Without this, the C1 fix could pass by never
+    creating a target at all."""
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        screen._sample_bench_client_factory = lambda t: _FakeCaptureClient([])
+        assert evals_db.list_models() == []
+
+        await pilot.click("#evals-create-sample-bench")
+        await _wait_until(pilot, lambda: screen._selection.kind == "run_group")
+        await pilot.pause()
+
+        models = evals_db.list_models(provider="llama_cpp")
+        assert len(models) == 1
+        assert models[0]["name"].startswith(sample_bench.SAMPLE_TARGET_NAME)
 
 
 @pytest.mark.asyncio
@@ -583,6 +729,40 @@ async def test_a_second_click_while_running_does_not_start_a_second_run(configur
         # then a fresh worker creates a second one.
         assert len(screen._view_model.benches()) == 1
         assert len(screen._view_model.run_groups()) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_sample_bench_worker_is_dispatched_as_a_callable_not_a_coroutine(
+    configured_app,
+):
+    """``exclusive=True`` cancels a superseded worker's Task before its
+    first step. A coroutine object built at the call site is then never
+    awaited at all -- ``RuntimeWarning: coroutine ... was never awaited``
+    (observed as a ``PytestUnraisableExceptionWarning`` naming
+    ``EvalsScreen._create_sample_bench_worker``). Textual only calls a
+    callable when the worker really starts, so no orphan is ever created.
+    """
+    async with configured_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        screen._sample_bench_client_factory = lambda t: _FakeCaptureClient([])
+
+        # Records what was dispatched WITHOUT running it: the shape of the
+        # hand-off is the whole point here, and letting the (instant) fake
+        # run complete would just re-cover what the click tests already do.
+        dispatched: list = []
+        screen.run_worker = lambda work, *a, **kw: dispatched.append(work)  # type: ignore[method-assign,assignment]
+
+        screen.post_message(LibraryRail.SampleBenchRequested())
+        await _wait_until(pilot, lambda: bool(dispatched))
+
+        assert len(dispatched) == 1
+        work = dispatched[0]
+        assert not asyncio.iscoroutine(work), (
+            "a pre-built coroutine is orphaned when exclusive=True cancels "
+            "the worker before its first step"
+        )
+        assert work == screen._create_sample_bench_worker
 
 
 @pytest.mark.asyncio

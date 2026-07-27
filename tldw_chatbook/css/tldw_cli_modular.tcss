@@ -11606,9 +11606,11 @@ Button:disabled {
 }
 
 /* Task 6 (empty states, sample bench, export). "No providers configured"
-   replaces the whole rail (see library_rail.py's _no_providers_state) --
-   these two ids only ever render together, never alongside the three
-   normal sections. */
+   replaces the BENCHES SECTION BODY only (see library_rail.py's
+   _no_providers_message) -- deliberately not the whole rail: Datasets and
+   Runs never needed a provider, and classic tasks stay reachable without
+   one. These two ids only ever render together, in place of that one
+   section's bench list. */
 #evals-rail-no-providers {
     padding: 1 1 0 1;
 }

@@ -276,6 +276,51 @@ def clean_run_group(evals_db: EvalsDB) -> dict:
 
 
 @pytest.fixture
+def empty_run_group(evals_db: EvalsDB) -> dict:
+    """A run group with real targets but ZERO snippets -- reachable as soon
+    as a bench is run against an empty dataset, and ``_create_new_dataset``
+    (this PR) creates datasets with zero snippets."""
+    base_id = evals_db.create_model(name="base", provider="llama_cpp", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name="empty-set", format="custom", source_path="inline:empty-set"
+    )
+    config = BenchConfig(
+        name="empty bench", prompt_mode="raw", top_k=5,
+        dataset_id=dataset_id, target_ids=(base_id,),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [Target(id=base_id, name="base", provider="llama_cpp", model_id="m")]
+    group_id, _run_ids = create_run_group(evals_db, task_id, config, targets, [])
+    return {"group_id": group_id, "base_id": base_id}
+
+
+@pytest.fixture
+def multi_probe_run_group(evals_db: EvalsDB) -> dict:
+    """Two configured probes -- the Probe lens can only show one at a time,
+    so which one it is showing has to be nameable and switchable."""
+    base_id = evals_db.create_model(name="base", provider="llama_cpp", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name="probe-set", format="custom", source_path="inline:probe-set"
+    )
+    config = BenchConfig(
+        name="probe bench", prompt_mode="raw", top_k=5,
+        dataset_id=dataset_id, target_ids=(base_id,),
+        probes=(" Sure", " Cannot"),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [Target(id=base_id, name="base", provider="llama_cpp", model_id="m")]
+    snippets = [Snippet(id="s1", text="I will", group=None)]
+    group_id, run_ids = create_run_group(evals_db, task_id, config, targets, snippets)
+    # Both probes are genuinely present, at clearly different
+    # probabilities, so the rendered cell says WHICH one is showing.
+    save_cell(
+        evals_db, run_ids[base_id], snippets[0],
+        _cap([(" Sure", 0.6), (" Cannot", 0.2), (" maybe", 0.1)]),
+    )
+    return {"group_id": group_id, "base_id": base_id}
+
+
+@pytest.fixture
 def markup_hazard_run_group(evals_db: EvalsDB) -> dict:
     base_id = evals_db.create_model(name="base", provider="llama_cpp", model_id="m")
     dataset_id = evals_db.create_dataset(
@@ -337,14 +382,16 @@ def test_render_token_makes_whitespace_visible():
 
 
 def test_render_probe_reading_covers_all_three_states_distinctly():
-    observed = analysis.ProbeReading(probe=" Sure", state="observed", logprob=math.log(0.6))
+    matched = TokenProb(token=" Sure", logprob=math.log(0.6))
+    observed = analysis.ProbeReading(
+        probe=" Sure", state="observed", logprob=math.log(0.6), matched=matched
+    )
     bounded = analysis.ProbeReading(probe=" Sure", state="bounded", logprob=math.log(0.9))
     never = analysis.ProbeReading(probe=" Sure", state="never_observed", logprob=None)
 
-    matched = TokenProb(token=" Sure", logprob=math.log(0.6))
-    observed_text = render_probe_reading(observed, matched)
-    bounded_text = render_probe_reading(bounded, None)
-    never_text = render_probe_reading(never, None)
+    observed_text = render_probe_reading(observed)
+    bounded_text = render_probe_reading(bounded)
+    never_text = render_probe_reading(never)
 
     assert observed_text == f"{math.log(0.6):.2f}  60.0%"
     assert bounded_text.startswith("< ")
@@ -565,7 +612,8 @@ async def test_entropy_lens_states_effective_k_and_uses_it_for_every_cell(
         await pilot.pause()
 
         meta = str(grid.query_one("#evals-grid-meta").renderable)
-        assert "K 5" in meta, f"header must state the effective K (5), got {meta!r}"
+        # Delimited, not a bare substring: "K 5" alone also matches "K 50".
+        assert "· K 5 ·" in meta, f"header must state the effective K (5), got {meta!r}"
 
         table = grid.query_one("#evals-grid-table", DataTable)
         rich_text = str(table.get_cell("s1", clean_run_group["base_id"]))
@@ -914,11 +962,198 @@ async def test_probe_lens_renders_an_observed_probe_with_a_percentage(
         await pilot.pause()
 
         table = grid.query_one("#evals-grid-table", DataTable)
-        # probes=(" a",) and s1 x base observed " a" at 44%.
+        # probes=(" a",) and s1 x base observed " a" at 44%. Asserted
+        # exactly: `"%" in text` alone would pass on any percentage from
+        # any probe -- including the wrong probe or the wrong cell.
         text = str(table.get_cell("s1", mixed_run_group["base_id"]))
-        assert "%" in text
+        assert text == f"{math.log(0.44):.2f}  44.0%", (
+            f"expected the observed reading for probe ' a' at 44%, got {text!r}"
+        )
         assert text != FAILED_MARK
         assert text != ""
+
+        # The state line names WHICH probe produced it -- with one probe
+        # configured, no "n of m" position is needed.
+        state = str(grid.query_one("#evals-grid-state").renderable)
+        assert 'Lens: Probe (" a")' in state, state
+
+
+@pytest.mark.asyncio
+async def test_a_run_group_with_no_snippets_renders_an_empty_state_instead_of_crashing(
+    evals_app, empty_run_group
+):
+    """Regression: ``compose()``'s empty-snapshot branch returned WITHOUT
+    yielding the DataTable, but ``on_mount`` only guarded ``self._grid is
+    None`` -- so it went straight on to ``_render_table``'s
+    ``query_one("#evals-grid-table")`` and raised ``NoMatches`` out of
+    ``on_mount``, taking the whole app down on the one input that branch
+    exists to handle."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        # Selecting it at all is the crash: an unhandled on_mount
+        # exception tears down the Textual app.
+        grid = await _select_run_group(pilot, empty_run_group["group_id"])
+
+        empty_state = grid.query_one("#evals-grid-empty")
+        assert "no snippets" in str(empty_state.renderable)
+        assert not grid.query("#evals-grid-table")
+        # And the shortcuts stay inert rather than crashing on a table
+        # that was never built.
+        grid.action_cycle_lens()
+        grid.action_cycle_baseline()
+        grid.action_cycle_sort()
+        grid.action_export()
+        await pilot.pause()
+        assert pilot.app.screen.query_one("#evals-results-grid", ResultsGrid) is grid
+
+
+@pytest.mark.asyncio
+async def test_truncation_lens_uses_the_shared_k_the_header_states(
+    evals_app, clean_run_group
+):
+    """Same misrepresentation the shared-K entropy rule exists to prevent,
+    one lens over. s1's two cells hold the SAME distribution over the first
+    5 ranks; base additionally has 15 real low-probability tokens beyond
+    rank 5 (native K=20) while the capped target stops at 5. Read at each
+    cell's own native K they show 1% vs 2% -- a 2x "difference" produced
+    purely by the requested K, under a header that says ``K 5``."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, clean_run_group["group_id"])
+        grid.query_one("#evals-lens-selector", Select).value = "coverage"
+        await pilot.pause()
+
+        meta = str(grid.query_one("#evals-grid-meta").renderable)
+        assert "· K 5 ·" in meta, meta
+
+        table = grid.query_one("#evals-grid-table", DataTable)
+        rich_text = str(table.get_cell("s1", clean_run_group["base_id"]))
+        poor_text = str(table.get_cell("s1", clean_run_group["poor_id"]))
+        assert rich_text == poor_text, (
+            f"same distribution at the shared K {5} must produce equal "
+            f"truncation: rich={rich_text!r} poor={poor_text!r}"
+        )
+        # Not vacuously equal-because-both-blank: this is the real figure,
+        # 1 - (0.5+0.3+0.1+0.05+0.03) = 0.02 -> "2%".
+        assert rich_text == "2%", rich_text
+
+        # The cells' OWN native truncated_mass genuinely differ -- proof
+        # the fixture discriminates rather than the two happening to agree.
+        from tldw_chatbook.Evals.word_bench.storage import load_grid
+
+        db = pilot.app.app_instance.evaluation_orchestrator.db
+        cells = load_grid(db, clean_run_group["group_id"])["cells"]
+        native_rich = cells[("s1", clean_run_group["base_id"])].truncated_mass
+        native_poor = cells[("s1", clean_run_group["poor_id"])].truncated_mass
+        assert round(native_rich, 4) != round(native_poor, 4)
+
+
+@pytest.mark.asyncio
+async def test_probe_lens_names_the_active_probe_and_lets_the_user_switch_it(
+    evals_app, multi_probe_run_group
+):
+    """A bench with two probes rendered only probes[0], with no selector and
+    a state line that said just "Lens: Probe" -- numbers a reader could not
+    attribute to a probe, and a second probe unreachable from the grid."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, multi_probe_run_group["group_id"])
+        grid.query_one("#evals-lens-selector", Select).value = "probe"
+        await pilot.pause()
+
+        table = grid.query_one("#evals-grid-table", DataTable)
+        base_id = multi_probe_run_group["base_id"]
+
+        state = str(grid.query_one("#evals-grid-state").renderable)
+        assert 'Lens: Probe (" Sure" · 1 of 2)' in state, state
+        assert str(table.get_cell("s1", base_id)) == f"{math.log(0.6):.2f}  60.0%"
+
+        # The second probe is reachable, and switching to it changes both
+        # the state line and the rendered number. The selector has to be
+        # genuinely usable, not merely in the DOM -- three 1fr Selects now
+        # share the control row.
+        probe_select = grid.query_one("#evals-probe-selector", Select)
+        pane = pilot.app.screen.query_one("#evals-detail-pane")
+        assert probe_select.region.width > 0 and probe_select.region.height > 0
+        assert pane.region.contains_region(probe_select.region), (
+            f"probe selector at {probe_select.region} escapes {pane.region}"
+        )
+        probe_select.value = 1
+        await pilot.pause()
+
+        state = str(grid.query_one("#evals-grid-state").renderable)
+        assert 'Lens: Probe (" Cannot" · 2 of 2)' in state, state
+        assert str(table.get_cell("s1", base_id)) == f"{math.log(0.2):.2f}  20.0%"
+
+
+@pytest.mark.asyncio
+async def test_probe_percentage_follows_the_engines_matched_token_not_a_local_rematch(
+    evals_app, mixed_run_group, monkeypatch
+):
+    """I5: the Probe lens and the focused-cell inspector each re-derived
+    ``resolve_probe``'s ``token == probe`` match with their own copy of the
+    predicate, so a change to the engine's matching rule (most obviously
+    moving it to the bytes-based ``TokenProb.identity()`` the rest of
+    ``analysis`` aligns on) would silently not reach either renderer.
+
+    Simulated here by changing the engine's rule -- this fake matches rank
+    2 (" the", 43%) rather than rank 1 (" a", 44%). Both renderers must
+    follow the ``ProbeReading`` the engine returned; a local re-match would
+    keep printing 44%.
+    """
+    real_resolve = analysis.resolve_probe
+
+    def _rank_two_resolve(cap, probe, *, ever_observed):
+        if len(cap.top_k) > 1:
+            tok = cap.top_k[1]
+            return analysis.ProbeReading(
+                probe=probe, state="observed", logprob=tok.logprob, matched=tok
+            )
+        return real_resolve(cap, probe, ever_observed=ever_observed)
+
+    monkeypatch.setattr(analysis, "resolve_probe", _rank_two_resolve)
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, mixed_run_group["group_id"])
+        grid.query_one("#evals-lens-selector", Select).value = "probe"
+        await pilot.pause()
+
+        table = grid.query_one("#evals-grid-table", DataTable)
+        base_id = mixed_run_group["base_id"]
+        expected = f"{math.log(0.43):.2f}  43.0%"
+        assert str(table.get_cell("s1", base_id)) == expected, (
+            "the grid re-derived the match instead of using "
+            "ProbeReading.matched"
+        )
+
+        row = table.get_row_index("s1")
+        col = table.get_column_index(base_id)
+        table.focus()
+        table.move_cursor(row=row, column=col)
+        await pilot.pause()
+
+        body = pilot.app.screen.query_one("#evals-cell-inspector-body")
+        text = str(body.renderable)
+        assert f'" a": {expected}' in text, (
+            f"the inspector re-derived the match instead of using "
+            f"ProbeReading.matched: {text!r}"
+        )
+
+
+def test_resolve_probe_hands_back_the_token_it_matched():
+    """The engine no longer discards the ``TokenProb`` it found -- the
+    identity assertion is what makes a caller-side re-derivation
+    unnecessary (and pins that ``matched`` is the engine's own object, not
+    a reconstruction)."""
+    cap = _cap([(" a", 0.44), (" the", 0.43)])
+    reading = analysis.resolve_probe(cap, " the", ever_observed=True)
+    assert reading.state == "observed"
+    assert reading.matched is cap.top_k[1]
+
+    bounded = analysis.resolve_probe(cap, " nope", ever_observed=True)
+    assert bounded.state == "bounded"
+    assert bounded.matched is None
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ from tldw_chatbook.Evals.word_bench.analysis import (
     near_tie,
     resolve_probe,
     spread,
+    truncated_mass,
 )
 from tldw_chatbook.Evals.word_bench.models import CellCapture, TokenProb
 
@@ -131,11 +132,38 @@ def test_divergence_truncates_both_cells_to_min_k():
     assert jsd_mixed == pytest.approx(jsd_even, abs=1e-9)
 
 
+def test_truncated_mass_at_no_k_reproduces_the_cells_own_native_figure():
+    cap = _cap([("a", 0.5), ("b", 0.3), ("c", 0.1)])
+    assert truncated_mass(cap) == pytest.approx(cap.truncated_mass, abs=1e-9)
+
+
+def test_truncated_mass_at_a_shared_k_equalizes_two_cells_of_the_same_behaviour():
+    """The Truncation lens's own version of the shared-K rule entropy and
+    divergence already follow: a K=20 and a K=5 cell holding the SAME
+    distribution over the first 5 ranks must read the same truncation at
+    the shared K, even though their native figures differ."""
+    same = [("a", 0.5), ("b", 0.3), ("c", 0.1), ("d", 0.05), ("e", 0.03)]
+    rich = _cap(same + [(f"x{i}", 0.001) for i in range(15)], k_returned=20)
+    poor = _cap(same, k_returned=5)
+
+    # Native figures genuinely disagree -- the assertion below is not
+    # vacuous.
+    assert rich.truncated_mass != pytest.approx(poor.truncated_mass, abs=1e-6)
+
+    shared = effective_k([rich, poor])
+    assert shared == 5
+    assert truncated_mass(rich, k=shared) == pytest.approx(
+        truncated_mass(poor, k=shared), abs=1e-9
+    )
+    assert truncated_mass(poor, k=shared) == pytest.approx(0.02, abs=1e-9)
+
+
 def test_probe_observed_when_present_in_top_k():
     cap = _cap([(" Sure", 0.6), (" I", 0.4)])
     r = resolve_probe(cap, " Sure", ever_observed=True)
     assert r.state == "observed"
     assert r.logprob == pytest.approx(math.log(0.6), abs=1e-9)
+    assert r.matched is cap.top_k[0], "the matched TokenProb rides on the reading"
 
 
 def test_probe_bounded_when_absent_but_seen_elsewhere_in_the_run():
