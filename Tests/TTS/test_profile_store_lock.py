@@ -653,6 +653,60 @@ def test_close_failure_after_unlock_is_safe(
     assert lease.acquired is False
 
 
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(12)])
+def test_close_control_exception_outranks_ordinary_unlock_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt: BaseException,
+) -> None:
+    handle = _RecordingHandle(interrupt)
+    _patch_open(monkeypatch, handle)
+    monkeypatch.setattr(portalocker, "lock", lambda current_handle, flags: None)
+    monkeypatch.setattr(
+        portalocker,
+        "unlock",
+        lambda current_handle: (_ for _ in ()).throw(OSError("unlock-private-secret")),
+    )
+    lease = ProfileStoreLease(
+        tmp_path / "profiles.sqlite3",
+        ProfileStoreLockMode.SHARED,
+    ).acquire()
+
+    with pytest.raises(type(interrupt)) as exc_info:
+        lease.release()
+
+    assert exc_info.value is interrupt
+    assert handle.closed is True
+    assert lease.acquired is False
+
+
+def test_first_control_exception_wins_when_unlock_and_close_both_interrupt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unlock_interrupt = KeyboardInterrupt()
+    close_interrupt = SystemExit(13)
+    handle = _RecordingHandle(close_interrupt)
+    _patch_open(monkeypatch, handle)
+    monkeypatch.setattr(portalocker, "lock", lambda current_handle, flags: None)
+
+    def interrupt_unlock(current_handle: object) -> None:
+        raise unlock_interrupt
+
+    monkeypatch.setattr(portalocker, "unlock", interrupt_unlock)
+    lease = ProfileStoreLease(
+        tmp_path / "profiles.sqlite3",
+        ProfileStoreLockMode.SHARED,
+    ).acquire()
+
+    with pytest.raises(KeyboardInterrupt) as exc_info:
+        lease.release()
+
+    assert exc_info.value is unlock_interrupt
+    assert handle.closed is True
+    assert lease.acquired is False
+
+
 @pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(7)])
 def test_unlock_base_exception_is_preserved_after_close(
     tmp_path: Path,
@@ -862,7 +916,8 @@ def test_release_state_transition_interrupt_releases_real_lock(
             super().__setattr__(name, value)
 
     database_path = tmp_path / "profiles.sqlite3"
-    lease = InterruptingReleaseLease(database_path).acquire()
+    lease = InterruptingReleaseLease(database_path)
+    lease.acquire()
     lease.interrupt_clear = True
 
     try:

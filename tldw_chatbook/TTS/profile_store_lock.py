@@ -56,7 +56,11 @@ def _unlock_and_close(
         try:
             handle.close()
         except BaseException as error:
-            if first_error is None:
+            # Control-flow cleanup errors outrank ordinary cleanup failures.
+            # If both are control-flow exceptions, the first one remains primary.
+            if first_error is None or (
+                isinstance(first_error, Exception) and not isinstance(error, Exception)
+            ):
                 first_error = error
     return first_error
 
