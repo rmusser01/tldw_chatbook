@@ -89,7 +89,36 @@ class WordBenchRunner:
         progress: Optional[ProgressFn] = None,
         cancel_token: Optional[CancelToken] = None,
     ) -> RunOutcome:
-        """Execute the grid and return its run group id and preflight verdicts."""
+        """Execute the grid and return its run group id and preflight verdicts.
+
+        Args:
+            config: The bench definition (prompt mode, top_k, concurrency,
+                ...).
+            targets: The columns to measure. Every target must be valid for
+                ``config.prompt_mode`` and carry a unique id --
+                ``storage.create_run_group`` rejects duplicates, since every
+                per-target structure built around ``targets`` (this method's
+                own ``clients`` map included) is keyed by target id.
+            snippets: The rows to measure, in row-major fill order.
+            task_id: The ``eval_tasks`` id this run group's runs are
+                recorded against.
+            progress: Optional ``(done, total)`` callback invoked after each
+                cell is saved. A callback that raises degrades to no further
+                progress reporting rather than aborting the run.
+            cancel_token: Optional cooperative cancellation, checked once per
+                row at ``concurrency > 1`` and once per cell at
+                ``concurrency == 1``.
+
+        Returns:
+            The run group id and the per-target ``PreflightResult`` map
+            resolved before any cell was measured.
+
+        Raises:
+            ValueError: If any target is not valid for
+                ``config.prompt_mode`` (mismatched ``prefix``/
+                ``system_prompt``), or -- via ``storage.create_run_group``
+                -- if ``targets`` contains duplicate ids.
+        """
         for target in targets:
             if not target.is_valid_for_mode(config.prompt_mode):
                 raise ValueError(
@@ -123,6 +152,33 @@ class WordBenchRunner:
         progress: Optional[ProgressFn],
         cancel_token: Optional[CancelToken],
     ) -> RunOutcome:
+        """Preflight every target, then fill the grid row-major.
+
+        Split out of ``run()`` so that ``run()``'s
+        ``finally: await self._close_clients(clients)`` can wrap this whole
+        body -- including a raised exception or a hard
+        ``asyncio.CancelledError`` propagated from within it.
+
+        Args:
+            config: See ``run()``.
+            targets: See ``run()``. Mode validity was already checked by
+                ``run()`` and is not re-checked here.
+            snippets: See ``run()``.
+            task_id: See ``run()``.
+            clients: One ``CaptureClientLike`` per target id, built by
+                ``run()`` before this call so it can close every one of them
+                in its ``finally``, regardless of how this method returns or
+                raises.
+            progress: See ``run()``.
+            cancel_token: See ``run()``.
+
+        Returns:
+            See ``run()``.
+
+        Raises:
+            ValueError: Via ``storage.create_run_group``, if ``targets``
+                contains duplicate ids.
+        """
         # Preflight before any measurement, so a dead or degenerate target is
         # known up front rather than discovered N cells in.
         results: dict[str, PreflightResult] = {}
@@ -263,6 +319,11 @@ class WordBenchRunner:
         run's own outcome (already computed by the caller) from being
         returned, or turn a successful/cancelled run into a raised
         exception.
+
+        Args:
+            clients: The ``run()``-built map of target id to client. Each
+                entry that has an ``aclose()`` attribute is awaited; entries
+                without one (most test fakes) are left alone.
         """
         for client in clients.values():
             aclose = getattr(client, "aclose", None)

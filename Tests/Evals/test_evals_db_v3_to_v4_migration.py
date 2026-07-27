@@ -19,6 +19,7 @@ from __future__ import annotations
 import sqlite3
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
+from tldw_chatbook.DB.sql_validation import validate_identifier
 
 #: The exact v3 shape of Evals_DB._create_schema, minus `run_group_id` and
 #: its index (added at v4) -- everything else copied verbatim so the
@@ -242,7 +243,24 @@ def _build_v3_database(path: str) -> dict[str, str]:
     return {"task_id": "task-1", "model_id": "model-1", "run_id": "run-1"}
 
 
+#: The tables this module's hand-built _V3_SCHEMA_DDL defines (see above).
+#: SQLite's `?` placeholders can only bind values, never identifiers, so
+#: `table` below is interpolated into the SQL string -- it must be checked
+#: against this explicit allow-list first, same as production code would be
+#: required to under Tests/DB/test_sql_validation.py's rule. This applies
+#: even in a test: `table` is a plain function argument, not a hardcoded
+#: literal, so nothing stops a future caller from passing something else.
+_ALLOWED_RAW_COLUMN_TABLES = {
+    "eval_tasks", "eval_datasets", "eval_models", "eval_runs",
+    "eval_results", "eval_run_metrics", "ab_tests", "ab_test_runs",
+}
+
+
 def _raw_columns(path: str, table: str) -> set[str]:
+    if table not in _ALLOWED_RAW_COLUMN_TABLES or not validate_identifier(
+        table, "table name"
+    ):
+        raise ValueError(f"Unexpected table name for _raw_columns: {table!r}")
     conn = sqlite3.connect(path)
     try:
         return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}

@@ -105,6 +105,18 @@ class BenchConfig:
             raise ValueError(f"top_k must be >= 1, got {self.top_k}")
         if self.concurrency < 1:
             raise ValueError(f"concurrency must be >= 1, got {self.concurrency}")
+        if len(set(self.target_ids)) != len(self.target_ids):
+            # Every per-target map downstream (WordBenchRunner's `clients`,
+            # its preflight/canary dicts, storage.create_run_group's
+            # `run_ids`) is keyed by target id. A duplicate silently
+            # collapses two targets into one -- caught here rather than
+            # letting it surface as "the grid only has N-1 columns".
+            duplicates = sorted(
+                {tid for tid in self.target_ids if self.target_ids.count(tid) > 1}
+            )
+            raise ValueError(
+                f"target_ids must be unique, got duplicates: {duplicates!r}"
+            )
 
 
 @dataclass(frozen=True)

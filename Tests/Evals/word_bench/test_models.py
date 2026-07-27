@@ -57,6 +57,19 @@ def test_bench_config_rejects_unknown_prompt_mode():
         BenchConfig(name="b", prompt_mode="telepathy", top_k=20, dataset_id="d", target_ids=("t1",))
 
 
+def test_bench_config_rejects_duplicate_target_ids():
+    """Every per-target map downstream (WordBenchRunner's `clients`,
+    storage.create_run_group's `run_ids`) is keyed by target id -- a
+    duplicate would silently collapse two targets into one, so it must be
+    rejected at construction time rather than producing a grid with a
+    missing column."""
+    with pytest.raises(ValueError, match="target_ids must be unique"):
+        BenchConfig(
+            name="b", prompt_mode="raw", top_k=20, dataset_id="d",
+            target_ids=("t1", "t1"),
+        )
+
+
 def test_cell_capture_computes_truncated_mass():
     cap = CellCapture(
         prompt_mode="raw",
