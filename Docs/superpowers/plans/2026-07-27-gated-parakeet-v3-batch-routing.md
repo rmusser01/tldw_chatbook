@@ -4,7 +4,7 @@
 
 **Goal:** Add explicit Parakeet v3 INT8 batch transcription and deterministic STT request routing without enabling unqualified Parakeet semantic defaults.
 
-**Architecture:** A small dependency-free routing module resolves a batch request before inference. `provider=default` remains on faster-whisper while the promotion gate is closed; exact `parakeet-onnx` requests select v2 for English or v3 for supported non-English and fail clearly for incompatible requests. The existing `TranscriptionService` remains the narrow execution seam and gains only the v3 model/result differences needed by the working batch path.
+**Architecture:** A small dependency-free routing module resolves a batch request before inference. Compatible `provider=default` requests remain on faster-whisper while the promotion gate is closed, and non-English translation targets fail; exact `parakeet-onnx` requests select v2 for English or v3 for supported non-English and fail clearly for incompatible requests. The existing `TranscriptionService` remains the narrow execution seam and gains only the v3 model/result differences needed by the working batch path.
 
 **Tech Stack:** Python 3.11+, pytest, Textual ingestion option contracts, `onnx-asr[cpu]==0.12.0`.
 
@@ -114,8 +114,11 @@ def resolve_batch_stt_route(
 Rules:
 
 - Normalize missing language to `en` and lowercase explicit codes.
-- `default` resolves to faster-whisper while `parakeet_defaults_enabled` is false.
-- With the gate enabled, `default` follows ADR-025: English/v2, supported non-English/v3, and auto/unsupported/translation/faster-whisper.
+- While `parakeet_defaults_enabled` is false, compatible `default` requests
+  resolve to faster-whisper and non-English translation targets fail.
+- With the gate enabled, `default` follows ADR-025: English/v2, supported
+  non-English/v3, auto or unsupported languages/faster-whisper, and
+  translation-to-English/faster-whisper; other translation targets fail.
 - Exact `parakeet-onnx` selects v2/v3 only for compatible explicit languages and raises with the literal recovery action for auto, unsupported languages, or translation.
 - Exact `faster-whisper` remains exact and retains the requested language/task.
 - Every batch route records `precision="int8"` and `local_files_only=True`; routing never authorizes a worker download.
@@ -227,7 +230,8 @@ Add cases proving:
 
 - A Library audio/video job with exact Parakeet plus `de` stores the v3 model, normalized language, and selected local model directory.
 - An exact Parakeet English job stores v2.
-- A semantic `default` job resolves to faster-whisper while the gate is closed and drops a stale Parakeet directory.
+- A compatible semantic `default` transcription job resolves to faster-whisper
+  while the gate is closed and drops a stale Parakeet directory.
 - Audio and video processor calls receive the same resolved provider/model/language/model directory, `precision="int8"`, and `local_files_only=True`.
 - Faster-whisper batch model construction receives `local_files_only=True` and `compute_type="int8"` even when service config says `float16`; direct non-batch calls without routed overrides retain the configured compute type.
 - Incompatible exact Parakeet requests are caught after the job is claimed and marked failed with sanitized “Retry with faster-whisper” guidance before pool creation or submission. A queue regression test places a valid job behind the invalid job and proves the invalid job never reaches the pool while the valid job is still dispatched in the same top-up pass.
@@ -297,7 +301,9 @@ Document:
 - `en` remains the default requested language.
 - Exact Parakeet English uses v2 INT8.
 - Exact supported non-English uses v3 INT8 and does not enforce the selected language in the decoder.
-- Semantic Parakeet defaults remain gated; auto, unsupported languages, and translation use faster-whisper under the approved policy.
+- Semantic Parakeet defaults remain gated; auto, unsupported languages, and
+  translation-to-English use faster-whisper under the approved policy, while
+  other translation targets fail.
 - Batch transcription uses installed/local models only; Parakeet requires a user-selected existing local directory with the required filenames, and faster-whisper uses `local_files_only=True`, so a missing model fails clearly instead of downloading in a worker. The bounded receipt metadata check can reject a v2/v3 mismatch but does not authenticate or verify model contents.
 
 - [ ] **Step 2: Run fresh focused verification**

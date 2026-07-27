@@ -67,8 +67,9 @@ chunk_length_seconds = 40.0         # For Canary long audio processing
 For local audio and video ingestion, the Library's **Transcription provider**
 menu exposes `default`, `parakeet-onnx`, and `faster-whisper`. The visible
 `default` value is a semantic default, not an alias for Parakeet. While the
-Parakeet promotion gate is closed, it resolves to faster-whisper for every
-request. `en` remains the default requested language.
+Parakeet promotion gate is closed, compatible requests resolve to
+faster-whisper; translation targets other than `en` fail. `en` remains the
+default requested language.
 
 | Selected provider | Request | Current batch result |
 |---|---|---|

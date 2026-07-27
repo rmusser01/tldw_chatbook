@@ -6,8 +6,8 @@ This guide helps you choose the right transcription provider for your use case.
 
 The Library audio/video form exposes a visible semantic `default` plus the exact
 `parakeet-onnx` and `faster-whisper` providers. While the Parakeet promotion
-gate is closed, `default` remains faster-whisper; `en` remains the default
-requested language.
+gate is closed, compatible `default` requests use faster-whisper; translation
+targets other than `en` fail. `en` remains the default requested language.
 
 | Selected provider | Request | Model/runtime behavior |
 |---|---|---|
