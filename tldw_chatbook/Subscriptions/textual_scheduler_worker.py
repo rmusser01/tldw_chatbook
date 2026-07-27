@@ -111,7 +111,41 @@ class SubscriptionSchedulerWorker:
 
     @work(exclusive=True, thread=True)
     async def start_scheduler(self):
-        """Start the subscription scheduler."""
+        """Start the subscription scheduler.
+
+        TASK-981 cross-event-loop audit findings:
+
+        1. Not a cross-loop hazard by design. ``_run_scheduler`` below runs
+           an unbounded ``while self.is_running:`` loop, so the coroutine
+           (and therefore the single worker-thread event loop
+           ``asyncio.run()`` creates for it) stays alive for the scheduler's
+           whole lifetime -- it is only closed once ``is_running`` goes
+           False or an exception escapes. None of ``self.scheduler`` /
+           ``self.website_monitor`` / ``self.aggregation_engine`` /
+           ``self.briefing_generator`` cache an asyncio ``Lock``/``Event``/
+           ``Queue``/``Semaphore`` or an ``httpx.AsyncClient`` in
+           ``__init__`` (verified) that this loop would then be sharing
+           with the app's loop; the two ``httpx.AsyncClient`` uses in
+           ``website_monitor.py``/``monitoring_engine.py`` are both
+           ``async with``-scoped per call. ``stop_scheduler()`` (a
+           *non*-thread worker, so it runs on the app loop) only flips the
+           plain bool ``self.is_running`` -- a GIL-safe attribute write, not
+           an asyncio primitive, so there is no cross-loop wait involved.
+
+        2. Separate, pre-existing, unrelated bug found during this audit:
+           ``SubscriptionSchedulerWorker`` does not subclass ``DOMNode``
+           (it is a plain manager object), so ``@work`` itself asserts
+           false the moment ``start_scheduler()`` is called (Textual's
+           ``_work_decorator.decorated`` does
+           ``assert isinstance(self, DOMNode)``) -- confirmed by calling it
+           directly. Its only call site,
+           ``SubscriptionBackendController._ensure_local_scheduler``, is
+           therefore dead on arrival today. Left unfixed: this module is
+           already marked deprecated in favour of the unified Scheduling
+           scheduler (ADR-019), and fixing a "can never start" bug in a
+           component being migrated away from is out of scope for this
+           cross-event-loop audit.
+        """
         if self.is_running:
             logger.warning("Scheduler already running")
             return

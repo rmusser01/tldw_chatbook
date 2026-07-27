@@ -402,17 +402,18 @@ class TestCCPPersonaHandler:
 class TestCCPMessageManager:
     """Message manager coverage for string session IDs."""
 
-    @pytest.mark.asyncio
-    async def test_load_conversation_messages_accepts_string_identifier(
-        self, mock_window
-    ):
+    def test_load_conversation_messages_accepts_string_identifier(self, mock_window):
+        # load_conversation_messages is a plain `def` (TASK-981: it never
+        # awaits anything, so `@work(thread=True)` on `async def` was
+        # buying nothing but an extra event loop per call) -- call the
+        # unwrapped function synchronously, no `await`.
         manager = CCPMessageManager(mock_window)
 
         with patch(
             "tldw_chatbook.UI.CCP_Modules.ccp_message_manager.fetch_messages_for_conversation",
             return_value=[{"id": "msg-1", "role": "user", "content": "hello"}],
         ) as mock_fetch:
-            await CCPMessageManager.load_conversation_messages.__wrapped__(
+            CCPMessageManager.load_conversation_messages.__wrapped__(
                 manager, "conv-1"
             )
 

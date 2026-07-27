@@ -4,6 +4,8 @@ Unit tests for GitHub API client.
 Tests the GitHubAPIClient in isolation with mocked HTTP responses.
 """
 
+import asyncio
+import threading
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import base64
@@ -499,5 +501,130 @@ class TestGitHubAPIClient:
     async def test_close_client_no_client(self, api_client):
         """Test closing when no client exists."""
         # Should not raise error
+        await api_client.close()
+        assert api_client._client is None
+
+
+class TestGitHubAPIClientCrossEventLoop:
+    """Regression tests for TASK-981: ``GitHubAPIClient.client`` is shared by
+    handlers on the app's long-lived event loop AND by ``@work(thread=True)``
+    workers decorated with ``async def`` (``CodeRepoCopyPasteWindow``'s
+    ``_export_to_zip_worker`` / ``load_node_children``). Those workers run
+    on a brand-new event loop created by Textual's ``Worker._run_threaded``
+    via ``asyncio.run()``, which closes that loop when the worker returns.
+    Caching a single ``httpx.AsyncClient`` across those loops is a real
+    cross-loop hazard: a client built on one loop must never be handed back
+    to a caller running on a different loop, since httpx pins connection
+    pool/transport state to the loop active at construction time.
+    """
+
+    @staticmethod
+    async def _touch_client(api_client: GitHubAPIClient) -> httpx.AsyncClient:
+        """Access the ``client`` property from whatever loop is running."""
+        return api_client.client
+
+    def test_client_is_not_reused_across_two_asyncio_run_loops(self):
+        """Two separate ``asyncio.run()`` calls == two separate throwaway
+        loops, exactly like two invocations of the same ``@work(thread=True)``
+        async worker. The client built for the first loop must not be handed
+        back once that loop is closed and a second, unrelated loop is
+        running -- if it were, awaiting anything on it would risk
+        ``RuntimeError: Event loop is closed``.
+        """
+        api_client = GitHubAPIClient(token="t")
+
+        client_first = asyncio.run(self._touch_client(api_client))
+        loop_first = api_client._client_loop
+        assert loop_first is not None
+        assert loop_first.is_closed()
+
+        client_second = asyncio.run(self._touch_client(api_client))
+        loop_second = api_client._client_loop
+
+        # The defect this guards against: handing back `client_first`, which
+        # is bound to `loop_first` -- a loop that is now closed. (Both loops
+        # are closed by the time we inspect them here -- `asyncio.run()`
+        # always closes its loop before returning -- so the meaningful proof
+        # is that the *instances* differ, not their closed-ness.)
+        assert client_second is not client_first
+        assert loop_second is not loop_first
+        assert api_client._client is client_second
+
+    def test_second_call_after_owning_loop_closed_still_works(self):
+        """Directly exercises the acceptance-criteria phrasing: a second
+        call to the accessor, made after the loop that built the first
+        client has closed, must still succeed (not raise, not hang) and
+        must not return the dead-loop-bound instance.
+        """
+        api_client = GitHubAPIClient(token="t")
+
+        stale_client = asyncio.run(self._touch_client(api_client))
+        assert api_client._client_loop.is_closed()
+
+        # This call happens on a *third* loop, entirely unrelated to the
+        # one `stale_client` was built on. Before the fix, this returned
+        # `stale_client` unconditionally (single-slot unconditional cache).
+        fresh_client = asyncio.run(self._touch_client(api_client))
+
+        assert fresh_client is not stale_client
+        assert fresh_client.is_closed is False
+
+    def test_stale_client_on_still_running_loop_is_closed_via_handoff(self):
+        """Simulates the realistic ordering in ``CodeRepoCopyPasteWindow``:
+        the app loop (long-lived, never closed by us) builds the client
+        first via a handler like ``load_repository``; later a worker thread
+        (``_export_to_zip_worker`` / ``load_node_children``) running its own
+        throwaway loop touches the same ``GitHubAPIClient`` instance. The
+        app-loop client must not be silently leaked -- it should be handed
+        off for a graceful ``aclose()`` via ``run_coroutine_threadsafe``,
+        which the app loop (still alive) can complete on its next iteration.
+        """
+        api_client = GitHubAPIClient(token="t")
+        app_loop = asyncio.new_event_loop()
+        try:
+            app_client = app_loop.run_until_complete(self._touch_client(api_client))
+            assert app_client.is_closed is False
+            assert api_client._client_loop is app_loop
+
+            # Simulate a `@work(thread=True)` async worker touching the same
+            # shared api_client from its own asyncio.run() loop.
+            worker_client = asyncio.run(self._touch_client(api_client))
+            assert worker_client is not app_client
+            assert api_client._client_loop is not app_loop
+
+            # The app loop is still alive (unlike a worker's loop) -- pump it
+            # once so the scheduled `aclose()` hand-off actually runs.
+            app_loop.run_until_complete(asyncio.sleep(0))
+            assert app_client.is_closed is True, (
+                "stale app-loop client was not closed via the "
+                "run_coroutine_threadsafe hand-off -- it would otherwise leak"
+            )
+        finally:
+            app_loop.close()
+
+    @pytest.mark.asyncio
+    async def test_close_from_different_loop_does_not_raise(self):
+        """``close()`` itself must not attempt to await a client bound to a
+        different loop than the one ``close()`` is running on -- that is
+        the same cross-loop hazard, just triggered from the cleanup path
+        (``CodeRepoCopyPasteWindow.__aexit__``) instead of the accessor.
+        """
+        api_client = GitHubAPIClient(token="t")
+
+        # Build a client on an unrelated, already-closed loop. This test is
+        # itself async (running on pytest-asyncio's loop), so this can't be
+        # nested via `asyncio.run()` directly -- do what the real worker
+        # does: run it on a separate OS thread with its own throwaway loop.
+        worker_thread = threading.Thread(
+            target=lambda: asyncio.run(self._touch_client(api_client))
+        )
+        worker_thread.start()
+        worker_thread.join()
+
+        assert api_client._client is not None
+        assert api_client._client_loop.is_closed()
+
+        # close() now runs on pytest-asyncio's loop, which is a different,
+        # live loop. This must not raise or hang.
         await api_client.close()
         assert api_client._client is None
