@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ProviderToolCalls
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_models import (
+    DIRECT_DISCLOSE_THRESHOLD,
     LOAD_TOOLS_NAME,
     RUN_DONE,
     RUN_ERROR,
@@ -1951,15 +1952,17 @@ def test_skill_named_like_a_builtin_never_shadows_it_at_invocation(tmp_path):
 
 
 class _ManySkillsService:
-    """9 real skills (> DIRECT_DISCLOSE_THRESHOLD == 8), so the catalog
-    defers everything to find_tools/load_tools -- the exact >8-skill shape
-    that engaged progressive disclosure in the live gate capture."""
+    """Enough real skills to exceed DIRECT_DISCLOSE_THRESHOLD on their own
+    (even before the 2 builtins _compose_run_registry_and_allowed always
+    adds), so the catalog defers everything to find_tools/load_tools -- the
+    same >threshold-skill shape that engaged progressive disclosure in the
+    live gate capture."""
 
     def __init__(self):
         self.execute_calls = []
 
     async def get_context(self, *, mode="local"):
-        names = ["shout"] + [f"filler{i}" for i in range(8)]
+        names = ["shout"] + [f"filler{i}" for i in range(DIRECT_DISCLOSE_THRESHOLD)]
         return {
             "available_skills": [
                 {
