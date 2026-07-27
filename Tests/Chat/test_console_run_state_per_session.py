@@ -16,10 +16,17 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
 
+from Tests.Chat.conftest import StreamingGateway
+
 
 # `controller_with_two_sessions` (and its `StreamingGateway` provider stub)
 # moved to `Tests/Chat/conftest.py` (Task 7 brief) so
 # `test_console_run_markers.py` can share it without a cross-module import.
+# A handful of tests below (needing a custom session-creation ORDER the
+# fixed 2-session fixture doesn't offer) still construct their own
+# controller directly and import `StreamingGateway` straight from
+# conftest -- a same-package import from the dedicated shared-fixtures
+# module, not the cross-TEST-MODULE import the move above was about.
 
 
 def test_run_states_are_isolated_per_session(controller_with_two_sessions):
