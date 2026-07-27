@@ -35,7 +35,8 @@ rather than walking the live dict a worker thread's `request_mcp_approvals`
 can concurrently register/pop entries in. The `round_id is not None` branch's
 `.get()` was guarded too, for consistency with every other access to this map.
 
-AC #2 (the fail-closed-vs-remove behavioral decision for the `round_id=None`
+(Historical — superseded by the AC#2 pass below.) AC #2 (the
+fail-closed-vs-remove behavioral decision for the `round_id=None`
 fallback itself) was explicitly out of scope for the fix this pass authorized
 (a locking/thread-safety hardening pass, not a behavioral redesign of a
 production-unreachable legacy path) -- changing it would also require
