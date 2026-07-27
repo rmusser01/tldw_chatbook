@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunMarker,
     ConsoleRunState,
@@ -152,3 +154,59 @@ def test_terminal_transition_clears_pending_approval_flag_on_active_session(
         ConsoleRunState(ConsoleRunStatus.STOPPED, "stopped"), session_id=session_b
     )
     assert controller.run_marker_for(session_b) is ConsoleRunMarker.NONE
+
+
+def test_approval_state_lock_serializes_snapshot_against_worker_thread_mutation(
+    controller_with_two_sessions,
+):
+    """F2b regression (Qodo wave): ``fleet_summary_counts``'s snapshot of
+    ``_pending_approvals`` and ``set_run_pending_approval``'s add/discard
+    (reachable from the worker thread via ``request_mcp_approvals``) must
+    be mutually exclusive under ``_approval_state_lock`` -- otherwise a
+    worker-thread mutation racing the UI-thread's ~0.2s sync-tick
+    iteration risks ``RuntimeError: Set changed size during iteration``.
+
+    Deterministically forces the interleaving (never relies on scheduling
+    luck, so this cannot flake): a worker thread holds the shared lock
+    open for a controlled window, and the main thread's own attempt to
+    read ``fleet_summary_counts`` is asserted to BLOCK for as long as the
+    lock is held, then complete immediately once it is released.
+    """
+    controller, session_a, session_b = controller_with_two_sessions
+
+    lock_acquired = threading.Event()
+    release_lock = threading.Event()
+
+    def _hold_lock() -> None:
+        with controller._approval_state_lock:
+            lock_acquired.set()
+            release_lock.wait(timeout=2)
+
+    holder = threading.Thread(target=_hold_lock)
+    holder.start()
+    assert lock_acquired.wait(timeout=1), "worker thread never acquired the lock"
+
+    snapshot_done = threading.Event()
+    result: dict[str, tuple[int, int]] = {}
+
+    def _read_fleet_summary() -> None:
+        result["counts"] = controller.fleet_summary_counts()
+        snapshot_done.set()
+
+    reader = threading.Thread(target=_read_fleet_summary)
+    reader.start()
+    try:
+        # While the worker thread holds the lock, the reader's own
+        # snapshot must be blocked -- this is the assertion that actually
+        # proves mutual exclusion, not just "no exception happened to
+        # occur this run".
+        assert not snapshot_done.wait(timeout=0.2), (
+            "fleet_summary_counts did not block on the held lock"
+        )
+    finally:
+        release_lock.set()
+        holder.join(timeout=2)
+
+    assert snapshot_done.wait(timeout=2), "fleet_summary_counts never completed"
+    reader.join(timeout=2)
+    assert result["counts"] == (0, 0)

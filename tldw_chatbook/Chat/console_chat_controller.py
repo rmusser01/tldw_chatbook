@@ -669,6 +669,19 @@ class ConsoleChatController:
         #     deliberately never stamped here.
         self._pending_approvals: set[str] = set()
         self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
+        #: F2b fix (Qodo wave): guards every mutation of `_pending_
+        #: approvals`, `_parked_approval_payloads`, and `_pending_
+        #: approval_rounds` -- the three approval-marker collections a
+        #: worker thread (`request_mcp_approvals`'s own body/`finally`) can
+        #: mutate WHILE the UI thread iterates them every ~0.2s sync tick
+        #: (`fleet_summary_counts`). An unguarded set/dict mutation racing
+        #: an unguarded iteration over the SAME object can raise
+        #: `RuntimeError: Set/dictionary changed size during iteration`.
+        #: `_unvisited_outcomes`/`_run_states` are NOT covered here: both
+        #: are written only from the main thread (`_set_run_state`,
+        #: `mark_session_visited`), never from a worker thread, so they
+        #: carry no cross-thread hazard this lock needs to close.
+        self._approval_state_lock = threading.Lock()
         #: Optional owner hook invoked once a submit is accepted (user message
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
@@ -920,11 +933,22 @@ class ConsoleChatController:
         controller``, see ``__init__``) -- reusing it as a method name
         here would be silently clobbered by that attribute's own
         assignment.
+
+        Args:
+            session_id: The session whose pending-approval flag to update.
+            pending: ``True`` to mark the session as awaiting a decision,
+                ``False`` to clear it.
         """
-        if pending:
-            self._pending_approvals.add(session_id)
-        else:
-            self._pending_approvals.discard(session_id)
+        # F2b fix (Qodo wave): this is reachable from the worker thread
+        # (``request_mcp_approvals``'s own body/``finally``) while the UI
+        # thread may concurrently iterate ``_pending_approvals`` via
+        # ``fleet_summary_counts`` -- guard the mutation with the shared
+        # lock so that iteration never observes a torn add/discard.
+        with self._approval_state_lock:
+            if pending:
+                self._pending_approvals.add(session_id)
+            else:
+                self._pending_approvals.discard(session_id)
 
     def mark_session_visited(self, session_id: str) -> None:
         """Clear ``session_id``'s unvisited terminal outcome.
@@ -947,6 +971,10 @@ class ConsoleChatController:
         (``_set_run_state``) -- never merely from being looked at. See
         ``switch_session`` for the (separate) mount-the-parked-card step
         that visiting now performs instead.
+
+        Args:
+            session_id: The session just switched to (or otherwise
+                visited).
         """
         self._unvisited_outcomes.pop(session_id, None)
 
@@ -967,6 +995,14 @@ class ConsoleChatController:
            by ``_set_run_state``'s terminal transitions and cleared by
            ``mark_session_visited``.
         4. ``NONE`` otherwise.
+
+        Args:
+            session_id: The session to compute the marker for.
+
+        Returns:
+            The single ``ConsoleRunMarker`` that best describes
+            ``session_id``'s current fleet-visible state, per the
+            precedence above.
         """
         if session_id in self._pending_approvals:
             return ConsoleRunMarker.NEEDS_APPROVAL
@@ -987,12 +1023,25 @@ class ConsoleChatController:
         busy and pending-approval is counted only as pending, mirroring
         ``run_marker_for``'s NEEDS_APPROVAL-outranks-RUNNING precedence --
         neither count double-books it.
+
+        Returns:
+            A ``(other_running, other_pending_approval)`` tuple of counts,
+            both excluding the active (viewed) session.
         """
         active = self.store.active_session_id or ""
         live_ids = {session.id for session in self.store.sessions()}
+        # F2b fix (Qodo wave): snapshot under the lock rather than
+        # iterating `_pending_approvals` live -- this runs on the UI
+        # thread's ~0.2s sync tick while a worker thread can concurrently
+        # add/discard entries (`request_mcp_approvals`'s own body/
+        # `finally`), so an unguarded comprehension here risked
+        # `RuntimeError: Set changed size during iteration`. The
+        # comprehension itself runs OUTSIDE the lock, over the snapshot.
+        with self._approval_state_lock:
+            pending_snapshot = set(self._pending_approvals)
         other_pending = {
             sid
-            for sid in self._pending_approvals
+            for sid in pending_snapshot
             if sid in live_ids and sid != active
         }
         other_busy = {sid for sid in self._live_busy_session_ids() if sid != active}
@@ -1384,7 +1433,12 @@ class ConsoleChatController:
         # "card state derives from the run's pending review state" rule
         # every other activation path follows.
         if self.set_pending_approval is not None:
-            self.set_pending_approval(self._parked_approval_payloads.get(session.id))
+            # F2b fix (Qodo wave): guard the read for consistency with
+            # every other `_parked_approval_payloads` access, even though
+            # a single `.get()` is not itself an iteration hazard.
+            with self._approval_state_lock:
+                parked_payload = self._parked_approval_payloads.get(session.id)
+            self.set_pending_approval(parked_payload)
         return session
 
     def _maybe_auto_title_session(
@@ -1530,7 +1584,11 @@ class ConsoleChatController:
         # parking -- the round now stays alive until its own resolution
         # (decision, cancel, or timeout).
         if self.set_pending_approval is not None:
-            self.set_pending_approval(self._parked_approval_payloads.get(session_id))
+            # F2b fix (Qodo wave): guard the read for consistency with
+            # every other `_parked_approval_payloads` access.
+            with self._approval_state_lock:
+                parked_payload = self._parked_approval_payloads.get(session_id)
+            self.set_pending_approval(parked_payload)
         # Skill-install/script confirms are NOT parked by this task (out of
         # scope -- see PA-T9 report): still single-slot, controller-wide
         # rounds, so a context change unconditionally denies whichever one
@@ -1591,9 +1649,11 @@ class ConsoleChatController:
         if new_active_id is not None and new_active_id != previous_active_id:
             self.mark_session_visited(new_active_id)
             if self.set_pending_approval is not None:
-                self.set_pending_approval(
-                    self._parked_approval_payloads.get(new_active_id)
-                )
+                # F2b fix (Qodo wave): guard the read for consistency with
+                # every other `_parked_approval_payloads` access.
+                with self._approval_state_lock:
+                    parked_payload = self._parked_approval_payloads.get(new_active_id)
+                self.set_pending_approval(parked_payload)
         return closed
 
     def original_attempt_for_message(self, message_id: str) -> str | None:
@@ -1868,11 +1928,16 @@ class ConsoleChatController:
         owning_session_id = session_id if session_id is not None else (
             self.store.active_session_id or ""
         )
-        self._pending_approval_rounds[round_id] = {
-            "event": event,
-            "decisions": decisions,
-            "session_id": owning_session_id,
-        }
+        # F2b fix (Qodo wave): guard the round registration -- the UI
+        # thread's `resolve_pending_approval`/legacy fallback and the
+        # `fleet_summary_counts` sync tick can read/iterate this map
+        # concurrently with this worker thread's own writes.
+        with self._approval_state_lock:
+            self._pending_approval_rounds[round_id] = {
+                "event": event,
+                "decisions": decisions,
+                "session_id": owning_session_id,
+            }
 
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
         deadline = time.monotonic() + timeout_seconds
@@ -1927,7 +1992,11 @@ class ConsoleChatController:
             # here too makes retention symmetric with that cleanup, per
             # spec §5 ("card state survives tab switches") for every round,
             # not only parked ones.
-            self._parked_approval_payloads[session_id] = payload
+            # F2b fix (Qodo wave): guard the store -- `switch_session`'s
+            # own re-derive read (`.get()`) runs on the UI thread and can
+            # race this worker-thread write.
+            with self._approval_state_lock:
+                self._parked_approval_payloads[session_id] = payload
 
         try:
             if is_parked:
@@ -1982,9 +2051,15 @@ class ConsoleChatController:
             # a second source of truth.
             return {name: decisions.get(name, "deny") for name in unique_names}
         finally:
-            self._pending_approval_rounds.pop(round_id, None)
+            # F2b fix (Qodo wave): guard both pops -- `resolve_pending_
+            # approval`'s legacy fallback and `switch_session`'s re-derive
+            # read can each observe these maps from the UI thread while
+            # this worker thread tears the round down.
+            with self._approval_state_lock:
+                self._pending_approval_rounds.pop(round_id, None)
+                if session_id is not None:
+                    self._parked_approval_payloads.pop(session_id, None)
             if session_id is not None:
-                self._parked_approval_payloads.pop(session_id, None)
                 self.set_run_pending_approval(session_id, False)
             # Only clear the MOUNTED card if this round's session is still
             # the one being viewed right now -- a parked round resolving
@@ -2231,15 +2306,37 @@ class ConsoleChatController:
         avoid TOCTOU race: the worker thread's ``finally`` block pops the
         round entry out of ``_pending_approval_rounds`` concurrently. Guard
         and act only on the snapshots.
+
+        Args:
+            decisions: The user's per-``llm_name`` decision strings
+                (``approve_once``/``approve_session``/``always_allow``/
+                ``deny``) to merge into the round's shared decisions dict.
+            round_id: The specific round to resolve (the id stamped onto
+                the card the user actually decided). ``None`` falls back to
+                whichever round belongs to the currently active session
+                (legacy/direct-call compatibility -- see above).
         """
+        # F2b/F3b fix (Qodo wave, task-913): both branches read
+        # ``_pending_approval_rounds`` under the shared lock -- the worker
+        # thread's own registration (``request_mcp_approvals``) and
+        # teardown (its ``finally``) can mutate this dict concurrently
+        # with either branch here. The legacy ``round_id=None`` fallback
+        # in particular used to iterate ``.values()`` live; snapshotting
+        # it into a list under the lock first (then iterating the
+        # snapshot, outside the lock) closes the same
+        # "dictionary changed size during iteration" hazard
+        # ``fleet_summary_counts`` had for ``_pending_approvals``.
         if round_id is not None:
-            round_state = self._pending_approval_rounds.get(round_id)
+            with self._approval_state_lock:
+                round_state = self._pending_approval_rounds.get(round_id)
         else:
             active = self.store.active_session_id or ""
+            with self._approval_state_lock:
+                round_states = list(self._pending_approval_rounds.values())
             round_state = next(
                 (
                     state
-                    for state in self._pending_approval_rounds.values()
+                    for state in round_states
                     if state.get("session_id") == active
                 ),
                 None,
@@ -6254,7 +6351,12 @@ class ConsoleChatController:
             ConsoleRunStatus.FAILED,
             ConsoleRunStatus.STOPPED,
         }:
-            self._pending_approvals.discard(target)
+            # F2b fix (Qodo wave): this call always runs on the main
+            # thread today, but guard it with the same lock as every other
+            # `_pending_approvals` mutation for consistency (and so it
+            # stays correct if a future caller ever moves this off-thread).
+            with self._approval_state_lock:
+                self._pending_approvals.discard(target)
         # Parallel-agents spec §6: stamp an unvisited terminal outcome, but
         # ONLY for a session other than the currently active (viewed) one --
         # the viewed session's own COMPLETED/FAILED transition is visible
