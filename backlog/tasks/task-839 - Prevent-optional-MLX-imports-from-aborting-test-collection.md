@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-27 02:06'
-updated_date: '2026-07-27 21:04'
+updated_date: '2026-07-27 21:33'
 labels:
   - testing
   - optional-deps
@@ -62,4 +62,6 @@ Implemented cheap MLX package discovery with two cached first-use loaders in tra
 Added subprocess and loader lifecycle/path regression coverage, then removed the three ProductionApp sys.modules stubs. Scoped verification passed: 20 import/config/ProductionApp tests, 6 exact legacy MLX availability/loading/cache tests, Ruff check/format for all five touched code/test files, and git diff --check. The planned broad -k not_available selector was narrowed to exact node IDs because it also selected an unrelated soundfile test that initializes the unsafe native runtime. Repository-wide tests were intentionally not run per user direction.
 
 ADR required: no. No provider ownership, citation behavior, routing/defaults, schema, dependency, security, or license boundary changed.
+
+PR review follow-up: rebased onto the latest dev, routed first-use MLX imports through Utils.optional_deps.require_dependency() while keeping that helper import local to preserve startup laziness, and removed the misleading pre-load callable debug log. The dedicated regressions now fail on direct importlib bypasses and guard against restoring that stale log.
 <!-- SECTION:NOTES:END -->

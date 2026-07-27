@@ -243,7 +243,9 @@ def _ensure_lightning_whisper_mlx_import():
     if not LIGHTNING_WHISPER_AVAILABLE:
         raise TranscriptionError("lightning-whisper-mlx is not installed")
     try:
-        module = importlib.import_module("lightning_whisper_mlx")
+        from ..Utils.optional_deps import require_dependency
+
+        module = require_dependency("lightning_whisper_mlx")
         LightningWhisperMLX = module.LightningWhisperMLX
     except Exception as exc:
         LIGHTNING_WHISPER_AVAILABLE = False
@@ -258,7 +260,9 @@ def _ensure_parakeet_mlx_import():
     if not PARAKEET_MLX_AVAILABLE:
         raise TranscriptionError("parakeet-mlx is not installed")
     try:
-        module = importlib.import_module("parakeet_mlx")
+        from ..Utils.optional_deps import require_dependency
+
+        module = require_dependency("parakeet_mlx")
         parakeet_from_pretrained = module.from_pretrained
     except Exception as exc:
         PARAKEET_MLX_AVAILABLE = False
@@ -2525,9 +2529,6 @@ class TranscriptionService:
                     # Add detailed logging before the problematic call
                     logger.debug(f"Current working directory: {os.getcwd()}")
                     logger.debug(f"PARAKEET_MLX_AVAILABLE: {PARAKEET_MLX_AVAILABLE}")
-                    logger.debug(
-                        f"parakeet_from_pretrained function: {parakeet_from_pretrained}"
-                    )
 
                     logger.info("[PARAKEET] About to call parakeet_from_pretrained...")
                     logger.info(f"[PARAKEET] Model name: '{model}'")

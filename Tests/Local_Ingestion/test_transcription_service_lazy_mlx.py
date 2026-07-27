@@ -179,20 +179,26 @@ def test_mlx_loader_imports_once_and_caches_symbol(
     export_name: str,
 ) -> None:
     expected_symbol = object()
-    imported_modules: list[str] = []
+    required_modules: list[str] = []
+    optional_deps = importlib.import_module("tldw_chatbook.Utils.optional_deps")
 
-    def import_module(name: str):
-        imported_modules.append(name)
+    def require_dependency(name: str):
+        required_modules.append(name)
         return SimpleNamespace(**{export_name: expected_symbol})
 
     monkeypatch.setattr(service_module, available_name, True)
     monkeypatch.setattr(service_module, symbol_name, None)
-    monkeypatch.setattr(service_module.importlib, "import_module", import_module)
+    monkeypatch.setattr(optional_deps, "require_dependency", require_dependency)
+    monkeypatch.setattr(
+        service_module.importlib,
+        "import_module",
+        Mock(side_effect=AssertionError("optional_deps helper bypassed")),
+    )
     ensure_import = getattr(service_module, loader_name)
 
     assert ensure_import() is expected_symbol
     assert ensure_import() is expected_symbol
-    assert imported_modules == [module_name]
+    assert required_modules == [module_name]
 
 
 @pytest.mark.parametrize(
@@ -214,16 +220,22 @@ def test_mlx_loader_failure_is_cached(
     module_name: str,
     _export_name: str,
 ) -> None:
-    imported_modules: list[str] = []
+    required_modules: list[str] = []
     unsafe_runtime = RuntimeError("unsafe mlx")
+    optional_deps = importlib.import_module("tldw_chatbook.Utils.optional_deps")
 
-    def import_module(name: str):
-        imported_modules.append(name)
+    def require_dependency(name: str):
+        required_modules.append(name)
         raise unsafe_runtime
 
     monkeypatch.setattr(service_module, available_name, True)
     monkeypatch.setattr(service_module, symbol_name, None)
-    monkeypatch.setattr(service_module.importlib, "import_module", import_module)
+    monkeypatch.setattr(optional_deps, "require_dependency", require_dependency)
+    monkeypatch.setattr(
+        service_module.importlib,
+        "import_module",
+        Mock(side_effect=AssertionError("optional_deps helper bypassed")),
+    )
     ensure_import = getattr(service_module, loader_name)
 
     with pytest.raises(service_module.TranscriptionError) as first_error:
@@ -235,7 +247,7 @@ def test_mlx_loader_failure_is_cached(
     assert second_error.value.__cause__ is None
     assert getattr(service_module, available_name) is False
     assert getattr(service_module, symbol_name) is None
-    assert imported_modules == [module_name]
+    assert required_modules == [module_name]
 
 
 def test_lightning_file_model_construction_uses_loader(
@@ -259,6 +271,12 @@ def test_lightning_file_model_construction_uses_loader(
 def test_parakeet_file_model_construction_uses_loader(
     service_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    debug_messages: list[str] = []
+    monkeypatch.setattr(
+        service_module.logger,
+        "debug",
+        lambda message, *args, **kwargs: debug_messages.append(str(message)),
+    )
     service = _service(service_module, monkeypatch)
     sentinel = RuntimeError("parakeet loader reached")
     ensure_import = Mock(side_effect=sentinel)
@@ -275,6 +293,9 @@ def test_parakeet_file_model_construction_uses_loader(
 
     assert error.value.__cause__ is sentinel
     ensure_import.assert_called_once_with()
+    assert not any(
+        "parakeet_from_pretrained function:" in message for message in debug_messages
+    )
 
 
 def test_parakeet_buffer_model_construction_uses_loader(
