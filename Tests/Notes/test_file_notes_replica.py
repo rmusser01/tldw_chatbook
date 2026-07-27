@@ -315,6 +315,26 @@ def test_mark_deleted_retains_bytes_and_clear_tombstone_restores_search(
     assert not replica.clear_tombstone(root, "folder/gone.md")
 
 
+def test_discard_file_removes_current_projection_without_tombstone(
+    replica: FileNotesReplica,
+) -> None:
+    root = "/notes"
+    _upsert(replica, root, "moved-from.md", b"searchable move bytes")
+
+    assert replica.discard_file(root, "moved-from.md")
+    assert replica.list_active_files(root) == []
+    assert replica.search(root, "searchable") == []
+    assert replica.get_bytes(root, "moved-from.md") is None
+    assert replica.list_deleted(root) == []
+    assert not replica.discard_file(root, "moved-from.md")
+
+    _upsert(replica, root, "real-delete.md", b"recoverable bytes")
+    assert replica.mark_deleted(root, "real-delete.md")
+    assert not replica.discard_file(root, "real-delete.md")
+    assert replica.get_restore_bytes(root, "real-delete.md") == b"recoverable bytes"
+    assert replica.list_deleted(root) == ["real-delete.md"]
+
+
 def test_protection_matches_exact_files_and_component_bounded_prefixes(
     replica: FileNotesReplica,
 ) -> None:

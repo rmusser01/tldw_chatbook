@@ -508,6 +508,67 @@ def test_create_is_exclusive_and_move_is_no_clobber_with_rollback(
     assert not (root / "folder" / "moved.md").exists()
 
 
+def test_move_replaces_replica_path_without_tombstoning_source(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    root = tmp_path / "notes"
+    (root / "folder").mkdir(parents=True)
+    (root / "source.md").write_text("unique move content", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    service.scan()
+
+    result = service.move_file("source.md", "folder/moved.md")
+
+    assert result.status == "ok"
+    assert result.replica_warning is None
+    assert not (root / "source.md").exists()
+    assert (root / "folder" / "moved.md").read_text(encoding="utf-8") == (
+        "unique move content"
+    )
+    assert [
+        item.relative_path
+        for item in replica.list_active_files(str(root.resolve()))
+    ] == ["folder/moved.md"]
+    assert replica.search(str(root.resolve()), "unique move") == [
+        "folder/moved.md"
+    ]
+    assert replica.list_deleted(str(root.resolve())) == []
+    assert len(service.session_changes) == 1
+    change = service.session_changes[0]
+    assert change.action == "moved"
+    assert change.relative_path == "source.md"
+    assert change.destination_path == "folder/moved.md"
+
+
+def test_move_retains_source_replica_when_destination_refresh_fails(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "source.md"
+    source.write_bytes(b"last recovery copy")
+    service = FileNotesService(root, replica)
+    service.scan()
+
+    def fail_upsert(*args: object, **kwargs: object) -> None:
+        raise sqlite3.OperationalError("forced replica failure")
+
+    monkeypatch.setattr(replica, "upsert_file", fail_upsert)
+    result = service.move_file("source.md", "moved.md")
+
+    assert result.status == "ok"
+    assert result.replica_warning is not None
+    assert not source.exists()
+    assert (root / "moved.md").read_bytes() == b"last recovery copy"
+    root_key = str(root.resolve())
+    assert replica.get_bytes(root_key, "source.md") == b"last recovery copy"
+    assert replica.get_bytes(root_key, "moved.md") is None
+    assert replica.list_deleted(root_key) == []
+
+
 def test_delete_rechecks_after_tombstone_and_restore_requires_absent_destination(
     tmp_path: Path,
     replica: FileNotesReplica,

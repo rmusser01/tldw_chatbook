@@ -596,16 +596,19 @@ class FileNotesService:
             )
 
         warning: str | None = None
+        destination_replicated = False
         try:
             moved = self._load_file(destination_path)
             warning = self._upsert_opened(moved)
+            destination_replicated = warning is None
         except (OSError, ValueError) as error:
             warning = f"Replica refresh failed: {error}"
         if self._replica is not None:
-            try:
-                self._replica.mark_deleted(self.root_key, relative_path)
-            except Exception as error:
-                warning = _merge_warnings(warning, _replica_warning(error))
+            if destination_replicated:
+                try:
+                    self._replica.discard_file(self.root_key, relative_path)
+                except Exception as error:
+                    warning = _merge_warnings(warning, _replica_warning(error))
         else:
             warning = _merge_warnings(warning, "Replica unavailable")
         self._session_changes.append(

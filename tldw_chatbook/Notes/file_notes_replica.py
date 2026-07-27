@@ -227,6 +227,30 @@ class FileNotesReplica:
             self._delete_fts(cursor, root, relative_path)
         return True
 
+    def discard_file(self, root: str, relative_path: str) -> bool:
+        """Remove one active replica projection without creating a tombstone.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+
+        Returns:
+            ``True`` when an active replica row was removed.
+        """
+        with self._transaction() as cursor:
+            self._delete_fts(cursor, root, relative_path)
+            cursor.execute(
+                """
+                DELETE FROM files
+                WHERE root = ?
+                  AND relative_path = ?
+                  AND deleted_at IS NULL
+                """,
+                (root, relative_path),
+            )
+            removed = cursor.rowcount > 0
+        return removed
+
     def clear_tombstone(self, root: str, relative_path: str) -> bool:
         """Clear a deletion marker and restore searchable current content.
 

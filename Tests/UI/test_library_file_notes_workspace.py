@@ -384,6 +384,10 @@ async def test_create_move_delete_protect_and_restore_use_real_service(
         )
         assert not (root / "created.md").exists()
         assert (root / "moved.md").exists()
+        assert replica.list_deleted(str(root.resolve())) == []
+        assert "Recently deleted" not in _tree_labels(
+            workspace.query_one("#file-notes-tree", Tree)
+        )
 
         workspace.query_one("#file-notes-delete", Button).press()
         await _wait_until(
