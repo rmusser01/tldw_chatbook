@@ -212,43 +212,58 @@ def test_controller_session_changes_clear_terminal_run_copy() -> None:
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     first = store.ensure_session(title="Chat 1")
 
-    controller.run_state = ConsoleRunState(
-        ConsoleRunStatus.COMPLETED, "Response complete."
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
     )
     controller.new_session(title="Chat 2")
 
     assert controller.run_state.status is ConsoleRunStatus.IDLE
     assert controller.run_state.visible_copy == ""
 
-    controller.run_state = ConsoleRunState(
-        ConsoleRunStatus.BLOCKED, "Provider blocked."
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.BLOCKED, "Provider blocked.")
     )
     controller.switch_session(first.id)
 
+    # `switch_session` clears a stale TERMINAL run copy on the session being
+    # ARRIVED AT (the swap above already moved active_session_id to `first`
+    # before this clear runs) -- `first`'s own COMPLETED state (set at the
+    # very top of this test) is what gets swept here.
     assert controller.run_state.status is ConsoleRunStatus.IDLE
     assert controller.run_state.visible_copy == ""
 
 
 def test_controller_session_changes_preserve_active_run_copy() -> None:
+    """A non-terminal run state is never reset by session-change cleanup --
+    `_clear_terminal_run_state`'s guard only fires for TERMINAL statuses.
+
+    Parallel-agents spec §2: run state is per-session now, so this checks
+    `first`'s OWN state survives a sibling session being created (rather
+    than asserting the facade -- which after `new_session()` is viewing the
+    brand-new sibling, not `first` -- shows the same value).
+    """
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     first = store.ensure_session(title="Chat 1")
 
-    controller.run_state = ConsoleRunState(
-        ConsoleRunStatus.STREAMING, "Streaming response."
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
     )
-    controller.new_session(title="Chat 2")
+    second = controller.new_session(title="Chat 2")
 
-    assert controller.run_state.status is ConsoleRunStatus.STREAMING
-    assert controller.run_state.visible_copy == "Streaming response."
+    assert controller.run_state_for(first.id).status is ConsoleRunStatus.STREAMING
+    assert controller.run_state_for(first.id).visible_copy == "Streaming response."
 
-    controller.run_state = ConsoleRunState(
-        ConsoleRunStatus.VALIDATING, "Validating provider."
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
+        session_id=second.id,
     )
     controller.switch_session(first.id)
 
-    assert controller.run_state.status is ConsoleRunStatus.VALIDATING
-    assert controller.run_state.visible_copy == "Validating provider."
+    # Arriving back at `first`: its own STREAMING state is non-terminal, so
+    # the arrival-side clear leaves it untouched.
+    assert controller.run_state.status is ConsoleRunStatus.STREAMING
+    assert controller.run_state.visible_copy == "Streaming response."
 
 
 def test_controller_new_session_accepts_settings_snapshot() -> None:
@@ -715,9 +730,11 @@ def test_stop_active_run_falls_back_to_visible_streaming_assistant_message():
         content="",
     )
     store.append_stream_chunk(assistant.id, "partial")
-    controller.run_state = ConsoleRunState(
-        ConsoleRunStatus.STREAMING,
-        "Streaming response.",
+    controller._set_run_state(
+        ConsoleRunState(
+            ConsoleRunStatus.STREAMING,
+            "Streaming response.",
+        )
     )
     controller._active_assistant_message_id = None
 
@@ -918,7 +935,13 @@ async def test_close_streaming_session_stops_run_without_key_error():
     assert result.accepted is True
     assert result.visible_copy == "Session closed."
     assert store.sessions() == []
-    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+    # No session is active anymore (the only session was just closed), so
+    # the `run_state` FACADE (keyed by the now-None active_session_id) is no
+    # longer meaningful here -- check the closed session's own recorded
+    # state instead, proving the stop was actually processed rather than
+    # silently swallowed by a KeyError.
+    assert store.active_session_id is None
+    assert controller.run_state_for(session_id).status is ConsoleRunStatus.STOPPED
 
 
 @pytest.mark.asyncio

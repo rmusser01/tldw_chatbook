@@ -636,8 +636,16 @@ class ConsoleChatController:
         self._chat_dictionary_applier = chat_dictionary_applier
         self._world_info_applier = world_info_applier
         self._rag_capture_provider = rag_capture_provider
-        self.run_state = ConsoleRunState()
-        self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
+        # Parallel-agents spec §2: run state is a PER-SESSION map, not a
+        # single global slot -- two sessions can each have their own
+        # in-flight/terminal run without stamping each other. `run_state`/
+        # `run_state_history` below become read-only facades over these maps
+        # (see the property block right after `__init__`); every WRITE goes
+        # through `_set_run_state`/`_clear_terminal_run_state`, which take an
+        # explicit `session_id` so a background completion can target its
+        # OWNING session instead of whatever the user currently has open.
+        self._run_states: dict[str, ConsoleRunState] = {}
+        self._run_state_histories: dict[str, list[ConsoleRunStatus]] = {}
         #: Optional owner hook invoked once a submit is accepted (user message
         #: persisted, run about to start) so the composer can clear immediately
         #: instead of holding the sent text for the whole run.
@@ -719,6 +727,45 @@ class ConsoleChatController:
         #: late button press from a torn-down round 1 from authorizing
         #: round 2's script. `None` whenever no round is armed.
 
+    @property
+    def run_state(self) -> ConsoleRunState:
+        """The ACTIVE session's run state (parallel-agents spec §2).
+
+        Read-only facade: the ~16 pre-existing read sites in chat_screen
+        keep their semantics ("the viewed session's run"), while writes go
+        through ``_set_run_state``/``_clear_terminal_run_state`` with an
+        explicit owning session id. There is deliberately no setter --
+        assigning ``controller.run_state = ...`` now raises ``AttributeError``
+        so a stray direct-assignment writer (bypassing the per-session map)
+        fails loudly instead of silently reintroducing the single-slot bug.
+        """
+        return self.run_state_for(self.store.active_session_id or "")
+
+    def run_state_for(self, session_id: str) -> ConsoleRunState:
+        """Return ``session_id``'s own run state (a fresh idle one when unset)."""
+        return self._run_states.get(session_id) or ConsoleRunState()
+
+    def run_states(self) -> dict[str, ConsoleRunState]:
+        """Snapshot copy of every session with a recorded run state (fleet UX, cap count)."""
+        return dict(self._run_states)
+
+    def in_flight_run_count(self) -> int:
+        """Count of sessions whose recorded run currently disallows a new send."""
+        return sum(
+            1 for state in self._run_states.values() if not state.is_send_allowed
+        )
+
+    @property
+    def run_state_history(self) -> list[ConsoleRunStatus]:
+        """The ACTIVE session's run-status history (read-only facade, mirrors ``run_state``)."""
+        return self.run_state_history_for(self.store.active_session_id or "")
+
+    def run_state_history_for(self, session_id: str) -> list[ConsoleRunStatus]:
+        """Return (creating if absent) ``session_id``'s run-status history."""
+        return self._run_state_histories.setdefault(
+            session_id, [ConsoleRunStatus.IDLE]
+        )
+
     async def submit_draft(self, draft: str) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution."""
         active_rejection = self._active_run_rejection()
@@ -796,7 +843,8 @@ class ConsoleChatController:
         )
 
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
+            session_id=session.id,
         )
         try:
             resolution = await self.provider_gateway.resolve_for_send(
@@ -951,6 +999,14 @@ class ConsoleChatController:
             title=title or f"Chat {next_number}",
             settings=settings,
         )
+        # `create_session` above already activated the new session, so the
+        # default (no explicit session_id -> active session) targets the
+        # session JUST created here -- which is fresh/never-recorded and
+        # therefore already idle, making this call a no-op today. Left
+        # unchanged (rather than reaching for the session being replaced)
+        # for the same reason `switch_session` below is: per-session run
+        # state is meant to persist on the session you're leaving, not be
+        # wiped just because a sibling session appeared.
         self._clear_terminal_run_state()
         return session
 
@@ -1030,6 +1086,10 @@ class ConsoleChatController:
             self.system_prompt,
         )
         if current_selection != previous_selection:
+            # No session in scope here -- this is a global provider/model
+            # settings change, not tied to any particular session's run.
+            # Active-session UI path: clears whatever the user is currently
+            # looking at (parallel-agents spec §2).
             self._clear_terminal_run_state()
 
     def update_agent_runtime(
@@ -1052,6 +1112,17 @@ class ConsoleChatController:
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing native Console session."""
         session = self.store.switch_session(session_id)
+        # `store.switch_session` above has ALREADY moved `active_session_id`
+        # to `session_id`, so the no-arg default here (active session)
+        # targets the session being ARRIVED AT, not the one being left --
+        # verified against `test_controller_session_changes_clear_terminal_
+        # run_copy` (Tests/Chat/test_console_chat_controller.py), which
+        # requires a stale terminal banner on the destination session to be
+        # cleared the moment you switch back to it. Per-session run state is
+        # otherwise preserved (this only fires for TERMINAL statuses), so a
+        # session you're LEAVING keeps its own in-flight/terminal state
+        # untouched -- only the newly-viewed session's stale terminal copy
+        # is swept (parallel-agents spec §2).
         self._clear_terminal_run_state()
         # Binding threading contract (task-5): a conversation switch denies
         # any pending MCP approval round rather than leaving its worker
@@ -1087,7 +1158,14 @@ class ConsoleChatController:
             ):
                 self._active_stream_task.cancel()
             self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.STOPPED, "Session closed.")
+                ConsoleRunState(ConsoleRunStatus.STOPPED, "Session closed."),
+                # `session_id` here is the session being CLOSED, which the
+                # `_active_stream_belongs_to_session` guard above confirms
+                # owns the active stream -- not necessarily the currently
+                # ACTIVE session (you can close a background tab while
+                # viewing another one), so this must be explicit rather
+                # than falling back to the active-session default.
+                session_id=session_id,
             )
         closed = self.store.close_session(session_id)
         if (
@@ -1881,12 +1959,17 @@ class ConsoleChatController:
         message_session_id = self.store.session_id_for_message(message_id)
         if message_session_id != session_id:
             visible_copy = "Open the original session before retrying this message."
-            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            self._set_run_state(
+                ConsoleRunState.blocked(visible_copy), session_id=session_id
+            )
             return ConsoleSubmitResult(False, False, visible_copy)
         if message.status != "failed":
             return self._block(session_id, "Only failed messages can be retried.")
 
-        self._set_run_state(ConsoleRunState.retrying("Retrying failed response."))
+        self._set_run_state(
+            ConsoleRunState.retrying("Retrying failed response."),
+            session_id=session_id,
+        )
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection()
         )
@@ -1948,11 +2031,14 @@ class ConsoleChatController:
             visible_copy = (
                 "Open the original session before continuing from this message."
             )
-            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            self._set_run_state(
+                ConsoleRunState.blocked(visible_copy), session_id=session_id
+            )
             return ConsoleSubmitResult(False, False, visible_copy)
 
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
+            session_id=session_id,
         )
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection()
@@ -2051,11 +2137,14 @@ class ConsoleChatController:
             )
         if self.store.session_id_for_message(message_id) != session_id:
             visible_copy = "Open the original session before regenerating this message."
-            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            self._set_run_state(
+                ConsoleRunState.blocked(visible_copy), session_id=session_id
+            )
             return ConsoleSubmitResult(False, False, visible_copy)
 
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
+            session_id=session_id,
         )
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection()
@@ -2157,14 +2246,18 @@ class ConsoleChatController:
             return ConsoleSubmitResult(False, False, "No active Console session.")
 
         if message_id not in self.store.active_path_message_ids(session_id):
-            return self._summarize_block("Switch to that branch before summarizing.")
+            return self._summarize_block(
+                session_id, "Switch to that branch before summarizing."
+            )
         try:
             target = self.store.get_message(message_id)
         except KeyError:
-            return self._summarize_block("Switch to that branch before summarizing.")
+            return self._summarize_block(
+                session_id, "Switch to that branch before summarizing."
+            )
         if target.role is not ConsoleMessageRole.USER:
             return self._summarize_block(
-                "Only your own messages can be summarized up to here."
+                session_id, "Only your own messages can be summarized up to here."
             )
 
         messages = self.store.messages_for_session(session_id)
@@ -2172,14 +2265,18 @@ class ConsoleChatController:
             (i for i, m in enumerate(messages) if m.id == message_id), None
         )
         if target_index is None:
-            return self._summarize_block("Switch to that branch before summarizing.")
+            return self._summarize_block(
+                session_id, "Switch to that branch before summarizing."
+            )
         before = [
             m
             for m in messages[:target_index]
             if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
         ]
         if not before:
-            return self._summarize_block("Nothing to summarize before that message.")
+            return self._summarize_block(
+                session_id, "Nothing to summarize before that message."
+            )
 
         # Rolling compaction: when a prior boundary sits on this path BEFORE the
         # target, the prior summary already covers everything strictly before
@@ -2203,14 +2300,16 @@ class ConsoleChatController:
 
         # "Summarizing..." run state, set the way regenerate sets VALIDATING.
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…")
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…"),
+            session_id=session_id,
         )
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection()
         )
         if not getattr(resolution, "ready", False):
             return self._summarize_block(
-                self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+                session_id,
+                self._blocked_visible_copy(getattr(resolution, "visible_copy", "")),
             )
 
         span_text = self._build_summary_span_text(
@@ -2234,26 +2333,38 @@ class ConsoleChatController:
                 "Console summarize-up-to failed", error=str(error)
             )
             visible_copy = "Couldn't summarize the conversation. Try again."
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+                session_id=session_id,
+            )
             return ConsoleSubmitResult(False, False, visible_copy)
 
         if not summary_text.strip():
-            return self._summarize_block("The model returned an empty summary.")
+            return self._summarize_block(
+                session_id, "The model returned an empty summary."
+            )
 
         self.store.set_session_context_summary(session_id, summary_text, message_id)
         turns = sum(1 for m in before if m.role is ConsoleMessageRole.USER)
         visible_copy = f"Summarized {turns} earlier turn{'s' if turns != 1 else ''}."
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, visible_copy))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, visible_copy),
+            session_id=session_id,
+        )
         return ConsoleSubmitResult(True, False, visible_copy)
 
-    def _summarize_block(self, visible_copy: str) -> ConsoleSubmitResult:
+    def _summarize_block(
+        self, session_id: str, visible_copy: str
+    ) -> ConsoleSubmitResult:
         """Blocked-summarize result that mutates NO transcript state.
 
         Unlike ``_block`` (which appends a SYSTEM row), a blocked summarize
         must leave the transcript untouched -- the run-state copy alone carries
         the reason to the control surfaces (Phase B discipline).
         """
-        self._set_run_state(ConsoleRunState.blocked(visible_copy))
+        self._set_run_state(
+            ConsoleRunState.blocked(visible_copy), session_id=session_id
+        )
         return ConsoleSubmitResult(False, False, visible_copy)
 
     def _build_summary_span_text(
@@ -2386,7 +2497,9 @@ class ConsoleChatController:
             )
         if self.store.session_id_for_message(message_id) != session_id:
             visible_copy = "Open the original session before editing this message."
-            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            self._set_run_state(
+                ConsoleRunState.blocked(visible_copy), session_id=session_id
+            )
             return ConsoleSubmitResult(False, False, visible_copy)
         if message_id not in self.store.active_path_message_ids(session_id):
             # Task 2 review fix (Qodo finding 2): `_provider_messages_for_session`
@@ -2418,7 +2531,8 @@ class ConsoleChatController:
                 return self._block(session_id, block_reason)
 
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
+            session_id=session_id,
         )
         resolution = await self.provider_gateway.resolve_for_send(
             self._provider_selection()
@@ -3530,7 +3644,9 @@ class ConsoleChatController:
         return copy or "Provider blocked."
 
     def _block(self, session_id: str, visible_copy: str) -> ConsoleSubmitResult:
-        self._set_run_state(ConsoleRunState.blocked(visible_copy))
+        self._set_run_state(
+            ConsoleRunState.blocked(visible_copy), session_id=session_id
+        )
         self.store.append_message(
             session_id,
             role=ConsoleMessageRole.SYSTEM,
@@ -3803,6 +3919,9 @@ class ConsoleChatController:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
+            # The message itself is already gone -- no owning session to
+            # attribute this to; default (active session) is a harmless
+            # no-op since nothing will ever read a closed session's state.
             return self._session_closed_result()
         owner = next((s for s in self.store.sessions() if s.id == owner_id), None)
         # task-427: a character session always takes the plain-provider
@@ -3930,9 +4049,10 @@ class ConsoleChatController:
             try:
                 self.store.append_stream_chunk(assistant_message_id, prefill)
             except KeyError:
-                return self._session_closed_result()
+                return self._session_closed_result(session_id=owner_id)
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."),
+            session_id=owner_id,
         )
         retry_prepared = False
         emitted_content = False
@@ -3960,7 +4080,7 @@ class ConsoleChatController:
                             retry_prepared=retry_prepared,
                         )
                     except KeyError:
-                        return self._session_closed_result()
+                        return self._session_closed_result(session_id=owner_id)
                     self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                     return ConsoleSubmitResult(True, True, stopped.content)
                 if prepare_retry and not retry_prepared:
@@ -3972,11 +4092,11 @@ class ConsoleChatController:
                                 assistant_message_id, prefill
                             )
                         except KeyError:
-                            return self._session_closed_result()
+                            return self._session_closed_result(session_id=owner_id)
                 try:
                     self.store.append_stream_chunk(assistant_message_id, chunk)
                 except KeyError:
-                    return self._session_closed_result()
+                    return self._session_closed_result(session_id=owner_id)
                 if chunk:
                     emitted_content = True
             if self._stop_requested:
@@ -3988,25 +4108,26 @@ class ConsoleChatController:
                         retry_prepared=retry_prepared,
                     )
                 except KeyError:
-                    return self._session_closed_result()
+                    return self._session_closed_result(session_id=owner_id)
                 self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                 return ConsoleSubmitResult(True, True, stopped.content)
             if not emitted_content:
                 try:
                     failed = self.store.get_message(assistant_message_id)
                 except KeyError:
-                    return self._session_closed_result()
+                    return self._session_closed_result(session_id=owner_id)
                 self._set_run_state(
                     ConsoleRunState(
                         ConsoleRunStatus.FAILED,
                         "Provider stream ended without content.",
-                    )
+                    ),
+                    session_id=owner_id,
                 )
                 if not prepare_retry:
                     try:
                         failed = self.store.mark_message_failed(assistant_message_id)
                     except KeyError:
-                        return self._session_closed_result()
+                        return self._session_closed_result(session_id=owner_id)
                 return ConsoleSubmitResult(True, True, failed.content)
             if citation_repair_session is not None and stream_signals is not None:
                 try:
@@ -4029,9 +4150,10 @@ class ConsoleChatController:
                 else:
                     completed = self.store.mark_message_complete(assistant_message_id)
             except KeyError:
-                return self._session_closed_result()
+                return self._session_closed_result(session_id=owner_id)
             self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
+                ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
+                session_id=owner_id,
             )
             self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
             return ConsoleSubmitResult(True, True, completed.content)
@@ -4045,7 +4167,7 @@ class ConsoleChatController:
                         retry_prepared=retry_prepared,
                     )
                 except KeyError:
-                    return self._session_closed_result()
+                    return self._session_closed_result(session_id=owner_id)
                 self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
@@ -4060,14 +4182,15 @@ class ConsoleChatController:
                 else:
                     self.store.get_message(assistant_message_id)
             except KeyError:
-                return self._session_closed_result()
-            try:
-                session_id = self.store.session_id_for_message(assistant_message_id)
-            except KeyError:
-                session_id = None
-            if session_id is not None:
-                self._append_failure_system_row(session_id, visible_copy)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+                return self._session_closed_result(session_id=owner_id)
+            # Reuse the guarded owner_id resolved at the top of this method
+            # (rather than re-deriving it) -- this is the run's OWNING
+            # session regardless of whatever the user currently has open.
+            self._append_failure_system_row(owner_id, visible_copy)
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+                session_id=owner_id,
+            )
             return ConsoleSubmitResult(True, True, visible_copy)
 
     async def _select_post_generation_body(
@@ -4377,13 +4500,18 @@ class ConsoleChatController:
         # thread observe a Stop correctly (task-227).
         cancel_event = threading.Event()
         self._active_cancel_event = cancel_event
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running.")
-        )
+        # Resolve the run's OWNING session BEFORE stamping run state, so the
+        # very first _set_run_state below (and every other one in this
+        # method) targets it explicitly rather than falling back to
+        # whatever the user currently has open (parallel-agents spec §2).
         try:
             session_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
+            session_id=session_id,
+        )
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
         elif prepare_retry:
@@ -4517,7 +4645,7 @@ class ConsoleChatController:
                         assistant_message_id, visible_copy="Response stopped."
                     )
                 except KeyError:
-                    return self._session_closed_result()
+                    return self._session_closed_result(session_id=session_id)
                 # task-543: this is the dominant user-Stop path --
                 # ``task.cancel()`` raised before ``(run_id, outcome)`` ever
                 # bound, so recover the active run's id via the bridge's
@@ -4557,9 +4685,12 @@ class ConsoleChatController:
             try:
                 self.store.mark_message_failed(assistant_message_id)
             except KeyError:
-                return self._session_closed_result()
+                return self._session_closed_result(session_id=session_id)
             self._append_failure_system_row(session_id, visible_copy)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+                session_id=session_id,
+            )
             return ConsoleSubmitResult(True, True, visible_copy)
         finally:
             if self._active_cancel_event is cancel_event:
@@ -4569,11 +4700,14 @@ class ConsoleChatController:
                 # to, forever, regardless of this attribute now pointing
                 # elsewhere (or nowhere) for the NEXT run (task-227).
                 self._active_cancel_event = None
+            # `session_id` (not the facade): this run's OWN outcome, not
+            # whatever the user currently has open (parallel-agents spec §2).
+            run_state = self.run_state_for(session_id)
             logger.info(
                 "console agent reply end",
                 assistant_message_id=assistant_message_id,
-                run_status=self.run_state.status.value,
-                run_copy=self.run_state.visible_copy,
+                run_status=run_state.status.value,
+                run_copy=run_state.visible_copy,
             )
 
         # Captured here, before `_finalize_agent_reply` runs: this run's own
@@ -4650,7 +4784,8 @@ class ConsoleChatController:
             # fallback -- correct).
             self._record_run_assistant_message(run_id, current)
             self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
+                ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped."),
+                session_id=session_id,
             )
             return ConsoleSubmitResult(True, True, current.content if current is not None else "")
 
@@ -4738,7 +4873,10 @@ class ConsoleChatController:
         else:
             failed = self._append_failed_assistant(session_id, visible_copy)
         self._record_run_assistant_message(run_id, failed)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+            session_id=session_id,
+        )
         return ConsoleSubmitResult(True, True, failed.content)
 
     def _finalize_agent_failure(
@@ -4769,7 +4907,10 @@ class ConsoleChatController:
             failed = self.store.mark_message_failed(assistant_message_id)
             self._record_run_assistant_message(run_id, failed)
             self._append_failure_system_row(session_id, visible_copy)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+                session_id=session_id,
+            )
             return ConsoleSubmitResult(True, True, failed.content)
 
         runtime_written = self._find_runtime_written_assistant(session_id)
@@ -4779,7 +4920,10 @@ class ConsoleChatController:
         else:
             failed = self._append_failed_assistant(session_id, visible_copy)
         self._record_run_assistant_message(run_id, failed)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+            session_id=session_id,
+        )
         return ConsoleSubmitResult(True, True, failed.content)
 
     async def _finalize_agent_success(
@@ -4834,21 +4978,30 @@ class ConsoleChatController:
                     )
             completed = self._complete_agent_message(assistant_message_id, variant_mode, outcome)
             self._record_run_assistant_message(run_id, completed)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
+                session_id=session_id,
+            )
             return ConsoleSubmitResult(True, True, completed.content)
 
         runtime_written = self._find_runtime_written_assistant(session_id)
         if runtime_written is not None and runtime_written.status in {"pending", "streaming"}:
             completed = self._complete_agent_message(runtime_written.id, variant_mode=False, outcome=outcome)
             self._record_run_assistant_message(run_id, completed)
-            self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
+                session_id=session_id,
+            )
             return ConsoleSubmitResult(True, True, completed.content)
 
         final_text = getattr(outcome, "final_text", "") or "No response was generated."
         completed = self.store.append_message(
             session_id, role=ConsoleMessageRole.ASSISTANT, content=final_text)
         self._record_run_assistant_message(run_id, completed)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
+            session_id=session_id,
+        )
         return ConsoleSubmitResult(True, True, completed.content)
 
     def _record_run_assistant_message(
@@ -5231,22 +5384,60 @@ class ConsoleChatController:
                 stopped = self.store.mark_message_stopped(assistant_message_id)
             except ValueError:
                 stopped = self.store.get_message(assistant_message_id)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy))
+        # Derive the owning session the same way `_active_stream_belongs_to_
+        # session`/`streaming_session_id` do, rather than requiring every
+        # caller to thread it through -- `assistant_message_id` is stable
+        # even once the run finishes, so this is always resolvable unless
+        # the session was closed out from under the run (in which case
+        # there is nothing left to attribute the STOPPED stamp to).
+        try:
+            owner_id = self.store.session_id_for_message(assistant_message_id)
+        except KeyError:
+            owner_id = None
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
+            session_id=owner_id,
+        )
         return stopped
 
-    def _set_run_state(self, run_state: ConsoleRunState) -> None:
-        self.run_state = run_state
-        self.run_state_history.append(run_state.status)
+    def _set_run_state(
+        self, run_state: ConsoleRunState, *, session_id: str | None = None
+    ) -> None:
+        """Write ``run_state`` for ``session_id`` (default: the active session).
 
-    def _clear_terminal_run_state(self) -> None:
-        """Clear stale terminal status copy when the active session changes."""
-        if self.run_state.status in {
+        Parallel-agents spec §2: this is the ONLY path that mutates the
+        per-session run-state map -- ``run_state``/``run_state_history``
+        stay read-only facades (see their property definitions near
+        ``__init__``). ``session_id=None`` preserves every pre-existing
+        call site's behavior (targets whatever session is currently active);
+        callers that know the run's OWNING session (which may not be the
+        active one once a background run outlives a session switch) pass it
+        explicitly.
+        """
+        target = session_id if session_id is not None else (
+            self.store.active_session_id or ""
+        )
+        self._run_states[target] = run_state
+        self.run_state_history_for(target).append(run_state.status)
+
+    def _clear_terminal_run_state(self, session_id: str | None = None) -> None:
+        """Clear stale terminal status copy for ``session_id`` (default: active).
+
+        Parallel-agents spec §2: terminal-only guard preserved verbatim --
+        a NON-terminal (e.g. STREAMING) run is never reset by this, so a
+        background run in progress on another session is untouched when the
+        viewed session changes.
+        """
+        target = session_id if session_id is not None else (
+            self.store.active_session_id or ""
+        )
+        if self.run_state_for(target).status in {
             ConsoleRunStatus.BLOCKED,
             ConsoleRunStatus.COMPLETED,
             ConsoleRunStatus.FAILED,
             ConsoleRunStatus.STOPPED,
         }:
-            self._set_run_state(ConsoleRunState())
+            self._set_run_state(ConsoleRunState(), session_id=target)
 
     def _active_stream_belongs_to_session(self, session_id: str) -> bool:
         if self._active_assistant_message_id is None:
@@ -5268,9 +5459,25 @@ class ConsoleChatController:
         except KeyError:
             return None
 
-    def _session_closed_result(self) -> ConsoleSubmitResult:
+    def _session_closed_result(
+        self, *, session_id: str | None = None
+    ) -> ConsoleSubmitResult:
+        """Result for a KeyError caused by the message's session vanishing mid-run.
+
+        ``session_id`` is the run's owning session when the caller still has
+        it in scope (most call sites do -- ``owner_id``/``session_id``
+        resolved earlier in the same method); ``None`` only where the very
+        first lookup of that owning session is what failed, i.e. there is
+        genuinely nothing to attribute the STOPPED stamp to. Either way the
+        owning session no longer exists in the store (``close_session``
+        purges it), so this write is at worst an orphaned map entry -- never
+        a stamp on a live, currently-viewed session.
+        """
         visible_copy = "Session closed."
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
+            session_id=session_id,
+        )
         return ConsoleSubmitResult(True, True, visible_copy)
 
     def _active_run_rejection(self) -> ConsoleSubmitResult | None:
