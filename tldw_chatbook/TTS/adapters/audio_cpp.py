@@ -27,6 +27,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProgress,
     TTSProviderCatalog,
     TTSRequest,
+    TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_contract import (
@@ -184,7 +185,7 @@ _GENERATION_TIMEOUT = _OperationFailure(
 
 @dataclass(frozen=True, slots=True)
 class _VoiceCacheEntry:
-    voices: tuple[str, ...]
+    result: TTSVoiceDiscoveryResult
     estimated_bytes: int
 
 
@@ -270,7 +271,7 @@ class AudioCppAdapter:
         self._voice_lock_users: dict[_VoiceCacheKey, int] = {}
         self._voice_shared_results: dict[
             _VoiceCacheKey,
-            tuple[int, tuple[str, ...]],
+            tuple[int, TTSVoiceDiscoveryResult],
         ] = {}
         self._close_lock = asyncio.Lock()
         self._close_task: asyncio.Task[None] | None = None
@@ -296,14 +297,31 @@ class AudioCppAdapter:
         model_id: str,
         refresh: bool = False,
     ) -> tuple[str, ...]:
-        """Return optional voices for one exact model in the current catalog."""
+        """Return the compatibility tuple projection of voice observation."""
+        result = await self.observe_voices(model_id, refresh=refresh)
+        return result.voices if result.state == "complete" else ()
+
+    async def observe_voices(
+        self,
+        model_id: str,
+        refresh: bool = False,
+    ) -> TTSVoiceDiscoveryResult:
+        """Observe optional voices without discarding discovery authority."""
         await self.ensure_ready()
         force = refresh
 
         while True:
             catalog = self._catalog
-            if self._closed or not self._catalog_contains(catalog, model_id):
-                return ()
+            if self._closed or not catalog.health.fresh:
+                return self._unverified_voice_result(model_id, catalog.revision)
+            if not self._catalog_contains(catalog, model_id):
+                return TTSVoiceDiscoveryResult(
+                    provider_id=_PROVIDER_ID,
+                    model_id=model_id,
+                    catalog_revision=catalog.revision,
+                    voices=(),
+                    state="model_missing",
+                )
 
             key = (catalog.revision, model_id)
             started_generation = self._voice_generation.get(key, 0)
@@ -317,8 +335,11 @@ class AudioCppAdapter:
                         or not self._catalog_contains(current, model_id)
                     ):
                         continue
-                    if self._closed:
-                        return ()
+                    if self._closed or not current.health.fresh:
+                        return self._unverified_voice_result(
+                            model_id,
+                            current.revision,
+                        )
 
                     current_generation = self._voice_generation.get(key, 0)
                     if current_generation != started_generation:
@@ -333,9 +354,15 @@ class AudioCppAdapter:
                         if cached is not None:
                             return cached
 
-                    voices = await self._fetch_voices(model_id)
+                    result = await self._fetch_voices(
+                        model_id,
+                        catalog.revision,
+                    )
                     if self._closed:
-                        return ()
+                        return self._unverified_voice_result(
+                            model_id,
+                            self._catalog.revision,
+                        )
                     if self._catalog.revision != catalog.revision:
                         continue
 
@@ -343,10 +370,10 @@ class AudioCppAdapter:
                     self._voice_generation[key] = next_generation
                     self._voice_shared_results[key] = (
                         next_generation,
-                        voices,
+                        result,
                     )
-                    self._cache_voice_result(key, voices)
-                    return voices
+                    self._cache_voice_result(key, result)
+                    return result
             finally:
                 self._release_voice_lock_user(key, lock)
 
@@ -721,18 +748,29 @@ class AudioCppAdapter:
             self._refresh_generation += 1
             self._clear_voice_state()
 
-    async def _fetch_voices(self, model_id: str) -> tuple[str, ...]:
+    async def _fetch_voices(
+        self,
+        model_id: str,
+        catalog_revision: int,
+    ) -> TTSVoiceDiscoveryResult:
         try:
             async with asyncio.timeout(self._config.connect_timeout_seconds):
                 body = await self._safe_get(
                     "/v1/audio/voices",
                     params={"model": model_id},
                 )
-                return parse_voices_response(
+                voices = parse_voices_response(
                     body,
                     max_metadata_bytes=self._config.max_metadata_bytes,
                     max_identifier_characters=(self._config.max_identifier_characters),
                     max_voices=self._config.max_voices_per_model,
+                )
+                return TTSVoiceDiscoveryResult(
+                    provider_id=_PROVIDER_ID,
+                    model_id=model_id,
+                    catalog_revision=catalog_revision,
+                    voices=voices,
+                    state="complete",
                 )
         except asyncio.CancelledError:
             raise
@@ -742,7 +780,7 @@ class AudioCppAdapter:
             _HttpContractFailure,
             AudioCppContractError,
         ):
-            return ()
+            return self._unverified_voice_result(model_id, catalog_revision)
 
     async def _safe_get(
         self,
@@ -865,23 +903,23 @@ class AudioCppAdapter:
     def _cached_voice_result(
         self,
         key: _VoiceCacheKey,
-    ) -> tuple[str, ...] | None:
+    ) -> TTSVoiceDiscoveryResult | None:
         entry = self._voice_cache.get(key)
         if entry is None:
             return None
         self._voice_cache.move_to_end(key)
-        return entry.voices
+        return entry.result
 
     def _cache_voice_result(
         self,
         key: _VoiceCacheKey,
-        voices: tuple[str, ...],
+        result: TTSVoiceDiscoveryResult,
     ) -> None:
         existing = self._voice_cache.pop(key, None)
         if existing is not None:
             self._voice_cache_bytes -= existing.estimated_bytes
 
-        estimated_bytes = _estimate_voice_cache_entry_bytes(key, voices)
+        estimated_bytes = _estimate_voice_cache_entry_bytes(key, result.voices)
         if (
             _MAX_VOICE_CACHE_ENTRIES <= 0
             or _MAX_VOICE_CACHE_BYTES <= 0
@@ -891,7 +929,7 @@ class AudioCppAdapter:
             return
 
         self._voice_cache[key] = _VoiceCacheEntry(
-            voices=voices,
+            result=result,
             estimated_bytes=estimated_bytes,
         )
         self._voice_cache_bytes += estimated_bytes
@@ -942,6 +980,19 @@ class AudioCppAdapter:
         if self._closed:
             return
         self._catalog = self._failed_catalog(self._catalog, health)
+
+    @staticmethod
+    def _unverified_voice_result(
+        model_id: str,
+        catalog_revision: int,
+    ) -> TTSVoiceDiscoveryResult:
+        return TTSVoiceDiscoveryResult(
+            provider_id=_PROVIDER_ID,
+            model_id=model_id,
+            catalog_revision=catalog_revision,
+            voices=(),
+            state="unverified",
+        )
 
     @staticmethod
     def _operation_error(

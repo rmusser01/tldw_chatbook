@@ -9,6 +9,9 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSProviderDescriptor,
     TTSRequest,
+    TTSStructuredVoiceAdapter,
+    TTSVoiceDiscoveryResult,
+    VoiceDiscoveryState,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest, NormalizationOptions
 from tldw_chatbook.TTS.playground_types import (
@@ -72,7 +75,10 @@ __all__ = [
     "TTSProviderCatalog",
     "TTSProviderDescriptor",
     "TTSRequest",
+    "TTSStructuredVoiceAdapter",
+    "TTSVoiceDiscoveryResult",
     "TTSService",
+    "VoiceDiscoveryState",
     "bind_tts_service",
     "close_tts_resources",
     "canonical_json_options",

@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 ProgressSink = Callable[["TTSProgress"], Awaitable[None]]
 CleanupCallback = Callable[[], Awaitable[None]]
@@ -24,6 +24,7 @@ TTSOperationCode = Literal[
     "audio_response_invalid",
     "generation_timeout",
 ]
+VoiceDiscoveryState = Literal["complete", "model_missing", "unverified"]
 
 
 class UnknownTTSProviderError(LookupError):
@@ -196,6 +197,35 @@ class TTSProviderCatalog:
 
 
 @dataclass(frozen=True, slots=True)
+class TTSVoiceDiscoveryResult:
+    """An immutable, status-aware observation of one model's voices."""
+
+    provider_id: str
+    model_id: str
+    catalog_revision: int
+    voices: tuple[str, ...]
+    state: VoiceDiscoveryState
+
+    def __post_init__(self) -> None:
+        if type(self.provider_id) is not str or not self.provider_id:
+            raise ValueError("Voice discovery provider ID must be a non-empty string")
+        if type(self.model_id) is not str or not self.model_id:
+            raise ValueError("Voice discovery model ID must be a non-empty string")
+        if type(self.catalog_revision) is not int:
+            raise TypeError("Voice discovery catalog revision must be an integer")
+        if self.catalog_revision < 0:
+            raise ValueError("Voice discovery catalog revision must be nonnegative")
+        if type(self.voices) is not tuple or any(
+            type(voice) is not str or not voice for voice in self.voices
+        ):
+            raise TypeError("Voice discovery voices must be a tuple of non-empty strings")
+        if type(self.state) is not str:
+            raise TypeError("Voice discovery state must be a string")
+        if self.state not in ("complete", "model_missing", "unverified"):
+            raise ValueError("Voice discovery state is invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class TTSProviderDescriptor:
     provider_id: str
     display_name: str
@@ -288,6 +318,18 @@ class TTSAdapter(Protocol):
         raise NotImplementedError
 
     async def close(self) -> None:
+        raise NotImplementedError
+
+
+@runtime_checkable
+class TTSStructuredVoiceAdapter(Protocol):
+    """Optional adapter capability for authoritative voice discovery state."""
+
+    async def observe_voices(
+        self,
+        model_id: str,
+        refresh: bool = False,
+    ) -> TTSVoiceDiscoveryResult:
         raise NotImplementedError
 
 

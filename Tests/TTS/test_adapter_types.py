@@ -4,8 +4,13 @@ from typing import get_args
 
 import pytest
 
-from tldw_chatbook.TTS import adapter_types
-from tldw_chatbook.TTS.adapter_types import TTSAudioResponse, TTSRequest
+from tldw_chatbook.TTS import VoiceDiscoveryState, adapter_types
+from tldw_chatbook.TTS.adapter_types import (
+    TTSAudioResponse,
+    TTSRequest,
+    TTSStructuredVoiceAdapter,
+    TTSVoiceDiscoveryResult,
+)
 
 
 @pytest.mark.asyncio
@@ -79,6 +84,99 @@ def test_tts_request_copies_options_at_the_boundary() -> None:
     assert request.options == {"temperature": 0.5}
     with pytest.raises(TypeError):
         request.options["temperature"] = 0.2  # type: ignore[index]
+
+
+def test_voice_discovery_result_is_frozen_and_uses_an_immutable_voice_tuple() -> None:
+    result = TTSVoiceDiscoveryResult(
+        provider_id="audio_cpp",
+        model_id="supertonic",
+        catalog_revision=4,
+        voices=("voice-a",),
+        state="complete",
+    )
+
+    assert result.voices == ("voice-a",)
+    with pytest.raises(AttributeError):
+        result.voices = ()  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "updates",
+    (
+        {"provider_id": ""},
+        {"model_id": ""},
+        {"catalog_revision": -1},
+        {"catalog_revision": True},
+        {"voices": ["voice-a"]},
+        {"voices": ("voice-a", 1)},
+        {"state": "unknown"},
+    ),
+)
+def test_voice_discovery_result_rejects_invalid_or_mutable_state(
+    updates: dict[str, object],
+) -> None:
+    values: dict[str, object] = {
+        "provider_id": "audio_cpp",
+        "model_id": "supertonic",
+        "catalog_revision": 4,
+        "voices": ("voice-a",),
+        "state": "complete",
+    }
+    values.update(updates)
+
+    with pytest.raises((TypeError, ValueError)):
+        TTSVoiceDiscoveryResult(**values)  # type: ignore[arg-type]
+
+
+def test_voice_discovery_result_rejects_a_string_subclass_state() -> None:
+    class CompleteState(str):
+        pass
+
+    with pytest.raises(TypeError):
+        TTSVoiceDiscoveryResult(
+            provider_id="audio_cpp",
+            model_id="supertonic",
+            catalog_revision=4,
+            voices=("voice-a",),
+            state=CompleteState("complete"),  # type: ignore[arg-type]
+        )
+
+
+def test_structured_voice_adapter_runtime_protocol_detects_observe_voices() -> None:
+    class StructuredAdapter:
+        async def observe_voices(
+            self,
+            model_id: str,
+            refresh: bool = False,
+        ) -> TTSVoiceDiscoveryResult:
+            del refresh
+            return TTSVoiceDiscoveryResult(
+                provider_id="audio_cpp",
+                model_id=model_id,
+                catalog_revision=0,
+                voices=(),
+                state="complete",
+            )
+
+    class LegacyAdapter:
+        async def get_voices(
+            self,
+            model_id: str,
+            refresh: bool = False,
+        ) -> tuple[str, ...]:
+            del model_id, refresh
+            return ()
+
+    assert isinstance(StructuredAdapter(), TTSStructuredVoiceAdapter)
+    assert not isinstance(LegacyAdapter(), TTSStructuredVoiceAdapter)
+
+
+def test_voice_discovery_state_is_exported_from_the_tts_package() -> None:
+    assert get_args(VoiceDiscoveryState) == (
+        "complete",
+        "model_missing",
+        "unverified",
+    )
 
 
 def test_audio_response_copies_metadata_at_the_boundary() -> None:
