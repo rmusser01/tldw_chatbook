@@ -167,7 +167,8 @@ async def test_none_choice_just_refocuses_composer_without_mutation():
 @pytest.mark.asyncio
 async def test_summarize_up_to_choice_dispatches_console_run_worker_without_mutation():
     """SP2 Task 3: the summarize-up-to choice runs the boundary-summary flow on
-    the exclusive ``console-run`` worker group and never does tree surgery."""
+    the exclusive per-session ``console-run-{session_id}`` worker group (see
+    the parallel-agents spec Sec3) and never does tree surgery."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -192,7 +193,9 @@ async def test_summarize_up_to_choice_dispatches_console_run_worker_without_muta
         await pilot.pause()
 
     assert spy_worker.call_count == 1
-    assert spy_worker.call_args.kwargs.get("group") == "console-run"
+    group = spy_worker.call_args.kwargs.get("group")
+    assert isinstance(group, str) and group.startswith("console-run-"), group
+    assert group == f"console-run-{session.id}", group
     # Summarize never mutates the transcript tree, and nothing is stored until
     # the (unrun) worker succeeds.
     assert store.active_path_message_ids(session.id) == original_path
