@@ -1,11 +1,11 @@
 ---
 id: TASK-982
 title: Do not retain moved-from File Notes paths as restorable deletions
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-27 18:50'
-updated_date: '2026-07-27 18:58'
+updated_date: '2026-07-27 19:17'
 labels:
   - bug
   - notes
@@ -21,10 +21,10 @@ A Chatbook-initiated File Notes move currently tombstones the source path after 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A successful Chatbook move leaves only the destination active and searchable in the replica
-- [ ] #2 The moved-from source is absent from list_deleted() and the Recently deleted UI
-- [ ] #3 Actual Chatbook deletions and externally detected missing files remain tombstoned and restorable
-- [ ] #4 Disk and session reporting continue to record the operation as moved source to destination
+- [x] #1 A successful Chatbook move leaves only the destination active and searchable in the replica
+- [x] #2 The moved-from source is absent from list_deleted() and the Recently deleted UI
+- [x] #3 Actual Chatbook deletions and externally detected missing files remain tombstoned and restorable
+- [x] #4 Disk and session reporting continue to record the operation as moved source to destination
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,3 +39,9 @@ ADR required: no
 ADR path: backlog/decisions/029-file-notes-disk-authority.md (existing)
 Reason: This corrects move behavior to match the accepted distinction between moves and deletion tombstones; it changes no schema, authority rule, or cross-module interface.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented an atomic replica move that publishes destination bytes and removes only the active source projection without creating a source tombstone. Added session-local retry handling for transient replica failures, including safe source-path reuse and destination deletion so retained bytes keep the correct recovery identity. Updated the mounted workspace regression to verify the moved-from path never appears under Recently deleted while genuine deletions remain restorable. ADR: existing backlog/decisions/029-file-notes-disk-authority.md applies; no new ADR was required. Verification after rebasing on current dev: 48 focused replica/service tests passed, the mounted create/move/delete/protect/restore UI test passed, targeted Ruff passed, production modules compiled, and git diff --check passed. Modified File Notes replica, service, focused tests, mounted workspace test, and this task record.
+<!-- SECTION:NOTES:END -->
