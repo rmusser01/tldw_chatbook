@@ -267,6 +267,26 @@ def test_newer_schema_is_rejected_without_mutation(tmp_path: Path) -> None:
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         )
         """,
+        # Profile UUID identity must retain canonical BINARY equality.
+        """
+        CREATE TABLE tts_generation_profiles (
+            profile_id TEXT PRIMARY KEY COLLATE NOCASE, display_name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL UNIQUE, provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL, voice_id TEXT, response_format TEXT NOT NULL,
+            speed REAL NOT NULL, options_json TEXT NOT NULL, revision INTEGER NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )
+        """,
+        # Profile UUID identity must use the approved ascending key direction.
+        """
+        CREATE TABLE tts_generation_profiles (
+            profile_id TEXT PRIMARY KEY DESC, display_name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL UNIQUE, provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL, voice_id TEXT, response_format TEXT NOT NULL,
+            speed REAL NOT NULL, options_json TEXT NOT NULL, revision INTEGER NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )
+        """,
     ],
 )
 def test_malformed_v1_profile_schema_is_rejected(tmp_path: Path, schema: str) -> None:
@@ -349,6 +369,8 @@ def test_incompatible_unique_index_does_not_satisfy_normalized_name_uniqueness(
     "defect",
     [
         "pk",
+        "pk_nocase",
+        "pk_desc",
         "extra_pk",
         "index",
         "partial_index",
@@ -374,15 +396,12 @@ def test_malformed_v1_assignment_schema_is_rejected(
         )
         """
     )
-    pk = (
-        "PRIMARY KEY(authority_id, source, character_id)"
-        if defect == "pk"
-        else (
-            "PRIMARY KEY(source, authority_id, character_id, tenant)"
-            if defect == "extra_pk"
-            else "PRIMARY KEY(source, authority_id, character_id)"
-        )
-    )
+    pk = {
+        "pk": "PRIMARY KEY(authority_id, source, character_id)",
+        "pk_nocase": ("PRIMARY KEY(source, authority_id COLLATE NOCASE, character_id)"),
+        "pk_desc": "PRIMARY KEY(source, authority_id DESC, character_id)",
+        "extra_pk": "PRIMARY KEY(source, authority_id, character_id, tenant)",
+    }.get(defect, "PRIMARY KEY(source, authority_id, character_id)")
     fk = (
         ""
         if defect == "fk"
@@ -422,6 +441,29 @@ def test_malformed_v1_assignment_schema_is_rejected(
             )
         )
         assert ASSIGNMENT_PROFILE_INDEX not in query_plan
+    if defect == "pk_nocase":
+        assignment_values = (
+            "local",
+            "Authority",
+            "character",
+            str(PROFILE_ID),
+            "2026-07-26T12:34:56.123456Z",
+            "2026-07-26T12:34:56.123456Z",
+        )
+        connection.execute(
+            "INSERT INTO character_tts_assignments VALUES (?, ?, ?, ?, ?, ?)",
+            assignment_values,
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO character_tts_assignments VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    assignment_values[0],
+                    "authority",
+                    *assignment_values[2:],
+                ),
+            )
+        connection.rollback()
     connection.execute("PRAGMA user_version = 1")
     connection.close()
 

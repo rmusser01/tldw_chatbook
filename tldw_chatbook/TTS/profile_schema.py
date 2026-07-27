@@ -410,19 +410,35 @@ def _table_info(connection: sqlite3.Connection, table: str) -> dict[str, sqlite3
     }
 
 
-def _has_exact_binary_index_key(
-    connection: sqlite3.Connection, index: str, column: str
+def _has_exact_binary_index_keys(
+    connection: sqlite3.Connection, index: str, columns: tuple[str, ...]
 ) -> bool:
     key_rows = [
         row
         for row in connection.execute(f"PRAGMA index_xinfo({index})")
         if row["key"] == 1
     ]
-    return len(key_rows) == 1 and (
-        key_rows[0]["name"],
-        key_rows[0]["desc"],
-        key_rows[0]["coll"],
-    ) == (column, 0, "BINARY")
+    return [(row["name"], row["desc"], row["coll"]) for row in key_rows] == [
+        (column, 0, "BINARY") for column in columns
+    ]
+
+
+def _has_exact_primary_key_index(
+    connection: sqlite3.Connection, table: str, columns: tuple[str, ...]
+) -> bool:
+    primary_indexes = [
+        row
+        for row in connection.execute(f"PRAGMA index_list({table})")
+        if row["origin"] == "pk"
+    ]
+    return (
+        len(primary_indexes) == 1
+        and primary_indexes[0]["unique"] == 1
+        and primary_indexes[0]["partial"] == 0
+        and _has_exact_binary_index_keys(
+            connection, primary_indexes[0]["name"], columns
+        )
+    )
 
 
 def _validate_schema(connection: sqlite3.Connection) -> None:
@@ -461,14 +477,16 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
             "profile_id"
         ]:
             raise ValueError
+        if not _has_exact_primary_key_index(connection, PROFILE_TABLE, ("profile_id",)):
+            raise ValueError
 
         unique_normalized = False
         for row in connection.execute(f"PRAGMA index_list({PROFILE_TABLE})"):
             if (
                 row["unique"] == 1
                 and row["partial"] == 0
-                and _has_exact_binary_index_key(
-                    connection, row["name"], "normalized_name"
+                and _has_exact_binary_index_keys(
+                    connection, row["name"], ("normalized_name",)
                 )
             ):
                 unique_normalized = True
@@ -501,6 +519,12 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
             "character_id",
         ]:
             raise ValueError
+        if not _has_exact_primary_key_index(
+            connection,
+            ASSIGNMENT_TABLE,
+            ("source", "authority_id", "character_id"),
+        ):
+            raise ValueError
 
         assignment_indexes = {
             row["name"]: row
@@ -512,8 +536,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
             or profile_index["origin"] != "c"
             or profile_index["partial"] != 0
             or profile_index["unique"] != 0
-            or not _has_exact_binary_index_key(
-                connection, ASSIGNMENT_PROFILE_INDEX, "profile_id"
+            or not _has_exact_binary_index_keys(
+                connection, ASSIGNMENT_PROFILE_INDEX, ("profile_id",)
             )
         ):
             raise ValueError
