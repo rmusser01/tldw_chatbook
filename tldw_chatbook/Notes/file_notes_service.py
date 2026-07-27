@@ -341,6 +341,64 @@ class FileNotesService:
         )
 
     @_serialized
+    def save_copy(
+        self,
+        opened: OpenedFileNote,
+        body: str,
+        destination_path: str,
+    ) -> OperationResult:
+        """Save an opened note's exact format to a new path without clobbering."""
+        if opened.root != self.root_key:
+            return _result(
+                "unsafe",
+                destination_path,
+                "Opened note belongs to another root",
+            )
+        if not opened.editable:
+            return _result("readonly", destination_path, opened.read_only_reason)
+        if not self._root_is_online():
+            return _result("offline", destination_path)
+        try:
+            path = self._safe_path(destination_path)
+        except ValueError as error:
+            return _result("unsafe", destination_path, str(error))
+        if not self._is_supported(path):
+            return _result("unsupported", destination_path)
+
+        raw_bytes = _serialize_body(opened, body)
+        if len(body) > MAX_FILE_CHARS or len(raw_bytes) > MAX_FILE_BYTES:
+            return _result("readonly", destination_path, "Edited content exceeds limits")
+
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags, 0o666)
+        except FileExistsError:
+            return _result("exists", destination_path)
+        except OSError as error:
+            if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+                return _result("unsafe", destination_path, str(error))
+            return _result("error", destination_path, str(error))
+        try:
+            with os.fdopen(descriptor, "wb") as destination:
+                destination.write(raw_bytes)
+        except OSError as error:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            return _result("error", destination_path, str(error))
+
+        content_hash = _digest(raw_bytes)
+        return self._finish_published_file(
+            "created",
+            destination_path,
+            path,
+            raw_bytes,
+            content_hash=content_hash,
+        )
+
+    @_serialized
     def create_file(self, relative_path: str, body: str = "") -> OperationResult:
         """Create one supported UTF-8 file with an exclusive filesystem open."""
         if not self._root_is_online():

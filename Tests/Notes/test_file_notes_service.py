@@ -107,6 +107,37 @@ def test_open_and_save_preserve_bom_frontmatter_crlf_final_newline_and_mode(
     ]
 
 
+def test_save_copy_preserves_exact_format_and_never_clobbers(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    source = root / "source.md"
+    source_bytes = b"\xef\xbb\xbf---\r\ntitle: Exact\r\n---\r\nold\r\nbody\r\n"
+    source.write_bytes(source_bytes)
+    occupied = root / "occupied.md"
+    occupied.write_bytes(b"keep me")
+    service = FileNotesService(root, replica)
+    opened = service.open_file(source.name)
+
+    result = service.save_copy(opened, "copied\nbody", "copy.md")
+
+    expected = b"\xef\xbb\xbf---\r\ntitle: Exact\r\n---\r\ncopied\r\nbody\r\n"
+    assert result.status == "ok"
+    assert source.read_bytes() == source_bytes
+    assert (root / "copy.md").read_bytes() == expected
+    assert replica.get_bytes(str(root.resolve()), "copy.md") == expected
+    assert service.session_changes[-1].action == "created"
+    changes = service.session_changes
+
+    existing = service.save_copy(opened, "replacement", occupied.name)
+
+    assert existing.status == "exists"
+    assert occupied.read_bytes() == b"keep me"
+    assert service.session_changes == changes
+
+
 @pytest.mark.parametrize("operation", ["save", "create", "restore"])
 def test_post_publication_stat_failure_still_records_success(
     operation: str,
