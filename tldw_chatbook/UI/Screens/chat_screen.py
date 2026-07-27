@@ -11274,6 +11274,7 @@ class ChatScreen(BaseAppScreen):
                     getattr(result, "state", None)
                     is not ActiveCitationTraceState.ACTIVE
                     or summary is None
+                    or getattr(result, "availability_warning", None) is not None
                     or not repository.verify_active_trace_result(result)
                 ):
                     continue

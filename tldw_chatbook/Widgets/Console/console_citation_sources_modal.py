@@ -250,7 +250,7 @@ class ConsoleCitationSourcesModal(ModalScreen[dict[str, str] | None]):
                         markup=False,
                     )
                     open_button = Button(
-                        "Open",
+                        "Open in Library",
                         id="console-citation-source-open",
                         disabled=True,
                     )

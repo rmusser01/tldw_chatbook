@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import StringIO
 from threading import Event
 from types import SimpleNamespace
@@ -12,6 +12,16 @@ from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import Button, ListItem, ListView, Static
 
+from Tests.Chat.test_citation_trace_repository import (
+    _identity as _repository_identity,
+    _persist as _persist_repository_trace,
+    _repository as _citation_repository,
+)
+from tldw_chatbook.Chat.citation_payload_lifecycle import (
+    CitationPayloadLifecycle,
+    PayloadRetentionPolicy,
+    PayloadTombstone,
+)
 from tldw_chatbook.Chat.citation_source_locators import (
     AuthorityScope,
     CitationReadAuthorization,
@@ -39,6 +49,7 @@ from tldw_chatbook.Chat.citation_trace_models import (
 )
 from tldw_chatbook.Chat.citation_trace_repository import (
     ActiveCitationTraceState,
+    CitationAvailabilityWarning,
     CitationHydrationResult,
     CitationHydrationState,
     CitationTraceSummary,
@@ -52,6 +63,7 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
     ConsoleCitationSourceRow,
@@ -500,6 +512,58 @@ async def test_discovery_queries_only_complete_persisted_assistants_with_two_arg
     assert all(type(value) is int for value in screen._console_citation_counts.values())
     assert "trace" not in repr(screen._console_citation_counts).lower()
     assert "snapshot" not in repr(screen._console_citation_counts).lower()
+
+
+def test_citation_count_read_hides_verified_active_revoked_trace(tmp_path) -> None:
+    db = CharactersRAGDB(
+        tmp_path / "citation-revoked-footer.sqlite",
+        client_id="citation-revoked-footer-test",
+    )
+    try:
+        repository = _citation_repository(db)
+        _persist_repository_trace(db, repository)
+        identity = _repository_identity(db)
+        CitationPayloadLifecycle(
+            repository,
+            retention_policy=PayloadRetentionPolicy(
+                policy_version="policy-1",
+                soft_deleted_owner_retention_seconds=0,
+                max_collection_batch_size=32,
+            ),
+        ).revoke(
+            local_trace_namespace(identity, trace_id="trace-1"),
+            snapshot_payload_id="snapshot-1",
+            tombstone=PayloadTombstone(
+                profile_id=identity.profile_id,
+                origin_namespace="local_payload_v1",
+                origin_payload_id="snapshot-1",
+                revocation_scope_id="snapshot-1",
+                reason_code="source_revoked",
+                policy_version="policy-1",
+                revoked_at=NOW,
+                retain_until=NOW + timedelta(days=30),
+            ),
+        )
+        active = repository.get_active_trace_for_current_message(
+            "message-1",
+            "Answer [S1].",
+        )
+
+        assert active.state is ActiveCitationTraceState.ACTIVE
+        assert (
+            active.availability_warning
+            is CitationAvailabilityWarning.EVIDENCE_REVOKED
+        )
+        assert repository.verify_active_trace_result(active) is True
+
+        counts = ChatScreen._read_console_citation_counts(
+            repository,
+            (("assistant-native", "message-1", "Answer [S1].", "complete"),),
+        )
+
+        assert counts == {"assistant-native": 0}
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -1274,6 +1338,7 @@ async def test_citation_open_source_returns_exact_library_navigation_context(
         assert isinstance(modal, ConsoleCitationSourcesModal)
         open_button = modal.query_one("#console-citation-source-open", Button)
         assert open_button.display is True
+        assert open_button.label.plain == "Open in Library"
 
         await pilot.click("#console-citation-source-open")
         await pilot.pause()
