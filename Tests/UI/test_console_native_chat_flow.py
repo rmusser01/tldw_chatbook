@@ -1011,6 +1011,11 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
     use), the already-existing session stays on its mount-time default
     provider and every send this helper is meant to unblock stays gated
     behind the first-run setup modal.
+
+    Args:
+        console: The ChatScreen instance to configure with llama.cpp provider
+            settings. Session settings are updated to route sends through the
+            configured llama.cpp endpoint.
     """
     app_config = console.app_instance.app_config
     api_settings = app_config.setdefault("api_settings", {})
@@ -7353,6 +7358,14 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     normally, so ``_serialize_native_console_state`` /
     ``_restore_native_console_state`` can be exercised as plain, fast
     unit-level round trips instead of a full pilot-driven screen.
+
+    Args:
+        store: The ConsoleChatStore instance to attach to the screen for
+            state serialization and restoration testing.
+
+    Returns:
+        ChatScreen: A bare ChatScreen instance with minimal initialization,
+            suitable for unit-level serialize/restore round-trip testing.
     """
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_chat_store = store
