@@ -1,0 +1,50 @@
+---
+id: TASK-602.1
+title: Stage gated Parakeet v3 batch routing
+status: In Progress
+assignee:
+  - '@codex'
+created_date: '2026-07-27 17:47'
+updated_date: '2026-07-27 17:48'
+labels:
+  - stt
+  - onnx
+  - ingestion
+dependencies: []
+references:
+  - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
+documentation:
+  - Docs/superpowers/specs/2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md
+parent_task_id: TASK-602
+priority: high
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Extend the working batch transcription path with explicit Parakeet v3 support and deterministic language routing while preserving the artifact/default-promotion gate.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Explicit parakeet-onnx plus en uses the local v2 INT8 bundle; explicit supported non-English uses the local v3 INT8 bundle; explicit auto, unsupported languages, and translation fail clearly with Retry with faster-whisper guidance.
+- [ ] #2 Semantic provider=default resolves to faster-whisper until the Parakeet promotion gate is enabled; the approved en/v2, supported non-English/v3, and auto-or-unsupported/faster-whisper policy is implemented without silently crossing engines.
+- [ ] #3 Parakeet v3 never receives a decoder language constraint and returns requested_language, effective_language=auto, detected_language=null, and requested_language_not_enforced.
+- [ ] #4 Batch audio and video preserve the resolved provider, model, language, model directory, and INT8 precision without downloading inside transcription workers.
+- [ ] #5 Focused routing, service, audio, video, and app-option tests pass; parent TASK-602 remains open for managed executor, provenance, VAD, retry-action, and platform gates.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a dependency-free, test-first batch STT routing policy that keeps semantic defaults on faster-whisper while the promotion gate is closed and resolves exact Parakeet v2/v3 requests deterministically.
+2. Extend the existing Parakeet ONNX service seam for explicit v3 INT8 inference without passing a decoder language constraint, and normalize requested/effective/detected language plus warnings.
+3. Resolve audio/video routes once at the app option boundary and preserve provider/model/language/model_dir through workers without downloads.
+4. Run focused tests and static checks, update routing documentation, record remaining parent gates, and complete only TASK-602.1.
+
+Detailed plan: Docs/superpowers/plans/2026-07-27-gated-parakeet-v3-batch-routing.md
+
+ADR required: yes
+ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
+Reason: ADR-025 already governs routing, v3 language transparency, INT8, explicit recovery, and the promotion gate; no new decision is introduced.
+<!-- SECTION:PLAN:END -->
