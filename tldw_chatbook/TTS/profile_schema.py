@@ -86,7 +86,7 @@ SELECT
     p.created_at AS profile_created_at,
     p.updated_at AS profile_updated_at
 FROM character_tts_assignments AS a
-JOIN tts_generation_profiles AS p ON p.profile_id = a.profile_id
+LEFT JOIN tts_generation_profiles AS p ON p.profile_id = a.profile_id
 """
 
 _PROFILE_TABLE_DDL = """

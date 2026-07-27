@@ -2893,6 +2893,51 @@ async def test_assignment_missing_profile_is_missing_not_zero_or_partial(
 
 
 @pytest.mark.asyncio
+async def test_orphan_assignment_is_corrupt_while_genuine_unassigned_is_none(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "secret-orphan-assignment.sqlite3"
+    profile_id = UUID("f3100000-0000-4000-8000-000000000003")
+    assigned_ref = CharacterRef(
+        "server",
+        "secret-orphan-authority",
+        "secret-orphan-character",
+    )
+    unassigned_ref = CharacterRef(
+        "server",
+        "secret-unassigned-authority",
+        "secret-unassigned-character",
+    )
+
+    async with _opened_repository(database_path) as repository:
+        await repository.create_profile(_draft("Orphaned"), profile_id=profile_id)
+        await repository.set_assignment(assigned_ref, profile_id)
+        assert (await repository.get_assigned_profile(unassigned_ref)).value is None
+
+        connection = sqlite3.connect(database_path, isolation_level=None)
+        try:
+            assert connection.execute("PRAGMA foreign_keys").fetchone() == (0,)
+            connection.execute(
+                "DELETE FROM tts_generation_profiles WHERE profile_id = ?",
+                (str(profile_id),),
+            )
+        finally:
+            connection.close()
+
+        with pytest.raises(ProfileRepositoryError) as corrupt:
+            await repository.get_assigned_profile(assigned_ref)
+        _assert_safe_error(
+            corrupt.value,
+            "corrupt_data",
+            str(profile_id),
+            assigned_ref.authority_id,
+            assigned_ref.character_id,
+            str(database_path),
+        )
+        assert (await repository.get_assigned_profile(unassigned_ref)).value is None
+
+
+@pytest.mark.asyncio
 async def test_remove_assignment_is_exact_idempotent_and_does_not_probe_target(
     tmp_path: Path,
 ) -> None:
