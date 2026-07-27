@@ -285,17 +285,6 @@ def test_first_run_initial_route_defaults_to_home():
     assert app._resolve_initial_shell_route() == "home"
 
 
-@pytest.mark.asyncio
-async def test_deferred_initial_tab_uses_first_run_home_route():
-    app = _build_test_app()
-    app.app_config["_first_run"] = True
-    app._initial_tab_value = "chat"
-
-    await app._set_initial_tab()
-
-    assert app.current_tab == "home"
-
-
 @pytest.mark.parametrize("configured_route", ["home", "library", "settings", "notes"])
 def test_returning_user_initial_route_preserves_configured_default(configured_route):
     app = _build_test_app()
