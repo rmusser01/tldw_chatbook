@@ -41,6 +41,8 @@ from ...Constants import (
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
 )
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...Library.export_progress import (
@@ -1098,6 +1100,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_workspace_depth_state_cache: LibraryWorkspaceDepthState | None = (
             None
         )
+        self._pending_library_source_open: tuple[str, str] | None = None
         self._selected_conversation_id = ""
         self._library_selected_row_id: str = ""
         self._library_conversation_query: str = ""
@@ -1481,6 +1484,12 @@ class LibraryScreen(BaseAppScreen):
             # ``save_state`` doesn't persist them -- but the guard makes
             # the intent explicit and is cheap insurance).
             self._start_library_export_counts_worker()
+        if self._pending_library_source_open is not None:
+            self.run_worker(
+                self._open_pending_library_source(),
+                exclusive=True,
+                group="library_nav_open_source",
+            )
 
     def on_unmount(self) -> None:
         """Unregister the ingest registry listener registered in ``on_mount``.
@@ -1726,7 +1735,9 @@ class LibraryScreen(BaseAppScreen):
                 ``note_id``) lands on the Notes list instead. An
                 ``ingest_media`` flag lands on the in-canvas Ingest >
                 Import media view (Home's ingest-jobs "Open details"
-                control, L3b Task 6).
+                control, L3b Task 6). A supported ``open_source_type`` and
+                exact ``open_source_id`` pair delegates to Library's existing
+                item opener.
         """
         if not isinstance(context, Mapping):
             return
@@ -1770,6 +1781,31 @@ class LibraryScreen(BaseAppScreen):
         ``_apply_navigation_context_after_flush``) while the pre-mount and
         clean-editor paths apply directly.
         """
+        raw_open_source_type = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE)
+        raw_open_source_id = context.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID)
+        open_source_type = ""
+        open_source_id = ""
+        if type(raw_open_source_type) is str and type(raw_open_source_id) is str:
+            validated_source_type = self._safe_text(
+                raw_open_source_type,
+                max_length=64,
+            )
+            validated_source_id = self._safe_text(
+                raw_open_source_id,
+                max_length=500,
+            )
+            if (
+                validated_source_type == raw_open_source_type
+                and validated_source_id == raw_open_source_id
+                and validated_source_type in ("media", "notes", "conversations")
+                and validated_source_id
+            ):
+                open_source_type = validated_source_type
+                open_source_id = validated_source_id
+                self._pending_library_source_open = (
+                    open_source_type,
+                    open_source_id,
+                )
         requested_mode = self._safe_text(
             context.get(LIBRARY_NAV_CONTEXT_MODE),
             max_length=64,
@@ -1857,6 +1893,12 @@ class LibraryScreen(BaseAppScreen):
                     exclusive=True,
                     group="library_note_detail",
                 )
+        if open_source_type and open_source_id and self.is_mounted:
+            self.run_worker(
+                self._open_pending_library_source(),
+                exclusive=True,
+                group="library_nav_open_source",
+            )
         if self.is_mounted:
             if (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
@@ -1867,6 +1909,15 @@ class LibraryScreen(BaseAppScreen):
                 self.run_worker(self._sync_collections_panel(refresh_snapshot=True))
             else:
                 self.refresh(recompose=True)
+
+    async def _open_pending_library_source(self) -> None:
+        """Consume one validated navigation target through Library's opener."""
+
+        pending = self._pending_library_source_open
+        self._pending_library_source_open = None
+        if pending is None:
+            return
+        await self._open_library_item_by_id(*pending)
 
     # Own group, deliberately separate from the "default" group the plain
     # `self.run_worker(self._sync_collections_panel(...))` calls above use

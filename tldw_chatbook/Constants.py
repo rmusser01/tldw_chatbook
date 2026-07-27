@@ -46,6 +46,8 @@ LIBRARY_NAV_CONTEXT_MODE = "mode"
 LIBRARY_NAV_CONTEXT_CONVERSATION_ID = "conversation_id"
 LIBRARY_NAV_CONTEXT_NOTE_ID = "note_id"
 LIBRARY_NAV_CONTEXT_NOTES_CREATE = "notes_create"
+LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE = "open_source_type"
+LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID = "open_source_id"
 # Home's ingest-jobs "Open details" control (L3b Task 6) re-points here to
 # land the Library shell on the in-canvas Ingest > Import media view.
 LIBRARY_NAV_CONTEXT_INGEST = "ingest_media"

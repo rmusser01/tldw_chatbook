@@ -253,7 +253,11 @@ from ...Library.library_rag_service import (
     scope_empty_recovery_state,
 )
 from ...Notes.notes_scope_service import ScopeType
-from ...Constants import TAB_SETTINGS
+from ...Constants import (
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+    TAB_SETTINGS,
+)
 from ...Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
     normalize_console_background_effects,
@@ -11065,7 +11069,25 @@ class ChatScreen(BaseAppScreen):
                 )
             ),
         )
-        self.app.push_screen(modal)
+
+        def _open_source_in_library(result: dict[str, str] | None) -> None:
+            if not isinstance(result, dict):
+                return
+            source_type = result.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE)
+            source_id = result.get(LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID)
+            if type(source_type) is not str or type(source_id) is not str:
+                return
+            self.app.post_message(
+                NavigateToScreen(
+                    "library",
+                    {
+                        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: source_type,
+                        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: source_id,
+                    },
+                )
+            )
+
+        self.app.push_screen(modal, callback=_open_source_in_library)
 
     @staticmethod
     def _console_citation_message_body(message: Any) -> str:

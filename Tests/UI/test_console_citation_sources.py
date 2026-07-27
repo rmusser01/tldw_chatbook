@@ -48,6 +48,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
     ConsoleCitationSourceRow,
@@ -1052,6 +1056,7 @@ class _CitationHarnessApp(App):
         self.test_screen = screen
         self.citation_trace_repository = repository
         self.chachanotes_db = db
+        self.seen_navigation: list[tuple[str, dict[str, object]]] = []
         self.transcript = ConsoleTranscript(id="console-native-transcript")
         self.transcript.set_messages(messages)
         self.transcript.set_citation_counts(citation_counts)
@@ -1066,6 +1071,11 @@ class _CitationHarnessApp(App):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.has_class("console-transcript-citation-sources"):
             ChatScreen.handle_console_citation_sources(self.test_screen, event)
+
+    def on_navigate_to_screen(self, event) -> None:
+        self.seen_navigation.append(
+            (event.screen_name, dict(event.screen_context or {}))
+        )
 
 
 def _citation_harness(
@@ -1230,6 +1240,84 @@ async def test_modal_render_output_neutralizes_terminal_controls_only() -> None:
         source_list.index = 1
         await pilot.pause()
         assert detail.renderable.plain == "exact snapshot 1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_kind", "source_id", "expected_type"),
+    [
+        ("media_db", "media-exact", "media"),
+        ("notes", "note-exact", "notes"),
+        ("chat_history", "conversation-exact", "conversations"),
+    ],
+)
+async def test_citation_open_source_returns_exact_library_navigation_context(
+    source_kind: str,
+    source_id: str,
+    expected_type: str,
+) -> None:
+    hydration = _hydration_result(
+        identities={
+            1: {"source_kind": "notes", "source_id": "note-1"},
+            2: {"source_kind": source_kind, "source_id": source_id},
+            3: {"source_kind": "chat_history", "source_id": "conversation-3"},
+        }
+    )
+    app, _screen, _repository, _message = _citation_harness(hydration=hydration)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#console-citation-sources-assistant-1")
+        await pilot.pause(0.1)
+
+        modal = app.screen
+        assert isinstance(modal, ConsoleCitationSourcesModal)
+        open_button = modal.query_one("#console-citation-source-open", Button)
+        assert open_button.display is True
+
+        await pilot.click("#console-citation-source-open")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, ConsoleCitationSourcesModal)
+        assert app.seen_navigation == [
+            (
+                "library",
+                {
+                    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: expected_type,
+                    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: source_id,
+                },
+            )
+        ]
+        assert set(app.seen_navigation[0][1]) == {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+        }
+
+
+@pytest.mark.asyncio
+async def test_citation_unsupported_source_renders_no_open_source_action() -> None:
+    hydration = _hydration_result(
+        identities={
+            1: {"source_kind": "notes", "source_id": "note-1"},
+            2: {"source_kind": "web_content", "source_id": "web-2"},
+            3: {"source_kind": "chat_history", "source_id": "conversation-3"},
+        }
+    )
+    app, _screen, _repository, _message = _citation_harness(hydration=hydration)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#console-citation-sources-assistant-1")
+        await pilot.pause(0.1)
+
+        modal = app.screen
+        assert isinstance(modal, ConsoleCitationSourcesModal)
+        open_button = modal.query_one("#console-citation-source-open", Button)
+
+        assert modal.display_rows[0].open_source_type is None
+        assert open_button.display is False
+        assert open_button.disabled is True
+        assert app.seen_navigation == []
 
 
 @pytest.mark.asyncio

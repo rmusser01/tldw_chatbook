@@ -28,6 +28,10 @@ from tldw_chatbook.Chat.citation_trace_repository import (
     CitationHydrationResult,
     CitationHydrationState,
 )
+from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+)
 
 
 OPEN_SOURCE_TYPES = {
@@ -194,7 +198,7 @@ def build_console_citation_source_rows(
     return tuple(rows)
 
 
-class ConsoleCitationSourcesModal(ModalScreen[None]):
+class ConsoleCitationSourcesModal(ModalScreen[dict[str, str] | None]):
     """Show exact cited snapshots after lazy authorized hydration."""
 
     BINDINGS = [("escape", "dismiss", "Close")]
@@ -245,6 +249,13 @@ class ConsoleCitationSourcesModal(ModalScreen[None]):
                         id="console-citation-source-chunk",
                         markup=False,
                     )
+                    open_button = Button(
+                        "Open",
+                        id="console-citation-source-open",
+                        disabled=True,
+                    )
+                    open_button.display = False
+                    yield open_button
             yield Button("Close", id="console-citation-sources-close")
 
     def on_mount(self) -> None:
@@ -374,6 +385,14 @@ class ConsoleCitationSourcesModal(ModalScreen[None]):
         marker = self.query_one("#console-citation-source-marker", Static)
         title = self.query_one("#console-citation-source-title", Static)
         chunk = self.query_one("#console-citation-source-chunk", Static)
+        open_button = self.query_one("#console-citation-source-open", Button)
+        can_open = (
+            row is not None
+            and type(row.open_source_type) is str
+            and type(row.source_id) is str
+        )
+        open_button.display = can_open
+        open_button.disabled = not can_open
         if row is None:
             marker.update(Text())
             title.update(Text())
@@ -398,6 +417,26 @@ class ConsoleCitationSourcesModal(ModalScreen[None]):
     @on(ListView.Selected, "#console-citation-source-list")
     def _source_selected(self, event: ListView.Selected) -> None:
         self._show_item(event.item)
+
+    @on(Button.Pressed, "#console-citation-source-open")
+    def _open_source(self, event: Button.Pressed) -> None:
+        """Return the selected supported source identity to Console."""
+
+        event.stop()
+        source_list = self.query_one("#console-citation-source-list", ListView)
+        index = source_list.index
+        if type(index) is not int or not 0 <= index < len(self.display_rows):
+            return
+        row = self.display_rows[index]
+        if type(row.open_source_type) is not str or type(row.source_id) is not str:
+            return
+        self._request_generation += 1
+        self.dismiss(
+            {
+                LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: row.open_source_type,
+                LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: row.source_id,
+            }
+        )
 
 
 __all__ = [
