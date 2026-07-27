@@ -10,7 +10,7 @@
 
 **Spec:** `Docs/superpowers/specs/2026-07-26-provider-default-model-refresh-design.md` (read first; it is the source of truth).
 
-**Backlog:** `backlog/tasks/task-519 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md`
+**Backlog:** `backlog/tasks/task-869 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md`
 
 **ADR required:** no
 
@@ -31,22 +31,22 @@
 **Files:**
 
 - Add: `Docs/superpowers/plans/2026-07-26-provider-default-model-refresh.md`
-- Modify: `backlog/tasks/task-519 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md`
+- Modify: `backlog/tasks/task-869 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md`
 
 - [x] **Step 1: Verify the planning diff**
 
 ```bash
 git diff --check
-git diff -- Docs/superpowers/plans/2026-07-26-provider-default-model-refresh.md "backlog/tasks/task-519 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md"
+git diff -- Docs/superpowers/plans/2026-07-26-provider-default-model-refresh.md "backlog/tasks/task-869 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md"
 ```
 
-Expected: no whitespace errors; TASK-519 is In Progress and links the approved
+Expected: no whitespace errors; TASK-869 is In Progress and links the approved
 design, this plan, and ADR-020 with `ADR required: no`.
 
 - [x] **Step 2: Commit the planning artifacts before implementation**
 
 ```bash
-git add Docs/superpowers/plans/2026-07-26-provider-default-model-refresh.md "backlog/tasks/task-519 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md"
+git add Docs/superpowers/plans/2026-07-26-provider-default-model-refresh.md "backlog/tasks/task-869 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md"
 git commit -m "docs: plan provider default model refresh"
 ```
 
@@ -552,11 +552,11 @@ git commit -m "config: recognize new default model capabilities"
 
 ---
 
-### Task 6: Verify, document, and close TASK-519
+### Task 6: Verify, document, and close TASK-869
 
 **Files:**
 
-- Modify: `backlog/tasks/task-519 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md` (via Backlog CLI)
+- Modify: `backlog/tasks/task-869 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md` (via Backlog CLI)
 - Verify: all files changed in Tasks 1–5
 
 - [x] **Step 1: Run the complete targeted suite**
@@ -600,7 +600,7 @@ Confirm:
   fallback defaults;
 - Responses API normalization and older-model payload behavior remain covered.
 
-- [x] **Step 4: Update TASK-519 through Backlog CLI**
+- [x] **Step 4: Update TASK-869 through Backlog CLI**
 
 Add concise implementation notes that list the changed files, model-aware
 compatibility rules, ADR-020/design links, and exact verification results. Mark
@@ -616,7 +616,7 @@ backlog task edit 519 -s Done
 - [x] **Step 5: Commit task closeout**
 
 ```bash
-git add "backlog/tasks/task-519 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md"
+git add "backlog/tasks/task-869 - Refresh-default-models-for-DeepSeek-Anthropic-and-OpenAI.md"
 git commit -m "docs: close provider default model refresh task"
 ```
 
@@ -640,14 +640,14 @@ baseline. Broad default Ruff remains baseline-failing (452 existing findings).
 A broader serial suite attempt was manually interrupted after 448 passed, 1
 skipped, and 0 observed failures at 3% in 140.83s because its projected runtime
 was impractical; xdist is unsuitable because repository tests share state. This
-is not a full-suite pass. The approved scoped exception keeps TASK-519 Done
+is not a full-suite pass. The approved scoped exception keeps TASK-869 Done
 because its acceptance criteria require the focused suite.
 
-Post-rebase addendum (2026-07-27): after replaying the isolated TASK-519 commit
+Post-rebase addendum (2026-07-27): after replaying the isolated TASK-869 commit
 series onto the latest `origin/dev`, the focused suite passes 97 tests. Fatal
 Ruff rules, `compileall`, and `git diff --check origin/dev` pass. A whole-file
 Ruff format pass is no longer claimed: current `dev` contributes unrelated
 formatting findings in `Tests/Chat/test_chat_functions.py` and
 `tldw_chatbook/model_capabilities.py`, and mechanically formatting those files
-would expand this PR beyond TASK-519. The rebase also preserved `dev`'s
+would expand this PR beyond TASK-869. The rebase also preserved `dev`'s
 Anthropic prompt-caching behavior and context-window metadata.
