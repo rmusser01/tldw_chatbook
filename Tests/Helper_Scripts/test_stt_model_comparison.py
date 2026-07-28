@@ -394,6 +394,38 @@ def test_main_rejects_output_input_collisions_before_execution(
     assert sentinel_path.read_bytes() == sentinel
 
 
+@pytest.mark.parametrize("destination_kind", ("directory", "file_parent"))
+def test_main_rejects_invalid_output_destination_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    destination_kind: str,
+) -> None:
+    _write_wav(tmp_path / "audio.wav")
+    cases_path = _write_cases(tmp_path / "cases.jsonl", [_case("case")])
+    directories = _model_directories(tmp_path)
+    if destination_kind == "directory":
+        output = tmp_path / "existing-directory"
+        output.mkdir()
+        sentinel_path = output / "sentinel.txt"
+    else:
+        malformed_parent = tmp_path / "regular-file-parent"
+        output = malformed_parent / "report.json"
+        sentinel_path = malformed_parent
+    sentinel = b"do not replace"
+    sentinel_path.write_bytes(sentinel)
+
+    monkeypatch.setattr(
+        comparison,
+        "_build_model_runners",
+        lambda _directories: pytest.fail("model execution started"),
+    )
+
+    status = comparison.main(_main_args(cases_path, directories, output))
+
+    assert status == 2
+    assert sentinel_path.read_bytes() == sentinel
+
+
 def test_scheduled_models_match_language_matrix() -> None:
     assert comparison.scheduled_models({"language": "en", "tag": "clean"}) == (
         "parakeet_v2_int8",

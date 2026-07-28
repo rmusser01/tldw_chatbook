@@ -765,6 +765,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError(
                     f"--output cannot be inside the {name} model directory"
                 )
+        if output_path.exists() and not output_path.is_file():
+            raise ValueError("--output must be a file path")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         model_directories = {
             "parakeet_v2_int8": directories["v2_int8"],
             "parakeet_v2_f32": directories["v2_f32"],
