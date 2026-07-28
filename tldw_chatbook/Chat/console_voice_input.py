@@ -328,7 +328,27 @@ class ConsoleVoiceInputController:
             return
 
     def _begin(self, effective: EffectiveConfig) -> None:
-        """Blocking half of start(); always runs via `spawn`."""
+        """Blocking half of start(); always runs via `spawn`.
+
+        A thread boundary: when `spawn` is inline -- the default in nearly
+        every test, and any future ad-hoc caller -- this method runs
+        synchronously inside `start()`'s own try/except around the `spawn()`
+        call. That guard exists to catch a real `spawn()` failing to
+        *schedule* work and must stay in place, so nothing raised in here may
+        propagate back through `spawn()` into it: `_run_begin()`'s own
+        `_fail()` calls have a raising emit as their whole reason for
+        existing (Finding 2), and letting that reach `start()`'s guard would
+        fire a second, mislabeled `VoiceFailed` describing this method's
+        plumbing instead of the real cause -- the exact cascade N1 fixed in
+        `start()`, recurring one call frame deeper.
+        """
+        try:
+            self._run_begin(effective)
+        except Exception:  # noqa: BLE001 - nothing may escape _begin(); see docstring
+            logger.opt(exception=True).warning("Console dictation _begin() raised unexpectedly")
+
+    def _run_begin(self, effective: EffectiveConfig) -> None:
+        """The actual work of `_begin()`, shielded from its caller by `_begin()`."""
         try:
             service = self._service_factory(
                 transcription_provider=effective.provider,
@@ -365,10 +385,21 @@ class ConsoleVoiceInputController:
 
         if not started:
             self._service = None
-            self._fail("Could not start the microphone.")
+            self._fail_not_started()
             return
 
         self._enter_listening()
+
+    def _fail_not_started(self) -> None:
+        """Report that `start_dictation()` returned `False`.
+
+        Stays quiet if `abandon()` landed in the narrow window between the
+        claim above and this check: the controller is already idle and torn
+        down at that point, so a `VoiceFailed`/`VoiceStateChanged(idle)` pair
+        here would be noise on top of teardown, not a real report.
+        """
+        if not self._abandoned:
+            self._fail("Could not start the microphone.")
 
     def _enter_listening(self) -> None:
         """Atomically transition to `listening`, re-checking abandonment.

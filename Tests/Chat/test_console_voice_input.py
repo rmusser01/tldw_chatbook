@@ -741,3 +741,93 @@ def test_start_after_abandon_never_constructs_a_service(monkeypatch):
     assert events == []
     assert controller.state == cvi.STATE_IDLE
     assert controller.is_active is False
+
+
+# -- Fix round 3: N1's cascade recurring inside _begin() (via the S4 fix's --
+# -- try/except around an inline spawn), plus zero coverage of the --------
+# -- not-started path that let it slip past four targeted tests -----------
+
+
+def test_begin_when_start_dictation_returns_false(monkeypatch):
+    """`_begin()`'s `if not started:` branch had ZERO test coverage before
+    this round -- exactly how the round-2 mutation checks and four targeted
+    tests missed the cascade this round fixes. Plain coverage, no raising
+    emit involved.
+    """
+    service = FakeDictationService()
+    service.start_result = False
+    controller, events, _ = _controller(monkeypatch, service)
+
+    controller.start()
+
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert failures[0].reason == "Could not start the microphone."
+    assert controller.state == cvi.STATE_IDLE
+    assert controller._service is None
+
+
+def test_begin_not_started_failure_does_not_cascade_into_a_second_voicefailed(monkeypatch):
+    """The S4 fix (wrapping `self._spawn(...)` in `start()`) reintroduced the
+    N1 cascade one call frame deeper: with the default inline `spawn`, that
+    try transitively covers all of `_begin()`, so `_begin()`'s own `_fail()`
+    call (for a `start_dictation()` that returns `False`) had its raising
+    emit re-caught by `start()`'s guard and re-fired as a second, mislabeled
+    `VoiceFailed` describing the plumbing exception instead of the real
+    cause. `_begin()` is now a thread boundary that swallows anything raised
+    inside it, so `start()` must not raise at all here.
+    """
+    service = FakeDictationService()
+    service.start_result = False
+
+    recorded = []
+
+    def emit_raising_on_third_event(event):
+        recorded.append(event)
+        if len(recorded) == 3:  # VoiceStateChanged(idle), _fail()'s 2nd emit
+            raise RuntimeError("widget torn down mid-delivery")
+
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    controller = cvi.ConsoleVoiceInputController(
+        emit=emit_raising_on_third_event,
+        spawn=lambda thunk: thunk(),
+        service_factory=lambda **kwargs: service,
+    )
+
+    controller.start()  # must NOT raise: _begin() is a thread boundary
+
+    failures = [e for e in recorded if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert failures[0].reason == "Could not start the microphone."
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_begin_not_started_stays_quiet_when_abandoned_in_the_gap(monkeypatch):
+    """SECONDARY fix: if `abandon()` lands between `_begin()` claiming the
+    service and its `if not started:` check, the controller is already idle
+    and torn down; `_begin()` must not pile a spurious
+    `VoiceFailed`/`VoiceStateChanged(idle)` pair on top of that.
+    `_fail_not_started()` is the seam -- patching it to run `abandon()`
+    before delegating simulates `abandon()` landing at exactly that instant,
+    the same technique used for the round-2 ghost-listening race test.
+    """
+    service = FakeDictationService()
+    service.start_result = False
+    controller, events, _ = _controller(monkeypatch, service)
+
+    real_fail_not_started = controller._fail_not_started
+
+    def fail_not_started_after_concurrent_abandon():
+        controller.abandon()
+        real_fail_not_started()
+
+    monkeypatch.setattr(controller, "_fail_not_started", fail_not_started_after_concurrent_abandon)
+
+    controller.start()
+
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert failures == []
+    assert controller.state == cvi.STATE_IDLE
