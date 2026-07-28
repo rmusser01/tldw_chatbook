@@ -24,13 +24,23 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Collapsible, ProgressBar, RichLog, Static, TextArea
+from textual.widgets import (
+    Button,
+    Collapsible,
+    ProgressBar,
+    RichLog,
+    Select,
+    Static,
+    TextArea,
+)
 
 from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
 from .speech_axis_row import SpeechAxisRow
+from .speech_synthesis_mixin import SpeechSynthesisMixin
 from .speech_param_group import SpeechParamGroup
 from .speech_result_history import SpeechResultHistory, SpeechTake
 
@@ -111,8 +121,15 @@ class SpeechChip(Static):
         )
 
 
-class SpeechPlaygroundPane(Vertical):
-    """The TTS Playground body: title, actions, input, settings, status."""
+class SpeechPlaygroundPane(SpeechSynthesisMixin, Vertical):
+    """The TTS Playground body: title, actions, input, settings, status.
+
+    Synthesis comes from `SpeechSynthesisMixin`, shared with the legacy
+    widget rather than reimplemented: the generate path is 322 lines of
+    provider resolution and request building, and a second copy would drift
+    from the first. The mixin queries its controls by id, which is why this
+    rebuild kept the legacy ids.
+    """
 
     def __init__(
         self,
@@ -150,14 +167,57 @@ class SpeechPlaygroundPane(Vertical):
         #: One-line capability status, sourced from lab_speech_status by the
         #: screen rather than re-derived here.
         self.capability_line = capability_line
+        self.init_synthesis_state()
+
+    @on(Button.Pressed, "#tts-generate-btn")
+    def _on_generate_pressed(self, event: Button.Pressed) -> None:
+        """Run the shared synthesis path.
+
+        Args:
+            event: The press, stopped here so it does not also reach a
+                host screen's own button handling.
+        """
+        event.stop()
+        self._generate_tts()
+
+    @on(Select.Changed, "#tts-provider-select")
+    def _on_provider_changed(self, event: Select.Changed) -> None:
+        """Re-scope the parameter group and the clip picker to the provider.
+
+        Args:
+            event: The selection change.
+        """
+        event.stop()
+        provider = event.value
+        if not isinstance(provider, str) or provider == self.provider:
+            return
+        self.provider = provider
+        self.refresh(recompose=True)
+
+    def _refresh_provider_ids(self) -> None:
+        """Record the provider values on offer.
+
+        `_generation_readiness_error` distinguishes a selection that has gone
+        stale from one that was never valid, and needs the current option
+        set to do it.
+        """
+        try:
+            select = self.query_one("#tts-provider-select", Select)
+        except Exception:  # noqa: BLE001 - not yet mounted
+            return
+        options = getattr(select, "_options", ()) or ()
+        self._provider_ids = frozenset(
+            value for _label, value in options if isinstance(value, str)
+        )
 
     def on_resize(self) -> None:
         """Stack the split when the pane is too narrow to hold two columns."""
         self._sync_split_layout()
 
     def on_mount(self) -> None:
-        """Apply the split layout once the pane has a real width."""
+        """Apply the split layout and record the provider options."""
         self._sync_split_layout()
+        self._refresh_provider_ids()
 
     def _sync_split_layout(self) -> None:
         """Toggle the stacked class from the pane's measured width."""
