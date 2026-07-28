@@ -1756,6 +1756,120 @@ async def test_unstage_raw_conflict_stages_block_before_stdin_and_revoke(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("relation", "baseline_path", "conflict_path"),
+    (
+        ("ancestor", "tree/owned.md", "tree"),
+        ("descendant", "tree", "tree/conflict.md"),
+        ("exact", "tree", "tree"),
+    ),
+)
+async def test_unstage_conflict_replacement_closure_blocks_before_stdin(
+    tmp_path: Path,
+    relation: str,
+    baseline_path: str,
+    conflict_path: str,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    baseline = repository.path / baseline_path
+    baseline.parent.mkdir(parents=True, exist_ok=True)
+    baseline.write_text(f"{relation} baseline\n", encoding="utf-8")
+    repository.run("add", "--", baseline_path)
+    repository.run("commit", "-m", f"{relation} baseline")
+    baseline_entries = _index_entries(repository)
+    repository.run("rm", "--cached", "--", baseline_path)
+
+    if relation == "ancestor":
+        baseline.unlink()
+        baseline.parent.rmdir()
+        (repository.path / conflict_path).write_text(
+            "ancestor conflict\n",
+            encoding="utf-8",
+        )
+    elif relation == "descendant":
+        baseline.unlink()
+        baseline.mkdir()
+        conflict = repository.path / conflict_path
+        conflict.write_text("descendant conflict\n", encoding="utf-8")
+
+    conflict_payload = (
+        f"100644 {baseline_entries[baseline_path].object_id} 1\t{conflict_path}\n"
+        f"100644 {baseline_entries['tracked.md'].object_id} 2\t{conflict_path}\n"
+        f"100644 {baseline_entries[baseline_path].object_id} 3\t{conflict_path}\n"
+    ).encode()
+    subprocess.run(
+        [repository.git, "update-index", "--index-info"],
+        cwd=repository.path,
+        env=repository.environment,
+        input=conflict_payload,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    conflict_before = repository.run(
+        "ls-files",
+        "--stage",
+        "--",
+        conflict_path,
+    ).stdout
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("deleted", baseline_path),
+    )
+    runner = _RecordingRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert discovery.head is not None
+    assert owner.publish_trust(binding, discovery.repository)
+    group = coalesce_session_changes(owner.snapshot(binding).changes)[0]
+    assert owner.publish_ownership(
+        binding,
+        {
+            1: StagingOwnership(
+                repository=discovery.repository,
+                head=discovery.head,
+                approved_endpoint_topology=group.endpoints,
+                approved_move_edges=group.move_edges,
+                approved_current_path=group.current_path,
+                original_baselines={
+                    baseline_path: IndexBaseline(
+                        baseline_entries[baseline_path],
+                    ),
+                },
+                post_stage_entries={baseline_path: None},
+            )
+        },
+    )
+    call_boundary = len(runner.calls)
+    stdin_boundary = len(runner.stdins)
+
+    result = await service.start_unstage(binding, (1,))
+
+    assert result.state == "blocked"
+    assert result.blocked_group_ids == (1,)
+    assert not any(
+        "update-index" in tuple(os.fsdecode(argument) for argument in call)
+        for call in runner.calls[call_boundary:]
+    )
+    assert all(payload is None for payload in runner.stdins[stdin_boundary:])
+    assert repository.run(
+        "ls-files",
+        "--stage",
+        "--",
+        conflict_path,
+    ).stdout == conflict_before
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_unstage_preserves_unrelated_preexisting_conflict_stages(
     tmp_path: Path,
 ) -> None:
