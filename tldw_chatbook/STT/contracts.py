@@ -15,10 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
-
-if TYPE_CHECKING:
-    from tldw_chatbook.Model_Artifacts.leases import ArtifactLeaseKey
+from typing import Protocol, cast, runtime_checkable
 
 
 # A generous but finite in-process PCM payload boundary. Longer recordings
@@ -29,6 +26,28 @@ _VALID_SAMPLE_WIDTHS = frozenset({1, 2, 3, 4})
 _LANGUAGE_PATTERN = re.compile(r"(?:auto|[a-z]{2,3}(?:-[a-z0-9]{1,8})*)")
 _DETAIL_CODE_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*")
 _MAX_DETAIL_CODE_LENGTH = 128
+
+
+class _ArtifactIdentity(Protocol):
+    """Runtime-resolvable structural annotation for an artifact lease key."""
+
+    @property
+    def artifact_id(self) -> str:
+        """Return the stable artifact identifier."""
+
+        ...
+
+    @property
+    def revision(self) -> str:
+        """Return the immutable artifact revision."""
+
+        ...
+
+    @property
+    def variant(self) -> str:
+        """Return the artifact variant."""
+
+        ...
 
 
 class TranscriptionTask(str, Enum):
@@ -267,7 +286,7 @@ def _is_artifact_lease_key(value: object) -> bool:
 class FileAudioSource:
     """A filesystem-backed audio source."""
 
-    path: Path
+    path: Path = field(repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.path, Path):
@@ -404,7 +423,7 @@ class TranscriptionFailure:
     phase: TranscriptionPhase
     provider_id: str
     model_id: str
-    artifact_root: ArtifactLeaseKey | None
+    artifact_root: _ArtifactIdentity | None
     precision: str
     requested_device: ExecutionDevice
     effective_device: ExecutionDevice | None
@@ -631,8 +650,8 @@ class TranscriptionSegment:
 
     start_seconds: float
     end_seconds: float
-    text: str
-    speaker: str | None = None
+    text: str = field(repr=False)
+    speaker: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         _require_finite_nonnegative(self.start_seconds, "start_seconds")
@@ -656,8 +675,8 @@ class TranscriptionProvenance:
     retry_of_job_id: str | None
     provider_id: str
     model_id: str
-    artifact_root: ArtifactLeaseKey | None
-    artifact_dependencies: tuple[ArtifactLeaseKey, ...]
+    artifact_root: _ArtifactIdentity | None
+    artifact_dependencies: tuple[_ArtifactIdentity, ...]
     precision: str
     requested_device: ExecutionDevice
     effective_device: ExecutionDevice
@@ -786,8 +805,8 @@ class TranscriptionTimings:
 class TranscriptionResult:
     """A normalized transcription result and its complete provenance."""
 
-    text: str
-    segments: tuple[TranscriptionSegment, ...]
+    text: str = field(repr=False)
+    segments: tuple[TranscriptionSegment, ...] = field(repr=False)
     provenance: TranscriptionProvenance
     produced_capabilities: ProducedCapabilities
     duration_seconds: float | None

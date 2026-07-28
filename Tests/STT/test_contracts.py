@@ -5,6 +5,7 @@ from dataclasses import FrozenInstanceError
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
+from typing import get_args, get_type_hints
 
 import pytest
 
@@ -160,6 +161,15 @@ def test_file_audio_source_requires_a_path_and_is_frozen_and_slotted() -> None:
         source.path = Path("/tmp/other.wav")  # type: ignore[misc]
     with pytest.raises(TypeError):
         FileAudioSource("/tmp/example.wav")  # type: ignore[arg-type]
+
+
+def test_file_audio_source_repr_redacts_local_path() -> None:
+    path = Path("/private/customer-secret-path.wav")
+    source = FileAudioSource(path)
+
+    assert source.path == path
+    assert source == FileAudioSource(path)
+    assert "customer-secret-path" not in repr(source)
 
 
 def test_buffer_audio_source_accepts_bounded_pcm_metadata() -> None:
@@ -543,6 +553,26 @@ def test_segment_rejects_end_before_start() -> None:
         TranscriptionSegment(1.0, 0.9, "out of order")
 
 
+def test_transcription_segment_repr_redacts_text_and_speaker() -> None:
+    segment = TranscriptionSegment(
+        0.0,
+        1.0,
+        "customer-secret-transcript",
+        speaker="customer-secret-speaker",
+    )
+
+    assert segment.text == "customer-secret-transcript"
+    assert segment.speaker == "customer-secret-speaker"
+    assert segment == TranscriptionSegment(
+        0.0,
+        1.0,
+        "customer-secret-transcript",
+        speaker="customer-secret-speaker",
+    )
+    assert "customer-secret-transcript" not in repr(segment)
+    assert "customer-secret-speaker" not in repr(segment)
+
+
 def test_segment_accepts_finite_nonnegative_arbitrary_precision_integers() -> None:
     timestamp = 10**1000
 
@@ -578,6 +608,26 @@ def test_provenance_rejects_an_artifact_key_lookalike() -> None:
 
     with pytest.raises(TypeError):
         _provenance(artifact_root=ArtifactLeaseKeyLookalike())
+
+
+def test_public_artifact_identity_annotations_resolve_at_runtime() -> None:
+    failure_hints = get_type_hints(TranscriptionFailure)
+    provenance_hints = get_type_hints(TranscriptionProvenance)
+
+    artifact_identity_types = set(get_args(failure_hints["artifact_root"])) - {
+        type(None)
+    }
+    assert len(artifact_identity_types) == 1
+    artifact_identity = artifact_identity_types.pop()
+    assert getattr(artifact_identity, "_is_protocol", False)
+    assert get_args(provenance_hints["artifact_root"]) == (
+        artifact_identity,
+        type(None),
+    )
+    assert get_args(provenance_hints["artifact_dependencies"]) == (
+        artifact_identity,
+        Ellipsis,
+    )
 
 
 @pytest.mark.parametrize(
@@ -714,6 +764,27 @@ def test_result_rejects_speaker_when_diarization_was_not_produced() -> None:
             segments=(TranscriptionSegment(0.0, 1.0, "hello", speaker="A"),),
             produced_capabilities=_produced(diarization=False),
         )
+
+
+def test_transcription_result_repr_redacts_text_and_segments() -> None:
+    segment = TranscriptionSegment(
+        0.0,
+        1.0,
+        "customer-secret-segment",
+        speaker="customer-secret-speaker",
+    )
+    result = _result(
+        text="customer-secret-result",
+        segments=(segment,),
+        produced_capabilities=_produced(diarization=True),
+    )
+
+    assert result.text == "customer-secret-result"
+    assert result.segments == (segment,)
+    rendered = repr(result)
+    assert "customer-secret-result" not in rendered
+    assert "customer-secret-segment" not in rendered
+    assert "customer-secret-speaker" not in rendered
 
 
 @pytest.mark.parametrize("duration", [-0.1, math.inf, -math.inf, math.nan, True, "1"])
