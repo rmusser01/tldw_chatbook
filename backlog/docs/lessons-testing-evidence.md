@@ -272,13 +272,6 @@ are cheaper than re-deriving the graph.
 
 ---
 
-## Related
-
-- `lessons-live-verification.md` — why the suite could not see seven of these defects
-- `lessons-backlog-hygiene.md` — task IDs, CLI quirks, git plumbing traps
-
----
-
 ## A property test with no deadline override is load-sensitive
 
 **TASK-1260, 2026-07-28.** `test_safe_paths_always_validate` failed once inside a
@@ -307,3 +300,10 @@ and this repo has punished both.
 
 The durable fix is a Hypothesis profile registered once in `Tests/conftest.py`,
 not a per-file patch — other property files carry the same exposure.
+
+---
+
+## Related
+
+- `lessons-live-verification.md` — why the suite could not see seven of these defects
+- `lessons-backlog-hygiene.md` — task IDs, CLI quirks, git plumbing traps
