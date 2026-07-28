@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Grid
 from textual.widgets import Static
 
 from .speech_playground_model import AXIS_CONTROLS
@@ -53,8 +53,15 @@ def axis_chip_id(axis: str) -> str:
     return f"speech-axis-{axis}"
 
 
-class SpeechAxisRow(Horizontal):
-    """One row of ``Label: value`` chips for the comparison axes."""
+class SpeechAxisRow(Grid):
+    """The comparison axes as chips, reflowed rather than truncated.
+
+    A single Horizontal could not hold six chips: at 120 columns the Lab
+    body is ~81 cells and the chips need more, so "Format" truncated and
+    "Speed" fell off the right edge entirely. A Grid wraps them onto a
+    second line instead -- the axes are the one thing on this screen that
+    must never be cut off, since they are what the user is comparing.
+    """
 
     def __init__(
         self,
@@ -72,7 +79,7 @@ class SpeechAxisRow(Horizontal):
             kwargs: Forwarded to ``Horizontal``.
         """
         classes = kwargs.pop("classes", "")
-        super().__init__(classes=f"speech-chip-row {classes}".strip(), **kwargs)
+        super().__init__(classes=f"speech-axis-grid {classes}".strip(), **kwargs)
         self.values = dict(values)
         self.defaults = dict(defaults)
 

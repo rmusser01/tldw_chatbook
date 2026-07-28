@@ -75,8 +75,46 @@ def _is_switch(param: str) -> bool:
     return param.endswith(_SWITCH_SUFFIXES)
 
 
+def _param_rows(provider: str) -> list[Horizontal]:
+    """Build one labelled row per parameter this provider has.
+
+    Args:
+        provider: The selected provider key.
+
+    Returns:
+        The rows, ready to pass to ``Collapsible`` as children.
+    """
+    rows: list[Horizontal] = []
+    for param in params_for_provider(provider):
+        control = (
+            Switch(id=param, classes="speech-param-control")
+            if _is_switch(param)
+            else Input(id=param, classes="speech-param-control")
+        )
+        rows.append(
+            Horizontal(
+                Static(
+                    PARAM_LABELS.get(param, param),
+                    classes="speech-param-label",
+                    markup=False,
+                ),
+                control,
+                classes="speech-param-row",
+            )
+        )
+    return rows
+
+
 class SpeechParamGroup(Collapsible):
-    """The selected provider's tuning knobs, collapsed by default."""
+    """The selected provider's tuning knobs, collapsed by default.
+
+    Children are passed to ``Collapsible`` rather than yielded from an
+    overridden ``compose()``. Overriding it replaces Collapsible's own
+    composition -- the title row and the contents container it toggles -- so
+    the group rendered fully expanded with no title while still reporting
+    `collapsed is True`. The attribute was right and the screen was wrong,
+    which is why the test now asserts what renders.
+    """
 
     def __init__(self, *, provider: str, **kwargs: Any) -> None:
         """Create the group.
@@ -89,18 +127,8 @@ class SpeechParamGroup(Collapsible):
         kwargs.setdefault("title", f"{provider} parameters")
         kwargs.setdefault("collapsed", True)
         classes = kwargs.pop("classes", "")
-        super().__init__(classes=f"speech-param-group {classes}".strip(), **kwargs)
-
-    def compose(self) -> ComposeResult:
-        """Yield one labelled row per parameter this provider actually has."""
-        for param in params_for_provider(self.provider):
-            with Horizontal(classes="speech-param-row"):
-                yield Static(
-                    PARAM_LABELS.get(param, param),
-                    classes="speech-param-label",
-                    markup=False,
-                )
-                if _is_switch(param):
-                    yield Switch(id=param, classes="speech-param-control")
-                else:
-                    yield Input(id=param, classes="speech-param-control")
+        super().__init__(
+            *_param_rows(provider),
+            classes=f"speech-param-group {classes}".strip(),
+            **kwargs,
+        )

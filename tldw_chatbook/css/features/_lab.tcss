@@ -619,3 +619,37 @@
     padding: 0 1;
     margin-left: 1;
 }
+
+/* The axes reflow onto a second line rather than truncating. Six chips need
+ * more than the ~81 cells the Lab body gives at 120 columns -- "Format" was
+ * being cut to "Format: un" and "Speed" fell off the edge. These are the
+ * variables the user is comparing; they are the last thing that may be
+ * clipped. One column when stacked. */
+.speech-axis-grid {
+    grid-size: 3;
+    grid-rows: 1;
+    grid-gutter: 0 1;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.speech-split-stacked .speech-axis-grid {
+    grid-size: 1;
+}
+
+/* Four player actions do not fit the ~38-cell result pane on one row --
+ * "Export" rendered at x=101..111 against a pane ending at 107, clipped by
+ * the parent rather than by itself. A 2x2 grid fits, and reflows to one
+ * column when stacked. */
+#speech-result-actions {
+    layout: grid;
+    grid-size: 2;
+    grid-rows: 1;
+    grid-gutter: 0 1;
+    height: auto;
+    margin-top: 1;
+}
+
+.speech-split-stacked #speech-result-actions {
+    grid-size: 1;
+}

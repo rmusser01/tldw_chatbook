@@ -35,14 +35,24 @@ async def test_only_the_selected_providers_knobs_are_mounted():
 
 
 @pytest.mark.asyncio
-async def test_the_group_starts_collapsed():
-    """Knobs are set once per provider. Expanded by default they would push
-    the text input and the primary action back below the fold, which is the
-    defect this redesign exists to fix."""
+async def test_the_group_starts_collapsed_and_actually_hides_its_contents():
+    """Assert what renders, not just the attribute.
+
+    Subclassing Collapsible and overriding compose() replaces its own
+    composition -- the title row and the contents container it toggles -- so
+    the group rendered fully expanded while still reporting
+    `collapsed is True`. Checking the flag alone passed that bug straight
+    through; the contents' visibility is the real oracle.
+    """
     app = _Harness("chatterbox")
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        assert app.query_one(Collapsible).collapsed is True
+        group = app.query_one(Collapsible)
+        assert group.collapsed is True
+        control = app.query_one("#tts-exaggeration-input")
+        assert not control.region.height, (
+            "collapsed group is still rendering its controls"
+        )
 
 
 @pytest.mark.asyncio

@@ -148,7 +148,10 @@ class STTSScreen(LabScreen):
             ``STTSWindow``, mounted after first paint like every Lab body.
         """
         if self._redesign_view == "playground":
-            return SpeechPlaygroundPane(id="speech-playground-pane")
+            return SpeechPlaygroundPane(
+                id="speech-playground-pane",
+                capability_line=speech_capability_text(),
+            )
         self.stts_window = STTSWindow(self.app_instance, classes="window")
         self.stts_window.styles.height = "1fr"
         return self.stts_window

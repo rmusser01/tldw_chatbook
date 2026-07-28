@@ -30,6 +30,9 @@ from textual.widgets import Static, TextArea
 
 from ..Workbench.workbench_state import WorkbenchAction
 from ..Workbench.workbench_widgets import CommandStrip
+from .speech_axis_row import SpeechAxisRow
+from .speech_param_group import SpeechParamGroup
+from .speech_result_history import SpeechResultHistory, SpeechTake
 
 if TYPE_CHECKING:
     pass
@@ -44,29 +47,34 @@ SPEECH_SPLIT_MIN_WIDTH = 64
 
 #: The playground's visible commands, in the order Console orders its own:
 #: the thing you came to do first, then what you do to the result.
+#: The text actions. Ids are the legacy control ids on purpose: the rebuild
+#: re-sites controls, it does not rename them, so wiring is an id lookup
+#: rather than a translation table.
 PLAYGROUND_ACTIONS: tuple[WorkbenchAction, ...] = (
     WorkbenchAction(
-        id="speech-generate",
+        id="tts-generate-btn",
         label="Generate",
-        tooltip="Synthesize the text above",
+        tooltip="Synthesize the text",
         primary=True,
     ),
-    WorkbenchAction(id="speech-play", label="Play", tooltip="Play the last result"),
-    WorkbenchAction(id="speech-pause", label="Pause", tooltip="Pause playback"),
-    WorkbenchAction(id="speech-stop", label="Stop", tooltip="Stop playback"),
-    WorkbenchAction(id="speech-export", label="Export", tooltip="Save the audio file"),
-    WorkbenchAction(id="speech-clear", label="Clear", tooltip="Clear the text"),
+    WorkbenchAction(
+        id="tts-random-text-btn", label="Random text", tooltip="Insert sample text"
+    ),
+    WorkbenchAction(id="tts-clear-text-btn", label="Clear", tooltip="Clear the text"),
+    WorkbenchAction(
+        id="tts-refresh-catalog-btn",
+        label="Refresh catalog",
+        tooltip="Re-read available models and voices",
+    ),
 )
 
-#: Actions that operate on the synthesized result, kept beside it rather
-#: than mixed into the strip that acts on the text.
-RESULT_ACTIONS: tuple[WorkbenchAction, ...] = (
-    WorkbenchAction(
-        id="speech-export-result", label="Export", tooltip="Save the audio file"
-    ),
-    WorkbenchAction(
-        id="speech-copy-path", label="Copy path", tooltip="Copy the file path"
-    ),
+#: Playback actions, kept beside the result rather than mixed into the strip
+#: that acts on the text.
+PLAYER_ACTIONS: tuple[WorkbenchAction, ...] = (
+    WorkbenchAction(id="audio-play-btn", label="Play", tooltip="Play"),
+    WorkbenchAction(id="pause-audio-btn", label="Pause", tooltip="Pause"),
+    WorkbenchAction(id="stop-audio-btn", label="Stop", tooltip="Stop"),
+    WorkbenchAction(id="audio-export-btn", label="Export", tooltip="Save the audio"),
 )
 
 
@@ -98,12 +106,42 @@ class SpeechChip(Static):
 class SpeechPlaygroundPane(Vertical):
     """The TTS Playground body: title, actions, input, settings, status."""
 
-    def __init__(self, **kwargs: Any) -> None:
-        """Create the pane."""
+    def __init__(
+        self,
+        *,
+        provider: str = "audio_cpp",
+        axis_values: dict[str, str] | None = None,
+        axis_defaults: dict[str, str] | None = None,
+        takes: Any = None,
+        capability_line: str = "",
+        **kwargs: Any,
+    ) -> None:
+        """Create the pane.
+
+        Args:
+            provider: Selected provider; decides the parameter group.
+            axis_values: Effective value per comparison axis.
+            axis_defaults: Persisted default per axis, for override marking.
+            takes: Takes generated this session.
+            capability_line: One-line local-speech status.
+            kwargs: Forwarded to ``Vertical``.
+        """
         classes = kwargs.pop("classes", "")
         super().__init__(classes=f"speech-pane {classes}".strip(), **kwargs)
         #: None until first measured, so the first sync always applies.
         self._stacked: bool | None = None
+        #: Effective axis values for this session, and the persisted
+        #: defaults they are compared against. The pane never writes the
+        #: defaults -- overrides are session-scoped by design.
+        self.axis_values: dict[str, str] = dict(axis_values or {})
+        self.axis_defaults: dict[str, str] = dict(axis_defaults or {})
+        #: Selected provider, which decides the parameter group's contents.
+        self.provider = provider
+        #: Takes generated this session.
+        self.takes: list[SpeechTake] = list(takes or ())
+        #: One-line capability status, sourced from lab_speech_status by the
+        #: screen rather than re-derived here.
+        self.capability_line = capability_line
 
     def on_resize(self) -> None:
         """Stack the split when the pane is too narrow to hold two columns."""
@@ -122,35 +160,33 @@ class SpeechPlaygroundPane(Vertical):
         self.set_class(stacked, "speech-split-stacked")
 
     def compose(self) -> ComposeResult:
-        """Compose the pane.
+        """Compose the Playground.
+
+        Order is the comparison loop: what you are about to do, the
+        variables you are comparing, the text, then the results and the
+        knobs you rarely touch.
 
         Returns:
-            A ``ComposeResult`` yielding, in order: the view title, the
-            command strip, the text input, the settings chip line, and a
-            one-line capability status.
+            A ``ComposeResult`` yielding the title, action strip, axis
+            chips, the Text/Result split, the collapsed provider parameters
+            and the capability line.
         """
         yield Static("🎤 TTS Playground", classes="speech-pane-title")
 
         yield CommandStrip(PLAYGROUND_ACTIONS, id="speech-playground-actions")
 
-        # Settings sit ABOVE the input, where Console puts its status chips
-        # relative to the composer: what you are about to do with, then the
-        # thing you type into.
-        with Horizontal(id="speech-settings-line", classes="speech-chip-row"):
-            yield SpeechChip("Provider", "audio.cpp", id="speech-chip-provider")
-            yield SpeechChip("Voice", "Server default", id="speech-chip-voice")
-            yield SpeechChip("Format", "mp3", id="speech-chip-format")
-            yield SpeechChip("Speed", "1.0", id="speech-chip-speed")
+        yield SpeechAxisRow(
+            values=self.axis_values,
+            defaults=self.axis_defaults,
+            id="speech-axis-row",
+        )
 
-        # Text and Result side by side: the pane has width to spend and does
-        # not have 34 rows of content to spend vertically. Stacks below
-        # SPEECH_SPLIT_MIN_WIDTH -- see `on_resize`.
         with Horizontal(id="speech-split", classes="speech-split"):
             with Vertical(id="speech-text-pane", classes="speech-split-pane"):
                 yield Static("Text", classes="speech-section-head")
                 editor = TextArea(
                     "",
-                    id="speech-input",
+                    id="tts-text-input",
                     classes="speech-input",
                     placeholder="Type or paste the text to synthesize...",
                 )
@@ -158,23 +194,17 @@ class SpeechPlaygroundPane(Vertical):
                 yield editor
 
             with Vertical(id="speech-result-pane", classes="speech-split-pane"):
-                yield Static("Result", classes="speech-section-head")
-                # The old screen's player row and audio container both sat
-                # below the fold. Without somewhere for the result to land,
-                # Generate has no visible consequence.
-                yield Static(
-                    "No audio yet.",
-                    id="speech-result-state",
-                    classes="speech-result-state",
-                    markup=False,
+                yield SpeechResultHistory(
+                    takes=self.takes, id="speech-result-history"
                 )
-                yield SpeechChip("Voice", "Server default", id="speech-res-voice")
-                yield SpeechChip("Format", "mp3", id="speech-res-format")
-                yield SpeechChip("Size", "--", id="speech-res-size")
-                yield CommandStrip(RESULT_ACTIONS, id="speech-result-actions")
+                yield CommandStrip(PLAYER_ACTIONS, id="speech-result-actions")
+
+        yield SpeechParamGroup(
+            provider=self.provider, id="speech-param-group"
+        )
 
         yield Static(
-            "audio.cpp is unavailable — open TTS Settings to configure it.",
+            self.capability_line,
             id="speech-capability-line",
             classes="speech-status-line",
             markup=False,
