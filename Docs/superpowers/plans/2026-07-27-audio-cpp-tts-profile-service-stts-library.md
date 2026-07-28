@@ -369,7 +369,7 @@ Expected: the project-local worktree directory is ignored and branch
 Use the exact command and result recorded under **Rebased baseline**. Do not
 repair the three unrelated fixture failures in task 951.
 
-- [ ] **Step 5: Commit the reviewed planning boundary**
+- [x] **Step 5: Commit the reviewed planning boundary**
 
 ```bash
 git add \
@@ -394,7 +394,7 @@ commits.
 - Modify: `Tests/TTS/test_adapter_types.py`
 - Modify: `Tests/TTS/test_audio_cpp_adapter.py`
 
-- [ ] **Step 1: Write failing immutable-type and protocol tests**
+- [x] **Step 1: Write failing immutable-type and protocol tests**
 
 Cover exact validation, frozen voice tuples, nonnegative catalog revision,
 runtime protocol detection, and rejection of mutable or invalid state.
@@ -411,7 +411,7 @@ assert result.voices == ("voice-a",)
 assert isinstance(structured_adapter, TTSStructuredVoiceAdapter)
 ```
 
-- [ ] **Step 2: Run the type tests and verify red**
+- [x] **Step 2: Run the type tests and verify red**
 
 ```bash
 .venv/bin/python -m pytest Tests/TTS/test_adapter_types.py -q
@@ -419,12 +419,12 @@ assert isinstance(structured_adapter, TTSStructuredVoiceAdapter)
 
 Expected: failure because the structured result/protocol do not exist.
 
-- [ ] **Step 3: Add the minimal frozen result and optional runtime protocol**
+- [x] **Step 3: Add the minimal frozen result and optional runtime protocol**
 
 Keep `TTSAdapter.get_voices()` unchanged. The optional protocol contains only
 `observe_voices()` and is not added to legacy adapter requirements.
 
-- [ ] **Step 4: Write failing adapter behavior tests**
+- [x] **Step 4: Write failing adapter behavior tests**
 
 Prove:
 
@@ -438,7 +438,7 @@ Prove:
 - external `CancelledError` propagates and is neither cached nor published;
 - `get_voices()` delegates and projects only `complete` to its tuple.
 
-- [ ] **Step 5: Run the adapter tests and verify red**
+- [x] **Step 5: Run the adapter tests and verify red**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -448,7 +448,7 @@ Prove:
 
 Expected: new structured-status tests fail against tuple-only discovery.
 
-- [ ] **Step 6: Convert the existing cache and fetch path minimally**
+- [x] **Step 6: Convert the existing cache and fetch path minimally**
 
 Store `TTSVoiceDiscoveryResult` in `_VoiceCacheEntry` and
 `_voice_shared_results`. `_fetch_voices()` converts only bounded internal
@@ -463,7 +463,7 @@ a voice fetch result. Caller cancellation is neither shared nor cached.
 Preserve the existing cache entry/byte limits, per-key locks, request
 coalescing, privacy filters, and refresh generations.
 
-- [ ] **Step 7: Run green adapter tests and commit**
+- [x] **Step 7: Run green adapter tests and commit**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -494,7 +494,7 @@ git commit -m "feat(tts): preserve structured audio cpp voice status"
 - Modify: `Tests/TTS/test_stts_playground_types.py`
 - Modify: `Tests/TTS/test_stts_audio_cpp_generation.py`
 
-- [ ] **Step 1: Write failing capability snapshot tests**
+- [x] **Step 1: Write failing capability snapshot tests**
 
 Use fake adapters and a controlled clock to prove:
 
@@ -508,7 +508,7 @@ Use fake adapters and a controlled clock to prove:
 - caller cancellation propagates after cancellation-safe lease release;
 - no concrete adapter or lease escapes the service API.
 
-- [ ] **Step 2: Run the new capability tests and verify red**
+- [x] **Step 2: Run the new capability tests and verify red**
 
 ```bash
 .venv/bin/python -m pytest Tests/TTS/test_tts_profile_capabilities.py -q
@@ -516,7 +516,7 @@ Use fake adapters and a controlled clock to prove:
 
 Expected: import/attribute failures for the missing snapshot API.
 
-- [ ] **Step 3: Implement one bounded service snapshot**
+- [x] **Step 3: Implement one bounded service snapshot**
 
 Add:
 
@@ -536,7 +536,7 @@ uses the existing retained cleanup helper and preserves caller cancellation.
 The ten-second deadline is a module-owned Slice 2B constant, not a new public
 configuration surface; tests control the private clock/deadline seam.
 
-- [ ] **Step 4: Write failing exact-admission provenance tests**
+- [x] **Step 4: Write failing exact-admission provenance tests**
 
 Prove:
 
@@ -550,7 +550,7 @@ Prove:
 - the coordinator gate is released before repository work;
 - legacy generation cannot create requested-selection provenance.
 
-- [ ] **Step 5: Run exact-admission tests and verify red**
+- [x] **Step 5: Run exact-admission tests and verify red**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -561,7 +561,7 @@ Prove:
 
 Expected: failures for missing exact synthesis and artifact provenance.
 
-- [ ] **Step 6: Add exact synthesis and revision-decision service methods**
+- [x] **Step 6: Add exact synthesis and revision-decision service methods**
 
 Add public service methods that delegate to its existing coordinator:
 
@@ -581,13 +581,13 @@ the current revision, acquires the matching operation, creates the immutable
 text-free requested-selection snapshot, exits the gate, and synthesizes.
 The response continues to own the admitted lease through close.
 
-- [ ] **Step 7: Attach provenance only to successful native artifacts**
+- [x] **Step 7: Attach provenance only to successful native artifacts**
 
 Change `_generate_audio_cpp()` to call `synthesize_exact()` and set the
 artifact's optional `requested_selection`. Do not modify `_generate_legacy()`
 beyond tests that assert the field remains `None`.
 
-- [ ] **Step 8: Run green capability/provenance tests and commit**
+- [x] **Step 8: Run green capability/provenance tests and commit**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -618,7 +618,7 @@ git commit -m "feat(tts): admit exact native profile provenance"
 - Modify: `Tests/TTS/test_profile_repository.py`
 - Modify: `Tests/TTS/test_profile_repository_lifecycle.py`
 
-- [ ] **Step 1: Write failing expected-generation admission tests**
+- [x] **Step 1: Write failing expected-generation admission tests**
 
 Cover exact integer validation and the three mutation paths:
 
@@ -643,7 +643,7 @@ Pause admission around restore and use a replacement store containing the same
 UUID and profile revision. Every pre-restore update, delete, and duplicate must
 raise safe code `stale` before enqueue and leave the replacement unchanged.
 
-- [ ] **Step 2: Run repository tests and verify red**
+- [x] **Step 2: Run repository tests and verify red**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -654,7 +654,7 @@ raise safe code `stale` before enqueue and leave the replacement unchanged.
 Expected: new calls fail because public methods lack expected-generation
 admission.
 
-- [ ] **Step 3: Add the minimal state-lock comparison**
+- [x] **Step 3: Add the minimal state-lock comparison**
 
 Validate an exact nonnegative generation at the public boundary. Thread it to
 `_submit_operation()` and `_admit_operation()`. Under `_state_lock`, compare it
@@ -665,7 +665,7 @@ Do not add a table, column, migration, second lock, or worker round trip.
 Update existing direct repository tests to pass the generation returned by the
 read/create that produced their caller state.
 
-- [ ] **Step 4: Run green repository gates and commit**
+- [x] **Step 4: Run green repository gates and commit**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -688,7 +688,7 @@ git commit -m "fix(tts): fence loaded profile mutations by store generation"
 - Modify: `tldw_chatbook/TTS/__init__.py`
 - Create: `Tests/TTS/test_profile_service.py`
 
-- [ ] **Step 1: Write failing validation, availability-allowlist, and
+- [x] **Step 1: Write failing validation, availability-allowlist, and
   save-from-artifact tests**
 
 Prove:
@@ -706,7 +706,7 @@ Prove:
 - errors expose bounded codes without text, paths, endpoints, credentials, or
   raw upstream data.
 
-- [ ] **Step 2: Run service tests and verify red**
+- [x] **Step 2: Run service tests and verify red**
 
 ```bash
 .venv/bin/python -m pytest Tests/TTS/test_profile_service.py -q
@@ -714,12 +714,12 @@ Prove:
 
 Expected: import failure for the missing service.
 
-- [ ] **Step 3: Implement immutable page, loaded, and availability values**
+- [x] **Step 3: Implement immutable page, loaded, and availability values**
 
 Keep these in `profile_service.py`; do not add persistence fields. Freeze every
 tuple/mapping and validate state/code values at construction.
 
-- [ ] **Step 4: Implement save, list, and availability minimally**
+- [x] **Step 4: Implement save, list, and availability minimally**
 
 `list_profiles()` delegates to the repository with fixed `limit=50`.
 `observe_availability()` first confirms the page's repository generation,
@@ -741,7 +741,7 @@ returning. Return those revisions with the availability rows so the UI can
 reject an older enrichment after a newer page/refresh has been requested. Do
 not persist availability or add a second cache.
 
-- [ ] **Step 5: Write failing edit, duplicate, count, and delete tests**
+- [x] **Step 5: Write failing edit, duplicate, count, and delete tests**
 
 Prove:
 
@@ -756,13 +756,13 @@ Prove:
 - count/publication rejects a changed repository generation;
 - transactional assignment protection remains the final delete authority.
 
-- [ ] **Step 6: Implement mutations and preview preset**
+- [x] **Step 6: Implement mutations and preview preset**
 
 Release the coordinator read side before calling any repository method.
 `preview_preset()` copies only exact persisted generation values and the
 availability state; it performs no synthesis.
 
-- [ ] **Step 7: Run green service tests and commit**
+- [x] **Step 7: Run green service tests and commit**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -784,7 +784,7 @@ git commit -m "feat(tts): add native generation profile service"
 - Modify: `tldw_chatbook/app.py`
 - Modify: `Tests/TTS/test_tts_app_ownership.py`
 
-- [ ] **Step 1: Write failing ownership tests**
+- [x] **Step 1: Write failing ownership tests**
 
 Prove:
 
@@ -801,7 +801,7 @@ Prove:
 Use focused fakes that do not call the known failing shared
 `_build_test_app()` fixture until that unrelated baseline is fixed elsewhere.
 
-- [ ] **Step 2: Run ownership tests and verify red**
+- [x] **Step 2: Run ownership tests and verify red**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -811,7 +811,7 @@ Use focused fakes that do not call the known failing shared
 
 Expected: new profile-service ownership tests fail.
 
-- [ ] **Step 3: Add one lazy app-owned service**
+- [x] **Step 3: Add one lazy app-owned service**
 
 Add `_tts_profile_service: TTSProfileService | None = None` and a small
 `_ensure_tts_profile_service()` method. It awaits
@@ -819,7 +819,7 @@ Add `_tts_profile_service: TTSProfileService | None = None` and a small
 returns `None` on unavailable storage. It adds no close method because its
 dependencies are already app-owned and closed by existing shutdown.
 
-- [ ] **Step 4: Run green ownership tests and commit**
+- [x] **Step 4: Run green ownership tests and commit**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -839,7 +839,7 @@ Report the three known full-file baseline failures separately if still present.
 - Modify: `tldw_chatbook/UI/STTS_Window.py`
 - Create: `Tests/UI/test_stts_profile_library.py`
 
-- [ ] **Step 1: Write failing initial-library and failure-isolation tests**
+- [x] **Step 1: Write failing initial-library and failure-isolation tests**
 
 Mount `STTSWindow` with a fake profile service. Prove:
 
@@ -851,7 +851,7 @@ Mount `STTSWindow` with a fake profile service. Prove:
 - repository rows appear before the controlled availability future completes;
 - selected profile actions remain disabled until a row is selected.
 
-- [ ] **Step 2: Run UI tests and verify red**
+- [x] **Step 2: Run UI tests and verify red**
 
 ```bash
 .venv/bin/python -m pytest Tests/UI/test_stts_profile_library.py -q
@@ -859,14 +859,14 @@ Mount `STTSWindow` with a fake profile service. Prove:
 
 Expected: the library module/view does not exist.
 
-- [ ] **Step 3: Implement the focused library shell**
+- [x] **Step 3: Implement the focused library shell**
 
 Use a selectable `DataTable`, one search `Input`, Previous/Next controls, one
 status/detail region, and explicit Preview/Edit/Duplicate/Refresh/Delete
 buttons. Keep the editor in a focused modal class inside the new module.
 Do not add profile logic to the 5,000-line `STTS_Window.py`.
 
-- [ ] **Step 4: Write failing coalescing and stale-publication tests**
+- [x] **Step 4: Write failing coalescing and stale-publication tests**
 
 Use controlled futures to prove:
 
@@ -879,7 +879,7 @@ Use controlled futures to prove:
   revision changes;
 - cancellation and unmount settle retained work without unhandled tasks.
 
-- [ ] **Step 5: Implement one coalesced page pipeline**
+- [x] **Step 5: Implement one coalesced page pipeline**
 
 Store only:
 
@@ -891,21 +891,21 @@ Store only:
 Publish repository rows immediately, then start availability enrichment.
 Do not add a long-lived catalog/voice cache to the widget or service.
 
-- [ ] **Step 6: Write failing editor/action tests**
+- [x] **Step 6: Write failing editor/action tests**
 
 Cover create-from-artifact handoff, edit conflict, rename-only, generation
 edit, duplicate new name/UUID, assignment count, protected delete, refresh,
 minimal repair, and value-independent errors. Confirm all actions pass the
 exact loaded profile token back to the service.
 
-- [ ] **Step 7: Implement editor and actions**
+- [x] **Step 7: Implement editor and actions**
 
 The editor preserves exact opaque model/voice values. It does not silently
 replace unavailable values, expose character assignment, or synthesize.
 Delete confirmation shows the advisory count; repository conflict remains the
 final authority.
 
-- [ ] **Step 8: Run green library tests and commit**
+- [x] **Step 8: Run green library tests and commit**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -931,7 +931,7 @@ git commit -m "feat(stts): add bounded generation profile library"
 - Modify: `Tests/UI/test_stts_playground_audio_cpp.py`
 - Modify: `Tests/UI/test_stts_profile_library.py`
 
-- [ ] **Step 1: Write failing exact-preset projection tests**
+- [x] **Step 1: Write failing exact-preset projection tests**
 
 Prove:
 
@@ -946,7 +946,7 @@ Prove:
 - the preset association ends on user edits to provider/model/voice/format/
   speed/options.
 
-- [ ] **Step 2: Run preset tests and verify red**
+- [x] **Step 2: Run preset tests and verify red**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -957,7 +957,7 @@ Prove:
 
 Expected: missing preset and current first/default substitution failures.
 
-- [ ] **Step 3: Add the one-shot STTSWindow handoff**
+- [x] **Step 3: Add the one-shot STTSWindow handoff**
 
 `STTSWindow` owns one `_pending_playground_preset`. A profile-library preview
 message sets it and switches `current_view` to `playground`. The next
@@ -967,7 +967,7 @@ class-static, config, or handler state stores the preset.
 Add a pure exact projection helper in `stts_playground_catalog.py`; keep the
 ordinary selector projection unchanged for non-profile use.
 
-- [ ] **Step 4: Write failing save-result tests**
+- [x] **Step 4: Write failing save-result tests**
 
 Prove:
 
@@ -981,14 +981,14 @@ Prove:
 - navigation/remount continues to reuse handler-owned artifact and player
   cleanup.
 
-- [ ] **Step 5: Implement the minimal save action**
+- [x] **Step 5: Implement the minimal save action**
 
 The button reads only `current_audio_artifact.requested_selection`.
 It obtains `app._ensure_tts_profile_service()` lazily and delegates to
 `create_from_artifact()`. The existing handler retains artifact lifetime; the
 widget does not create or copy audio files.
 
-- [ ] **Step 6: Run green preview/save and legacy regression tests**
+- [x] **Step 6: Run green preview/save and legacy regression tests**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -1003,7 +1003,7 @@ widget does not create or copy audio files.
 Expected: all task-added and existing tests pass; legacy artifacts still have
 no profile provenance.
 
-- [ ] **Step 7: Commit exact preview and save flow**
+- [x] **Step 7: Commit exact preview and save flow**
 
 ```bash
 git add \
@@ -1028,7 +1028,7 @@ git commit -m "feat(stts): save and preview exact audio cpp profiles"
 - Modify: `backlog/decisions/028-character-tts-generation-profile-ownership.md` only if implementation would otherwise contradict the accepted decision
 - Modify: `backlog/tasks/task-951 - Add-audio.cpp-TTS-profile-service-and-STTS-library.md`
 
-- [ ] **Step 1: Run the focused task-951 gate**
+- [x] **Step 1: Run the focused task-951 gate**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -1056,7 +1056,7 @@ Expected: every task-added test and every previously green baseline test
 passes. Report the three named pre-existing shared-fixture failures separately
 if they remain; no additional failure is accepted.
 
-- [ ] **Step 2: Run broader TTS/STTS regression**
+- [x] **Step 2: Run broader TTS/STTS regression**
 
 ```bash
 .venv/bin/python -m pytest Tests/TTS Tests/UI/test_stts_*.py -q
@@ -1065,7 +1065,7 @@ if they remain; no additional failure is accepted.
 Expected: no new failure relative to the recorded baseline and optional
 dependency skips remain explicit.
 
-- [ ] **Step 3: Run static and boundary checks**
+- [x] **Step 3: Run static and boundary checks**
 
 ```bash
 .venv/bin/python -m ruff check \
@@ -1123,7 +1123,7 @@ git diff --check
 Expected: task-scoped checks pass. Any inherited baseline must be identified by
 exact file/line and must not be represented as task-created success.
 
-- [ ] **Step 4: Run scope and privacy audit**
+- [x] **Step 4: Run scope and privacy audit**
 
 ```bash
 git diff --name-only origin/dev...HEAD
@@ -1143,7 +1143,7 @@ origin, or submitted-text persistence enters Slice 2B. Existing
 `STTSGeneratedAudio.source_text` remains an artifact-lifetime field and never
 enters `TTSRequestedSelectionSnapshot` or profile persistence.
 
-- [ ] **Step 5: Update guides and perform UAT**
+- [x] **Step 5: Update guides and perform UAT**
 
 Document:
 
@@ -1159,13 +1159,13 @@ Run isolated-config UAT against the user-started external audio.cpp server.
 Slice 2B UAT stops after profile persistence and management; do not claim
 character roleplay speech.
 
-- [ ] **Step 6: Request independent code and scope review**
+- [x] **Step 6: Request independent code and scope review**
 
 Use `superpowers:requesting-code-review` over `origin/dev...HEAD`. Address every
 verified Critical, Important, and Minor finding with fresh tests. Re-run the
 focused/static gates after the last amendment.
 
-- [ ] **Step 7: Rebase on latest dev and repeat final verification**
+- [x] **Step 7: Rebase on latest dev and repeat final verification**
 
 ```bash
 git fetch origin dev
@@ -1175,7 +1175,7 @@ git diff --check origin/dev...HEAD
 
 Repeat Steps 1–4 after the rebase. Do not rely on pre-rebase evidence.
 
-- [ ] **Step 8: Complete task hygiene**
+- [x] **Step 8: Complete task hygiene**
 
 Only after every acceptance criterion and Definition of Done item is proven:
 first set `--notes` to a concise summary of the implemented behavior plus the
@@ -1193,7 +1193,7 @@ backlog task edit 951 \
   --status Done
 ```
 
-- [ ] **Step 9: Commit final documentation**
+- [x] **Step 9: Commit final documentation**
 
 ```bash
 git add \
