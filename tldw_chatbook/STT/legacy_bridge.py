@@ -255,6 +255,11 @@ class LegacyTranscriptionBridge:
             raise LegacyTranscriptionBridgeError()
         if request.request.timestamps is TimestampGranularity.WORD:
             raise LegacyTranscriptionBridgeError()
+        if (
+            request.request.timestamps is TimestampGranularity.NONE
+            and request.request.diarization
+        ):
+            raise LegacyTranscriptionBridgeError()
 
         legacy_progress = self._legacy_progress_callback(request)
         try:

@@ -20,6 +20,7 @@ from tldw_chatbook.STT.contracts import (
     PipelineCapabilities,
     ResolvedTranscriptionRequest,
     TimestampGranularity,
+    TranscriptionFailureCode,
     TranscriptionPhase,
     TranscriptionProgress,
     TranscriptionRequest,
@@ -104,6 +105,7 @@ def _request(
     precision: str = "int8",
     device: ExecutionDevice = ExecutionDevice.CPU,
     timestamps: TimestampGranularity = TimestampGranularity.SEGMENT,
+    diarization: bool = True,
     progress: object = None,
 ) -> ResolvedTranscriptionRequest:
     request = TranscriptionRequest(
@@ -119,7 +121,7 @@ def _request(
         device=device,
         timestamps=timestamps,
         vad=True,
-        diarization=True,
+        diarization=diarization,
         progress=progress,  # type: ignore[arg-type]
     )
     return ResolvedTranscriptionRequest(
@@ -541,9 +543,11 @@ def test_coordinator_bridge_allows_none_timestamps_without_incidental_segments()
     None
 ):
     backend = _Backend()
+    backend.result["diarization_performed"] = False
     request = _request(
         FileAudioSource(Path("/tmp/example.wav")),
         timestamps=TimestampGranularity.NONE,
+        diarization=False,
     ).request
 
     result = _coordinator(backend).transcribe(request)
@@ -551,6 +555,26 @@ def test_coordinator_bridge_allows_none_timestamps_without_incidental_segments()
     assert result.segments == ()
     assert result.produced_capabilities.timestamps is TimestampGranularity.NONE
     assert any(call[0] == "transcribe" for call in backend.calls)
+
+
+def test_coordinator_bridge_rejects_none_timestamps_with_diarization_before_execution() -> (
+    None
+):
+    backend = _Backend()
+    request = _request(
+        FileAudioSource(Path("/tmp/example.wav")),
+        timestamps=TimestampGranularity.NONE,
+        diarization=True,
+    ).request
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        _coordinator(backend).transcribe(request)
+
+    assert caught.value.failure.code is TranscriptionFailureCode.INFERENCE_FAILED
+    assert caught.value.failure.phase is TranscriptionPhase.TRANSCRIBING
+    assert not any(
+        call[0] in {"transcribe", "transcribe_buffer"} for call in backend.calls
+    )
 
 
 def test_coordinator_bridge_rejects_word_timestamps_without_execution() -> None:
