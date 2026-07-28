@@ -111,6 +111,10 @@ def test_console_active_row_marker_and_close_glyphs():
 
 
 def _workspace_state() -> ConsoleWorkspaceContextState:
+    # TASK-1190: production always attaches a real (possibly empty) grouped
+    # conversation browser -- the transitional legacy compose path (taken
+    # only when conversation_browser is None) was retired, so this fixture
+    # carries an empty browser to match the one real production shape.
     return ConsoleWorkspaceContextState(
         heading="Convos & Workspaces",
         workspace_label="Workspace: Default",
@@ -119,6 +123,9 @@ def _workspace_state() -> ConsoleWorkspaceContextState:
         runtime_label="Runtime: none, file tools disabled",
         conversation_rows=(),
         conversation_empty_copy="No conversations yet.",
+        conversation_browser=build_console_conversation_browser_state(
+            rows=(), active_workspace_id=None
+        ),
         change_workspace_enabled=False,
         change_workspace_recovery="",
         new_conversation_enabled=False,

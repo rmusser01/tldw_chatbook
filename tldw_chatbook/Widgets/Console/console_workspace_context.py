@@ -26,7 +26,6 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 )
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
-    ConsoleWorkspaceConversationSectionState,
 )
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
@@ -242,8 +241,6 @@ _FALLBACK_ROW_CONTENT_WIDTH = 20
 # Grouped-browser rows share their line with the star control (width 3 +
 # 1 margin) and carry 1 cell of button padding per side.
 _BROWSER_ROW_CHROME_WIDTH = 6
-# Legacy-section rows have no star column; only button padding.
-_LEGACY_ROW_CHROME_WIDTH = 2
 # Every row button carries a 1-line bottom margin (see the row CSS).
 _ROW_BOTTOM_MARGIN = 1
 # Minimum measured-width change (in cells) that triggers a relabel recompose
@@ -651,58 +648,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         """
         return Static(str(text), id=id, classes=classes, markup=False)
 
-    def _conversation_section(self) -> ConsoleWorkspaceConversationSectionState:
-        """Return section state, adapting legacy row-only snapshots.
-
-        Returns:
-            Conversation section state for the currently mounted tray state.
-        """
-        section = self.state.conversation_section
-        if section is not None:
-            return section
-        selected = next(
-            (row for row in self.state.conversation_rows if row.selected),
-            None,
-        )
-        selected_summary = (
-            (
-                f"{self._conversation_title(selected.title)} - "
-                f"{self._conversation_detail_status(selected.status) or 'conversation'}"
-            )
-            if selected is not None
-            else "No active conversation."
-        )
-        return ConsoleWorkspaceConversationSectionState(
-            workspace_id="",
-            collapsed=False,
-            query="",
-            selected_summary=selected_summary,
-            rows=self.state.conversation_rows,
-            workspace_total_count=len(self.state.conversation_rows),
-            result_total_count=None,
-            status_copy="",
-            empty_copy=self.state.conversation_empty_copy,
-            search_enabled=False,
-            new_conversation_enabled=self.state.new_conversation_enabled,
-        )
-
-    @staticmethod
-    def _conversation_count_title(
-        section: ConsoleWorkspaceConversationSectionState,
-    ) -> str:
-        """Return the Conversations heading with a stable workspace count.
-
-        Args:
-            section: Conversation section state to summarize.
-
-        Returns:
-            Heading text containing the workspace conversation count.
-        """
-        count = section.workspace_total_count
-        if count is None:
-            count = len(section.rows)
-        return f"Conversations ({count})"
-
     @staticmethod
     def _conversation_button(
         text: str,
@@ -734,26 +679,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         button.styles.height = row_height
         button.styles.min_height = row_height
         return button
-
-    @staticmethod
-    def _legacy_conversation_list_height(
-        section: ConsoleWorkspaceConversationSectionState,
-        budget: int,
-    ) -> int:
-        """Return the full content height for legacy conversation rows."""
-        if not section.rows:
-            return _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
-        return max(
-            _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT,
-            sum(
-                _conversation_row_render_height(
-                    len(wrap_console_conversation_title(row.title, budget)),
-                    0,
-                )
-                + _ROW_BOTTOM_MARGIN
-                for row in section.rows
-            ),
-        )
 
     @staticmethod
     def _conversation_browser_rows_height(
@@ -952,138 +877,24 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-workspace-recovery",
             )
 
+        # TASK-1190: the transitional legacy conversation-list compose path
+        # (taken only when ``conversation_browser is None``) was retired.
+        # Reachability sweep (grep every constructor/caller that could
+        # produce a state reaching this widget): the SOLE production
+        # builder, ``ChatScreen._build_console_workspace_context_state``,
+        # always finishes by calling ``_with_console_conversation_browser_
+        # state``, which unconditionally attaches a real
+        # ``ConsoleConversationBrowserState`` via ``build_console_
+        # conversation_browser_state`` (that builder has exactly one
+        # ``return`` and it is never ``None``). No other production call
+        # site constructs a ``ConsoleWorkspaceContextState`` or calls this
+        # tray's ``sync_state`` with ``conversation_browser=None`` -- only
+        # test fixtures did, to pin the now-removed legacy render path. The
+        # ``browser is not None`` guard below stays as defense in depth
+        # (render nothing rather than crash) rather than an assertion.
         browser = self.state.conversation_browser
         if browser is not None:
             yield from self._compose_conversation_browser(browser)
-        else:
-            yield from self._compose_legacy_conversation_section()
-
-    def _compose_legacy_conversation_section(self) -> ComposeResult:
-        """Render the transitional active-workspace conversation section."""
-
-        section = self._conversation_section()
-        section_controls_enabled = self.state.conversation_section is not None
-        with Horizontal(
-            id="console-workspace-conversations-header",
-            classes="console-rail-header console-workspace-conversations-header",
-        ):
-            title = self._static(
-                self._conversation_count_title(section),
-                id="console-workspace-conversations-title",
-                classes="console-rail-section-title",
-            )
-            title.styles.width = "1fr"
-            yield title
-            toggle_label = GLYPH_COLLAPSED if section.collapsed else GLYPH_EXPANDED
-            toggle = Button(
-                toggle_label,
-                id="console-workspace-conversations-toggle",
-                classes=(
-                    "console-workspace-action console-workspace-conversations-toggle"
-                ),
-                compact=True,
-                disabled=not section_controls_enabled,
-            )
-            toggle.tooltip = (
-                "Expand Conversations"
-                if section.collapsed
-                else "Collapse Conversations"
-            )
-            toggle.styles.width = 3
-            toggle.styles.min_width = 3
-            yield toggle
-        yield self._static(
-            section.selected_summary or "No active conversation.",
-            id="console-workspace-selected-conversation",
-            classes="console-workspace-selected-conversation",
-        )
-        if not section.collapsed:
-            with Horizontal(
-                id="console-workspace-conversation-search-row",
-                classes="console-workspace-conversation-search-row",
-            ):
-                search_input = Input(
-                    value=section.query,
-                    placeholder="Search workspace conversations",
-                    id="console-workspace-conversation-search",
-                    classes="console-workspace-conversation-search",
-                    disabled=not section.search_enabled,
-                )
-                search_input.styles.width = "1fr"
-                yield search_input
-                clear_button = Button(
-                    "Clear",
-                    id="console-workspace-conversation-search-clear",
-                    classes=(
-                        "console-workspace-action "
-                        "console-workspace-conversation-search-clear"
-                    ),
-                    compact=True,
-                    disabled=(
-                        not section.search_enabled
-                        or not bool(str(section.query or "").strip())
-                    ),
-                )
-                clear_button.tooltip = "Clear conversation search"
-                yield clear_button
-            if section.status_copy:
-                yield self._static(
-                    section.status_copy,
-                    id="console-workspace-conversation-search-status",
-                    classes="console-workspace-empty-copy",
-                )
-            if section.error_copy:
-                yield self._static(
-                    section.error_copy,
-                    id="console-workspace-conversation-search-error",
-                    classes="console-workspace-recovery",
-                )
-            conversation_list = Vertical(id="console-workspace-conversations")
-            legacy_budget = self._legacy_title_budget()
-            conversation_list.styles.height = self._legacy_conversation_list_height(
-                section, legacy_budget
-            )
-            conversation_list.styles.min_height = 0
-            with conversation_list:
-                if section.rows:
-                    for index, row in enumerate(section.rows):
-                        title = self._conversation_title(row.title)
-                        name_lines = wrap_console_conversation_title(
-                            row.title, legacy_budget
-                        )
-                        status = self._conversation_status(row.status)
-                        detail = self._conversation_detail_status(row.status)
-                        status_suffix = f" [{status}]" if status else ""
-                        secondary = truncate_console_row_cells(
-                            detail or "conversation", legacy_budget
-                        )
-                        yield self._conversation_button(
-                            "\n".join((*name_lines, secondary)),
-                            id=f"console-workspace-conversation-{index}",
-                            conversation_id=row.conversation_id,
-                            tooltip_label=f"{title}{status_suffix}",
-                            selected=row.selected,
-                            name_line_count=len(name_lines),
-                        )
-                else:
-                    yield self._static(
-                        section.empty_copy or self.state.conversation_empty_copy,
-                        id="console-workspace-empty-conversations",
-                        classes="console-workspace-empty-copy",
-                    )
-            if section.new_conversation_enabled:
-                yield Button(
-                    "New conversation",
-                    id="console-new-workspace-conversation",
-                    classes="console-workspace-action",
-                    compact=True,
-                )
-                if self.state.new_conversation_recovery:
-                    yield self._static(
-                        self.state.new_conversation_recovery,
-                        id="console-new-workspace-conversation-recovery",
-                        classes="console-workspace-recovery",
-                    )
 
     def _compose_conversation_browser(
         self,
@@ -1437,13 +1248,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         return max(
             _MIN_TITLE_WRAP_BUDGET,
             self._row_content_width - _BROWSER_ROW_CHROME_WIDTH,
-        )
-
-    def _legacy_title_budget(self) -> int:
-        """Cells available to legacy-section row text (no star column)."""
-        return max(
-            _MIN_TITLE_WRAP_BUDGET,
-            self._row_content_width - _LEGACY_ROW_CHROME_WIDTH,
         )
 
     @staticmethod
