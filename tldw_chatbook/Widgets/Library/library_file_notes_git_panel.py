@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Iterable
 
+from rich.markup import escape as escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -36,6 +38,33 @@ _ROW_STATE_LABELS = {
     "unavailable": "Git unavailable",
     "error": "Error",
 }
+
+
+def _repository_path_for_display(path: str, *, markup: bool = False) -> str:
+    """Make path controls visible and optionally escape Rich markup."""
+    parts: list[str] = []
+    replacements = {"\n": r"\n", "\r": r"\r", "\t": r"\t"}
+    for character in path:
+        if character in replacements:
+            parts.append(replacements[character])
+            continue
+        codepoint = ord(character)
+        if 0xDC80 <= codepoint <= 0xDCFF:
+            parts.append(f"\\x{codepoint - 0xDC00:02x}")
+        elif unicodedata.category(character) in {"Cc", "Cf", "Cs"}:
+            parts.append(
+                f"\\x{codepoint:02x}"
+                if codepoint <= 0xFF
+                else (
+                    f"\\u{codepoint:04x}"
+                    if codepoint <= 0xFFFF
+                    else f"\\U{codepoint:08x}"
+                )
+            )
+        else:
+            parts.append(character)
+    display = "".join(parts)
+    return escape_markup(display) if markup else display
 
 
 class _SessionGitListItem(ListItem):
@@ -299,7 +328,8 @@ class LibraryFileNotesGitPanel(Vertical):
             repository_text = "Repository: unavailable"
         else:
             repository_text = (
-                f"Repository: {status.repository.worktree_root}"
+                "Repository: "
+                f"{_repository_path_for_display(status.repository.worktree_root)}"
                 f" · {self._head_label(status.head)}"
             )
         self.query_one("#file-notes-git-repository", Static).update(
@@ -323,7 +353,7 @@ class LibraryFileNotesGitPanel(Vertical):
         self._status_ready = False
         self._mutating = False
         self.query_one("#file-notes-git-repository", Static).update(
-            f"Repository: {repository_path}"
+            f"Repository: {_repository_path_for_display(repository_path)}"
         )
         self.query_one("#file-notes-git-action-status", Static).update(
             "Trust is required before checking Session Git status."
@@ -338,7 +368,7 @@ class LibraryFileNotesGitPanel(Vertical):
         self._status_ready = False
         self._mutating = False
         self.query_one("#file-notes-git-repository", Static).update(
-            f"Repository: {repository_path}"
+            f"Repository: {_repository_path_for_display(repository_path)}"
         )
         self.query_one("#file-notes-git-action-status", Static).update(
             "Checking Session Git status…"
@@ -561,10 +591,14 @@ class SessionGitTrustDialog(ConfirmationDialog):
     """Safe-focus process-only trust prompt for worktree-aware Git commands."""
 
     def __init__(self, repository_path: str) -> None:
+        display_path = _repository_path_for_display(
+            repository_path,
+            markup=True,
+        )
         super().__init__(
             title="Trust Session Git repository?",
             message=(
-                f"Repository: {repository_path}\n\n"
+                f"Repository: {display_path}\n\n"
                 "Trust lasts only for this application process. Git status "
                 "and staging may execute configured Git filters, including "
                 "arbitrary programs with side effects outside Chatbook.\n\n"

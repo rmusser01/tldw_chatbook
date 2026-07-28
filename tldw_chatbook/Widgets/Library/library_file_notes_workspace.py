@@ -259,6 +259,8 @@ class LibraryFileNotesWorkspace(Vertical):
         self._save_worker: Worker[Any] | None = None
         self._git_status_worker: Worker[Any] | None = None
         self._git_action_worker: Worker[Any] | None = None
+        self._git_status_task: asyncio.Task[SessionGitStatus] | None = None
+        self._git_status_task_binding: SessionBinding | None = None
         self._active = False
         self._refresh_lock = asyncio.Lock()
         self._save_lock = asyncio.Lock()
@@ -479,6 +481,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._set_action_status(self._action_detail)
         self._update_root_surface()
         self._sync_navigator_mode()
+        self._rehydrate_git_presentation()
         self._update_controls()
         self.run_worker(
             self._initialize(),
@@ -1031,9 +1034,90 @@ class LibraryFileNotesWorkspace(Vertical):
         return (
             self._active
             and self._navigator_mode == "git"
-            and binding == self._session_binding
+            and self._git_binding_matches_session(binding)
+        )
+
+    def _git_binding_matches_session(self, binding: SessionBinding) -> bool:
+        """Return whether a result still belongs to this retained root."""
+        return (
+            binding == self._session_binding
             and binding == self._session_owner.current_binding()
         )
+
+    def _ensure_git_status_waiter(
+        self,
+        task: asyncio.Task[SessionGitStatus],
+        binding: SessionBinding,
+        *,
+        replace: bool = False,
+    ) -> None:
+        """Attach presentation to one service-owned task without restarting it."""
+        if (
+            not self._active
+            or not self.is_mounted
+            or (
+                not replace
+                and self._git_status_worker is not None
+                and not self._git_status_worker.is_finished
+            )
+        ):
+            return
+        self._git_status_worker = self.run_worker(
+            self._render_git_status(task, binding),
+            name="file-notes-git-status",
+            group="file-notes-git-status",
+            exclusive=True,
+        )
+
+    def _rehydrate_git_presentation(self) -> bool:
+        """Render retained owner/task state without starting hidden Git work."""
+        if (
+            not self._active
+            or not self.is_mounted
+            or self._navigator_mode != "git"
+        ):
+            return False
+        binding = self._session_binding
+        if binding is None or not self._git_binding_matches_session(binding):
+            return False
+        snapshot = self._session_owner.snapshot(binding)
+        if self._session_owner.mutation_active(binding):
+            if snapshot.git_status is not None:
+                self._git_panel_widget.render_status(snapshot.git_status)
+            self._git_panel_widget.set_mutating(
+                True,
+                self._git_action_detail or "Git mutation in progress…",
+            )
+            self._git_refresh_after_mutation = True
+            return True
+        task = self._git_status_task
+        if (
+            task is not None
+            and self._git_status_task_binding == binding
+            and not task.done()
+        ):
+            repository = snapshot.trusted_repository
+            if repository is not None:
+                self._git_panel_widget.render_checking(
+                    repository.worktree_root
+                )
+            self._ensure_git_status_waiter(task, binding)
+            return True
+        if snapshot.git_status is not None:
+            self._git_panel_widget.render_status(snapshot.git_status)
+            if self._git_action_detail:
+                self._git_panel_widget.set_action_status(
+                    self._git_action_detail
+                )
+            return True
+        if (
+            task is not None
+            and self._git_status_task_binding == binding
+            and task.done()
+        ):
+            self._ensure_git_status_waiter(task, binding)
+            return True
+        return False
 
     async def _open_session_git(self, *, force_prompt: bool = False) -> None:
         binding = self._session_binding
@@ -1075,8 +1159,7 @@ class LibraryFileNotesWorkspace(Vertical):
             if not self._session_owner.publish_trust(binding, repository):
                 return
             snapshot = self._session_owner.snapshot(binding)
-        if snapshot.git_status is not None:
-            self._git_panel_widget.render_status(snapshot.git_status)
+        if self._rehydrate_git_presentation():
             return
         self._start_git_refresh()
 
@@ -1109,12 +1192,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._git_refresh_after_mutation = True
             self._git_panel_widget.mark_stale(str(error))
             return
-        self._git_status_worker = self.run_worker(
-            self._render_git_status(task, binding),
-            name="file-notes-git-status",
-            group="file-notes-git-status",
-            exclusive=True,
-        )
+        self._git_status_task = task
+        self._git_status_task_binding = binding
+        self._ensure_git_status_waiter(task, binding, replace=True)
 
     async def _render_git_status(
         self,
@@ -1128,6 +1208,9 @@ class LibraryFileNotesWorkspace(Vertical):
         except Exception as error:
             if self._git_binding_is_current(binding):
                 self._git_panel_widget.mark_stale(f"Git status failed: {error}")
+                if self._git_status_task is task:
+                    self._git_status_task = None
+                    self._git_status_task_binding = None
             return
         if (
             self._git_binding_is_current(binding)
@@ -1138,6 +1221,9 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._git_panel_widget.set_action_status(
                     self._git_action_detail
                 )
+            if self._git_status_task is task:
+                self._git_status_task = None
+                self._git_status_task_binding = None
 
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
         self._save_state = state
@@ -1958,6 +2044,8 @@ class LibraryFileNotesWorkspace(Vertical):
                 f"{action.title()} blocked: {error}"
             )
             return
+        self._git_status_task = None
+        self._git_status_task_binding = None
         self._git_panel_widget.set_mutating(
             True,
             f"{action.title()} in progress…",
@@ -1983,16 +2071,22 @@ class LibraryFileNotesWorkspace(Vertical):
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            if self._git_binding_is_current(binding):
+            if self._git_binding_matches_session(binding):
                 self._git_action_detail = f"Git action failed: {error}"
-                self._git_panel_widget.set_action_status(self._git_action_detail)
+                if self._git_binding_is_current(binding):
+                    self._git_panel_widget.set_action_status(
+                        self._git_action_detail
+                    )
         else:
-            if self._git_binding_is_current(binding):
+            if self._git_binding_matches_session(binding):
                 self._git_action_detail = self._git_action_summary(
                     result,
                     summary_context,
                 )
-                self._git_panel_widget.set_action_status(self._git_action_detail)
+                if self._git_binding_is_current(binding):
+                    self._git_panel_widget.set_action_status(
+                        self._git_action_detail
+                    )
         finally:
             binding_changed = (
                 binding != self._session_binding

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 from textual.widgets import Button, Input, Label, ListView, Static, TextArea, Tree
 
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
@@ -112,6 +113,18 @@ class _WorkspaceHarness(App[None]):
 
     def compose(self) -> ComposeResult:
         yield self.workspace
+
+
+class _RemountWorkspaceHarness(App[None]):
+    """Mount one retained workspace beneath a removable host."""
+
+    def __init__(self, workspace: LibraryFileNotesWorkspace) -> None:
+        super().__init__()
+        self.workspace = workspace
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="remount-workspace-host"):
+            yield self.workspace
 
 
 class _FakeGitService:
@@ -425,6 +438,53 @@ async def test_panel_renders_repository_scope_and_complete_file_state() -> None:
         assert "content, deletion, and mode" in _text(
             panel.query_one("#file-notes-git-complete-state", Static)
         )
+
+
+@pytest.mark.asyncio
+async def test_repository_path_controls_and_rich_markup_are_display_only() -> None:
+    malicious_path = "/repo[bold red]OWNED[/bold red]\nFAKE TRUST\t\x1b"
+    identity = FileSystemIdentity(1, 2)
+    repository = RepositoryIdentity(
+        worktree_root=malicious_path,
+        git_dir=f"{malicious_path}/.git",
+        git_common_dir=f"{malicious_path}/.git",
+        worktree_identity=identity,
+        git_dir_identity=identity,
+        git_common_dir_identity=identity,
+    )
+    status = SessionGitStatus(
+        binding_generation=1,
+        status_generation=1,
+        state="ready",
+        rows=(_row("unstaged", stage_action="stage"),),
+        repository=repository,
+        head=HeadIdentity.attached("main", "a" * 40),
+    )
+    panel = LibraryFileNotesGitPanel()
+    async with _PanelHarness(panel).run_test() as pilot:
+        panel.render_status(status)
+        await pilot.pause()
+
+        rendered = _text(panel.query_one("#file-notes-git-repository", Static))
+        assert "repo[bold red]OWNED[/bold red]\\nFAKE TRUST\\t\\x1b" in rendered
+        assert "\x1b" not in rendered
+        assert status.repository is not None
+        assert status.repository.worktree_root == malicious_path
+
+
+@pytest.mark.asyncio
+async def test_trust_dialog_escapes_repository_path_controls_and_markup() -> None:
+    malicious_path = "/repo[bold red]OWNED[/bold red]\nFAKE TRUST\t\x1b"
+    app = _DialogHarness(SessionGitTrustDialog(malicious_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        rendered = _text(app.dialog.query_one(".dialog-message", Label))
+        assert (
+            r"repo\[bold red]OWNED\[/bold red]\nFAKE TRUST\t\x1b"
+            in rendered
+        )
+        assert "\x1b" not in rendered
 
 
 @pytest.mark.asyncio
@@ -918,6 +978,235 @@ async def test_opening_session_git_moves_focus_to_a_visible_ready_control(
         )
         await pilot.press("down")
         assert workspace._git_panel_widget.selected_group_id == 2
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_reopening_cached_status_keeps_mutation_controls_disabled(
+    tmp_path: Path,
+) -> None:
+    _root, owner, binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    git_service.action_release = asyncio.Event()
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        entry.press()
+        await _wait_until(
+            pilot,
+            lambda: len(workspace._git_panel_widget.rows) == 2,
+            "initial status did not finish",
+        )
+        workspace.query_one("#file-notes-git-stage-selected", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: owner.mutation_active(binding),
+            "Stage did not retain the mutation gate",
+        )
+
+        try:
+            workspace.query_one("#file-notes-git-back", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: workspace._navigator_mode != "git",
+                "Back did not hide Session Git",
+            )
+            entry.press()
+            await _wait_until(
+                pilot,
+                lambda: len(git_service.discovery_calls) >= 2,
+                "Session Git did not rediscover on reopen",
+            )
+            await pilot.pause()
+
+            assert workspace.query_one(
+                "#file-notes-git-stage-selected",
+                Button,
+            ).disabled
+            assert workspace.query_one(
+                "#file-notes-git-stage-all",
+                Button,
+            ).disabled
+            assert git_service.stage_calls == [(1,)]
+        finally:
+            git_service.action_release.set()
+            await _wait_until(
+                pilot,
+                lambda: not owner.mutation_active(binding),
+                "Stage did not settle during cleanup",
+            )
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_reopening_cached_status_keeps_controls_disabled_during_refresh(
+    tmp_path: Path,
+) -> None:
+    _root, owner, binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        entry.press()
+        await _wait_until(
+            pilot,
+            lambda: len(workspace._git_panel_widget.rows) == 2,
+            "initial status did not finish",
+        )
+        git_service.status_release = asyncio.Event()
+        workspace.query_one("#file-notes-git-refresh", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(git_service.status_calls) == 2,
+            "retained refresh did not start",
+        )
+
+        try:
+            workspace.query_one("#file-notes-git-back", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: workspace._navigator_mode != "git",
+                "Back did not hide Session Git",
+            )
+            entry.press()
+            await _wait_until(
+                pilot,
+                lambda: len(git_service.discovery_calls) >= 2,
+                "Session Git did not rediscover on reopen",
+            )
+            await pilot.pause()
+
+            assert workspace.query_one(
+                "#file-notes-git-stage-selected",
+                Button,
+            ).disabled
+            assert workspace.query_one(
+                "#file-notes-git-stage-all",
+                Button,
+            ).disabled
+            assert len(git_service.status_calls) == 2
+        finally:
+            git_service.status_release.set()
+            await _wait_until(
+                pilot,
+                lambda: owner.snapshot(binding).git_status is not None
+                and owner.snapshot(binding).git_status.status_generation >= 2,
+                "retained refresh did not settle during cleanup",
+            )
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_hidden_action_summary_is_presented_after_reopen(
+    tmp_path: Path,
+) -> None:
+    _root, owner, binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    git_service.action_release = asyncio.Event()
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        entry.press()
+        await _wait_until(
+            pilot,
+            lambda: len(workspace._git_panel_widget.rows) == 2,
+            "initial status did not finish",
+        )
+        workspace.query_one("#file-notes-git-stage-selected", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: owner.mutation_active(binding),
+            "Stage did not retain the mutation gate",
+        )
+        workspace.query_one("#file-notes-git-back", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace._navigator_mode != "git",
+            "Back did not hide Session Git",
+        )
+        git_service.action_release.set()
+        await _wait_until(
+            pilot,
+            lambda: not owner.mutation_active(binding),
+            "hidden Stage did not settle",
+        )
+        assert len(git_service.status_calls) == 1
+
+        entry.press()
+        await _wait_until(
+            pilot,
+            lambda: len(git_service.status_calls) == 2,
+            "reopen did not refresh the hidden action result",
+        )
+        await _wait_until(
+            pilot,
+            lambda: "Staged 1 · clean 0 · blocked 0"
+            in _text(
+                workspace.query_one("#file-notes-git-action-status", Static)
+            ),
+            "reopen did not present the retained action summary",
+        )
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_remount_rehydrates_status_that_finished_while_unmounted(
+    tmp_path: Path,
+) -> None:
+    _root, owner, binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    git_service.status_release = asyncio.Event()
+    app = _RemountWorkspaceHarness(workspace)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace.query_one("#file-notes-session-changes", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(git_service.status_calls) == 1,
+            "retained status did not start",
+        )
+        assert "Checking Session Git status" in _text(
+            workspace.query_one("#file-notes-git-action-status", Static)
+        )
+
+        host = app.query_one("#remount-workspace-host", Vertical)
+        await host.remove_children()
+        await _wait_until(
+            pilot,
+            lambda: not workspace._active and not tuple(host.children),
+            "workspace did not unmount",
+        )
+        git_service.status_release.set()
+        await _wait_until(
+            pilot,
+            lambda: owner.snapshot(binding).git_status is not None,
+            "service did not publish status while unmounted",
+        )
+        await host.mount(workspace)
+        await _wait_until(
+            pilot,
+            lambda: workspace.is_mounted and workspace._active,
+            "workspace did not remount",
+        )
+        await pilot.pause()
+
+        assert len(workspace._git_panel_widget.rows) == 2
+        assert "Status ready" in _text(
+            workspace.query_one("#file-notes-git-action-status", Static)
+        )
+        assert len(git_service.status_calls) == 1
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
