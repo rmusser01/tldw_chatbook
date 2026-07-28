@@ -24,7 +24,14 @@ What changed:
 - The rollback lever described below does not exist. Setting `watchlist_checks_enabled = false`
   disables watchlist checking entirely rather than reverting to the old scheduler.
 
-Removal of the old scheduler — deferred by this ADR — is TASK-1211.
+Removal of the old scheduler — deferred by this ADR — is **complete (TASK-1211)**. About 7,750 LOC
+across 13 files were deleted: `scheduler.py`, `textual_scheduler_worker.py`, `website_monitor.py`,
+the seven briefing/aggregation/distribution modules, `subscription_backend_controller.py`, and
+`Event_Handlers/subscription_events.py` + `subscription_ingest_worker.py` (orphaned by the
+scheduler's removal). `monitoring_engine.py` is retained — it is what `WatchlistCheckHandler` calls.
+
+`Tests/Subscriptions/test_retired_modules_stay_retired.py` asserts the modules are gone and that no
+import path back to them reappears at app startup.
 
 ## Status note (2026-07-27)
 

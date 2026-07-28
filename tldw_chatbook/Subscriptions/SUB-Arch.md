@@ -1,5 +1,25 @@
 # Subscriptions Module Architecture
 
+> **STATUS (2026-07-28, TASK-1211): large parts of this document describe code that
+> no longer exists.** It is kept as the historical design record; do not read it as a
+> map of the shipped system.
+>
+> Removed as unreachable: `scheduler.py`, `textual_scheduler_worker.py`,
+> `website_monitor.py`, `briefing_generator.py`, `briefing_templates.py`,
+> `aggregation_engine.py`, `recursive_summarizer.py`, `rss_feed_generator.py`,
+> `export_manager.py`, `distribution_manager.py`, plus
+> `Event_Handlers/subscription_events.py` and
+> `Event_Handlers/subscription_ingest_worker.py`. Every "briefing generation",
+> "aggregation", "distribution" and "export" capability described below was never
+> reachable from the running application.
+>
+> **What actually runs today:** watchlist checks are scheduled by
+> `Scheduling/scheduler/loop.py` (`SchedulerLoop`), dispatched to
+> `Scheduling/scheduler/handlers/watchlist_check_handler.py`, which delegates to
+> `Subscriptions/monitoring_engine.py` (`FeedMonitor`, `URLMonitor`) and persists
+> through `SubscriptionsDB`. See ADR-019 and
+> `Docs/superpowers/research/2026-07-27-briefing-subsystem-revive-or-retire.md`.
+
 ## Table of Contents
 1. [Overview](#overview)
 2. [Architecture Decisions Records (ADRs)](#architecture-decisions-records-adrs)

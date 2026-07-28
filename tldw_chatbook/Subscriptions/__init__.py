@@ -6,20 +6,16 @@
 # - URL change detection
 # - Automated content ingestion
 # - LLM analysis integration
-# - Briefing generation
 # - Security features (XXE/SSRF protection)
 #
-# Deprecation notice (ADR-019):
-# The legacy scheduling symbols SubscriptionScheduler, TextualSchedulerWorker,
-# and create_scheduler are deprecated. They remain accessible by direct attribute
-# access (e.g., ``from tldw_chatbook.Subscriptions import SubscriptionScheduler``)
-# for backward compatibility during the dual-run validation period, but are no
-# longer exported by ``from tldw_chatbook.Subscriptions import *``. Watchlist
-# checks are migrating to the unified Scheduling scheduler
-# (tldw_chatbook.Scheduling.scheduler.loop.SchedulerLoop).
+# Scheduling (ADR-019, TASK-1211):
+# Watchlist checks run on the unified scheduler
+# (tldw_chatbook.Scheduling.scheduler.loop.SchedulerLoop) via WatchlistCheckHandler,
+# which delegates to monitoring_engine below. The legacy SubscriptionScheduler,
+# SubscriptionSchedulerWorker and the briefing subsystem they drove have been
+# removed -- they were unreachable, and the dual-run this package's deprecation
+# notice described was never implemented.
 #
-
-from typing import Any
 
 from .local_watchlists_service import LocalWatchlistsService
 from .server_watchlists_service import ServerWatchlistsService
@@ -60,16 +56,6 @@ try:  # noqa: SIM105
 except ImportError:
     _CORE_AVAILABLE = False
 
-# Optional briefing generation subsystem.
-try:  # noqa: SIM105
-    from .briefing_generator import BriefingGenerator, BriefingSchedule  # noqa: F401
-
-    _BRIEFING_AVAILABLE = True
-except ImportError:
-    BriefingGenerator = None  # type: ignore[assignment,misc]
-    BriefingSchedule = None  # type: ignore[assignment,misc]
-    _BRIEFING_AVAILABLE = False
-
 __all__ = (
     (
         [
@@ -92,15 +78,6 @@ __all__ = (
         if _CORE_AVAILABLE
         else []
     )
-    + (
-        [
-            # Briefing Generation
-            "BriefingGenerator",
-            "BriefingSchedule",
-        ]
-        if _BRIEFING_AVAILABLE
-        else []
-    )
     + [
         # Watchlists
         "LocalWatchlistsService",
@@ -119,19 +96,3 @@ __all__ = (
 # Version info
 __version__ = "1.0.0"
 __author__ = "TLDW ChatBook Team"
-
-# Legacy scheduler symbols are loaded lazily so that importing the package does
-# not emit deprecation warnings for consumers that do not need them.
-_DEPRECATED_SCHEDULER_SYMBOLS = {
-    "SubscriptionScheduler",
-    "TextualSchedulerWorker",
-    "create_scheduler",
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name in _DEPRECATED_SCHEDULER_SYMBOLS:
-        from . import scheduler
-
-        return getattr(scheduler, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -34,6 +34,22 @@ Retiring this before building briefing generation avoids growing a second implem
 same feature beside a dead one.
 
 Audit: `Docs/superpowers/research/2026-07-27-briefing-subsystem-revive-or-retire.md`
+
+**Scope correction found during implementation.** The island is larger than the audit measured. The
+chain continues past `textual_scheduler_worker`, which is the sole importer of
+`Event_Handlers/subscription_events.py`, which is in turn the sole importer of
+`Event_Handlers/subscription_ingest_worker.py`. Removing the scheduler orphans both, so both are in
+scope here — leaving them would create exactly the silent-orphan shape this cleanup exists to
+remove. TASK-813's notes independently reached the same conclusion from the other direction:
+`handle_add_subscription` has zero dispatchers and `#subscription-folder-input` is composed nowhere.
+
+That brings the removal to ~7,750 LOC across 13 files.
+
+`Subscriptions/content_processor.py` (590 LOC) also falls out of the graph once
+`subscription_ingest_worker` goes, but is deliberately **left in place** and filed separately: it is
+the LLM content-analysis component spec #2 needs, and its five entries in the internal prompt
+catalog may carry user overrides. Deleting it now to re-add it for the briefing work would be churn,
+and the override-migration question deserves its own decision.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -46,4 +62,7 @@ Audit: `Docs/superpowers/research/2026-07-27-briefing-subsystem-revive-or-retire
 - [ ] #6 App startup imports no retired module - asserted by a test that inspects sys.modules after importing the app
 - [ ] #7 ADR-019 is updated to record the removal as complete
 - [ ] #8 Full test suite shows no new failures against the pre-change baseline
+- [ ] #9 Event_Handlers/subscription_events.py and Event_Handlers/subscription_ingest_worker.py are removed - the scheduler's removal orphans both
+- [ ] #10 The two prompt specs describing removed modules (subscriptions.recursive_summarizer_system, subscriptions.briefing) are unregistered, since they document code that no longer exists
+- [ ] #11 content_processor.py is left in place and its newly-orphaned state is filed as a follow-up, not left silent
 <!-- AC:END -->
