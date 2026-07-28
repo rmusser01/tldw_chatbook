@@ -9,12 +9,14 @@ that arrive mid-capture rather than out of a blocking call.
 
 from __future__ import annotations
 
+from pathlib import Path
 import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
 from Tests.UI.test_console_dictation import (
@@ -26,6 +28,27 @@ from tldw_chatbook.Chat import console_voice_input as voice_module
 from tldw_chatbook.Chat.console_voice_input import VoiceFailed
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+# `_ready_host()`/`ConsoleHarness` (used by every other test in this module)
+# deliberately mounts without the production CSS_PATH for speed -- a bare
+# `App` subclass with no CSS_PATH set never loads `_agentic_terminal.tcss`'s
+# rules at all, so any assertion on a CSS-derived resolved style would pass
+# vacuously regardless of whether the rule exists. The visual-distinguishability
+# test below needs the real bundle, so it uses the same pattern already
+# established for this in `test_console_composer_collapse.py`: a minimal App
+# mounting `ConsoleComposerBar` directly with `CSS_PATH` pointed at the
+# generated bundle.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
+
+
+class _ComposerCSSApp(App[None]):
+    """Mount the composer with the production stylesheet for visual assertions."""
+
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleComposerBar(id="console-native-composer")
 
 
 class FakeDictationService:
@@ -712,6 +735,47 @@ async def _wait_for_mic_tooltip_containing(
         await pilot.pause(0.01)
     assert expected in str(button.tooltip)
     return button
+
+
+@pytest.mark.asyncio
+async def test_unavailable_mic_is_visually_distinguishable_not_just_the_tooltip():
+    """A CSS class with no rule is invisible; assert on the resolved style (fix round 1).
+
+    `.console-dictation-unavailable` must carry a real rule -- a hover-only
+    tooltip is not enough for a sighted user who never hovers, and it is the
+    only screen-reader-equivalent surface a TUI has: the rendered terminal
+    text. This uses the production CSS bundle (`_ComposerCSSApp`), not
+    `_ready_host()`'s no-CSS_PATH harness, which would let this pass
+    vacuously regardless of whether the rule exists.
+    """
+    app = _ComposerCSSApp()
+    async with app.run_test(size=(140, 42)) as pilot:
+        composer = app.query_one("#console-native-composer", ConsoleComposerBar)
+        mic = composer.query_one("#console-dictation", Button)
+        await pilot.pause()
+
+        composer.set_dictation_availability(available=True)
+        await pilot.pause()
+        available_opacity = mic.styles.text_opacity
+        available_style = mic.get_visual_style()
+
+        composer.set_dictation_availability(
+            available=False, tooltip=voice_module.CAPTURE_REMEDY
+        )
+        await pilot.pause()
+        unavailable_opacity = mic.styles.text_opacity
+
+        assert "console-dictation-unavailable" in mic.classes
+        # The resolved style, not merely the class being present: a class
+        # with no matching rule is exactly the bug this locks in against.
+        assert unavailable_opacity < available_opacity
+        assert mic.get_visual_style() != available_style
+        # Nothing else about the button changed -- still visible, still the
+        # ordinary label, still real-clickable (see task-15-report.md for why
+        # Textual `disabled` is not used for this).
+        assert str(mic.label) == "Mic"
+        assert mic.disabled is False
+        assert mic.styles.display != "none"
 
 
 @pytest.mark.asyncio

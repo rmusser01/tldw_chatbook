@@ -96,6 +96,11 @@ class ConsoleComposerBar(Horizontal):
     PASTE_CONFIRM_STYLE = "bold black on yellow"
     CURSOR_GLYPH = "▌"  # LEFT HALF BLOCK, terminal-style caret
     CURSOR_BLINK_INTERVAL = 0.53
+    #: Shared with the mic button's initial `compose()` tooltip and
+    #: `sync_dictation_state`'s idle tooltip, and used as the fallback in
+    #: `set_dictation_availability` -- an `Availability(ok=False)` with no
+    #: `remedy` text must not blank the tooltip entirely.
+    DICTATION_IDLE_TOOLTIP = "Record one English utterance with local Parakeet v2."
 
     def __init__(
         self,
@@ -494,7 +499,7 @@ class ConsoleComposerBar(Horizontal):
             "transcribing": "STT…",
         }
         tooltips = {
-            "idle": "Record one English utterance with local Parakeet v2.",
+            "idle": self.DICTATION_IDLE_TOOLTIP,
             "starting": "Starting the default microphone…",
             "recording": "Stop microphone recording and transcribe.",
             "transcribing": "Transcribing locally with Parakeet v2 INT8…",
@@ -550,10 +555,16 @@ class ConsoleComposerBar(Horizontal):
                 transcription provider installed.
             tooltip: Reason and remedy to show in the mic tooltip while
                 unavailable (e.g. naming the missing extra to install).
-                Ignored when ``available`` is True.
+                Ignored when ``available`` is True. An empty string falls
+                back to the ordinary idle tooltip rather than blanking it --
+                `Availability(ok=False)` defaults both `reason` and `remedy`
+                to `""`, and a blank tooltip would be worse than the generic
+                one it replaced.
         """
         self._dictation_available = bool(available)
-        self._dictation_unavailable_tooltip = "" if available else tooltip
+        self._dictation_unavailable_tooltip = (
+            "" if available else (tooltip or self.DICTATION_IDLE_TOOLTIP)
+        )
         self.sync_dictation_state(self._dictation_state)
 
     def set_voice_partial(self, text: str) -> None:
@@ -2273,7 +2284,7 @@ class ConsoleComposerBar(Horizontal):
                     width=8,
                     id="console-dictation",
                     classes="destination-action-button console-dictation-button",
-                    tooltip="Record one English utterance with local Parakeet v2.",
+                    tooltip=self.DICTATION_IDLE_TOOLTIP,
                 )
                 yield self._bounded_button(
                     "Attach",

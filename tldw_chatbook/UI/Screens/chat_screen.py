@@ -4469,13 +4469,16 @@ class ChatScreen(BaseAppScreen):
             )
             composer.set_dictation_availability(available=True)
             return
+        # `remedy` alone is a complete, self-explanatory sentence for both
+        # kinds (it already opens by restating `reason` -- see CAPTURE_REMEDY
+        # / PROVIDER_REMEDY in console_voice_input.py); joining `reason` ahead
+        # of it here would stutter ("No ... installed. No ... installed.
+        # Install with: ..."). The `reason + remedy` join used for the
+        # VoiceFailed toast is a one-off event, not idle copy shown on every
+        # glance at the button, so it can afford the redundancy this can't.
         composer.set_dictation_availability(
             available=availability.ok,
-            tooltip=(
-                ""
-                if availability.ok
-                else f"{availability.reason} {availability.remedy}".strip()
-            ),
+            tooltip="" if availability.ok else availability.remedy,
         )
 
     def _cancel_console_dictation_timer(self) -> None:
@@ -4583,9 +4586,16 @@ class ChatScreen(BaseAppScreen):
                 self.app_instance, "_console_dictation_override_notified", False
             ):
                 self.app_instance._console_dictation_override_notified = True
+                # `event.configured` traces back to the user's own
+                # `transcription.default_provider` TOML setting -- unvalidated
+                # free text, not a value from a closed enum -- and
+                # `App.notify` defaults to `markup=True`, so a provider name
+                # containing `[...]` must be escaped or it is silently
+                # swallowed as (invalid) Rich markup instead of shown.
                 self.app_instance.notify(
-                    f"Configured dictation provider '{event.configured}' isn't "
-                    f"available; using '{event.effective}' instead.",
+                    f"Configured dictation provider "
+                    f"'{escape_markup(event.configured)}' isn't available; "
+                    f"using '{escape_markup(event.effective)}' instead.",
                     severity="warning",
                 )
 
@@ -11154,7 +11164,14 @@ class ChatScreen(BaseAppScreen):
         # existing resume/user-triggered retry paths.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
+        # Same hedge as the handoff timers above: the native composer is not
+        # guaranteed to exist in the DOM yet at `call_after_refresh` time
+        # either, and `_sync_console_dictation_availability` silently no-ops
+        # when it doesn't -- without this retry, a mount that loses that race
+        # would leave the mic showing its unmounted-default tooltip until the
+        # user's first activation attempt re-probes it.
         self.call_after_refresh(self._sync_console_dictation_availability)
+        self.set_timer(0.15, self._sync_console_dictation_availability)
         self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)

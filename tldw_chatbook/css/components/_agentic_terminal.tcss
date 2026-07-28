@@ -686,6 +686,17 @@ ConsoleRunLogModal {
     padding: 0 1;
 }
 
+/* The mic button stays real-clickable (never Textual `disabled`) while
+   dictation is unavailable -- a genuinely disabled widget can never be
+   pressed again, which would remove the only re-probe trigger that exists
+   (task-15). Dimming here restores the *appearance* of disabled, carried
+   before by `disabled`'s own styling, without the *semantics*: the tooltip
+   alone is not enough, since it is invisible to anyone who does not hover,
+   and to the rendered terminal text a screen reader would read. */
+.console-dictation-unavailable {
+    text-opacity: 60%;
+}
+
 .home-dashboard-region,
 .library-region,
 #artifacts-list-pane,
