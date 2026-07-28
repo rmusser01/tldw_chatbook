@@ -887,7 +887,52 @@ git commit -m "feat(speech): assemble the Playground pane and pin the responsive
 
 ---
 
-### Task 6: Wire behaviour and retire the legacy playground
+### Task 6 — REVISED after measurement
+
+Two premises in the original Task 6 were wrong, both found by measuring the
+rebuilt pane rather than reasoning about it.
+
+**"Legacy ids make wiring an id lookup, not a translation table" — false for
+actions.** `CommandStrip._button_id` rewrites every action id:
+`tts-generate-btn` becomes `workbench-action-tts-generate-btn`. The legacy
+handler compares `event.button.id == "tts-generate-btn"`, so it never
+matches. Either the pane stops using `CommandStrip` for these, or the
+handler is rewritten to strip the prefix. Prefer the former: the strip's
+value was its Console-grammar styling, which plain Buttons can carry via
+the same classes.
+
+**"Assert all 57 controls are present" — impossible by construction.**
+Provider parameters are provider-scoped, which is the whole point: with
+audio.cpp selected, `chatterbox-settings` and Higgs' six knobs correctly do
+not exist. A single set comparison can never pass. The check must iterate
+providers and assert the union across them, with the always-present
+controls asserted on every provider.
+
+**Measured gap:** the rebuilt pane currently renders **10 of 57**. Missing
+and genuinely needed regardless of provider: the audio player
+(`audio-player-container`, `audio-progress-bar`, `audio-time-display`,
+`audio-player-status`), generation status (`generation-status-container`,
+`generation-status-text`, `generation-progress`, `tts-generation-log`),
+provider status (`tts-provider-status`, `tts-audio-cpp-restrictions`),
+reference audio (3 controls) and Higgs voice upload (4 controls).
+
+So Task 6 splits:
+
+- **6a — always-present controls.** Add player, generation status, provider
+  status, reference-audio and voice-upload controls to the pane. No
+  behaviour; just the surface, with the completeness check made
+  provider-aware and passing.
+- **6b — action identity.** Replace `CommandStrip` with plain Buttons
+  carrying the exact legacy ids and the same `workbench-action` classes, so
+  `event.button.id` matches what the handler expects.
+- **6c — wiring.** Move the generate closure (`_generate_tts`,
+  `_generation_readiness_error`, `_get_select_key`, `_is_valid_voice`,
+  `_sync_generate_enabled` -- 5 methods, ~322 lines) onto a mixin the pane
+  inherits. Because the pane uses the same control ids, their `query_one`
+  calls resolve unchanged. Append a `SpeechTake` on completion.
+- **6d — retire the legacy branch.** Only after 6c is green.
+
+### Task 6 (original, superseded): Wire behaviour and retire the legacy playground
 
 **Files:**
 - Modify: `tldw_chatbook/UI/Speech/speech_playground_pane.py`
