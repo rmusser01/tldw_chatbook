@@ -10,12 +10,18 @@ import pytest
 from rich.cells import cell_len
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.test_console_workspace_action_row_geometry import StyledConsoleHarness
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
+)
 from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
@@ -26,6 +32,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
+from tldw_chatbook.Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
 from tldw_chatbook.Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     ConsoleWorkspaceACPHandoffState,
@@ -1572,6 +1579,231 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
         assert all(
             "Collapse Chat A" not in " ".join(text.split())
             for text in _conversation_row_texts(console)
+        )
+
+
+async def _click_conversation_browser_toggle(console, pilot, selector: str) -> None:
+    """Scroll a browser toggle into view, then drive it via a REAL click.
+
+    TASK-1142 (UAT F4): section-header carets rendered but real clicks never
+    reached the toggle `Button` -- `.press()` (used by every collapse test
+    above) calls the Button's own handler directly and never exercises
+    Textual's actual click-routing (`get_widget_at` hit-testing against the
+    compositor), so it could not have caught this. Scrolling first mirrors
+    what a real user does before clicking anything below the fold; without
+    it, `pilot.click` can silently miss a widget that is currently clipped
+    out of the rail's visible viewport (nothing to do with this defect --
+    you simply cannot click what is not on screen).
+    """
+    rail_body = console.query_one("#console-left-rail-body")
+
+    # The tray settles its post-recompose layout over more than one message
+    # turn (`_schedule_recomposed_content_fit` schedules nested `call_later`
+    # passes plus a 0.01s timer): a freshly-scrolled/recomposed region can
+    # report a screen position the compositor has not painted yet, which is
+    # exactly the kind of stale-geometry race a real user's own click could
+    # also lose to. Re-scroll and re-check on every attempt (not just once)
+    # until the toggle's own reported region agrees with what
+    # `get_widget_at` resolves there, then click.
+    for _ in range(10):
+        toggle = console.query_one(selector, Button)
+        rail_body.scroll_to_widget(toggle, animate=False)
+        await pilot.pause()  # wait for CPU idle, not a fixed guessed delay
+        toggle = console.query_one(selector, Button)
+        cx = toggle.region.x + toggle.region.width // 2
+        cy = toggle.region.y + toggle.region.height // 2
+        widget_at_center, _ = console.screen.get_widget_at(cx, cy)
+        if widget_at_center is toggle:
+            break
+    else:
+        raise AssertionError(
+            f"{selector!r} never settled at a hittable on-screen position"
+        )
+
+    landed = await pilot.click(selector)
+    assert landed, f"real click missed {selector!r} (not on screen / not hittable)"
+    await pilot.pause(0.2)
+
+
+async def _seed_console_transcript_message(console) -> None:
+    """Append one message to the active session's transcript.
+
+    Session onboarding renders a full-screen setup card + backdrop
+    (`ConsoleSetupBackdrop`) over an EMPTY transcript, which swallows every
+    click in the harness regardless of where it lands -- a real user with
+    any chat history never sees it. Every real-click test in this file
+    seeds one message first so it is exercising section-toggle click
+    routing, not incidentally re-testing the onboarding card.
+    """
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    await console._sync_native_console_chat_ui()
+    console._sync_console_transcript_guidance()
+
+
+@pytest.mark.asyncio
+async def test_section_header_toggles_via_real_click_and_persists_across_rebuild() -> (
+    None
+):
+    """TASK-1142 (UAT F4): Starred/Workspaces/Chats section headers render a
+    collapse caret that must actually respond to a real mouse click, not
+    just `Button.press()`. Drives the real click path end to end: collapse,
+    persistence across a rail rebuild (the same `_sync_console_workspace_
+    context` seam a workspace switch drives), then expand -- mirroring
+    `test_console_workspace_browser_group_collapse_persists_locally` above
+    but through `pilot.click` instead of `.press()`.
+
+    Collapse and expand are each driven from a freshly rebuilt tray rather
+    than chained back-to-back on one instance: `ConsoleWorkspaceContextTray.
+    _fit_height_to_content` settles its own auto-height over several
+    deferred passes, and re-toggling within a couple hundred milliseconds
+    of the previous toggle's own settle can catch it mid-flight (a
+    real, pre-existing race in that unrelated fit-pass machinery, not a
+    click-routing defect and out of this task's scope) -- the rail-rebuild
+    seam this test already needs for persistence conveniently also gives
+    every click a fresh, from-scratch layout to click into.
+    """
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    default_workspace = service.get_active_workspace()
+    service.link_membership(
+        default_workspace.workspace_id,
+        item_type="conversation",
+        item_id="real-click-chat-a",
+        role="workspace-thread",
+        title="Real Click Chat A",
+    )
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _seed_console_transcript_message(console)
+        await pilot.pause(0.2)
+
+        assert any(
+            "Real Click Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_EXPANDED
+
+        # Click: collapses -- rows unmount, caret flips.
+        await _click_conversation_browser_toggle(
+            console, pilot, "#console-conversation-browser-section-toggle-chats"
+        )
+        assert all(
+            "Real Click Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_COLLAPSED
+        collapsed_groups = app.app_config["console"]["conversation_browser"][
+            "collapsed_groups"
+        ]
+        assert collapsed_groups["section:chats"] is True
+
+        # Rebuild the rail (a workspace switch forces a fresh
+        # `_build_console_workspace_context_state()` and re-syncs the
+        # mounted tray with a brand-new instance) -- collapsed state must
+        # round-trip.
+        other_workspace = service.create_workspace(
+            workspace_id="ws-rebuild-check", name="Rebuild Check"
+        )
+        service.set_active_workspace(other_workspace.workspace_id)
+        console._sync_console_workspace_context()
+        await pilot.pause(0.2)
+        service.set_active_workspace(default_workspace.workspace_id)
+        console._sync_console_workspace_context()
+        await pilot.pause(0.2)
+
+        assert all(
+            "Real Click Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_COLLAPSED
+
+        # Click on the freshly-rebuilt tray: expands -- rows remount, caret
+        # flips back.
+        await _click_conversation_browser_toggle(
+            console, pilot, "#console-conversation-browser-section-toggle-chats"
+        )
+        assert any(
+            "Real Click Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_EXPANDED
+        assert (
+            app.app_config["console"]["conversation_browser"]["collapsed_groups"][
+                "section:chats"
+            ]
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_collapsing_workspaces_via_real_click_reveals_aggregate_marker_from_busy_group() -> (
+    None
+):
+    """TASK-1142 + TASK-912: task-912 taught the Workspaces section header
+    to borrow the most-urgent glyph from a hidden busy group when
+    collapsed, but with the header inert to real clicks that marker was
+    only ever reachable via the empty-Chats default collapse -- never by a
+    user actually collapsing a populated section live. A real background
+    session with a live run in its own workspace group, collapsed via the
+    real click path, must surface the aggregate glyph on the header.
+    """
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    busy_workspace = service.create_workspace(workspace_id="ws-busy", name="Busy")
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        store = console._ensure_console_chat_store()
+        viewed = store.ensure_session()
+        store.append_message(viewed.id, role=ConsoleMessageRole.USER, content="hi")
+        background = store.create_session(
+            title="Busy background chat",
+            workspace_id=busy_workspace.workspace_id,
+        )
+        store.switch_session(viewed.id)  # stay viewing the first session
+
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "running"),
+            session_id=background.id,
+        )
+        await console._sync_native_console_chat_ui()
+        console._sync_console_transcript_guidance()
+        await pilot.pause(0.2)
+
+        # Expanded: the row shows its own marker, so the header stays plain.
+        assert (
+            _static_plain(console, "#console-conversation-browser-workspaces-title")
+            == "Workspaces"
+        )
+
+        await _click_conversation_browser_toggle(
+            console, pilot, "#console-conversation-browser-section-toggle-workspaces"
+        )
+
+        assert (
+            _static_plain(console, "#console-conversation-browser-workspaces-title")
+            == "Workspaces ●"
         )
 
 

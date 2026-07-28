@@ -1159,6 +1159,23 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 if section.collapsed
                 else f"Collapse {section.label}"
             )
+            # TASK-1142: mirror the app-tier CSS width (and the legacy
+            # toggle's own belt-and-suspenders inline styles below) directly
+            # on the widget. Textual's built-in `Button` default is `width:
+            # auto; min-width: 16` (task-712 hit the exact same failure mode
+            # for Switch/New) -- relying solely on the bundle's `.console-
+            # workspace-action.console-workspace-conversations-toggle` rule
+            # to beat that default left the toggle's real (unclipped) hit
+            # region up to 16 cells wide, pushed past the rail's clipped
+            # right edge: the caret glyph rendered inside the visible column
+            # but the actual on-screen widget resolved at that position (via
+            # the compositor, matching what a real mouse click hits) was
+            # whatever sat behind the rail -- an inert-looking-but-present
+            # caret. Setting the width inline removes the dependency on the
+            # bundle CSS having loaded/cascaded correctly at all.
+            toggle.styles.width = 3
+            toggle.styles.min_width = 3
+            toggle.styles.max_width = 3
             yield toggle
 
     def _compose_conversation_browser_group_header(
@@ -1214,6 +1231,11 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 if group.collapsed
                 else f"Collapse {group.label}"
             )
+            # TASK-1142: see the matching comment on the section-header
+            # toggle above -- same defensive inline width, same reason.
+            toggle.styles.width = 3
+            toggle.styles.min_width = 3
+            toggle.styles.max_width = 3
             yield toggle
 
     def _compose_conversation_browser_row(
