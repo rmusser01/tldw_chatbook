@@ -2060,6 +2060,15 @@ class ChatScreen(BaseAppScreen):
         # switch initiation; consumed by the deferred draft swap.
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
         self._console_agent_bridge: Any | None = None
+        # TASK-1141: round/request ids (namespaced "mcp:<round_id>" /
+        # "install:<request_id>" / "script:<request_id>") this screen has
+        # already fired a park toast for -- see `_park_console_approval`'s
+        # docstring for the re-invocation hazard this guards against. Never
+        # pruned: entries are one-off UUIDs minted per approval-like round,
+        # so this set's steady-state size is bounded by "how many rounds
+        # this screen instance has EVER parked", not by anything unbounded
+        # over a session's lifetime.
+        self._console_toasted_park_round_ids: set[str] = set()
         self._console_agent_drilldown_run_id: str | None = None
         # Finding C: the conversation the drill-in was set for -- used to
         # detect a conversation/session switch and drop back to the
@@ -15893,6 +15902,44 @@ class ChatScreen(BaseAppScreen):
         registered yet -- i.e. when this method is used standalone (the
         test-seam usage the docstring above describes).
 
+        TASK-1141 (UAT F2): this callback's "once per round" guarantee
+        previously relied ENTIRELY on the structural assumption that each
+        owning bridge invokes it exactly once per round -- true for a
+        single, race-free `request_mcp_approvals`/`request_skill_install_
+        confirm`/`request_skill_script_confirm` call, but the callback
+        itself carried no memory of which round it had already announced.
+        Live UAT observed a duplicate toast for an unchanged, still-parked
+        round: with a background session already parked (toast shown), a
+        DIFFERENT viewed session's own run completing re-fired the exact
+        same toast text for the backgrounded round, even though nothing
+        about that round had changed. Exhaustively tracing the suspects
+        (`_set_run_state`'s COMPLETED branch, `_finalize_agent_*`,
+        `switch_session`/`_remount_parked_*`'s re-derive step, the
+        unvisited-marker stamp) found none of them invoke this callback a
+        second time for the SAME round under single-threaded/synchronous
+        conditions -- but nothing in this method itself prevented a
+        second, differently-triggered invocation (e.g. a re-marshal racing
+        `call_from_thread`, or any future caller of the shared park seam)
+        from re-announcing a round whose identity hasn't changed. Rather
+        than depend on every CALLER staying single-invocation-per-round
+        forever, this method now keys its own idempotency directly off the
+        round/request id(s) the owning controller is CURRENTLY retaining
+        for `session_id` (`_parked_approval_payloads`/`_parked_skill_
+        install_payloads`/`_parked_skill_script_payloads` -- the exact
+        maps `switch_session` re-derives the mounted card from), via
+        `_current_park_round_ids`. A round/request id already recorded in
+        `_console_toasted_park_round_ids` is a re-announcement of a round
+        this screen already toasted for -- silently absorbed. A round/
+        request id NOT yet recorded (a genuinely new round, even for a
+        session that already has an outstanding one) still toasts, per
+        spec (parking must never go silent just because a SIBLING round is
+        also live). When none of the three maps carry any id for
+        `session_id` yet (the standalone test-seam usage described above,
+        or a caller that races ahead of the owning bridge's own
+        `_parked_*_payloads` write), there is no identity to key on, so
+        this falls back to the pre-TASK-1141 unconditional toast --
+        preserving every existing direct-call test's behavior.
+
         Args:
             session_id: The parked round's OWNING session.
         """
@@ -15901,12 +15948,66 @@ class ChatScreen(BaseAppScreen):
             return
         if not controller.has_pending_approval_round(session_id):
             controller.set_run_pending_approval(session_id, True)
+        current_round_ids = self._current_park_round_ids(controller, session_id)
+        if current_round_ids:
+            new_round_ids = current_round_ids - self._console_toasted_park_round_ids
+            if not new_round_ids:
+                # Every round/request id currently parked for this session
+                # has already been toasted -- this invocation is a
+                # re-announcement (re-marshal/re-derive/re-park) of round(s)
+                # already surfaced, not a genuinely new one.
+                return
+            self._console_toasted_park_round_ids.update(current_round_ids)
         session_title, workspace_name = self._console_session_title_and_workspace_name(
             controller, session_id
         )
         self.app_instance.notify(
             f"Agent in {session_title} ({workspace_name}) needs approval."
         )
+
+    @staticmethod
+    def _current_park_round_ids(
+        controller: ConsoleChatController, session_id: str
+    ) -> frozenset[str]:
+        """Return every round/request id CURRENTLY retained for ``session_id``.
+
+        TASK-1141: namespaced per bridge (``"mcp:"``/``"install:"``/
+        ``"script:"``) since the three bridges mint their ids
+        independently -- two different bridges could theoretically mint
+        the same raw UUID by construction, however astronomically
+        unlikely, and namespacing costs nothing. Reads the SAME three
+        retained-payload maps ``switch_session``/``_remount_parked_
+        skill_install``/``_remount_parked_skill_script`` already treat as
+        the single source of truth for "what round is this session's card
+        showing right now" -- deliberately not a separate/parallel piece
+        of state that could itself drift from theirs.
+
+        Args:
+            controller: The owning Console chat controller.
+            session_id: The session to look up.
+
+        Returns:
+            A ``frozenset`` of namespaced round/request ids, empty when
+            none of the three bridges currently retain a payload for
+            ``session_id``.
+        """
+        ids: set[str] = set()
+        mcp_payload = controller._parked_approval_payloads.get(session_id)
+        if mcp_payload is not None:
+            round_id = mcp_payload.get("round_id")
+            if round_id:
+                ids.add(f"mcp:{round_id}")
+        install_payload = controller._parked_skill_install_payloads.get(session_id)
+        if install_payload is not None:
+            request_id = install_payload.get("request_id")
+            if request_id:
+                ids.add(f"install:{request_id}")
+        script_payload = controller._parked_skill_script_payloads.get(session_id)
+        if script_payload is not None:
+            request_id = script_payload.get("request_id")
+            if request_id:
+                ids.add(f"script:{request_id}")
+        return frozenset(ids)
 
     def _console_session_title_and_workspace_name(
         self, controller: ConsoleChatController, session_id: str

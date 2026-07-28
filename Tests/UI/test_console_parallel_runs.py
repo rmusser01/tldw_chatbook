@@ -518,6 +518,156 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
 
 
 @pytest.mark.asyncio
+async def test_park_toast_survives_a_viewed_run_completion_re_invocation() -> None:
+    """TASK-1141 (UAT F2): a parked round's toast must not re-fire when a
+    DIFFERENT, VIEWED session's own run completes.
+
+    Live UAT: session B parked (toast fired once); a run in the VIEWED
+    session A then completed; at that moment, the exact same
+    ``needs approval`` toast re-fired for B's completely unchanged,
+    still-parked round. Exhaustively tracing the suspect call sites
+    (``_set_run_state``'s COMPLETED branch, ``_finalize_agent_*``,
+    ``switch_session``/``_remount_parked_*``'s re-derive step) found none
+    of them invoke ``park_pending_approval``/``_park_console_approval`` a
+    second time under single-threaded/synchronous conditions -- but
+    ``_park_console_approval`` itself carried no protection against a
+    second, differently-triggered invocation for the SAME still-live
+    round (a re-marshal/re-derive/re-park), relying entirely on the
+    structural assumption that its three owning bridges each call it
+    exactly once per round. This drives the REAL sequence UAT observed --
+    park B, run A to a real terminal COMPLETED transition via
+    ``_set_run_state`` (the established seam other tests in this file use
+    to drive "real" terminal transitions), then a second invocation of the
+    shared park seam for B's own round, unchanged -- and asserts the toast
+    still fires exactly once total. Must fail on HEAD (pre-TASK-1141):
+    the second invocation was unconditional and always re-toasted.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        controller.app = host
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # keep viewing A
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        decision_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_mcp_approvals,
+                [
+                    MCPPendingCall(
+                        llm_name="mcp__srv__tool",
+                        server_key="local:srv",
+                        tool_name="tool",
+                        server_label="Srv",
+                        arguments={},
+                        reason="ask",
+                        options=["approve_once", "deny"],
+                    )
+                ],
+                session_id=background,
+            )
+        )
+        await pilot.pause(0.3)
+
+        approval_toasts = [n for n in notifications if "needs approval" in n]
+        assert len(approval_toasts) == 1
+        round_id = controller._parked_approval_payloads[background]["round_id"]
+
+        # A's own real terminal transition -- A stays active/viewed
+        # throughout, so `_set_run_state`'s non-active toast branch never
+        # even considers B; nothing about B's round changes here.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
+            session_id=viewed,
+        )
+        await pilot.pause(0.1)
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
+            session_id=viewed,
+        )
+        await pilot.pause(0.2)
+
+        # A re-marshal/re-derive re-invoking the shared park seam for B's
+        # SAME, still-outstanding round (round_id unchanged) -- the
+        # hazard TASK-1141 guards against regardless of which real
+        # trigger UAT actually hit.
+        assert controller._parked_approval_payloads[background]["round_id"] == round_id
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+
+        approval_toasts_after = [n for n in notifications if "needs approval" in n]
+        assert len(approval_toasts_after) == 1, (
+            f"expected exactly 1 park toast total across the re-invocation, "
+            f"got {approval_toasts_after}"
+        )
+
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "deny"}, round_id=round_id
+        )
+        decisions = await asyncio.wait_for(decision_task, timeout=2.0)
+        assert decisions == {"mcp__srv__tool": "deny"}
+
+
+@pytest.mark.asyncio
+async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session() -> None:
+    """TASK-1141: the round-identity guard must not over-suppress -- a
+    SECOND, genuinely different round for the SAME session (e.g. the
+    first round having resolved/timed out and a fresh one starting) must
+    still toast, per AC#1's "a genuinely NEW round ... must still toast".
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        controller.add_pending_round(background, "round-1")
+        controller._parked_approval_payloads[background] = {
+            "round_id": "round-1",
+            "session_id": background,
+            "calls": [],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        # Round 1 resolves and clears completely.
+        controller.discard_pending_round(background, "round-1")
+        controller._parked_approval_payloads.pop(background, None)
+
+        # A genuinely new round (different id) parks for the same session.
+        controller.add_pending_round(background, "round-2")
+        controller._parked_approval_payloads[background] = {
+            "round_id": "round-2",
+            "session_id": background,
+            "calls": [],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        toasts = [n for n in notifications if "needs approval" in n]
+        assert len(toasts) == 2, f"expected the new round to toast again, got {toasts}"
+
+
+@pytest.mark.asyncio
 async def test_background_completion_fires_single_toast() -> None:
     """Task 10 (background completion toasts, parallel-agents spec): a
     NON-viewed session's run finishing (COMPLETED) or failing (FAILED)
@@ -1356,3 +1506,91 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
         decision = await asyncio.wait_for(decision_task, timeout=2.0)
         assert decision == {"allow": True, "remember": False}
         assert background not in controller._pending_approvals
+
+
+@pytest.mark.asyncio
+async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_round() -> None:
+    """TASK-1141 sweep: `_park_console_approval` is the SAME shared seam
+    for all three bridges (see its own docstring) -- this pins that the
+    round-identity guard covers the skill-install park path too, not just
+    MCP approvals. Mirrors ``test_park_toast_survives_a_viewed_run_
+    completion_re_invocation`` above."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        controller.app = host
+        controller.skill_install_confirm_timeout_seconds = lambda: 30.0
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        decision_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_skill_install_confirm,
+                "https://github.com/o/r",
+                session_id=background,
+            )
+        )
+        await pilot.pause(0.3)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+        request_id = controller._parked_skill_install_payloads[background]["request_id"]
+
+        # Re-invoke the shared park seam for the SAME, still-outstanding
+        # skill-install round.
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        controller.resolve_pending_skill_install(True, request_id=request_id)
+        allowed = await asyncio.wait_for(decision_task, timeout=2.0)
+        assert allowed is True
+
+
+@pytest.mark.asyncio
+async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_round() -> None:
+    """TASK-1141 sweep: same guard, skill-script park path."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        controller.app = host
+        controller.skill_script_confirm_timeout_seconds = lambda: 30.0
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        decision_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_skill_script_confirm,
+                {"skill_name": "demo", "script_path": "scripts/hello.py"},
+                session_id=background,
+            )
+        )
+        await pilot.pause(0.3)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+        request_id = controller._parked_skill_script_payloads[background]["request_id"]
+
+        # Re-invoke the shared park seam for the SAME, still-outstanding
+        # skill-script round.
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        controller.resolve_pending_skill_script(True, False, request_id=request_id)
+        decision = await asyncio.wait_for(decision_task, timeout=2.0)
+        assert decision == {"allow": True, "remember": False}
