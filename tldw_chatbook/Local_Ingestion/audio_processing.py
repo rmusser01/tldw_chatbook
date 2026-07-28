@@ -314,6 +314,9 @@ class LocalAudioProcessor:
         transcription_progress_callback: Optional[
             Callable[[float, str, Optional[Dict]], None]
         ] = None,
+        transcription_precision: Optional[str] = None,
+        transcription_local_files_only: bool = False,
+        transcription_batch_route_resolved: bool = False,
     ) -> Dict[str, Any]:
         """
         Process multiple audio inputs (URLs or local files).
@@ -348,6 +351,9 @@ class LocalAudioProcessor:
                         transcription_model_dir=transcription_model_dir,
                         transcription_language=transcription_language,
                         translation_target_language=translation_target_language,
+                        transcription_precision=transcription_precision,
+                        transcription_local_files_only=transcription_local_files_only,
+                        transcription_batch_route_resolved=transcription_batch_route_resolved,
                         perform_chunking=perform_chunking,
                         chunk_method=chunk_method,
                         max_chunk_size=max_chunk_size,
@@ -498,6 +504,13 @@ class LocalAudioProcessor:
                     language=language,
                     model_dir=kwargs.get("transcription_model_dir"),
                     target_lang=kwargs.get("translation_target_language"),
+                    compute_type=kwargs.get("transcription_precision"),
+                    local_files_only=kwargs.get(
+                        "transcription_local_files_only", False
+                    ),
+                    batch_route_resolved=kwargs.get(
+                        "transcription_batch_route_resolved", False
+                    ),
                     vad_filter=kwargs.get("vad_use", False),
                     diarize=kwargs.get("diarize", False),
                     progress_callback=transcription_progress_callback,

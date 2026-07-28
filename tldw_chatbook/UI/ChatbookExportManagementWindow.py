@@ -24,9 +24,11 @@ from textual.widgets import Static, Button, DataTable, OptionList, Footer
 from textual.reactive import reactive
 from loguru import logger
 
-from ..Utils.private_paths import secure_private_directory
 from ..Chatbooks.chatbook_importer import ChatbookImporter
-from ..Chatbooks.database_paths import get_chatbook_database_paths
+from ..Chatbooks.database_paths import (
+    get_chatbook_database_paths,
+    get_private_chatbooks_dir,
+)
 from ..Chatbooks.chatbook_models import ChatbookManifest
 from ..Chatbooks.server_chatbook_service import (
     get_server_job_records,
@@ -314,11 +316,10 @@ class ChatbookExportManagementWindow(ModalScreen):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self.chatbooks_dir = secure_private_directory(
-            Path.home() / "Documents" / "Chatbooks",
-            create=True,
-            application_owned=True,
-        ).lexical_path
+        # Default to the app's private, hardened data directory rather than
+        # the hardcoded ~/Documents/Chatbooks literal (task-984). Pre-existing
+        # exports at the old location are not moved by this change.
+        self.chatbooks_dir = get_private_chatbooks_dir()
         self.chatbook_files: List[Dict[str, Any]] = []
         self.current_manifest: Optional[ChatbookManifest] = None
         self.server_job_records: List[Dict[str, Any]] = []

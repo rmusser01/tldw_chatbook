@@ -96,6 +96,18 @@
     padding: 0 1;
 }
 
+/* TASK-1076: the fully-first-run "Start here" callout above the sample
+   bench button -- bold and full-text-primary against the muted
+   .evals-rail-empty-copy used everywhere else in this rail, so the
+   recommended first step reads as visually distinct, not just differently
+   worded. Never a colour-only cue (the "Start here" text itself carries
+   the meaning). */
+.evals-rail-first-run-hint {
+    color: $ds-text-primary;
+    text-style: bold;
+    padding: 0 1;
+}
+
 /* Task 6 (empty states, sample bench, export). "No providers configured"
    replaces the BENCHES SECTION BODY only (see library_rail.py's
    _no_providers_message) -- deliberately not the whole rail: Datasets and
@@ -264,6 +276,16 @@
     color: $ds-text-muted;
 }
 
+/* TASK-1036: the run view's degenerate-canary callout -- same
+   .ds-recovery-callout base styling (border/background/padding, from
+   components/_agentic_terminal.tcss) as #evals-inspector-bench's own
+   callout above, plus the identical trailing margin so it reads as the
+   same design element on both views, per the design contract's "bench
+   view and run view agree on how prominently it is presented". */
+#evals-grid-canary-callout {
+    margin: 0 0 1 0;
+}
+
 #evals-grid-controls {
     height: auto;
     margin: 0 0 1 0;
@@ -277,6 +299,23 @@
     height: 1fr;
     min-height: 0;
 }
+
+/* TASK-1034 lived here: the global `*:focus { outline: solid
+   $ds-focus-accent; }` fallback (core/_reset.tcss) paints its outline OVER
+   the widget's outermost rendered lines, and a `DataTable`'s first line is
+   its column header -- so a focused results grid lost its header, and the
+   "[warned]" canary marker riding inside it, entirely. That was fixed here
+   with an id-scoped `outline: none` plus a header recolour.
+
+   TASK-1160 found the same rule silently eating clicks on the bottom row
+   of every focused table in the app and moved BOTH halves of that fix --
+   the suppressed outline and the header recolour -- to a bare
+   `DataTable:focus` type selector in components/_lists.tcss, which this
+   table now inherits unchanged. The id-scoped rules were removed rather
+   than left in place, so there is one mechanism, not two.
+   Tests/UI/test_evals_results_grid.py::
+   test_focused_results_grid_keeps_its_header_and_the_warned_marker still
+   guards the header against a real compositor render. */
 
 /* Focused-cell detail can run to many lines (a full top-K plus a probe
    table) -- scrolled at this level per the I4 convention above, mirroring

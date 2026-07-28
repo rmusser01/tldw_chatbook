@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Awaitable, Mapping, Optional, Sequence
 
 from .media_reading_normalizers import (
     normalize_file_artifact,
@@ -100,6 +101,8 @@ class MediaReadingScopeService:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
         self.sync_scope_service = sync_scope_service
+        self._metadata_update_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._metadata_update_generations: dict[tuple[str, str], int] = {}
 
     def _normalize_mode(
         self, mode: MediaReadingBackend | str | None
@@ -112,7 +115,6 @@ class MediaReadingScopeService:
             return MediaReadingBackend(str(mode))
         except ValueError as exc:
             raise ValueError(f"Invalid media backend: {mode}") from exc
-
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
@@ -1430,7 +1432,6 @@ class MediaReadingScopeService:
             await self._maybe_await(service.unlink_note(item_id, note_id))
         )
 
-
     async def create_reading_archive(
         self,
         *,
@@ -2445,6 +2446,54 @@ class MediaReadingScopeService:
             service.update_media_metadata(media_id, **metadata)
         )
 
+    def update_media_metadata_latest(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+        media_id: Any,
+        **metadata: Any,
+    ) -> Awaitable[Any]:
+        """Build a last-request-wins metadata mutation for one media record.
+
+        The request generation is reserved synchronously so callers can create
+        the awaitable before handing it to a background worker. Writes for one
+        backend/record pair are serialized across replacement UI destinations;
+        a request that has not started writing is skipped when a newer request
+        has already been reserved.
+
+        Args:
+            mode: Backend that owns the media record.
+            media_id: Backend-native media identifier.
+            **metadata: Replacement metadata fields accepted by the backend.
+
+        Returns:
+            Awaitable that persists this request unless a newer pending request
+            for the same backend and record supersedes it first.
+        """
+        ordering_mode = (
+            mode.value
+            if isinstance(mode, MediaReadingBackend)
+            else str(mode or MediaReadingBackend.LOCAL.value)
+        )
+        ordering_key = (ordering_mode, str(media_id))
+        generation = self._metadata_update_generations.get(ordering_key, 0) + 1
+        self._metadata_update_generations[ordering_key] = generation
+        write_lock = self._metadata_update_locks.setdefault(
+            ordering_key, asyncio.Lock()
+        )
+
+        async def persist_latest() -> Any:
+            async with write_lock:
+                if self._metadata_update_generations.get(ordering_key) != generation:
+                    return None
+                return await self.update_media_metadata(
+                    mode=mode,
+                    media_id=media_id,
+                    **metadata,
+                )
+
+        return persist_latest()
+
     async def delete_media(
         self, *, mode: MediaReadingBackend | str | None = None, media_id: Any
     ) -> Any:
@@ -3149,7 +3198,6 @@ class MediaReadingScopeService:
             normalize_ingestion_source_item(item, backend=normalized_mode.value)
             for item in list(items or [])
         ]
-
 
     async def trigger_ingestion_source_sync(
         self,

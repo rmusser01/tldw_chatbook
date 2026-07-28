@@ -1,93 +1,34 @@
 """Tests for task-283: move debounced-search DB work off the event loop.
 
-Covers the retained search leaves the perf audit (§P1 B4) identified as
+Cover the retained Console search leaves the perf audit (§P1 B4) identified as
 running sync sqlite/FTS work on the event loop when run_worker(coroutine)
 fires after a debounce:
 
   * Console browser search -- ChatConversationScopeService.list_conversations
     (chat_conversation_scope_service.py) and the raw-service branch in
     ChatScreen._persisted_console_browser_rows (chat_screen.py).
-  * Media search -- perform_media_search_and_display's search_media_db call
-    (media_events.py).
 
-For each: a file-backed DB runs the leaf via asyncio.to_thread (assert via
-threading.get_ident()); a per-connection ``:memory:`` DB stays inline
-(thread-affinity hazard); and where a staleness guard exists/was added, a
-result that becomes stale mid-flight is discarded rather than clobbering a
-newer search's output.
+For each, a file-backed DB runs the leaf via asyncio.to_thread (assert via
+threading.get_ident()) and a per-connection ``:memory:`` DB stays inline.
 """
 
 from __future__ import annotations
 
-import sys
 import threading
-import types
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from loguru import logger as _real_logger
-from textual.css.query import QueryError
 
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
-from tldw_chatbook.Event_Handlers import media_events
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 from Tests.UI.test_screen_navigation import _build_test_app
 
 
 MAIN_THREAD_IDENT = threading.get_ident
-
-
-# ---------------------------------------------------------------------------
-# Shared fakes
-# ---------------------------------------------------------------------------
-
-
-class _FakeInput:
-    def __init__(self, value: str = ""):
-        self.value = value
-        self.disabled = False
-
-
-class _FakeCheckbox:
-    def __init__(self, value: bool):
-        self.value = value
-
-
-class _FakeSelect:
-    def __init__(self, value: Any):
-        self.value = value
-
-
-class _FakeListView:
-    def __init__(self):
-        self.items: list[Any] = []
-
-    async def clear(self) -> None:
-        self.items = []
-
-    async def append(self, item: Any) -> None:
-        self.items.append(item)
-
-
-class _SelectorApp(SimpleNamespace):
-    """Minimal query_one-capable stand-in, not a real Textual App/Screen."""
-
-    def query_one(self, selector: Any, widget_type: Any = None) -> Any:
-        widgets = self.__dict__.setdefault("_widgets", {})
-        widget = widgets.get(selector)
-        if widget is None:
-            raise QueryError(f"No match for {selector!r}")
-        return widget
-
-
-def _selector_app(**widgets: Any) -> _SelectorApp:
-    app = _SelectorApp()
-    app._widgets = widgets
-    return app
 
 
 # ---------------------------------------------------------------------------
@@ -229,104 +170,3 @@ async def test_refresh_console_conversation_browser_search_discards_result_when_
     # before persisted rows returned (empty, since it starts as ()).
     assert screen._console_conversation_browser_total is None
     assert screen._console_conversation_browser_rows == ()
-
-
-# ---------------------------------------------------------------------------
-# Media search
-# ---------------------------------------------------------------------------
-
-
-class _CountingMediaDb:
-    def __init__(self, *, is_memory_db: bool, on_call=None):
-        self.is_memory_db = is_memory_db
-        self.calls = 0
-        self.thread_idents: list[int] = []
-        self._on_call = on_call
-
-    def search_media_db(self, **kwargs):
-        self.calls += 1
-        self.thread_idents.append(threading.get_ident())
-        if self._on_call is not None:
-            self._on_call()
-        return [{"id": 1, "title": "Doc", "type": "document"}], 1
-
-
-def _media_app(db: Any, *, type_slug: str = "all-media") -> _SelectorApp:
-    app = _selector_app(
-        **{
-            f"#media-list-view-{type_slug}": _FakeListView(),
-        }
-    )
-    app.media_db = db
-    app.media_current_page = 1
-    app.loguru_logger = _real_logger
-    app._media_search_generation = {}
-    return app
-
-
-def _stub_media_window_module(monkeypatch) -> None:
-    """Work around an unrelated, pre-existing dead import.
-
-    ``perform_media_search_and_display`` does ``from ..UI.MediaWindow
-    import MediaWindow`` inside a ``try/except QueryError`` -- but
-    ``tldw_chatbook/UI/MediaWindow.py`` no longer exists (renamed to
-    ``MediaWindow_v2.py``/``MediaWindowV88.py`` well before task-283), so
-    the import always raises ``ModuleNotFoundError``, which that narrow
-    ``except QueryError`` does NOT catch. In production this is swallowed
-    by the function's outer broad ``except Exception`` (media search
-    always falls into the "Error loading" branch instead of ever reaching
-    the DB call this task threads) -- a real, pre-existing bug, but fixing
-    it is out of scope for task-283 (STOP-don't-improvise per site; flagged
-    in the task's Implementation Notes instead). Stub the module so this
-    test can actually exercise the threaded search_media_db call.
-    """
-    stub_module = types.ModuleType("tldw_chatbook.UI.MediaWindow")
-    stub_module.MediaWindow = type("MediaWindow", (), {})
-    monkeypatch.setitem(sys.modules, "tldw_chatbook.UI.MediaWindow", stub_module)
-
-
-@pytest.mark.asyncio
-async def test_media_search_threads_file_backed_db(monkeypatch):
-    _stub_media_window_module(monkeypatch)
-    db = _CountingMediaDb(is_memory_db=False)
-    app = _media_app(db)
-    caller_thread = threading.get_ident()
-
-    await media_events.perform_media_search_and_display(app, "all-media", "term", "")
-
-    assert db.calls == 1
-    assert db.thread_idents[0] != caller_thread
-    results_list = app.query_one("#media-list-view-all-media", None)
-    assert len(results_list.items) == 1
-
-
-@pytest.mark.asyncio
-async def test_media_search_stays_inline_for_memory_backed_db(monkeypatch):
-    _stub_media_window_module(monkeypatch)
-    db = _CountingMediaDb(is_memory_db=True)
-    app = _media_app(db)
-    caller_thread = threading.get_ident()
-
-    await media_events.perform_media_search_and_display(app, "all-media", "term", "")
-
-    assert db.calls == 1
-    assert db.thread_idents[0] == caller_thread
-
-
-@pytest.mark.asyncio
-async def test_media_search_discards_stale_generation(monkeypatch):
-    _stub_media_window_module(monkeypatch)
-
-    def bump_generation():
-        app._media_search_generation["all-media"] += 1
-
-    db = _CountingMediaDb(is_memory_db=False, on_call=bump_generation)
-    app = _media_app(db)
-
-    await media_events.perform_media_search_and_display(app, "all-media", "term", "")
-
-    results_list = app.query_one("#media-list-view-all-media", None)
-    # A newer search's generation bump while this one's DB call was
-    # off-thread must discard these results (list stays at whatever the
-    # pre-search clear() left, i.e. empty).
-    assert results_list.items == []

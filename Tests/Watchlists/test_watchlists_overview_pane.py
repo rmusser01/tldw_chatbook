@@ -94,6 +94,12 @@ async def test_data_recompose_releases_a_capture_that_lands_in_the_deferred_tear
     app = OverviewPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(OverviewPane)
+        # TASK-1020: a pane whose `data` is still `{}` is in the LOADING
+        # state and renders no cards, so the victim widget this test needs to
+        # capture has to be brought into existence first. The recompose being
+        # exercised is the second assignment below, exactly as before.
+        pane.data = {"total_sources": 1, "failed_runs": []}
+        await pilot.pause()
         victim = pane.query_one("#overview-total-sources")
 
         pane.data = {

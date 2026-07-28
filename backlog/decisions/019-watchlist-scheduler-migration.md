@@ -1,9 +1,53 @@
 # ADR-019: Migrate watchlist checks to the unified Scheduling scheduler
 
-Status: Accepted
+Status: Accepted — **amended; the dual-run below was never implemented. Read the amendment first.**
 Date: 2026-07-19
 Related Task: TASK-299
 Supersedes: N/A
+
+## Amendment (2026-07-27, TASK-1210)
+
+**The promotion gate this ADR defines was unsatisfiable, so the migration is promoted directly.**
+
+The ADR gates promotion on dual-run parity metrics between the old and new schedulers. Those metrics
+can never be produced: the old scheduler is unreachable, so there is no second path to compare
+against. Waiting for the gate meant waiting forever, with the flag off and nothing checking
+watchlists at all.
+
+What changed:
+
+- `watchlist_checks_enabled` now defaults **true** and `watchlist_checks_shadow` defaults **false**,
+  in the shipped TOML and in `app.py`'s in-code fallbacks. `WatchlistCheckHandler` is the sole and
+  authoritative executor of watchlist checks.
+- Shadow mode remains as an explicit diagnostics opt-in. It fetches and discards, and because it
+  never writes `last_checked` it also ignores each source's cadence — do not leave it on.
+- The rollback lever described below does not exist. Setting `watchlist_checks_enabled = false`
+  disables watchlist checking entirely rather than reverting to the old scheduler.
+
+Removal of the old scheduler — deferred by this ADR — is TASK-1211.
+
+## Status note (2026-07-27)
+
+A runtime import-trace audit found that the dual-run safety net described below **does not exist in
+the shipped app**. Two clauses of this ADR are not true of the code:
+
+- *"Old scheduler remains the execution authority by default"* — the old `SubscriptionScheduler`
+  and `SubscriptionSchedulerWorker` are **unreachable**. Their only construction site is
+  `UI/Subscription_Modules/subscription_backend_controller.py`, which serves a `SubscriptionWindow`
+  class that no longer exists; neither module is in `sys.modules` after a full app import.
+- *"Rollback plan: set `watchlist_checks_enabled = false` and the old `SubscriptionScheduler`
+  resumes authoritative execution"* — setting that flag false leaves **no** executor at all, since
+  the new handler is then never constructed and the old one cannot run.
+
+Because the flag ships `false` (and `watchlist_checks_shadow` ships `true`, which fetches and
+discards results), the practical effect is that **nothing checks watchlists on a schedule**. Manual
+"Check now" works; automatic checking is unimplemented end to end.
+
+Tracked by TASK-1210 (make scheduled checks run — landed, see the amendment above) and TASK-1211
+(retire the unreachable scheduler, the removal this ADR deferred).
+
+Full analysis and reproduction:
+`Docs/superpowers/research/2026-07-27-briefing-subsystem-revive-or-retire.md`
 
 ## Decision
 

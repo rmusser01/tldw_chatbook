@@ -201,7 +201,7 @@ class TestFasterWhisperUnit:
         assert result["provider"] == "faster-whisper"
 
         # Verify model is cached
-        cache_key = ("base", "cpu", "int8")
+        cache_key = ("base", "cpu", "int8", False)
         assert cache_key in transcription_service._model_cache
 
     def test_model_cache_reuse(
@@ -230,7 +230,7 @@ class TestFasterWhisperUnit:
         mock_class.assert_not_called()
 
         # The cached model should be used - verify cache is populated
-        cache_key = ("base", "cpu", "int8")
+        cache_key = ("base", "cpu", "int8", False)
         assert cache_key in transcription_service._model_cache
         cached_model = transcription_service._model_cache[cache_key]
         # Both calls should use the same model instance
@@ -258,7 +258,7 @@ class TestFasterWhisperUnit:
             transcription_service.config["compute_type"] = compute_type
 
             # Clear specific cache entry if it exists
-            cache_key = (model, device, compute_type)
+            cache_key = (model, device, compute_type, False)
             if cache_key in transcription_service._model_cache:
                 del transcription_service._model_cache[cache_key]
 
@@ -273,6 +273,78 @@ class TestFasterWhisperUnit:
             # Should create new model for this configuration
             mock_class.assert_called_once()
             assert cache_key in transcription_service._model_cache
+
+    def test_batch_overrides_force_local_int8_model_loading(
+        self, transcription_service, mock_whisper_model, sample_audio_file
+    ):
+        """Routed batch settings override config at the model-loading boundary."""
+        mock_class, _ = mock_whisper_model
+        transcription_service.config["compute_type"] = "float16"
+
+        transcription_service._transcribe_with_faster_whisper(
+            audio_path=sample_audio_file,
+            model="base",
+            language="en",
+            vad_filter=True,
+            compute_type="int8",
+            local_files_only=True,
+        )
+
+        mock_class.assert_called_once_with(
+            "base",
+            device="cpu",
+            compute_type="int8",
+            download_root=None,
+            local_files_only=True,
+        )
+        assert ("base", "cpu", "int8", True) in transcription_service._model_cache
+
+    def test_direct_call_without_overrides_keeps_configured_loading_behavior(
+        self, transcription_service, mock_whisper_model, sample_audio_file
+    ):
+        """Non-batch callers retain configured compute type and downloads."""
+        mock_class, _ = mock_whisper_model
+        transcription_service.config["compute_type"] = "float16"
+
+        transcription_service._transcribe_with_faster_whisper(
+            audio_path=sample_audio_file,
+            model="base",
+            language="en",
+            vad_filter=True,
+        )
+
+        mock_class.assert_called_once_with(
+            "base",
+            device="cpu",
+            compute_type="float16",
+            download_root=None,
+            local_files_only=False,
+        )
+        assert ("base", "cpu", "float16", False) in transcription_service._model_cache
+
+    def test_local_only_state_participates_in_model_cache_identity(
+        self, transcription_service, mock_whisper_model, sample_audio_file
+    ):
+        """Local-only and download-enabled calls never share a cached model."""
+        mock_class, _ = mock_whisper_model
+
+        transcription_service._transcribe_with_faster_whisper(
+            audio_path=sample_audio_file,
+            model="base",
+            language="en",
+            vad_filter=True,
+            local_files_only=True,
+        )
+        transcription_service._transcribe_with_faster_whisper(
+            audio_path=sample_audio_file,
+            model="base",
+            language="en",
+            vad_filter=True,
+        )
+
+        assert mock_class.call_count == 2
+        assert ("base", "cpu", "int8", True) in transcription_service._model_cache
+        assert ("base", "cpu", "int8", False) in transcription_service._model_cache
 
     def test_language_detection(
         self, transcription_service, mock_whisper_model, sample_audio_file
@@ -319,6 +391,102 @@ class TestFasterWhisperUnit:
         assert result["source_language"] == "es"
         assert result["target_language"] == "en"
         assert "translation" in result
+
+    def test_auto_translation_to_english_uses_translate_task(
+        self, transcription_service, mock_whisper_model, sample_audio_file
+    ):
+        """Automatic language detection still requests faster-whisper translation."""
+        _, mock_instance = mock_whisper_model
+        info = MockTranscriptionInfo(
+            language="es", language_probability=0.99, duration=7.5
+        )
+        mock_instance.transcribe.side_effect = lambda *args, **kwargs: (
+            iter([MockSegment(0.0, 1.0, "Translated.")]),
+            info,
+        )
+
+        result = transcription_service._transcribe_with_faster_whisper(
+            audio_path=sample_audio_file,
+            model="base",
+            language="auto",
+            vad_filter=True,
+            source_lang="auto",
+            target_lang="en",
+        )
+
+        call_args = mock_instance.transcribe.call_args
+        assert call_args.kwargs["task"] == "translate"
+        assert call_args.kwargs["language"] is None
+        assert result["task"] == "translation"
+        assert result["source_language"] == "es"
+        assert result["target_language"] == "en"
+
+    def test_resolved_batch_route_ignores_global_language_defaults(
+        self, transcription_service, monkeypatch, sample_audio_file
+    ):
+        """Resolved batch source/target values must survive service configuration."""
+        transcription_service.config["default_source_language"] = "en"
+        transcription_service.config["default_target_language"] = "en"
+        captured = {}
+
+        def fake_transcribe(
+            audio_path,
+            model,
+            language,
+            vad_filter,
+            source_lang,
+            target_lang,
+            **kwargs,
+        ):
+            captured.update(
+                {
+                    "audio_path": audio_path,
+                    "model": model,
+                    "language": language,
+                    "vad_filter": vad_filter,
+                    "source_lang": source_lang,
+                    "target_lang": target_lang,
+                    **kwargs,
+                }
+            )
+            return {"text": "Bonjour", "segments": []}
+
+        monkeypatch.setattr(
+            transcription_service,
+            "_transcribe_with_faster_whisper",
+            fake_transcribe,
+        )
+
+        transcription_service.transcribe(
+            sample_audio_file,
+            provider="faster-whisper",
+            model="base",
+            language="fr",
+            target_lang=None,
+            batch_route_resolved=True,
+        )
+
+        assert captured["language"] == "fr"
+        assert captured["source_lang"] == "fr"
+        assert captured["target_lang"] is None
+
+    def test_non_english_translation_target_rejected_before_model_construction(
+        self, transcription_service, mock_whisper_model, sample_audio_file
+    ):
+        """Reject unsupported translation targets before loading a model."""
+        mock_class, _ = mock_whisper_model
+
+        with pytest.raises(TranscriptionError, match="target en"):
+            transcription_service._transcribe_with_faster_whisper(
+                audio_path=sample_audio_file,
+                model="base",
+                language="es",
+                vad_filter=True,
+                source_lang="es",
+                target_lang="fr",
+            )
+
+        mock_class.assert_not_called()
 
     def test_vad_filter_options(
         self, transcription_service, mock_whisper_model, sample_audio_file

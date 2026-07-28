@@ -50,7 +50,23 @@ def save_bench(db: EvalsDB, config: BenchConfig, task_id: Optional[str] = None) 
     dataset_id values, and passing those through raised sqlite3's FOREIGN
     KEY constraint failed. A documented restriction is preferable to a
     surface that breaks existing callers this way.
+
+    Raises:
+        ValueError: If ``config.target_ids`` contains a duplicate. A
+            ``BenchConfig`` built the normal way (``strict=True``, the
+            default) already rejects this at construction time, but
+            ``config`` here could instead be one ``load_bench`` built
+            leniently from a legacy row (task-1132) -- re-checking here
+            means a duplicate read off a pre-existing bench can never
+            round-trip back into storage un-flagged just because it arrived
+            through a lenient read; it must be resolved before a save
+            succeeds, same as a brand-new bench.
     """
+    target_ids = list(config.target_ids)
+    if len(set(target_ids)) != len(target_ids):
+        duplicates = sorted({tid for tid in target_ids if target_ids.count(tid) > 1})
+        raise ValueError(f"target_ids must be unique, got duplicates: {duplicates!r}")
+
     config_data = {
         "bench_type": BENCH_TYPE,
         "prompt_mode": config.prompt_mode,
@@ -83,12 +99,27 @@ def save_bench(db: EvalsDB, config: BenchConfig, task_id: Optional[str] = None) 
 def load_bench(db: EvalsDB, task_id: str) -> BenchConfig:
     """Load a bench definition back out of its eval_tasks row.
 
+    Constructs with ``strict=False`` (see ``BenchConfig``'s own docstring)
+    -- this is the read path, not the write path ``BenchConfig`` guards by
+    default. A bench saved before target-id-uniqueness validation existed
+    (task-1132) still has to be readable: rejecting here would make it
+    permanently unopenable rather than merely unrunnable, and would hide
+    the very duplicate the user needs to see in order to fix it. Any
+    duplicate present in ``config_data.target_ids`` is preserved exactly as
+    stored, not deduplicated -- deduplicating would silently collapse two
+    columns into one, which is the original bug (task-1132's ancestor) in
+    a different guise.
+
     Args:
         db: Database handle.
         task_id: The eval_tasks row id returned by save_bench.
 
     Returns:
-        The bench's current (live, editable) definition.
+        The bench's current (live, editable) definition. ``target_ids`` may
+        contain a duplicate if the stored row does; nothing downstream of
+        this function may assume uniqueness -- the write path
+        (``save_bench``, ``create_run_group``, ``WordBenchRunner.run``)
+        still rejects a duplicate before it can be persisted or run.
 
     Raises:
         TypeError: If task_id does not name an existing, non-deleted task
@@ -105,6 +136,7 @@ def load_bench(db: EvalsDB, task_id: str) -> BenchConfig:
         target_ids=tuple(data.get("target_ids", ())),
         probes=tuple(data.get("probes", ())),
         concurrency=int(data.get("concurrency", 1)),
+        strict=False,
     )
 
 

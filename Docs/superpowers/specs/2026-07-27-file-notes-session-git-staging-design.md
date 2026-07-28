@@ -1,8 +1,8 @@
 # File Notes Session Git Staging Design
 
 Date: 2026-07-27
-Task: [TASK-1023](../../../backlog/tasks/task-1023%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)
-Decision: [ADR-034](../../../backlog/decisions/034-file-notes-session-git-index-controls.md)
+Task: [TASK-1213](../../../backlog/tasks/task-1213%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)
+Decision: [ADR-035](../../../backlog/decisions/035-file-notes-session-git-index-controls.md)
 Conforms to: [ADR-033](../../../backlog/decisions/033-application-session-state-ownership.md)
 
 ## Goal

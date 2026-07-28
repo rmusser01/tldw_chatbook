@@ -5,6 +5,7 @@ Supports multiple transcription backends including faster-whisper, Qwen2Audio, e
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -37,6 +38,51 @@ except ImportError:
 
 # Local imports
 from ..config import get_cli_setting
+from ..Utils.path_validation import validate_path_simple
+from .parakeet_v2_installer import (
+    PARAKEET_V2_REPOSITORY,
+    PARAKEET_V2_REVISION,
+    VERIFICATION_RECEIPT,
+)
+from .stt_batch_routing import (
+    BatchSTTRoutingError,
+    PARAKEET_V3_MODEL,
+    resolve_batch_stt_route,
+)
+
+_VERIFICATION_RECEIPT_MAX_BYTES = 64 * 1024
+
+
+def _has_known_parakeet_v2_receipt(model_dir: Path) -> bool:
+    """Return whether bounded receipt metadata claims the curated v2 identity."""
+    try:
+        receipt_path = validate_path_simple(
+            model_dir / VERIFICATION_RECEIPT,
+            probe_existing=False,
+        )
+        if receipt_path.is_symlink() or not receipt_path.is_file():
+            return False
+        if receipt_path.stat().st_size > _VERIFICATION_RECEIPT_MAX_BYTES:
+            return False
+        with receipt_path.open("rb") as receipt_file:
+            payload = receipt_file.read(_VERIFICATION_RECEIPT_MAX_BYTES + 1)
+        if len(payload) > _VERIFICATION_RECEIPT_MAX_BYTES:
+            return False
+        receipt = json.loads(payload.decode("utf-8"))
+    except (
+        OSError,
+        RecursionError,
+        TypeError,
+        UnicodeDecodeError,
+        ValueError,
+    ):
+        return False
+    return (
+        isinstance(receipt, dict)
+        and receipt.get("repository") == PARAKEET_V2_REPOSITORY
+        and receipt.get("revision") == PARAKEET_V2_REVISION
+    )
+
 
 # Optional imports with graceful degradation
 try:
@@ -55,42 +101,21 @@ try:
 except (ImportError, ValueError, ModuleNotFoundError):
     ONNX_ASR_AVAILABLE = False
 
-try:
-    if sys.platform == "darwin":
-        from lightning_whisper_mlx import LightningWhisperMLX
 
-        LIGHTNING_WHISPER_AVAILABLE = True
-    else:
-        LIGHTNING_WHISPER_AVAILABLE = False
-except ImportError:
-    LightningWhisperMLX = None
-    LIGHTNING_WHISPER_AVAILABLE = False
-    if sys.platform == "darwin":
-        logger.warning(
-            "lightning-whisper-mlx not available. Install with: pip install lightning-whisper-mlx"
+def _optional_module_available(module_name: str) -> bool:
+    try:
+        return (
+            sys.platform == "darwin"
+            and importlib.util.find_spec(module_name) is not None
         )
-else:
-    if sys.platform != "darwin":
-        LightningWhisperMLX = None
+    except (AttributeError, ImportError, ValueError):
+        return False
 
-try:
-    if sys.platform == "darwin":
-        from parakeet_mlx import from_pretrained as parakeet_from_pretrained
 
-        PARAKEET_MLX_AVAILABLE = True
-        logger.info("parakeet-mlx is available for real-time ASR on Apple Silicon")
-    else:
-        PARAKEET_MLX_AVAILABLE = False
-except ImportError:
-    parakeet_from_pretrained = None
-    PARAKEET_MLX_AVAILABLE = False
-    if sys.platform == "darwin":
-        logger.warning(
-            "parakeet-mlx not available. Install with: pip install parakeet-mlx"
-        )
-else:
-    if sys.platform != "darwin":
-        parakeet_from_pretrained = None
+LIGHTNING_WHISPER_AVAILABLE = _optional_module_available("lightning_whisper_mlx")
+PARAKEET_MLX_AVAILABLE = _optional_module_available("parakeet_mlx")
+LightningWhisperMLX = None
+parakeet_from_pretrained = None
 
 # torch/transformers are heavy optional dependencies (torch alone pulls in
 # ~500 transitive modules). Probe availability cheaply via find_spec instead
@@ -209,6 +234,40 @@ class TranscriptionError(Exception):
     """Base exception for transcription errors."""
 
     pass
+
+
+def _ensure_lightning_whisper_mlx_import():
+    global LIGHTNING_WHISPER_AVAILABLE, LightningWhisperMLX
+    if LightningWhisperMLX is not None:
+        return LightningWhisperMLX
+    if not LIGHTNING_WHISPER_AVAILABLE:
+        raise TranscriptionError("lightning-whisper-mlx is not installed")
+    try:
+        from ..Utils.optional_deps import require_dependency
+
+        module = require_dependency("lightning_whisper_mlx")
+        LightningWhisperMLX = module.LightningWhisperMLX
+    except Exception as exc:
+        LIGHTNING_WHISPER_AVAILABLE = False
+        raise TranscriptionError("lightning-whisper-mlx could not be loaded") from exc
+    return LightningWhisperMLX
+
+
+def _ensure_parakeet_mlx_import():
+    global PARAKEET_MLX_AVAILABLE, parakeet_from_pretrained
+    if parakeet_from_pretrained is not None:
+        return parakeet_from_pretrained
+    if not PARAKEET_MLX_AVAILABLE:
+        raise TranscriptionError("parakeet-mlx is not installed")
+    try:
+        from ..Utils.optional_deps import require_dependency
+
+        module = require_dependency("parakeet_mlx")
+        parakeet_from_pretrained = module.from_pretrained
+    except Exception as exc:
+        PARAKEET_MLX_AVAILABLE = False
+        raise TranscriptionError("parakeet-mlx could not be loaded") from exc
+    return parakeet_from_pretrained
 
 
 class ConversionError(TranscriptionError):
@@ -398,6 +457,7 @@ class TranscriptionService:
         progress_callback: Optional[
             Callable[[float, str, Optional[Dict]], None]
         ] = None,
+        batch_route_resolved: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -410,6 +470,8 @@ class TranscriptionService:
             language: Language code (for backward compatibility)
             source_lang: Explicit source language for transcription
             target_lang: Target language for translation (if supported)
+            batch_route_resolved: Preserve the already-normalized batch language
+                and target instead of applying configured language defaults.
             vad_filter: Apply voice activity detection
             diarize: Perform speaker diarization to identify different speakers
             progress_callback: Optional callback for progress updates (progress: 0-100, status: str, data: dict)
@@ -420,24 +482,31 @@ class TranscriptionService:
         provider = provider or self.config["default_provider"]
 
         # Handle provider-specific default models
-        if not model:
-            if provider == "parakeet-onnx":
-                model = "nemo-parakeet-tdt-0.6b-v2"
-            elif provider == "parakeet-mlx":
+        if not model and provider != "parakeet-onnx":
+            if provider == "parakeet-mlx":
                 model = "mlx-community/parakeet-tdt-0.6b-v2"
             elif provider == "qwen2audio":
                 model = "Qwen2-Audio-7B-Instruct"
             else:
                 model = self.config["default_model"]
-        # Handle source language - prefer explicit source_lang over language param
-        source_lang = (
-            source_lang
-            or self.config["default_source_language"]
-            or language
-            or self.config["default_language"]
-        )
-        # Handle target language
-        target_lang = target_lang or self.config["default_target_language"] or None
+        if provider == "parakeet-onnx":
+            target_language_alias = kwargs.pop("target_language", None)
+            source_lang = source_lang or language or "en"
+            target_lang = (
+                target_lang if target_lang is not None else target_language_alias
+            )
+        elif batch_route_resolved:
+            source_lang = source_lang or language or "en"
+        else:
+            # Handle source language - prefer explicit source_lang over language param
+            source_lang = (
+                source_lang
+                or self.config["default_source_language"]
+                or language
+                or self.config["default_language"]
+            )
+            # Handle target language
+            target_lang = target_lang or self.config["default_target_language"] or None
         # For backward compatibility, set language to source_lang if not specified
         language = language or source_lang
 
@@ -464,6 +533,7 @@ class TranscriptionService:
                     wav_path,
                     model,
                     source_lang,
+                    target_language=target_lang,
                     progress_callback=progress_callback,
                     **kwargs,
                 )
@@ -523,7 +593,7 @@ class TranscriptionService:
                     )
                 result = self._transcribe_with_faster_whisper(
                     wav_path,
-                    model,
+                    model or self.config["default_model"],
                     language,
                     vad_filter,
                     source_lang,
@@ -658,18 +728,22 @@ class TranscriptionService:
     def _transcribe_with_parakeet_onnx(
         self,
         audio_path: str,
-        model: str,
+        model: str | None,
         language: str,
+        target_language: str | None = None,
         progress_callback: Optional[
             Callable[[float, str, Optional[Dict]], None]
         ] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Transcribe English audio with a local Parakeet v2 INT8 model."""
-        parakeet_model = self._load_parakeet_onnx_model(
-            model=model,
-            language=language,
-            model_dir=kwargs.get("model_dir"),
+        """Transcribe audio with a compatible local Parakeet INT8 model."""
+        parakeet_model, selected_model, requested_language = (
+            self._load_parakeet_onnx_model(
+                model=model,
+                language=language,
+                target_language=target_language,
+                model_dir=kwargs.get("model_dir"),
+            )
         )
 
         if progress_callback:
@@ -682,33 +756,74 @@ class TranscriptionService:
         if progress_callback:
             progress_callback(100, "Transcription complete", None)
 
-        return self._parakeet_onnx_result(text, duration=duration, model=model)
+        return self._parakeet_onnx_result(
+            text,
+            duration=duration,
+            model=selected_model,
+            requested_language=requested_language,
+        )
 
     def _load_parakeet_onnx_model(
         self,
         *,
-        model: str,
+        model: str | None,
         language: str,
+        target_language: str | None,
         model_dir: str | Path | None,
-    ) -> Any:
-        """Validate and load the configured local Parakeet v2 INT8 model."""
+    ) -> tuple[Any, str, str]:
+        """Validate and load a compatible local Parakeet INT8 model."""
+        try:
+            route = resolve_batch_stt_route(
+                provider="parakeet-onnx",
+                language=language,
+                target_language=target_language,
+            )
+        except BatchSTTRoutingError as exc:
+            raise TranscriptionError(str(exc)) from exc
+
+        expected_model = route.model
+        assert expected_model is not None
+        selected_model = model or expected_model
+        if selected_model != expected_model:
+            raise TranscriptionError(
+                f"Parakeet model {selected_model!r} is incompatible with requested "
+                f"language {route.requested_language!r}; expected {expected_model!r}. "
+                "Retry with faster-whisper."
+            )
+
         if not ONNX_ASR_AVAILABLE:
             raise TranscriptionError(
                 "parakeet-onnx is not installed. Install with: "
                 "pip install 'onnx-asr[cpu]==0.12.0'"
             )
-        if language != "en":
-            raise TranscriptionError(
-                "parakeet-onnx v2 supports explicit English only. "
-                "Retry with faster-whisper for automatic or non-English transcription."
-            )
 
         model_dir = model_dir or self.config["parakeet_onnx_model_dir"]
-        if not model_dir or not Path(model_dir).is_dir():
+        if not model_dir:
             raise TranscriptionError(
                 "parakeet-onnx requires an explicit existing local model directory "
                 "via model_dir or transcription.parakeet_onnx_model_dir; "
                 "no model will be downloaded automatically."
+            )
+        try:
+            model_root = validate_path_simple(model_dir, require_exists=True)
+        except ValueError as exc:
+            raise TranscriptionError(
+                "parakeet-onnx invalid local model directory; choose an existing "
+                "local model folder. No model will be downloaded automatically."
+            ) from exc
+        if not model_root.is_dir():
+            raise TranscriptionError(
+                "parakeet-onnx requires an explicit existing local model directory "
+                "via model_dir or transcription.parakeet_onnx_model_dir; "
+                "no model will be downloaded automatically."
+            )
+        if selected_model == PARAKEET_V3_MODEL and _has_known_parakeet_v2_receipt(
+            model_root
+        ):
+            raise TranscriptionError(
+                "Selected Parakeet v3 cannot use a directory identified as "
+                "Parakeet v2 by receipt metadata. "
+                "Choose a Parakeet v3 folder or Retry with faster-whisper."
             )
         required_files = {
             "config.json",
@@ -719,7 +834,7 @@ class TranscriptionService:
         missing_files = sorted(
             filename
             for filename in required_files
-            if not (Path(model_dir) / filename).is_file()
+            if not (model_root / filename).is_file()
         )
         if missing_files:
             raise TranscriptionError(
@@ -727,15 +842,15 @@ class TranscriptionService:
                 + ", ".join(missing_files)
             )
 
-        cache_key = ("parakeet-onnx", model, str(model_dir), "int8")
+        cache_key = ("parakeet-onnx", selected_model, str(model_root), "int8")
         with self._model_cache_lock:
             parakeet_model = self._model_cache.get(cache_key)
             if parakeet_model is None:
                 from onnx_asr import load_model
 
                 parakeet_model = load_model(
-                    model,
-                    path=str(model_dir),
+                    selected_model,
+                    path=str(model_root),
                     quantization="int8",
                     providers=["CPUExecutionProvider"],
                     preprocessor_config={
@@ -744,13 +859,14 @@ class TranscriptionService:
                     },
                 )
                 self._model_cache[cache_key] = parakeet_model
-        return parakeet_model
+        return parakeet_model, selected_model, route.requested_language
 
     @staticmethod
     def _parakeet_onnx_result(
-        text: str, *, duration: float, model: str
+        text: str, *, duration: float, model: str, requested_language: str
     ) -> Dict[str, Any]:
         """Build the common Parakeet ONNX transcription result."""
+        is_v3 = model == PARAKEET_V3_MODEL
         return {
             "text": text,
             "segments": [
@@ -765,7 +881,11 @@ class TranscriptionService:
             ]
             if text
             else [],
-            "language": "en",
+            "language": None if is_v3 else "en",
+            "requested_language": requested_language,
+            "effective_language": "auto" if is_v3 else "en",
+            "detected_language": None,
+            "warnings": ["requested_language_not_enforced"] if is_v3 else [],
             "provider": "parakeet-onnx",
             "model": model,
         }
@@ -776,7 +896,7 @@ class TranscriptionService:
         sample_rate: int,
         channels: int,
         sample_width: int,
-        model: str,
+        model: str | None,
         language: str,
         **kwargs,
     ) -> Dict[str, Any]:
@@ -799,17 +919,29 @@ class TranscriptionService:
         if channels > 1:
             waveform = waveform.reshape(-1, channels).mean(axis=1)
         waveform = waveform.astype(np.float32) / 32768.0
-        parakeet_model = self._load_parakeet_onnx_model(
-            model=model,
-            language=language,
-            model_dir=kwargs.get("model_dir"),
+        parakeet_model, selected_model, requested_language = (
+            self._load_parakeet_onnx_model(
+                model=model,
+                language=language,
+                target_language=(
+                    kwargs.get("target_lang")
+                    if "target_lang" in kwargs
+                    else kwargs.get("target_language")
+                ),
+                model_dir=kwargs.get("model_dir"),
+            )
         )
         text = parakeet_model.recognize(
             waveform,
             sample_rate=sample_rate,
         ).strip()
         duration = (len(audio_data) // frame_bytes) / sample_rate
-        return self._parakeet_onnx_result(text, duration=duration, model=model)
+        return self._parakeet_onnx_result(
+            text,
+            duration=duration,
+            model=selected_model,
+            requested_language=requested_language,
+        )
 
     def transcribe_buffer(
         self,
@@ -858,7 +990,7 @@ class TranscriptionService:
                 sample_rate,
                 channels,
                 sample_width,
-                model or "nemo-parakeet-tdt-0.6b-v2",
+                model,
                 language or "en",
                 **kwargs,
             )
@@ -1041,6 +1173,18 @@ class TranscriptionService:
     ) -> Dict[str, Any]:
         """Transcribe using faster-whisper."""
 
+        if target_lang is not None:
+            if not isinstance(target_lang, str):
+                raise TranscriptionError(
+                    "faster-whisper translation target must be target en."
+                )
+            normalized_target = target_lang.strip().lower()
+            if normalized_target and normalized_target != "en":
+                raise TranscriptionError(
+                    "faster-whisper translation only supports target en."
+                )
+            target_lang = normalized_target or None
+
         if not FASTER_WHISPER_AVAILABLE:
             logger.error("faster-whisper is not installed")
             raise TranscriptionError("faster-whisper is not installed")
@@ -1078,13 +1222,27 @@ class TranscriptionService:
             except Exception as e:
                 _handle_progress_callback_error(e)
 
-        # Get or create model instance with thread safety
-        cache_key = (model, self.config["device"], self.config["compute_type"])
+        # Get or create model instance with thread safety. Routed batch calls
+        # can narrow execution to local INT8 without changing direct callers'
+        # configured compute type or existing download behavior.
+        effective_compute_type = (
+            kwargs.get("compute_type") or self.config["compute_type"]
+        )
+        effective_local_files_only = bool(kwargs.get("local_files_only", False))
+        cache_key = (
+            model,
+            self.config["device"],
+            effective_compute_type,
+            effective_local_files_only,
+        )
 
         with self._model_cache_lock:
             if cache_key not in self._model_cache:
                 logger.info(
-                    f"Loading Whisper model: {model} (device: {self.config['device']}, compute_type: {self.config['compute_type']})"
+                    f"Loading Whisper model: {model} "
+                    f"(device: {self.config['device']}, "
+                    f"compute_type: {effective_compute_type}, "
+                    f"local_files_only: {effective_local_files_only})"
                 )
 
                 # Report model loading progress
@@ -1092,7 +1250,7 @@ class TranscriptionService:
                     try:
                         # Check if this is likely a first-time download
                         is_huggingface_model = "/" in model
-                        if is_huggingface_model:
+                        if is_huggingface_model and not effective_local_files_only:
                             progress_callback(
                                 0,
                                 f"Downloading model '{model}' from HuggingFace (this may take several minutes on first use)...",
@@ -1124,9 +1282,9 @@ class TranscriptionService:
                         self._model_cache[cache_key] = WhisperModel(
                             model,
                             device=self.config["device"],
-                            compute_type=self.config["compute_type"],
+                            compute_type=effective_compute_type,
                             download_root=None,  # Use default cache directory
-                            local_files_only=False,  # Allow downloading if needed
+                            local_files_only=effective_local_files_only,
                         )
                     model_load_time = time.time() - model_load_start
                     logger.info(
@@ -1215,16 +1373,12 @@ class TranscriptionService:
         # Use source_lang if provided, otherwise fall back to language
         transcribe_language = source_lang or language
 
-        # Determine task - translate if target language is English and source is non-English
-        # For auto-detection cases (None or 'auto'), we need to detect language first
-        if target_lang and target_lang == "en":
-            if transcribe_language and transcribe_language not in ["en", "auto", None]:
-                task = "translate"
-            else:
-                # For auto-detection, we'll decide after language detection
-                task = "transcribe"
-        else:
-            task = "transcribe"
+        # faster-whisper can translate to English while auto-detecting the source.
+        task = (
+            "translate"
+            if target_lang == "en" and transcribe_language != "en"
+            else "transcribe"
+        )
 
         logger.info(f"Transcription task: {task}, language: {transcribe_language}")
 
@@ -1251,7 +1405,7 @@ class TranscriptionService:
                         f"Starting transcription with {model}{device_info}...",
                         {
                             "device": self.config["device"],
-                            "compute_type": self.config["compute_type"],
+                            "compute_type": effective_compute_type,
                             "model": model,
                             "provider": "faster-whisper",
                         },
@@ -1438,7 +1592,11 @@ class TranscriptionService:
             # Add translation info if applicable
             if task == "translate":
                 result["task"] = "translation"
-                result["source_language"] = transcribe_language or info.language
+                result["source_language"] = (
+                    info.language
+                    if transcribe_language in (None, "auto")
+                    else transcribe_language
+                )
                 result["target_language"] = "en"
                 result["translation"] = result["text"]
 
@@ -2055,7 +2213,8 @@ class TranscriptionService:
                     model_load_start = time.time()
 
                     try:
-                        lightning_model = LightningWhisperMLX(
+                        lightning_whisper_cls = _ensure_lightning_whisper_mlx_import()
+                        lightning_model = lightning_whisper_cls(
                             model=model, batch_size=batch_size, quant=quant
                         )
                         # Store config for cache comparison
@@ -2370,9 +2529,6 @@ class TranscriptionService:
                     # Add detailed logging before the problematic call
                     logger.debug(f"Current working directory: {os.getcwd()}")
                     logger.debug(f"PARAKEET_MLX_AVAILABLE: {PARAKEET_MLX_AVAILABLE}")
-                    logger.debug(
-                        f"parakeet_from_pretrained function: {parakeet_from_pretrained}"
-                    )
 
                     logger.info("[PARAKEET] About to call parakeet_from_pretrained...")
                     logger.info(f"[PARAKEET] Model name: '{model}'")
@@ -2400,9 +2556,8 @@ class TranscriptionService:
 
                     # Note: We cannot use signal-based timeout in worker threads
                     # The model loading will either succeed or fail on its own
-                    self._parakeet_mlx_model = parakeet_from_pretrained(
-                        model, dtype=dtype
-                    )
+                    parakeet_loader = _ensure_parakeet_mlx_import()
+                    self._parakeet_mlx_model = parakeet_loader(model, dtype=dtype)
                     logger.info(
                         "[PARAKEET] parakeet_from_pretrained completed successfully"
                     )
@@ -3538,9 +3693,8 @@ class TranscriptionService:
                     precision = self._parakeet_mlx_config["precision"]
                     dtype = dtype_map.get(precision, mx.bfloat16)
 
-                    self._parakeet_mlx_model = parakeet_from_pretrained(
-                        model_name, dtype=dtype
-                    )
+                    parakeet_loader = _ensure_parakeet_mlx_import()
+                    self._parakeet_mlx_model = parakeet_loader(model_name, dtype=dtype)
                     self._parakeet_mlx_model._model_name = model_name
                     logger.info(f"Loaded Parakeet MLX model: {model_name}")
 
@@ -3733,9 +3887,8 @@ class TranscriptionService:
                     }
                     dtype = dtype_map.get(precision, mx.bfloat16)
 
-                    self._parakeet_mlx_model = parakeet_from_pretrained(
-                        model, dtype=dtype
-                    )
+                    parakeet_loader = _ensure_parakeet_mlx_import()
+                    self._parakeet_mlx_model = parakeet_loader(model, dtype=dtype)
                     self._parakeet_mlx_model._model_name = model
                     logger.info("Model loaded successfully")
                 except Exception as e:

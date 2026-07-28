@@ -19,9 +19,9 @@ from tldw_chatbook.Widgets.Console.console_model_popover import (
     CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
     ConsoleModelPopover,
 )
-from tldw_chatbook.Widgets.Console.console_rail_section import (
-    CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
-    ConsoleRailSectionHeader,
+from tldw_chatbook.Widgets.destination_rail import (
+    RAIL_SECTION_TOGGLE_PREFIX,
+    DestinationRailSectionHeader,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_setup_modal import (
@@ -46,7 +46,7 @@ from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
 
 class _HeaderApp(App):
     def compose(self):
-        yield ConsoleRailSectionHeader(
+        yield DestinationRailSectionHeader(
             "Details",
             section_id="details",
             open=False,
@@ -60,7 +60,7 @@ async def test_rail_section_header_renders_title_and_toggle():
     async with app.run_test(size=(60, 10)):
         title = app.query_one("#console-rail-section-title-details", Static)
         assert str(getattr(title.renderable, "plain", title.renderable)) == "Details"
-        toggle = app.query_one(f"#{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}details", Button)
+        toggle = app.query_one(f"#{RAIL_SECTION_TOGGLE_PREFIX}details", Button)
         assert str(toggle.label) == "▸"
         assert toggle.tooltip == "Expand Details"
 
@@ -69,15 +69,15 @@ async def test_rail_section_header_renders_title_and_toggle():
 async def test_rail_section_header_sync_open_flips_toggle():
     app = _HeaderApp()
     async with app.run_test(size=(60, 10)):
-        header = app.query_one("#header-under-test", ConsoleRailSectionHeader)
+        header = app.query_one("#header-under-test", DestinationRailSectionHeader)
         header.sync_open(True)
-        toggle = app.query_one(f"#{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}details", Button)
+        toggle = app.query_one(f"#{RAIL_SECTION_TOGGLE_PREFIX}details", Button)
         assert str(toggle.label) == "▾"
         assert toggle.tooltip == "Collapse Details"
 
 
 def test_section_header_allows_border_height():
-    header = ConsoleRailSectionHeader("Session", section_id="session", open=True)
+    header = DestinationRailSectionHeader("Session", section_id="session", open=True)
     # Inline height constraints should be gone so CSS can set min-height 2.
     assert header.styles.height is None or header.styles.height.value != 1
     assert header.styles.max_height is None

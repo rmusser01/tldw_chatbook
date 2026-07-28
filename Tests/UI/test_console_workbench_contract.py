@@ -358,36 +358,6 @@ async def test_console_control_chips_are_focusable_and_reveal_full_label_on_focu
 
 
 @pytest.mark.asyncio
-async def test_console_approvals_chip_activation_focuses_pending_approval_card():
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(140, 42)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-control-bar")
-
-        console.set_task_resume_state(
-            TaskResumeState(
-                pending_approval={
-                    "summary": "Allow workspace write for chip test",
-                    "details": "Approvals chip activation must reach this card",
-                }
-            )
-        )
-        await pilot.pause(0.1)
-
-        chip = console.query_one("#console-approvals-chip")
-        chip.focus()
-        await pilot.pause()
-        await pilot.press("enter")
-        await pilot.pause(0.1)
-
-        focused = host.focused
-        assert getattr(focused, "id", None) == "approval-allow-once"
-
-
-@pytest.mark.asyncio
 async def test_console_approvals_chip_activation_focuses_batch_submit_button():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -443,7 +413,7 @@ async def test_console_approvals_chip_activation_without_pending_approval_notifi
 
         host.notify.assert_called_once()
         assert CONSOLE_INSPECTOR_NO_APPROVAL_REASON in host.notify.call_args.args[0]
-        assert getattr(host.focused, "id", None) != "approval-allow-once"
+        assert getattr(host.focused, "id", None) != "approval-submit"
 
 
 @pytest.mark.asyncio

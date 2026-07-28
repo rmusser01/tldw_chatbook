@@ -14,6 +14,7 @@ from tldw_chatbook.Evals.word_bench.models import (
     TokenProb,
 )
 from tldw_chatbook.Evals.word_bench.storage import (
+    BENCH_TYPE,
     create_run_group,
     load_bench,
     load_grid,
@@ -93,6 +94,145 @@ def test_create_run_group_rejects_duplicate_target_ids(db, config, snippets):
     assert len(db.list_runs(limit=10_000)) == runs_before, (
         "rejection must happen before any eval_runs row is created"
     )
+
+
+# ---------------------------------------------------------------------------
+# task-1132: BenchConfig.__post_init__'s target-id-uniqueness check (added
+# by b73de3564 to fix the silent-column-collapse bug) also ran on
+# storage.load_bench's read path, so a bench saved BEFORE that validation
+# existed -- one whose stored config_data.target_ids already carries a
+# duplicate -- could no longer be opened at all. The fix keeps every write
+# path strict (BenchConfig's default strict=True, save_bench, and
+# create_run_group, all unchanged in behavior) and makes only load_bench
+# lenient (BenchConfig(..., strict=False)), so a legacy duplicate is read
+# back and displayed rather than raising.
+#
+# Qodo review follow-up, finding 2: that read-leniency means BenchConfig now
+# deliberately accepts more from stored data than it used to, but nothing
+# ever validated target_ids' ELEMENT shape -- not before task-1132, not
+# after. That is a pre-existing gap, not a regression this PR introduced,
+# but it is worth closing here since a corrupted config_data.target_ids
+# entry (an int, a nested list) would otherwise load silently and only fail
+# later, deep inside db.get_model(target_id), as an opaque sqlite
+# parameter-binding error. The check lives in BenchConfig.__post_init__,
+# UNGATED (unlike the uniqueness check above), so it runs on every path
+# including this file's lenient load_bench.
+# ---------------------------------------------------------------------------
+
+
+def test_load_bench_tolerates_and_preserves_a_legacy_duplicate_target_id(db, dataset):
+    """Writes an eval_tasks row directly against EvalsDB.create_task --
+    bypassing BenchConfig and save_bench entirely, exactly as a bench saved
+    before target-id-uniqueness validation existed would have been written
+    -- with config_data.target_ids naming the same id twice, then asserts
+    load_bench reads it back without raising and preserves BOTH entries
+    rather than deduplicating them. Deduplicating here would be the
+    original silent-column-collapse bug wearing a different hat: the user
+    would no longer be able to see the duplicate in order to remove it.
+
+    Args:
+        db: In-memory EvalsDB fixture (see conftest.py), used to write the
+            legacy row directly against create_task/create_model.
+        dataset: A real eval_datasets row id fixture, required because
+            eval_tasks.dataset_id carries a FOREIGN KEY to eval_datasets(id).
+    """
+    target_id = db.create_model(name="legacy-target", provider="llama_cpp", model_id="m")
+    task_id = db.create_task(
+        name="pre-validation bench",
+        task_type="logprob",
+        config_format="custom",
+        config_data={
+            "bench_type": BENCH_TYPE,
+            "prompt_mode": "raw",
+            "top_k": 20,
+            "probes": [],
+            "target_ids": [target_id, target_id],
+            "concurrency": 1,
+        },
+        dataset_id=dataset,
+    )
+
+    loaded = load_bench(db, task_id)
+
+    assert loaded.target_ids == (target_id, target_id)
+    assert len(loaded.target_ids) == 2
+
+
+def test_load_bench_rejects_a_malformed_stored_target_id(db, dataset):
+    """Companion to the legacy-duplicate test above, for the OTHER kind of
+    malformed target_ids entry: not a duplicate (still tolerated), but an
+    element of the wrong type entirely -- here an int standing in for
+    corrupted stored data. Unlike the uniqueness check, element-type
+    validation is unconditional in BenchConfig.__post_init__, so load_bench
+    (which always constructs with strict=False) still raises a diagnosable
+    ValueError naming the offending value and its type, instead of loading
+    silently and failing much later inside db.get_model(target_id) as an
+    opaque sqlite parameter-binding error (eval_models.id is TEXT).
+
+    Args:
+        db: In-memory EvalsDB fixture (see conftest.py), used to write the
+            corrupted row directly against create_task/create_model.
+        dataset: A real eval_datasets row id fixture, required because
+            eval_tasks.dataset_id carries a FOREIGN KEY to eval_datasets(id).
+    """
+    target_id = db.create_model(name="legacy-target", provider="llama_cpp", model_id="m")
+    task_id = db.create_task(
+        name="corrupted bench",
+        task_type="logprob",
+        config_format="custom",
+        config_data={
+            "bench_type": BENCH_TYPE,
+            "prompt_mode": "raw",
+            "top_k": 20,
+            "probes": [],
+            "target_ids": [target_id, 123],
+            "concurrency": 1,
+        },
+        dataset_id=dataset,
+    )
+
+    with pytest.raises(ValueError, match=r"target_ids.*123.*int"):
+        load_bench(db, task_id)
+
+
+def test_bench_config_construction_still_rejects_duplicates_by_default(dataset):
+    """User-facing bench creation goes through BenchConfig's plain
+    constructor (strict=True is the default -- nothing has to opt in), and
+    that must still reject a duplicate unconditionally. This is the same
+    assertion as test_models.test_bench_config_rejects_duplicate_target_ids;
+    repeated here, next to the new load_bench leniency test above, so the
+    write/read split this file exercises is visible in one place.
+
+    Args:
+        dataset: A real eval_datasets row id fixture, required because
+            eval_tasks.dataset_id carries a FOREIGN KEY to eval_datasets(id).
+    """
+    with pytest.raises(ValueError, match="target_ids must be unique"):
+        BenchConfig(
+            name="new bench", prompt_mode="raw", top_k=20, dataset_id=dataset,
+            target_ids=("dup", "dup"),
+        )
+
+
+def test_save_bench_rejects_duplicates_even_for_a_leniently_loaded_config(db, dataset):
+    """save_bench must not let a legacy duplicate round-trip back into
+    storage un-flagged just because it arrived through load_bench's lenient
+    (strict=False) read. Builds the same shape load_bench would produce for
+    a legacy row -- BenchConfig(..., strict=False), which itself does not
+    raise -- and asserts save_bench still refuses to persist it.
+
+    Args:
+        db: In-memory EvalsDB fixture (see conftest.py).
+        dataset: A real eval_datasets row id fixture, required because
+            eval_tasks.dataset_id carries a FOREIGN KEY to eval_datasets(id).
+    """
+    target_id = db.create_model(name="legacy-target", provider="llama_cpp", model_id="m")
+    leniently_loaded = BenchConfig(
+        name="pre-validation bench", prompt_mode="raw", top_k=20, dataset_id=dataset,
+        target_ids=(target_id, target_id), strict=False,
+    )
+    with pytest.raises(ValueError, match="target_ids must be unique"):
+        save_bench(db, leniently_loaded)
 
 
 def test_run_snapshot_carries_snippet_text_not_only_ids(db, config, targets, snippets):

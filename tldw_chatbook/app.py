@@ -40,15 +40,7 @@ from loguru import logger as loguru_logger, logger
 from rich.markup import escape as escape_markup
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
-from textual.widgets import (
-    Static,
-    Button,
-    Input,
-    RichLog,
-    ListView,
-    Switch,
-    Markdown,
-)
+from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
 from textual.worker import Worker
@@ -60,7 +52,6 @@ from textual.command import Hit, Hits, Provider
 from functools import partial
 from pathlib import Path
 
-from tldw_chatbook.Utils.text import slugify
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
@@ -188,6 +179,10 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     classify_ingest_source,
     persist_parsed_media,
 )
+from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
+    BatchSTTRoutingError,
+    resolve_batch_stt_route,
+)
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -233,7 +228,7 @@ from .config import (
     persist_cli_config_for_shutdown,
     set_encryption_password,
 )
-from .Event_Handlers import worker_events, media_events
+from .Event_Handlers import worker_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSRequestEvent,
     TTSCompleteEvent,
@@ -333,15 +328,8 @@ from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
 from .UI.Navigation.screen_registry import resolve_screen_target
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
-from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
 
-# Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
-# The legacy per-view navigation (ingest-nav-*/ingest-view-*) is not used anymore.
-# Keep these as empty to avoid wiring legacy handlers.
-USE_REBUILT_INGEST = True
-INGEST_NAV_BUTTON_IDS: list[str] = []
-INGEST_VIEW_IDS: list[str] = []
 from .UI.Tools_Settings_Window import ToolsSettingsWindow  # noqa: E402
 from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
 from .UI.image_gen_command_provider import ImageGenCommandProvider  # noqa: E402
@@ -532,14 +520,6 @@ if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import MCPUnifiedClient
 
 API_IMPORTS_SUCCESSFUL = True
-
-SEARCH_VIEW_RAG_QA = "search-view-rag-qa"
-SEARCH_NAV_RAG_QA = "search-nav-rag-qa"
-SEARCH_NAV_RAG_CHAT = "search-nav-rag-chat"
-SEARCH_NAV_RAG_MANAGEMENT = "search-nav-rag-management"
-SEARCH_NAV_WEB_SEARCH = "search-nav-web-search"
-SEARCH_NAV_EMBEDDINGS_CREATE = "search-nav-embeddings-create"
-SEARCH_NAV_EMBEDDINGS_MANAGE = "search-nav-embeddings-manage"
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
@@ -1520,128 +1500,6 @@ class DeveloperProvider(Provider):
             self.app.notify(f"Failed to show keybindings: {e}", severity="error")
 
 
-# --- Placeholder Window for Lazy Loading ---
-class PlaceholderWindow(Container):
-    """A lightweight placeholder that defers actual window creation until needed."""
-
-    def __init__(
-        self,
-        app_instance: "TldwCli",
-        window_class: type,
-        window_id: str,
-        classes: str = "",
-    ) -> None:
-        """Initialize placeholder with window creation parameters."""
-        super().__init__(id=window_id, classes=f"placeholder-window {classes}")
-        self.app_instance = app_instance
-        self.window_class = window_class
-        self.window_id = window_id
-        self.actual_classes = classes
-        self._actual_window = None
-        self._initialized = False
-        # Log placeholder creation
-        logger.debug(
-            f"PlaceholderWindow created for {window_id} (class: {window_class.__name__})"
-        )
-
-    def initialize(self) -> None:
-        """Create and mount the actual window widget."""
-        if self._initialized:
-            return
-
-        logger.info(f"Initializing actual window for {self.window_id}")
-        start_time = time.perf_counter()
-
-        try:
-            # Remove the loading placeholder first
-            for child in list(self.children):
-                child.remove()
-
-            # Create the actual window
-            # EvalsLab and EvalsWindow are Containers that take app_instance as keyword argument
-            if self.window_class.__name__ in [
-                "EvalsLab",
-                "EvalsWindow",
-            ]:
-                self._actual_window = self.window_class(
-                    app_instance=self.app_instance,
-                    id=self.window_id,
-                    classes=self.actual_classes,
-                )
-            else:
-                self._actual_window = self.window_class(
-                    self.app_instance, id=self.window_id, classes=self.actual_classes
-                )
-
-            # Clear placeholder styling and mount actual window
-            self.remove_class("placeholder-window")
-            # Set proper layout for the container AND make it visible
-            self.styles.layout = "vertical"
-            self.styles.height = "100%"
-            self.styles.width = "100%"
-            self.styles.display = "block"  # CRITICAL: Reset display to block after removing placeholder class
-
-            # Make sure the actual window fills the container
-            self._actual_window.styles.height = "100%"
-            self._actual_window.styles.width = "100%"
-            self._actual_window.styles.display = (
-                "block"  # Ensure the actual window is visible
-            )
-
-            self.mount(self._actual_window)
-            self._initialized = True
-
-            # Populate widgets for specific windows after initialization
-            self._populate_window_widgets()
-
-            # Log timing
-            duration = time.perf_counter() - start_time
-            log_histogram(
-                "lazy_window_initialization_seconds",
-                duration,
-                labels={"window": self.window_id.replace("-window", "")},
-                documentation="Time to initialize lazy-loaded window",
-            )
-            logger.info(
-                f"Window {self.window_id} initialized in {duration:.3f} seconds"
-            )
-
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Failed to initialize window {self.window_id}: {str(e)}"
-            )
-            # Clear any existing children before showing error
-            for child in list(self.children):
-                child.remove()
-            self.mount(
-                Static(f"Error loading {self.window_id}: {str(e)}", classes="error")
-            )
-
-    def _populate_window_widgets(self) -> None:
-        """Populate widgets for specific windows after they're initialized."""
-        # Don't populate widgets here - let the watch_current_tab handle it
-        # This prevents timing issues where widgets aren't ready yet
-        pass
-
-    @property
-    def is_initialized(self) -> bool:
-        """Check if the actual window has been initialized."""
-        return self._initialized
-
-    def compose(self) -> ComposeResult:
-        """Show a loading message until initialized."""
-        if not self._initialized:
-            yield Static("Loading...", classes="loading-placeholder")
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Proxy button presses to the actual window if initialized."""
-        if self._initialized and self._actual_window:
-            if hasattr(self._actual_window, "on_button_pressed"):
-                result = self._actual_window.on_button_pressed(event)
-                if hasattr(result, "__await__"):
-                    await result
-
-
 class TabDropdown(Widget):
     """Placeholder for dropdown navigation (not yet implemented)."""
 
@@ -2300,23 +2158,37 @@ class LibraryIngestQueueMixin:
             )
             options["extract_images"] = flat_opts.get("extract_images", False)
         elif group == "audio_video":
-            transcription_provider = (
-                flat_opts.get("transcription_provider") or "parakeet-onnx"
+            provider = flat_opts.get("transcription_provider")
+            if provider is None:
+                provider = "default"
+            target_language = flat_opts.get("translation_target_language")
+            if target_language is None:
+                target_language = flat_opts.get("target_language")
+            route = resolve_batch_stt_route(
+                provider=provider,
+                language=flat_opts.get("language"),
+                target_language=target_language,
             )
-            options["transcription_provider"] = transcription_provider
+            options["transcription_provider"] = route.provider
             selected_model_dir = (
                 str(flat_opts.get("transcription_model_dir") or "").strip()
-                if transcription_provider == "parakeet-onnx"
+                if route.provider == "parakeet-onnx"
                 else ""
             )
             options["transcription_model_dir"] = selected_model_dir or None
-            options["transcription_model"] = (
-                "nemo-parakeet-tdt-0.6b-v2"
-                if transcription_provider == "parakeet-onnx"
-                else flat_opts.get("model")
-                or flat_opts.get("transcription_model")
-            )
-            options["language"] = flat_opts.get("language", "en")
+            selected_model = route.model
+            if selected_model is None and route.requested_provider != "default":
+                selected_model = flat_opts.get("model") or flat_opts.get(
+                    "transcription_model"
+                )
+                if route.requested_provider == "faster-whisper" and not selected_model:
+                    selected_model = "base"
+            options["transcription_model"] = selected_model
+            options["language"] = route.requested_language
+            options["translation_target_language"] = route.target_language
+            options["transcription_precision"] = route.precision
+            options["transcription_local_files_only"] = route.local_files_only
+            options["transcription_batch_route_resolved"] = True
             options["timestamps"] = flat_opts.get("timestamps", True)
             options["diarization"] = flat_opts.get("diarization", False)
         elif group == "ebook":
@@ -2414,7 +2286,26 @@ class LibraryIngestQueueMixin:
             parsing_count += 1
             if job.detected_type in _INGEST_HEAVY_TYPES:
                 heavy_parsing_count += 1
-            options = self._ingest_job_options(claimed)
+            try:
+                options = self._ingest_job_options(claimed)
+            except BatchSTTRoutingError as exc:
+                error_text = _sanitize_library_ingest_error_text(str(exc))
+                failure_text = error_text or "Batch transcription routing failed."
+                logger.warning(
+                    "Library ingest batch STT routing failed "
+                    f"(job_id={claimed.job_id}, "
+                    f"detected_type={claimed.detected_type}, "
+                    f"error={failure_text})."
+                )
+                self.library_ingest_jobs.mark_failed(
+                    claimed.job_id,
+                    error=failure_text,
+                    permanent=False,
+                )
+                parsing_count -= 1
+                if claimed.detected_type in _INGEST_HEAVY_TYPES:
+                    heavy_parsing_count -= 1
+                continue
             job_id = claimed.job_id
             source_path = claimed.source_path
             try:
@@ -2702,9 +2593,9 @@ class LibraryIngestQueueMixin:
     def _resolve_ingest_backend(self) -> str:
         """Return the backend a new ingest should run on: ``local`` or ``server``.
 
-        Deliberately its **own** preference rather than the Library's browse
-        scope (``media_runtime_state.runtime_backend``). Reusing the browse
-        scope looked tidier -- one notion of "which backend am I on" -- but it
+        Deliberately its **own** preference rather than the Media destination's
+        browse scope. Reusing the browse scope looked tidier -- one notion of
+        "which backend am I on" -- but it
         would mean a user who switched scope to look at server-side media and
         then imported a file had that file leave their machine without ever
         asking for it. ``build_library_ingest_state``'s own contract is explicit
@@ -3406,7 +3297,6 @@ class TldwCli(
         ImageGenCommandProvider,
     }
 
-    ALL_INGEST_VIEW_IDS = INGEST_VIEW_IDS
     # T169: "notes-window" removed -- no widget composes that id anymore (the
     # standalone Notes tab / Notes_Window.py it belonged to is gone, replaced
     # by the Library workbench's Notes canvas), confirmed via
@@ -3462,88 +3352,18 @@ class TldwCli(
     ui_responsiveness_monitor: UIResponsivenessMonitor | None = None
     _ui_responsiveness_heartbeat_timer: Optional[Timer] = None
 
-    # Reactives for retained destination sidebars
-    media_active_view: reactive[Optional[str]] = reactive(
-        None
-    )  # Added for Media tab navigation
-
-    # Reactive variables for selected note details
-    current_selected_note_id: reactive[Optional[str]] = reactive(None)
-    current_selected_note_version: reactive[Optional[int]] = reactive(None)
-    current_selected_note_title: reactive[Optional[str]] = reactive(None)
-    current_selected_note_content: reactive[Optional[str]] = reactive("")
-
-    # Notes tab UI state
-    notes_sort_by: reactive[str] = reactive(
-        "date_created"
-    )  # date_created, date_modified, title
-    notes_sort_ascending: reactive[bool] = reactive(False)  # False = newest first
-    notes_preview_mode: reactive[bool] = reactive(
-        False
-    )  # False = edit mode, True = preview mode
-
-    # Auto-save related reactive variables
-    notes_auto_save_enabled: reactive[bool] = reactive(
-        True
-    )  # Auto-save enabled by default
-    notes_auto_save_timer: reactive[Optional[Timer]] = reactive(
-        None
-    )  # Timer reference for auto-save
-    notes_last_save_time: reactive[Optional[float]] = reactive(
-        None
-    )  # Timestamp of last save
-
-    # Media Tab
+    # Media services and type catalog
     _media_types_for_ui: List[str] = []
-    _initial_media_view_slug: Optional[str] = reactive(
-        slugify("All Media")
-    )  # Default to "All Media" slug
-
-    current_media_type_filter_slug: reactive[Optional[str]] = reactive(
-        slugify("All Media")
-    )  # Slug for filtering
-    current_media_type_filter_display_name: reactive[Optional[str]] = reactive(
-        "All Media"
-    )  # Display name
-    media_current_page: reactive[int] = reactive(1)  # Search results pagination
-
-    # current_media_search_term: reactive[str] = reactive("") # Handled by inputs directly
-    current_loaded_media_item: reactive[Optional[Dict[str, Any]]] = reactive(None)
-    _media_search_timers: Dict[str, Timer] = {}  # For debouncing per media type
-    # task-283 (B4): per-type_slug staleness generation, incremented each time a
-    # debounced media search starts; the DB call now runs via asyncio.to_thread,
-    # which an exclusive worker/timer cannot cancel mid-flight, so this guards
-    # against an older, slower search overwriting a newer one's results.
-    # Annotation only -- the dict is created per-instance in __init__ because a
-    # class-level {} would be mutated in place and shared across TldwCli
-    # instances in one process (PR #683 review).
-    _media_search_generation: Dict[str, int]
 
     # Add media_types_for_ui to store fetched types
     media_types_for_ui: List[str] = []
-    _initial_media_view: Optional[str] = (
-        "media-view-video-audio"  # Default to the first sub-tab
-    )
     media_db: Optional[MediaDatabase] = None
-    # Search Tab's active sub-view reactives
-    search_active_sub_tab: reactive[Optional[str]] = reactive(None)
-    _initial_search_sub_tab_view: Optional[str] = SEARCH_VIEW_RAG_QA
-
-    # Ingest Tab
-    ingest_active_view: reactive[Optional[str]] = reactive("ingest-view-prompts")
-    _initial_ingest_view: Optional[str] = "ingest-view-prompts"
     selected_note_files_for_import: List[Path]
     parsed_notes_for_preview: List[Dict[str, Any]] = []
     last_note_import_dir: Optional[Path] = None
     # Add attributes to hold the handlers (optional, but can be useful)
     note_import_success_handler: Optional[Callable] = None
     note_import_failure_handler: Optional[Callable] = None
-
-    # Tools Tab
-    tools_settings_active_view: reactive[Optional[str]] = reactive(
-        "ts-view-general-settings"
-    )  # Default to general settings
-    _initial_tools_settings_view: Optional[str] = "ts-view-general-settings"
 
     _prompt_search_timer: Optional[Timer] = None
 
@@ -3554,17 +3374,11 @@ class TldwCli(
     mlx_server_process: Optional[subprocess.Popen] = None
     onnx_server_process: Optional[subprocess.Popen] = None
 
-    # De-Bouncers
-    _notes_search_timer: Optional[Timer] = None
-
     # Make API_IMPORTS_SUCCESSFUL accessible if needed by old methods or directly
     API_IMPORTS_SUCCESSFUL = API_IMPORTS_SUCCESSFUL
 
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
-
-    # Shared state for tldw API requests
-    _last_tldw_api_request_context: Dict[str, Any] = {}
 
     def __init__(self):
         # Track startup timing
@@ -3573,9 +3387,6 @@ class TldwCli(
 
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
-
-        # task-283 (B4): per-instance -- see the class-level annotation.
-        self._media_search_generation = {}
 
         # Reduce logging in production
         if not os.environ.get("TLDW_DEBUG"):
@@ -3614,6 +3425,14 @@ class TldwCli(
         self.pending_handoffs = PendingHandoffStore()
         self.file_notes_session_owner = build_file_notes_session_owner()
         self._file_notes_session_owner_shutdown_task: asyncio.Task[None] | None = None
+        #: TASK-1143 (F5): count of Console agent runs/rounds the last
+        #: navigation-away teardown killed (``ChatScreen.on_unmount`` ->
+        #: ``ConsoleChatController.shutdown()``). The app outlives the
+        #: screen instance that recorded it -- screens are never cached
+        #: (``_create_navigation_screen``) -- so the NEXT Console mount
+        #: reads and clears this one-shot slot to show a single toast.
+        #: 0 means nothing to report.
+        self._console_fleet_teardown_notice: int = 0
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
@@ -3666,7 +3485,6 @@ class TldwCli(
         self.onnx_server_process = None
         self._llm_server_launch_claims = {}
         self._llm_server_lifecycle_lock = threading.RLock()
-        self.media_current_page = 1
         self._startup_phases["attribute_init"] = time.perf_counter() - phase_start
         log_histogram(
             "app_startup_phase_duration_seconds",
@@ -3748,10 +3566,6 @@ class TldwCli(
         if not hasattr(self, "_media_types_for_ui"):
             self._media_types_for_ui = ["Error: Media DB not loaded"]
 
-        initial_media_runtime_backend = self._resolve_initial_media_runtime_backend()
-        self.media_runtime_state = MediaRuntimeState(
-            runtime_backend=initial_media_runtime_backend
-        )
         self.local_media_reading_service = LocalMediaReadingService(
             self.media_db, app_config=self.app_config
         )
@@ -4861,10 +4675,10 @@ class TldwCli(
         )
 
         watchlist_checks_enabled = get_cli_setting(
-            "scheduling", "watchlist_checks_enabled", False
+            "scheduling", "watchlist_checks_enabled", True
         )
         watchlist_checks_shadow = get_cli_setting(
-            "scheduling", "watchlist_checks_shadow", True
+            "scheduling", "watchlist_checks_shadow", False
         )
 
         watchlist_handler = None
@@ -6236,6 +6050,45 @@ class TldwCli(
                     pass
                 return
 
+        # TASK-1143 (F5): give the outgoing screen one awaited chance to
+        # ASK before it (and whatever it owns) is torn down -- e.g. Console
+        # unmounting cancels every in-flight run and denies every pending/
+        # parked approval round for its ConsoleChatController (see
+        # ChatScreen.on_unmount / ConsoleChatController.shutdown). Mirrors
+        # the flush-veto seam immediately above: False keeps the outgoing
+        # screen mounted exactly like a flush veto, only here the decision
+        # comes from a user-facing confirmation dialog rather than an
+        # unresolved save conflict.
+        confirm_navigation = getattr(current_screen, "confirm_navigation", None)
+        if callable(confirm_navigation):
+            try:
+                confirm_result = confirm_navigation()
+                if inspect.isawaitable(confirm_result):
+                    confirm_result = await confirm_result
+                if confirm_result is False:
+                    logger.info(
+                        f"Navigation to {screen_name} vetoed by the outgoing "
+                        "screen's confirm_navigation"
+                    )
+                    return
+            except Exception as exc:
+                # A broken confirm hook must not silently let navigation
+                # proceed and tear down live work the user was never asked
+                # about -- fail closed, same as the flush veto above.
+                logger.warning(
+                    "Screen navigation confirm failed (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+                try:
+                    self.notify(
+                        "Couldn't confirm leaving this screen; staying put.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
+                return
+
         release_navigation = None
         acquire_navigation = getattr(
             current_screen,
@@ -6577,247 +6430,6 @@ class TldwCli(
         handler = await self._ensure_stts_handler()
         if handler:
             await handler.handle_audiobook_generate(event)
-
-    # ##################################################
-    # --- Watcher for Search Tab Active Sub-View ---
-    # ##################################################
-    def watch_search_active_sub_tab(
-        self, old_sub_tab: Optional[str], new_sub_tab: Optional[str]
-    ) -> None:
-        """Shows the correct sub-tab view in the Search tab and hides others."""
-        if not self._ui_ready or not new_sub_tab:
-            return
-
-        # Check if search window is initialized (not a placeholder)
-        try:
-            search_window = self.query_one("#search-window")
-            if isinstance(search_window, PlaceholderWindow):
-                self.loguru_logger.debug(
-                    "Search window is still a placeholder, deferring sub-tab switch"
-                )
-                return
-        except QueryError:
-            self.loguru_logger.debug(
-                "Search window not found, deferring sub-tab switch"
-            )
-            return
-
-        self.loguru_logger.debug(
-            f"Search sub-tab watcher: Changing from '{old_sub_tab}' to '{new_sub_tab}'"
-        )
-        try:
-            # First, find the parent content pane
-            content_pane = self.query_one("#search-content-pane")
-
-            # Iterate through all direct children that are view areas
-            for view in content_pane.query(".search-view-area"):
-                # Show the view if its ID matches the new sub-tab, otherwise hide it.
-                view.styles.display = "block" if view.id == new_sub_tab else "none"
-
-            # Also update the active button style
-            nav_pane = self.query_one("#search-left-nav-pane")
-            for button in nav_pane.query(".search-nav-button"):
-                button_id_as_view = button.id.replace("-nav-", "-view-")
-                button.set_class(
-                    button_id_as_view == new_sub_tab, "-active-search-sub-view"
-                )
-
-            self.loguru_logger.info(f"Switched search sub-tab view to: {new_sub_tab}")
-
-        except QueryError as e:
-            self.loguru_logger.opt(exception=True).error(
-                f"UI component not found during Search sub-tab switch: {e}"
-            )
-        except Exception as e_watch:
-            self.loguru_logger.opt(exception=True).error(
-                f"Unexpected error in watch_search_active_sub_tab: {e_watch}"
-            )
-
-        # ############################################
-        # --- Media Loaded Item Watcher ---
-        # ############################################
-        async def watch_current_loaded_media_item(
-            self, media_data: Optional[Dict[str, Any]]
-        ) -> None:
-            """Watcher to display details when a media item is loaded."""
-            if not self._ui_ready:
-                self.loguru_logger.debug(
-                    "watch_current_loaded_media_item: UI not ready, returning."
-                )
-                return
-
-            type_slug = self.current_media_type_filter_slug
-            if not type_slug:
-                self.loguru_logger.warning(
-                    "watch_current_loaded_media_item: type_slug is not set, cannot update details display."
-                )
-                return
-
-            details_display_widget_id = f"media-details-display-{type_slug}"
-            try:
-                # Target Markdown widget
-                details_display = self.query_one(
-                    f"#{details_display_widget_id}", Markdown
-                )
-
-                if media_data:
-                    # Special formatting for "analysis-review"
-                    if type_slug == "analysis-review":
-                        title = media_data.get("title", "Untitled")
-                        url = media_data.get("url", "No URL")
-                        analysis_content = media_data.get("analysis_content", "")
-                        if not analysis_content:
-                            analysis_content = "No analysis available for this item."
-                        markdown_details_string = f"## {title}\n\n**URL:** {url}\n\n### Analysis\n{analysis_content}"
-                    else:
-                        # Use the existing format_media_details_as_markdown function from media_events
-                        markdown_details_string = (
-                            media_events.format_media_details_as_markdown(
-                                self, media_data
-                            )
-                        )
-
-                    await details_display.update(
-                        markdown_details_string
-                    )  # Use await and update()
-                    # self.notify(f"Details for '{media_data.get('title', 'N/A')}' displayed via watcher.") # Optional notification
-                else:
-                    await details_display.update(
-                        "### No media item loaded or item cleared."
-                    )  # Use await and update()
-
-            except QueryError:
-                self.loguru_logger.warning(
-                    f"watch_current_loaded_media_item: Could not find Markdown details display '#{details_display_widget_id}' for slug '{type_slug}' to update."
-                )
-            except Exception as e:
-                self.loguru_logger.opt(exception=True).error(
-                    f"Error in watch_current_loaded_media_item: {e}"
-                )
-
-    # ############################################
-    # --- Ingest Tab Watcher ---
-    # ############################################
-    def watch_ingest_active_view(
-        self, old_view: Optional[str], new_view: Optional[str]
-    ) -> None:
-        # Rebuilt ingest UI manages its own tabs; skip legacy view toggling
-        if "USE_REBUILT_INGEST" in globals() and USE_REBUILT_INGEST:
-            return
-        self.loguru_logger.info(
-            f"watch_ingest_active_view called. Old view: '{old_view}', New view: '{new_view}'"
-        )
-        if not hasattr(self, "app") or not self.app:
-            self.loguru_logger.debug("watch_ingest_active_view: App not fully ready.")
-            return
-        if not self._ui_ready:
-            self.loguru_logger.debug("watch_ingest_active_view: UI not ready.")
-            return
-        self.loguru_logger.debug(
-            f"Ingest active view changing from '{old_view}' to: '{new_view}'"
-        )
-        try:
-            content_pane = self.query_one("#ingest-content-pane")
-        except QueryError:
-            # Legacy pane not present; nothing to do
-            return
-        for child in content_pane.children:
-            if child.id and child.id.startswith("ingest-view-"):
-                child.styles.display = "none"
-        if new_view:
-            try:
-                target_view_selector = f"#{new_view}"
-                view_to_show = content_pane.query_one(target_view_selector)
-                view_to_show.styles.display = "block"
-
-                def refresh_layout():
-                    view_to_show.refresh(layout=True)
-                    content_pane.refresh(layout=True)
-                    try:
-                        ingest_window = self.query_one("#ingest-window")
-                        ingest_window.refresh(layout=True)
-                    except QueryError:
-                        pass
-
-                self.call_later(refresh_layout)
-            except QueryError:
-                # Target legacy view not found; ignore
-                return
-
-    def watch_tools_settings_active_view(
-        self, old_view: Optional[str], new_view: Optional[str]
-    ) -> None:
-        self.loguru_logger.debug(
-            f"Tools & Settings active view changing from '{old_view}' to: '{new_view}'"
-        )
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-
-        # Check if the Tools & Settings tab has been created yet
-        try:
-            # First check if the content pane exists
-            self.query_one("#tools-settings-content-pane")
-        except QueryError:
-            # Tools & Settings tab hasn't been created yet, nothing to do
-            self.loguru_logger.debug(
-                "Tools & Settings content pane not found, tab not yet created"
-            )
-            return
-
-        if not new_view:  # If new_view is None, hide all
-            try:
-                for view_area in self.query(
-                    ".ts-view-area"
-                ):  # Query all potential view areas
-                    view_area.styles.display = "none"
-            except QueryError:
-                self.loguru_logger.warning(
-                    "No .ts-view-area found to hide on tools_settings_active_view change to None."
-                )
-            return
-
-        try:
-            content_pane = self.query_one("#tools-settings-content-pane")
-            # Hide all views first
-            for child in content_pane.children:
-                if child.id and child.id.startswith(
-                    "ts-view-"
-                ):  # Check if it's one of our view containers
-                    child.styles.display = "none"
-
-            # Show the selected view
-            if new_view:  # new_view here is the ID of the view container, e.g., "ts-view-general-settings"
-                target_view_id_selector = (
-                    f"#{new_view}"  # Construct selector from the new_view string
-                )
-                view_to_show = content_pane.query_one(
-                    target_view_id_selector, Container
-                )
-                view_to_show.styles.display = "block"
-                self.loguru_logger.info(
-                    f"Switched Tools & Settings view to: {new_view}"
-                )
-
-                # Optional: Focus an element within the newly shown view
-                # try:
-                # view_to_show.query(Input, Button)[0].focus() # Example: focus first Input or Button
-                # except IndexError:
-                #     pass # No focusable element
-            else:  # Should be caught by the `if not new_view:` at the start
-                self.loguru_logger.debug(
-                    "Tools & Settings active view is None, all views hidden."
-                )
-
-        except QueryError as e:
-            self.loguru_logger.opt(exception=True).error(
-                f"UI component not found during Tools & Settings view switch: {e}"
-            )
-        except Exception as e_watch:
-            self.loguru_logger.opt(exception=True).error(
-                f"Unexpected error in watch_tools_settings_active_view: {e_watch}"
-            )
 
     def _bind_tts_service(self) -> None:
         """Bind the single TTS service owned by this application."""
@@ -8275,21 +7887,6 @@ class TldwCli(
         logging.shutdown()
         self.loguru_logger.info("--- App Unmounted (Loguru) ---")
 
-    ########################################################################
-    #
-    # WATCHER - Handles UI changes when current_tab's VALUE changes
-    #
-    # ######################################################################
-    def watch_current_tab(self, old_tab: Optional[str], new_tab: str) -> None:
-        """Legacy tab-content watcher; retained as a permanent no-op.
-
-        Screen-based navigation (``self._use_screen_navigation``, set
-        unconditionally in ``__init__``) now owns every tab switch, so
-        this watcher's original show/hide dispatch (``_execute_tab_switch``,
-        task-577 PR2 T2) has been retired along with it.
-        """
-        return
-
     def _log_view_dimensions(self, view, parent):
         """Helper to log view dimensions after refresh."""
         self.loguru_logger.info(
@@ -8299,117 +7896,12 @@ class TldwCli(
             f"After refresh - Parent dimensions: width={parent.size.width}, height={parent.size.height}"
         )
 
-    async def _activate_initial_ingest_view(self) -> None:
-        self.loguru_logger.info(
-            "Attempting to activate initial ingest view via _activate_initial_ingest_view."
-        )
-
-        # First, ensure all views are hidden initially
-        try:
-            content_pane = self.query_one("#ingest-content-pane")
-            for child in content_pane.children:
-                if child.id and child.id.startswith("ingest-view-"):
-                    child.styles.display = "none"
-                    self.loguru_logger.debug(
-                        f"Initially hiding ingest view: {child.id}"
-                    )
-        except QueryError:
-            self.loguru_logger.error(
-                "Could not find #ingest-content-pane to hide views initially"
-            )
-
-        if (
-            not self.ingest_active_view
-        ):  # Check if it hasn't been set by some other means already
-            self.loguru_logger.debug(
-                f"Setting ingest_active_view to initial: {self._initial_ingest_view}"
-            )
-            self.ingest_active_view = self._initial_ingest_view
-        else:
-            self.loguru_logger.debug(
-                f"Ingest active view already set to '{self.ingest_active_view}'. No change made by _activate_initial_ingest_view."
-            )
-
-    def watch_media_active_view(
-        self, old_view: Optional[str], new_view: Optional[str]
-    ) -> None:
-        """Notify MediaWindow when media_active_view changes."""
-        # Temporarily disabled - MediaWindow handles its own navigation via MediaTypeSelectedEvent
-        pass
-        # if not self._ui_ready:
-        #     self.loguru_logger.debug("watch_media_active_view: UI not ready.")
-        #     return
-        #
-        # if self.current_tab == TAB_MEDIA:
-        #     try:
-        #         media_window = self.query_one(MediaWindow)
-        #         # Sync the MediaWindow's own media_active_view
-        #         media_window.media_active_view = new_view
-        #         # Call the watcher manually to trigger the view change
-        #         if new_view:
-        #             media_window.watch_media_active_view(old_view, new_view)
-        #         self.loguru_logger.info(f"Notified MediaWindow of view change: {old_view} -> {new_view}")
-        #     except QueryError:
-        #         self.loguru_logger.error("MediaWindow not found for view update.")
-        #     except Exception as e:
-        #         self.loguru_logger.error(f"Error updating MediaWindow view: {e}", exc_info=True)
-
-
     ########################################################################
     #
     # --- EVENT DISPATCHERS ---
     #
     ########################################################################
     # Notes editor changes are handled inside the Library screen, not dispatched here.
-
-    async def on_input_changed(self, event: Input.Changed) -> None:
-        """Route retained root-level input events to their destination owners."""
-        input_id = event.input.id
-        current_active_tab = self.current_tab
-        # --- Notes input events are handled inside the Library screen, not here ---
-        if (
-            input_id
-            and input_id.startswith("media-search-input-")
-            and current_active_tab == TAB_MEDIA
-        ):
-            await media_events.handle_media_search_input_changed(
-                self, input_id, event.value
-            )
-        elif (
-            input_id
-            and input_id.startswith("media-keyword-filter-")
-            and current_active_tab == TAB_MEDIA
-        ):
-            await media_events.handle_media_search_input_changed(
-                self,
-                input_id.replace("media-keyword-filter-", "media-search-input-"),
-                event.value,
-            )
-        # Add more specific input handlers if needed, e.g., for title inputs if they need live validation/reaction
-
-    async def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Route retained root-level list selections to destination owners."""
-        list_view_id = event.list_view.id
-        if (
-            list_view_id
-            and list_view_id.startswith("media-list-view-")
-            and self.current_tab == TAB_MEDIA
-        ):
-            await media_events.handle_media_list_item_selected(self, event)
-
-    async def on_switch_changed(self, event: Switch.Changed) -> None:
-        """Handles changes in Switch widgets."""
-
-        switch_id = event.switch.id
-
-        if switch_id == "notes-auto-save-toggle":
-            await self.handle_notes_auto_save_toggle(event)
-
-    @on(media_events.MediaMetadataUpdateEvent)
-    async def on_media_metadata_update(
-        self, event: media_events.MediaMetadataUpdateEvent
-    ) -> None:
-        await media_events.handle_media_metadata_update(self, event)
 
     # Collections/Tags event handlers
     @on(Message)
@@ -8462,31 +7954,6 @@ class TldwCli(
         # Finish deferred startup work once the mounted screen has rendered.
         self.call_after_refresh(self._post_mount_setup)
 
-    async def handle_notes_auto_save_toggle(self, event: Switch.Changed) -> None:
-        """Handles the notes auto-save toggle."""
-        try:
-            # Update the reactive variable
-            self.notes_auto_save_enabled = event.value
-
-            # If auto-save is being disabled, cancel any pending timer
-            if not event.value and self.notes_auto_save_timer is not None:
-                self.notes_auto_save_timer.stop()
-                self.notes_auto_save_timer = None
-                self.loguru_logger.info("Auto-save timer cancelled")
-
-            # Save the setting to config
-            from .config import save_setting_to_cli_config
-
-            save_setting_to_cli_config("notes", "auto_save_enabled", event.value)
-
-            # Notify the user
-            status = "enabled" if event.value else "disabled"
-            self.notify(f"Notes auto-save {status}", timeout=2)
-            self.loguru_logger.info(f"Notes auto-save {status}")
-
-        except Exception as e:
-            self.loguru_logger.error(f"Error toggling notes auto-save: {e}")
-            self.notify("Error changing auto-save setting", severity="error")
     #####################################################################
     # --- Event Handlers for Worker State Changes ---
     #####################################################################
@@ -8736,15 +8203,6 @@ class TldwCli(
         # Cancel media cleanup timer if it exists
         if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
             self._media_cleanup_timer.stop()
-
-        # Handle Notes auto-save cleanup
-        if (
-            hasattr(self, "notes_auto_save_timer")
-            and self.notes_auto_save_timer is not None
-        ):
-            self.notes_auto_save_timer.stop()
-            self.notes_auto_save_timer = None
-            loguru_logger.debug("Cancelled auto-save timer during app quit")
 
         # Note autosave is owned by the Library notes editor; no legacy quit-save path remains.
 

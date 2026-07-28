@@ -50,10 +50,12 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
+from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 from tldw_chatbook.UI.Watchlists_Modules.runs_pane import RunsPane
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+from tldw_chatbook.UI.Watchlists_Modules.watchlists_tab_strip import SECTIONS
 from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
     WorkbenchPane,
@@ -3267,4 +3269,481 @@ async def test_watchlists_tree_blocked_verbs_render_as_disabled_under_the_bundle
         }, (
             "the disabled action paints identically to the live one under the "
             "production stylesheet"
+        )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
+    """TASK-995: the Sources toolbar drew no controls at all.
+
+    `.destination-filter-strip` is `height: 1` (`layout/_panes.tcss`), but a
+    bordered `Input`/`Select` is three rows, so the strip carrying the search
+    box, the three filters, `New Source` and `Filters` rendered as its top
+    border and nothing else. Captured live on a clean profile:
+
+        ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+            Preview        Check now      Import OPML     Export OPML
+
+    That blocked the whole new-user path: create a watchlist, click
+    "Create source", and there is no visible way to add one.
+
+    The Rules strip holds only `Button`s and rendered correctly, which is why
+    this asserts on the widgets that are three rows tall rather than on the
+    strip class.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        for selector in (
+            "#sources-search-input",
+            "#sources-type-select",
+            "#sources-status-filter",
+            "#sources-active-filter",
+            "#sources-new-button",
+            "#sources-filter-toggle",
+        ):
+            widget = pane.query_one(selector)
+            assert widget.region.height >= 1, (
+                f"{selector} is clipped to nothing: {widget.region}"
+            )
+            assert widget.region.width > 0, (
+                f"{selector} has no width: {widget.region}"
+            )
+            # Clipping was only half of it. Nothing sized these controls, so
+            # `Input`'s `width: 100%` default and the global
+            # `Select { width: 100% }` each claimed the whole strip and
+            # stacked: `New Source` measured Region(x=395, ...) inside a pane
+            # 93 columns wide on a 160-column terminal. A control that is
+            # three hundred columns off the right edge is just as unusable as
+            # one clipped to its border, and neither `height` nor
+            # `render_strips` alone catches it, so assert containment.
+            assert widget.region.right <= pane.region.right, (
+                f"{selector} overflows the Sources pane horizontally: "
+                f"{widget.region} is outside {pane.region}"
+            )
+            assert widget.region.x >= pane.region.x, (
+                f"{selector} starts left of the Sources pane: "
+                f"{widget.region} vs {pane.region}"
+            )
+
+        # Regions are not enough on their own: a three-row control inside a
+        # one-row strip still reports a region while painting only its
+        # border. Every label has to actually reach the screen.
+        strips = screen._compositor.render_strips()
+        strip_row = pane.query_one("#sources-search-input").region.y
+        painted = "".join(seg.text for seg in strips[strip_row])
+        for label in (
+            "Search sources...",  # the search Input's placeholder
+            "All statuses",  # the status Select's current value
+            "New Source",
+            "Filters",
+        ):
+            assert label in painted, (
+                f"{label!r} never reaches the screen; the Sources toolbar is "
+                f"still unusable at {size}. Row {strip_row} paints: "
+                f"{painted.strip()!r}"
+            )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_other_filter_strip_controls_are_visible(size):
+    """TASK-995 AC#3: the same defect, everywhere else it occurs.
+
+    `.destination-filter-strip` is shared chrome, so the Sources toolbar was
+    checked against every other user of it. Schedules, Workflows and the
+    Runs/Rules/Notifications toolbars put only `Static`s and `Button`s in
+    theirs and were never affected; the two that carry an `Input` or a
+    `Select`, and so had exactly the Sources defect, are the Items toolbar
+    and the screen's own backend header bar. Both are asserted here so the
+    UAT does not have to find them a second time.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+
+        items_pane = screen.query_one("#watchlists-items-pane")
+        for selector in ("#items-search-input", "#items-status-select"):
+            widget = screen.query_one(selector)
+            assert widget.region.height >= 1 and widget.region.width > 0, (
+                f"{selector} is clipped to nothing: {widget.region}"
+            )
+            assert widget.region.right <= items_pane.region.right, (
+                f"{selector} overflows the Items pane horizontally: "
+                f"{widget.region} is outside {items_pane.region}"
+            )
+
+        strips = screen._compositor.render_strips()
+        items_row = screen.query_one("#items-search-input").region.y
+        painted = "".join(seg.text for seg in strips[items_row])
+        for label in ("Search items...", "All statuses"):
+            assert label in painted, (
+                f"{label!r} never reaches the screen; the Items toolbar is "
+                f"clipped at {size}. Row {items_row} paints: {painted.strip()!r}"
+            )
+
+        backend = screen.query_one("#watchlists-backend-select")
+        assert backend.region.height >= 1 and backend.region.width > 0, (
+            f"the backend Select is clipped to nothing: {backend.region}"
+        )
+        assert backend.region.right <= screen.size.width, (
+            f"the backend Select is off the right edge: {backend.region}"
+        )
+        header_painted = "".join(seg.text for seg in strips[backend.region.y])
+        assert "Local" in header_painted, (
+            "the backend Select's current value never reaches the screen; "
+            f"row {backend.region.y} paints: {header_painted.strip()!r}"
+        )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
+    """TASK-996: a real click at each tab's PAINTED label column has to
+    activate that tab's own section.
+
+    The UAT reported that clicking the column where `Items` is drawn
+    activated `Runs`, and suspected the task-875 shape: `WatchlistsTabStrip`
+    pins `height: 1` while a bordered `Button` wants three rows, so layout
+    boxes and painted labels come apart. That did not reproduce -- see the
+    task file -- but nothing was asserting it either way, which is why a
+    harness coordinate error could be mistaken for an app defect for a whole
+    UAT round. This closes that gap.
+
+    Deliberately derived from the compositor, not from the widget's own
+    region: reading `button.region.x` and clicking there would pass even if
+    the label were painted somewhere else entirely, which is precisely the
+    failure that was alleged. Every column the label occupies is probed, not
+    just its centre, so a hit region that merely OVERLAPS the label still
+    fails.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await pilot.pause(0.2)
+
+        strip = screen.query_one("#wl-tabs")
+        row = strip.region.y
+        painted = "".join(
+            segment.text for segment in screen._compositor.render_strips()[row]
+        )
+
+        for section_id, label in SECTIONS:
+            start = painted.find(label)
+            assert start != -1, (
+                f"the {label!r} tab label is not painted at all on row {row}: "
+                f"{painted.strip()!r}"
+            )
+            for column in range(start, start + len(label)):
+                hit = screen.get_widget_at(column, row)[0]
+                assert getattr(hit, "id", None) == f"wl-tab-{section_id}", (
+                    f"column {column} of row {row} paints {label!r} but belongs "
+                    f"to {getattr(hit, 'id', None)!r} -- clicking the label "
+                    f"would activate the wrong section"
+                )
+
+            # And the click has to land, not merely be routed: `Items` was
+            # the tab the UAT could never reach.
+            await pilot.click(offset=(start + len(label) // 2, row))
+            await pilot.pause(0.2)
+            assert screen.active_section == section_id, (
+                f"clicking column {start + len(label) // 2} of row {row}, where "
+                f"{label!r} is painted, activated "
+                f"{screen.active_section!r} instead of {section_id!r}"
+            )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
+    """TASK-997: the expand chevron drew on its own line above the name.
+
+    Captured live in the rail on a clean profile:
+
+        │ Unassigned  0            │
+        │       ▸                  │
+        │ Morning AI Brief  0      │
+
+    `_watchlist_node` yielded the chevron `Button` and the name `Button` as
+    two separate children of the tree's `Vertical`, so they stacked; and the
+    chevron inherited Textual's `min-width: 16`, which is why it painted
+    seven columns in from the left of a 26-column rail rather than beside
+    anything. Every watchlist cost two rows of the screen's primary
+    navigation instead of one.
+
+    Asserted from the compositor under the production stylesheet: which row a
+    glyph lands on is exactly the kind of thing a bare `App` gets wrong.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    service = app.watchlist_bundle_service
+    watchlist = service.create("Morning AI Brief")
+    arxiv = service._db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    service.add_source(watchlist["id"], arxiv)
+
+    host = _visual_destination_harness(app, "watchlists_collections")
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(
+            screen, pilot, f"#wl-tree-node-watchlist-{watchlist['id']}"
+        )
+
+        def painted_rows():
+            strips = screen._compositor.render_strips()
+            return ["".join(seg.text for seg in row) for row in strips]
+
+        chevron = screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button)
+        node = screen.query_one(
+            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
+        )
+
+        # AC#1: same row, and the chevron to the LEFT of the name.
+        assert chevron.region.y == node.region.y, (
+            f"the chevron is on row {chevron.region.y} and its watchlist name "
+            f"on row {node.region.y}; they must share one row"
+        )
+        assert chevron.region.right <= node.region.x, (
+            f"the chevron {chevron.region} must sit left of the name "
+            f"{node.region}, not overlap or follow it"
+        )
+
+        rows = painted_rows()
+        row_text = rows[node.region.y]
+        assert "▸" in row_text and "Morning AI Brief" in row_text, (
+            f"row {node.region.y} should paint the collapsed chevron beside "
+            f"the name; it paints {row_text.strip()!r}"
+        )
+        assert row_text.index("▸") < row_text.index("Morning AI Brief"), (
+            f"the chevron must precede the name on the row: {row_text.strip()!r}"
+        )
+
+        # AC#2: one collapsed watchlist occupies exactly one rail row. The
+        # chevron used to own a row of its own directly above the name.
+        # Guarded: a watchlist painted on row 0 has no row above it, and an
+        # unguarded `y - 1` would wrap to the last row and compare against
+        # something unrelated (Qodo #2 on PR #1017).
+        assert node.region.y > 0, (
+            f"expected the watchlist below the rail heading, not at the top "
+            f"of the screen: {node.region}"
+        )
+        row_above = rows[node.region.y - 1]
+        assert "▸" not in row_above, (
+            f"the row above the watchlist still paints a stray chevron: "
+            f"{row_above.strip()!r}"
+        )
+
+        # AC#4: expanding still nests the sources under the watchlist.
+        await pilot.click(f"#wl-tree-expand-{watchlist['id']}")
+        await pilot.pause(0.2)
+
+        source = screen.query_one(f"#wl-tree-node-source-1-{arxiv}", Button)
+        node = screen.query_one(
+            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
+        )
+        chevron = screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button)
+        assert chevron.region.y == node.region.y, (
+            "the open chevron must still share the watchlist's row"
+        )
+        assert source.region.y > node.region.y, (
+            f"the source row {source.region} must sit below its watchlist "
+            f"{node.region}"
+        )
+        rows = painted_rows()
+        # The source's indent is textual (its label is prefixed with two
+        # spaces), not a region offset, so assert on what is painted.
+        assert rows[source.region.y].index("ArXiv") > rows[node.region.y].index(
+            "Morning AI Brief"
+        ), (
+            f"the source name must be indented past its watchlist's: "
+            f"{rows[source.region.y].strip()!r} under "
+            f"{rows[node.region.y].strip()!r}"
+        )
+        assert "▾" in rows[node.region.y], (
+            f"an expanded watchlist must paint the open chevron on its own "
+            f"row: {rows[node.region.y].strip()!r}"
+        )
+        assert "ArXiv" in rows[source.region.y], (
+            f"row {source.region.y} should paint the source name; it paints "
+            f"{rows[source.region.y].strip()!r}"
+        )
+
+
+def _pane_painted_text(screen, widget) -> str:
+    """Everything the compositor actually paints inside `widget`'s region."""
+    strips = screen._compositor.render_strips()
+    region = widget.region
+    lines = []
+    for y in range(region.y, min(region.y + region.height, len(strips))):
+        row = "".join(segment.text for segment in strips[y])
+        lines.append(row[region.x : region.x + region.width])
+    return "\n".join(lines)
+
+
+@pytest.mark.asyncio
+async def test_watchlists_first_run_replaces_empty_cards_with_guidance():
+    """TASK-998: on a profile with nothing in it, the biggest region on the
+    screen was seven empty bordered cards and the right rail told the user to
+    "Select a source, run, item, rule, or notification" when none can exist.
+
+    Both are answers to one question -- what should this screen say when there
+    is nothing in it yet -- so both are asserted together here.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService([])
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#overview-first-run")
+        assert screen.active_section == "overview"
+
+        overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
+
+        # AC#1: no empty bordered cards, and no empty failed-runs table
+        # either -- both are chrome around data that does not exist.
+        assert not overview.query(".overview-card"), (
+            "a profile with no sources still renders the summary cards"
+        )
+        assert not overview.query("#overview-failed-runs"), (
+            "a profile with no runs still renders the failed-runs table"
+        )
+
+        # ...replaced by copy that actually reaches the screen.
+        painted = _pane_painted_text(screen, overview)
+        assert "watchlist" in painted.lower(), (
+            f"the first-run panel says nothing useful; it paints {painted!r}"
+        )
+
+        # AC#2: the guidance must name controls that exist and can be used
+        # right now, not five things that cannot exist yet.
+        inspector_text = "\n".join(
+            getattr(node.renderable, "plain", str(node.renderable))
+            for node in screen.query("#watchlists-entity-inspector Static")
+        )
+        assert "Select a source, run, item, rule, or notification" not in (
+            inspector_text
+        ), "the dead-end guidance is still shown on a profile with nothing in it"
+
+        for label, selector in (("New", "#wl-tree-new"), ("Sources", "#wl-tab-sources")):
+            control = screen.query_one(selector, Button)
+            assert not control.disabled, (
+                f"{selector} is named in the first-run guidance but is disabled"
+            )
+            assert label in painted or label in inspector_text, (
+                f"the first-run guidance names no reachable control; it should "
+                f"name {label!r} ({selector})"
+            )
+
+
+@pytest.mark.asyncio
+async def test_watchlists_populated_overview_and_inspector_are_unchanged():
+    """TASK-998 AC#4: the first-run treatment must not leak into a populated
+    profile. With a source present the seven cards, the failed-runs table and
+    the Inspector's ordinary "select something" guidance all come back.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService(
+        [
+            {
+                "id": 1,
+                "name": "ArXiv",
+                "source_type": "rss",
+                "url": "https://a.example/f",
+                "status": "ok",
+                "active": True,
+            }
+        ]
+    )
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=(160, 42)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#watchlists-overview-grid")
+
+        overview = screen.query_one("#watchlists-overview-pane", OverviewPane)
+        assert len(overview.query(".overview-card")) == 7
+        assert overview.query_one("#overview-failed-runs")
+        assert not overview.query("#overview-first-run")
+        assert "Total sources\n1" in str(
+            overview.query_one("#overview-total-sources").renderable
+        )
+
+        inspector_text = "\n".join(
+            getattr(node.renderable, "plain", str(node.renderable))
+            for node in screen.query("#watchlists-entity-inspector Static")
+        )
+        assert "Select a source, run, item, rule, or notification" in inspector_text, (
+            "with sources present and nothing selected, the ordinary Inspector "
+            "guidance is the correct copy and must be preserved"
+        )
+
+
+@pytest.mark.parametrize("size", [(160, 42), (235, 52)])
+@pytest.mark.asyncio
+async def test_watchlists_overview_cards_paint_their_labels_and_numbers(size):
+    """TASK-998, second finding: the Overview cards were empty in EVERY state.
+
+    The UAT read "seven empty bordered cards" as a first-run problem. It was
+    not. Measured at 160x42 with a source present, before the fix:
+
+        #overview-total-sources  region=Region(height=1)  content=Size(height=0)
+
+    The grid had no `height` and so took `Grid`'s `1fr` default -- six rows for
+    three rows of cards plus two gutters -- and `padding: 1` inside `height: 4`
+    with a `round` border left zero content rows even when the height was
+    granted. Neither the label nor the number could ever paint.
+
+    `Tests/Watchlists/test_watchlists_overview_pane.py` did not catch it
+    because it asserts on `Static.renderable`, which is correct whether or not
+    a single cell of it reaches the screen. This asserts the compositor.
+    """
+    app = _build_test_app()
+    app.watchlist_scope_service = StaticWatchlistsScopeService(
+        [
+            {
+                "id": 1,
+                "name": "ArXiv",
+                "source_type": "rss",
+                "url": "https://a.example/f",
+                "status": "ok",
+                "active": True,
+            }
+        ]
+    )
+    host = _visual_destination_harness(app, "watchlists_collections")
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#watchlists-overview-grid")
+
+        card = screen.query_one("#overview-total-sources")
+        assert card.content_size.height >= 2, (
+            f"the card has no room for its two lines: {card.region} "
+            f"content={card.content_size}"
+        )
+
+        painted = _pane_painted_text(screen, card)
+        assert "Total sources" in painted, (
+            f"the card's label never reaches the screen; it paints {painted!r}"
+        )
+        assert "1" in painted, (
+            f"the card's value never reaches the screen; it paints {painted!r}"
         )

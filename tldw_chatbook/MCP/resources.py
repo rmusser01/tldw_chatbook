@@ -10,7 +10,11 @@ from loguru import logger
 
 # Import tldw_chatbook components
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
-from ..DB.Client_Media_DB_v2 import MediaDatabase, get_media_transcripts
+from ..DB.Client_Media_DB_v2 import (
+    MediaDatabase,
+    get_media_transcripts,
+    get_chunk_by_uuid,
+)
 
 # `get_note_by_id` (tldw_chatbook.Notes.Notes_Library) and
 # `get_character_by_id` (tldw_chatbook.Character_Chat.Character_Chat_Lib)
@@ -308,21 +312,33 @@ class MCPResources:
                 "content": f"Error loading media: {str(e)}",
             }
 
-    async def get_rag_chunk_resource(self, chunk_id: str) -> Dict[str, Any]:
+    async def get_rag_chunk_resource(self, chunk_uuid: str) -> Dict[str, Any]:
         """Get a RAG chunk as a resource.
 
         Args:
-            chunk_id: ID of the chunk
+            chunk_uuid: UUID of the chunk (`UnvectorizedMediaChunks.uuid`).
+
+                This used to be an integer id (`int(chunk_id)`) passed to
+                `self.media_db.get_chunk_by_id(...)`, a method that has
+                never existed on `MediaDatabase` (TASK-985). The real
+                accessor for a single chunk's row, `get_chunk_by_uuid`
+                (added alongside this fix, a sibling of the pre-existing
+                `get_chunk_text`), keys on the chunk's UUID rather than an
+                int id -- matching how chunks are addressed everywhere else
+                in the app (vector-store lookups use this same UUID). There
+                is no `embedding_id` column on `UnvectorizedMediaChunks` at
+                all, so it is dropped from the metadata below rather than
+                guessed at.
 
         Returns:
-            Resource dict with content and metadata
+            Resource dict with content and metadata.
         """
         try:
             # Get chunk from media database
-            chunk = self.media_db.get_chunk_by_id(int(chunk_id))
+            chunk = get_chunk_by_uuid(self.media_db, chunk_uuid)
             if not chunk:
                 return {
-                    "uri": f"rag-chunk://{chunk_id}",
+                    "uri": f"rag-chunk://{chunk_uuid}",
                     "name": "Not Found",
                     "mimeType": "text/plain",
                     "content": "Chunk not found",
@@ -332,15 +348,15 @@ class MCPResources:
             media = self.media_db.get_media_by_id(chunk["media_id"])
 
             # Format content
-            content = f"# RAG Chunk {chunk_id}\n\n"
+            content = f"# RAG Chunk {chunk_uuid}\n\n"
             if media:
                 content += f"**From**: {media['title']}\n"
-            content += f"**Position**: {chunk.get('start_char', 0)} - {chunk.get('end_char', 0)}\n\n"
+            content += f"**Position**: {chunk.get('start_char') or 0} - {chunk.get('end_char') or 0}\n\n"
             content += "---\n\n"
-            content += chunk["text"]
+            content += chunk["chunk_text"]
 
             return {
-                "uri": f"rag-chunk://{chunk_id}",
+                "uri": f"rag-chunk://{chunk_uuid}",
                 "name": f"Chunk from {media['title'] if media else 'Unknown'}",
                 "mimeType": "text/plain",
                 "content": content,
@@ -348,14 +364,15 @@ class MCPResources:
                     "media_id": chunk["media_id"],
                     "start_char": chunk.get("start_char"),
                     "end_char": chunk.get("end_char"),
-                    "embedding_id": chunk.get("embedding_id"),
+                    "chunk_index": chunk.get("chunk_index"),
+                    "chunk_type": chunk.get("chunk_type"),
                 },
             }
 
         except Exception as e:
             logger.error(f"Error getting RAG chunk resource: {e}")
             return {
-                "uri": f"rag-chunk://{chunk_id}",
+                "uri": f"rag-chunk://{chunk_uuid}",
                 "name": "Error",
                 "mimeType": "text/plain",
                 "content": f"Error loading chunk: {str(e)}",

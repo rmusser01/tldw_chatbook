@@ -14,6 +14,7 @@ from textual.widgets import Button, DataTable, Static
 from textual.worker import get_current_worker
 
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .table_selection import highlight_is_user_driven
 
 
 class RunSelected(Message):
@@ -135,11 +136,43 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()
+        if event.data_table.id != "runs-table":
+            return
         self.select_run_by_id(str(event.row_key.value))
 
     def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
         event.stop()
+        if event.data_table.id != "runs-table":
+            return
         self.select_run_by_id(str(event.cell_key.row_key.value))
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Select on cursor movement, which is what a mouse click produces.
+
+        TASK-1105, matching `SourcesPane`. Scoped to `#runs-table`: this pane
+        also owns `#runs-detail-items`, whose rows are the *content* of the
+        selected run, not runs -- highlighting one of those must not try to
+        re-select a run by an item's key (and would resolve to `None`,
+        clearing the very selection that produced the detail table).
+        """
+        event.stop()
+        if event.data_table.id != "runs-table":
+            return
+        if not highlight_is_user_driven(event):
+            return
+        if event.row_key is not None and event.row_key.value is not None:
+            self.select_run_by_id(str(event.row_key.value))
+
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        """Same, for a table whose cursor is cell-shaped rather than row-shaped."""
+        event.stop()
+        if event.data_table.id != "runs-table":
+            return
+        if not highlight_is_user_driven(event):
+            return
+        row_key = getattr(event.cell_key, "row_key", None)
+        if row_key is not None and row_key.value is not None:
+            self.select_run_by_id(str(row_key.value))
 
     def select_run_by_id(self, run_id: str) -> None:
         """Select the run with the given id and notify listeners."""

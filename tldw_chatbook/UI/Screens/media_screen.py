@@ -9,7 +9,6 @@ from ..Navigation.base_app_screen import BaseAppScreen
 from ..MediaWindow_v2 import MediaWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
-from .media_runtime_state import MediaRuntimeState
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -23,7 +22,6 @@ class MediaScreen(BaseAppScreen):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "media", **kwargs)
         self.media_window = None
-        self.media_runtime_state: MediaRuntimeState = app_instance.media_runtime_state
         # Stashed by restore_state on this (pre-mount) instance; applied to
         # the freshly composed MediaWindow once it exists (see on_mount).
         # MediaWindow itself is rebuilt fresh every visit -- there is no
@@ -41,7 +39,6 @@ class MediaScreen(BaseAppScreen):
             id="media-destination-header",
         )
         self.media_window = MediaWindow(self.app_instance, classes="window")
-        self.media_window.runtime_state = self.media_runtime_state
         # Leave room for the destination header above the window.
         self.media_window.styles.height = "1fr"
         # Yield the window widget directly
@@ -69,8 +66,6 @@ class MediaScreen(BaseAppScreen):
 
         if self.media_window is not None:
             await self.media_window.handle_runtime_backend_changed(runtime_backend)
-        else:
-            self.media_runtime_state.reset_for_backend(runtime_backend)
 
     def save_state(self) -> Dict[str, Any]:
         """Save the Media window's user-facing view state.

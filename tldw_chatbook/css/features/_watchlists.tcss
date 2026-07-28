@@ -4,17 +4,43 @@
  * Styles for the WatchlistsCollectionsScreen dashboard and panes.
  * ======================================== */
 
-/* Overview dashboard grid and cards */
+/* Overview dashboard grid and cards.
+ *
+ * TASK-998, second finding. The UAT called these "seven empty bordered
+ * cards" and read it as a first-run problem. It is not: they were empty in
+ * EVERY state, populated or not, and had been since the dashboard shipped.
+ * Measured at 160x42 with a source present:
+ *
+ *     #overview-total-sources  region=Region(height=1)  content=Size(height=0)
+ *
+ * Two compounding causes, one per rule below.
+ *
+ * The grid had no `height`, so it took `Grid`'s `1fr` default and was handed
+ * six rows for three rows of cards plus two gutters -- about one row each.
+ * `height: auto` sizes it to the cards instead, which is the only way a fixed
+ * card height means anything.
+ *
+ * And `padding: 1` inside `height: 4` with a `round` border left ZERO content
+ * rows: 4 - 2 (border) - 2 (padding) = 0. Even given its four rows the card
+ * could not have painted the label or the number. The padding is now
+ * horizontal only, so the two lines the card actually renders
+ * ("Total sources" / the value) have exactly the two rows they need.
+ *
+ * This is the same family as TASK-995 and task-875 elsewhere on this screen:
+ * a container too short for its children, where the border is the only thing
+ * that survives.
+ */
 #watchlists-overview-grid {
     layout: grid;
     grid-size: 3;
     grid-gutter: 1;
+    height: auto;
     margin: 1 0;
 }
 
 .overview-card {
     height: 4;
-    padding: 1;
+    padding: 0 1;
     background: $surface;
     border: round $surface-lighten-1;
     text-align: center;
@@ -537,6 +563,107 @@ WatchlistSourcePickerDialog {
     color: $ds-text-muted;
 }
 
+/* TASK-998. The first-run panel that replaces the seven empty Overview cards.
+ *
+ * `height: auto` on both the wrapper and the body is the load-bearing pair.
+ * `Vertical` defaults to `height: 1fr`, so the wrapper would claim the whole
+ * region and re-create the "large box containing nothing" this task exists to
+ * remove; and a `Static` left at its default single row would clip multi-
+ * paragraph copy to its first line, which is the same class of defect as
+ * TASK-995 one region over. `text-wrap: wrap` because this copy has to
+ * survive the centre pane at 160 columns as well as at 235.
+ *
+ * No border. The region wrapper (`.watchlists-region-items`) already draws
+ * one box, and Task 6's rule for this screen is one border and one heading
+ * per region -- an inner box here would be the doubled-chrome defect that
+ * task removed.
+ */
+#overview-first-run {
+    width: 100%;
+    height: auto;
+    padding: 1 0;
+}
+
+.watchlists-first-run-title {
+    width: 100%;
+    height: auto;
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+.watchlists-first-run-body {
+    width: 100%;
+    height: auto;
+    padding: 1 0 0 0;
+    text-wrap: wrap;
+    color: $ds-text-muted;
+}
+
+/* The Inspector's own first-run line, muted the same way, so the rail reads
+ * as one voice with `.watchlists-region-placeholder` rather than as an
+ * alert.
+ */
+#inspector-first-run-hint {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    color: $ds-text-muted;
+}
+
+/* TASK-997. The expand chevron drew on its own indented line ABOVE the
+ * watchlist name:
+ *
+ *     │ Unassigned  0            │
+ *     │       ▸                  │
+ *     │ Morning AI Brief  0      │
+ *
+ * `_watchlist_node` now wraps the two buttons in this row so they share a
+ * line. `height: 1` is what makes the row a row: `Horizontal` defaults to
+ * `height: 1fr`, which inside the rail's `Vertical` would let one watchlist
+ * claim whatever vertical space the tree had left.
+ *
+ * `min-width: 0` on the chevron is the other half of the original defect and
+ * is load-bearing, exactly as it is for `.watchlist-tree-action` above:
+ * Textual's Button CSS pins `min-width: 16` and `compact=True` removes only
+ * the border, not that floor. A one-glyph chevron was therefore SIXTEEN
+ * columns wide with the glyph centred in them -- which is why it painted
+ * seven columns in from the left edge of a 26-column rail, reading as a
+ * stray mark rather than as this watchlist's control.
+ *
+ * The name button is left at its natural `width: auto` rather than given
+ * `1fr`: at `1fr` a name longer than the remaining rail would be ellipsized
+ * (`test_watchlists_left_rail_is_labelled_when_expanded` fails on any `…`),
+ * and the `is-active` highlight would stretch the full rail width instead of
+ * hugging the label the way the sibling root nodes do.
+ *
+ * `width: 3` and not `2`, which is the tighter look this was first written
+ * for: Textual's `Button` reserves a column each side via `line-pad: 1`, so
+ * a 2-column button has ZERO content columns and Rich raises
+ * `ValueError: range() arg 3 must not be zero` while wrapping the glyph. The
+ * obvious `line-pad: 0` is not available -- Textual's integer property parser
+ * rejects a literal 0 for it (`_process_integer` errors on `value == 0`), so
+ * the stylesheet fails to parse and every rule after it is lost. 3 is the
+ * narrowest width that renders.
+ *
+ * The source rows deliberately get NO rule: their two-space label indent
+ * plus Textual's `min-width: 16` centring already places them past the
+ * watchlist name (name at column 5, source at column 7 in a 26-column rail),
+ * so the nesting reads without adding a margin that would only move with the
+ * chevron's width.
+ */
+.watchlist-tree .watchlist-tree-row {
+    width: 100%;
+    height: 1;
+}
+
+.watchlist-tree Button.watchlist-tree-expander {
+    width: 3;
+    min-width: 0;
+    height: 1;
+    padding: 0;
+    border: none;
+}
+
 /* TASK-897. `#sources-toolbar` is a bare `Vertical` wrapping several
  * `.destination-filter-strip` rows, and had no height rule anywhere -- so it
  * inherited Textual's `height: 1fr` default and its size came from whatever
@@ -556,4 +683,210 @@ WatchlistSourcePickerDialog {
  */
 #sources-toolbar {
     height: auto;
+}
+
+/* TASK-995. The Sources toolbar rendered as one bare `▊▔▔▔` bar with no
+ * controls at all, which blocked the entire new-user path: create a
+ * watchlist, press "Create source", and there is no visible way to add one.
+ *
+ * Two independent causes compounded, and both are fixed here.
+ *
+ * 1. HEIGHT. `.destination-filter-strip` is `height: 1`
+ *    (layout/_panes.tcss) but a bordered `Input`/`Select` is three rows, so
+ *    only the top border row survived. The widgets now pass `compact=True`
+ *    (sources_pane.py / items_pane.py / watchlists_collections_screen.py),
+ *    Textual's own supported one-row form -- the same idiom this codebase
+ *    already uses ~300 times, including for `Input`/`Select` in
+ *    mcp_server_mutations.py. That is done in Python rather than by
+ *    un-pinning the strip: `.destination-filter-strip` is shared chrome
+ *    (schedules, workflows and four sibling Watchlists toolbars), and the
+ *    one-row strip is this screen's design language -- the tab strip, the
+ *    tree action row and the header bar are all one row. Growing the strip
+ *    to three rows instead would have cost the Sources table a quarter of
+ *    its rows at 160x42, re-opening TASK-897.
+ *
+ * 2. WIDTH, which the strip's height alone would not have fixed. Nothing
+ *    sized these controls, so `Input`'s Textual default (`width: 100%`) and
+ *    `_conversations.tcss`'s bare global `Select { width: 100%; }` each
+ *    claimed the FULL strip: measured at 160x42 the four of them stacked to
+ *    x=31,122,213,304 in a pane 93 columns wide, putting `New Source` at
+ *    x=395 -- 300 columns off the right edge of a 160-column terminal. The
+ *    explicit widths below are what keeps every control on screen.
+ *
+ *    These must live in the bundle, not in a widget's `DEFAULT_CSS`:
+ *    Textual always ranks a CSS_PATH rule above any `DEFAULT_CSS` rule
+ *    regardless of specificity, so that bare `Select { width: 100% }` beats
+ *    DEFAULT_CSS every time. Same lesson as `#mcp-tools-filter-server-slot
+ *    Select` and `#mcp-audit-filter-*` in components/_agentic_terminal.tcss.
+ *    `margin: 0` is part of that override too -- the same global rule adds
+ *    `margin-bottom: 1`, which would push a one-row Select to two rows.
+ *
+ * Widths are sized to their longest option label plus the dropdown arrow
+ * ("All statuses" 12, "Playlist"/"Inactive" 8), leaving the search box the
+ * remainder: 19 columns at 160x42 and 94 at 235x52.
+ */
+#sources-toolbar Input,
+#sources-toolbar Select,
+#items-toolbar Input,
+#items-toolbar Select,
+#watchlists-header-bar Select {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+#sources-search-input {
+    width: 1fr;
+    min-width: 12;
+}
+
+#sources-type-select {
+    width: 12;
+}
+
+#sources-status-filter {
+    width: 16;
+}
+
+#sources-active-filter {
+    width: 12;
+}
+
+#sources-tags-filter {
+    width: 1fr;
+    min-width: 12;
+}
+
+/* TASK-1035. The create-source form had no rule anywhere, so it took
+ * Textual's defaults for its container and painted like an unfinished
+ * sketch: `Create` on row 40 and `Cancel` on row 43 with blank rows between
+ * them, and `#sources-table` squeezed to a single row underneath.
+ *
+ * The container is now a `Vertical` rather than a bare `Grid` (see
+ * `sources_pane.py`), which fixes the row spread; `height: auto` is what
+ * stops it then claiming `1fr` of the pane and starving the table a second
+ * way -- the same defect and the same one-line fix as `#sources-toolbar`
+ * immediately above (TASK-897).
+ */
+#sources-create-form {
+    height: auto;
+    width: 100%;
+}
+
+/* Type + Active share one row. Two things are pinned here.
+ *
+ * The `Active` label was `width: 1fr` at Textual's default and claimed the
+ * whole 168-column row, pushing the `Switch` to x=198 -- one column past
+ * the pane's right edge at 235x52, so the only control for "is this source
+ * active" was neither visible nor clickable.
+ *
+ * `margin: 0` on the Select undoes the bare global `Select { width: 100%;
+ * margin-bottom: 1; }` in features/_conversations.tcss, which added a blank
+ * row under the row and pushed the fields below it further down a pane that
+ * has no rows to spare. Same override, same reason, as the toolbar block
+ * above.
+ */
+#sources-create-form .sources-create-type-row {
+    width: 100%;
+    height: 3;
+}
+
+#sources-create-form #sources-create-type {
+    width: 1fr;
+    margin: 0;
+}
+
+#sources-create-form .sources-create-active-label {
+    width: auto;
+    height: 3;
+    content-align: left middle;
+    padding: 0 1;
+}
+
+/* Tags + check cadence share the next row, for the reason spelled out above:
+ * the Sources pane is 16 rows tall at 160x42 and a sixth full-height field row
+ * would put `Create`/`Cancel` past its bottom edge. The Select needs the same
+ * `margin: 0` override as the type Select -- the bare global
+ * `Select { width: 100%; margin-bottom: 1; }` in features/_conversations.tcss
+ * otherwise adds a blank row beneath it and reintroduces exactly that overflow.
+ */
+#sources-create-form .sources-create-tags-row {
+    width: 100%;
+    height: 3;
+}
+
+#sources-create-form #sources-create-tags {
+    width: 1fr;
+}
+
+#sources-create-form #sources-create-frequency {
+    width: 16;
+    margin: 0;
+}
+
+/* `.dialog-buttons` (features/_media.tcss) supplies the side-by-side pair
+ * itself -- `layout: horizontal`, and `margin: 0 1; min-width: 12` on each
+ * Button -- so this form and `WatchlistNameDialog` pair their Create/Cancel
+ * the same way rather than stacking them.
+ *
+ * Two properties are deliberately not inherited. The dialog centres its
+ * pair inside a narrow modal; this form is inline and 168 columns wide,
+ * where a centred pair would float away from the fields it belongs to. And
+ * the dialog's `height: 3` would put the pair a row past the bottom of a
+ * 16-row Sources pane at 160x42; one row is also what every other button on
+ * this screen uses (`New Source`, `Preview`, `Import OPML`, the tree's
+ * `New`), so the pair reads as part of the screen rather than a modal
+ * dropped into it.
+ */
+#sources-create-form .sources-create-buttons {
+    align: left middle;
+    width: 100%;
+    height: 1;
+}
+
+#items-search-input {
+    width: 1fr;
+    min-width: 12;
+}
+
+#items-status-select {
+    width: 16;
+}
+
+#watchlists-backend-select {
+    width: 12;
+}
+
+/* TASK-1105 lived here. Clicking any Watchlists table row other than the
+ * first left the selection on row 0, so `Preview`, `Check now` and `Delete`
+ * all acted on the wrong source. The cause is the app-wide keyboard-focus
+ * fallback `*:focus { outline: solid $ds-focus-accent; }` (core/_reset.tcss):
+ * Textual paints an `outline` OVER a widget's outermost rendered lines, and
+ * the overwritten segments lose the `{"row", "column"}` metadata that
+ * `DataTable._on_click` needs, so the bottom row of a FOCUSED table is
+ * unclickable. The Sources table is three rows tall here (header + two rows),
+ * which left row 0 as the only reachable data row.
+ *
+ * It was fixed with `.watchlists-region DataTable:focus { outline: none; }`
+ * plus a `$ds-focus-bg`/`$ds-focus-fg` cursor recolour, scoped to this
+ * screen, and its notes called out that every other table in the app still
+ * had it. TASK-1160 promoted exactly those two rules to a bare
+ * `DataTable:focus` type selector in components/_lists.tcss, which every
+ * region here inherits unchanged, and removed this local copy so there is one
+ * mechanism rather than two.
+ * Tests/UI/test_watchlists_source_row_click_selects.py still guards the
+ * Watchlists behaviour end to end.
+ */
+
+/* TASK-1020. The Overview region's and the Inspector's third state: the
+ * overview worker has been started and has not answered yet. Muted like
+ * `.watchlists-region-placeholder` and `.watchlists-first-run-body` so a
+ * transient line does not read as an alert, and `height: auto` so it does not
+ * claim the region's rows on the way past.
+ */
+.watchlists-loading-state {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    color: $ds-text-muted;
 }

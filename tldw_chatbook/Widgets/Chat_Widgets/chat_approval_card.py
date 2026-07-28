@@ -1,8 +1,8 @@
-"""Inline chat approval card: legacy single-approval API + the live
-Phase-5 MCP batch-approval flow (task-5).
+"""Inline chat approval card: the live Phase-5 MCP batch-approval flow
+(task-5).
 
-The batch path (`set_batch`/`ApprovalDecided`) is the UI half of the
-Console MCP tool-call approval round-trip: ``ConsoleChatController.
+``set_batch``/``ApprovalDecided`` is the UI half of the Console MCP
+tool-call approval round-trip: ``ConsoleChatController.
 request_mcp_approvals`` (worker thread) pushes a pending batch into
 ``ChatScreen.chat_state.task_resume_state.pending_approval`` via
 ``app.call_from_thread``, which flows down through ``sync_task_resume_state``
@@ -11,12 +11,19 @@ decisions travel back up as an ``ApprovalDecided`` message that
 ``ChatScreen`` forwards to ``ConsoleChatController.resolve_pending_approval``
 (UI thread), which releases the worker thread's wait.
 
-Every method here stays synchronous end-to-end (mirrors ``set_approval``):
-``ChatScreen.set_task_resume_state``/``sync_task_resume_state`` and
-``ChatTaskCards.sync_state`` are plain sync calls frozen by
-``Tests/UI/test_chat_approvals_and_resume.py``, so ``set_batch`` cannot
-``await`` anything either -- see its own docstring for how row remounts
-stay collision-safe without awaiting ``remove_children()``.
+Every method here stays synchronous end-to-end: ``ChatScreen.
+set_task_resume_state``/``sync_task_resume_state`` and ``ChatTaskCards.
+sync_state`` are plain sync calls, so ``set_batch`` cannot ``await``
+anything either -- see its own docstring for how row remounts stay
+collision-safe without awaiting ``remove_children()``.
+
+(task-914: this card used to also carry a legacy single-approval API --
+``set_approval``/``#approval-single-body`` with "Allow once"/"Deny"
+buttons -- for the pre-task-649 ``Chat_Window_Enhanced`` composition.
+That composition was fully retired in task-649, which deleted its last
+caller and its dedicated pinning suite (``Tests/UI/test_chat_approvals_
+and_resume.py``) without also removing the now-orphaned widget code;
+``set_batch`` is the sole production entry point today.)
 """
 
 from __future__ import annotations
@@ -140,8 +147,8 @@ class ChatApprovalCard(Container):
         never "whichever session happens to be active" (an async-message
         misattribution hazard fixed alongside this: `ApprovalDecided` can
         be delivered after a `switch_session` already moved the active
-        session elsewhere). ``None`` only for the legacy single-approval
-        API, which has no batch/round concept.
+        session elsewhere). ``None`` when no round id was supplied (e.g.
+        a test constructing this message directly).
         """
 
         def __init__(
@@ -169,13 +176,6 @@ class ChatApprovalCard(Container):
 
     def compose(self) -> ComposeResult:
         yield Static("Approval required", id="approval-title")
-        with Container(id="approval-single-body"):
-            yield Static("", id="approval-summary")
-            yield Static("", id="approval-copy")
-            with Horizontal(id="approval-actions"):
-                yield Button("Allow once", id="approval-allow-once", variant="primary")
-                yield Button("Deny", id="approval-deny", variant="error")
-                yield Button("Review details", id="approval-details")
         with Container(id="approval-batch-body"):
             yield Vertical(id="approval-batch-rows")
             with Horizontal(id="approval-batch-actions"):
@@ -212,29 +212,6 @@ class ChatApprovalCard(Container):
             # The card is hidden anyway (display = False above); a missing
             # batch body at this point is harmless.
             pass
-
-    # -- legacy single-approval API (unchanged; kept for existing callers) --
-
-    def set_approval(self, approval: dict[str, Any] | None) -> None:
-        """Update the card with the latest single approval request."""
-        has_approval = bool(approval)
-        self.display = has_approval
-        if not has_approval:
-            return
-
-        self.query_one("#approval-batch-body").display = False
-        self.query_one("#approval-single-body").display = True
-
-        summary = approval.get("summary", "Approval required")
-        details = approval.get("details", "")
-        allow_label = approval.get("allow_label", "Allow once")
-
-        self.query_one("#approval-summary", Static).update(summary)
-        self.query_one("#approval-copy", Static).update(details)
-        self.query_one("#approval-details", Button).label = approval.get(
-            "details_label", "Review details"
-        )
-        self.query_one("#approval-allow-once", Button).label = allow_label
 
     # -- batch-approval API (task-5) -----------------------------------------
 
@@ -279,7 +256,6 @@ class ChatApprovalCard(Container):
             return
 
         self.display = True
-        self.query_one("#approval-single-body").display = False
         self.query_one("#approval-batch-body").display = True
 
         grouped = _collapse_pending_calls(calls)
@@ -384,9 +360,9 @@ class ChatApprovalCard(Container):
         """Clear a row's ``needs-decision`` flag once it has an explicit choice.
 
         The only ``Select`` widgets under this card are the per-row batch
-        decision selects (the legacy single-approval body has none), so no
-        id/class scoping is needed on the decorator -- membership in
-        ``self._batch_selects`` is enough to identify "one of our rows."
+        decision selects, so no id/class scoping is needed on the
+        decorator -- membership in ``self._batch_selects`` is enough to
+        identify "one of our rows."
         This does not stop the event: nothing else in this widget handles
         ``Select.Changed`` today, and it must keep bubbling exactly as it
         did before this handler existed (``TldwCli.on_select_changed`` in

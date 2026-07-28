@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
 from rich.text import Text
-from textual.containers import Grid, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
+from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Input, Select, Static, Switch
 
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
@@ -106,6 +108,36 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     # (a one-argument `watch_selected_source` only ever sees the new one).
     _highlighted_source_key: str | None = None
 
+    #: The create form's focusable controls, in visual order (TASK-1035).
+    #: `compose()` yields them in this order and the form is a plain
+    #: `Vertical`, so DOM order, paint order and Tab order are the same list.
+    _CREATE_FORM_FIELD_IDS = (
+        "sources-create-name",
+        "sources-create-url",
+        "sources-create-type",
+        "sources-create-active",
+        "sources-create-tags",
+        "sources-create-frequency",
+        "sources-create-submit",
+        "sources-create-cancel",
+    )
+
+    #: How often a new source is checked, in seconds. Mirrors the
+    #: `check_frequency INTEGER DEFAULT 3600` column in Subscriptions_DB, so
+    #: leaving the control alone reproduces the database default (TASK-1210).
+    _FREQUENCY_OPTIONS = [
+        ("Every 15m", 900),
+        ("Every 1h", 3600),
+        ("Every 6h", 21_600),
+        ("Every 24h", 86_400),
+    ]
+    _DEFAULT_FREQUENCY_SECONDS = 3600
+
+    #: Which create-form control `recompose()` should focus once it has
+    #: remounted this pane's children. See `recompose` for why focus has to
+    #: be re-homed by hand.
+    _pending_create_focus: str | None = None
+
     _TYPE_OPTIONS = [
         ("All", "all"),
         ("RSS", "rss"),
@@ -130,29 +162,42 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
 
     def compose(self):
         with Vertical(id="sources-toolbar"):
+            # TASK-995: `compact=True` on every Input/Select in a
+            # `.destination-filter-strip` row. That class pins `height: 1`
+            # (layout/_panes.tcss) while a bordered Input/Select is three
+            # rows, so without this the whole strip painted as its own top
+            # border and nothing else -- no search box, no filters, no
+            # `New Source` -- and a new user had no way to add a source at
+            # all. Widths are pinned alongside it in features/_watchlists.tcss
+            # (they have to be in the bundle to beat the global
+            # `Select { width: 100% }` in features/_conversations.tcss).
             with Horizontal(classes="destination-filter-strip"):
                 yield Input(
                     placeholder="Search sources...",
                     id="sources-search-input",
                     value=self.search_query,
+                    compact=True,
                 )
                 yield Select(
                     self._TYPE_OPTIONS,
                     value=self.source_type_filter,
                     id="sources-type-select",
                     allow_blank=False,
+                    compact=True,
                 )
                 yield Select(
                     self._STATUS_OPTIONS,
                     value=self.status_filter,
                     id="sources-status-filter",
                     allow_blank=False,
+                    compact=True,
                 )
                 yield Select(
                     self._ACTIVE_OPTIONS,
                     value=self.active_filter,
                     id="sources-active-filter",
                     allow_blank=False,
+                    compact=True,
                 )
                 yield Button("New Source", id="sources-new-button", variant="primary")
                 yield Button("Filters", id="sources-filter-toggle", variant="default")
@@ -162,6 +207,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                         placeholder="Tags (comma separated)...",
                         id="sources-tags-filter",
                         value=self.tags_filter,
+                        compact=True,
                     )
             with Horizontal(classes="destination-filter-strip"):
                 yield Button(
@@ -178,31 +224,68 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 yield Button("Export OPML", id="sources-export-opml-button")
 
         if self.show_create_form:
-            with Grid(id="sources-create-form"):
+            # TASK-1035: a `Vertical`, not a `Grid`. Nothing styled
+            # `#sources-create-form`, so the `Grid` fell back to Textual's
+            # defaults -- one column, and rows that share the container's
+            # height as `1fr` each. Measured at 235x52 that spread seven
+            # controls over 23 rows with blank gaps between them, put
+            # `Create` on row 40 and `Cancel` three rows below it (the
+            # "stacked with blank rows" the UAT reported), and starved
+            # `#sources-table` down to a single row. A `Vertical` of
+            # auto-height children stacks them tight, in visual = DOM =
+            # Tab order, which is what the New-watchlist dialog does too.
+            with Vertical(id="sources-create-form"):
                 yield Input(
                     placeholder="Name", id="sources-create-name", value=self.create_draft_name
                 )
                 yield Input(
                     placeholder="URL", id="sources-create-url", value=self.create_draft_url
                 )
-                yield Select(
-                    [(label, value) for label, value in self._TYPE_OPTIONS if value != "all"],
-                    value="rss",
-                    id="sources-create-type",
-                    allow_blank=False,
-                )
+                # Type and Active share a row. The pane is only 16 rows tall
+                # at 160x42 and its toolbar takes two of them, so a form of
+                # five full-height rows would push `Create`/`Cancel` off the
+                # bottom -- unreachable, which is the same class of defect
+                # this task is fixing.
                 yield Horizontal(
-                    Static("Active"),
+                    Select(
+                        [
+                            (label, value)
+                            for label, value in self._TYPE_OPTIONS
+                            if value != "all"
+                        ],
+                        value="rss",
+                        id="sources-create-type",
+                        allow_blank=False,
+                    ),
+                    Static("Active", classes="sources-create-active-label"),
                     Switch(value=True, id="sources-create-active"),
-                    classes="sources-create-active-row",
+                    classes="sources-create-type-row",
                 )
-                yield Input(
-                    placeholder="Tags (comma separated)",
-                    id="sources-create-tags",
-                    value=self.create_draft_tags,
+                # Tags and the check cadence share a row for the same reason
+                # Type and Active do: the pane has no spare rows, and a sixth
+                # full-height row would push `Create`/`Cancel` off the bottom.
+                yield Horizontal(
+                    Input(
+                        placeholder="Tags (comma separated)",
+                        id="sources-create-tags",
+                        value=self.create_draft_tags,
+                    ),
+                    Select(
+                        self._FREQUENCY_OPTIONS,
+                        value=self._DEFAULT_FREQUENCY_SECONDS,
+                        id="sources-create-frequency",
+                        allow_blank=False,
+                    ),
+                    classes="sources-create-tags-row",
                 )
-                yield Button("Create", id="sources-create-submit", variant="success")
-                yield Button("Cancel", id="sources-create-cancel", variant="default")
+                # `.dialog-buttons` is the same one-row, side-by-side pairing
+                # `WatchlistNameDialog` uses for its own Create/Cancel, so the
+                # two creation flows read the same (TASK-1035 AC#6). Only the
+                # alignment is overridden for this inline form -- see
+                # `features/_watchlists.tcss`.
+                with Horizontal(classes="dialog-buttons sources-create-buttons"):
+                    yield Button("Create", id="sources-create-submit", variant="success")
+                    yield Button("Cancel", id="sources-create-cancel", variant="default")
 
         selected_key = (
             str(self.selected_source.get("id")) if self.selected_source else None
@@ -224,6 +307,40 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         yield table
 
     @staticmethod
+    def source_status_text(source: dict[str, Any]) -> str:
+        """What the Status column says about this source.
+
+        TASK-1090. This read `source.get("status")` alone -- a key **no**
+        watchlists normalizer emits. `normalize_local_subscription_row`
+        publishes `status_summary` (`active`, `inactive`, `error`,
+        `error (3)`), and the server normalizer the same. So the Status column
+        rendered `-` for every source in every state, including one whose last
+        check had just failed: `subscriptions.last_error` was written and the
+        screen showed nothing.
+
+        The bare `status` key is kept as a fallback because it is the shape
+        this pane's own tests and any hand-built row use.
+
+        Args:
+            source: A source row as published to `sources`.
+
+        Returns:
+            The status text, or `-` when the backend reported none.
+        """
+        return str(source.get("status_summary") or source.get("status") or "-")
+
+    @staticmethod
+    def source_last_scraped_text(source: dict[str, Any]) -> str:
+        """What the Last scraped column says. Same defect as `status` above:
+        the normalizers publish `last_checked_or_scraped_at`, so this column
+        read `-` even immediately after a successful check."""
+        return str(
+            source.get("last_checked_or_scraped_at")
+            or source.get("last_scraped")
+            or "-"
+        )
+
+    @staticmethod
     def _source_row_cells(source: dict[str, Any], highlighted: bool) -> tuple[Text, ...]:
         """One row's cell values, styled if `highlighted` (task-876).
 
@@ -235,10 +352,36 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         return (
             Text(str(source.get("name") or source.get("title") or "Untitled"), style=style),
             Text(str(source.get("source_type") or "-"), style=style),
-            Text(str(source.get("status") or "-"), style=style),
-            Text(str(source.get("last_scraped") or "-"), style=style),
+            Text(SourcesPane.source_status_text(source), style=style),
+            Text(SourcesPane.source_last_scraped_text(source), style=style),
             Text("Yes" if source.get("active") else "No", style=style),
         )
+
+    @staticmethod
+    def _matches_status_filter(source: dict[str, Any], status_filter: str) -> bool:
+        """Whether a source matches the Status filter's chosen value.
+
+        TASK-1090. Compared `source.get("status")` to the option value with
+        `==`, which could never be true for a real source: the normalizers
+        publish `status_summary`, and its error form carries a count
+        (`error (3)`). Filtering to `Error` -- the whole point of the filter
+        for someone whose feeds have started failing -- returned nothing.
+
+        Args:
+            source: A source row as published to `sources`.
+            status_filter: One of the `_STATUS_OPTIONS` values.
+
+        Returns:
+            True when the source's status belongs to that filter bucket.
+        """
+        status = SourcesPane.source_status_text(source).lower()
+        if status_filter == "error":
+            return status.startswith("error")
+        if status_filter == "ok":
+            # `active` is what a healthy local source reports; `ok` is the
+            # hand-built shape used by this pane's own tests.
+            return status in ("ok", "active")
+        return status == status_filter
 
     def _filtered_sources(self) -> list[dict[str, Any]]:
         query = self.search_query.strip().lower()
@@ -251,7 +394,9 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         for source in self.sources:
             if type_filter != "all" and str(source.get("source_type") or "").lower() != type_filter:
                 continue
-            if status_filter != "all" and str(source.get("status") or "").lower() != status_filter:
+            if status_filter != "all" and not self._matches_status_filter(
+                source, status_filter
+            ):
                 continue
             if active_filter == "active" and not source.get("active"):
                 continue
@@ -310,11 +455,96 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         see that message's docstring for why this pane cannot just rely on
         its own reactive surviving a recompose.
 
+        Also arms the first field to take focus once the recompose this
+        assignment triggers has finished mounting it (TASK-1035) — the
+        `is_mounted` guard keeps that to a genuinely interactive open, so a
+        pane constructed pre-mount by `_build_detail_pane` (re-seeding an
+        already-open form after a workbench rebuild) does not later yank
+        focus away from wherever the user actually left it.
+
         Args:
             is_open: The form's new visibility.
         """
         if self.is_mounted:
+            if is_open:
+                self._pending_create_focus = self._CREATE_FORM_FIELD_IDS[0]
             self.post_message(CreateFormVisibilityChanged(is_open))
+
+    def _focused_create_field_id(self) -> str | None:
+        """Id of this pane's create-form control that currently has focus."""
+        if not self.show_create_form or not self.is_mounted:
+            return None
+        try:
+            focused = self.screen.focused
+        except Exception:
+            return None
+        if focused is None or focused.id not in self._CREATE_FORM_FIELD_IDS:
+            return None
+        try:
+            return focused.id if self in focused.ancestors_with_self else None
+        except Exception:
+            return None
+
+    async def recompose(self) -> None:
+        """Re-home focus into the create form after this pane rebuilds.
+
+        TASK-1035. `show_create_form` is `reactive(..., recompose=True)`, and
+        `Widget.recompose` removes and remounts *every* child of this pane.
+        Textual does not move focus when the focused widget is removed that
+        way, so pressing `New Source` — a `Button` inside this very pane —
+        destroyed the widget holding focus and left `Screen.focused` at
+        `None`. The form then opened with nothing focused anywhere on the
+        screen: typing went to the void, and `Tab` restarted at the head of
+        the screen's focus chain (the top navigation bar), 37 presses away
+        from the first form field. That is what the 2026-07-28 UAT reported
+        as "the create-source form cannot be filled in".
+
+        Two cases are handled, and only these two — focus is never taken
+        from anywhere outside this pane's own create form:
+
+        1. The form just opened: `watch_show_create_form` armed
+           `_pending_create_focus` with the first field, matching
+           `WatchlistNameDialog.on_mount`, which focuses its input.
+        2. The form was already open with one of its fields focused, and
+           something *else* rebuilt this pane underneath it — a `sources`
+           reload, a region collapse. The draft text already survives that
+           (`CreateFormDraftChanged`); this puts the caret back with it.
+        """
+        restore = self._pending_create_focus
+        self._pending_create_focus = None
+        if restore is None:
+            restore = self._focused_create_field_id()
+        await super().recompose()
+        # Guard explicitly after the await: the pane can be torn down while
+        # `super().recompose()` is in flight (a section switch, a region
+        # collapse), matching how `lab_frame.py` bails out of its own
+        # post-recompose work.
+        if not self.is_mounted or not self.is_running:
+            return
+        if not restore or not self.show_create_form:
+            return
+        try:
+            self.query_one(f"#{restore}").focus()
+        except NoMatches:
+            # The only *expected* miss: the form closed, or its fields were
+            # rebuilt under a different id, between arming `restore` and
+            # getting here. Debug is right for that -- it is not a fault.
+            logger.opt(exception=True).debug(
+                f"SourcesPane: #{restore} was gone after recompose; "
+                "nothing to focus."
+            )
+        except Exception:
+            # Anything else is a real fault in the focus path, and this pane
+            # exists in its current form *because* focus silently going
+            # missing after a recompose shipped to users once already
+            # (TASK-1035). Logging that at debug would hide the next
+            # occurrence behind "focus is randomly missing" with no signal,
+            # so it is warned. Still swallowed: a broken focus restore must
+            # not take the screen down with it.
+            logger.opt(exception=True).warning(
+                f"SourcesPane: unexpected failure focusing #{restore} after "
+                "recompose; the create form may open with nothing focused."
+            )
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "sources-type-select":
@@ -372,6 +602,12 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 tags.append(clean)
             else:
                 self.app.notify(f"Tag '{tag}' was skipped due to invalid content.", severity="warning")
+        try:
+            check_frequency = int(
+                self.query_one("#sources-create-frequency", Select).value
+            )
+        except (TypeError, ValueError):
+            check_frequency = self._DEFAULT_FREQUENCY_SECONDS
         self.post_message(
             CreateSourceRequested(
                 {
@@ -380,6 +616,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     "source_type": source_type,
                     "active": active,
                     "tags": tags,
+                    "check_frequency": check_frequency,
                 }
             )
         )
@@ -393,6 +630,32 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
         event.stop()
         self.select_source_by_id(str(event.cell_key.row_key.value))
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Select on cursor movement, which is what a mouse click produces.
+
+        TASK-1100. `RowSelected`/`CellSelected` fire on *activation* — Enter,
+        or a second click — not when a click merely moves the cursor onto a
+        row. So clicking a source did not select it: `selected_source` stayed
+        `None`, `Preview` and `Check now` stayed disabled, and pressing
+        `Check now` returned silently because `handle_check_now_requested`
+        early-returns on `entity is None`.
+
+        That is why "Check now" appeared to do nothing at all in the
+        2026-07-28 live UAT — verified against real feeds, zero runs and zero
+        items, with the scrape backend itself working perfectly when driven
+        directly.
+        """
+        event.stop()
+        if event.row_key is not None and event.row_key.value is not None:
+            self.select_source_by_id(str(event.row_key.value))
+
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        """Same, for a table whose cursor is cell-shaped rather than row-shaped."""
+        event.stop()
+        row_key = getattr(event.cell_key, "row_key", None)
+        if row_key is not None and row_key.value is not None:
+            self.select_source_by_id(str(row_key.value))
 
     def select_source_by_id(self, source_id: str) -> None:
         """Select the source with the given id and notify listeners."""

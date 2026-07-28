@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
-from textual.widgets import DataTable, Select
+from textual.widgets import DataTable, Select, Static
 
 import tldw_chatbook
 from tldw_chatbook.DB.Evals_DB import EvalsDB
@@ -38,6 +38,7 @@ from tldw_chatbook.Evals.word_bench.storage import create_run_group, save_bench,
 from tldw_chatbook.UI.Evals.results_grid import (
     FAILED_MARK,
     ResultsGrid,
+    degenerate_canary_text,
     render_probe_reading,
     render_token,
 )
@@ -264,6 +265,97 @@ def clean_run_group(evals_db: EvalsDB) -> dict:
     save_cell(evals_db, run_ids[poor_id], snippets[3], _cap(poor_pairs, k_returned=5))
 
     return {"group_id": group_id, "base_id": base_id, "poor_id": poor_id}
+
+
+# ---------------------------------------------------------------------------
+# Fixtures for TASK-1036: the run view's degenerate-canary callout.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def multi_warned_run_group(evals_db: EvalsDB) -> dict:
+    """Three targets, one clean and TWO warned -- the callout must name
+    both warned targets by name, not collapse them to "a target" (see
+    degenerate_canary_text's docstring: an unnamed warning is not
+    actionable on a bench with several targets) and must not name the
+    clean one.
+    """
+    clean_id = evals_db.create_model(name="clean-target", provider="llama_cpp", model_id="m")
+    steered_id = evals_db.create_model(name="steered", provider="llama_cpp", model_id="m")
+    distilled_id = evals_db.create_model(name="distilled", provider="llama_cpp", model_id="m")
+    dataset_id = evals_db.create_dataset(
+        name="multi-warn-set", format="custom", source_path="inline:multi-warn-set"
+    )
+    config = BenchConfig(
+        name="multi-warn bench", prompt_mode="raw", top_k=20,
+        dataset_id=dataset_id, target_ids=(clean_id, steered_id, distilled_id),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [
+        Target(id=clean_id, name="clean-target", provider="llama_cpp", model_id="m"),
+        Target(id=steered_id, name="steered", provider="llama_cpp", model_id="m"),
+        Target(id=distilled_id, name="distilled", provider="llama_cpp", model_id="m"),
+    ]
+    snippets = [Snippet(id="s1", text="The protestors were", group=None)]
+    preflight = {
+        clean_id: PreflightResult(state="ok", k_returned=20, canary="pass"),
+        steered_id: PreflightResult(state="ok", k_returned=20, canary="degenerate"),
+        distilled_id: PreflightResult(state="ok", k_returned=20, canary="degenerate"),
+    }
+    group_id, run_ids = create_run_group(
+        evals_db, task_id, config, targets, snippets, preflight=preflight
+    )
+    save_cell(evals_db, run_ids[clean_id], snippets[0], _cap([(" a", 0.9), (" the", 0.05)]))
+    save_cell(
+        evals_db, run_ids[steered_id], snippets[0],
+        _cap([(" mente", 0.49), (" the", 0.2)]),
+    )
+    save_cell(
+        evals_db, run_ids[distilled_id], snippets[0],
+        _cap([(" xyzzy", 0.4), (" the", 0.3)]),
+    )
+    return {
+        "group_id": group_id,
+        "clean_id": clean_id,
+        "steered_id": steered_id,
+        "distilled_id": distilled_id,
+    }
+
+
+@pytest.fixture
+def warned_markup_hazard_run_group(evals_db: EvalsDB) -> dict:
+    """A single warned target whose NAME itself contains Rich markup
+    syntax ("[...]") -- the same hazard ``markup_hazard_run_group`` above
+    covers for snippet text, but for the canary callout's target-name
+    interpolation specifically. The callout is a ``Static``, not a
+    ``DataTable`` cell, so the guard under test is ``markup=False``
+    (results_grid.py's ``compose()``), not ``_safe_cell``'s ``Text()``
+    wrapping.
+    """
+    steered_id = evals_db.create_model(
+        name="steered [redacted]", provider="llama_cpp", model_id="m"
+    )
+    dataset_id = evals_db.create_dataset(
+        name="hazard-canary-set", format="custom", source_path="inline:hazard-canary-set"
+    )
+    config = BenchConfig(
+        name="hazard canary bench", prompt_mode="raw", top_k=5,
+        dataset_id=dataset_id, target_ids=(steered_id,),
+    )
+    task_id = save_bench(evals_db, config)
+    targets = [
+        Target(id=steered_id, name="steered [redacted]", provider="llama_cpp", model_id="m")
+    ]
+    snippets = [Snippet(id="s1", text="The protestors were", group=None)]
+    preflight = {steered_id: PreflightResult(state="ok", k_returned=20, canary="degenerate")}
+    group_id, run_ids = create_run_group(
+        evals_db, task_id, config, targets, snippets, preflight=preflight
+    )
+    save_cell(
+        evals_db, run_ids[steered_id], snippets[0],
+        _cap([(" mente", 0.49), (" the", 0.2)]),
+    )
+    return {"group_id": group_id, "steered_id": steered_id}
 
 
 @pytest.fixture
@@ -535,6 +627,23 @@ async def test_selecting_a_run_group_mounts_the_results_grid_with_the_right_shap
 
 
 @pytest.mark.asyncio
+async def test_grid_meta_defines_its_own_jargon_via_tooltip(evals_app, mixed_run_group):
+    """TASK-1076: the meta line ("<bench> * raw * K 20 * N cells * N
+    failed") is a first-contact wall of undefined jargon for a new reader,
+    with nothing else on the screen defining "raw", "K", or "cells". A
+    tooltip keeps that definition reachable without permanently widening
+    the header for every return visit."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, mixed_run_group["group_id"])
+        meta = grid.query_one("#evals-grid-meta")
+        tooltip = str(meta.tooltip)
+        assert "raw" in tooltip
+        assert "K:" in tooltip
+        assert "cells:" in tooltip
+
+
+@pytest.mark.asyncio
 async def test_grid_and_its_selectors_are_genuinely_visible_within_the_detail_pane(
     evals_app, mixed_run_group
 ):
@@ -710,6 +819,220 @@ async def test_warned_column_header_carries_the_warning_the_clean_one_does_not(
 
         assert "warned" not in str(base_col.label).lower()
         assert "warned" in str(steered_col.label).lower()
+
+
+def _header_row_text(app: App, table: DataTable) -> str:
+    """Read the on-screen text of just ``table``'s header row.
+
+    A whole-screen blob match (join every compositor strip -- see
+    ``Tests/UI/test_lab_mode_strip.py``'s ``_rendered_text``) is too broad
+    here: this module's fixtures name a target ``"base"``, and the lens/
+    baseline ``Select`` controls above the grid render their own options
+    as e.g. ``f"Column · {target['name']}"`` (``results_grid.py``), so
+    ``"base"`` sits in the screen blob whether or not the table's header
+    row exists at all -- confirmed by reverting the CSS fix this helper
+    guards and observing the assertion still pass. Restricting the read
+    to the table's own header LINE, not the screen, is what makes the
+    check fail when the header is actually missing.
+
+    ``table.region`` is stable across both the broken and fixed render
+    paths (confirmed: same ``Region`` in each), so ``table.region.y`` is a
+    safe, focus-state-independent way to find the header row -- a
+    ``DataTable``'s first rendered row is always its column header, and
+    that stays the top row of the table's own box whether it currently
+    shows a border, an outline, or neither (the sole difference this bug
+    produces). ``table.region.x``/``width`` then crop the strip to the
+    table's own columns, excluding anything a sibling widget draws on the
+    same screen row -- including the run view's degenerate-canary callout
+    (task-1036), which can otherwise land on the same line as the grid.
+
+    Args:
+        app: The running Textual app whose screen was just rendered; its
+            compositor holds the actual painted strips.
+        table: The ``DataTable`` whose header row should be read.
+
+    Returns:
+        The header row's on-screen text, cropped to ``table``'s own
+        region -- empty if ``table``'s top row is off-screen.
+    """
+    strips = app.screen._compositor.render_strips()
+    header_y = table.region.y
+    if not (0 <= header_y < len(strips)):
+        return ""
+    line = "".join(segment.text for segment in strips[header_y])
+    x_start, x_end = table.region.x, table.region.x + table.region.width
+    return line[x_start:x_end]
+
+
+@pytest.mark.asyncio
+async def test_focused_results_grid_keeps_its_header_and_the_warned_marker(
+    evals_app, mixed_run_group
+):
+    """TASK-1034: a focused results grid used to lose its column header --
+    and the "[warned]" canary marker riding inside it -- entirely.
+
+    Root cause: the global fallback ``*:focus { outline: solid
+    $ds-focus-accent; }`` (``core/_reset.tcss``) draws its outline INSIDE
+    a widget's own box, painting over the widget's own first and last
+    rendered rows rather than sitting outside them like ``border`` does. A
+    ``DataTable``'s first rendered row is its column header, so as soon as
+    the grid's ``DataTable`` took keyboard focus -- which ``ResultsGrid.
+    on_mount`` (results_grid.py) does immediately on every fresh mount, so
+    this is not a rare interaction but the DEFAULT state right after
+    selecting a run group -- the outline's box-drawing top edge replaced
+    the header outright.
+
+    The tests above this one (``test_warned_column_header_carries_the_
+    warning_the_clean_one_does_not`` and
+    ``test_grid_content_survives_datatable_rendering_without_bracket_
+    corruption``) all read ``table.columns[...].label`` -- the DataTable's
+    stored data model, not what the compositor actually painted -- so none
+    of them could have caught this: the column label was always correct
+    in the data model, only its on-screen rendering vanished. This test
+    reads the real compositor output instead (``_header_row_text``, built
+    on the same ``screen._compositor.render_strips()`` primitive
+    ``test_lab_mode_strip.py`` uses, but cropped to the table's own header
+    LINE rather than joined across the whole screen -- an earlier version
+    of this test used the whole-screen join and its "base" and
+    "[warned]" assertions both still passed with the header completely
+    absent, because unrelated widgets echo those same substrings
+    elsewhere on screen; see the helper's own docstring) specifically
+    WHILE the table holds focus, which ``_select_run_group`` already
+    leaves it in via ``on_mount``'s auto-focus -- no extra ``table.
+    focus()`` call needed, and none is made here, so this test fails
+    exactly the way live UAT did: on the DEFAULT, no-extra-interaction
+    path.
+
+    Args:
+        evals_app: The ``EvalsHarness`` app fixture (unstarted); pushes a
+            real ``EvalsScreen`` on mount.
+        mixed_run_group: Fixture run group with a clean ``"base"`` target
+            and a ``"steered"`` target carrying the ``[warned]`` canary.
+    """
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, mixed_run_group["group_id"])
+        table = grid.query_one("#evals-grid-table", DataTable)
+
+        assert table.has_focus, (
+            "expected on_mount's auto-focus to have already put the grid "
+            "in the exact state that dropped its header during UAT"
+        )
+
+        header_text = _header_row_text(pilot.app, table)
+        assert "Snippet" in header_text, (
+            f"column header missing from the focused grid's header row:\n"
+            f"{header_text!r}"
+        )
+        assert "base" in header_text, (
+            f"target column header missing from the focused grid's header "
+            f"row:\n{header_text!r}"
+        )
+        assert "[warned]" in header_text, (
+            f"the warned-target canary marker is missing from the focused "
+            f"grid's header row:\n{header_text!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TASK-1036: the degenerate-canary callout on the run view itself -- the
+# grid's ONLY signal used to be the nine-character "[warned]" column
+# suffix above, which TASK-1034 shows can vanish entirely along with the
+# rest of the header in one of the grid's two render paths.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_degenerate_canary_callout_names_the_target_and_states_the_consequence(
+    evals_app, mixed_run_group
+):
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, mixed_run_group["group_id"])
+
+        callout = grid.query_one("#evals-grid-canary-callout", Static)
+        assert "ds-recovery-callout" in callout.classes
+        # `.visual.plain`, not `.renderable`/`.content`: this codebase's own
+        # Textual compatibility shim (tldw_chatbook/__init__.py) defines
+        # `Static.renderable` as an alias for `.content` -- the RAW,
+        # unparsed constructor argument -- so it reads back correctly
+        # regardless of whether `markup=` actually got applied. `.visual`
+        # is the actual `visualize(..., markup=self._render_markup)`
+        # result Static.render() draws from (confirmed against this
+        # module's own compatibility shim and Static.visual's source);
+        # only that path can catch a lost `markup=False`. Mirrors
+        # `Tests/UI/test_library_ingest_canvas.py::
+        # test_error_and_warning_markup_is_escaped`'s identical pattern.
+        text = callout.visual.plain
+
+        # Named: the warned target ("steered"), not the clean one ("base").
+        assert "steered" in text
+        assert "base" not in text
+
+        # Consequence, not just the bare state -- matching the bench
+        # view's own wording (degenerate_canary_text is shared, see
+        # inspector.py's _recovery_callout_text).
+        assert "canary" in text.lower()
+        assert "large divergence" in text
+        assert "may reflect that, not the prompt" in text
+        assert callout.region.width > 0
+        assert callout.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_degenerate_canary_callout_absent_when_nothing_is_warned(
+    evals_app, clean_run_group
+):
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, clean_run_group["group_id"])
+
+        # No callout, no reserved blank row, no empty container.
+        assert not grid.query("#evals-grid-canary-callout")
+        assert not grid.query(".ds-recovery-callout")
+
+
+@pytest.mark.asyncio
+async def test_degenerate_canary_callout_names_every_warned_target_when_several(
+    evals_app, multi_warned_run_group
+):
+    """A bench can have several warned targets; the callout must name ALL
+    of them, not settle for "a target was degenerate"."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, multi_warned_run_group["group_id"])
+
+        callout = grid.query_one("#evals-grid-canary-callout", Static)
+        text = callout.visual.plain  # see the .visual.plain rationale above
+
+        assert "steered" in text
+        assert "distilled" in text
+        assert "clean-target" not in text
+        # Plural grammar -- not two names glued onto a singular sentence.
+        assert "These targets are still runnable" in text
+        assert degenerate_canary_text(["steered", "distilled"]) == text
+
+
+@pytest.mark.asyncio
+async def test_degenerate_canary_callout_survives_a_target_name_containing_markup(
+    evals_app, warned_markup_hazard_run_group
+):
+    """Regression, one widget over from test_grid_content_survives_
+    DataTable_rendering_without_bracket_corruption: the callout's target
+    name comes from the same free-text ``target["name"]`` a DataTable
+    column label uses, which Rich's markup parser silently mangles (or
+    raises on) when handed a plain ``str``. This pins that the callout's
+    own guard (``markup=False`` on its ``Static``) is actually applied.
+    """
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(
+            pilot, warned_markup_hazard_run_group["group_id"]
+        )
+
+        callout = grid.query_one("#evals-grid-canary-callout", Static)
+        text = callout.visual.plain  # see the .visual.plain rationale above
+        assert "steered [redacted]" in text
 
 
 @pytest.mark.asyncio

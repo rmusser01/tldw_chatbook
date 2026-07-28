@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import total_ordering
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Protocol
 
 from .models import DEFAULT_WORKSPACE_ID
 
@@ -253,6 +253,15 @@ class ConsoleConversationBrowserGroup:
     #: renders this on the group HEADER when `collapsed` is True; an
     #: expanded group already shows every row's own marker.
     run_marker: str = ""
+    #: TASK-912 AC#2: the single most-urgent `run_marker` glyph among the
+    #: rows beyond `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT` (i.e. the
+    #: rows a non-collapsed group's cap still hides). An expanded group with
+    #: more rows than the cap shows no header marker today, so a marked row
+    #: pushed past the cap was invisible -- unlike `run_marker` above (the
+    #: full-group aggregate borrowed onto a COLLAPSED header), this is
+    #: scoped to only the hidden overflow: a visible marked row already
+    #: shows its own glyph and must not also echo on the header.
+    capped_run_marker: str = ""
 
 
 @dataclass(frozen=True)
@@ -268,6 +277,25 @@ class ConsoleConversationBrowserSection:
         count: Total row count represented by the section.
         hidden_count: Rows hidden by collapse or row capping.
         empty_copy: Empty-state copy for the section.
+        run_marker: Most-urgent `run_marker` glyph among ALL of this
+            section's contents (its own rows plus every workspace group's
+            full pre-cap rows), regardless of collapse state. Same
+            "computed unconditionally, rendered only when collapsed" split
+            as `ConsoleConversationBrowserGroup.run_marker` (TASK-912 AC#1):
+            collapsing a whole section hides every marker beneath it, so
+            the header borrows the single most-urgent one.
+        capped_run_marker: Most-urgent `run_marker` glyph among only this
+            section's OWN rows beyond the row cap (empty for the
+            `"workspaces"` section, whose rows live in `groups` instead --
+            each group already carries its own `capped_run_marker`).
+            TASK-912 review fix round 1: the identical cap bug the group
+            fix addressed also applies to flat row-based sections (Starred/
+            Chats) -- `_build_row_section` caps `rows` with the same
+            `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT`, so an expanded
+            Chats section (the common case once it has rows) could push a
+            marked row past the cap with no marker surfaced anywhere. Same
+            "rendered only when expanded and non-empty" split as
+            `ConsoleConversationBrowserGroup.capped_run_marker`.
     """
 
     section_id: str
@@ -278,6 +306,8 @@ class ConsoleConversationBrowserSection:
     count: int = 0
     hidden_count: int = 0
     empty_copy: str = ""
+    run_marker: str = ""
+    capped_run_marker: str = ""
 
 
 @dataclass(frozen=True)
@@ -420,6 +450,11 @@ def build_console_conversation_browser_state(
             else sum(group.hidden_count for group in workspace_groups)
         ),
         empty_copy="No workspace conversations.",
+        # TASK-912 AC#1: `_most_urgent_run_marker` duck-types on `.run_marker`,
+        # so passing the groups themselves (each already the most-urgent glyph
+        # among ITS full pre-cap rows) yields the most-urgent glyph across the
+        # whole section without re-walking every row.
+        run_marker=_most_urgent_run_marker(workspace_groups),
     )
     chat_input_rows = _sort_normal_rows(_dedupe_rows(chat_rows))
     chat_preference_collapsed = _resolve_collapsed(
@@ -542,6 +577,13 @@ def _build_row_section(
         count=len(rows),
         hidden_count=hidden_count,
         empty_copy=empty_copy,
+        # TASK-912 AC#1: computed from `rows` -- the full pre-cap set --
+        # so a marker on a row hidden by collapse or capping is never lost.
+        run_marker=_most_urgent_run_marker(rows),
+        # TASK-912 review fix round 1: mirrors the group fix exactly -- same
+        # helper, same `rows[group_row_limit:]` slice source `_visible_rows`
+        # uses, computed unconditionally regardless of collapse state.
+        capped_run_marker=_capped_run_marker(rows, group_row_limit),
     )
 
 
@@ -555,22 +597,58 @@ def _build_row_section(
 _RUN_MARKER_URGENCY = {"◆": 0, "●": 1, "✗": 2, "✓": 3}
 
 
-def _most_urgent_run_marker(
-    rows: Iterable[ConsoleConversationBrowserInputRow],
-) -> str:
+class RunMarkerBearer(Protocol):
+    """Structural type for anything exposing a resolved ``run_marker`` glyph.
+
+    TASK-912 review fix round 1 (MINOR): `_most_urgent_run_marker` is called
+    both over input/browser rows AND over `ConsoleConversationBrowserGroup`
+    (the section-level aggregate borrows each group's already-computed
+    `run_marker` instead of re-walking every row) -- a `rows: Iterable[
+    ConsoleConversationBrowserInputRow]` hint stopped matching the second
+    call site. This Protocol names the actual constraint (a plain
+    `.run_marker: str` attribute) instead of an artificial union of the
+    two-or-more concrete types that happen to satisfy it today.
+
+    Rider (Qodo finding 1, TASK-1050): renamed from ``_RunMarkerBearer`` --
+    a leading underscore on a class name is not PascalCase.
+    """
+
+    run_marker: str
+
+
+def _most_urgent_run_marker(rows: Iterable[RunMarkerBearer]) -> str:
     """Return the single most-urgent non-empty ``run_marker`` glyph among ``rows``.
 
     Urgency (most to least): NEEDS_APPROVAL ("◆") > RUNNING ("●") >
     FINISHED_FAILED ("✗") > FINISHED_OK ("✓") -- a human decision blocked on
     approval outranks "still working", which outranks a finished outcome,
-    and a failure outranks a plain success. Returns ``""`` when no row in
-    ``rows`` carries a marker.
+    and a failure outranks a plain success. Returns ``""`` when nothing in
+    ``rows`` carries a marker. ``rows`` may be input rows, browser rows, or
+    `ConsoleConversationBrowserGroup`s -- anything with a `.run_marker: str`.
     """
     markers = {str(row.run_marker or "").strip() for row in rows}
     markers.discard("")
     if not markers:
         return ""
     return min(markers, key=lambda glyph: _RUN_MARKER_URGENCY.get(glyph, 99))
+
+
+def _capped_run_marker(
+    rows: tuple[ConsoleConversationBrowserInputRow, ...], group_row_limit: int
+) -> str:
+    """Return the most-urgent ``run_marker`` among rows beyond the row cap.
+
+    TASK-912 AC#2: unlike `_most_urgent_run_marker` applied to a full row
+    set (the aggregate an already-collapsed header borrows), this looks only
+    at the rows an EXPANDED group/section's cap still hides -- a visible
+    marked row already shows its own glyph and must not also echo on the
+    header. ``rows[group_row_limit:]`` is the same slice source
+    `_visible_rows` uses to decide what is hidden, so the two can never
+    disagree about which rows are "capped out". Same urgency table via the
+    shared `_most_urgent_run_marker`, so ordering can never disagree
+    between the two call sites either.
+    """
+    return _most_urgent_run_marker(rows[group_row_limit:])
 
 
 def _build_workspace_groups(
@@ -623,6 +701,12 @@ def _build_workspace_groups(
                 # collapsed group -- so a marker on a hidden row is never
                 # lost.
                 run_marker=_most_urgent_run_marker(group_rows),
+                # TASK-912 AC#2: computed from the same FULL `group_rows`
+                # regardless of collapse state -- cheap, and it is the
+                # rendering layer's job to pick which of `run_marker` /
+                # `capped_run_marker` applies (collapsed vs expanded-and-
+                # capped), same split as `run_marker` itself.
+                capped_run_marker=_capped_run_marker(group_rows, group_row_limit),
             )
         )
     return tuple(browser_groups)

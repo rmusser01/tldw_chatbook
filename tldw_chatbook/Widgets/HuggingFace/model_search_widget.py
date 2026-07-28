@@ -140,9 +140,25 @@ class ModelSearchWidget(Container):
         # Results list directly without container wrapper
         yield ListView(id="results-list", classes="results-list")
 
-    def on_mount(self) -> None:
-        """Initialize with popular models on mount."""
-        # Defer initial browse to allow Select to fully initialize
+    # No `on_mount` here on purpose. It used to
+    # `call_after_refresh(self._initial_browse)`, which reaches
+    # huggingface.co. This widget lives inside `llm-view-download-models`,
+    # which `LLMManagementWindow.compose()` builds eagerly, so every visit
+    # to the Models screen fired an unrequested live request -- including
+    # for users who never open Download Models -- and it fed that screen's
+    # 488-787ms mount cost. The browse waits for `ensure_initial_browse`,
+    # called from `LLMManagementWindow.watch_active_view`.
+
+    def ensure_initial_browse(self) -> None:
+        """Run the first browse, once, when the view is actually shown.
+
+        Idempotent: activating the view repeatedly must not re-fetch, and a
+        user who has already searched must not have their results replaced
+        by the popular list.
+        """
+        if self._initial_browse_done:
+            return
+        self._initial_browse_done = True
         self.call_after_refresh(self._initial_browse)
 
     def _initial_browse(self) -> None:
@@ -320,6 +336,10 @@ class ModelSearchWidget(Container):
         """Initialize the search widget."""
         super().__init__(**kwargs)
         self.browsing_mode = False
+        #: Guards `ensure_initial_browse` so activating the download-models
+        #: view repeatedly does not re-fetch, and a user who has already
+        #: searched does not get their results replaced by the popular list.
+        self._initial_browse_done = False
 
     async def _update_results_list(self, results: List[Dict[str, Any]]) -> None:
         """Update the ListView with search results."""
@@ -337,8 +357,19 @@ class ModelSearchWidget(Container):
         await results_list.clear()
 
         if not results and not self.is_loading:
+            # "No models found" is only true once something has been looked
+            # for. Before the first browse the list is empty because nothing
+            # has been fetched, and saying "none found" there reads as "none
+            # exist". Deciding it here rather than writing a placeholder at
+            # mount is what makes it stick: `watch_results` fires on the
+            # initial empty `results` and would overwrite any earlier copy.
+            message = (
+                "No models found"
+                if self._initial_browse_done
+                else "Open this view to browse popular models."
+            )
             await results_list.append(
-                ListItem(Static("No models found", classes="loading-message"))
+                ListItem(Static(message, classes="loading-message"))
             )
             return
 

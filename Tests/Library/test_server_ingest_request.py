@@ -122,7 +122,9 @@ class TestBuildServerIngestKwargs:
         """Chunking is declared once, in the capability schema, for both backends."""
         kwargs = build_server_ingest_kwargs(
             "/tmp/notes.txt",
-            options={"generic": {"chunk": True, "chunk_size": 1200, "chunk_overlap": 150}},
+            options={
+                "generic": {"chunk": True, "chunk_size": 1200, "chunk_overlap": 150}
+            },
         )
 
         assert kwargs["perform_chunking"] is True

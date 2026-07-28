@@ -147,11 +147,13 @@ def test_get_capabilities_audio_video() -> None:
         "diarization",
     )
 
-    provider_field = next(
-        f for f in caps.fields if f.name == "transcription_provider"
+    provider_field = next(f for f in caps.fields if f.name == "transcription_provider")
+    assert provider_field.options == (
+        "default",
+        "parakeet-onnx",
+        "faster-whisper",
     )
-    assert provider_field.options == ("parakeet-onnx", "faster-whisper")
-    assert provider_field.default == "parakeet-onnx"
+    assert provider_field.default == "default"
 
     model_dir_field = next(
         f for f in caps.fields if f.name == "transcription_model_dir"

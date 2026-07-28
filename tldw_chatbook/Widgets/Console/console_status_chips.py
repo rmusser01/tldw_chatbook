@@ -330,12 +330,10 @@ class ConsoleStatusChips(Horizontal):
             card.scroll_visible(animate=False)
         except Exception:
             pass
+        # `set_batch` (the card's sole production entry point, task-914) is
+        # the only body it ever renders, so a displayed card's action is
+        # always its "Submit" button.
         try:
-            batch_visible = card.query_one("#approval-batch-body").display
-        except NoMatches:
-            batch_visible = False
-        target_id = "#approval-submit" if batch_visible else "#approval-allow-once"
-        try:
-            card.query_one(target_id, Button).focus()
+            card.query_one("#approval-submit", Button).focus()
         except NoMatches:
             pass

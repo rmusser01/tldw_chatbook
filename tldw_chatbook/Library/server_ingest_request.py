@@ -51,11 +51,11 @@ SERVER_ACCEPTED_MEDIA_TYPES: frozenset[str] = frozenset(
 #: one of :data:`SERVER_ACCEPTED_MEDIA_TYPES`.
 #:
 #: An earlier version of this table sent ``plaintext`` and ``xml``, inferred
-#: from the legacy ingest window's own form dispatch (``tldw_api_events.py``,
-#: deleted with that window in task-684.4). That dispatch described *that
-#: window's* form, not this endpoint's contract, and the server rejects both --
-#: so every plain-text server ingest would have failed validation. The server
-#: has no text/markup type at all: its document extractor takes them.
+#: from the retired standalone ingest window's own form dispatch. That
+#: dispatch described *that window's* form, not this endpoint's contract, and
+#: the server rejects both -- so every plain-text server ingest would have
+#: failed validation. The server has no text/markup type at all: its document
+#: extractor takes them.
 SERVER_MEDIA_TYPE_BY_LOCAL_TYPE: dict[str, str] = {
     "pdf": "pdf",
     "document": "document",
@@ -173,7 +173,9 @@ def build_server_ingest_kwargs(
         "media_type": media_type,
         "perform_chunking": chunk_enabled,
         "chunk_size": _coerce_int(
-            generic.get("chunk_size", _generic_default("chunk_size", DEFAULT_CHUNK_SIZE)),
+            generic.get(
+                "chunk_size", _generic_default("chunk_size", DEFAULT_CHUNK_SIZE)
+            ),
             DEFAULT_CHUNK_SIZE,
         ),
         "chunk_overlap": _coerce_int(

@@ -121,6 +121,54 @@ class EvalsViewModel:
             group["run_count"] += 1
         return [groups[group_id] for group_id in order]
 
+    def library_is_empty(self) -> bool:
+        """Whether the whole workbench library -- benches, classic tasks,
+        datasets, and run groups -- is genuinely empty.
+
+        TASK-1076 review (Qodo): ``EvalsScreen._empty_detail_text()`` used
+        to answer this by calling ``benches()`` and ``classic_tasks()``
+        back to back -- each independently re-running
+        ``EvalsDB.list_tasks(limit=500)`` via its own ``_all_tasks()``
+        call -- plus a further ``datasets()`` and ``run_groups()`` read on
+        top, all from a compose path that reruns on every selection change
+        (``EvalsScreen.select()`` -> ``refresh(recompose=True)``). This
+        method reads tasks ONCE and derives both bench and classic-task
+        emptiness from that single read: either kind existing on its own
+        is enough to make the library non-empty, so no bench/classic split
+        is actually needed to answer this yes/no question, only a single
+        pass over the one page of rows.
+
+        Datasets use a ``limit=1`` existence check instead of a full page:
+        exactly equivalent to ``bool(datasets())`` here, since
+        ``list_datasets`` applies no row-shaping beyond the same
+        ``deleted_at`` filter -- a matching row at position 1 proves the
+        collection is non-empty just as well as a full 500-row page would.
+
+        Run groups still go through ``run_groups()`` rather than a raw
+        ``list_runs(limit=1)``: unlike datasets, that would NOT be
+        equivalent -- ``run_groups()`` deliberately excludes runs with no
+        ``run_group_id`` (see its own docstring), which ``list_runs``
+        alone does not filter. Trading correctness for a cheaper query the
+        DB API doesn't actually support for this shape is exactly the kind
+        of behaviour change this fix must not make.
+
+        Returns:
+            ``True`` iff no benches, no classic tasks, no datasets, and no
+            run groups exist (or ``db`` is unavailable).
+        """
+        if self._db is None:
+            return True
+        tasks = self._all_tasks()
+        if any(self._is_word_bench(task) for task in tasks):
+            return False
+        if any(not self._is_word_bench(task) for task in tasks):
+            return False
+        if self._db.list_datasets(limit=1):
+            return False
+        if self.run_groups():
+            return False
+        return True
+
     def bench_by_id(self, bench_id: str) -> Optional[dict[str, Any]]:
         for bench in self.benches():
             if bench.get("id") == bench_id:

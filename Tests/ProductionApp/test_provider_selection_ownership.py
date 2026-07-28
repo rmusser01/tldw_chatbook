@@ -1,44 +1,28 @@
-# ruff: noqa: E402
-
 from __future__ import annotations
 
 from dataclasses import replace
 import logging
-import sys
 
 import pytest
 from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Input, OptionList, Select
 
-# Exercise the full production app in its supported "optional transcription
-# backend absent" configuration. The installed parakeet-mlx wheel aborts the
-# interpreter while importing MLX in this test runner, before Textual can mount.
-_MISSING_MODULE = object()
-_previous_parakeet_mlx = sys.modules.get("parakeet_mlx", _MISSING_MODULE)
-sys.modules["parakeet_mlx"] = None
-
-try:
-    import tldw_chatbook.app as app_module
-    from tldw_chatbook.app import LLMProviderProvider, TldwCli
-    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-    from tldw_chatbook.config import load_settings
-    from tldw_chatbook.Constants import TAB_CHAT
-    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
-        ConsoleProviderIntent,
-        HandoffChannel,
-    )
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-    from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
-finally:
-    if _previous_parakeet_mlx is _MISSING_MODULE:
-        sys.modules.pop("parakeet_mlx", None)
-    else:
-        sys.modules["parakeet_mlx"] = _previous_parakeet_mlx
+import tldw_chatbook.app as app_module
+from tldw_chatbook.app import LLMProviderProvider, TldwCli
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.config import load_settings
+from tldw_chatbook.Constants import TAB_CHAT
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    ConsoleProviderIntent,
+    HandoffChannel,
+)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 
 
 PROVIDERS_MODELS = {

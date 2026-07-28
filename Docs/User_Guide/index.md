@@ -65,6 +65,29 @@ Everything else (Enter/Ctrl+K/Ctrl+T in Console, and the single-letter
 mnemonics like `s`/`r`/`t` on Settings) is screen-specific — see that
 screen's own page for its "Keyboard & commands" table.
 
+## Console agent runs are screen-scoped
+
+Background agent runs and parallel sessions you start in Console — and any
+approval/confirmation they're waiting on — live only as long as the Console
+screen itself stays mounted. Leaving Console for another screen (e.g.
+Settings, Ctrl+1…Ctrl+0, or the command palette) cancels every in-flight
+run and denies every pending or parked approval for that visit; coming
+back always starts a fresh Console with no memory of what was running
+before. Two guards make this visible instead of silent:
+
+- **Before you leave:** if any run is still in flight or waiting on an
+  approval, a confirmation dialog asks "N agent runs will be cancelled if
+  you leave Console. Leave anyway?" — **Leave** proceeds and cancels them,
+  **Stay** keeps Console (and the fleet) exactly as it was. An idle
+  Console never shows this prompt.
+- **After you return:** if you left anyway (or navigated away some other
+  way while runs were active), the next time Console mounts you get a
+  one-time toast — "N agent runs were cancelled when you left Console." —
+  so a lost run is never silently unexplained.
+
+Nothing is ever auto-approved: an approval that gets caught by this
+teardown is always denied, never resolved on your behalf.
+
 ## Where did … go? (legacy names)
 
 | Old name | Now lives in |

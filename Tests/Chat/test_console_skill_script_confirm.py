@@ -5,10 +5,13 @@ Covers two halves of the trust-gated skill-script-execution flow (see
 
 1. The controller-side worker-thread <-> UI-thread bridge
    (``ConsoleChatController.request_skill_script_confirm`` /
-   ``resolve_pending_skill_script`` / ``_deny_pending_skill_script_on_
-   context_change``) -- mirrors ``request_skill_install_confirm`` (see
-   ``Tests/UI/test_console_skill_install_confirm.py``) but carries a
-   two-part ``{"allow", "remember"}`` decision instead of a plain bool.
+   ``resolve_pending_skill_script``) -- mirrors ``request_skill_install_
+   confirm`` (see ``Tests/UI/test_console_skill_install_confirm.py``) but
+   carries a two-part ``{"allow", "remember"}`` decision instead of a plain
+   bool. TASK-910: a plain context change (switch away) no longer denies
+   either bridge's pending confirm -- it parks like an MCP approval round
+   instead; only the owning session's own stop/cancel or real process
+   teardown (`_shutdown_requested`) still does.
 2. The ``run_skill_script`` closure ``console_agent_bridge.run_reply``
    builds and hands to ``AgentService`` -- exercised through the REAL
    closure (captured off a real ``run_reply`` call by intercepting the
@@ -433,8 +436,12 @@ def test_always_allow_round_trip(make_controller):
     assert result["decision"] == {"allow": True, "remember": True}
 
 
-def test_context_change_denies_a_pending_confirm(make_controller):
+def test_shutdown_denies_a_pending_confirm(make_controller):
+    """TASK-910: a plain context change (switch) no longer denies (AC#2) --
+    only real process teardown (`_shutdown_requested`, mirroring
+    `request_mcp_approvals`' identical fallback) still does (AC#4)."""
     controller = make_controller()
+    controller.skill_script_confirm_timeout_seconds = lambda: 30.0
     result = {}
 
     def worker():
@@ -443,28 +450,141 @@ def test_context_change_denies_a_pending_confirm(make_controller):
     thread = threading.Thread(target=worker)
     thread.start()
     _wait_until(lambda: bool(controller.pending_skill_script_ids()))
-    controller._deny_pending_skill_script_on_context_change()
+    controller._shutdown_requested.set()
     thread.join(timeout=5)
     assert result["decision"]["allow"] is False
 
 
-def test_switch_session_denies_a_pending_skill_script_confirm(make_controller):
-    """`switch_session` must deny any pending script confirm, mirroring the
-    identical wiring for `_deny_pending_skill_install_on_context_change`."""
+def test_switch_session_no_longer_denies_a_pending_skill_script_confirm(make_controller):
+    """TASK-910 (AC#1/#2): `switch_session` no longer force-denies a pending
+    script confirm -- it parks (a background session) or simply re-derives
+    the mounted card (the owning session, switched away from and back),
+    exactly mirroring `request_mcp_approvals`' park contract. Supersedes
+    the pre-TASK-910 `test_switch_session_denies_a_pending_skill_script_
+    confirm`, which asserted the old deny-on-any-switch behavior."""
     controller = make_controller()
-    controller.store.ensure_session()
-    other = controller.store.ensure_session()
+    controller.skill_script_confirm_timeout_seconds = lambda: 30.0
+    owning = controller.store.ensure_session().id
+    other = controller.store.create_session().id
+    controller.store.switch_session(owning)  # keep viewing `owning`
     result = {}
 
     def worker():
-        result["decision"] = controller.request_skill_script_confirm({"skill_name": "demo"})
+        result["decision"] = controller.request_skill_script_confirm(
+            {"skill_name": "demo"}, session_id=owning
+        )
 
     thread = threading.Thread(target=worker)
     thread.start()
     _wait_until(lambda: bool(controller.pending_skill_script_ids()))
-    controller.switch_session(other.id)
+    # `owning` WAS the active session at round-start, so it mounted
+    # immediately (no parking) -- same as every legacy call site.
+    assert controller.pending_skill_script_payloads
+    assert controller.pending_skill_script_payloads[-1] is not None
+
+    controller.switch_session(other)
+    time.sleep(0.05)
+    assert "decision" not in result  # not denied by the switch
+    assert controller.pending_skill_script_payloads[-1] is None  # departing card cleared
+
+    controller.switch_session(owning)
+    # The SAME round's card re-mounts on revisit.
+    assert controller.pending_skill_script_payloads[-1] is not None
+    request_id = controller.pending_skill_script_payloads[-1]["request_id"]
+    controller.resolve_pending_skill_script(True, False, request_id=request_id)
     thread.join(timeout=5)
-    assert result["decision"]["allow"] is False
+
+    assert result["decision"] == {"allow": True, "remember": False}
+
+
+def test_request_skill_script_confirm_parks_for_a_non_active_session(make_controller):
+    """TASK-910 (AC#1): a round whose `session_id` differs from the store's
+    ACTIVE session parks -- no card mount, the run-marker pending flag
+    flips, and `park_pending_approval` fires exactly once. Visiting the
+    owning session later mounts the SAME retained payload."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
+
+    controller = make_controller()
+    controller.skill_script_confirm_timeout_seconds = lambda: 30.0
+    viewed = controller.store.ensure_session().id
+    background = controller.store.create_session().id
+    controller.store.switch_session(viewed)  # keep viewing the first session
+    parked: list[str] = []
+    controller.park_pending_approval = parked.append
+    result = {}
+
+    def worker():
+        result["decision"] = controller.request_skill_script_confirm(
+            {"skill_name": "demo"}, session_id=background
+        )
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    _wait_until(lambda: bool(controller.pending_skill_script_ids()))
+
+    assert parked == [background]
+    # Never mounted -- the viewed session's own (empty) surface is untouched.
+    assert all(
+        payload is None for payload in controller.pending_skill_script_payloads
+    )
+    assert background in controller._pending_approvals
+    assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+
+    controller.switch_session(background)
+    assert controller.pending_skill_script_payloads[-1] is not None
+    request_id = controller.pending_skill_script_payloads[-1]["request_id"]
+    controller.resolve_pending_skill_script(True, True, request_id=request_id)
+    thread.join(timeout=5)
+
+    assert result["decision"] == {"allow": True, "remember": True}
+    assert background not in controller._pending_approvals
+    assert controller.pending_skill_script_payloads[-1] is None
+
+
+def test_unrelated_session_stop_does_not_deny_skill_script_confirm(make_controller):
+    """TASK-910: stopping a DIFFERENT session must not deny THIS session's
+    in-flight script confirm."""
+    controller = make_controller()
+    controller.skill_script_confirm_timeout_seconds = lambda: 30.0
+    owning = controller.store.ensure_session().id
+
+    def _stop_unrelated_soon() -> None:
+        time.sleep(0.05)
+        controller._signal_stop(session_id="unrelated-session-id")
+
+    def _resolve_soon() -> None:
+        time.sleep(0.2)
+        request_id = controller.pending_skill_script_ids()[0]
+        controller.resolve_pending_skill_script(True, False, request_id=request_id)
+
+    threading.Thread(target=_stop_unrelated_soon).start()
+    threading.Thread(target=_resolve_soon).start()
+    decision = controller.request_skill_script_confirm(
+        {"skill_name": "demo"}, session_id=owning
+    )
+
+    assert decision == {"allow": True, "remember": False}
+
+
+def test_own_session_cancel_event_denies_the_skill_script_round(make_controller):
+    """TASK-910: session B's own cancel event still denies B's round when
+    `session_id=B` is threaded through."""
+    controller = make_controller()
+    controller.skill_script_confirm_timeout_seconds = lambda: 30.0
+    session_b = controller.store.ensure_session().id
+    cancel_event = threading.Event()
+    controller._active_cancel_events[session_b] = cancel_event
+
+    def _cancel_soon() -> None:
+        time.sleep(0.05)
+        cancel_event.set()
+
+    threading.Thread(target=_cancel_soon).start()
+    decision = controller.request_skill_script_confirm(
+        {"skill_name": "demo"}, session_id=session_b
+    )
+
+    assert decision == {"allow": False, "remember": False}
 
 
 def test_confirm_payload_carries_timeout_and_request_id(make_controller):
@@ -504,7 +624,9 @@ def test_stale_request_id_is_dropped_then_matching_id_resolves(make_controller):
     docstring for the exact late-button-press scenario this closes."""
     controller = make_controller()
 
-    # Round 1: arm, capture its id, then deny it via context-change so it
+    # Round 1: arm, capture its id, then deny it via shutdown (TASK-910:
+    # `_deny_pending_skill_script_on_context_change` was removed -- a plain
+    # context change no longer denies; real teardown still does) so it
     # tears down (dropping its round from the registry) without ever
     # being resolved by a matching id.
     round_one_result = {}
@@ -519,7 +641,7 @@ def test_stale_request_id_is_dropped_then_matching_id_resolves(make_controller):
     _wait_until(lambda: bool(controller.pending_skill_script_ids()))
     stale_id = controller.pending_skill_script_ids()[0]
     assert stale_id
-    controller._deny_pending_skill_script_on_context_change()
+    controller._shutdown_requested.set()
     t1.join(timeout=5)
     assert round_one_result["decision"]["allow"] is False
     assert controller.pending_skill_script_ids() == []  # torn down

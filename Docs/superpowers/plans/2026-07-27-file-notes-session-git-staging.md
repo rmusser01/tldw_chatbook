@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11+, Textual 8, `asyncio.create_subprocess_exec`, Git porcelain v2/index plumbing, frozen dataclasses, SQLite boundary spies, pytest/pytest-asyncio.
 
-**Backlog:** [TASK-1023](../../../backlog/tasks/task-1023%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)
+**Backlog:** [TASK-1213](../../../backlog/tasks/task-1213%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)
 
 **Specification:** [File Notes Session Git Staging Design](../specs/2026-07-27-file-notes-session-git-staging-design.md)
 
@@ -16,9 +16,9 @@
 
 **ADR required:** yes
 
-**ADR path:** `backlog/decisions/034-file-notes-session-git-index-controls.md`
+**ADR path:** `backlog/decisions/035-file-notes-session-git-index-controls.md`
 
-**Reason:** ADR-034 already fixes the Git index, trust, lifecycle, and UX boundary; ADR-033 governs the app-session owner. No additional ADR is needed.
+**Reason:** ADR-035 already fixes the Git index, trust, lifecycle, and UX boundary; ADR-033 governs the app-session owner. No additional ADR is needed.
 
 ---
 
@@ -284,7 +284,7 @@ remain unchanged.
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Notes/file_notes_service.py tldw_chatbook/Widgets/Library/library_file_notes_workspace.py Tests/Notes/test_file_notes_session_owner.py Tests/Notes/test_file_notes_service.py Tests/UI/test_library_file_notes_workspace.py
-git commit -m "refactor(notes): retain file session changes in app owner [TASK-1023]"
+git commit -m "refactor(notes): retain file session changes in app owner [TASK-1213]"
 ```
 
 ## Task 2: Define Session Groups, Git Records, and Eligibility
@@ -418,7 +418,7 @@ Change the workspace's compact count to
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Notes/file_notes_git_service.py tldw_chatbook/Widgets/Library/library_file_notes_workspace.py Tests/Notes/test_file_notes_git_service.py
-git commit -m "feat(notes): model session Git rows and eligibility [TASK-1023]"
+git commit -m "feat(notes): model session Git rows and eligibility [TASK-1213]"
 ```
 
 ## Task 3: Add Hardened Repository Discovery and Coalesced Status
@@ -591,7 +591,7 @@ Expected: PASS.
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_service.py Tests/Notes/test_file_notes_git_integration.py
-git commit -m "feat(notes): add trusted session-path Git status [TASK-1023]"
+git commit -m "feat(notes): add trusted session-path Git status [TASK-1213]"
 ```
 
 ## Task 4: Implement Exact Stage and Stage Update Ownership
@@ -717,7 +717,7 @@ Expected: PASS.
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_service.py Tests/Notes/test_file_notes_git_integration.py
-git commit -m "feat(notes): stage exact session path groups [TASK-1023]"
+git commit -m "feat(notes): stage exact session path groups [TASK-1213]"
 ```
 
 ## Task 5: Implement Exact Saved-Baseline Unstage
@@ -808,7 +808,7 @@ Expected: PASS.
 
 ```bash
 git add tldw_chatbook/Notes/file_notes_session_owner.py tldw_chatbook/Notes/file_notes_git_service.py Tests/Notes/test_file_notes_git_service.py Tests/Notes/test_file_notes_git_integration.py
-git commit -m "feat(notes): unstage owned baselines exactly [TASK-1023]"
+git commit -m "feat(notes): unstage owned baselines exactly [TASK-1213]"
 ```
 
 ## Task 6: Build the Session Git Navigator UX
@@ -979,7 +979,7 @@ Expected: PASS.
 
 ```bash
 git add tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py tldw_chatbook/Widgets/Library/library_file_notes_workspace.py Tests/UI/test_library_file_notes_git.py Tests/UI/test_library_file_notes_workspace.py
-git commit -m "feat(library): add session Git navigator actions [TASK-1023]"
+git commit -m "feat(library): add session Git navigator actions [TASK-1213]"
 ```
 
 ## Task 7: Wire Fresh Screens and Pre-Screen App Shutdown
@@ -1119,17 +1119,17 @@ Expected: PASS.
 
 ```bash
 git add tldw_chatbook/app.py tldw_chatbook/UI/Screens/library_screen.py Tests/UI/test_screen_navigation.py Tests/ProductionApp/test_file_notes_session_owner_lifecycle.py
-git commit -m "feat(app): own File Notes Git lifecycle across screens [TASK-1023]"
+git commit -m "feat(app): own File Notes Git lifecycle across screens [TASK-1213]"
 ```
 
-## Task 8: Close the Approved Focused Matrix and Reconcile TASK-1023
+## Task 8: Close the Approved Focused Matrix and Reconcile TASK-1213
 
 **Files:**
 
 - Modify as required within the files listed above; do not add a second acceptance layer.
 - Modify: `Tests/Notes/test_file_notes_git_integration.py`
 - Modify: `Tests/UI/test_library_file_notes_git.py`
-- Modify: `backlog/tasks/task-1023 - Add-session-scoped-Git-status-and-staging-to-File-Notes.md`
+- Modify: `backlog/tasks/task-1213 - Add-session-scoped-Git-status-and-staging-to-File-Notes.md`
 
 - [ ] **Step 1: Add the controlled configured-filter trust test**
 
@@ -1221,19 +1221,19 @@ Review the final diff for:
 
 Check all eleven acceptance criteria, add concise `## Implementation Notes`
 covering the actual files, decisions, focused test/UAT evidence, and links to
-ADR-034/ADR-033, then:
+ADR-035/ADR-033, then:
 
 ```bash
 backlog task edit 1023 -s Done
 backlog task 1023 --plain
 ```
 
-Expected: TASK-1023 is Done, all acceptance criteria are checked, the
+Expected: TASK-1213 is Done, all acceptance criteria are checked, the
 implementation plan and notes are present, and both ADR links remain.
 
 - [ ] **Step 8: Commit task reconciliation**
 
 ```bash
-git add "backlog/tasks/task-1023 - Add-session-scoped-Git-status-and-staging-to-File-Notes.md"
-git commit -m "docs(notes): complete session Git staging task [TASK-1023]"
+git add "backlog/tasks/task-1213 - Add-session-scoped-Git-status-and-staging-to-File-Notes.md"
+git commit -m "docs(notes): complete session Git staging task [TASK-1213]"
 ```

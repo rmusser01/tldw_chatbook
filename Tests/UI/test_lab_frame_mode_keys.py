@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
 
 import pytest
 from textual.widgets import Button
 
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
-from tldw_chatbook.LLM_Calls.huggingface_api import HuggingFaceAPI
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.lab_mode_strip import LAB_MODE_CHIP_IDS
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
@@ -38,7 +36,7 @@ def _deterministic_models_mount(monkeypatch):
        this does not change any other test-environment behaviour.
     2. Live network call. ``ModelSearchWidget.on_mount`` -> ``_initial_browse``
        -> ``perform_search()`` (``model_search_widget.py`` ~142-272) fires a
-       real ``HuggingFaceAPI.search_models`` HTTP request to huggingface.co
+       browse that used to fire on mount now waits for its view (task-887)
        the moment ``LLMScreen``'s body mounts -- confirmed independently:
        the search widget lives inside ``llm-view-download-models``, which
        ``LLMManagementWindow.compose()`` builds eagerly. That request's
@@ -58,7 +56,6 @@ def _deterministic_models_mount(monkeypatch):
         return _real_get_cli_setting(section, key, default)
 
     monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
-    monkeypatch.setattr(HuggingFaceAPI, "search_models", AsyncMock(return_value=[]))
 
 
 async def _models(app):

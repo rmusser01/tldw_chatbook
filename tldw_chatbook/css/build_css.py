@@ -62,12 +62,10 @@ CSS_MODULES = [
     "features/_ingest.tcss",
     # task-745: "features/_ingest_tldw_api_tabs.tcss" removed -- it styled the
     # standalone ingest window's tab strip and API form, deleted in task-684.4.
-    # Every distinctive selector (#tldw-api-tabs, #tldw-api-tabbed-window,
-    # #ingest-view-tldw-api, .ingest-form-scrollable, .ingest-status-area,
-    # .ingest-submit-button, .tldw-api-media-specific-options) has zero mount
-    # sites. Its ".hidden" rule was scoped to the dead #tldw-api-tabs, and other
-    # sheets define .hidden anyway; its unscoped ".window-title" rule was the
-    # only bundled definition and moved to components/_shared_components.tcss.
+    # Every distinctive selector in that retired sheet has zero mount sites.
+    # Its scoped ".hidden" rule had no surviving owner, and other sheets define
+    # .hidden anyway; its unscoped ".window-title" rule was the only bundled
+    # definition and moved to components/_shared_components.tcss.
     # NOTE: "features/_evaluation_v2.tcss" was removed from the tree back in
     # ac937dab ("f", Aug 2025) when the Evals dashboard was consolidated
     # into _evaluation_unified.tcss below; this manifest entry was left

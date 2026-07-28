@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
 
 import pytest
 from textual.widgets import Button, Static
 
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
-from tldw_chatbook.LLM_Calls.huggingface_api import HuggingFaceAPI
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -20,8 +18,9 @@ def _deterministic_models_mount(monkeypatch):
     press/pause sequences can hit. Same rationale as the identically named
     fixture in ``test_lab_frame_mode_keys.py``: ``SplashScreen`` starts a
     real 1.5s timer that can push a competing screen mid-test, and
-    ``ModelSearchWidget`` (mounted eagerly inside the Download Models view)
-    fires a real ``HuggingFaceAPI.search_models`` HTTP request on mount.
+    The ``HuggingFaceAPI.search_models`` stub that used to sit here is gone:
+    the browse now waits for the Download Models view to be activated
+    (task-887), so mounting Models reaches no network at all.
 
     Args:
         monkeypatch: pytest's monkeypatch fixture; reverts both patches
@@ -34,7 +33,6 @@ def _deterministic_models_mount(monkeypatch):
         return _real_get_cli_setting(section, key, default)
 
     monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
-    monkeypatch.setattr(HuggingFaceAPI, "search_models", AsyncMock(return_value=[]))
 
 
 async def _models_screen(pilot_app):
@@ -210,3 +208,47 @@ async def test_the_initial_view_is_marked_active_on_arrival_with_no_press():
         active_views = [v for v in window.query(".llm-view") if "-active" in v.classes]
         assert len(active_views) == 1, "exactly one .llm-view must carry -active"
         assert active_views[0].id == "llm-view-llama-cpp"
+
+
+@pytest.mark.asyncio
+async def test_mounting_models_reaches_no_network_until_the_view_is_opened(monkeypatch):
+    """Opening Models must not call huggingface.co (task-887).
+
+    `ModelSearchWidget` used to `call_after_refresh(self._initial_browse)`
+    from `on_mount`, and it lives inside `llm-view-download-models`, which
+    `LLMManagementWindow.compose()` builds eagerly -- so every visit to this
+    screen fired a live request for users who never open Download Models.
+
+    Counting calls is the oracle. Asserting the results list is empty would
+    pass whether the request was skipped or merely returned nothing.
+    """
+    from tldw_chatbook.LLM_Calls.huggingface_api import HuggingFaceAPI
+
+    calls: list[int] = []
+
+    async def counted(self, *args, **kwargs):
+        calls.append(1)
+        return []
+
+    monkeypatch.setattr(HuggingFaceAPI, "search_models", counted)
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        await pilot.pause()
+        await pilot.pause()
+        assert calls == [], "mounting Models reached the network"
+
+        window = screen.llm_window
+        assert window is not None
+        window.active_view = "download-models"
+        await pilot.pause()
+        await pilot.pause()
+        assert len(calls) == 1, "opening Download Models did not browse"
+
+        window.active_view = "llama-cpp"
+        await pilot.pause()
+        window.active_view = "download-models"
+        await pilot.pause()
+        await pilot.pause()
+        assert len(calls) == 1, "re-opening the view browsed again"
