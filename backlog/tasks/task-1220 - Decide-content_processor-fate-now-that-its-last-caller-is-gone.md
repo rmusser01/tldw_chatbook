@@ -1,7 +1,7 @@
 ---
 id: TASK-1220
 title: Decide content_processor's fate now that its last caller is gone
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-28 00:20'
 labels:

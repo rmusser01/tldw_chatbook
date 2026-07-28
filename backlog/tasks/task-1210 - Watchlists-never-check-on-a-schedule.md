@@ -1,7 +1,7 @@
 ---
 id: TASK-1210
 title: Watchlists never check on a schedule - promote the unified handler out of shadow mode
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-27 22:15'
 labels:

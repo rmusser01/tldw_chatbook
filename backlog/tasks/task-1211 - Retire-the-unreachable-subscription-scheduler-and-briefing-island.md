@@ -1,7 +1,7 @@
 ---
 id: TASK-1211
 title: Retire the unreachable subscription scheduler and briefing island
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-27 22:15'
 labels:

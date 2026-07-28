@@ -1,7 +1,7 @@
 ---
 id: TASK-1260
 title: Path-validation property tests fail under machine load, producing false regression signals
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-28 10:55'
 labels:
