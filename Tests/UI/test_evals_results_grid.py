@@ -804,6 +804,119 @@ async def test_warned_column_header_carries_the_warning_the_clean_one_does_not(
         assert "warned" in str(steered_col.label).lower()
 
 
+def _header_row_text(app: App, table: DataTable) -> str:
+    """Read the on-screen text of just ``table``'s header row.
+
+    A whole-screen blob match (join every compositor strip -- see
+    ``Tests/UI/test_lab_mode_strip.py``'s ``_rendered_text``) is too broad
+    here: this module's fixtures name a target ``"base"``, and the lens/
+    baseline ``Select`` controls above the grid render their own options
+    as e.g. ``f"Column · {target['name']}"`` (``results_grid.py``), so
+    ``"base"`` sits in the screen blob whether or not the table's header
+    row exists at all -- confirmed by reverting the CSS fix this helper
+    guards and observing the assertion still pass. Restricting the read
+    to the table's own header LINE, not the screen, is what makes the
+    check fail when the header is actually missing.
+
+    ``table.region`` is stable across both the broken and fixed render
+    paths (confirmed: same ``Region`` in each), so ``table.region.y`` is a
+    safe, focus-state-independent way to find the header row -- a
+    ``DataTable``'s first rendered row is always its column header, and
+    that stays the top row of the table's own box whether it currently
+    shows a border, an outline, or neither (the sole difference this bug
+    produces). ``table.region.x``/``width`` then crop the strip to the
+    table's own columns, excluding anything a sibling widget draws on the
+    same screen row -- including the run view's degenerate-canary callout
+    (task-1036), which can otherwise land on the same line as the grid.
+
+    Args:
+        app: The running Textual app whose screen was just rendered; its
+            compositor holds the actual painted strips.
+        table: The ``DataTable`` whose header row should be read.
+
+    Returns:
+        The header row's on-screen text, cropped to ``table``'s own
+        region -- empty if ``table``'s top row is off-screen.
+    """
+    strips = app.screen._compositor.render_strips()
+    header_y = table.region.y
+    if not (0 <= header_y < len(strips)):
+        return ""
+    line = "".join(segment.text for segment in strips[header_y])
+    x_start, x_end = table.region.x, table.region.x + table.region.width
+    return line[x_start:x_end]
+
+
+@pytest.mark.asyncio
+async def test_focused_results_grid_keeps_its_header_and_the_warned_marker(
+    evals_app, mixed_run_group
+):
+    """TASK-1034: a focused results grid used to lose its column header --
+    and the "[warned]" canary marker riding inside it -- entirely.
+
+    Root cause: the global fallback ``*:focus { outline: solid
+    $ds-focus-accent; }`` (``core/_reset.tcss``) draws its outline INSIDE
+    a widget's own box, painting over the widget's own first and last
+    rendered rows rather than sitting outside them like ``border`` does. A
+    ``DataTable``'s first rendered row is its column header, so as soon as
+    the grid's ``DataTable`` took keyboard focus -- which ``ResultsGrid.
+    on_mount`` (results_grid.py) does immediately on every fresh mount, so
+    this is not a rare interaction but the DEFAULT state right after
+    selecting a run group -- the outline's box-drawing top edge replaced
+    the header outright.
+
+    The tests above this one (``test_warned_column_header_carries_the_
+    warning_the_clean_one_does_not`` and
+    ``test_grid_content_survives_datatable_rendering_without_bracket_
+    corruption``) all read ``table.columns[...].label`` -- the DataTable's
+    stored data model, not what the compositor actually painted -- so none
+    of them could have caught this: the column label was always correct
+    in the data model, only its on-screen rendering vanished. This test
+    reads the real compositor output instead (``_header_row_text``, built
+    on the same ``screen._compositor.render_strips()`` primitive
+    ``test_lab_mode_strip.py`` uses, but cropped to the table's own header
+    LINE rather than joined across the whole screen -- an earlier version
+    of this test used the whole-screen join and its "base" and
+    "[warned]" assertions both still passed with the header completely
+    absent, because unrelated widgets echo those same substrings
+    elsewhere on screen; see the helper's own docstring) specifically
+    WHILE the table holds focus, which ``_select_run_group`` already
+    leaves it in via ``on_mount``'s auto-focus -- no extra ``table.
+    focus()`` call needed, and none is made here, so this test fails
+    exactly the way live UAT did: on the DEFAULT, no-extra-interaction
+    path.
+
+    Args:
+        evals_app: The ``EvalsHarness`` app fixture (unstarted); pushes a
+            real ``EvalsScreen`` on mount.
+        mixed_run_group: Fixture run group with a clean ``"base"`` target
+            and a ``"steered"`` target carrying the ``[warned]`` canary.
+    """
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, mixed_run_group["group_id"])
+        table = grid.query_one("#evals-grid-table", DataTable)
+
+        assert table.has_focus, (
+            "expected on_mount's auto-focus to have already put the grid "
+            "in the exact state that dropped its header during UAT"
+        )
+
+        header_text = _header_row_text(pilot.app, table)
+        assert "Snippet" in header_text, (
+            f"column header missing from the focused grid's header row:\n"
+            f"{header_text!r}"
+        )
+        assert "base" in header_text, (
+            f"target column header missing from the focused grid's header "
+            f"row:\n{header_text!r}"
+        )
+        assert "[warned]" in header_text, (
+            f"the warned-target canary marker is missing from the focused "
+            f"grid's header row:\n{header_text!r}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # TASK-1036: the degenerate-canary callout on the run view itself -- the
 # grid's ONLY signal used to be the nine-character "[warned]" column
