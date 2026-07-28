@@ -8,7 +8,7 @@ import pytest
 from textual.widgets import Input, TabbedContent
 
 import tldw_chatbook.app as app_module
-from Tests.test_application_state_ownership import RETIRED_TLDW_REACTIVES
+from Tests.reactive_ownership_contract import RETIRED_TLDW_REACTIVES
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_INGEST,

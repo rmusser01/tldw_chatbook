@@ -830,10 +830,10 @@ implementation evidence. TASK-906 completes slice 9 on latest `dev` commit
   input, audits every loaded package module, preserves installed hashes, and
   exercises the registered Home and Chat screens;
 - the focused ownership/production-app gate passed 57 tests with 2 warnings
-  in 277.36 seconds, the installed-distribution gate passed 6 tests in 19.12
+  in 281.97 seconds, the installed-distribution gate passed 6 tests in 21.83
   seconds, and the authorized integrated gate passed 196 tests with 5
-  warnings in 589.99 seconds;
-- compileall, scoped Ruff lint, the zero-F841 Settings baseline, the 36-file
+  warnings in 567.81 seconds;
+- compileall, scoped Ruff lint, the zero-F841 Settings baseline, the 37-file
   format gate, and `git diff --check` passed.
 
 `Tests/UI` remains intentionally excluded because its conftest imports legacy

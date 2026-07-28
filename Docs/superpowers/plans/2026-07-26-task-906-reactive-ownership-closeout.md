@@ -40,6 +40,8 @@ imports surrogate app/widget harnesses. Do not claim a raw repository-wide
 
 - Modify `tldw_chatbook/app.py`: delete the already-no-op
   `watch_current_tab()` and any final removed-name residue.
+- Create `Tests/reactive_ownership_contract.py`: one test-only retained/retired
+  inventory shared by source, production-app, and packaging sentinels.
 - Modify `Tests/test_application_state_ownership.py`: exact 61-descriptor disposition and full production-source dynamic access guard.
 - Create `Tests/ProductionApp/test_reactive_ownership_maturity.py`: full-app route and owner maturity sentinel.
 - Modify `Tests/ProductionApp/conftest.py`: only if needed to make private environment isolation complete; never add an alternate app fixture.
@@ -63,8 +65,9 @@ backlog task edit 906 --plan $'ADR required: yes\nADR path: backlog/decisions/03
 {"current_tab", "splash_screen_active"}
 ```
 
-- [x] Define `RETIRED_TLDW_REACTIVES` from the other 59 reviewed names in the
-  specification and scan every production Python file for:
+- [x] Define `RETIRED_TLDW_REACTIVES` from the other 59 reviewed names in one
+  test-only contract module shared by all three sentinels, then scan every
+  production Python file for:
   class descriptors, assignments/deletes, root `app.<name>` access, constant
   `getattr`/`setattr`/`delattr`, string-key access, and handler
   `reactive_attr` values.
@@ -141,7 +144,7 @@ Expected: PASS; record exact counts and duration.
 
 ```bash
 pytest Tests/ProductionApp/test_reactive_ownership_maturity.py Tests/test_application_state_ownership.py -q
-git add tldw_chatbook/app.py Tests/ProductionApp/test_reactive_ownership_maturity.py Tests/ProductionApp/conftest.py Tests/test_application_state_ownership.py Tests/Packaging/test_installed_distribution.py
+git add tldw_chatbook/app.py Tests/reactive_ownership_contract.py Tests/ProductionApp/test_reactive_ownership_maturity.py Tests/ProductionApp/conftest.py Tests/test_application_state_ownership.py Tests/Packaging/test_installed_distribution.py
 git commit -m "test(state): enforce installed reactive ownership (task-906)"
 ```
 
@@ -171,11 +174,11 @@ git diff --cached --exit-code -- tldw_chatbook Tests Packaging pyproject.toml MA
 - [x] Run compile and formatting/lint checks over the final changed scope:
 
 ```bash
-python -m compileall -q tldw_chatbook Tests/ProductionApp Tests/State Tests/Provider Tests/Library/test_server_ingest_request.py Tests/test_application_state_ownership.py Tests/Packaging/test_installed_distribution.py
-python -m ruff check tldw_chatbook/app.py tldw_chatbook/UI/LLM_Management_Window.py tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/provider_model_resolution.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/personas_screen.py tldw_chatbook/UI/Screens/library_screen.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/search_screen.py tldw_chatbook/UI/Screens/mcp_screen.py tldw_chatbook/UI/Screens/evals_screen.py tldw_chatbook/Utils/log_widget_manager.py tldw_chatbook/Event_Handlers Tests/ProductionApp Tests/State Tests/Provider Tests/Library/test_server_ingest_request.py Tests/test_application_state_ownership.py Tests/Packaging/test_installed_distribution.py
+python -m compileall -q tldw_chatbook Tests/ProductionApp Tests/State Tests/Provider Tests/Library/test_server_ingest_request.py Tests/reactive_ownership_contract.py Tests/test_application_state_ownership.py Tests/Packaging/test_installed_distribution.py
+python -m ruff check tldw_chatbook/app.py tldw_chatbook/UI/LLM_Management_Window.py tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/provider_model_resolution.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/personas_screen.py tldw_chatbook/UI/Screens/library_screen.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/search_screen.py tldw_chatbook/UI/Screens/mcp_screen.py tldw_chatbook/UI/Screens/evals_screen.py tldw_chatbook/Utils/log_widget_manager.py tldw_chatbook/Event_Handlers Tests/ProductionApp Tests/State Tests/Provider Tests/Library/test_server_ingest_request.py Tests/reactive_ownership_contract.py Tests/test_application_state_ownership.py Tests/Packaging/test_installed_distribution.py
 python -m ruff check --ignore F841 tldw_chatbook/UI/Screens/settings_screen.py
 python -c 'import json, subprocess, sys; p = subprocess.run([sys.executable, "-m", "ruff", "check", "--select", "F841", "--output-format", "json", "tldw_chatbook/UI/Screens/settings_screen.py"], capture_output=True, text=True); findings = json.loads(p.stdout); assert findings == [], findings'
-python -m ruff format --check tldw_chatbook/UI/LLM_Management_Window.py tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/search_screen.py tldw_chatbook/UI/Screens/mcp_screen.py tldw_chatbook/Utils/log_widget_manager.py tldw_chatbook/Event_Handlers/LLM_Management_Events tldw_chatbook/Event_Handlers/worker_events.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py Tests/ProductionApp Tests/State Tests/Provider Tests/Library/test_server_ingest_request.py Tests/test_application_state_ownership.py
+python -m ruff format --check tldw_chatbook/UI/LLM_Management_Window.py tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/search_screen.py tldw_chatbook/UI/Screens/mcp_screen.py tldw_chatbook/Utils/log_widget_manager.py tldw_chatbook/Event_Handlers/LLM_Management_Events tldw_chatbook/Event_Handlers/worker_events.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py Tests/ProductionApp Tests/State Tests/Provider Tests/Library/test_server_ingest_request.py Tests/reactive_ownership_contract.py Tests/test_application_state_ownership.py
 git diff --check
 ```
 

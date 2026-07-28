@@ -68,8 +68,10 @@ Added exact source and installed-artifact AST sentinels for the 59 retired
 names. The final review corrected two sentinel defects before closeout:
 transitive local mixins inherited by `TldwCli` are now part of the exact root
 inventory, while destination-owned `reactive_attr` values are no longer
-misclassified as root access. The source and installed lists were independently
-verified as identical 59-name contracts.
+misclassified as root access. PR review then moved the retained/retired
+inventory into one test-only contract module shared by the source,
+production-app, and packaging sentinels, eliminating same-length list drift
+without making the installed child import test code.
 
 Added a production maturity suite that uses only the normal `TldwCli` and its
 registered screens. It exercises LLM, Chat, Personas, Library, Media, Search,
@@ -87,13 +89,13 @@ installed-hash invariants remain enforced.
 
 Verification on the rebased tree:
 
-- `pytest Tests/ProductionApp/test_reactive_ownership_maturity.py Tests/test_application_state_ownership.py -q`: 57 passed, 2 warnings in 277.36s.
-- `pytest Tests/Packaging/test_installed_distribution.py -q`: 6 passed in 19.12s.
+- `pytest Tests/ProductionApp/test_reactive_ownership_maturity.py Tests/test_application_state_ownership.py -q`: 57 passed, 2 warnings in 281.97s.
+- `pytest Tests/Packaging/test_installed_distribution.py -q`: 6 passed in 21.83s.
 - Authorized integrated suite (`Tests/ProductionApp`, the approved State,
   Provider and Library direct-function tests, source ownership, and installed
-  distribution): 196 passed, 5 warnings in 589.99s.
+  distribution): 196 passed, 5 warnings in 567.81s.
 - `compileall`, scoped Ruff lint, the exact zero-F841 Settings assertion, the
-  36-file Ruff format gate, `git diff --check`, and the committed-source
+  37-file Ruff format gate, `git diff --check`, and the committed-source
   cleanliness checks passed.
 - TASK-647–652 and TASK-904–905 are Done, have no unchecked acceptance
   criteria, contain Implementation Notes, and retain their reviewed
@@ -107,6 +109,7 @@ stronger current baselines rather than restoring dead code or preserving stale
 expectations.
 
 Modified files: `tldw_chatbook/app.py`,
+`Tests/reactive_ownership_contract.py`,
 `Tests/test_application_state_ownership.py`,
 `Tests/ProductionApp/test_reactive_ownership_maturity.py`,
 `Tests/Packaging/test_installed_distribution.py`, the TASK-906 plan, this
