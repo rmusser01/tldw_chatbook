@@ -455,11 +455,21 @@ def _artifact() -> STTSGeneratedAudio:
     )
 
 
+async def _open_stts_view(
+    app: App[Any],
+    pilot: Any,
+    view: str,
+) -> None:
+    """Open an STTS body view without depending on the screen-owned Lab rail."""
+    app.query_one(STTSWindow).current_view = view
+    await pilot.pause()
+
+
 async def _select_action_profile(
     app: _ActionHost,
     pilot: Any,
 ) -> tuple[STTSProfileLibrary, LoadedTTSProfile]:
-    await pilot.click("#view-profiles-btn")
+    await _open_stts_view(app, pilot, "profiles")
     await _wait_until(
         pilot,
         lambda: app.query_one("#stts-profile-table", DataTable).row_count == 1,
@@ -488,7 +498,7 @@ async def _wait_until(
 
 
 @pytest.mark.asyncio
-async def test_voice_profiles_sidebar_mounts_focused_library_without_hiding_legacy_views(
+async def test_voice_profiles_view_mounts_focused_library_without_hiding_other_views(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _OptionalAudioBookWidget(Widget):
@@ -515,33 +525,29 @@ async def test_voice_profiles_sidebar_mounts_focused_library_without_hiding_lega
         )
         assert app.query_one("#tts-generate-btn", Button)
 
-        await pilot.click("#view-profiles-btn")
+        await _open_stts_view(app, pilot, "profiles")
         await _wait_until(pilot, lambda: bool(service.list_calls))
         assert app.query_one(STTSProfileLibrary)
 
-        await pilot.click("#view-settings-btn")
-        await pilot.pause()
+        await _open_stts_view(app, pilot, "settings")
         assert isinstance(
             app.query_one(".stts-content").children[0],
             TTSSettingsWidget,
         )
 
-        await pilot.click("#view-audiobook-btn")
-        await pilot.pause()
+        await _open_stts_view(app, pilot, "audiobook")
         assert isinstance(
             app.query_one(".stts-content").children[0],
             AudioBookGenerationWidget,
         )
 
-        await pilot.click("#view-stt-btn")
-        await pilot.pause()
+        await _open_stts_view(app, pilot, "dictation")
         assert isinstance(
             app.query_one(".stts-content").children[0],
             ImprovedDictationWindow,
         )
 
-        await pilot.click("#view-playground-btn")
-        await pilot.pause()
+        await _open_stts_view(app, pilot, "playground")
         assert isinstance(
             app.query_one(".stts-content").children[0],
             TTSPlaygroundWidget,
@@ -550,46 +556,18 @@ async def test_voice_profiles_sidebar_mounts_focused_library_without_hiding_lega
 
 
 @pytest.mark.asyncio
-async def test_enabled_legacy_sidebar_items_scroll_into_view_on_keyboard_focus_at_80x24() -> (
-    None
-):
-    app = _STTSHost(None)
-
-    async with app.run_test(size=(80, 24)) as pilot:
-        sidebar = app.query_one(".stts-sidebar")
-        app.query_one("#view-playground-btn", Button).focus()
-
-        for selector, label in (
-            ("#view-voice-cloning-btn", "Voice Cloning"),
-            ("#view-stt-btn", "Speech Recognition"),
-        ):
-            target = app.query_one(selector, Button)
-            for _ in range(12):
-                await pilot.press("tab")
-                if app.focused is target:
-                    break
-
-            assert app.focused is target
-            assert sidebar.region.contains_region(target.region)
-            assert label in "\n".join(_visible_content_rows(sidebar))
-
-        assert "Audio Effects" in "\n".join(_visible_content_rows(sidebar))
-
-
-@pytest.mark.asyncio
 async def test_profile_store_unavailable_isolated_to_stable_library_recovery() -> None:
     app = _STTSHost(None)
 
     async with app.run_test(size=(150, 55)) as pilot:
-        await pilot.click("#view-profiles-btn")
+        await _open_stts_view(app, pilot, "profiles")
         await _wait_until(pilot, lambda: app.profile_service_requests == 1)
 
         assert _status_copy(app) == PROFILE_STORE_UNAVAILABLE_COPY
         assert app.query_one("#stts-profile-table", DataTable).row_count == 0
         assert not app.query_one("#stts-profile-refresh-btn", Button).disabled
 
-        await pilot.click("#view-playground-btn")
-        await pilot.pause()
+        await _open_stts_view(app, pilot, "playground")
         assert app.query_one("#tts-generate-btn", Button)
 
 
@@ -600,7 +578,7 @@ async def test_store_unavailable_recovery_wraps_without_becoming_a_tab_stop_at_8
     app = _STTSHost(None)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.click("#view-profiles-btn")
+        await _open_stts_view(app, pilot, "profiles")
         await _wait_until(pilot, lambda: app.profile_service_requests == 1)
 
         status = app.query_one("#stts-profile-status")
@@ -614,7 +592,7 @@ async def test_empty_profile_page_offers_only_current_library_recovery() -> None
     app = _STTSHost(service)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.click("#view-profiles-btn")
+        await _open_stts_view(app, pilot, "profiles")
         await _wait_until(pilot, lambda: bool(service.availability_calls))
 
         status = _status_copy(app)
@@ -638,7 +616,7 @@ async def test_refresh_reloads_service_after_store_level_list_failure(
     app = _STTSHost(failed_service)
 
     async with app.run_test(size=(150, 55)) as pilot:
-        await pilot.click("#view-profiles-btn")
+        await _open_stts_view(app, pilot, "profiles")
         await _wait_until(pilot, lambda: len(failed_service.list_calls) == 1)
 
         await _wait_until(
@@ -683,7 +661,7 @@ async def test_repository_page_renders_before_availability_and_selection_arms_ac
     app = _STTSHost(service)
 
     async with app.run_test(size=(150, 55)) as pilot:
-        await pilot.click("#view-profiles-btn")
+        await _open_stts_view(app, pilot, "profiles")
         await _wait_until(pilot, lambda: bool(service.availability_calls))
 
         table = app.query_one("#stts-profile-table", DataTable)
@@ -886,7 +864,7 @@ async def test_search_debounces_before_one_active_and_one_latest_page_request(
     latest_page = _page(_profile(5), generation=5)
 
     async with app.run_test(size=(150, 55)) as pilot:
-        await pilot.click("#view-profiles-btn")
+        await _open_stts_view(app, pilot, "profiles")
         await _wait_until(pilot, lambda: len(service.list_futures) == 1)
         service.list_futures[0].set_result(initial_page)
         await _wait_until(pilot, lambda: len(service.availability_futures) == 1)
@@ -938,7 +916,7 @@ async def test_stale_rendered_rows_cannot_arm_actions_or_emit_preview() -> None:
     )
 
     async with app.run_test(size=(150, 55)) as pilot:
-        await pilot.click("#view-profiles-btn")
+        await _open_stts_view(app, pilot, "profiles")
         await _wait_until(pilot, lambda: len(service.list_futures) == 1)
         service.list_futures[0].set_result(initial_page)
         await _wait_until(pilot, lambda: len(service.availability_futures) == 1)
@@ -1027,7 +1005,7 @@ async def test_cancellation_resistant_availability_keeps_one_cleanup_and_drains_
 
     try:
         async with app.run_test(size=(150, 55)) as pilot:
-            await pilot.click("#view-profiles-btn")
+            await _open_stts_view(app, pilot, "profiles")
             await _wait_until(pilot, lambda: len(service.list_futures) == 1)
             service.list_futures[0].set_result(initial_page)
             await _wait_until(
@@ -1084,7 +1062,7 @@ async def test_cancellation_resistant_availability_keeps_one_cleanup_and_drains_
             assert not service.cleanup_releases[1].is_set()
             assert service.maximum_active_list_calls == 1
 
-            await pilot.click("#view-settings-btn")
+            await _open_stts_view(app, pilot, "settings")
             await _wait_until(
                 pilot,
                 lambda: service.cleanup_settled_by_unmount == [1],
@@ -1118,7 +1096,7 @@ async def test_late_search_and_repository_generation_pages_never_replace_current
     new_search_page = _page(_profile(2), generation=7)
 
     async with app.run_test(size=(150, 55)) as pilot:
-        await pilot.click("#view-profiles-btn")
+        await _open_stts_view(app, pilot, "profiles")
         await _wait_until(pilot, lambda: len(service.list_futures) == 1)
         service.list_futures[0].set_result(current_page)
         await _wait_until(pilot, lambda: len(service.availability_futures) == 1)
@@ -1163,7 +1141,7 @@ async def test_availability_revisions_cannot_regress_the_rendered_page() -> None
     page = _page(_profile(0), generation=5)
 
     async with app.run_test(size=(150, 55)) as pilot:
-        await pilot.click("#view-profiles-btn")
+        await _open_stts_view(app, pilot, "profiles")
         await _wait_until(pilot, lambda: len(service.list_futures) == 1)
         service.list_futures[0].set_result(page)
         await _wait_until(pilot, lambda: len(service.availability_futures) == 1)
@@ -1238,11 +1216,11 @@ async def test_unmount_cancels_and_settles_the_retained_page_pipeline() -> None:
 
     try:
         async with app.run_test(size=(150, 55)) as pilot:
-            await pilot.click("#view-profiles-btn")
+            await _open_stts_view(app, pilot, "profiles")
             await _wait_until(pilot, lambda: len(service.list_futures) == 1)
             library = app.query_one(STTSProfileLibrary)
 
-            await pilot.click("#view-settings-btn")
+            await _open_stts_view(app, pilot, "settings")
             await _wait_until(pilot, lambda: service.cancelled_list_calls == 1)
 
             assert library.parent is None
@@ -1334,9 +1312,8 @@ async def test_stts_window_consumes_exact_profile_preview_once_on_playground_rem
         assert first_playground._profile_preset.voice_id == "missing/exact-voice"
         assert window._pending_playground_preset is None
 
-        await pilot.click("#view-settings-btn")
-        await pilot.click("#view-playground-btn")
-        await pilot.pause()
+        await _open_stts_view(app, pilot, "settings")
+        await _open_stts_view(app, pilot, "playground")
         second_playground = app.query_one(TTSPlaygroundWidget)
 
         assert second_playground is not first_playground
