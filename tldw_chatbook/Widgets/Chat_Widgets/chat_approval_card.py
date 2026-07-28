@@ -214,6 +214,12 @@ class ChatApprovalCard(Container):
         self._batch_selects: list[Select] = []
         self._batch_legal_values: list[list[str]] = []
         self._batch_rows: list[Horizontal] = []
+        #: The current batch's fast-approval buttons (task-1234 review
+        #: round 1), if any -- membership-guards `on_button_pressed`
+        #: against a stale press the same way `_on_batch_row_select_
+        #: changed` guards `self._batch_selects`. See `_submit_fast_
+        #: decision`'s docstring for why this guard exists.
+        self._batch_fast_buttons: list[Button] = []
         #: The currently-rendered batch's round id (Task 9 fix round 1),
         #: echoed back unchanged in `ApprovalDecided` on submit. `None`
         #: whenever no batch (or a caller that predates round ids) is
@@ -299,10 +305,21 @@ class ChatApprovalCard(Container):
             self._batch_selects = []
             self._batch_legal_values = []
             self._batch_rows = []
+            self._batch_fast_buttons = []
             return
 
         self.display = True
         self.query_one("#approval-batch-body").display = True
+        # task-1234 review round 1: a submit-shaped control (Submit, or
+        # either fast button) disables itself right after a press to close
+        # the double-submit window -- see `_disable_batch_submit_controls`.
+        # A NEW batch must start every submitting control re-enabled,
+        # otherwise a round whose PREDECESSOR was resolved via Submit would
+        # render with a permanently-disabled Submit button.
+        try:
+            self.query_one("#approval-submit", Button).disabled = False
+        except NoMatches:
+            pass
 
         grouped = _collapse_pending_calls(calls)
         self._batch_generation += 1
@@ -321,6 +338,7 @@ class ChatApprovalCard(Container):
         selects: list[Select] = []
         legal_values: list[list[str]] = []
         rows: list[Horizontal] = []
+        fast_buttons: list[Button] = []
         for index, entry in enumerate(grouped):
             names.append(str(entry.get("llm_name", "")))
             row_options = _options_for_row(entry)
@@ -356,32 +374,31 @@ class ChatApprovalCard(Container):
                 select,
             ]
             if single_row:
-                row_children.append(
-                    Button(
-                        "Approve once",
-                        id=f"approval-fast-approve-{generation}-{index}",
-                        variant="success",
-                        compact=True,
-                        classes="approval-row-fast-approve",
-                        tooltip=(
-                            "Approve once and resume immediately "
-                            "(skips Select + Submit)."
-                        ),
-                    )
+                fast_approve = Button(
+                    "Approve once",
+                    id=f"approval-fast-approve-{generation}-{index}",
+                    variant="success",
+                    compact=True,
+                    classes="approval-row-fast-approve",
+                    tooltip=(
+                        "Approve once and resume immediately "
+                        "(skips Select + Submit)."
+                    ),
                 )
-                row_children.append(
-                    Button(
-                        "Deny",
-                        id=f"approval-fast-deny-{generation}-{index}",
-                        variant="error",
-                        compact=True,
-                        classes="approval-row-fast-deny",
-                        tooltip=(
-                            "Deny and resume immediately "
-                            "(skips Select + Submit)."
-                        ),
-                    )
+                fast_deny = Button(
+                    "Deny",
+                    id=f"approval-fast-deny-{generation}-{index}",
+                    variant="error",
+                    compact=True,
+                    classes="approval-row-fast-deny",
+                    tooltip=(
+                        "Deny and resume immediately "
+                        "(skips Select + Submit)."
+                    ),
                 )
+                fast_buttons.extend((fast_approve, fast_deny))
+                row_children.append(fast_approve)
+                row_children.append(fast_deny)
             rows.append(
                 Horizontal(
                     *row_children,
@@ -393,6 +410,7 @@ class ChatApprovalCard(Container):
         self._batch_selects = selects
         self._batch_legal_values = legal_values
         self._batch_rows = rows
+        self._batch_fast_buttons = fast_buttons
 
         rows_container = self.query_one("#approval-batch-rows", Vertical)
         rows_container.remove_children()
@@ -412,10 +430,17 @@ class ChatApprovalCard(Container):
             self._submit_batch_decisions()
         elif button_id.startswith("approval-fast-approve-"):
             event.stop()
-            self._submit_fast_decision("approve_once")
+            # task-1234 review round 1: membership-guard against a STALE
+            # button -- see `_submit_fast_decision`'s docstring for the
+            # race this closes. `event.button` (not the id string) so this
+            # matches by widget identity, the same way `_on_batch_row_
+            # select_changed` guards `self._batch_selects`.
+            if event.button in self._batch_fast_buttons:
+                self._submit_fast_decision("approve_once")
         elif button_id.startswith("approval-fast-deny-"):
             event.stop()
-            self._submit_fast_decision("deny")
+            if event.button in self._batch_fast_buttons:
+                self._submit_fast_decision("deny")
 
     def _set_all_batch_decisions(self, candidates: tuple[str, ...]) -> None:
         """Bulk-set every row to the first of ``candidates`` that row legally offers.
@@ -471,11 +496,34 @@ class ChatApprovalCard(Container):
         index = self._batch_selects.index(select)
         self._batch_rows[index].remove_class("needs-decision")
 
+    def _disable_batch_submit_controls(self) -> None:
+        """Disable this round's submitting controls right after a press.
+
+        task-1234 review round 1: Submit and both fast buttons each
+        resolve the ENTIRE round with one press. Before this, a second
+        click landing in the brief window before the round's teardown
+        (the next ``set_batch``/hide) would post a SECOND ``ApprovalDecided``
+        for a round that may already be resolved -- safe only incidentally,
+        by whatever the controller does with a duplicate resolution, not by
+        anything this widget guaranteed. Disabling immediately, rather than
+        waiting on a re-render, closes that window directly. ``set_batch``
+        re-enables ``#approval-submit`` (and repopulates
+        ``self._batch_fast_buttons`` with fresh, enabled buttons) at the
+        start of every new round, so this is never a permanent lockout.
+        """
+        for button in self._batch_fast_buttons:
+            button.disabled = True
+        try:
+            self.query_one("#approval-submit", Button).disabled = True
+        except NoMatches:
+            pass
+
     def _submit_batch_decisions(self) -> None:
         decisions = {
             name: select.value
             for name, select in zip(self._batch_names, self._batch_selects)
         }
+        self._disable_batch_submit_controls()
         self.post_message(
             self.ApprovalDecided(decisions, round_id=self._batch_round_id)
         )
@@ -484,12 +532,25 @@ class ChatApprovalCard(Container):
         """Single-row fast path (task-1234/F5): resolve without touching Selects.
 
         Only ever reachable when ``set_batch`` rendered exactly one row
-        (the fast buttons are gated on ``single_row`` there), so
-        ``self._batch_names[0]`` is unambiguous. Posts the SAME
-        ``ApprovalDecided`` message, through the SAME ``round_id``, as
-        ``_submit_batch_decisions`` -- no new resolution seam;
-        ``ConsoleChatController.resolve_pending_approval`` cannot tell
-        this apart from a normal Select+Submit round trip.
+        (the fast buttons are gated on ``single_row`` there) AND the
+        pressed button is still a member of ``self._batch_fast_buttons``
+        (``on_button_pressed``'s guard, task-1234 review round 1) -- so
+        ``self._batch_names[0]`` is unambiguously THIS round's row. Without
+        that membership guard, a fire-and-forget ``remove_children()`` (see
+        ``set_batch``'s docstring) leaves a stale-generation button mounted
+        and clickable for one event-loop tick after a NEW batch supersedes
+        it; pressing it would otherwise resolve the NEW round using
+        whatever ``self._batch_names``/``self._batch_round_id`` the newer
+        ``set_batch`` call just overwrote them with -- silently deciding a
+        tool call the user never reviewed. ``round_id`` alone does not
+        catch this: ``set_batch`` overwrites ``_batch_round_id`` wholesale
+        on every call, so an old and a new round's messages are not
+        distinguishable by id at this layer.
+
+        Posts the SAME ``ApprovalDecided`` message, through the SAME
+        ``round_id``, as ``_submit_batch_decisions`` -- no new resolution
+        seam; ``ConsoleChatController.resolve_pending_approval`` cannot
+        tell this apart from a normal Select+Submit round trip.
 
         Args:
             decision: The verdict to submit. Only ever ``"approve_once"``
@@ -500,6 +561,7 @@ class ChatApprovalCard(Container):
         """
         if not self._batch_names:
             return
+        self._disable_batch_submit_controls()
         self.post_message(
             self.ApprovalDecided(
                 {self._batch_names[0]: decision}, round_id=self._batch_round_id
