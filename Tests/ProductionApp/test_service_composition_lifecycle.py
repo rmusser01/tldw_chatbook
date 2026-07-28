@@ -4,7 +4,6 @@ from collections import Counter
 import ast
 import logging
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -208,21 +207,24 @@ async def test_production_app_scheduler_worker_settles_without_contract_error(
     _disable_splash(monkeypatch)
     app = TldwCli()
     app.app_config["_first_run"] = False
-    logger = MagicMock()
-    app.loguru_logger = logger
+    scheduler_errors: list[str] = []
+    sink_id: int | None = None
 
     try:
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             scheduler_worker = app.scheduler_worker
             assert not scheduler_worker.is_finished
+            sink_id = app.loguru_logger.add(
+                lambda message: scheduler_errors.append(message.record["message"]),
+                level="ERROR",
+            )
 
-        scheduler_errors = [
-            call
-            for call in logger.error.call_args_list
-            if "Error stopping scheduler worker" in str(call)
-        ]
-        assert scheduler_errors == []
+        assert not any(
+            "Error stopping scheduler worker" in message for message in scheduler_errors
+        )
         assert scheduler_worker.is_finished
     finally:
+        if sink_id is not None:
+            app.loguru_logger.remove(sink_id)
         await _close_production_app(app)

@@ -4384,11 +4384,9 @@ class TldwCli(
                 "Local writing service unavailable during app wiring"
             )
             self.local_writing_service = None
-        self.server_writing_service = (
-            ServerWritingService.from_server_context_provider(
-                self.server_context_provider,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        self.server_writing_service = ServerWritingService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
         )
         self.writing_scope_service = WritingScopeService(
             local_service=self.local_writing_service,
