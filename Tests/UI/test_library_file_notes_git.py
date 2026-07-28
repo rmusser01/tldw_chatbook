@@ -479,6 +479,21 @@ async def _wait_until(
     raise AssertionError(message)
 
 
+async def _settle_current_git_row_render(
+    workspace: LibraryFileNotesWorkspace,
+) -> None:
+    """Await the current non-cancelled panel row replacement, if any."""
+    row_workers = tuple(
+        worker
+        for worker in workspace.app.workers
+        if worker.node is workspace._git_panel_widget
+        and worker.group == "file-notes-git-render-rows"
+        and not worker.is_cancelled
+    )
+    if row_workers:
+        await workspace.app.workers.wait_for_complete(row_workers)
+
+
 async def _open_git_and_stage_one(
     workspace: LibraryFileNotesWorkspace,
     git_service: _FakeGitService,
@@ -502,6 +517,13 @@ async def _open_git_and_stage_one(
         ).display,
         "Stage result did not render",
     )
+    action_worker = workspace._git_action_worker
+    if action_worker is not None:
+        await action_worker.wait()
+    status_worker = workspace._git_status_worker
+    if status_worker is not None:
+        await status_worker.wait()
+    await _settle_current_git_row_render(workspace)
 
 
 async def _assert_visible_panel_buttons_fit(panel, pilot) -> None:
@@ -2071,23 +2093,36 @@ async def test_session_change_invalidates_last_action_before_refresh(
             await _open_git_and_stage_one(workspace, git_service, pilot)
 
             git_service.status_release = release
-            assert owner.record_change(
-                binding,
-                SessionChange("modified", "late.md"),
-            )
-            workspace._refresh_session_changes()
+            try:
+                assert owner.record_change(
+                    binding,
+                    SessionChange("modified", "late.md"),
+                )
+                workspace._refresh_session_changes()
 
-            last_action = workspace.query_one(
-                "#file-notes-git-action-status",
-                Static,
-            )
-            assert not last_action.display
-            assert _text(last_action) == ""
-            assert "Status: STALE" in _text(
-                workspace.query_one("#file-notes-git-status", Static)
-            )
+                last_action = workspace.query_one(
+                    "#file-notes-git-action-status",
+                    Static,
+                )
+                assert not last_action.display
+                assert _text(last_action) == ""
+                assert "Status: STALE" in _text(
+                    workspace.query_one("#file-notes-git-status", Static)
+                )
+            finally:
+                scheduled_refresh = workspace._git_refresh_timer
+                if scheduled_refresh is not None:
+                    scheduled_task = scheduled_refresh._task
+                    scheduled_refresh.stop()
+                    if scheduled_task is not None:
+                        await asyncio.gather(
+                            scheduled_task,
+                            return_exceptions=True,
+                        )
+                    workspace._git_refresh_timer = None
+                release.set()
+                await _settle_current_git_row_render(workspace)
     finally:
-        release.set()
         await workspace.shutdown()
         owner.shutdown()
         replica.close()
@@ -2124,6 +2159,7 @@ async def test_selected_root_change_clears_rows_and_last_action(
             Static,
         ).display
         assert workspace._git_last_action is None
+        await _settle_current_git_row_render(workspace)
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
@@ -2168,6 +2204,7 @@ async def test_repository_retrust_clears_old_rows_and_action_before_prompt(
             Static,
         ).display
         assert workspace._git_last_action is None
+        await _settle_current_git_row_render(workspace)
         await pilot.press("escape")
     await workspace.shutdown()
     owner.shutdown()
@@ -3109,8 +3146,18 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
         await _wait_until(
             pilot,
             lambda: len(git_service.status_calls) == 1
+            and len(workspace._git_panel_widget.rows) == 2
             and all(not toolbar.display for toolbar in toolbars),
             "Prepare session did not quiet both editor toolbars",
+        )
+        await _settle_current_git_row_render(workspace)
+        await pilot.pause()
+        git_back = workspace.query_one("#file-notes-git-back", Button)
+        git_rows = workspace.query_one("#file-notes-git-rows", ListView)
+        await _wait_until(
+            pilot,
+            lambda: git_back.has_focus or git_rows.has_focus,
+            "Prepare session focus transfer did not settle",
         )
         assert workspace.query_one("#file-notes-breadcrumb", Static).display
         assert workspace.query_one("#file-notes-save-status", Static).display
