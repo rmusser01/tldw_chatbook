@@ -930,7 +930,8 @@ So Task 6 splits:
   `_sync_generate_enabled` -- 5 methods, ~322 lines) onto a mixin the pane
   inherits. Because the pane uses the same control ids, their `query_one`
   calls resolve unchanged. Append a `SpeechTake` on completion.
-- **6d — retire the legacy branch.** BLOCKED, and not on test colour.
+- **6d — retire the legacy branch.** Deferred to task-1266, and not on
+  test colour.
 
   6c makes Generate reach synthesis, but the rebuilt pane has no catalog:
   nothing populates the provider, model, voice, language or format options,
@@ -944,9 +945,15 @@ So Task 6 splits:
   `_show_provider_specific_controls`. That is more than twice the generate
   closure and its own piece of work, not a step inside this one.
 
-  So phase 1 ends after 6c with the legacy branch intact and the rebuilt pane
-  reachable beside it. Catalog adoption and retirement become **phase 1b**,
-  planned separately.
+  Phase 1b since delivered all of it: catalog (717 lines), playback and
+  export (672), and the last shared behaviour. The pane populates its axes
+  live, synthesizes, and receives its results.
+
+  Retirement is now blocked only on **coverage**, not behaviour. The legacy
+  host's 43 tests exercise the shared mixins through it; swapping the
+  harness to the rebuilt pane leaves 41 failing -- 27 because the tests
+  query `TTSPlaygroundWidget` by type (mechanical), 14 that need
+  classifying as pane defect or fixture difference. That is task-1266.
 
 ### Task 6 (original, superseded): Wire behaviour and retire the legacy playground
 
