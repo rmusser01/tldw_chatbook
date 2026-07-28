@@ -217,19 +217,38 @@ def test_two_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_th
     stay up and the slot must still hold a payload (remount still works,
     even though it is round 2's own now-stale payload rather than round
     1's -- the accepted single-slot scope). Only resolving the older,
-    now-last round clears both."""
+    now-last round clears both.
+
+    Fix round 3 (re-review) EXTENSION: mirrors `test_console_mcp_
+    approval.py`'s identical extension -- pins the CARD-CLEAR seam
+    itself, not just the payload map. The `controller` fixture wires
+    `set_pending_skill_install` as a discarding no-op, which could not
+    have caught the fix-round-2 regression (a stray clear call is
+    silently indistinguishable from no call at all through a no-op), so
+    this test overrides it locally with a recording list and asserts
+    directly on it: no NEW clear call reaches the seam while round 1 is
+    still armed, and round 1 remains resolvable (decidable) through its
+    own `request_id` throughout; only once round 1 (the last remaining
+    round) resolves does the clear actually fire."""
+    mounted: list[dict | None] = []
+    controller.set_pending_skill_install = mounted.append
+
     results = {}
     t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
     assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
     id1 = controller.pending_skill_install_ids()[0]
+    assert mounted and mounted[-1] is not None
 
     t2 = _arm(controller, "https://x/two", controller.session_a, results, "two")
     assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 2)
     id2 = [i for i in controller.pending_skill_install_ids() if i != id1][0]
+    assert mounted[-1] is not None
+    calls_after_both_armed = len(mounted)  # 2: round 1's mount, round 2's mount
 
     # Round 2 (the NEWER round) resolves FIRST -- round 1 is still
-    # outstanding, so the badge must stay up and the slot must still hold
-    # a payload.
+    # outstanding, so the badge must stay up, the slot must still hold a
+    # payload, and -- the regression this test now pins -- the
+    # CARD-CLEAR seam must NOT be invoked at all.
     controller.resolve_pending_skill_install(True, request_id=id2)
     t2.join(timeout=5)
     assert results["two"] is True
@@ -243,15 +262,23 @@ def test_two_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_th
         "would strand the still-armed older round unresolvable on the "
         "next switch-away/back"
     )
+    assert len(mounted) == calls_after_both_armed, (
+        "round 2 resolving must NOT invoke the card-clear seam while "
+        "round 1 is still armed -- doing so strands round 1 card-less "
+        "with the badge still lit"
+    )
 
-    # Round 1 (the OLDER round, now the LAST one armed) resolves -- only
-    # now do both the badge and the parked slot clear.
+    # Round 1 (the OLDER round) remains fully decidable through the UI --
+    # resolving it now by its OWN `request_id` must still work correctly.
     controller.resolve_pending_skill_install(False, request_id=id1)
     t1.join(timeout=5)
     assert results["one"] is False
     assert controller.run_marker_for(controller.session_a) is ConsoleRunMarker.NONE
     assert controller.session_a not in controller._pending_approvals
     assert controller.session_a not in controller._parked_skill_install_payloads
+    # Round 1 (now the LAST remaining round) resolving DOES fire the clear.
+    assert len(mounted) == calls_after_both_armed + 1
+    assert mounted[-1] is None
 
 
 class _DeferredClearApp:

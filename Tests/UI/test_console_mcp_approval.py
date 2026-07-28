@@ -1383,12 +1383,32 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
     timeout. The fix now pops ONLY when no armed round remains for the
     session at all (order-independent), so resolving the newer round
     first must leave the slot populated (remount still works) and the
-    badge up; only resolving the older (now last) round clears both."""
+    badge up; only resolving the older (now last) round clears both.
+
+    Fix round 3 (re-review) EXTENSION: pins the CARD-CLEAR seam itself,
+    not just the payload map -- the round-identity-guarded clear
+    (`_clear_pending_approval_if_round_is_current`) introduced in fix
+    round 2 initially checked ONLY "has a newer round overwritten the
+    payload slot", which is trivially false when round 2 (the newest)
+    resolves first, so it cleared the card anyway even though round 1
+    was still armed -- card gone, badge still lit, round 1 undecidable
+    through the UI until timeout. The ORIGINAL version of this test used
+    `controller.set_pending_approval = lambda payload: None` (a
+    discarding no-op), which could not have caught that regression: a
+    stray `set_pending_approval(None)` call is silently indistinguishable
+    from no call at all through a no-op. Now records every call via
+    `mounted.append` (mirrors every other test in this module) and
+    asserts directly on it at each step: no NEW clear call reaches the
+    seam while round 1 is still armed, and the OLDER round remains
+    resolvable (decidable) through its own `round_id` the whole time;
+    only once round 1 (the last remaining round) resolves does the clear
+    actually fire."""
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     store.switch_session(session_a)
     controller.app = _FakeApp()
-    controller.set_pending_approval = lambda payload: None
+    mounted: list[dict | None] = []
+    controller.set_pending_approval = mounted.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
     result_1: dict[str, dict[str, str]] = {}
@@ -1402,7 +1422,8 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
     worker_1 = threading.Thread(target=_run_round_1)
     worker_1.start()
     time.sleep(0.1)
-    round_id_1 = controller._parked_approval_payloads[session_a]["round_id"]
+    assert mounted and mounted[-1] is not None
+    round_id_1 = mounted[-1]["round_id"]
 
     def _run_round_2() -> None:
         result_2["decisions"] = controller.request_mcp_approvals(
@@ -1412,14 +1433,18 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
     worker_2 = threading.Thread(target=_run_round_2)
     worker_2.start()
     time.sleep(0.1)
-    round_id_2 = controller._parked_approval_payloads[session_a]["round_id"]
+    assert mounted[-1] is not None
+    round_id_2 = mounted[-1]["round_id"]
     assert round_id_2 != round_id_1
+    calls_after_both_armed = len(mounted)  # 2: round 1's mount, round 2's mount
 
     # Round 2 (the NEWER, newest-armed round) resolves FIRST -- round 1 is
-    # still outstanding, so the badge must stay up AND the parked slot
-    # must still hold a payload (not popped to `None`), even though it is
-    # (per the accepted single-slot scope) round 2's own now-stale
-    # payload rather than round 1's.
+    # still outstanding, so the badge must stay up, the parked slot must
+    # still hold a payload (not popped to `None`, even though it is --
+    # per the accepted single-slot scope -- round 2's own now-stale
+    # payload rather than round 1's), and -- the regression this test now
+    # pins -- the CARD-CLEAR seam must NOT be invoked at all: no new
+    # entry (`None` or otherwise) reaches `mounted`.
     controller.resolve_pending_approval(
         {"mcp__two__tool": "approve_once"}, round_id=round_id_2
     )
@@ -1432,9 +1457,15 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
         "would strand the still-armed older round unresolvable on the "
         "next switch-away/back"
     )
+    assert len(mounted) == calls_after_both_armed, (
+        "round 2 resolving must NOT invoke the card-clear seam while "
+        "round 1 is still armed -- doing so strands round 1 card-less "
+        "with the badge still lit"
+    )
 
-    # Round 1 (the OLDER round, now the LAST one armed) resolves -- only
-    # now do both the badge and the parked slot clear.
+    # Round 1 (the OLDER round) remains fully decidable through the UI
+    # the whole time round 2 was resolving -- resolving it now by its OWN
+    # `round_id` must still work correctly.
     controller.resolve_pending_approval(
         {"mcp__one__tool": "deny"}, round_id=round_id_1
     )
@@ -1443,6 +1474,9 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
     assert controller.run_marker_for(session_a) is ConsoleRunMarker.NONE
     assert session_a not in controller._pending_approvals
     assert session_a not in controller._parked_approval_payloads
+    # Round 1 (now the LAST remaining round) resolving DOES fire the clear.
+    assert len(mounted) == calls_after_both_armed + 1
+    assert mounted[-1] is None
 
 
 def _wait_until(predicate, timeout: float = 5.0) -> bool:

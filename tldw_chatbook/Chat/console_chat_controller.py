@@ -2375,16 +2375,46 @@ class ConsoleChatController:
         on the UI thread, so no further worker-thread interleaving can
         change the outcome mid-decision.
 
-        The check itself is round-IDENTITY based, not boolean:
-        ``_parked_approval_payloads[session_id]`` always holds whichever
-        round's payload was LAST WRITTEN (arming overwrites it -- mirrors
-        the payload-pop guard's own "last-armed-wins" contract in the
-        ``finally`` block above). If it no longer names THIS round's own
-        ``round_id``, a newer round has already claimed the slot (and, if
-        ``session_id`` is the currently active session, already marshaled
-        its own mount), so this round's clear must no-op. Otherwise falls
-        through to the ``still_active`` check -- also re-read live here,
-        not from a snapshot -- before actually clearing.
+        The check is TWO-PART, and BOTH parts must pass before clearing:
+
+        1. Round-IDENTITY based, not boolean: ``_parked_approval_payloads
+           [session_id]`` always holds whichever round's payload was LAST
+           WRITTEN (arming overwrites it -- mirrors the payload-pop
+           guard's own "last-armed-wins" contract in the ``finally``
+           block above). If it no longer names THIS round's own
+           ``round_id``, a newer round has already claimed the slot (and,
+           if ``session_id`` is the currently active session, already
+           marshaled its own mount), so this round's clear must no-op.
+           This closes the ORIGINAL Qodo TOCTOU (a newer round's own
+           mount getting wiped by an older round's stale clear).
+
+        2. Fix round 3 (re-review) regression fix: the identity check
+           ALONE only detects "payload overwritten by a newer arm" -- it
+           says nothing about whether a DIFFERENT, OLDER sibling round is
+           still armed. When the newest-armed round resolves FIRST (the
+           natural live ordering, per this file's own fix-round-1
+           docstrings: arming a round typically gets it decided before an
+           already-waiting older sibling does), the identity check
+           trivially PASSES (nothing has overwritten the slot since this
+           round armed) even though an older round is still pending --
+           the old snapshot-based ``still_armed_same_session`` guard this
+           closure replaced used to catch exactly this case; dropping it
+           entirely (rather than also re-checking it live) reintroduced a
+           stranded-card regression: the card cleared while the badge
+           stayed lit, leaving the older round undecidable through the
+           UI until its own timeout. Closed by ALSO re-reading (live,
+           under the same lock, at the same last-possible-moment as the
+           identity check -- never a pre-enqueue snapshot)
+           ``_pending_approval_rounds`` filtered to this session: if ANY
+           round remains registered there (this round's own entry is
+           already popped earlier in ``finally``, before this closure
+           even runs, so any hit here is necessarily a DIFFERENT,
+           still-armed sibling), the clear must no-op just as surely as a
+           failed identity check does.
+
+        Only once both checks pass does it fall through to the
+        ``still_active`` check -- also re-read live here, not from a
+        snapshot -- before actually clearing.
 
         Args:
             round_id: This round's own id. Only consulted when
@@ -2402,15 +2432,29 @@ class ConsoleChatController:
             if session_id is not None:
                 # F2b-style guard: this runs on the UI thread, but a
                 # worker thread can concurrently write `_parked_approval_
-                # payloads` under this same lock.
+                # payloads`/`_pending_approval_rounds` under this same
+                # lock (MCP's round registry shares `_approval_state_
+                # lock` with the payload map, so both reads happen in one
+                # atomic critical section).
                 with self._approval_state_lock:
                     current = self._parked_approval_payloads.get(session_id)
+                    still_armed_same_session = any(
+                        state.get("session_id") == session_id
+                        for state in self._pending_approval_rounds.values()
+                    )
                 if current is not None and current.get("round_id") != round_id:
                     # A newer round already claimed this session's
                     # retained-payload slot -- whatever the mounted card
                     # is currently showing (if this session is even the
                     # one being viewed) belongs to THAT round, not this
                     # one. Leave it alone.
+                    return
+                if still_armed_same_session:
+                    # A DIFFERENT round (necessarily -- this round's own
+                    # entry was already popped before this closure runs)
+                    # is still armed for this session. Clearing now would
+                    # strand it: card gone, badge still lit, undecidable
+                    # through the UI until its own timeout.
                     return
                 if session_id != (self.store.active_session_id or ""):
                     # Not (or no longer) the session being viewed --
@@ -2866,6 +2910,20 @@ class ConsoleChatController:
         this race, only deferring the whole identity check to the UI
         thread's own execution of the enqueued callable can.
 
+        Fix round 3 (re-review) regression fix: mirrors ``_clear_pending_
+        approval_if_round_is_current``'s identical two-part guard -- the
+        round-identity check alone only catches "payload overwritten by a
+        newer arm", not "a DIFFERENT, OLDER sibling round is still armed"
+        (true exactly when THIS round is the newest-armed one and
+        resolves FIRST, the natural live ordering). Also re-reads
+        ``_pending_skill_install_rounds`` live (under ``_pending_skill_
+        install_lock``, sequentially after -- never nested with --
+        ``_approval_state_lock``, matching this file's existing lock-
+        ordering discipline) filtered to this session; any hit there is
+        necessarily a still-armed sibling (this round's own entry is
+        already popped earlier in ``finally``), so the clear must no-op
+        exactly as it does on a failed identity check.
+
         Args:
             request_id: This round's own id. Only consulted when
                 ``session_id`` is not ``None``.
@@ -2881,6 +2939,13 @@ class ConsoleChatController:
                 with self._approval_state_lock:
                     current = self._parked_skill_install_payloads.get(session_id)
                 if current is not None and current.get("request_id") != request_id:
+                    return
+                with self._pending_skill_install_lock:
+                    still_armed_same_session = any(
+                        state.get("session_id") == session_id
+                        for state in self._pending_skill_install_rounds.values()
+                    )
+                if still_armed_same_session:
                     return
                 if session_id != (self.store.active_session_id or ""):
                     return
@@ -3109,6 +3174,16 @@ class ConsoleChatController:
         approval_if_round_is_current``'s identical race-proofing -- see
         that method's docstring for the full analysis.
 
+        Fix round 3 (re-review) regression fix: mirrors ``_clear_pending_
+        approval_if_round_is_current``'s/``_clear_pending_skill_install_
+        if_round_is_current``'s identical two-part guard -- also
+        re-reads ``_pending_skill_script_rounds`` live (under
+        ``_pending_skill_script_lock``, sequentially after -- never
+        nested with -- ``_approval_state_lock``) filtered to this
+        session, so a still-armed OLDER sibling round (true exactly when
+        THIS round is the newest-armed one and resolves FIRST) blocks the
+        clear just as surely as a failed identity check does.
+
         Args:
             request_id: This round's own id. Only consulted when
                 ``session_id`` is not ``None``.
@@ -3124,6 +3199,13 @@ class ConsoleChatController:
                 with self._approval_state_lock:
                     current = self._parked_skill_script_payloads.get(session_id)
                 if current is not None and current.get("request_id") != request_id:
+                    return
+                with self._pending_skill_script_lock:
+                    still_armed_same_session = any(
+                        state.get("session_id") == session_id
+                        for state in self._pending_skill_script_rounds.values()
+                    )
+                if still_armed_same_session:
                     return
                 if session_id != (self.store.active_session_id or ""):
                     return

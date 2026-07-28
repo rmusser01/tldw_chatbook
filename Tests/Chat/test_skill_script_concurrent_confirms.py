@@ -169,6 +169,27 @@ def test_two_rounds_for_the_same_session_keep_badge_and_payload_until_both_resol
     and the skill-install bridge
     (`test_skill_install_concurrent_confirms.py::
     test_teardown_clear_is_round_identity_guarded_against_a_newer_same_session_round_arming_mid_teardown`)
+    rather than a third time here.
+
+    Fix round 3 (re-review) note on symmetry: the round-identity check
+    ALONE (fix round 2) only caught "payload overwritten by a newer arm"
+    -- it missed "a DIFFERENT, OLDER sibling round is still armed" when
+    the NEWEST round resolves FIRST, which trivially passes the identity
+    check (nothing has overwritten the slot since it armed) and cleared
+    the card anyway, stranding the older round card-less while the badge
+    stayed lit. `_clear_pending_skill_script_if_round_is_current`'s
+    teardown now ALSO re-reads `_pending_skill_script_rounds` live
+    (byte-for-byte the same two-part shape as the other two bridges'
+    fixes), so this is symmetric by construction too. The end-to-end,
+    card-clear-seam-asserting proof (using a recording list rather than a
+    discarding no-op, since a no-op cannot distinguish "clear was called"
+    from "clear was never called") is exercised directly for the MCP
+    bridge
+    (`test_console_mcp_approval.py::
+    test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated`)
+    and the skill-install bridge
+    (`test_skill_install_concurrent_confirms.py::
+    test_two_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated`)
     rather than a third time here."""
     session_id = controller.store.create_session(title="S").id
     controller.store.switch_session(session_id)
