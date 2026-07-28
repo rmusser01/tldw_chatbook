@@ -6077,6 +6077,13 @@ class TldwCli(
                     screen_name,
                     type(exc).__name__,
                 )
+                try:
+                    self.notify(
+                        "Couldn't confirm leaving this screen; staying put.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
                 return
 
         runtime_identity = self._current_runtime_identity()

@@ -772,6 +772,10 @@ async def test_navigation_confirm_exception_warns_and_aborts_switch(monkeypatch)
 
     assert switched_screens == []
     assert created_screens == []
+    assert any(
+        "Couldn't confirm leaving this screen" in message
+        for message, _kwargs in notifications
+    )
 
 
 @pytest.mark.asyncio
