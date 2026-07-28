@@ -147,6 +147,37 @@ def test_retry_failure_does_not_overwrite_retry_source_snapshot() -> None:
     )
 
 
+def test_requeue_store_failure_does_not_expose_or_mutate_retry() -> None:
+    class FailingRetryStore:
+        def upsert_job(self, job) -> None:
+            return None
+
+        def upsert_retry(self, source, retry) -> None:
+            raise RuntimeError("disk full")
+
+        def delete_job(self, job_id: str) -> None:
+            return None
+
+    registry = LibraryIngestJobRegistry()
+    registry.attach_store(FailingRetryStore())
+    original = registry.submit(source_path="/tmp/audio.wav")
+    failed = registry.mark_failed(
+        original.job_id,
+        error="first failure",
+        stt_failure_provenance=_failed_document(),
+    )
+
+    assert registry.requeue(failed.job_id) is None
+
+    visible = registry.jobs()
+    assert [job.job_id for job in visible] == [failed.job_id]
+    assert visible[0].state is IngestJobState.FAILED
+    assert visible[0].superseded is False
+
+    next_job = registry.submit(source_path="/tmp/next.wav")
+    assert next_job.job_id == "ingest-job-2"
+
+
 def test_returned_retry_lineage_cannot_mutate_registry_snapshot() -> None:
     registry = LibraryIngestJobRegistry()
     original = registry.submit(source_path="/tmp/audio.wav")

@@ -201,7 +201,25 @@ def _validate_artifact_documents(
 
 @dataclass(frozen=True, slots=True)
 class FailedTranscriptionAttempt:
-    """Complete sanitized context for one failed STT attempt."""
+    """Complete sanitized context for one failed STT attempt.
+
+    Attributes:
+        attempt_id: Stable identifier for the failed attempt.
+        batch_id: Optional batch identifier.
+        job_id: Optional Library ingest-job identifier.
+        provider_id: Exact provider identifier.
+        model_id: Exact model identifier.
+        artifact_root: Optional root model artifact identity.
+        artifact_dependencies: Dependency artifact identities.
+        precision: Requested model precision.
+        requested_device: Caller-requested execution device.
+        effective_device: Observed device, when execution reached a runtime.
+        requested_language: Caller-requested language.
+        effective_language: Language applied by routing.
+        detected_language: Runtime-detected language, when trustworthy.
+        task: Transcription or translation task.
+        error_code: Stable sanitized failure classification.
+    """
 
     attempt_id: str
     batch_id: str | None
@@ -373,7 +391,19 @@ def build_transcription_provenance_document(
     *,
     failed_attempt: FailedTranscriptionAttempt | Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
-    """Build a version-1 persistence document from a normalized result."""
+    """Build a version-1 persistence document from a normalized result.
+
+    Args:
+        result: Successful normalized transcription result.
+        failed_attempt: Optional failed source attempt for an explicit retry.
+
+    Returns:
+        A validated provenance document suitable for persistence.
+
+    Raises:
+        TypeError: If the result or failed attempt has an invalid type.
+        ValueError: If identities, lineage, or normalized fields are invalid.
+    """
 
     if type(result) is not TranscriptionResult:
         raise TypeError("result must be a TranscriptionResult")
@@ -589,19 +619,52 @@ def _load_bounded(raw: str) -> object:
 
 
 def dump_transcription_provenance_document(value: object) -> str:
-    """Validate and serialize one canonical provenance document."""
+    """Validate and serialize one canonical provenance document.
+
+    Args:
+        value: Provenance mapping to validate.
+
+    Returns:
+        Bounded canonical JSON.
+
+    Raises:
+        TypeError: If a field has an invalid type.
+        ValueError: If the document is invalid or exceeds the size limit.
+    """
 
     return _dump_bounded(_validate_transcription_provenance_document(value))
 
 
 def load_transcription_provenance_document(raw: str) -> dict[str, Any]:
-    """Parse and validate one serialized provenance document."""
+    """Parse and validate one serialized provenance document.
+
+    Args:
+        raw: Serialized provenance JSON.
+
+    Returns:
+        The validated provenance document.
+
+    Raises:
+        TypeError: If ``raw`` or a decoded field has an invalid type.
+        ValueError: If JSON, document content, or size is invalid.
+    """
 
     return _validate_transcription_provenance_document(_load_bounded(raw))
 
 
 def dump_failed_transcription_attempt(value: object) -> str:
-    """Validate and serialize one sanitized failed-attempt snapshot."""
+    """Validate and serialize one sanitized failed-attempt snapshot.
+
+    Args:
+        value: Failed-attempt DTO or validated mapping.
+
+    Returns:
+        Bounded canonical JSON.
+
+    Raises:
+        TypeError: If a field has an invalid type.
+        ValueError: If the snapshot is invalid or exceeds the size limit.
+    """
 
     document = (
         _failed_attempt_to_document(value)
@@ -612,7 +675,18 @@ def dump_failed_transcription_attempt(value: object) -> str:
 
 
 def load_failed_transcription_attempt(raw: str) -> dict[str, Any]:
-    """Parse and validate one serialized failed-attempt snapshot."""
+    """Parse and validate one serialized failed-attempt snapshot.
+
+    Args:
+        raw: Serialized failed-attempt JSON.
+
+    Returns:
+        The validated failed-attempt document.
+
+    Raises:
+        TypeError: If ``raw`` or a decoded field has an invalid type.
+        ValueError: If JSON, snapshot content, or size is invalid.
+    """
 
     return _validate_failed_attempt_document(_load_bounded(raw))
 

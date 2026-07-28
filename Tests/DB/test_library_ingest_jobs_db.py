@@ -1,4 +1,6 @@
 import sqlite3
+from dataclasses import replace
+
 import pytest
 
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
@@ -35,6 +37,42 @@ def test_upsert_is_idempotent_update_in_place(tmp_path):
     db.upsert_job(reg.jobs()[0])  # same job_id, now PARSING
     rows = db.all_jobs()
     assert len(rows) == 1 and rows[0]["state"] == "parsing"
+    db.close()
+
+
+def test_retry_pair_upsert_rolls_back_both_rows_on_second_write_failure(
+    tmp_path,
+    monkeypatch,
+):
+    reg = LibraryIngestJobRegistry()
+    original = reg.submit(source_path="/a.mp3")
+    db = _db(tmp_path)
+    db.upsert_job(original)
+
+    superseded = replace(original, superseded=True)
+    retry = replace(
+        original,
+        job_id="ingest-job-2",
+        retry_of_job_id=original.job_id,
+    )
+    real_upsert = db._upsert_job
+    writes = 0
+
+    def fail_second_write(conn, job):
+        nonlocal writes
+        writes += 1
+        real_upsert(conn, job)
+        if writes == 2:
+            raise RuntimeError("second write failed")
+
+    monkeypatch.setattr(db, "_upsert_job", fail_second_write)
+
+    with pytest.raises(RuntimeError, match="second write failed"):
+        db.upsert_retry(superseded, retry)
+
+    rows = db.all_jobs()
+    assert [row["job_id"] for row in rows] == [original.job_id]
+    assert rows[0]["superseded"] == 0
     db.close()
 
 

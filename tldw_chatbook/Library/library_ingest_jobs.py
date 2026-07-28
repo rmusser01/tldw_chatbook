@@ -269,11 +269,17 @@ class IngestJobStore(Protocol):
     Optional -- a registry with no store attached (the default) is 100%
     pure/in-memory, matching every pre-existing behavior byte-for-byte.
     When attached (``attach_store``), every mutation best-effort persists
-    the affected job(s); a store exception is caught and logged, never
-    allowed to break the mutation itself (see ``_persist``/``_persist_delete``).
+    the affected job(s). Retry creation is the exception: its source and
+    retry rows must commit atomically before the in-memory mutation is exposed.
+    A failed retry-pair write is logged and leaves the source retryable.
     """
 
     def upsert_job(self, job: "LibraryIngestJob") -> None: ...
+    def upsert_retry(
+        self,
+        source: "LibraryIngestJob",
+        retry: "LibraryIngestJob",
+    ) -> None: ...
     def delete_job(self, job_id: str) -> None: ...
 
 
@@ -315,8 +321,10 @@ class LibraryIngestJobRegistry:
             store: An object implementing ``IngestJobStore``
                 (``upsert_job``/``delete_job``). Once attached, every
                 mutation best-effort persists the affected job(s) -- see
-                ``_persist``/``_persist_delete``. Not attaching one (the
-                default) keeps the registry 100% pure/in-memory.
+                ``_persist``/``_persist_delete``. Retry creation additionally
+                requires the store's atomic ``upsert_retry`` operation before
+                exposing the mutation. Not attaching one (the default) keeps
+                the registry 100% pure/in-memory.
         """
         self._store = store
 
@@ -916,7 +924,7 @@ class LibraryIngestJobRegistry:
         Returns:
             The newly appended ``QUEUED`` job (a copy), or ``None`` when
             ``job_id`` is unknown, not currently ``FAILED``, or already
-            hidden.
+            hidden, or when its durable retry-pair transaction fails.
         """
         index = self._find_index(job_id)
         if index is None:
@@ -935,7 +943,7 @@ class LibraryIngestJobRegistry:
         ):
             return None
         new_job = LibraryIngestJob(
-            job_id=self._allocate_job_id(),
+            job_id=f"ingest-job-{self._next_id}",
             source_path=source.source_path,
             title=source.title,
             author=source.author,
@@ -954,11 +962,18 @@ class LibraryIngestJobRegistry:
             ),
         )
         superseded_source = replace(source, superseded=True)
+        if self._store is not None:
+            try:
+                self._store.upsert_retry(superseded_source, new_job)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"ingest retry persist failed: {source.job_id}"
+                )
+                return None
+        self._next_id += 1
         self._jobs[index] = superseded_source
         self._jobs.append(new_job)
         self._notify_listeners()
-        self._persist(superseded_source)
-        self._persist(new_job)
         return _copy_job(new_job)
 
     def dismiss(self, job_id: str) -> LibraryIngestJob | None:

@@ -251,8 +251,9 @@ class LibraryIngestJobsDB(BaseDB):
         # "ingest-job-{n}" -> n
         return int(job_id.rsplit("-", 1)[-1])
 
-    def upsert_job(self, job) -> None:
-        conn = self._get_connection()
+    def _upsert_job(self, conn: sqlite3.Connection, job) -> None:
+        """Upsert one job through an existing transaction."""
+
         conn.execute(
             """
             INSERT INTO ingest_jobs
@@ -325,7 +326,28 @@ class LibraryIngestJobsDB(BaseDB):
                 ),
             ),
         )
-        conn.commit()
+
+    def upsert_job(self, job) -> None:
+        """Persist one ingest job in a standardized write transaction."""
+
+        with self.transaction() as conn:
+            self._upsert_job(conn, job)
+
+    def upsert_retry(self, source, retry) -> None:
+        """Persist a superseded source and its retry atomically.
+
+        Args:
+            source: The failed source job with ``superseded`` set.
+            retry: The new queued retry linked to ``source``.
+
+        Raises:
+            Exception: If either upsert fails. The transaction rolls both
+                writes back before propagating the failure.
+        """
+
+        with self.transaction() as conn:
+            self._upsert_job(conn, source)
+            self._upsert_job(conn, retry)
 
     def delete_job(self, job_id: str) -> None:
         conn = self._get_connection()
