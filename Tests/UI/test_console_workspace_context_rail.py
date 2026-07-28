@@ -1583,17 +1583,26 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
 
 
 async def _click_conversation_browser_toggle(console, pilot, selector: str) -> None:
-    """Scroll a browser toggle into view, then drive it via a REAL click.
+    """Scroll a browser toggle into view, then drive it via a REAL click at
+    the WIDGET's own center.
 
-    TASK-1142 (UAT F4): section-header carets rendered but real clicks never
-    reached the toggle `Button` -- `.press()` (used by every collapse test
-    above) calls the Button's own handler directly and never exercises
-    Textual's actual click-routing (`get_widget_at` hit-testing against the
-    compositor), so it could not have caught this. Scrolling first mirrors
-    what a real user does before clicking anything below the fold; without
-    it, `pilot.click` can silently miss a widget that is currently clipped
-    out of the rail's visible viewport (nothing to do with this defect --
-    you simply cannot click what is not on screen).
+    `.press()` (used by every collapse test above this point in the file)
+    calls the Button's own handler directly and never exercises Textual's
+    actual click-routing (`get_widget_at` hit-testing against the
+    compositor). This helper does exercise real click routing, but clicks
+    at the widget's center coordinate, not at the caret glyph's actual
+    rendered screen position -- see `test_section_header_caret_is_
+    clickable_at_its_rendered_screen_coordinates` below for the
+    coordinate-honest version that reproduces TASK-1142/UAT F4 directly
+    (round-1 review: this widget-center approach could not distinguish a
+    real fix from an inert one, since a toggle that's merely present
+    somewhere on screen still centers inside its own region regardless of
+    whether its rendered caret is where a live user would actually click).
+    Scrolling first mirrors what a real user does before clicking anything
+    below the fold; without it, `pilot.click` can silently miss a widget
+    that is currently clipped out of the rail's visible viewport (nothing
+    to do with either defect -- you simply cannot click what is not on
+    screen).
     """
     rail_body = console.query_one("#console-left-rail-body")
 
@@ -1805,6 +1814,109 @@ async def test_collapsing_workspaces_via_real_click_reveals_aggregate_marker_fro
             _static_plain(console, "#console-conversation-browser-workspaces-title")
             == "Workspaces ●"
         )
+
+
+def _render_screen_lines(console) -> list[str]:
+    """Render the full screen to plain text lines -- the same view a human
+    (or a tmux capture, matching the UAT's own flow) would see, not the
+    widget tree."""
+    compositor = console.screen._compositor
+    return [
+        "".join(seg.text for seg in strip._segments)
+        for strip in compositor.render_strips()
+    ]
+
+
+def _find_caret_in_row_with(lines: list[str], label_text: str) -> tuple[int, int]:
+    """Return the (x, y) SCREEN coordinates of the caret glyph on the row
+    containing ``label_text``, using cumulative CELL width up to the glyph
+    (matches how a real terminal/tmux column position works, not a raw
+    Python string index -- some rendered rows carry box-drawing characters
+    ahead of the target text)."""
+    for y, line in enumerate(lines):
+        if label_text in line and (GLYPH_EXPANDED in line or GLYPH_COLLAPSED in line):
+            for glyph in (GLYPH_EXPANDED, GLYPH_COLLAPSED):
+                idx = line.find(glyph)
+                if idx != -1:
+                    return cell_len(line[:idx]), y
+    raise AssertionError(f"No caret found on a rendered row containing {label_text!r}")
+
+
+@pytest.mark.asyncio
+async def test_section_header_caret_is_clickable_at_its_rendered_screen_coordinates() -> (
+    None
+):
+    """TASK-1142 round-1 review: the round-0 fix (an inline width on the
+    toggle `Button`) was INERT. Removing it left every real-click test in
+    this file passing, because `pilot.click(selector)` clicks at the
+    WIDGET's own center -- never at the coordinates a live user's mouse
+    actually lands on, which is the caret GLYPH's position in the rendered
+    pane. This test is coordinate-honest: it locates the caret exactly the
+    way the UAT's tmux flow did (``line.index('▾')`` against the rendered
+    text, not a widget query), then clicks at THOSE screen coordinates via
+    ``pilot.click(offset=...)`` with no selector.
+
+    The reviewer's hypothesis A (the visible caret is painted inside the
+    non-interactive title `Static`, not the `Button`) does not hold: a
+    width-scan across 100-200 column terminals on a freshly-mounted tray
+    found the glyph's rendered position resolving to the toggle `Button`
+    every time. The REAL, reproduced mechanism: ``_conversation_browser_
+    list_height`` (the tray's own auto-height estimate for `#console-
+    workspace-conversations`) assumed every empty-copy line ("No starred
+    conversations." etc.) renders as exactly one row. That Static is NOT
+    reduced by the star-column chrome width the way a row title is, so at
+    the tray's real content width it silently wraps to two lines while the
+    heuristic still counted one -- undercounting the container's explicit
+    height and clipping whatever composed after it out of the tray's own
+    visible bounds. Concretely: collapse "Chats" via its rendered caret,
+    then look for "Chats"'s own (now ▸) caret again in the freshly
+    rendered pane -- on the unfixed code this raises ``AssertionError``
+    (verified directly against 168f61ed8: the header is not merely
+    off-position, it is not painted at all), because "No starred
+    conversations." and "No workspace conversations." both wrap to two
+    rows above it. Fixed in ``_empty_copy_line_count`` /
+    ``_conversation_browser_list_height`` (see their docstrings).
+    """
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    default_workspace = service.get_active_workspace()
+    service.link_membership(
+        default_workspace.workspace_id,
+        item_type="conversation",
+        item_id="real-click-chat-a",
+        role="workspace-thread",
+        title="Real Click Chat A",
+    )
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _seed_console_transcript_message(console)
+        await pilot.pause(0.3)
+
+        # Click #1 at the CARET'S rendered screen coordinates: collapse.
+        lines = _render_screen_lines(console)
+        x, y = _find_caret_in_row_with(lines, "Chats")
+        landed = await pilot.click(offset=(x, y))
+        assert landed, "click at the caret's rendered coordinates missed the toggle"
+        await pilot.pause(0.3)
+        assert all(
+            "Real Click Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        ), "collapse via glyph-coordinate click did not take effect"
+
+        # Click #2: re-locate the caret in the FRESHLY rendered pane (not
+        # the widget tree, not a cached position) and click there again.
+        lines2 = _render_screen_lines(console)
+        x2, y2 = _find_caret_in_row_with(lines2, "Chats")
+        landed2 = await pilot.click(offset=(x2, y2))
+        assert landed2, "click at the caret's rendered coordinates missed the toggle"
+        await pilot.pause(0.3)
+        assert any(
+            "Real Click Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        ), "expand via glyph-coordinate click did not take effect"
 
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
@@ -2581,12 +2693,23 @@ async def test_console_rail_list_height_matches_rendered_rows() -> None:
         ) + len(
             conversation_list.query(".console-conversation-browser-group-header")
         )
-        empty_copies = len(
-            conversation_list.query(".console-workspace-empty-copy")
+        # TASK-1142 round 1 review: an empty-copy line ("No starred
+        # conversations." etc.) is NOT always exactly one row -- unlike a
+        # row title it is not reduced by the star-column chrome width, so
+        # at a narrow content width it wraps to two rows while the tray's
+        # own height estimate must still budget for that (see
+        # `_empty_copy_line_count`). Sum each widget's OWN settled rendered
+        # height (ground truth: what Static actually painted) rather than
+        # assuming a flat one row per occurrence.
+        empty_copy_widgets = list(
+            conversation_list.query(".console-workspace-empty-copy").results(Static)
+        )
+        empty_copies_height = sum(
+            max(1, widget.region.height) for widget in empty_copy_widgets
         )
         assert (
             int(conversation_list.styles.height.value)
-            == rows_height + header_count + empty_copies
+            == rows_height + header_count + empty_copies_height
         )
 
 

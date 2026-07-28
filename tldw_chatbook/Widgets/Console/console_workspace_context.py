@@ -713,11 +713,54 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         )
 
     @staticmethod
+    def _empty_copy_line_count(text: str, budget: int) -> int:
+        """Return the rendered line count for an empty-copy Static at
+        ``budget`` cells wide.
+
+        TASK-1142 round 1 review: ``_conversation_browser_list_height`` used
+        to assume every empty-copy line ("No starred conversations." etc.)
+        always renders as exactly one row. Unlike a row title, this Static
+        is NOT reduced by ``_BROWSER_ROW_CHROME_WIDTH`` (there is no star
+        column beside it), so at the tray's real content width it can (and
+        does) wrap to two lines while the flat-constant heuristic still
+        counted one. That single missing row silently undercounted the
+        `#console-workspace-conversations` container's explicit height,
+        clipping whatever composed after it -- including a LATER section's
+        entire header, caret and all -- out of the tray's own visible
+        bounds. Confirmed via a coordinate-honest repro: after a real click
+        collapsed "Chats", "Chats"'s own re-expand caret vanished from the
+        rendered pane entirely (not just off in a click-miss sense -- not
+        painted at all), because "No starred conversations." and "No
+        workspace conversations." both silently wrapped to two lines above
+        it.
+
+        Reuses the same word-wrap ``wrap_console_conversation_title``
+        already uses for row titles so this can never drift from a
+        plausible real render the way the flat constant did.
+        """
+        return max(
+            _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT,
+            len(wrap_console_conversation_title(text, budget)),
+        )
+
+    @staticmethod
     def _conversation_browser_list_height(
         browser: ConsoleConversationBrowserState,
-        budget: int,
+        row_title_budget: int,
+        empty_copy_budget: int,
     ) -> int:
-        """Return the full content height for the grouped browser rows."""
+        """Return the full content height for the grouped browser rows.
+
+        Args:
+            browser: The grouped browser state being measured.
+            row_title_budget: Wrap budget for row titles (reduced for the
+                star column, matches ``_browser_title_budget()``).
+            empty_copy_budget: Wrap budget for empty-copy lines, which span
+                the tray's full row width with no star-column reduction
+                (matches ``_row_content_width``) -- see
+                ``_empty_copy_line_count`` for why this must differ from
+                ``row_title_budget``.
+        """
         height = 0
         for section in browser.sections:
             height += _CONVERSATION_BROWSER_HEADER_HEIGHT
@@ -730,17 +773,21 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                         continue
                     if group.rows:
                         height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-                            group.rows, budget
+                            group.rows, row_title_budget
                         )
                     elif group.empty_copy:
-                        height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
+                        height += ConsoleWorkspaceContextTray._empty_copy_line_count(
+                            group.empty_copy, empty_copy_budget
+                        )
                 continue
             if section.rows:
                 height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-                    section.rows, budget
+                    section.rows, row_title_budget
                 )
             elif section.empty_copy:
-                height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
+                height += ConsoleWorkspaceContextTray._empty_copy_line_count(
+                    section.empty_copy, empty_copy_budget
+                )
         return max(_CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT, height)
 
     def compose(self) -> ComposeResult:
@@ -1041,7 +1088,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         row_index = 0
         conversation_list = Vertical(id="console-workspace-conversations")
         conversation_list.styles.height = self._conversation_browser_list_height(
-            browser, self._browser_title_budget()
+            browser,
+            self._browser_title_budget(),
+            self._row_content_width,
         )
         conversation_list.styles.min_height = 0
         with conversation_list:
@@ -1159,23 +1208,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 if section.collapsed
                 else f"Collapse {section.label}"
             )
-            # TASK-1142: mirror the app-tier CSS width (and the legacy
-            # toggle's own belt-and-suspenders inline styles below) directly
-            # on the widget. Textual's built-in `Button` default is `width:
-            # auto; min-width: 16` (task-712 hit the exact same failure mode
-            # for Switch/New) -- relying solely on the bundle's `.console-
-            # workspace-action.console-workspace-conversations-toggle` rule
-            # to beat that default left the toggle's real (unclipped) hit
-            # region up to 16 cells wide, pushed past the rail's clipped
-            # right edge: the caret glyph rendered inside the visible column
-            # but the actual on-screen widget resolved at that position (via
-            # the compositor, matching what a real mouse click hits) was
-            # whatever sat behind the rail -- an inert-looking-but-present
-            # caret. Setting the width inline removes the dependency on the
-            # bundle CSS having loaded/cascaded correctly at all.
-            toggle.styles.width = 3
-            toggle.styles.min_width = 3
-            toggle.styles.max_width = 3
             yield toggle
 
     def _compose_conversation_browser_group_header(
@@ -1231,11 +1263,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 if group.collapsed
                 else f"Collapse {group.label}"
             )
-            # TASK-1142: see the matching comment on the section-header
-            # toggle above -- same defensive inline width, same reason.
-            toggle.styles.width = 3
-            toggle.styles.min_width = 3
-            toggle.styles.max_width = 3
             yield toggle
 
     def _compose_conversation_browser_row(
