@@ -626,6 +626,18 @@ class LazyLiveDictationService:
             duration=duration,
         )
 
+        # Release capture explicitly. The non-lazy service does this in its own
+        # stop_dictation; this one never did, so every successful stop left the
+        # microphone live. Use the private attribute, not the `audio_service`
+        # property -- reading the property lazily CONSTRUCTS a recorder, which
+        # would open an audio device during teardown.
+        recorder = self._audio_service
+        if recorder is not None:
+            try:
+                recorder.stop_recording()
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                logger.opt(exception=True).warning("Failed to release audio capture")
+
         # Cleanup
         self._cleanup()
 

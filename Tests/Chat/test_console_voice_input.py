@@ -1185,3 +1185,68 @@ def test_finish_claims_the_service_under_the_state_lock(monkeypatch):
     assert all(controller.service_touches)  # ...and every touch held the lock
     assert service.stopped is True
     assert controller.state == cvi.STATE_IDLE
+
+
+# -- Fix round 5: the dependency's stop_dictation() never released capture, --
+# -- and the controller trusted it anyway ------------------------------------
+
+
+def test_stop_releases_capture_even_if_the_service_forgets(monkeypatch):
+    """The Console does not trust the dependency to release the microphone.
+
+    LazyLiveDictationService.stop_dictation() historically returned without
+    stopping capture, so the controller verifies it independently.
+    """
+    released = []
+
+    class ForgetfulService:
+        def __init__(self, **kwargs):
+            self._audio_service = type(
+                "R", (), {"stop_recording": lambda s: released.append("stopped")}
+            )()
+
+        def start_dictation(self, **callbacks):
+            return True
+
+        def stop_dictation(self):
+            return None  # deliberately does NOT release capture
+
+    controller, events, _ = _controller(monkeypatch, service=ForgetfulService())
+    controller.start()
+    controller.stop()
+
+    assert released == ["stopped"]
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_mid_session_error_releases_capture(monkeypatch):
+    """An error while listening must not leave a live recorder behind idle.
+
+    Without this, a retry claims a second service and orphans the first --
+    two simultaneously live recorders.
+    """
+    released = []
+
+    class ErroringService:
+        def __init__(self, **kwargs):
+            self._audio_service = type(
+                "R", (), {"stop_recording": lambda s: released.append("stopped")}
+            )()
+            self._on_error = None
+
+        def start_dictation(self, **callbacks):
+            self._on_error = callbacks["on_error"]
+            return True
+
+        def stop_dictation(self):
+            return None
+
+    service = ErroringService()
+    controller, events, _ = _controller(monkeypatch, service=service)
+    controller.start()
+    released.clear()
+
+    service._on_error(RuntimeError("transcription model missing"))
+
+    assert released == ["stopped"]
+    assert controller.state == cvi.STATE_IDLE

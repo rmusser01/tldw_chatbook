@@ -429,6 +429,18 @@ class ConsoleVoiceInputController:
         # report has happened either way, and the service's own
         # `_notify_error()` only logs whatever escapes this callback.
         self._error_reported = True
+        # Claim and release the service *before* reporting: a mid-session
+        # error (state LISTENING, `self._service` already claimed by
+        # `_run_begin()`) must not leave a live recorder behind an idle
+        # machine, and must not be silently orphaned when a retry claims a
+        # second service. During the startup path there is nothing to claim
+        # yet (`_claim_service()` returns None), so this is a no-op there.
+        # `_release()` never raises, so it cannot disturb the `_fail()`
+        # raising-emit contract this callback depends on (see
+        # `_run_begin`'s `except` and the `_error_reported` latch above).
+        service = self._claim_service()
+        if service is not None:
+            self._release(service)
         self._fail(str(error))
 
     def _fail_not_started(self) -> None:
@@ -519,6 +531,14 @@ class ConsoleVoiceInputController:
             logger.opt(exception=True).warning("Console dictation failed to stop")
             self._fail(str(exc))
             return
+        # Belt-and-braces: `LazyLiveDictationService.stop_dictation()` has
+        # historically returned successfully without releasing capture, so
+        # the Console does not trust the dependency alone. `stop_recording()`
+        # early-returns when not already recording, so releasing again here
+        # cannot double-stop a service that already released itself
+        # correctly -- it logs a warning at worst.
+        if service is not None:
+            self._release(service)
         self._enter_idle()
 
     def _enter_idle(self) -> None:
