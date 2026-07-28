@@ -15,13 +15,36 @@ from loguru import logger
 
 from .run_log_format import RunLogRecord, encode_record
 
-#: Directory created inside the resolved root. Deliberately UNDOTTED: a
-#: dotted directory is excluded by `_is_hidden_within`, which would hide
-#: the log from the very tools meant to read it.
+#: Directory created inside the resolved root. Deliberately UNDOTTED when the
+#: run's log lands in a bound workspace folder: a dotted directory is
+#: excluded by `_is_hidden_within`, which would hide the log from the very
+#: tools meant to read it there. `bind()` dots this name instead when the
+#: root came from the SANDBOX FALLBACK -- see its own comment (final-review
+#: CRITICAL 2).
 DEFAULT_DIR_NAME = "agent-runs"
 DEFAULT_SEGMENT_BYTES = 4_000_000
 DEFAULT_MAX_RECORD_BYTES = 1_000_000
 MANIFEST_NAME = "MANIFEST"
+
+#: Side channel from `resolve_log_root()` to `bind()`: whether the last
+#: real call resolved via the sandbox fallback (no read-write workspace
+#: folder bound) rather than a bound workspace folder. Thread-local so
+#: concurrent binds on different writers/threads can never cross-contaminate
+#: each other's naming choice.
+#:
+#: This exists ONLY because `resolve_log_root()`'s return value itself must
+#: stay a bare `Path | None` -- it is pinned by
+#: `test_real_resolve_log_root_prefers_workspace_over_sandbox` and its
+#: sandbox-fallback sibling in Tests/Agents/test_run_log_writer.py, which
+#: assert plain `Path` equality against the real function's result -- and
+#: because many pre-existing tests across several files monkeypatch
+#: `resolve_log_root` wholesale with a bare `lambda: some_path`, which never
+#: touches this side channel. `bind()` resets it to `False` immediately
+#: before calling `resolve_log_root()`, so those doubles (and any stale
+#: value from an earlier call in this thread) always read back as "not the
+#: sandbox fallback" -- the safe, pre-existing-behaviour-preserving default.
+#: Only the REAL `resolve_log_root()` ever sets it to `True`.
+_root_kind = threading.local()
 
 
 def _setting(key: str, default):
@@ -94,9 +117,17 @@ def resolve_log_root() -> Path | None:
     such folder is bound. Any failure resolves to ``None`` (logging off)
     rather than to a wider or unvalidated location.
 
+    As a side effect, records into the thread-local ``_root_kind`` whether
+    THIS call resolved via the sandbox fallback rather than a bound
+    workspace folder -- ``bind()`` reads it back to choose the log
+    directory's name (see CRITICAL 2, final review). The return value
+    itself is unchanged by this: still a bare ``Path | None``, exactly as
+    before.
+
     Returns:
         The chosen root directory, or ``None`` when none is usable.
     """
+    _root_kind.is_sandbox_fallback = False
     try:
         from tldw_chatbook.Tools.file_operation_tools import _tool_sandbox_root
         from tldw_chatbook.Tools.workspace_file_roots import allowed_file_roots
@@ -109,9 +140,12 @@ def resolve_log_root() -> Path | None:
     if not roots:
         return None
     # allowed_file_roots returns (sandbox, *workspace_folders); prefer a
-    # bound workspace folder, fall back to the sandbox.
+    # bound workspace folder, fall back to the sandbox. Which branch fires
+    # IS the fallback signal, reported structurally via the flag above --
+    # never guessed afterward by inspecting the resolved path's name.
     for candidate in roots[1:]:
         return candidate
+    _root_kind.is_sandbox_fallback = True
     return roots[0]
 
 
@@ -196,14 +230,42 @@ class RunLogWriter:
         if not _setting("run_log_enabled", True):
             self._active = False
             return
+        # Reset the side channel immediately before calling resolve_log_root()
+        # -- see `_root_kind`'s own docstring. Only a call to the REAL
+        # function can flip it back to True; a monkeypatched double (many
+        # pre-existing test fixtures) or a stale value from an earlier bind
+        # in this thread both read back as False, which is the
+        # backward-compatible, previously-shipped naming choice (undotted).
+        _root_kind.is_sandbox_fallback = False
         root = resolve_log_root()
         if root is None:
             self._active = False
             return
+        is_sandbox_fallback = getattr(_root_kind, "is_sandbox_fallback", False)
+        dir_name = self._dir_name
+        if is_sandbox_fallback and not dir_name.startswith("."):
+            # Final-review CRITICAL 2: the undotted name exists so the log
+            # is a user-visible artifact inside the user's OWN workspace
+            # folder -- that rationale holds only when the log actually
+            # lands there. Under the sandbox fallback (confirmed the real
+            # default: no rw workspace folder bound), `_tool_sandbox_root()`
+            # is EXACTLY the root `glob_files`/`grep_files` are rooted at,
+            # and those tools never consult `allowed_file_roots` (§9.4) --
+            # so an undotted "agent-runs" there is a live directory a
+            # sub-agent (which inherits the parent's allow-list) can read
+            # via grep_files/glob_files, handing it its PARENT's entire log
+            # and breaking spawn_subagent's "sees only the task text"
+            # promise. Dotting it here does NOT break OUR OWN reader --
+            # `search_run_log` -> `run_log_search.load_records` globs this
+            # directory directly and never routes through
+            # `validate_path`/`_is_hidden_within` -- it only removes the
+            # directory from what glob_files/grep_files/read_file can see,
+            # which in the app-internal sandbox case is exactly the intent.
+            dir_name = f".{dir_name}"
         try:
             from tldw_chatbook.Tools.file_operation_tools import is_within
 
-            base = root / self._dir_name
+            base = root / dir_name
             # Verify containment before creating any directories.
             if not is_within(base, root):
                 logger.warning(

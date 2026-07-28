@@ -162,20 +162,27 @@ SEARCH_RUN_LOG_TOOL_SCHEMA = ToolSchema(
         "Search this run's own complete log. Your context holds a truncated "
         "view; the log holds every model turn, tool call, and tool result in "
         "full. Use it to recover a truncated result or recall an earlier step "
-        "instead of re-running work. Prefer 'contains' (literal substring, "
-        "searches the whole record); 'pattern' is a regular expression and "
-        "only examines each record's first 500 characters."
+        "instead of re-running work. 'contains' (literal substring) and "
+        "'pattern' (regular expression, first 500 characters per record "
+        "only) both match a record's CONTENT ONLY -- never its metadata. "
+        "Use 'tool', 'type', 'status', and 'kind' to filter by metadata "
+        "instead -- e.g. to find every call to a specific tool, filter "
+        "with 'tool' rather than 'contains', since the tool's name may "
+        "never appear inside its own arguments or result."
     ),
     parameters={
         "type": "object",
         "properties": {
             "contains": {
                 "type": "string",
-                "description": "Literal substring to find (case-insensitive).",
+                "description": "Literal substring to find in a record's content "
+                "(case-insensitive). Never matches metadata such as the tool "
+                "name -- use 'tool' for that.",
             },
             "pattern": {
                 "type": "string",
-                "description": "Regular expression; first 500 chars per record.",
+                "description": "Regular expression over a record's content "
+                "only; first 500 chars per record.",
             },
             "tool": {"type": "string", "description": "Filter by tool name."},
             "type": {
@@ -183,6 +190,10 @@ SEARCH_RUN_LOG_TOOL_SCHEMA = ToolSchema(
                 "description": "Filter by record type: model, tool_call, tool_result.",
             },
             "status": {"type": "string", "description": "Filter: ok or error."},
+            "kind": {
+                "type": "string",
+                "description": "Filter by agent kind: primary or subagent.",
+            },
             "from_record": {"type": "integer", "description": "Lowest record number."},
             "to_record": {"type": "integer", "description": "Highest record number."},
             "context": {

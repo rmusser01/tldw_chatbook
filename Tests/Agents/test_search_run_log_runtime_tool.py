@@ -2,6 +2,7 @@
 """search_run_log: primary-only, no catalog slot, dispatched by the loop."""
 
 import json
+import re
 
 import pytest
 
@@ -187,3 +188,188 @@ def test_subagent_cannot_call_search_run_log(tmp_path, monkeypatch):
     assert any(
         f"Tool not permitted: {SEARCH_RUN_LOG_TOOL_NAME}" in r for r in tool_results
     )
+
+
+# -- Final-review CRITICAL 1 / IMPORTANT 6: exercise the REAL closure --------
+#
+# Every test above either injects a fake deps.search_run_log or asserts on
+# the schema; none drives agent_service.py's REAL closure. That gap is why
+# the closure's 400-char rendering ceiling (format_results' own default,
+# never overridden by the closure) survived seven reviews: following a
+# truncation trailer returned LESS content than the truncation it was
+# supposed to repair -- defeating spec §6.1, the single change that makes an
+# additive Phase 1 pay off at all.
+
+
+class _AllowGate:
+    """Bypasses BuiltinToolProvider's approval machinery for these tests.
+
+    `read_file`/`grep_files` carry the "reads" risk tag, which floors them
+    to `ask` under the REAL gate (`BuiltinToolProvider()`'s lazily-built
+    default) -- see test_builtin_gate_live_tools.py. These tests care about
+    the run-log closure and the file tools' own containment, not the
+    approval round trip, so they hand the provider a gate that always
+    allows.
+    """
+
+    def check(self, tool):
+        return None
+
+
+def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypatch):
+    """CRITICAL 1's regression test: drive a real tool result large enough
+    to be truncated in history, follow the trailer's own record pointer
+    through the REAL search_run_log closure, and confirm the recovered
+    content reaches a marker placed well beyond format_results' OLD
+    400-char rendering default.
+
+    Note on "beyond 16,000 chars" (the run's tool-result ceiling): this is
+    NOT independently achievable and is not attempted here. The recovered
+    render is deliberately capped at THIS SAME ceiling
+    (`config.budget.max_tool_result_chars`) that the ORIGINAL append-time
+    truncation used, and the search_run_log call's own result is re-capped
+    at the identical ceiling when IT is appended to history (the loop's
+    ordinary `_truncate_tool_result`, applied uniformly to every tool
+    result). So nothing the model ever reads in a message can exceed that
+    ceiling, by design ("this cannot blow the context" -- see the finding).
+    The marker is instead placed comfortably ABOVE 400 and comfortably
+    BELOW the ceiling: exactly the band the old bug made unreachable and
+    the fix restores.
+    """
+    from tldw_chatbook.Agents import run_log as run_log_module
+    import tldw_chatbook.Tools.file_operation_tools as file_tools
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setattr(file_tools, "_resolve_sandbox_config", lambda: str(sandbox))
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "tools" and key == "read_file_enabled":
+            return True
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+
+    # Marker sits at ~char 10,000: well past the old 400-char rendering
+    # bug, safely inside the run's 16,000-char ceiling so it is genuinely
+    # recoverable, while the trailing filler pushes the WHOLE result past
+    # 16,000 so a real append-time truncation (and a real format_results
+    # truncation on the recovery side) both actually fire.
+    marker = "END_MARKER_7f3a9c"
+    big_content = "A" * 10_000 + marker + "C" * 40_000
+    (sandbox / "big.txt").write_text(big_content, encoding="utf-8")
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = ToolCatalogRegistry()
+    reg.register_provider(BuiltinToolProvider(gate=_AllowGate()))
+
+    calls = []
+
+    def chat(**kwargs):
+        calls.append(kwargs)
+        round_idx = len(calls)
+        if round_idx == 1:
+            return _svc_fence("read_file", {"file_path": "big.txt"})
+        if round_idx == 2:
+            # Follow the trailer's OWN pointer, extracted from the ACTUAL
+            # truncated tool-result message the loop appended -- not a
+            # hardcoded record number -- so this test tracks the real
+            # capture order rather than assuming it.
+            last_msg = kwargs["messages_payload"][-1]["content"]
+            match = re.search(r"from_record=(\d+)", last_msg)
+            assert match, f"trailer did not name a record: {last_msg!r}"
+            record_number = int(match.group(1))
+            return _svc_fence(
+                SEARCH_RUN_LOG_TOOL_NAME,
+                {"from_record": record_number, "to_record": record_number},
+            )
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    service = AgentService(db, reg, chat_call=chat)
+    _rid, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "read the file"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("read_file",),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+
+    # Round 2's payload carries the history-truncated result: confirm a
+    # genuine truncation happened (there is more content than the ceiling
+    # allows), and that it names a recovery record.
+    truncated_msg = calls[1]["messages_payload"][-1]["content"]
+    assert "truncated" in truncated_msg
+    assert "search_run_log" in truncated_msg
+
+    # Round 3's payload carries search_run_log's rendered result: the
+    # marker -- at ~char 10,000, 25x past format_results' OLD 400-char
+    # default -- must be PRESENT, proving the closure now renders at the
+    # run's real ceiling rather than the old hardcoded default.
+    recovered_msg = calls[2]["messages_payload"][-1]["content"]
+    assert marker in recovered_msg
+    assert len(recovered_msg) > 400, (
+        "recovered message must be far larger than the old 400-char bug"
+    )
+
+
+def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkeypatch):
+    """IMPORTANT 5's regression test: `kind` is implemented in
+    `search_records` and justified by spec §4.1 ("a parent can search its
+    child's entire trace"), but the schema omitted it and the closure never
+    passed it through -- so it was unreachable end to end. Drives a real
+    spawn, then has the PARENT (never the child -- search_run_log stays
+    primary-only) filter its own log to `kind=subagent` and confirms it
+    finds the child's own record.
+    """
+    from tldw_chatbook.Agents import run_log as run_log_module
+
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = ToolCatalogRegistry()
+    reg.register_provider(BuiltinToolProvider())
+
+    child_marker = "CHILD_ONLY_MARKER_4b8e"
+    script = [
+        _svc_fence(SPAWN_TOOL_NAME, {"task": "investigate"}),  # parent spawns
+        {"choices": [{"message": {"content": child_marker}}]},  # child's final answer
+        _svc_fence(SEARCH_RUN_LOG_TOOL_NAME, {"kind": "subagent"}),  # parent searches
+        {"choices": [{"message": {"content": "done"}}]},  # parent's final answer
+    ]
+
+    def chat(**kwargs):
+        return script.pop(0)
+
+    service = AgentService(db, reg, chat_call=chat)
+    _rid, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "go"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", SPAWN_TOOL_NAME),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+
+    # Verify against the persisted run tree, not just the scripted flow:
+    # the PARENT's own tool_result for its search_run_log call must
+    # contain the CHILD's marker text.
+    parent_runs = [r for r in db.list_runs("c1") if r["agent_kind"] == "primary"]
+    assert len(parent_runs) == 1
+    search_results = [
+        s["result"]
+        for s in parent_runs[0]["steps"]
+        if s["kind"] == "tool_result" and s.get("tool_name") == SEARCH_RUN_LOG_TOOL_NAME
+    ]
+    assert search_results, "expected a search_run_log tool_result step"
+    assert any(child_marker in r for r in search_results)

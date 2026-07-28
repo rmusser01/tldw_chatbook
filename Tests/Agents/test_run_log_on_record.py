@@ -137,6 +137,71 @@ def test_refused_tool_call_still_emits_tool_call_and_tool_result_records():
     assert refused["call_id"] == "c1"
 
 
+def test_successful_dispatched_call_is_still_status_ok():
+    # Regression guard for the fix below: a genuine success must not
+    # collapse to "error" just because the status computation now looks at
+    # `result.ok` instead of the verdict alone.
+    turns = [
+        ModelTurn(
+            text="",
+            tool_calls=(
+                ToolCall(name="calculator", args={"expr": "1+1"}, call_id="c1"),
+            ),
+            assistant_message={"role": "assistant", "content": ""},
+        ),
+        ModelTurn(text="done"),
+    ]
+    seen, _ = run(turns, invoke=lambda c: ToolResult(ok=True, content="2"))
+    results = [p for kind, p in seen if kind == "tool_result"]
+    assert results and results[0]["status"] == "ok"
+
+
+def test_failing_tool_call_emits_and_is_searchable_as_error_status():
+    """tool_catalog.py documents `status` as filterable by "ok or error", but
+    the loop only ever wrote "ok" (any "proceed" verdict, even a dispatch
+    that actually failed -- see `content = ... f"ERROR: {result.error}"` in
+    agent_runtime.py) or "refused" -- "error" was never reachable, so an
+    agent filtering for its own failed calls got zero hits forever. This
+    pins both ends: the loop must emit status="error" for a genuine dispatch
+    failure, and search_records(..., status="error") must actually find it.
+    """
+    from tldw_chatbook.Agents.run_log_format import RunLogRecord
+    from tldw_chatbook.Agents.run_log_search import search_records
+
+    turns = [
+        ModelTurn(
+            text="",
+            tool_calls=(
+                ToolCall(name="calculator", args={"expr": "1/0"}, call_id="c1"),
+            ),
+            assistant_message={"role": "assistant", "content": ""},
+        ),
+        ModelTurn(text="done"),
+    ]
+    seen, _ = run(
+        turns, invoke=lambda c: ToolResult(ok=False, error="division by zero")
+    )
+    results = [p for kind, p in seen if kind == "tool_result"]
+    assert results, "a dispatched failure must still emit a tool_result record"
+    failed = results[0]
+    assert failed["status"] == "error"
+    assert failed["content"] == "ERROR: division by zero"
+
+    record = RunLogRecord(
+        number=1,
+        run_id="r",
+        kind="primary",
+        type="tool_result",
+        ts="t",
+        content=failed["content"],
+        tool=failed["tool"],
+        status=failed["status"],
+        call_id=failed["call_id"],
+    )
+    hits = search_records([record], status="error")
+    assert [r.number for r in hits] == [1]
+
+
 def test_failing_hook_never_aborts_the_run():
     def boom(kind, payload):
         raise RuntimeError("log is on fire")

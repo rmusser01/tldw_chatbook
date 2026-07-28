@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import sys
 import threading
 import time
 from collections.abc import Mapping
@@ -73,7 +74,9 @@ RUN_LOG_PROMPT_SECTION = (
     "it. When a result was truncated, or you need something from earlier in "
     "this run, call search_run_log to read the complete record instead of "
     "re-running the work or guessing. Prefer the 'contains' argument (a "
-    "literal substring, searched over the whole record) over 'pattern'. "
+    "literal substring) over 'pattern' -- but note 'contains' and 'pattern' "
+    "both match a record's CONTENT ONLY, never its metadata; use the "
+    "'tool', 'type', 'status', and 'kind' arguments to filter by metadata. "
     "Search for specific content you know you need rather than browsing."
 )
 
@@ -795,13 +798,35 @@ class AgentService:
                     tool=str(args.get("tool", "")),
                     type=str(args.get("type", "")),
                     status=str(args.get("status", "")),
+                    kind=str(args.get("kind", "")),
                     from_record=int(args.get("from_record") or 0),
                     to_record=int(args.get("to_record") or 0),
                     context=int(args.get("context") or 0),
                 )
             except (TypeError, ValueError) as exc:
                 return ToolResult(ok=False, error=f"Invalid search arguments: {exc}")
-            return ToolResult(ok=True, content=format_results(hits))
+            # Final-review CRITICAL 1: render recovered records at THIS run's
+            # own tool-result ceiling, not format_results' 400-char rendering
+            # default. §6.1's whole point is that a truncation trailer points
+            # at a lossless copy -- if the copy renders at 400 chars while
+            # the truncation it repairs cut at 16,000, following the trailer
+            # returns LESS than the thing it was supposed to fix. Keep
+            # format_results' own default untouched (its existing tests pin
+            # 400) and instead pass the run's actual ceiling from here.
+            # 0 (or negative) is the documented "unlimited" value for
+            # RunBudget.max_tool_result_chars / _truncate_tool_result;
+            # format_results has no such sentinel (max_chars=0 would render
+            # nothing), so translate it into a ceiling that never trips
+            # format_results' own truncation branch. The rendered search
+            # RESULT still passes back through the loop's ordinary
+            # _truncate_tool_result at the history-append seam, so this
+            # cannot blow the run's context budget -- it only stops the
+            # recovery path from being strictly worse than what it repairs.
+            ceiling = config.budget.max_tool_result_chars
+            render_max_chars = ceiling if ceiling > 0 else sys.maxsize
+            return ToolResult(
+                ok=True, content=format_results(hits, max_chars=render_max_chars)
+            )
 
         def on_record(record_type: str, payload: dict) -> int | None:
             # MUST return the record number: Task 7 threads it into the

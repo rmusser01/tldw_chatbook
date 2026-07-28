@@ -725,12 +725,25 @@ def run_agent_loop(
                 status="",
                 call_id=call.call_id,
             )
+            # Final-review IMPORTANT 3: tool_catalog.py documents `status` as
+            # "ok or error", but this used to write only "ok" (any
+            # "proceed" verdict, even a dispatch that actually failed -- see
+            # `content = ... f"ERROR: {result.error}"` above) or "refused"
+            # -- "error" was never reachable. `result` is only safe to read
+            # here when verdict == "proceed": that is the sole branch above
+            # that assigns it in THIS iteration (a non-"proceed" verdict
+            # skips dispatch entirely, so `result` -- if it exists at all --
+            # would be a stale value from a different call in this batch).
+            if verdict == "proceed":
+                record_status = "ok" if result.ok else "error"
+            else:
+                record_status = "refused"
             record_number = _emit_record(
                 deps,
                 "tool_result",
                 content=content,
                 tool=call.name,
-                status="ok" if verdict == "proceed" else "refused",
+                status=record_status,
                 call_id=call.call_id,
             )
 
