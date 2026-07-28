@@ -37,6 +37,26 @@ illustration of why these entries carry their evidence.
 
 ---
 
+## `--ac` does not split on commas — you get one run-on criterion
+
+**What happened.** 2026-07-28, filing task-1261: four acceptance criteria were passed
+as `--ac "first,second,third,fourth"`, exactly the shape CLAUDE.md documents
+(`--ac "Must work,Must be tested"`). The CLI (v1.44.0) wrote **a single** criterion
+whose text was the whole comma-joined string. Confirmed on a trivial control:
+`--ac "alpha,beta,gamma"` produces `- [ ] #1 alpha,beta,gamma`, not three items.
+
+A single run-on AC is not a cosmetic problem: it cannot be checked off
+independently, so the Definition of Done ("all `- [ ]` changed to `- [x]`") becomes
+all-or-nothing and the task stops describing what is actually left.
+
+**What to do.** Pass `--ac` **once per criterion** if the flag repeats, or write the
+`## Acceptance Criteria` block into the task file directly and verify with
+`backlog task <id> --plain` before moving on. Whichever route, read the rendered AC
+list back — the CLI accepted the comma form silently rather than erroring, so nothing
+warns you.
+
+---
+
 ## `git ls-tree` octal-escapes non-ASCII filenames
 
 **What happened.** Several task titles contain an em-dash. `git ls-tree` emits those
