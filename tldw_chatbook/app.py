@@ -249,6 +249,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSAudioBookGenerateEvent,
 )
 from .Notes.Notes_Library import NotesInteropService
+from .Notes.file_notes_git_service import build_file_notes_session_owner
 from .Notes.notes_scope_service import NotesScopeService
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
@@ -3611,6 +3612,8 @@ class TldwCli(
         load_runtime_policy_for_app(self)
         self.screen_state_store = ScreenStateStore()
         self.pending_handoffs = PendingHandoffStore()
+        self.file_notes_session_owner = build_file_notes_session_owner()
+        self._file_notes_session_owner_shutdown_task: asyncio.Task[None] | None = None
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
@@ -6233,6 +6236,45 @@ class TldwCli(
                     pass
                 return
 
+        release_navigation = None
+        acquire_navigation = getattr(
+            current_screen,
+            "acquire_navigation_transition",
+            None,
+        )
+        if callable(acquire_navigation):
+            admission = acquire_navigation()
+            if admission is False:
+                logger.info(
+                    f"Navigation to {screen_name} vetoed by the outgoing "
+                    "screen's transition admission"
+                )
+                return
+            release_navigation = admission
+        try:
+            await self._complete_screen_navigation(
+                message=message,
+                requested_screen=requested_screen,
+                screen_name=screen_name,
+                current_tab_value=current_tab_value,
+                screen_class=screen_class,
+                current_screen=current_screen,
+            )
+        finally:
+            if callable(release_navigation):
+                release_navigation()
+
+    async def _complete_screen_navigation(
+        self,
+        *,
+        message: NavigateToScreen,
+        requested_screen: str,
+        screen_name: str,
+        current_tab_value: str,
+        screen_class: type | None,
+        current_screen: Any,
+    ) -> None:
+        """Save, construct, restore, and switch while transition admission is held."""
         runtime_identity = self._current_runtime_identity()
         outgoing_key = str(self.current_tab or "").strip()
         if not outgoing_key:
@@ -7846,11 +7888,51 @@ class TldwCli(
         if client is not None and getattr(client, "sessions", None):
             await client.disconnect_all()
 
+    async def _shutdown_file_notes_session_owner(self) -> None:
+        """Settle the process-owned File Notes Git lifecycle exactly once."""
+        owner = getattr(self, "file_notes_session_owner", None)
+        if owner is None:
+            return
+        task = getattr(self, "_file_notes_session_owner_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                owner.shutdown_async(),
+                name="shutdown_file_notes_session_owner",
+            )
+            self._file_notes_session_owner_shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _shutdown(self) -> None:
+        """Settle File Notes Git before Textual closes screens and replicas."""
+        owner_error: BaseException | None = None
+        try:
+            await self._shutdown_file_notes_session_owner()
+        except BaseException as error:
+            owner_error = error
+        try:
+            await super()._shutdown()
+        except BaseException as shutdown_error:
+            if owner_error is not None:
+                shutdown_error.add_note(
+                    "File Notes session owner shutdown also failed before "
+                    "Textual screen teardown"
+                )
+            raise
+        if owner_error is not None:
+            raise owner_error
+
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
         import asyncio
 
         logging.info("--- App Unmounting ---")
+        try:
+            await self._shutdown_file_notes_session_owner()
+        except Exception as error:
+            self.loguru_logger.warning(
+                "File Notes session owner fallback shutdown failed "
+                f"type={type(error).__name__}"
+            )
         self._ui_ready = False
         self._stop_ui_responsiveness_monitor()
 

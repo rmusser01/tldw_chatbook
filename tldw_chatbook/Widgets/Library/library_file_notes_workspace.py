@@ -40,6 +40,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SessionBinding,
     SessionGitRow,
     SessionGitStatus,
+    SessionTransitionKind,
 )
 from tldw_chatbook.Notes.file_notes_service import (
     FileNoteEntry,
@@ -361,6 +362,21 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             and self._save_state not in {"dirty", "saving", "conflict", "error"}
         )
+
+    def acquire_transition(
+        self,
+        kind: SessionTransitionKind,
+    ) -> Callable[[], None] | Literal[False] | None:
+        """Synchronously admit an exact-binding screen or source transition."""
+        if kind not in {"screen", "source"}:
+            raise ValueError(f"Unsupported workspace transition kind: {kind}")
+        binding = self._session_binding
+        if binding is None:
+            return None
+        lease = self._session_owner.try_acquire_transition(binding, kind)
+        if lease is None:
+            return False
+        return lease.release
 
     @property
     def narrow(self) -> bool:

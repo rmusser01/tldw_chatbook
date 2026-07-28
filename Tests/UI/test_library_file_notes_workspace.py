@@ -89,6 +89,30 @@ class _DynamicWorkspaceHarness(App[None]):
         yield Vertical(id="dynamic-workspace-host")
 
 
+def test_workspace_transition_admission_is_exact_binding_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    workspace = LibraryFileNotesWorkspace(
+        root=tmp_path / "notes",
+        replica=None,
+        session_owner=owner,
+    )
+    workspace._session_binding = binding
+
+    release = workspace.acquire_transition("source")
+    assert callable(release)
+    assert owner.try_acquire_mutation(binding) is None
+    release()
+    release()
+
+    mutation = owner.try_acquire_mutation(binding)
+    assert mutation is not None
+    assert workspace.acquire_transition("screen") is False
+    mutation.release()
+
+
 async def _wait_until(
     pilot,
     predicate: Callable[[], bool],
