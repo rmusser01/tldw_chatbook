@@ -418,10 +418,11 @@ class LibraryFileNotesWorkspace(Vertical):
 
     async def shutdown(self) -> None:
         """Permanently close this workspace's owned replica once."""
-        if self._shutdown:
-            return
-        self._shutdown = True
-        self._active = False
+        with self._runtime_lock:
+            if self._shutdown:
+                return
+            self._shutdown = True
+            self._active = False
         for timer in (self._poll_timer, self._autosave_timer):
             if timer is not None:
                 timer.stop()
@@ -429,6 +430,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._autosave_timer = None
         if self._owns_session_owner:
             await asyncio.to_thread(self._session_owner.shutdown)
+        elif self._owns_replica:
+            await asyncio.to_thread(
+                self._session_owner.wait_for_root_commit,
+            )
         if self._owns_replica:
             await asyncio.to_thread(self._close_owned_replica)
 
@@ -512,7 +517,7 @@ class LibraryFileNotesWorkspace(Vertical):
     def _build_runtime(
         self,
         expected_generation: int,
-        expected_binding: SessionBinding | None,
+        _expected_binding: SessionBinding | None,
         *,
         bind_session: bool = True,
     ) -> tuple[
@@ -547,33 +552,43 @@ class LibraryFileNotesWorkspace(Vertical):
             generation_is_current = expected_generation == self._root_generation
             if not bind_session or not generation_is_current:
                 return root, replica, self._service, warning
-            binding = None
-            if root is not None:
-                binding = self._session_owner.try_select_root(
-                    root,
-                    expected_binding=expected_binding,
-                )
-                if binding is None:
-                    return root, replica, None, warning
-            service = self._service
-            if root is None:
-                service = None
-            elif (
-                service is None
-                or service.root_key != str(root)
-                or previous_replica is not replica
-                or self._session_binding != binding
-            ):
-                assert binding is not None
-                service = FileNotesService(
-                    root,
-                    replica,
-                    operation_lock=self._service_lock,
-                    session_owner=self._session_owner,
-                    session_binding=binding,
-                )
-            self._session_binding = binding
-            return root, replica, service, warning
+
+        stable_root = self._session_owner.acquire_stable_root(root)
+        if stable_root is None:
+            return root, replica, None, warning
+        try:
+            binding = stable_root.binding
+            root = None if binding is None else Path(binding.root_key)
+            with self._runtime_lock:
+                if self._shutdown:
+                    return self._root, self._replica, None, warning
+                if expected_generation != self._root_generation:
+                    return self._root, self._replica, self._service, warning
+                service = self._service
+                if root is None:
+                    service = None
+                elif (
+                    service is None
+                    or service.root_key != str(root)
+                    or previous_replica is not replica
+                    or self._session_binding != binding
+                ):
+                    assert binding is not None
+                    service = FileNotesService(
+                        root,
+                        replica,
+                        operation_lock=self._service_lock,
+                        session_owner=self._session_owner,
+                        session_binding=binding,
+                    )
+                self._root = root
+                self._replica = replica
+                self._service = service
+                self._session_binding = binding
+                self._runtime_warning = warning
+                return root, replica, service, warning
+        finally:
+            stable_root.release()
 
     async def _commit_root_candidate(
         self,

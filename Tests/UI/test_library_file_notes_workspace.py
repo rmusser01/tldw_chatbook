@@ -76,6 +76,19 @@ class _TwoWorkspaceHarness(App[None]):
             yield self.second
 
 
+class _DynamicWorkspaceHarness(App[None]):
+    """Mount a second workspace after the first is already running."""
+
+    def __init__(self, workspace: LibraryFileNotesWorkspace) -> None:
+        super().__init__()
+        self.workspace = workspace
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="primary-workspace-host"):
+            yield self.workspace
+        yield Vertical(id="dynamic-workspace-host")
+
+
 async def _wait_until(
     pilot,
     predicate: Callable[[], bool],
@@ -123,6 +136,29 @@ def _delayed_call(call):
         return call(*args, **kwargs)
 
     return delayed, started, release
+
+
+def _event_loop_heartbeat(
+    event_loop: asyncio.AbstractEventLoop,
+    blocked: threading.Event,
+    *release_on_failure: threading.Event,
+) -> tuple[threading.Thread, threading.Event, list[bool]]:
+    checked = threading.Event()
+    observations: list[bool] = []
+
+    def check() -> None:
+        heartbeat_ran = threading.Event()
+        if blocked.wait(timeout=5):
+            event_loop.call_soon_threadsafe(heartbeat_ran.set)
+            observations.append(heartbeat_ran.wait(timeout=1))
+        else:
+            observations.append(False)
+        checked.set()
+        if not observations[-1]:
+            for release in release_on_failure:
+                release.set()
+
+    return threading.Thread(target=check, daemon=True), checked, observations
 
 
 def _root_transition_workspace(tmp_path: Path):
@@ -502,6 +538,182 @@ async def test_overlapping_root_persistence_only_winner_updates_config_and_owner
         winner_replica.close()
 
 
+@pytest.mark.parametrize("selection_timing", ("during", "after"))
+@pytest.mark.asyncio
+async def test_fresh_shared_workspace_follows_committed_owner_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    selection_timing: str,
+) -> None:
+    old_root = (tmp_path / "old").resolve()
+    winner_root = (tmp_path / "winner").resolve()
+    old_root.mkdir()
+    winner_root.mkdir()
+    (winner_root / "winner.md").write_text("winner", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    winner_replica = FileNotesReplica(":memory:")
+    fresh_replica = FileNotesReplica(":memory:")
+    winner = LibraryFileNotesWorkspace(
+        root=old_root,
+        replica=winner_replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+    persisted_root = [str(old_root)]
+    persistence_started = threading.Event()
+    release_persistence = threading.Event()
+    config_read = threading.Event()
+    allow_config_return = threading.Event()
+    event_loop = asyncio.get_running_loop()
+    fresh: LibraryFileNotesWorkspace | None = None
+
+    def get_setting(
+        section: str,
+        key: str | None = None,
+        default: object = None,
+    ) -> object:
+        if (section, key) == ("file_notes", "root"):
+            configured = persisted_root[0]
+            config_read.set()
+            if selection_timing == "after":
+                assert allow_config_return.wait(timeout=5)
+            return configured
+        return default
+
+    def persist(
+        section_values: dict[str, dict[str, str]],
+    ) -> ConfigMutationResult:
+        persistence_started.set()
+        assert release_persistence.wait(timeout=5)
+        persisted_root[0] = section_values["file_notes"]["root"]
+        return ConfigMutationResult(True, True, None)
+
+    monkeypatch.setattr(workspace_module, "get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        workspace_module,
+        "apply_settings_mutation_to_cli_config",
+        persist,
+        raising=False,
+    )
+    heartbeat_thread, heartbeat_checked, heartbeat_while_waiting = (
+        _event_loop_heartbeat(
+            event_loop,
+            config_read,
+            release_persistence,
+            allow_config_return,
+        )
+    )
+    transition: asyncio.Task[bool] | None = None
+    heartbeat_started = False
+    try:
+        harness = _DynamicWorkspaceHarness(winner)
+        async with harness.run_test() as pilot:
+            await _wait_until(
+                pilot,
+                lambda: winner.initialized,
+                "winner workspace did not initialize",
+            )
+            old_binding = owner.current_binding()
+            assert old_binding is not None
+            fresh = LibraryFileNotesWorkspace(
+                replica=fresh_replica,
+                session_owner=owner,
+                poll_interval=10,
+            )
+            assert fresh._initial_session_binding == old_binding
+            transition = asyncio.create_task(winner.set_root(winner_root))
+            await _wait_until(
+                pilot,
+                persistence_started.is_set,
+                "winner persistence did not start",
+            )
+
+            heartbeat_thread.start()
+            heartbeat_started = True
+            await harness.query_one(
+                "#dynamic-workspace-host",
+                Vertical,
+            ).mount(fresh)
+            await _wait_until(
+                pilot,
+                config_read.is_set,
+                "fresh workspace did not read configured root",
+            )
+            if selection_timing == "during":
+                await pilot.pause()
+                assert not fresh.initialized
+            release_persistence.set()
+            assert await transition
+            allow_config_return.set()
+            await _wait_until(
+                pilot,
+                heartbeat_checked.is_set,
+                "event-loop heartbeat was not checked",
+            )
+            assert heartbeat_while_waiting == [True]
+            await _wait_until(
+                pilot,
+                lambda: fresh.initialized and fresh._service is not None,
+                "fresh workspace did not initialize after root commit",
+            )
+
+            binding = owner.current_binding()
+            assert binding is not None
+            assert fresh.root == winner_root
+            assert fresh._session_binding == binding
+            assert fresh._service is not None
+            assert fresh._service.root == winner_root
+            assert set(fresh.entries) == {"winner.md"}
+    finally:
+        release_persistence.set()
+        allow_config_return.set()
+        if transition is not None and not transition.done():
+            assert await transition
+        if heartbeat_started:
+            heartbeat_thread.join(timeout=1)
+        await winner.shutdown()
+        if fresh is not None:
+            await fresh.shutdown()
+        owner.shutdown()
+        winner_replica.close()
+        fresh_replica.close()
+
+
+@pytest.mark.asyncio
+async def test_bound_injected_owner_overrides_unrelated_explicit_seed(
+    tmp_path: Path,
+) -> None:
+    owner_root = (tmp_path / "owner").resolve()
+    unrelated_root = (tmp_path / "unrelated").resolve()
+    owner_root.mkdir()
+    unrelated_root.mkdir()
+    (owner_root / "owner.md").write_text("owner", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(owner_root)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=unrelated_root,
+        replica=replica,
+        session_owner=owner,
+        poll_interval=10,
+    )
+    try:
+        async with _WorkspaceHarness(workspace).run_test() as pilot:
+            await _wait_until(
+                pilot,
+                lambda: workspace.initialized and workspace._service is not None,
+                "bound-owner workspace did not initialize",
+            )
+            assert owner.current_binding() == binding
+            assert workspace.root == owner_root
+            assert workspace._session_binding == binding
+            assert set(workspace.entries) == {"owner.md"}
+    finally:
+        await workspace.shutdown()
+        owner.shutdown()
+        replica.close()
+
+
 @pytest.mark.asyncio
 async def test_failed_root_persistence_keeps_old_owner_log_and_service(
     tmp_path: Path,
@@ -656,9 +868,6 @@ async def test_cancelled_root_persistence_settles_and_adopts_written_root(
     persistence_started = threading.Event()
     release_persistence = threading.Event()
     persistence_finished = threading.Event()
-    heartbeat_ran = threading.Event()
-    heartbeat_checked = threading.Event()
-    heartbeat_during_persistence: list[bool] = []
     persisted_roots: list[str] = []
     event_loop = asyncio.get_running_loop()
 
@@ -671,25 +880,19 @@ async def test_cancelled_root_persistence_settles_and_adopts_written_root(
         persistence_finished.set()
         return ConfigMutationResult(True, True, None)
 
-    def check_heartbeat() -> None:
-        if not persistence_started.wait(timeout=5):
-            heartbeat_during_persistence.append(False)
-            heartbeat_checked.set()
-            release_persistence.set()
-            return
-        event_loop.call_soon_threadsafe(heartbeat_ran.set)
-        heartbeat_during_persistence.append(heartbeat_ran.wait(timeout=1))
-        heartbeat_checked.set()
-        if not heartbeat_during_persistence[-1]:
-            release_persistence.set()
-
     monkeypatch.setattr(
         workspace_module,
         "apply_settings_mutation_to_cli_config",
         persist,
         raising=False,
     )
-    heartbeat_thread = threading.Thread(target=check_heartbeat, daemon=True)
+    heartbeat_thread, heartbeat_checked, heartbeat_during_persistence = (
+        _event_loop_heartbeat(
+            event_loop,
+            persistence_started,
+            release_persistence,
+        )
+    )
     transition: asyncio.Task[bool] | None = None
     try:
         async with _WorkspaceHarness(workspace).run_test() as pilot:
@@ -754,6 +957,136 @@ async def test_cancelled_root_persistence_settles_and_adopts_written_root(
         await workspace.shutdown()
         owner.shutdown()
         replica.close()
+
+
+@pytest.mark.asyncio
+async def test_injected_owner_shutdown_waits_for_root_commit_before_replica_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_root = (tmp_path / "old").resolve()
+    new_root = (tmp_path / "new").resolve()
+    old_root.mkdir()
+    new_root.mkdir()
+    (new_root / "new.md").write_text("new root", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    workspace = LibraryFileNotesWorkspace(
+        root=old_root,
+        replica_path=tmp_path / "owned.sqlite",
+        session_owner=owner,
+        poll_interval=10,
+    )
+    persistence_started = threading.Event()
+    release_persistence = threading.Event()
+    persistence_finished = threading.Event()
+    owner_wait_entered = threading.Event()
+    replica_closed = threading.Event()
+    close_observations: list[tuple[bool, Path | None, object]] = []
+    owned_replica: FileNotesReplica | None = None
+    real_wait = FileNotesSessionOwner.wait_for_root_commit
+    real_close = FileNotesReplica.close
+
+    def persist(
+        _section_values: dict[str, dict[str, str]],
+    ) -> ConfigMutationResult:
+        persistence_started.set()
+        assert release_persistence.wait(timeout=5)
+        persistence_finished.set()
+        return ConfigMutationResult(True, True, None)
+
+    def observed_wait(session_owner: FileNotesSessionOwner) -> None:
+        if session_owner is owner:
+            owner_wait_entered.set()
+        real_wait(session_owner)
+
+    def observed_close(replica: FileNotesReplica) -> None:
+        if replica is owned_replica:
+            service = workspace._service
+            close_observations.append(
+                (
+                    persistence_finished.is_set(),
+                    None if service is None else service.root,
+                    owner.current_binding(),
+                )
+            )
+            replica_closed.set()
+        real_close(replica)
+
+    monkeypatch.setattr(
+        workspace_module,
+        "apply_settings_mutation_to_cli_config",
+        persist,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        FileNotesSessionOwner,
+        "wait_for_root_commit",
+        observed_wait,
+    )
+    monkeypatch.setattr(FileNotesReplica, "close", observed_close)
+    transition: asyncio.Task[bool] | None = None
+    shutdown_task: asyncio.Task[None] | None = None
+    try:
+        async with _WorkspaceHarness(workspace).run_test() as pilot:
+            await _wait_until(
+                pilot,
+                lambda: workspace.initialized,
+                "owned-replica workspace did not initialize",
+            )
+            owned_replica = workspace._replica
+            assert owned_replica is not None
+
+            transition = asyncio.create_task(workspace.set_root(new_root))
+            await _wait_until(
+                pilot,
+                persistence_started.is_set,
+                "root persistence did not start",
+            )
+            shutdown_task = asyncio.create_task(workspace.shutdown())
+            await _wait_until(
+                pilot,
+                lambda: owner_wait_entered.is_set() or replica_closed.is_set(),
+                "shutdown neither waited nor closed the replica",
+            )
+
+            transition.cancel()
+            await pilot.pause()
+            assert not transition.done()
+            assert owner_wait_entered.is_set()
+            assert not replica_closed.is_set()
+            assert not shutdown_task.done()
+            assert workspace._replica is owned_replica
+
+            release_persistence.set()
+            with pytest.raises(asyncio.CancelledError):
+                await transition
+            await shutdown_task
+
+            binding = owner.current_binding()
+            assert persistence_finished.is_set()
+            assert replica_closed.is_set()
+            assert close_observations == [(True, new_root, binding)]
+            assert binding is not None
+            assert binding.root_key == str(new_root)
+            assert workspace._replica is None
+            assert workspace._service is None
+            await pilot.pause()
+            assert workspace._replica is None
+            assert workspace._service is None
+
+            status = owner.try_acquire_status(binding)
+            assert status is not None
+            status.release()
+    finally:
+        release_persistence.set()
+        if transition is not None and not transition.done():
+            transition.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await transition
+        if shutdown_task is not None and not shutdown_task.done():
+            await shutdown_task
+        await workspace.shutdown()
+        owner.shutdown()
 
 
 @pytest.mark.asyncio

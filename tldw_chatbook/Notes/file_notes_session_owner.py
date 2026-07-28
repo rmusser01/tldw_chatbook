@@ -120,6 +120,22 @@ class RootCommitReservation:
         self._owner._release_root_reservation(self._token)
 
 
+@dataclass(slots=True)
+class StableRootAccess:
+    """Worker-thread access to one root binding while root changes are paused."""
+
+    _owner: FileNotesSessionOwner = field(repr=False, compare=False)
+    binding: SessionBinding | None
+    _released: bool = field(default=False, repr=False, compare=False)
+
+    def release(self) -> None:
+        """Release stable-root access once."""
+        if self._released:
+            return
+        self._released = True
+        self._owner._root_commit_lock.release()
+
+
 class FileNotesSessionOwner:
     """Own root-scoped File Notes session state for one application process."""
 
@@ -216,6 +232,41 @@ class FileNotesSessionOwner:
                 return self._select_root_locked(root_key)
         finally:
             self._root_commit_lock.release()
+
+    def wait_for_root_commit(self) -> None:
+        """Block a worker thread until the active root reservation settles."""
+        with self._root_commit_lock:
+            return
+
+    def acquire_stable_root(
+        self,
+        configured_root: str | Path | None,
+    ) -> StableRootAccess | None:
+        """Block a worker thread and hold one authoritative root binding.
+
+        An existing owner binding always wins. The configured candidate is
+        selected only when the owner is empty. Callers must release the
+        returned access after synchronously publishing dependent runtime state.
+        """
+        root_key = (
+            None
+            if configured_root is None
+            else str(Path(configured_root).expanduser().resolve(strict=False))
+        )
+        self._root_commit_lock.acquire()
+        access: StableRootAccess | None = None
+        try:
+            with self._lock:
+                if self._shutdown:
+                    return None
+                binding = self._binding
+                if binding is None and root_key is not None:
+                    binding = self._select_root_locked(root_key)
+                access = StableRootAccess(self, binding)
+                return access
+        finally:
+            if access is None:
+                self._root_commit_lock.release()
 
     def try_reserve_root(
         self,
