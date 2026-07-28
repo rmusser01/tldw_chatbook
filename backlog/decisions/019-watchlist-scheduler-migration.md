@@ -1,9 +1,32 @@
 # ADR-019: Migrate watchlist checks to the unified Scheduling scheduler
 
-Status: Accepted
+Status: Accepted — **partially implemented; see the status note below before relying on this**
 Date: 2026-07-19
 Related Task: TASK-299
 Supersedes: N/A
+
+## Status note (2026-07-27)
+
+A runtime import-trace audit found that the dual-run safety net described below **does not exist in
+the shipped app**. Two clauses of this ADR are not true of the code:
+
+- *"Old scheduler remains the execution authority by default"* — the old `SubscriptionScheduler`
+  and `SubscriptionSchedulerWorker` are **unreachable**. Their only construction site is
+  `UI/Subscription_Modules/subscription_backend_controller.py`, which serves a `SubscriptionWindow`
+  class that no longer exists; neither module is in `sys.modules` after a full app import.
+- *"Rollback plan: set `watchlist_checks_enabled = false` and the old `SubscriptionScheduler`
+  resumes authoritative execution"* — setting that flag false leaves **no** executor at all, since
+  the new handler is then never constructed and the old one cannot run.
+
+Because the flag ships `false` (and `watchlist_checks_shadow` ships `true`, which fetches and
+discards results), the practical effect is that **nothing checks watchlists on a schedule**. Manual
+"Check now" works; automatic checking is unimplemented end to end.
+
+Tracked by TASK-1210 (make scheduled checks run) and TASK-1211 (retire the unreachable scheduler,
+the removal this ADR deferred). This note will be replaced by an amended decision when 1210 lands.
+
+Full analysis and reproduction:
+`Docs/superpowers/research/2026-07-27-briefing-subsystem-revive-or-retire.md`
 
 ## Decision
 
