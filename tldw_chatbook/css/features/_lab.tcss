@@ -575,3 +575,24 @@
     color: $ds-status-warning;
     text-style: bold;
 }
+
+/* Parameter rows: label left, control right, one row each. The legacy form
+ * spent four rows on exactly this pairing, which is most of why it was 93
+ * rows tall. */
+.speech-param-row {
+    height: 1;
+    min-height: 1;
+}
+
+.speech-param-label {
+    width: 24;
+    height: 1;
+    color: $ds-text-muted;
+}
+
+.speech-param-control {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    border: none;
+}
