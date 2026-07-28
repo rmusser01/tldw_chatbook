@@ -526,6 +526,12 @@ async def test_exact_profile_ctrl_g_cannot_bypass_configuration_change_gate(
             "settings changed" in message.lower() and severity == "warning"
             for message, severity in app.notices
         )
+        banner = app.query_one("#tts-profile-preview-status", Static)
+        banner_copy = str(banner.render()).lower()
+        assert "blocked" in banner_copy
+        assert "refresh" in banner_copy
+        assert "exact saved selection" not in banner_copy
+        assert banner.has_class("profile-preview-unverified")
 
 
 @pytest.mark.asyncio
@@ -583,6 +589,12 @@ async def test_exact_profile_revision_invalidated_catalog_projects_but_stays_blo
             "settings changed"
             in str(app.query_one("#tts-provider-status", Static).render()).lower()
         )
+        banner = app.query_one("#tts-profile-preview-status", Static)
+        banner_copy = str(banner.render()).lower()
+        assert "blocked" in banner_copy
+        assert "refresh" in banner_copy
+        assert "exact saved selection" not in banner_copy
+        assert banner.has_class("profile-preview-unverified")
 
 
 @pytest.mark.asyncio
@@ -2080,6 +2092,36 @@ async def test_exact_profile_catalog_failure_projects_unverified_selection_for_o
 
 
 @pytest.mark.asyncio
+async def test_profile_catalog_failure_does_not_enable_stale_ordinary_generation_after_edit(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    app = _PlaygroundHost(preset=_profile_preset())
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+        service.catalog_error = RuntimeError("private refresh detail")
+
+        widget._load_provider_catalog("audio_cpp", refresh=True)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert widget._profile_preset is not None
+        assert app.query_one("#tts-generate-btn", Button).disabled is False
+
+        app.query_one("#tts-voice-select", Select).value = SERVER_DEFAULT_VOICE_ID
+        await pilot.pause()
+
+        assert widget._profile_preset is None
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert app.generation_events == []
+
+
+@pytest.mark.asyncio
 async def test_unavailable_exact_profile_catalog_failure_projects_but_stays_blocked(
     audio_cpp_playground: FakeTTSService,
 ) -> None:
@@ -2151,6 +2193,40 @@ async def test_exact_profile_catalog_lifecycle_failure_projects_but_never_bypass
                 for message, severity in app.notices
             )
         assert "private" not in str(app.notices).lower()
+
+
+@pytest.mark.asyncio
+async def test_fresh_not_configured_catalog_makes_exact_profile_unavailable(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    service.catalogs["audio_cpp"] = _audio_catalog(
+        health=ProviderHealth(state="not_configured", fresh=True)
+    )
+    preset = _profile_preset()
+    app = _PlaygroundHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        assert app.query_one("#tts-model-select", Select).value == preset.model_id
+        assert app.query_one("#tts-voice-select", Select).value == preset.voice_id
+        assert widget._profile_effective_availability == "unavailable"
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        status = str(app.query_one("#tts-provider-status", Static).render())
+        assert "unavailable" in status.lower()
+        assert "Edit" in status
+        banner = app.query_one("#tts-profile-preview-status", Static)
+        assert "unavailable" in str(banner.render()).lower()
+        assert "Edit" in str(banner.render())
+        assert banner.has_class("profile-preview-unavailable")
+
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert app.generation_events == []
 
 
 @pytest.mark.asyncio
@@ -2275,6 +2351,11 @@ async def test_closed_catalog_health_projects_exact_profile_but_stays_blocked(
             expected_status.lower()
             in str(app.query_one("#tts-provider-status", Static).render()).lower()
         )
+        banner_copy = str(
+            app.query_one("#tts-profile-preview-status", Static).render()
+        ).lower()
+        assert "generate makes one exact attempt" not in banner_copy
+        assert "blocked" in banner_copy or "unavailable" in banner_copy
 
 
 @pytest.mark.asyncio
@@ -2395,6 +2476,39 @@ async def test_current_voice_discovery_success_restores_only_original_preset_sta
 
 
 @pytest.mark.asyncio
+async def test_profile_service_acquisition_failure_projects_exact_disabled_recovery(
+    audio_cpp_playground: FakeTTSService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del audio_cpp_playground
+
+    async def _service_unavailable() -> object:
+        raise RuntimeError("private service detail")
+
+    monkeypatch.setattr(STTS_Window, "get_tts_service", _service_unavailable)
+    preset = _profile_preset()
+    app = _PlaygroundHost(preset=preset)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert app.query_one("#tts-provider-select", Select).value == preset.provider_id
+        assert app.query_one("#tts-model-select", Select).value == preset.model_id
+        assert app.query_one("#tts-voice-select", Select).value == preset.voice_id
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        status = str(app.query_one("#tts-provider-status", Static).render())
+        assert "unavailable" in status.lower()
+        assert "private service detail" not in status
+        banner = app.query_one("#tts-profile-preview-status", Static)
+        banner_copy = str(banner.render()).lower()
+        assert "blocked" in banner_copy
+        assert "unavailable" in banner_copy
+        assert "exact saved selection" not in banner_copy
+        assert banner.has_class("profile-preview-unavailable")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "edited_control",
     ("provider", "model", "voice", "format", "speed", "options"),
@@ -2449,7 +2563,9 @@ async def test_provider_edit_during_initial_profile_catalog_load_ends_preset(
         await service.catalog_started.wait()
         widget = app.query_one(TTSPlaygroundWidget)
         provider = app.query_one("#tts-provider-select", Select)
-        assert widget._profile_controls_applied is False
+        assert widget._profile_controls_applied is True
+        assert app.query_one("#tts-model-select", Select).value == "profile/model"
+        assert app.query_one("#tts-voice-select", Select).value == "profile/voice"
 
         provider.value = "openai"
         await _wait_until(pilot, lambda: widget._profile_preset is None)
