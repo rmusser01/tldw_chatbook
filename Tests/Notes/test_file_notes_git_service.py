@@ -1,25 +1,40 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import os
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.Notes.file_notes_git_service import (
+    AsyncGitProcessRunner,
+    FileNotesGitService,
+    GitCommandResult,
+    GitIndexParseError,
+    GitStatusAdmissionError,
     PorcelainV2ParseError,
     PorcelainPathOutsideSessionError,
     PorcelainRecord,
+    build_git_environment,
+    build_index_argv,
+    build_file_notes_session_owner,
+    build_status_argv,
     classify_session_rows,
     coalesce_session_changes,
     compute_stage_closure,
     compute_unstage_closure,
     ownership_signature_matches,
+    parse_index_entries_z,
     parse_porcelain_v2_z,
+    sanitize_git_stderr,
     stage_group_is_closed,
     stage_pathspecs,
     unstage_group_is_closed,
 )
 from tldw_chatbook.Notes.file_notes_session_owner import (
+    FileNotesSessionOwner,
     FileSystemIdentity,
     HeadIdentity,
     IndexBaseline,
@@ -1086,3 +1101,721 @@ def test_head_identity_distinguishes_attached_detached_and_explicit_unborn() -> 
         None,
     )
     assert len({attached, detached, unborn}) == 3
+
+
+_REDIRECTING_GIT_ENVIRONMENT = {
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    "GIT_SHALLOW_FILE",
+    "GIT_GRAFT_FILE",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_EXEC_PATH",
+    "GIT_PREFIX",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
+}
+
+
+def test_git_environment_removes_repository_and_config_injection() -> None:
+    ambient = {
+        **{key: f"hostile-{key}" for key in _REDIRECTING_GIT_ENVIRONMENT},
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": "core.fsmonitor",
+        "GIT_CONFIG_VALUE_0": "hostile-hook",
+        "GIT_CONFIG_KEY_37": "diff.external",
+        "GIT_CONFIG_VALUE_37": "hostile-diff",
+        "HOME": "/private/home",
+        "PATH": "/private/bin",
+        "LANG": "C.UTF-8",
+        "FILTER_HELPER_CONTEXT": "preserved",
+        "GIT_AUTHOR_NAME": "ordinary-config-remains",
+    }
+
+    sanitized = build_git_environment(ambient)
+
+    assert not (_REDIRECTING_GIT_ENVIRONMENT & sanitized.keys())
+    assert all(
+        not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+        for key in sanitized
+    )
+    assert "GIT_CONFIG_COUNT" not in sanitized
+    assert sanitized["HOME"] == "/private/home"
+    assert sanitized["FILTER_HELPER_CONTEXT"] == "preserved"
+    assert sanitized["GIT_AUTHOR_NAME"] == "ordinary-config-remains"
+    assert sanitized["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_status_environment_and_argv_disable_side_channel_writes() -> None:
+    environment = build_git_environment(
+        {"PATH": "/private/bin"},
+        for_status=True,
+    )
+    argv = build_status_argv(
+        "/private/bin/git",
+        (os.fsencode("-leading.md"), os.fsencode("line\nbreak.md")),
+    )
+
+    assert environment["GIT_OPTIONAL_LOCKS"] == "0"
+    assert argv[:2] == ("/private/bin/git", "--literal-pathspecs")
+    assert ("-c", "core.fsmonitor=false") == argv[2:4]
+    pairs = tuple(
+        argv[index : index + 2]
+        for index in range(len(argv) - 1)
+    )
+    assert ("-c", "status.renames=false") in pairs
+    assert "--porcelain=v2" in argv
+    assert "-z" in argv
+    assert "--untracked-files=all" in argv
+    assert "--ignored=matching" in argv
+    assert "--no-renames" in argv
+    boundary = argv.index("--")
+    assert argv[boundary + 1 :] == (
+        os.fsencode("-leading.md"),
+        os.fsencode("line\nbreak.md"),
+    )
+
+
+def test_runner_api_is_direct_argv_and_command_results_stay_bytes() -> None:
+    signature = inspect.signature(AsyncGitProcessRunner.run)
+
+    assert "shell" not in signature.parameters
+    assert "argv" in signature.parameters
+    result = GitCommandResult(
+        returncode=0,
+        stdout=b"\xffstdout\0",
+        stderr=b"\xfestderr",
+    )
+    assert isinstance(result.stdout, bytes)
+    assert isinstance(result.stderr, bytes)
+
+
+def test_git_stderr_is_bounded_and_control_sanitized() -> None:
+    diagnostic = sanitize_git_stderr(
+        b"bad\npath\rwith\tcontrols\x00\x1b" + (b"x" * 10_000),
+        limit=80,
+    )
+
+    assert len(diagnostic.encode("utf-8", "surrogateescape")) <= 80
+    assert "\n" not in diagnostic
+    assert "\r" not in diagnostic
+    assert "\t" not in diagnostic
+    assert "\x00" not in diagnostic
+    assert "\x1b" not in diagnostic
+
+
+class _CompletedProcess:
+    returncode = 0
+
+    def __init__(self) -> None:
+        self.stdin: bytes | None = None
+
+    async def communicate(
+        self,
+        stdin: bytes | None,
+    ) -> tuple[bytes, bytes]:
+        self.stdin = stdin
+        return b"stdout\0", b"stderr"
+
+    async def wait(self) -> int:
+        return self.returncode
+
+    def terminate(self) -> None:
+        raise AssertionError("completed process must not be terminated")
+
+    def kill(self) -> None:
+        raise AssertionError("completed process must not be killed")
+
+
+@pytest.mark.asyncio
+async def test_runner_passes_direct_argv_and_byte_stdin_to_exec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _CompletedProcess()
+    captured: dict[str, object] = {}
+
+    async def fake_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _CompletedProcess:
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return child
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner()
+
+    result = await runner.run(
+        ("git", b"status"),
+        cwd="/repo",
+        environment={"PATH": "/bin"},
+        stdin=b"input\0bytes",
+        timeout=1,
+    )
+
+    assert captured["argv"] == ("git", b"status")
+    assert "shell" not in captured["kwargs"]  # type: ignore[operator]
+    assert child.stdin == b"input\0bytes"
+    assert result == GitCommandResult(0, b"stdout\0", b"stderr")
+
+
+class _StubbornProcess:
+    returncode: int | None = None
+
+    def __init__(self) -> None:
+        self.terminate_calls = 0
+        self.kill_calls = 0
+        self.wait_calls = 0
+        self._never = asyncio.Event()
+
+    async def communicate(
+        self,
+        stdin: bytes | None,
+    ) -> tuple[bytes, bytes]:
+        del stdin
+        await self._never.wait()
+        return b"", b""
+
+    async def wait(self) -> int:
+        self.wait_calls += 1
+        await self._never.wait()
+        return 0
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_runner_timeout_terminates_then_kills_with_two_bounded_waits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _StubbornProcess()
+
+    async def fake_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _StubbornProcess:
+        del argv, kwargs
+        return child
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+
+    result = await runner.run(
+        ("git", "status"),
+        cwd="/repo",
+        environment={},
+        timeout=0.001,
+    )
+
+    assert child.terminate_calls == 1
+    assert child.kill_calls == 1
+    assert child.wait_calls == 2
+    assert result.timed_out
+    assert result.termination_uncertain
+
+
+def test_index_command_is_complete_nul_safe_and_has_explicit_boundary() -> None:
+    argv = build_index_argv("/private/bin/git")
+
+    assert argv[:2] == ("/private/bin/git", "--literal-pathspecs")
+    assert argv[-1] == "--"
+    assert "ls-files" in argv
+    assert "-z" in argv
+    assert "--stage" in argv
+    assert "-v" in argv
+
+
+def test_parse_index_entries_preserves_stage_and_semantic_flags() -> None:
+    payload = (
+        b"H 100644 " + OID_A.encode("ascii") + b" 0\tnormal.md\0"
+        b"S 100755 " + OID_B.encode("ascii") + b" 0\tsparse.md\0"
+        b"h 100644 " + OID_C.encode("ascii") + b" 2\tassumed.md\0"
+    )
+
+    entries = parse_index_entries_z(payload)
+
+    assert entries["normal.md"] == _entry("normal.md")
+    assert entries["sparse.md"] == _entry(
+        "sparse.md",
+        mode="100755",
+        object_id=OID_B,
+        flags=("skip-worktree",),
+    )
+    assert entries["assumed.md"] == _entry(
+        "assumed.md",
+        object_id=OID_C,
+        stage=2,
+        flags=("assume-unchanged",),
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"H 100644 " + OID_A.encode("ascii") + b" 0\tmissing-nul.md",
+        b"H malformed\0",
+        (
+            b"H 100644 " + OID_A.encode("ascii") + b" 0\tduplicate.md\0"
+            b"H 100644 " + OID_A.encode("ascii") + b" 0\tduplicate.md\0"
+        ),
+        b"H 100644 not-an-object 0\tbad.md\0",
+        b"H 100644 " + OID_A.encode("ascii") + b" x\tbad-stage.md\0",
+    ],
+)
+def test_parse_index_entries_fails_closed_on_malformed_or_duplicate_data(
+    payload: bytes,
+) -> None:
+    with pytest.raises(GitIndexParseError):
+        parse_index_entries_z(payload)
+
+
+def _repository_at(root: Path) -> RepositoryIdentity:
+    git_dir = root / ".git"
+    git_dir.mkdir(exist_ok=True)
+    worktree_stat = root.stat(follow_symlinks=False)
+    git_stat = git_dir.stat(follow_symlinks=False)
+    return RepositoryIdentity(
+        worktree_root=str(root),
+        git_dir=str(git_dir),
+        git_common_dir=str(git_dir),
+        worktree_identity=FileSystemIdentity(
+            worktree_stat.st_dev,
+            worktree_stat.st_ino,
+        ),
+        git_dir_identity=FileSystemIdentity(
+            git_stat.st_dev,
+            git_stat.st_ino,
+        ),
+        git_common_dir_identity=FileSystemIdentity(
+            git_stat.st_dev,
+            git_stat.st_ino,
+        ),
+    )
+
+
+class _DelayedStatusRunner:
+    def __init__(self) -> None:
+        self.first_index_started = asyncio.Event()
+        self.release_first_index = asyncio.Event()
+        self.status_completed = asyncio.Event()
+        self.calls: list[tuple[str | bytes, ...]] = []
+        self.query_count = 0
+        self.shutdown_calls = 0
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        del cwd, environment, stdin, timeout
+        command = tuple(argv)
+        self.calls.append(command)
+        text = tuple(os.fsdecode(argument) for argument in command)
+        if "config" in text:
+            return GitCommandResult(1, b"", b"")
+        if "symbolic-ref" in text:
+            return GitCommandResult(0, b"refs/heads/main\n", b"")
+        if "rev-parse" in text:
+            return GitCommandResult(0, OID_A.encode("ascii") + b"\n", b"")
+        if "ls-files" in text:
+            self.query_count += 1
+            if self.query_count == 1:
+                self.first_index_started.set()
+                await self.release_first_index.wait()
+            return GitCommandResult(0, b"", b"")
+        if "status" in text:
+            boundary = command.index("--")
+            payload = b"".join(
+                b"? " + os.fsencode(argument) + b"\0"
+                for argument in command[boundary + 1 :]
+            )
+            self.status_completed.set()
+            return GitCommandResult(0, payload, b"")
+        raise AssertionError(f"Unexpected Git command: {text!r}")
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
+        self.release_first_index.set()
+
+
+def _status_service(
+    tmp_path: Path,
+) -> tuple[
+    FileNotesSessionOwner,
+    object,
+    FileNotesGitService,
+    _DelayedStatusRunner,
+]:
+    root = tmp_path / "notes"
+    root.mkdir()
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    runner = _DelayedStatusRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={"PATH": "/bin"},
+    )
+    return owner, binding, service, runner
+
+
+@pytest.mark.asyncio
+async def test_ten_status_triggers_coalesce_to_active_plus_latest_rerun(
+    tmp_path: Path,
+) -> None:
+    owner, binding, service, runner = _status_service(tmp_path)
+    del owner
+    paths = tuple(f"note-{index}.md" for index in range(11))
+    for path in paths:
+        (tmp_path / "notes" / path).write_text("note\n", encoding="utf-8")
+    first = service.start_status(
+        binding,  # type: ignore[arg-type]
+        (_change(1, "modified", paths[0]),),
+    )
+    await runner.first_index_started.wait()
+
+    coalesced = [
+        service.start_status(
+            binding,  # type: ignore[arg-type]
+            (_change(index + 2, "modified", path),),
+        )
+        for index, path in enumerate(paths[1:])
+    ]
+
+    assert all(task is first for task in coalesced)
+    runner.release_first_index.set()
+    result = await asyncio.wait_for(first, timeout=1)
+    assert runner.query_count == 2
+    assert tuple(row.group.current_path for row in result.rows) == (paths[-1],)
+
+
+@pytest.mark.asyncio
+async def test_pending_status_rerun_is_suppressed_by_admitted_mutation(
+    tmp_path: Path,
+) -> None:
+    owner, binding, service, runner = _status_service(tmp_path)
+    root = tmp_path / "notes"
+    (root / "one.md").write_text("one\n", encoding="utf-8")
+    (root / "two.md").write_text("two\n", encoding="utf-8")
+    first = service.start_status(
+        binding,  # type: ignore[arg-type]
+        (_change(1, "modified", "one.md"),),
+    )
+    await runner.first_index_started.wait()
+    assert (
+        service.start_status(
+            binding,  # type: ignore[arg-type]
+            (_change(2, "modified", "two.md"),),
+        )
+        is first
+    )
+    mutation = owner.try_acquire_mutation(binding)  # type: ignore[arg-type]
+    assert mutation is not None
+
+    runner.release_first_index.set()
+    result = await asyncio.wait_for(first, timeout=1)
+
+    assert runner.query_count == 1
+    assert result.state == "stale"
+    assert owner.try_acquire_status(binding) is None  # type: ignore[arg-type]
+    mutation.release()
+    status_lease = owner.try_acquire_status(binding)  # type: ignore[arg-type]
+    assert status_lease is not None
+    status_lease.release()
+
+
+@pytest.mark.asyncio
+async def test_status_after_mutation_admission_starts_no_child_or_rerun(
+    tmp_path: Path,
+) -> None:
+    owner, binding, service, runner = _status_service(tmp_path)
+    mutation = owner.try_acquire_mutation(binding)  # type: ignore[arg-type]
+    assert mutation is not None
+
+    with pytest.raises(GitStatusAdmissionError) as error:
+        service.start_status(
+            binding,  # type: ignore[arg-type]
+            (_change(1, "modified", "note.md"),),
+        )
+
+    assert error.value.reason == "mutation_active"
+    assert not runner.calls
+    mutation.release()
+
+
+@pytest.mark.asyncio
+async def test_trigger_after_mutation_admission_cannot_piggyback_active_cycle(
+    tmp_path: Path,
+) -> None:
+    owner, binding, service, runner = _status_service(tmp_path)
+    root = tmp_path / "notes"
+    (root / "one.md").write_text("one\n", encoding="utf-8")
+    (root / "two.md").write_text("two\n", encoding="utf-8")
+    first = service.start_status(
+        binding,  # type: ignore[arg-type]
+        (_change(1, "modified", "one.md"),),
+    )
+    await runner.first_index_started.wait()
+    mutation = owner.try_acquire_mutation(binding)  # type: ignore[arg-type]
+    assert mutation is not None
+
+    with pytest.raises(GitStatusAdmissionError) as error:
+        service.start_status(
+            binding,  # type: ignore[arg-type]
+            (_change(2, "modified", "two.md"),),
+        )
+
+    assert error.value.reason == "mutation_active"
+    runner.release_first_index.set()
+    await asyncio.wait_for(first, timeout=1)
+    assert runner.query_count == 1
+    mutation.release()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiter_does_not_cancel_service_status_publication(
+    tmp_path: Path,
+) -> None:
+    owner, binding, service, runner = _status_service(tmp_path)
+    (tmp_path / "notes" / "note.md").write_text("note\n", encoding="utf-8")
+    waiter = service.start_status(
+        binding,  # type: ignore[arg-type]
+        (_change(1, "modified", "note.md"),),
+    )
+    await runner.first_index_started.wait()
+
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    runner.release_first_index.set()
+    await asyncio.wait_for(runner.status_completed.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    status = owner.snapshot(binding).git_status  # type: ignore[arg-type]
+    assert status is not None
+    assert status.state == "ready"
+    lease = owner.try_acquire_status(binding)  # type: ignore[arg-type]
+    assert lease is not None
+    lease.release()
+
+
+def test_production_builder_attaches_exactly_one_git_service() -> None:
+    owner = build_file_notes_session_owner()
+
+    attached = owner.attached_git_service()
+
+    assert isinstance(attached, FileNotesGitService)
+    with pytest.raises(RuntimeError, match="already attached"):
+        owner.attach_git_service(FileNotesGitService(owner))
+    owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_status_task_creation_failure_releases_admitted_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, binding, service, _runner = _status_service(tmp_path)
+
+    def fail_task_creation(coroutine: object) -> asyncio.Task[object]:
+        close = getattr(coroutine, "close", None)
+        if close is not None:
+            close()
+        raise RuntimeError("task creation failed")
+
+    monkeypatch.setattr(service, "_create_task", fail_task_creation)
+
+    with pytest.raises(RuntimeError, match="task creation failed"):
+        service.start_status(
+            binding,  # type: ignore[arg-type]
+            (_change(1, "modified", "note.md"),),
+        )
+
+    lease = owner.try_acquire_status(binding)  # type: ignore[arg-type]
+    assert lease is not None
+    lease.release()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_seals_status_and_prevents_late_publication(
+    tmp_path: Path,
+) -> None:
+    owner, binding, service, runner = _status_service(tmp_path)
+    (tmp_path / "notes" / "note.md").write_text("note\n", encoding="utf-8")
+    group = _single_group("note.md")
+    assert owner.publish_ownership(
+        binding,  # type: ignore[arg-type]
+        {1: _ownership(group, {"note.md": _entry("note.md")})},
+    )
+    waiter = service.start_status(
+        binding,  # type: ignore[arg-type]
+        (_change(1, "modified", "note.md"),),
+    )
+    await runner.first_index_started.wait()
+
+    service.shutdown()
+    service.shutdown()
+
+    with pytest.raises(GitStatusAdmissionError) as error:
+        service.start_status(
+            binding,  # type: ignore[arg-type]
+            (_change(2, "modified", "note.md"),),
+        )
+    assert error.value.reason == "shutdown"
+    await asyncio.wait_for(waiter, timeout=1)
+    await asyncio.sleep(0)
+    snapshot = owner.snapshot(binding)  # type: ignore[arg-type]
+    assert snapshot.git_status is None
+    assert not snapshot.staging_ownership
+    assert runner.shutdown_calls == 1
+
+
+class _UncertainStatusRunner(_DelayedStatusRunner):
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        text = tuple(os.fsdecode(argument) for argument in argv)
+        if "ls-files" in text:
+            self.calls.append(tuple(argv))
+            self.query_count += 1
+            return GitCommandResult(
+                None,
+                b"",
+                b"uncertain\x00child\n",
+                timed_out=True,
+                termination_uncertain=True,
+            )
+        return await super().run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+        )
+
+
+@pytest.mark.asyncio
+async def test_uncertain_child_termination_publishes_stale_and_clears_ownership(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("note\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    group = _single_group("note.md")
+    assert owner.publish_ownership(
+        binding,
+        {1: _ownership(group, {"note.md": _entry("note.md")})},
+    )
+    runner = _UncertainStatusRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+
+    status = await service.start_status(
+        binding,
+        (_change(1, "modified", "note.md"),),
+    )
+
+    assert status.state == "stale"
+    assert status.message is not None
+    assert "uncertain" in status.message
+    snapshot = owner.snapshot(binding)
+    assert snapshot.git_status == status
+    assert not snapshot.staging_ownership
+
+
+class _OutsideWhitelistRunner(_DelayedStatusRunner):
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        text = tuple(os.fsdecode(argument) for argument in argv)
+        if "status" in text:
+            self.calls.append(tuple(argv))
+            return GitCommandResult(0, b"? outside.md\0", b"")
+        return await super().run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+        )
+
+
+@pytest.mark.asyncio
+async def test_status_rejects_git_output_outside_repo_coordinate_whitelist(
+    tmp_path: Path,
+) -> None:
+    owner, binding, service, original_runner = _status_service(tmp_path)
+    (tmp_path / "notes" / "note.md").write_text("note\n", encoding="utf-8")
+    runner = _OutsideWhitelistRunner()
+    runner.release_first_index.set()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+    del original_runner
+
+    status = await service.start_status(
+        binding,  # type: ignore[arg-type]
+        (_change(1, "modified", "note.md"),),
+    )
+
+    assert status.state == "error"
+    assert status.message is not None
+    assert "outside the session whitelist" in status.message

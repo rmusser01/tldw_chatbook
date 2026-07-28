@@ -42,6 +42,12 @@ SessionChangeTopology = tuple[
     tuple[tuple[str, str], ...],
     str,
 ]
+GitStatusAdmissionReason = Literal[
+    "mutation_active",
+    "status_active",
+    "stale_binding",
+    "shutdown",
+]
 _TRANSITION_KINDS = frozenset({"root", "path", "source", "screen"})
 
 
@@ -341,6 +347,18 @@ class GitStatusLease:
 
 
 @dataclass(frozen=True, slots=True)
+class GitStatusAdmission:
+    """Atomic status admission with a typed refusal reason."""
+
+    lease: GitStatusLease | None = None
+    reason: GitStatusAdmissionReason | None = None
+
+    def __post_init__(self) -> None:
+        if (self.lease is None) == (self.reason is None):
+            raise ValueError("Status admission requires exactly one outcome")
+
+
+@dataclass(frozen=True, slots=True)
 class RootCommitReservation:
     """Fail-fast ownership of one validated root commit."""
 
@@ -598,8 +616,21 @@ class FileNotesSessionOwner:
 
     def clear_trust(self, binding: SessionBinding) -> bool:
         """Clear trust and all state whose authority depends on that trust."""
+        return self.clear_trust_if_matches(binding)
+
+    def clear_trust_if_matches(
+        self,
+        binding: SessionBinding,
+        expected_repository: RepositoryIdentity | None = None,
+    ) -> bool:
+        """Compare-and-clear trust without erasing a newer repository grant."""
         with self._lock:
             if binding != self._binding:
+                return False
+            if (
+                expected_repository is not None
+                and self._trusted_repository != expected_repository
+            ):
                 return False
             self._trusted_repository = None
             self._clear_git_status_locked()
@@ -627,6 +658,8 @@ class FileNotesSessionOwner:
                 self._shutdown
                 or binding != self._binding
                 or status.binding_generation != binding.generation
+                or self._trusted_repository is None
+                or status.repository != self._trusted_repository
                 or status.status_generation <= self._status_generation
             ):
                 return False
@@ -703,17 +736,27 @@ class FileNotesSessionOwner:
         binding: SessionBinding,
     ) -> GitStatusLease | None:
         """Try to admit one status operation without awaiting."""
+        return self.admit_status(binding).lease
+
+    def admit_status(
+        self,
+        binding: SessionBinding,
+    ) -> GitStatusAdmission:
+        """Atomically admit status or identify the current refusal."""
         with self._lock:
-            if (
-                self._shutdown
-                or binding != self._binding
-                or self._mutation_token is not None
-                or self._status_token is not None
-            ):
-                return None
+            if self._shutdown:
+                return GitStatusAdmission(reason="shutdown")
+            if binding != self._binding:
+                return GitStatusAdmission(reason="stale_binding")
+            if self._mutation_token is not None:
+                return GitStatusAdmission(reason="mutation_active")
+            if self._status_token is not None:
+                return GitStatusAdmission(reason="status_active")
             token = object()
             self._status_token = token
-            return GitStatusLease(self, token)
+            return GitStatusAdmission(
+                lease=GitStatusLease(self, token),
+            )
 
     def attach_git_service(self, service: FileNotesGitServiceLifecycle) -> None:
         """Attach the one optional service whose lifecycle this owner controls."""
@@ -723,6 +766,11 @@ class FileNotesSessionOwner:
             if self._git_service is not None:
                 raise RuntimeError("A File Notes Git service is already attached")
             self._git_service = service
+
+    def attached_git_service(self) -> FileNotesGitServiceLifecycle | None:
+        """Return the one process-owned Git service, if configured."""
+        with self._lock:
+            return self._git_service
 
     def shutdown(self) -> None:
         """Seal admission and shut down the attached service exactly once."""

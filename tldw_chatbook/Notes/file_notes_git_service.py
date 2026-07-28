@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import shutil
+import stat
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Literal, Protocol
 
 from tldw_chatbook.Notes.file_notes_session_owner import (
+    FileNotesSessionOwner,
+    FileSystemIdentity,
+    GitStatusLease,
     HeadIdentity,
     IndexBaseline,
     IndexEntry,
     RepositoryIdentity,
     SequencedSessionChange,
+    SessionBinding,
     SessionChangeAction,
     SessionChangeGroup,
     SessionChangeTopology,
+    SessionGitStatus,
     SessionGitRow,
     StagingOwnership,
 )
@@ -30,10 +39,1261 @@ PorcelainKind = Literal[
     "unavailable",
     "error",
 ]
+GitArg = str | bytes
+DiscoveryState = Literal[
+    "ready",
+    "not_repository",
+    "unavailable",
+    "unsupported",
+    "unsafe_root",
+    "identity_changed",
+]
+
+_REDIRECTING_GIT_ENVIRONMENT = frozenset(
+    {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_SHALLOW_FILE",
+        "GIT_GRAFT_FILE",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_EXEC_PATH",
+        "GIT_PREFIX",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_GLOB_PATHSPECS",
+        "GIT_NOGLOB_PATHSPECS",
+        "GIT_LITERAL_PATHSPECS",
+        "GIT_ICASE_PATHSPECS",
+    }
+)
+_DYNAMIC_CONFIG_ENVIRONMENT_PREFIXES = (
+    "GIT_CONFIG_KEY_",
+    "GIT_CONFIG_VALUE_",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class GitCommandResult:
+    """Byte-preserving result from one direct Git child process."""
+
+    returncode: int | None
+    stdout: bytes
+    stderr: bytes
+    timed_out: bool = False
+    termination_uncertain: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryResult:
+    """Machine-safe repository discovery without granting process trust."""
+
+    state: DiscoveryState
+    repository: RepositoryIdentity | None = None
+    head: HeadIdentity | None = None
+    message: str | None = None
+
+
+GitStatusAdmissionReason = Literal[
+    "untrusted",
+    "mutation_active",
+    "stale_binding",
+    "shutdown",
+    "status_active",
+]
+
+
+class GitStatusAdmissionError(RuntimeError):
+    """Typed synchronous refusal before any worktree-aware child starts."""
+
+    def __init__(
+        self,
+        reason: GitStatusAdmissionReason,
+        message: str,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class GitProcessRunner(Protocol):
+    """Injectable direct-argv child-process boundary."""
+
+    async def run(
+        self,
+        argv: Sequence[GitArg],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        """Run one command without accepting a shell option."""
+
+    def shutdown(self) -> None:
+        """Seal admission and finitely settle owned children."""
+
+
+def build_git_environment(
+    ambient: Mapping[str, str] | None = None,
+    *,
+    for_status: bool = False,
+) -> dict[str, str]:
+    """Return ordinary process context without Git redirection/injection."""
+    source = os.environ if ambient is None else ambient
+    environment = {
+        key: value
+        for key, value in source.items()
+        if (
+            key not in _REDIRECTING_GIT_ENVIRONMENT
+            and key != "GIT_CONFIG_COUNT"
+            and not key.startswith(_DYNAMIC_CONFIG_ENVIRONMENT_PREFIXES)
+        )
+    }
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    if for_status:
+        environment["GIT_OPTIONAL_LOCKS"] = "0"
+    return environment
+
+
+def build_status_argv(
+    git_executable: str,
+    repository_paths: Sequence[bytes],
+) -> tuple[GitArg, ...]:
+    """Build the literal, NUL-safe, no-renames session status command."""
+    return (
+        git_executable,
+        "--literal-pathspecs",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "status.renames=false",
+        "-c",
+        "diff.renames=false",
+        "status",
+        "--porcelain=v2",
+        "-z",
+        "--untracked-files=all",
+        "--ignored=matching",
+        "--no-renames",
+        "--",
+        *repository_paths,
+    )
+
+
+def build_index_argv(git_executable: str) -> tuple[GitArg, ...]:
+    """Build one complete, NUL-safe semantic index read."""
+    return (
+        git_executable,
+        "--literal-pathspecs",
+        "-c",
+        "core.fsmonitor=false",
+        "ls-files",
+        "-z",
+        "--stage",
+        "-v",
+        "--",
+    )
+
+
+def sanitize_git_stderr(payload: bytes, *, limit: int = 4096) -> str:
+    """Bound diagnostics and make terminal control bytes visible."""
+    if limit <= 0:
+        return ""
+    decoded = os.fsdecode(payload)
+    parts: list[str] = []
+    size = 0
+    replacements = {"\n": r"\n", "\r": r"\r", "\t": r"\t"}
+    for character in decoded:
+        codepoint = ord(character)
+        if character in replacements:
+            piece = replacements[character]
+        elif codepoint < 32 or 127 <= codepoint <= 159:
+            piece = f"\\x{codepoint:02x}"
+        elif 0xDC80 <= codepoint <= 0xDCFF:
+            piece = f"\\x{codepoint - 0xDC00:02x}"
+        else:
+            piece = character
+        encoded = piece.encode("utf-8", "surrogateescape")
+        if size + len(encoded) > limit:
+            break
+        parts.append(piece)
+        size += len(encoded)
+    return "".join(parts)
+
+
+class AsyncGitProcessRunner:
+    """Own direct-argv asyncio Git children without a shell boundary."""
+
+    def __init__(
+        self,
+        *,
+        terminate_timeout: float = 0.25,
+        kill_timeout: float = 0.25,
+        stderr_limit: int = 4096,
+    ) -> None:
+        self._sealed = False
+        self._terminate_timeout = terminate_timeout
+        self._kill_timeout = kill_timeout
+        self._stderr_limit = stderr_limit
+        self._processes: set[asyncio.subprocess.Process] = set()
+        self._cleanup_tasks: set[asyncio.Task[None]] = set()
+
+    async def run(
+        self,
+        argv: Sequence[GitArg],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        """Execute one direct child and preserve all standard streams as bytes."""
+        if self._sealed:
+            return GitCommandResult(127, b"", b"Git runner is shut down")
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=cwd,
+            env=dict(environment),
+            stdin=(
+                asyncio.subprocess.PIPE
+                if stdin is not None
+                else asyncio.subprocess.DEVNULL
+            ),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        self._processes.add(process)
+        communication = asyncio.create_task(process.communicate(stdin))
+        try:
+            done, _ = await asyncio.wait(
+                {communication},
+                timeout=timeout,
+            )
+            if done:
+                stdout, stderr = communication.result()
+                return GitCommandResult(
+                    process.returncode,
+                    stdout,
+                    self._bounded_stderr(stderr),
+                )
+
+            process.terminate()
+            terminated = await self._bounded_process_wait(
+                process,
+                self._terminate_timeout,
+            )
+            if not terminated:
+                process.kill()
+                terminated = await self._bounded_process_wait(
+                    process,
+                    self._kill_timeout,
+                )
+
+            stdout = b""
+            stderr = b"Git command timed out"
+            if terminated:
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        asyncio.shield(communication),
+                        timeout=self._kill_timeout,
+                    )
+                except TimeoutError:
+                    terminated = False
+            return GitCommandResult(
+                process.returncode,
+                stdout,
+                self._bounded_stderr(stderr),
+                timed_out=True,
+                termination_uncertain=not terminated,
+            )
+        finally:
+            self._processes.discard(process)
+            if not communication.done():
+                communication.cancel()
+                await asyncio.gather(
+                    communication,
+                    return_exceptions=True,
+                )
+
+    def shutdown(self) -> None:
+        """Seal admissions and begin finite cleanup of every owned child."""
+        self._sealed = True
+        for process in tuple(self._processes):
+            if process.returncode is not None:
+                continue
+            process.terminate()
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                process.kill()
+                continue
+            task = loop.create_task(self._settle_shutdown_process(process))
+            self._cleanup_tasks.add(task)
+            task.add_done_callback(self._cleanup_tasks.discard)
+
+    async def _bounded_process_wait(
+        self,
+        process: asyncio.subprocess.Process,
+        timeout: float,
+    ) -> bool:
+        try:
+            await asyncio.wait_for(process.wait(), timeout=timeout)
+        except TimeoutError:
+            return False
+        return True
+
+    async def _settle_shutdown_process(
+        self,
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        if await self._bounded_process_wait(
+            process,
+            self._terminate_timeout,
+        ):
+            return
+        if process.returncode is None:
+            process.kill()
+        await self._bounded_process_wait(process, self._kill_timeout)
+
+    def _bounded_stderr(self, stderr: bytes) -> bytes:
+        return sanitize_git_stderr(
+            stderr,
+            limit=self._stderr_limit,
+        ).encode("utf-8", "surrogateescape")
+
+
+class FileNotesGitService:
+    """Trusted, process-owned Git projection for one File Notes owner."""
+
+    def __init__(
+        self,
+        owner: FileNotesSessionOwner,
+        *,
+        runner: GitProcessRunner | None = None,
+        git_executable: str | None = None,
+        environment: Mapping[str, str] | None = None,
+        discovery_timeout: float = 3.0,
+        status_timeout: float = 5.0,
+    ) -> None:
+        self._owner = owner
+        self._runner = runner or AsyncGitProcessRunner()
+        self._environment = dict(
+            os.environ if environment is None else environment
+        )
+        self._git_executable = (
+            git_executable
+            if git_executable is not None
+            else shutil.which("git", path=self._environment.get("PATH"))
+        )
+        self._discovery_timeout = discovery_timeout
+        self._status_timeout = status_timeout
+        self._sealed = False
+        self._status_cycle: asyncio.Task[SessionGitStatus] | None = None
+        self._status_waiter: asyncio.Task[SessionGitStatus] | None = None
+        self._pending_status: tuple[
+            SessionBinding,
+            tuple[SequencedSessionChange, ...],
+            RepositoryIdentity,
+            int,
+        ] | None = None
+        self._rerun_available = False
+        self._status_request_generation = 0
+
+    async def discover(
+        self,
+        binding: SessionBinding,
+    ) -> DiscoveryResult:
+        """Discover repository/HEAD identity without inspecting worktree state."""
+        if self._sealed:
+            return DiscoveryResult(
+                "unavailable",
+                message="File Notes Git service is shut down",
+            )
+        if binding != self._owner.current_binding():
+            return DiscoveryResult(
+                "unavailable",
+                message="File Notes root binding is stale",
+            )
+        root = self._safe_root(binding)
+        if root is None:
+            return DiscoveryResult(
+                "unsafe_root",
+                message="Selected File Notes root is not a safe directory",
+            )
+        if self._git_executable is None:
+            return DiscoveryResult(
+                "unavailable",
+                message="Git is not installed",
+            )
+
+        inside = await self._run_discovery(
+            root,
+            ("rev-parse", "--is-inside-work-tree"),
+        )
+        if inside is None:
+            return DiscoveryResult(
+                "unavailable",
+                message="Git repository discovery failed",
+            )
+        if inside.returncode != 0:
+            return DiscoveryResult(
+                "not_repository",
+                message="Selected File Notes root is not in a Git worktree",
+            )
+        if inside.stdout != b"true\n":
+            return DiscoveryResult(
+                "not_repository",
+                message="Selected File Notes root is not in a Git worktree",
+            )
+
+        path_commands = (
+            ("rev-parse", "--path-format=absolute", "--show-toplevel"),
+            ("rev-parse", "--absolute-git-dir"),
+            ("rev-parse", "--path-format=absolute", "--git-common-dir"),
+        )
+        resolved_paths: list[Path] = []
+        for arguments in path_commands:
+            result = await self._run_discovery(root, arguments)
+            if result is None or result.returncode != 0:
+                return DiscoveryResult(
+                    "unsupported",
+                    message="Installed Git lacks required discovery features",
+                )
+            resolved = _canonical_directory_from_git(result.stdout)
+            if resolved is None:
+                return DiscoveryResult(
+                    "unsupported",
+                    message="Git returned an unsafe repository path",
+                )
+            resolved_paths.append(resolved)
+
+        worktree_root, git_dir, git_common_dir = resolved_paths
+        try:
+            root.relative_to(worktree_root)
+        except ValueError:
+            return DiscoveryResult(
+                "unsafe_root",
+                message="Selected File Notes root is outside the Git worktree",
+            )
+
+        repository = RepositoryIdentity(
+            worktree_root=str(worktree_root),
+            git_dir=str(git_dir),
+            git_common_dir=str(git_common_dir),
+            worktree_identity=_filesystem_identity(worktree_root),
+            git_dir_identity=_filesystem_identity(git_dir),
+            git_common_dir_identity=_filesystem_identity(git_common_dir),
+        )
+        head = await self._read_head(root)
+        if head is None:
+            return DiscoveryResult(
+                "unsupported",
+                message="Git HEAD could not be read safely",
+            )
+        return DiscoveryResult(
+            "ready",
+            repository=repository,
+            head=head,
+        )
+
+    def revalidate_repository(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+    ) -> bool:
+        """Revalidate canonical paths and identities, revoking stale trust."""
+        valid = (
+            not self._sealed
+            and binding == self._owner.current_binding()
+            and self._repository_identity_matches(binding, repository)
+        )
+        if not valid:
+            self._owner.clear_trust_if_matches(binding, repository)
+        return valid
+
+    def start_status(
+        self,
+        binding: SessionBinding,
+        changes: tuple[SequencedSessionChange, ...],
+    ) -> asyncio.Task[SessionGitStatus]:
+        """Synchronously admit one retained trusted status query."""
+        if self._sealed:
+            raise GitStatusAdmissionError(
+                "shutdown",
+                "File Notes Git service is shut down",
+            )
+        snapshot = self._owner.snapshot(binding)
+        repository = snapshot.trusted_repository
+        if binding != self._owner.current_binding():
+            raise GitStatusAdmissionError(
+                "stale_binding",
+                "File Notes root binding is stale",
+            )
+        if repository is None:
+            raise GitStatusAdmissionError(
+                "untrusted",
+                "Repository trust is required before Git status",
+            )
+        if self._status_cycle is not None and not self._status_cycle.done():
+            admission = self._owner.admit_status(binding)
+            if admission.reason == "mutation_active":
+                raise GitStatusAdmissionError(
+                    "mutation_active",
+                    "A File Notes Git mutation is active",
+                )
+            if admission.reason != "status_active":
+                if admission.lease is not None:
+                    admission.lease.release()
+                reason = admission.reason or "status_active"
+                raise GitStatusAdmissionError(
+                    reason,
+                    "File Notes Git status cannot be coalesced",
+                )
+            if self._rerun_available:
+                self._status_request_generation += 1
+                self._pending_status = (
+                    binding,
+                    tuple(changes),
+                    repository,
+                    self._status_request_generation,
+                )
+            waiter = self._status_waiter
+            if waiter is None or waiter.done():
+                waiter = self._create_task(
+                    self._shield_status_cycle(self._status_cycle)
+                )
+                self._status_waiter = waiter
+            return waiter
+
+        admission = self._owner.admit_status(binding)
+        lease = admission.lease
+        if lease is None:
+            reason = admission.reason or "status_active"
+            raise GitStatusAdmissionError(
+                reason,
+                "File Notes Git status admission was refused",
+            )
+        self._status_request_generation += 1
+        request_generation = self._status_request_generation
+        self._pending_status = None
+        self._rerun_available = True
+        cycle: asyncio.Task[SessionGitStatus] | None = None
+        try:
+            cycle = self._create_task(
+                self._run_status_cycle(
+                    binding,
+                    tuple(changes),
+                    repository,
+                    lease,
+                    request_generation,
+                )
+            )
+            waiter = self._create_task(self._shield_status_cycle(cycle))
+        except BaseException:
+            if cycle is not None:
+                cycle.cancel()
+            lease.release()
+            self._pending_status = None
+            self._rerun_available = False
+            raise
+        self._status_cycle = cycle
+        self._status_waiter = waiter
+        cycle.add_done_callback(self._status_cycle_completed)
+        return waiter
+
+    def shutdown(self) -> None:
+        """Synchronously seal admission and begin bounded child cleanup."""
+        if self._sealed:
+            return
+        self._sealed = True
+        binding = self._owner.current_binding()
+        if binding is not None:
+            self._owner.clear_ownership(binding)
+            self._owner.clear_status(binding)
+        self._runner.shutdown()
+
+    async def _shield_status_cycle(
+        self,
+        cycle: asyncio.Task[SessionGitStatus],
+    ) -> SessionGitStatus:
+        return await asyncio.shield(cycle)
+
+    def _status_cycle_completed(
+        self,
+        cycle: asyncio.Task[SessionGitStatus],
+    ) -> None:
+        if self._status_cycle is cycle:
+            self._status_cycle = None
+            self._pending_status = None
+            self._rerun_available = False
+
+    async def _run_status_cycle(
+        self,
+        binding: SessionBinding,
+        changes: tuple[SequencedSessionChange, ...],
+        repository: RepositoryIdentity,
+        lease: GitStatusLease,
+        request_generation: int,
+    ) -> SessionGitStatus:
+        try:
+            result = await self._query_status(
+                binding,
+                changes,
+                repository,
+            )
+            lease.release()
+            pending = self._pending_status
+            self._pending_status = None
+            if pending is None:
+                return self._publish_cycle_result(
+                    binding,
+                    result,
+                    request_generation,
+                )
+
+            (
+                pending_binding,
+                pending_changes,
+                pending_repository,
+                pending_generation,
+            ) = pending
+            admission = self._owner.admit_status(pending_binding)
+            next_lease = admission.lease
+            if next_lease is None:
+                self._rerun_available = False
+                stale = self._local_status(
+                    pending_binding,
+                    "stale",
+                    rows=result.rows,
+                    repository=pending_repository,
+                    head=result.head,
+                    message=(
+                        "Git status rerun was suppressed because a mutation "
+                        "was admitted"
+                    ),
+                )
+                return self._publish_cycle_result(
+                    pending_binding,
+                    stale,
+                    pending_generation,
+                )
+
+            lease = next_lease
+            self._rerun_available = False
+            result = await self._query_status(
+                pending_binding,
+                pending_changes,
+                pending_repository,
+            )
+            return self._publish_cycle_result(
+                pending_binding,
+                result,
+                pending_generation,
+            )
+        finally:
+            lease.release()
+
+    def _create_task(
+        self,
+        coroutine: object,
+    ) -> asyncio.Task[SessionGitStatus]:
+        return asyncio.get_running_loop().create_task(coroutine)  # type: ignore[arg-type]
+
+    def _publish_cycle_result(
+        self,
+        binding: SessionBinding,
+        status: SessionGitStatus,
+        request_generation: int,
+    ) -> SessionGitStatus:
+        if (
+            not self._sealed
+            and request_generation == self._status_request_generation
+            and binding == self._owner.current_binding()
+        ):
+            self._owner.publish_status(binding, status)
+        return status
+
+    async def _query_status(
+        self,
+        binding: SessionBinding,
+        changes: tuple[SequencedSessionChange, ...],
+        repository: RepositoryIdentity,
+    ) -> SessionGitStatus:
+        if (
+            self._owner.snapshot(binding).trusted_repository != repository
+            or not self.revalidate_repository(binding, repository)
+        ):
+            return self._local_status(
+                binding,
+                "stale",
+                message="Repository identity changed; trust was cleared",
+            )
+
+        root = self._safe_root(binding)
+        if root is None:
+            self._owner.clear_trust(binding)
+            return self._local_status(
+                binding,
+                "stale",
+                message="Selected File Notes root is no longer safe",
+            )
+        sparse = await self._sparse_checkout_state(repository)
+        if sparse is None:
+            return self._publish_status_result(
+                binding,
+                "error",
+                repository=repository,
+                message="Unable to verify sparse-checkout state",
+            )
+        if sparse:
+            return self._publish_status_result(
+                binding,
+                "unavailable",
+                repository=repository,
+                message="Sparse checkout or sparse index is unsupported",
+            )
+
+        groups = coalesce_session_changes(changes)
+        repository_groups: list[SessionChangeGroup] = []
+        original_groups: dict[int, SessionChangeGroup] = {}
+        invalid_rows: dict[int, SessionGitRow] = {}
+        for group in groups:
+            mapped_group, invalid_row = self._map_group(
+                root,
+                repository,
+                group,
+            )
+            if invalid_row is not None:
+                invalid_rows[group.group_id] = invalid_row
+                continue
+            assert mapped_group is not None
+            repository_groups.append(mapped_group)
+            original_groups[group.group_id] = group
+
+        head = await self._read_head(root)
+        if head is None:
+            return self._publish_status_result(
+                binding,
+                "error",
+                repository=repository,
+                message="Git HEAD could not be read safely",
+            )
+        index_result = await self._run_status_command(
+            repository,
+            build_index_argv(self._git_executable_or_raise()),
+        )
+        if not _command_succeeded(index_result):
+            return self._publish_status_result(
+                binding,
+                "stale",
+                repository=repository,
+                head=head,
+                message=_command_failure_message(
+                    index_result,
+                    "Git index read failed",
+                ),
+            )
+        try:
+            index_entries = parse_index_entries_z(index_result.stdout)
+        except GitIndexParseError as error:
+            return self._publish_status_result(
+                binding,
+                "error",
+                repository=repository,
+                head=head,
+                message=str(error),
+            )
+
+        status_records: tuple[PorcelainRecord, ...] = ()
+        repository_paths = tuple(
+            os.fsencode(path)
+            for group in repository_groups
+            for path in group.endpoints
+        )
+        if repository_paths:
+            allowed_paths = frozenset(
+                {
+                    *(
+                        path
+                        for group in repository_groups
+                        for path in group.endpoints
+                    ),
+                    *(
+                        index_path
+                        for index_path in index_entries
+                        if any(
+                            _paths_overlap(index_path, endpoint)
+                            for group in repository_groups
+                            for endpoint in group.endpoints
+                        )
+                    ),
+                }
+            )
+            status_result = await self._run_status_command(
+                repository,
+                build_status_argv(
+                    self._git_executable_or_raise(),
+                    repository_paths,
+                ),
+            )
+            if not _command_succeeded(status_result):
+                return self._publish_status_result(
+                    binding,
+                    "stale",
+                    repository=repository,
+                    head=head,
+                    message=_command_failure_message(
+                        status_result,
+                        "Git status failed",
+                    ),
+                )
+            try:
+                status_records = parse_porcelain_v2_z(
+                    status_result.stdout,
+                    allowed_paths=allowed_paths,
+                )
+            except PorcelainV2ParseError as error:
+                return self._publish_status_result(
+                    binding,
+                    "error",
+                    repository=repository,
+                    head=head,
+                    message=str(error),
+                )
+
+        classified = classify_session_rows(
+            repository_groups,
+            status_records,
+            index_entries,
+            {},
+        )
+        classified_by_id = {
+            row.group_id: replace(
+                row,
+                group=original_groups[row.group_id],
+            )
+            for row in classified
+        }
+        rows = tuple(
+            invalid_rows.get(group.group_id)
+            or classified_by_id[group.group_id]
+            for group in groups
+        )
+        return self._publish_status_result(
+            binding,
+            "ready",
+            rows=rows,
+            repository=repository,
+            head=head,
+        )
+
+    async def _sparse_checkout_state(
+        self,
+        repository: RepositoryIdentity,
+    ) -> bool | None:
+        for key in ("core.sparseCheckout", "index.sparse"):
+            result = await self._run_status_command(
+                repository,
+                (
+                    self._git_executable_or_raise(),
+                    "config",
+                    "--bool",
+                    "--get",
+                    key,
+                ),
+            )
+            if result.timed_out or result.termination_uncertain:
+                return None
+            if result.returncode == 1:
+                continue
+            if result.returncode != 0:
+                return None
+            if result.stdout == b"true\n":
+                return True
+            if result.stdout != b"false\n":
+                return None
+        return False
+
+    async def _run_status_command(
+        self,
+        repository: RepositoryIdentity,
+        argv: Sequence[GitArg],
+    ) -> GitCommandResult:
+        try:
+            result = await self._runner.run(
+                argv,
+                cwd=repository.worktree_root,
+                environment=build_git_environment(
+                    self._environment,
+                    for_status=True,
+                ),
+                timeout=self._status_timeout,
+            )
+        except OSError as error:
+            return GitCommandResult(
+                127,
+                b"",
+                str(error).encode("utf-8", "replace"),
+            )
+        if result.termination_uncertain:
+            binding = self._owner.current_binding()
+            if (
+                binding is not None
+                and self._owner.snapshot(binding).trusted_repository
+                == repository
+            ):
+                self._owner.clear_ownership(binding)
+        return result
+
+    def _map_group(
+        self,
+        notes_root: Path,
+        repository: RepositoryIdentity,
+        group: SessionChangeGroup,
+    ) -> tuple[SessionChangeGroup | None, SessionGitRow | None]:
+        mapping: dict[str, str] = {}
+        for endpoint in group.endpoints:
+            mapped, problem = _map_session_endpoint(
+                notes_root,
+                Path(repository.worktree_root),
+                endpoint,
+            )
+            if problem == "nested_repository":
+                return None, SessionGitRow(
+                    group,
+                    "nested_repository",
+                    disabled_reason="Nested repository unsupported",
+                )
+            if problem is not None:
+                return None, SessionGitRow(
+                    group,
+                    "unsupported",
+                    disabled_reason=problem,
+                )
+            assert mapped is not None
+            mapping[endpoint] = mapped
+        return (
+            replace(
+                group,
+                endpoints=tuple(mapping[path] for path in group.endpoints),
+                source_path=mapping[group.source_path],
+                destination_path=(
+                    None
+                    if group.destination_path is None
+                    else mapping[group.destination_path]
+                ),
+                current_path=mapping[group.current_path],
+                move_edges=tuple(
+                    (mapping[source], mapping[destination])
+                    for source, destination in group.move_edges
+                ),
+            ),
+            None,
+        )
+
+    def _publish_status_result(
+        self,
+        binding: SessionBinding,
+        state: Literal["ready", "stale", "unavailable", "error"],
+        *,
+        rows: tuple[SessionGitRow, ...] = (),
+        repository: RepositoryIdentity | None = None,
+        head: HeadIdentity | None = None,
+        message: str | None = None,
+    ) -> SessionGitStatus:
+        return self._local_status(
+            binding,
+            state,
+            rows=rows,
+            repository=repository,
+            head=head,
+            message=message,
+        )
+
+    def _local_status(
+        self,
+        binding: SessionBinding,
+        state: Literal["ready", "stale", "unavailable", "error"],
+        *,
+        rows: tuple[SessionGitRow, ...] = (),
+        repository: RepositoryIdentity | None = None,
+        head: HeadIdentity | None = None,
+        message: str | None = None,
+    ) -> SessionGitStatus:
+        generation = self._owner.next_status_generation(binding)
+        return SessionGitStatus(
+            binding_generation=binding.generation,
+            status_generation=0 if generation is None else generation,
+            state=state,
+            rows=rows,
+            repository=repository,
+            head=head,
+            message=message,
+        )
+
+    def _git_executable_or_raise(self) -> str:
+        if self._git_executable is None:
+            raise RuntimeError("Git is not installed")
+        return self._git_executable
+
+    def _safe_root(self, binding: SessionBinding) -> Path | None:
+        root = Path(binding.root_key)
+        try:
+            root_stat = root.stat(follow_symlinks=False)
+            canonical = root.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return None
+        if (
+            not stat.S_ISDIR(root_stat.st_mode)
+            or canonical != root
+        ):
+            return None
+        return canonical
+
+    async def _run_discovery(
+        self,
+        root: Path,
+        arguments: Sequence[str],
+    ) -> GitCommandResult | None:
+        assert self._git_executable is not None
+        try:
+            result = await self._runner.run(
+                (self._git_executable, *arguments),
+                cwd=str(root),
+                environment=build_git_environment(self._environment),
+                timeout=self._discovery_timeout,
+            )
+        except OSError:
+            return None
+        if result.timed_out or result.termination_uncertain:
+            return None
+        return result
+
+    async def _read_head(self, root: Path) -> HeadIdentity | None:
+        symbolic = await self._run_discovery(
+            root,
+            ("symbolic-ref", "-q", "HEAD"),
+        )
+        revision = await self._run_discovery(
+            root,
+            ("rev-parse", "--verify", "HEAD^{commit}"),
+        )
+        if symbolic is None or revision is None:
+            return None
+        branch = (
+            _single_git_value(symbolic.stdout)
+            if symbolic.returncode == 0
+            else None
+        )
+        object_id = (
+            _ascii_object_id(revision.stdout)
+            if revision.returncode == 0
+            else None
+        )
+        if branch is not None:
+            if object_id is None:
+                return HeadIdentity.unborn(branch)
+            return HeadIdentity.attached(branch, object_id)
+        if object_id is not None:
+            return HeadIdentity.detached(object_id)
+        return None
+
+    def _repository_identity_matches(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+    ) -> bool:
+        root = self._safe_root(binding)
+        if root is None:
+            return False
+        expected = (
+            (
+                repository.worktree_root,
+                repository.worktree_identity,
+            ),
+            (repository.git_dir, repository.git_dir_identity),
+            (
+                repository.git_common_dir,
+                repository.git_common_dir_identity,
+            ),
+        )
+        resolved: list[Path] = []
+        for path_text, identity in expected:
+            path = Path(path_text)
+            try:
+                canonical = path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                return False
+            if (
+                canonical != path
+                or not canonical.is_dir()
+                or _filesystem_identity(canonical) != identity
+            ):
+                return False
+            resolved.append(canonical)
+        worktree_root = resolved[0]
+        try:
+            root.relative_to(worktree_root)
+        except ValueError:
+            return False
+        return True
+
+
+def build_file_notes_session_owner() -> FileNotesSessionOwner:
+    """Build one process owner with exactly one attached Git service."""
+    owner = FileNotesSessionOwner()
+    owner.attach_git_service(FileNotesGitService(owner))
+    return owner
+
+
+def _canonical_directory_from_git(payload: bytes) -> Path | None:
+    value = _single_git_value(payload)
+    if value is None or "\0" in value:
+        return None
+    try:
+        path = Path(value).resolve(strict=True)
+        path_stat = path.stat(follow_symlinks=False)
+    except (OSError, RuntimeError):
+        return None
+    if not stat.S_ISDIR(path_stat.st_mode):
+        return None
+    return path
+
+
+def _single_git_value(payload: bytes) -> str | None:
+    if not payload.endswith(b"\n") or b"\0" in payload:
+        return None
+    value = payload[:-1]
+    if not value:
+        return None
+    return os.fsdecode(value)
+
+
+def _ascii_object_id(payload: bytes) -> str | None:
+    if not payload.endswith(b"\n"):
+        return None
+    object_id = payload[:-1]
+    if len(object_id) not in {40, 64}:
+        return None
+    try:
+        value = object_id.decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    if any(character not in "0123456789abcdefABCDEF" for character in value):
+        return None
+    return value.lower()
+
+
+def _filesystem_identity(path: Path) -> FileSystemIdentity:
+    path_stat = path.stat(follow_symlinks=False)
+    return FileSystemIdentity(
+        device=path_stat.st_dev,
+        inode=path_stat.st_ino,
+    )
+
+
+def _map_session_endpoint(
+    notes_root: Path,
+    worktree_root: Path,
+    relative_path: str,
+) -> tuple[str | None, str | None]:
+    if (
+        not relative_path
+        or relative_path.startswith("/")
+        or "\0" in relative_path
+    ):
+        return None, "Unsafe File Notes path"
+    components = relative_path.split("/")
+    if any(component in {"", ".", ".."} for component in components):
+        return None, "Unsafe File Notes path"
+    if ".git" in components:
+        return None, "nested_repository"
+
+    candidate = notes_root.joinpath(*components)
+    for depth in range(1, len(components)):
+        parent = notes_root.joinpath(*components[:depth])
+        try:
+            parent_stat = parent.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None, "Unsafe File Notes path"
+        if (
+            stat.S_ISLNK(parent_stat.st_mode)
+            or not stat.S_ISDIR(parent_stat.st_mode)
+        ):
+            return None, "Unsafe File Notes path"
+        git_boundary = parent / ".git"
+        try:
+            git_boundary.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return None, "Unsafe nested repository boundary"
+        else:
+            return None, "nested_repository"
+
+    try:
+        resolved_candidate = candidate.resolve(strict=False)
+        resolved_candidate.relative_to(notes_root)
+        candidate.relative_to(worktree_root)
+    except (OSError, RuntimeError, ValueError):
+        return None, "File Notes path leaves the trusted worktree"
+
+    try:
+        endpoint_stat = candidate.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        endpoint_stat = None
+    except OSError:
+        return None, "Unable to inspect File Notes path"
+    if endpoint_stat is not None:
+        if stat.S_ISLNK(endpoint_stat.st_mode):
+            return None, "Symlink endpoints are unsupported"
+        if stat.S_ISDIR(endpoint_stat.st_mode):
+            return None, "Directory endpoints are unsupported"
+        if not stat.S_ISREG(endpoint_stat.st_mode):
+            return None, "Non-regular endpoints are unsupported"
+
+    return candidate.relative_to(worktree_root).as_posix(), None
+
+
+def _command_succeeded(result: GitCommandResult) -> bool:
+    return (
+        result.returncode == 0
+        and not result.timed_out
+        and not result.termination_uncertain
+    )
+
+
+def _command_failure_message(
+    result: GitCommandResult,
+    fallback: str,
+) -> str:
+    if result.termination_uncertain:
+        return f"{fallback}: child termination is uncertain"
+    if result.timed_out:
+        return f"{fallback}: timed out"
+    diagnostic = sanitize_git_stderr(result.stderr)
+    if not diagnostic:
+        return fallback
+    return f"{fallback}: {diagnostic}"
 
 
 class PorcelainV2ParseError(ValueError):
     """Raised when porcelain-v2 bytes are incomplete or malformed."""
+
+
+class GitIndexParseError(ValueError):
+    """Raised when a complete NUL-safe index read is ambiguous or malformed."""
 
 
 class PorcelainPathOutsideSessionError(PorcelainV2ParseError):
@@ -58,6 +1318,76 @@ class PorcelainRecord:
     def __post_init__(self) -> None:
         object.__setattr__(self, "modes", tuple(self.modes))
         object.__setattr__(self, "object_ids", tuple(self.object_ids))
+
+
+def parse_index_entries_z(payload: bytes) -> dict[str, IndexEntry]:
+    """Parse `ls-files --stage -v -z` without losing filename bytes."""
+    if not payload:
+        return {}
+    if not payload.endswith(b"\0"):
+        raise GitIndexParseError("Git index payload is not NUL terminated")
+    entries: dict[str, IndexEntry] = {}
+    for raw_entry in payload[:-1].split(b"\0"):
+        if not raw_entry:
+            raise GitIndexParseError("Git index payload contains an empty entry")
+        if len(raw_entry) < 3 or raw_entry[1:2] != b" ":
+            raise GitIndexParseError("Git index entry lacks a semantic tag")
+        raw_tag = raw_entry[:1]
+        if not (
+            raw_tag.isalpha()
+            or raw_tag == b"?"
+        ):
+            raise GitIndexParseError("Git index semantic tag is unsupported")
+        try:
+            metadata, raw_path = raw_entry[2:].split(b"\t", 1)
+        except ValueError as error:
+            raise GitIndexParseError(
+                "Git index entry lacks a path boundary"
+            ) from error
+        fields = metadata.split(b" ")
+        if len(fields) != 3:
+            raise GitIndexParseError("Git index entry metadata is malformed")
+        raw_mode, raw_object_id, raw_stage = fields
+        if (
+            len(raw_mode) != 6
+            or any(byte not in b"01234567" for byte in raw_mode)
+        ):
+            raise GitIndexParseError("Git index mode is malformed")
+        if (
+            len(raw_object_id) not in {40, 64}
+            or any(
+                byte not in b"0123456789abcdefABCDEF"
+                for byte in raw_object_id
+            )
+        ):
+            raise GitIndexParseError("Git index object ID is malformed")
+        if raw_stage not in {b"0", b"1", b"2", b"3"}:
+            raise GitIndexParseError("Git index stage is malformed")
+        if not raw_path:
+            raise GitIndexParseError("Git index path is empty")
+        path = os.fsdecode(raw_path)
+        if (
+            path.startswith("/")
+            or "\0" in path
+            or any(component in {"", ".", ".."} for component in path.split("/"))
+        ):
+            raise GitIndexParseError("Git index path is unsafe")
+        if path in entries:
+            raise GitIndexParseError("Git index contains a duplicate path")
+        tag = raw_tag.decode("ascii")
+        flags: list[str] = []
+        if tag.upper() == "S":
+            flags.append("skip-worktree")
+        if tag.islower():
+            flags.append("assume-unchanged")
+        entries[path] = IndexEntry(
+            path=path,
+            mode=raw_mode.decode("ascii"),
+            object_id=raw_object_id.decode("ascii").lower(),
+            stage=int(raw_stage),
+            semantic_flags=tuple(flags),
+        )
+    return entries
 
 
 @dataclass(slots=True)
