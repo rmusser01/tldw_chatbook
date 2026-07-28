@@ -1,0 +1,582 @@
+{
+  "corpus": {
+    "derived_cases": [
+      {
+        "case_id": "accent-en-in",
+        "final_wav": "../../../.benchmarks/stt-task-593/audio/accent-en-in.wav",
+        "final_wav_sha256": "1c22ac684b7bb458afac0ef4db25c228e28a2654034537c7f518e260eea1b8dc",
+        "generation": {
+          "conversion_argv": [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            ".benchmarks/stt-task-593/audio/accent-en-in.aiff",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            ".benchmarks/stt-task-593/audio/accent-en-in.wav"
+          ],
+          "locale": "en_IN",
+          "say_argv": [
+            "say",
+            "-v",
+            "Rishi",
+            "-o",
+            ".benchmarks/stt-task-593/audio/accent-en-in.aiff",
+            "Please record this short sentence as an additional English accent sample for speech recognition."
+          ],
+          "settings": "No rate or other voice setting was explicitly supplied.",
+          "text": "Please record this short sentence as an additional English accent sample for speech recognition.",
+          "voice": "Rishi"
+        }
+      },
+      {
+        "case_id": "noise-en",
+        "final_wav": "../../../.benchmarks/stt-task-593/audio/noisy-en.wav",
+        "final_wav_sha256": "801a1376131447fa06db706ef903f12eefece35211bce64101ea26cce7eebeff",
+        "generation": {
+          "argv": [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            ".benchmarks/stt-task-593/audio/fleurs-en.wav",
+            "-f",
+            "lavfi",
+            "-i",
+            "anoisesrc=color=white:amplitude=0.08:sample_rate=16000:seed=593",
+            "-filter_complex",
+            "[0:a][1:a]amix=inputs=2:duration=first:weights=1 0.35:normalize=0",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            ".benchmarks/stt-task-593/audio/noisy-en.wav"
+          ],
+          "measured_snr_db": -12.7629,
+          "mix": {
+            "duration": "first",
+            "filter": "amix",
+            "noise_weight": 0.35,
+            "normalize": false,
+            "source_weight": 1.0
+          },
+          "noise_source": {
+            "amplitude": 0.08,
+            "color": "white",
+            "filter": "anoisesrc",
+            "sample_rate": 16000,
+            "seed": 593
+          },
+          "snr_method": "Whole-file aligned signed-16-bit PCM samples; 10*log10(mean(clean^2)/mean((noisy-clean)^2)).",
+          "source_case_id": "fleurs-en"
+        }
+      },
+      {
+        "case_id": "long-en",
+        "final_wav": "../../../.benchmarks/stt-task-593/audio/long-en.wav",
+        "final_wav_sha256": "98f682e6892040441579d4d8d66054b753470f5b2172d171040791bb1ff365d7",
+        "generation": {
+          "argv": [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            ".benchmarks/stt-task-593/audio/fleurs-en.wav",
+            "-i",
+            ".benchmarks/stt-task-593/audio/fleurs-en.wav",
+            "-i",
+            ".benchmarks/stt-task-593/audio/fleurs-en.wav",
+            "-i",
+            ".benchmarks/stt-task-593/audio/fleurs-en.wav",
+            "-i",
+            ".benchmarks/stt-task-593/audio/fleurs-en.wav",
+            "-i",
+            ".benchmarks/stt-task-593/audio/fleurs-en.wav",
+            "-filter_complex",
+            "[0:a][1:a][2:a][3:a][4:a][5:a]concat=n=6:v=0:a=1[out]",
+            "-map",
+            "[out]",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            ".benchmarks/stt-task-593/audio/long-en.wav"
+          ],
+          "concat_count": 6,
+          "duration_seconds": 63.36,
+          "reference_repeat_count": 6,
+          "source_case_id": "fleurs-en"
+        }
+      },
+      {
+        "case_id": "silence",
+        "final_wav": "../../../.benchmarks/stt-task-593/audio/silence.wav",
+        "final_wav_sha256": "b85d8cecb7b786adb68962926879894c65ab806a47f8add9c99676ced6ae880a",
+        "generation": {
+          "argv": [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=channel_layout=mono:sample_rate=16000",
+            "-t",
+            "5",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            ".benchmarks/stt-task-593/audio/silence.wav"
+          ],
+          "duration_seconds": 5.0,
+          "source": "anullsrc"
+        }
+      }
+    ],
+    "fleurs": {
+      "cases": [
+        {
+          "case_id": "fleurs-en",
+          "configuration": "en_us",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-en.wav",
+          "final_wav_sha256": "b5d212b1af5b8eda8247c22b2427e3c6cf10fcb572b77fe950069dfb2a1024ae",
+          "route_language": "en",
+          "source_audio_filename": "1003119935936341070.wav",
+          "source_row_id": 1904
+        },
+        {
+          "case_id": "fleurs-bg",
+          "configuration": "bg_bg",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-bg.wav",
+          "final_wav_sha256": "420069bc2e9846fb875e961659831d9d9938205f2af22e0ed9e80fe0276264ee",
+          "route_language": "bg",
+          "source_audio_filename": "10006190615151687504.wav",
+          "source_row_id": 1960
+        },
+        {
+          "case_id": "fleurs-hr",
+          "configuration": "hr_hr",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-hr.wav",
+          "final_wav_sha256": "72cc23fce6e2ca28ea8e038a7191e68adfc4aa86dcf0d009789f30d9ef1e9346",
+          "route_language": "hr",
+          "source_audio_filename": "10055598453054034810.wav",
+          "source_row_id": 1776
+        },
+        {
+          "case_id": "fleurs-cs",
+          "configuration": "cs_cz",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-cs.wav",
+          "final_wav_sha256": "c267a127ff38982e806332deadd1784a5402f972802279293ccb164d436faa41",
+          "route_language": "cs",
+          "source_audio_filename": "10008901044567586183.wav",
+          "source_row_id": 1893
+        },
+        {
+          "case_id": "fleurs-da",
+          "configuration": "da_dk",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-da.wav",
+          "final_wav_sha256": "f9e3466f83368f94b9481f7a6bc996c50c7418d2c57162c8b67d82ea9d67555b",
+          "route_language": "da",
+          "source_audio_filename": "10016401698104160032.wav",
+          "source_row_id": 1908
+        },
+        {
+          "case_id": "fleurs-nl",
+          "configuration": "nl_nl",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-nl.wav",
+          "final_wav_sha256": "cd8e76c90b408ebaece46d218e17a85c14767e2e831abc06b06fcaf570d48f1c",
+          "route_language": "nl",
+          "source_audio_filename": "10042455874761876908.wav",
+          "source_row_id": 1927
+        },
+        {
+          "case_id": "fleurs-et",
+          "configuration": "et_ee",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-et.wav",
+          "final_wav_sha256": "6280e523cd2a26e555655aad93a76c625c35da19a91cd273dbb5106cae2161e5",
+          "route_language": "et",
+          "source_audio_filename": "10017682066430689137.wav",
+          "source_row_id": 1831
+        },
+        {
+          "case_id": "fleurs-fi",
+          "configuration": "fi_fi",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-fi.wav",
+          "final_wav_sha256": "1b1e60f7aaa612992385667683738042fea0c8f4d32932247776434c26ba4004",
+          "route_language": "fi",
+          "source_audio_filename": "10036992464162193014.wav",
+          "source_row_id": 1862
+        },
+        {
+          "case_id": "fleurs-fr",
+          "configuration": "fr_fr",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-fr.wav",
+          "final_wav_sha256": "191d4b54a59c38fe0e625ecf5d6dcb49a203540a06959c8f2d13be6a9103ab77",
+          "route_language": "fr",
+          "source_audio_filename": "10043298898524273336.wav",
+          "source_row_id": 1987
+        },
+        {
+          "case_id": "fleurs-de",
+          "configuration": "de_de",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-de.wav",
+          "final_wav_sha256": "39b0645a278fc96df24a2b82cac3efbe5bc3ea77056b9bbd017b4c6fbe41417a",
+          "route_language": "de",
+          "source_audio_filename": "10004059102127011984.wav",
+          "source_row_id": 2003
+        },
+        {
+          "case_id": "fleurs-el",
+          "configuration": "el_gr",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-el.wav",
+          "final_wav_sha256": "5128689c05bab2c68abca725a4a747ee43eb8ca3ac9f7a7ba23b66a400d5fb59",
+          "route_language": "el",
+          "source_audio_filename": "10055043144368529343.wav",
+          "source_row_id": 1993
+        },
+        {
+          "case_id": "fleurs-hu",
+          "configuration": "hu_hu",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-hu.wav",
+          "final_wav_sha256": "54f6b51034c4f67c6d9b358a8e91e9ca8c71e32e508fd238e7ce3d3a9b86c85d",
+          "route_language": "hu",
+          "source_audio_filename": "10004554113809348010.wav",
+          "source_row_id": 1742
+        },
+        {
+          "case_id": "fleurs-it",
+          "configuration": "it_it",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-it.wav",
+          "final_wav_sha256": "12da49cc6a265432bed04e3379adb5d7d176f760c66b3339036453b6a199ba85",
+          "route_language": "it",
+          "source_audio_filename": "10000151032537989529.wav",
+          "source_row_id": 1787
+        },
+        {
+          "case_id": "fleurs-lv",
+          "configuration": "lv_lv",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-lv.wav",
+          "final_wav_sha256": "0691f5c76a25b405467332e6e761f118c5436fb4650e3b29d1300da71720cd33",
+          "route_language": "lv",
+          "source_audio_filename": "10056229872667344281.wav",
+          "source_row_id": 1951
+        },
+        {
+          "case_id": "fleurs-lt",
+          "configuration": "lt_lt",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-lt.wav",
+          "final_wav_sha256": "e23cc0035bf18edba5032490d345333c0423cefb8e3cb7fce4c5edd57cd38749",
+          "route_language": "lt",
+          "source_audio_filename": "10000766337781289513.wav",
+          "source_row_id": 1870
+        },
+        {
+          "case_id": "fleurs-mt",
+          "configuration": "mt_mt",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-mt.wav",
+          "final_wav_sha256": "bb1891857133b5e7e1beb5e7867a4780684677fb58a3a1454227b8a9f20859dd",
+          "route_language": "mt",
+          "source_audio_filename": "10011477559153786610.wav",
+          "source_row_id": 1920
+        },
+        {
+          "case_id": "fleurs-pl",
+          "configuration": "pl_pl",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-pl.wav",
+          "final_wav_sha256": "91637e0be33a0064eaf1090f55e02cf17ab6e656362b258701f6466a7aeb0475",
+          "route_language": "pl",
+          "source_audio_filename": "10003602174340488201.wav",
+          "source_row_id": 1829
+        },
+        {
+          "case_id": "fleurs-pt",
+          "configuration": "pt_br",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-pt.wav",
+          "final_wav_sha256": "98d6165ec00e947f1aa1a7d47e5bac25f61b2b995f98f4dff8dd9f0fb86ebb09",
+          "route_language": "pt",
+          "source_audio_filename": "10008174856218516817.wav",
+          "source_row_id": 1960
+        },
+        {
+          "case_id": "fleurs-ro",
+          "configuration": "ro_ro",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-ro.wav",
+          "final_wav_sha256": "5322fd102078f1dc5f4615522fba4963d894e59e0c3ca49411b18e120fc408a3",
+          "route_language": "ro",
+          "source_audio_filename": "10014289053103326436.wav",
+          "source_row_id": 1947
+        },
+        {
+          "case_id": "fleurs-sk",
+          "configuration": "sk_sk",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-sk.wav",
+          "final_wav_sha256": "4480499ab3c6f3891e8353621b7111e54eef143f9c8f3f494aa65b5d19b699ae",
+          "route_language": "sk",
+          "source_audio_filename": "10051555811813730705.wav",
+          "source_row_id": 1781
+        },
+        {
+          "case_id": "fleurs-sl",
+          "configuration": "sl_si",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-sl.wav",
+          "final_wav_sha256": "001a75df07c50a175cd2319635d8c99a289d3d8beff91a0a3e0d67d6fbcf365e",
+          "route_language": "sl",
+          "source_audio_filename": "10005375387265624885.wav",
+          "source_row_id": 1738
+        },
+        {
+          "case_id": "fleurs-es",
+          "configuration": "es_419",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-es.wav",
+          "final_wav_sha256": "4cf41d77b34d73a01f56adbdffafcc8e4b813a36279d9c704af997fb82bda30d",
+          "route_language": "es",
+          "source_audio_filename": "1001146817223348054.wav",
+          "source_row_id": 2001
+        },
+        {
+          "case_id": "fleurs-sv",
+          "configuration": "sv_se",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-sv.wav",
+          "final_wav_sha256": "657edc51692a735f2e8027acd8ab561ecadb364063f35d30352821958d836933",
+          "route_language": "sv",
+          "source_audio_filename": "10008573238567024266.wav",
+          "source_row_id": 1844
+        },
+        {
+          "case_id": "fleurs-ru",
+          "configuration": "ru_ru",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-ru.wav",
+          "final_wav_sha256": "388cbfefdb12a9986c2a76c98a581906d9f1ec2a089374c8c6231a3f636b9c32",
+          "route_language": "ru",
+          "source_audio_filename": "10000611681338527501.wav",
+          "source_row_id": 1819
+        },
+        {
+          "case_id": "fleurs-uk",
+          "configuration": "uk_ua",
+          "final_wav": "../../../.benchmarks/stt-task-593/audio/fleurs-uk.wav",
+          "final_wav_sha256": "f92dd0052b33476fe1a34dc8eae7d664d8e66b1e3fd39874c2cf1abd3b43e6ef",
+          "route_language": "uk",
+          "source_audio_filename": "10021730821550109934.wav",
+          "source_row_id": 1982
+        }
+      ],
+      "conversion_argv_template": [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        "pipe:0",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "{final_wav}"
+      ],
+      "repo_id": "google/fleurs",
+      "revision": "70bb2e84b976b7e960aa89f1c648e09c59f894dd",
+      "selection": "First row from each streaming test split after casting audio to datasets.Audio(decode=False).",
+      "split": "test"
+    }
+  },
+  "evaluation": {
+    "cases_path": "Docs/STT_Evaluation/task-593/cases.jsonl",
+    "cases_sha256": "0ac8fbdb4c15246e0a0a7ffd36cb4d580742793ca41f5088df543b27b6b2b373",
+    "command_argv": [
+      ".venv/bin/python",
+      "Helper_Scripts/Benchmarks/stt_model_comparison.py",
+      "--cases",
+      "Docs/STT_Evaluation/task-593/cases.jsonl",
+      "--v2-int8",
+      ".benchmarks/stt-task-593/models/parakeet-v2",
+      "--v2-f32",
+      ".benchmarks/stt-task-593/models/parakeet-v2",
+      "--v3-int8",
+      ".benchmarks/stt-task-593/models/parakeet-v3",
+      "--v3-f32",
+      ".benchmarks/stt-task-593/models/parakeet-v3",
+      "--faster-whisper",
+      ".benchmarks/stt-task-593/models/faster-whisper-base",
+      "--output",
+      "Docs/STT_Evaluation/task-593/report.json"
+    ],
+    "generated_at": "2026-07-28T01:41:44.368675+00:00",
+    "host_environment": {
+      "packages": {
+        "ctranslate2": "4.8.1",
+        "faster-whisper": "1.2.1",
+        "onnx-asr": "0.12.0",
+        "onnxruntime": "1.27.0"
+      },
+      "python": {
+        "implementation": "CPython",
+        "version": "3.12.11"
+      },
+      "system": {
+        "mac_version": "15.6",
+        "machine": "arm64",
+        "name": "Darwin",
+        "release": "24.6.0"
+      }
+    },
+    "interpreter": {
+      "command": ".venv/bin/python",
+      "implementation": "CPython",
+      "version": "3.12.11"
+    },
+    "model_execution_order": [
+      "parakeet_v2_int8",
+      "parakeet_v2_f32",
+      "parakeet_v3_int8",
+      "parakeet_v3_f32",
+      "faster_whisper"
+    ],
+    "repetitions": 1,
+    "report_label": "indicative_macos_comparison",
+    "report_path": "Docs/STT_Evaluation/task-593/report.json",
+    "report_sha256": "524409b147cdedb10291aa81ebc23cc3a93ec20e7c508a636e59ad93520ffca4",
+    "runner_commit": "d0549618f94c8ef4eda2c5397b5cbf2dc8dcd4ae",
+    "runner_path": "Helper_Scripts/Benchmarks/stt_model_comparison.py",
+    "runner_sha256": "52bacbe48068305bf0ad95456b9557facae79a2d78324f459deac5fdab2ab23c",
+    "timing_scope": "Each transcription call only; model loading occurs outside timed rows.",
+    "warm_up_runs": 0
+  },
+  "models": [
+    {
+      "directory_name": "parakeet-v2",
+      "files": [
+        {
+          "name": "config.json",
+          "sha256": "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466",
+          "size_bytes": 97
+        },
+        {
+          "name": "vocab.txt",
+          "sha256": "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d",
+          "size_bytes": 9384
+        },
+        {
+          "name": "encoder-model.onnx",
+          "sha256": "3987bcd28175d829d12888a996a84e8f62a0e374d9ffd640662c1515adc679d3",
+          "size_bytes": 41770866
+        },
+        {
+          "name": "encoder-model.onnx.data",
+          "sha256": "4dab7362d4874d85965045b1e41b2d61dd2cc0fb25671a7f6b3dc47bf120cc41",
+          "size_bytes": 2435420160
+        },
+        {
+          "name": "decoder_joint-model.onnx",
+          "sha256": "cbb52a07bd70ab5b67f8439d4b3cd8704b18467b4430bcacb5adabe154b8d191",
+          "size_bytes": 35792059
+        },
+        {
+          "name": "encoder-model.int8.onnx",
+          "sha256": "3e0581fda6ab843888b51e56d7ee78b6d5bc3237ec113af1f732d1d5286aa155",
+          "size_bytes": 652184014
+        },
+        {
+          "name": "decoder_joint-model.int8.onnx",
+          "sha256": "a449f49acd68979d418651dd2dcb737cc0f1bf0225e009e29ee326354edbf7d3",
+          "size_bytes": 8998286
+        }
+      ],
+      "repo_id": "istupakov/parakeet-tdt-0.6b-v2-onnx",
+      "revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85"
+    },
+    {
+      "directory_name": "parakeet-v3",
+      "files": [
+        {
+          "name": "config.json",
+          "sha256": "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466",
+          "size_bytes": 97
+        },
+        {
+          "name": "vocab.txt",
+          "sha256": "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+          "size_bytes": 93939
+        },
+        {
+          "name": "encoder-model.onnx",
+          "sha256": "98a74b21b4cc0017c1e7030319a4a96f4a9506e50f0708f3a516d02a77c96bb1",
+          "size_bytes": 41770866
+        },
+        {
+          "name": "encoder-model.onnx.data",
+          "sha256": "9a22d372c51455c34f13405da2520baefb7125bd16981397561423ed32d24f36",
+          "size_bytes": 2435420160
+        },
+        {
+          "name": "decoder_joint-model.onnx",
+          "sha256": "e978ddf6688527182c10fde2eb4b83068421648985ef23f7a86be732be8706c1",
+          "size_bytes": 72520893
+        },
+        {
+          "name": "encoder-model.int8.onnx",
+          "sha256": "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09",
+          "size_bytes": 652183999
+        },
+        {
+          "name": "decoder_joint-model.int8.onnx",
+          "sha256": "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70",
+          "size_bytes": 18202004
+        }
+      ],
+      "repo_id": "istupakov/parakeet-tdt-0.6b-v3-onnx",
+      "revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce"
+    },
+    {
+      "directory_name": "faster-whisper-base",
+      "files": [
+        {
+          "name": "config.json",
+          "sha256": "56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a",
+          "size_bytes": 2309
+        },
+        {
+          "name": "model.bin",
+          "sha256": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9",
+          "size_bytes": 145217532
+        },
+        {
+          "name": "tokenizer.json",
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "size_bytes": 2203239
+        },
+        {
+          "name": "vocabulary.txt",
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "size_bytes": 459861
+        }
+      ],
+      "repo_id": "Systran/faster-whisper-base",
+      "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66"
+    }
+  ],
+  "schema": "task593_indicative_macos_provenance_v1"
+}
