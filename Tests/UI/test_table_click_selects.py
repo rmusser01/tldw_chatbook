@@ -161,6 +161,113 @@ async def test_the_same_row_highlighted_twice_selects_once():
 
 
 @pytest.mark.asyncio
+async def test_arrowing_then_pressing_enter_selects_once_not_twice():
+    """The gesture the highlight-forwarding makes ambiguous.
+
+    Once a highlight selects, a user who arrows onto a row and *then* presses
+    Enter would be processed twice — once by the forwarded highlight, once by
+    Textual's native `RowSelected`. Harmless for an idempotent handler, wrong
+    for one that posts a message: `test_row_selection_posts_entry_selected_with_
+    synthetic_index` asserts exactly one event for exactly this.
+
+    Raised by review, and missed by my own run because `-q` suppressed the
+    summary lines the failures appeared in.
+    """
+    from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
+
+    pane = MCPToolsMode()
+    app = _Harness(pane)
+    async with app.run_test(size=(120, 40)) as pilot:
+        table = pane.query_one(DataTable)
+        table.add_row("echo", "server-a", key="tool-echo")
+        row_key = table.add_row("fetch", "server-b", key="tool-fetch")
+        table.focus()
+        await pilot.pause()
+
+        # Arrow onto the row: the highlight selects it.
+        pane.post_message(_click_row(table, row_key))
+        await pilot.pause()
+        # Then activate it, exactly as `pilot.press("enter")` would.
+        pane.post_message(DataTable.RowSelected(table, 1, row_key))
+        await pilot.pause()
+        await pilot.pause()
+
+        selected = [m for m in app.captured if type(m).__name__ == "ToolSelected"]
+        assert len(selected) == 1, (
+            f"one gesture produced {len(selected)} selections; the native "
+            "activation was not deduped against the highlight that preceded it"
+        )
+
+
+@pytest.mark.asyncio
+async def test_reselecting_the_same_row_later_is_not_swallowed():
+    """The dedup must be one-shot, scoped to a single gesture.
+
+    A persistent "last selected key" looks equivalent and is not: re-selecting
+    the same row later — which `goto_permission_row()` and the workbench's
+    sub-view triggers both do — would be silently dropped. That broke
+    `test_goto_permission_row_is_the_single_shared_implementation_for_all_three_
+    triggers` and `test_both_sub_view_selections_do_not_stack_visible_detail_
+    panels`, but only in the full-file run, because those two need a prior test
+    to leave the key set. This asserts the property directly so it fails alone.
+    """
+    from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
+
+    pane = MCPToolsMode()
+    app = _Harness(pane)
+    async with app.run_test(size=(120, 40)) as pilot:
+        table = pane.query_one(DataTable)
+        row_key = table.add_row("echo", "server-a", key="tool-echo")
+        table.focus()
+        await pilot.pause()
+
+        # Gesture one: highlight selects, the activation completing it is
+        # swallowed.
+        pane.post_message(_click_row(table, row_key))
+        await pilot.pause()
+        pane.post_message(DataTable.RowSelected(table, 0, row_key))
+        await pilot.pause()
+
+        # Later, something re-selects the same row outright. That is a new
+        # gesture and must reach the pane.
+        pane.post_message(DataTable.RowSelected(table, 0, row_key))
+        await pilot.pause()
+        await pilot.pause()
+
+        selected = [m for m in app.captured if type(m).__name__ == "ToolSelected"]
+        assert len(selected) == 2, (
+            f"expected the gesture plus the later re-selection, got "
+            f"{len(selected)}; the dedup is persistent rather than one-shot"
+        )
+
+
+@pytest.mark.asyncio
+async def test_pressing_enter_without_a_preceding_highlight_still_selects():
+    """The dedup must not swallow a genuine activation.
+
+    Guards the obvious over-correction: a `RowSelected` for a row the mixin did
+    not just forward has to reach the pane.
+    """
+    from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
+
+    pane = MCPToolsMode()
+    app = _Harness(pane)
+    async with app.run_test(size=(120, 40)) as pilot:
+        table = pane.query_one(DataTable)
+        row_key = table.add_row("echo", "server-a", key="tool-echo")
+        await pilot.pause()
+
+        pane.post_message(DataTable.RowSelected(table, 0, row_key))
+        await pilot.pause()
+        await pilot.pause()
+
+        selected = [m for m in app.captured if type(m).__name__ == "ToolSelected"]
+        assert len(selected) == 1, (
+            "a native activation with no preceding highlight was swallowed"
+        )
+
+
+@pytest.mark.asyncio
 async def test_keyboard_cursor_movement_selects_the_same_way(monkeypatch):
     """AC#3: arrow keys and a click must agree.
 

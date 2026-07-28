@@ -59,6 +59,57 @@ class DataTableClickSelectMixin:
     #: Set while the pane is rebuilding its own rows. See `repopulating_table`.
     _suppress_row_selection: bool = False
 
+    #: True only while the mixin is invoking the pane's own handler, so the
+    #: dedup wrapper can tell its own call from a native activation.
+    _forwarding_highlight: bool = False
+
+    #: Row key a forwarded highlight just selected, consumed by the *next*
+    #: native activation and then cleared. One-shot on purpose: it must
+    #: suppress the Enter that completes an arrow-then-Enter gesture, and must
+    #: NOT suppress a later, genuine re-selection of the same row -- which is
+    #: what `goto_permission_row()` and the sub-view triggers do.
+    _pending_activation_key: Any = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Make the pane's own `RowSelected` handler idempotent per row.
+
+        Highlighting a row now selects it, so a user who arrows onto a row and
+        *then* presses Enter would otherwise be processed twice: once by the
+        forwarded highlight, once by Textual's native `RowSelected`. That is
+        redundant work for an idempotent handler and a wrong count for anything
+        that posts a message -- `test_row_selection_posts_entry_selected_with_
+        synthetic_index` asserts exactly one event for exactly that gesture.
+
+        The mixin cannot intercept by defining `on_data_table_row_selected`
+        itself: a method on the subclass shadows one on a base class, and the
+        subclass is where every pane defines its handler. Wrapping at class
+        creation gets in front of that without any pane having to remember.
+        """
+        super().__init_subclass__(**kwargs)
+        handler = cls.__dict__.get("on_data_table_row_selected")
+        if handler is None or getattr(handler, "_tldw_dedup_wrapped", False):
+            return
+
+        def _deduped(self, event, _handler=handler):
+            if self._forwarding_highlight:
+                # This IS the mixin's forwarded call; let it through.
+                return _handler(self, event)
+            row_key = getattr(event, "row_key", None)
+            value = getattr(row_key, "value", None)
+            pending = self._pending_activation_key
+            self._pending_activation_key = None
+            if value is not None and value == pending:
+                # The activation completing the gesture whose highlight already
+                # selected this row; swallow it rather than re-posting.
+                event.stop()
+                return None
+            return _handler(self, event)
+
+        _deduped._tldw_dedup_wrapped = True  # type: ignore[attr-defined]
+        _deduped.__name__ = handler.__name__
+        _deduped.__doc__ = handler.__doc__
+        cls.on_data_table_row_selected = _deduped  # type: ignore[assignment]
+
     def repopulating_table(self) -> None:
         """Declare that this pane is about to rebuild a table's rows.
 
@@ -113,9 +164,14 @@ class DataTableClickSelectMixin:
         if not self._should_forward(table, row_key):
             return
         event.stop()
-        handler(
-            DataTable.RowSelected(table, getattr(event, "cursor_row", 0), row_key)
-        )
+        self._forwarding_highlight = True
+        try:
+            handler(
+                DataTable.RowSelected(table, getattr(event, "cursor_row", 0), row_key)
+            )
+        finally:
+            self._forwarding_highlight = False
+            self._pending_activation_key = row_key.value
 
     def on_data_table_cell_highlighted(
         self, event: DataTable.CellHighlighted
@@ -129,24 +185,32 @@ class DataTableClickSelectMixin:
         cell_handler: Any = getattr(self, "on_data_table_cell_selected", None)
         if cell_handler is not None:
             event.stop()
-            cell_handler(
-                DataTable.CellSelected(
-                    table,
-                    getattr(event, "value", None),
-                    getattr(event, "coordinate", None),
-                    event.cell_key,
+            self._forwarding_highlight = True
+            try:
+                cell_handler(
+                    DataTable.CellSelected(
+                        table,
+                        getattr(event, "value", None),
+                        getattr(event, "coordinate", None),
+                        event.cell_key,
+                    )
                 )
-            )
+            finally:
+                self._forwarding_highlight = False
             return
 
         row_handler = getattr(self, "on_data_table_row_selected", None)
         if row_handler is None:
             return
         event.stop()
-        row_handler(
-            DataTable.RowSelected(
-                table,
-                getattr(getattr(event, "coordinate", None), "row", 0) or 0,
-                row_key,
+        self._forwarding_highlight = True
+        try:
+            row_handler(
+                DataTable.RowSelected(
+                    table,
+                    getattr(getattr(event, "coordinate", None), "row", 0) or 0,
+                    row_key,
+                )
             )
-        )
+        finally:
+            self._forwarding_highlight = False
