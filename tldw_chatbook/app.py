@@ -7904,22 +7904,58 @@ class TldwCli(
 
     async def _shutdown(self) -> None:
         """Settle File Notes Git before Textual closes screens and replicas."""
+        cancellation: asyncio.CancelledError | None = None
         owner_error: BaseException | None = None
-        try:
-            await self._shutdown_file_notes_session_owner()
-        except BaseException as error:
-            owner_error = error
+        shutdown_task = asyncio.current_task()
+        cancellation_requests = (
+            shutdown_task.cancelling() if shutdown_task is not None else 0
+        )
+        while True:
+            try:
+                await self._shutdown_file_notes_session_owner()
+            except asyncio.CancelledError as error:
+                next_cancellation_requests = (
+                    shutdown_task.cancelling()
+                    if shutdown_task is not None
+                    else 0
+                )
+                if next_cancellation_requests > cancellation_requests:
+                    cancellation = cancellation or error
+                    cancellation_requests = next_cancellation_requests
+                    continue
+                owner_error = error
+            except BaseException as error:
+                owner_error = error
+            break
+
+        shutdown_error: BaseException | None = None
         try:
             await super()._shutdown()
-        except BaseException as shutdown_error:
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+        except BaseException as error:
+            shutdown_error = error
+
+        if shutdown_error is not None:
             if owner_error is not None:
                 shutdown_error.add_note(
                     "File Notes session owner shutdown also failed before "
                     "Textual screen teardown"
                 )
-            raise
+            if cancellation is not None:
+                shutdown_error.add_note(
+                    "Application shutdown cancellation was also requested"
+                )
+            raise shutdown_error
         if owner_error is not None:
+            if cancellation is not None:
+                owner_error.add_note(
+                    "Application shutdown cancellation was delayed while "
+                    "preserving the owner shutdown failure"
+                )
             raise owner_error
+        if cancellation is not None:
+            raise cancellation
 
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""

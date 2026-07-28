@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,6 +56,28 @@ class _FailingOwnerProbe:
     async def shutdown_async(self) -> None:
         self.events.append("git-owner-failed")
         raise RuntimeError("forced owner shutdown failure")
+
+
+class _BlockingOwnerProbe:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        failure: BaseException | None = None,
+    ) -> None:
+        self.events = events
+        self.failure = failure
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def shutdown_async(self) -> None:
+        self.events.append("git-owner-started")
+        self.started.set()
+        await self.release.wait()
+        if self.failure is not None:
+            self.events.append("git-owner-failed")
+            raise self.failure
+        self.events.append("git-owner-settled")
 
 
 async def _wait_for_library(app, pilot) -> LibraryScreen:
@@ -119,6 +142,92 @@ async def test_file_notes_owner_failure_still_runs_textual_shutdown(
         await app._shutdown()
 
     assert events == ["git-owner-failed", "textual-shutdown"]
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_cancellation_waits_for_owner_before_textual_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller cancellation is delayed until the retained owner has settled."""
+    events: list[str] = []
+    owner = _BlockingOwnerProbe(events)
+    app = _build_test_app(configured_default="chat")
+    app.file_notes_session_owner = owner
+
+    async def shutdown_textual(_app) -> None:
+        assert events[-1] == "git-owner-settled"
+        events.extend(("textual-shutdown", "screen-closed", "replica-closed"))
+
+    monkeypatch.setattr(App, "_shutdown", shutdown_textual)
+    shutdown = asyncio.create_task(app._shutdown())
+    await owner.started.wait()
+
+    shutdown.cancel("first shutdown cancellation")
+    await asyncio.sleep(0)
+    shutdown.cancel("second shutdown cancellation")
+    await asyncio.sleep(0)
+    events_before_release = tuple(events)
+    shutdown_done_before_release = shutdown.done()
+
+    owner.release.set()
+    with pytest.raises(asyncio.CancelledError) as cancellation:
+        await shutdown
+
+    assert events_before_release == ("git-owner-started",)
+    assert not shutdown_done_before_release
+    assert cancellation.value.args == ("first shutdown cancellation",)
+    assert events == [
+        "git-owner-started",
+        "git-owner-settled",
+        "textual-shutdown",
+        "screen-closed",
+        "replica-closed",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ["owner", "textual"])
+async def test_app_shutdown_cancellation_preserves_non_cancellation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_phase: str,
+) -> None:
+    """Owner and superclass failures remain primary over caller cancellation."""
+    events: list[str] = []
+    owner = _BlockingOwnerProbe(
+        events,
+        failure=(
+            RuntimeError("forced owner failure")
+            if failure_phase == "owner"
+            else None
+        ),
+    )
+    app = _build_test_app(configured_default="chat")
+    app.file_notes_session_owner = owner
+
+    async def shutdown_textual(_app) -> None:
+        events.append("textual-shutdown")
+        if failure_phase == "textual":
+            raise ValueError("forced Textual failure")
+
+    monkeypatch.setattr(App, "_shutdown", shutdown_textual)
+    shutdown = asyncio.create_task(app._shutdown())
+    await owner.started.wait()
+    shutdown.cancel("shutdown cancellation")
+    await asyncio.sleep(0)
+    owner.release.set()
+
+    expected_error = RuntimeError if failure_phase == "owner" else ValueError
+    with pytest.raises(expected_error) as failure:
+        await shutdown
+
+    terminal_event = (
+        "git-owner-failed" if failure_phase == "owner" else "git-owner-settled"
+    )
+    assert events.index(terminal_event) < events.index("textual-shutdown")
+    assert any(
+        "cancellation" in note.lower()
+        for note in getattr(failure.value, "__notes__", ())
+    )
 
 
 @pytest.mark.asyncio
