@@ -685,36 +685,6 @@ class TTSPlaygroundWidget(
         self._rehydrate_handler_state()
         self._load_provider_catalog(initialize=True)
 
-    async def on_unmount(self) -> None:
-        """Clean up resources when widget is unmounted"""
-        try:
-            self.app.workers.cancel_group(self, "stts-catalog-discovery")
-            self.app.workers.cancel_group(self, "stts-voice-discovery")
-            self.app.workers.cancel_group(self, "stts-playback")
-            # Cancel any active progress timer
-            if self._progress_timer_task and not self._progress_timer_task.done():
-                self._progress_timer_task.cancel()
-                await asyncio.sleep(0.05)
-
-            # Cancel any active play worker
-            if (
-                hasattr(self, "_play_worker_task")
-                and self._play_worker_task
-                and not self._play_worker_task.is_finished
-            ):
-                self._play_worker_task.cancel()
-                await asyncio.sleep(0.05)
-
-            # Stop audio playback if active
-            if hasattr(self.app, "audio_player"):
-                await self.app.audio_player.stop()
-                self._release_playback_artifact()
-            else:
-                self._release_playback_artifact()
-
-            logger.debug("TTSPlaygroundWidget cleanup completed")
-        except Exception as e:
-            logger.error(f"Error during TTSPlaygroundWidget cleanup: {e}")
 
 
 
@@ -745,72 +715,6 @@ class TTSPlaygroundWidget(
 
 
 
-    def mark_provider_configuration_changed(
-        self,
-        provider_id: str,
-        configuration_revision: int,
-    ) -> None:
-        """Invalidate cached controls after a changed provider configuration."""
-        del configuration_revision
-        self._stale_providers.add(provider_id)
-        self._discovered_voices = {
-            key: value
-            for key, value in self._discovered_voices.items()
-            if key[0] != provider_id
-        }
-        if provider_id != self._selected_provider_id:
-            return
-        self.app.workers.cancel_group(self, "stts-catalog-discovery")
-        self.app.workers.cancel_group(self, "stts-voice-discovery")
-        self._catalog_generation_allowed = False
-        display_name = self._provider_display_name(provider_id)
-        self._set_provider_status(f"{display_name} settings changed; refresh models")
-        self._sync_generate_enabled()
-
-
-    @on(Input.Changed)
-    def on_tts_speed_changed(self, event: Input.Changed) -> None:
-        if (
-            not self._applying_catalog_controls
-            and event.input.id == "tts-speed-input"
-            and self._selected_provider_id is not None
-        ):
-            self._remember_current_controls(self._selected_provider_id)
-
-    @on(TextArea.Changed)
-    def on_tts_text_changed(self, _event: TextArea.Changed) -> None:
-        self._sync_generate_enabled()
-
-
-
-
-    def _rehydrate_handler_state(self) -> None:
-        handler = getattr(self.app, "_stts_handler", None)
-        snapshot_getter = getattr(handler, "playground_state", None)
-        if not callable(snapshot_getter):
-            return
-        try:
-            state = snapshot_getter()
-        except Exception as error:
-            logger.debug(
-                "Could not rehydrate TTS Playground state ({})",
-                type(error).__name__,
-            )
-            return
-        artifact = getattr(state, "artifact", None)
-        if isinstance(artifact, STTSGeneratedAudio) and artifact.path.exists():
-            self._store_delivered_artifact(artifact, announce=False)
-        active_operation_id = getattr(state, "active_operation_id", None)
-        if getattr(state, "generation_active", False) and isinstance(
-            active_operation_id,
-            str,
-        ):
-            self._generation_operation_id = active_operation_id
-            self.query_one("#generation-status-container").remove_class("hidden")
-            self.query_one("#generation-status-text", Static).update(
-                "Generation in progress…"
-            )
-            self.query_one("#tts-generate-btn", Button).disabled = True
 
 
 
@@ -832,9 +736,13 @@ class TTSPlaygroundWidget(
 
 
 
-    def action_generate_tts(self) -> None:
-        """Keyboard shortcut action for generate"""
-        self._generate_tts()
+
+
+
+
+
+
+
 
 
 

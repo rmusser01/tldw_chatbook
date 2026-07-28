@@ -381,3 +381,7 @@ class SpeechSynthesisMixin:
         )
         self._generation_operation_id = request.operation_id
         self.app.post_message(STTSPlaygroundGenerateEvent(request))
+
+    def action_generate_tts(self) -> None:
+        """Keyboard shortcut action for generate"""
+        self._generate_tts()

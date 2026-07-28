@@ -779,3 +779,34 @@ class SpeechPlaybackMixin:
         minutes = int(seconds // 60)
         secs = int(seconds % 60)
         return f"{minutes}:{secs:02d}"
+
+    async def on_unmount(self) -> None:
+        """Clean up resources when widget is unmounted"""
+        try:
+            self.app.workers.cancel_group(self, "stts-catalog-discovery")
+            self.app.workers.cancel_group(self, "stts-voice-discovery")
+            self.app.workers.cancel_group(self, "stts-playback")
+            # Cancel any active progress timer
+            if self._progress_timer_task and not self._progress_timer_task.done():
+                self._progress_timer_task.cancel()
+                await asyncio.sleep(0.05)
+
+            # Cancel any active play worker
+            if (
+                hasattr(self, "_play_worker_task")
+                and self._play_worker_task
+                and not self._play_worker_task.is_finished
+            ):
+                self._play_worker_task.cancel()
+                await asyncio.sleep(0.05)
+
+            # Stop audio playback if active
+            if hasattr(self.app, "audio_player"):
+                await self.app.audio_player.stop()
+                self._release_playback_artifact()
+            else:
+                self._release_playback_artifact()
+
+            logger.debug("TTSPlaygroundWidget cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during TTSPlaygroundWidget cleanup: {e}")

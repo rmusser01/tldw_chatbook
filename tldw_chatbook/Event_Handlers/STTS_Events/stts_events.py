@@ -1607,7 +1607,13 @@ class STTSEventHandler:
         event: STTSProviderConfigurationChanged,
     ) -> None:
         """Invalidate any mounted Playground for the changed provider."""
-        for widget in self.app.query("TTSPlaygroundWidget"):
+        # Both playgrounds, for the same reason delivery names both: a
+        # selector naming only the legacy widget left the rebuilt pane
+        # serving a stale catalog after a provider's settings changed, with
+        # nothing to indicate it.
+        for widget in self.app.query(
+            "TTSPlaygroundWidget, SpeechPlaygroundPane"
+        ):
             callback = getattr(widget, "mark_provider_configuration_changed", None)
             if callable(callback):
                 callback(event.provider_id, event.configuration_revision)

@@ -240,6 +240,7 @@ class SpeechPlaygroundPane(
         """
         self._sync_split_layout()
         self._refresh_provider_ids()
+        self._rehydrate_handler_state()
         self._load_provider_catalog(initialize=True)
 
     def _sync_split_layout(self) -> None:

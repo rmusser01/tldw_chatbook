@@ -35,7 +35,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.TTS import get_tts_service
+from tldw_chatbook.TTS import STTSGeneratedAudio, get_tts_service
 from tldw_chatbook.TTS.adapter_types import (
     TTSOperationError,
     TTSProviderCatalog,
@@ -890,3 +890,53 @@ class SpeechCatalogMixin:
                 timeout=10,
             )
             logger.warning("Higgs Audio (boson_multimodal) is not installed")
+
+    def mark_provider_configuration_changed(
+        self,
+        provider_id: str,
+        configuration_revision: int,
+    ) -> None:
+        """Invalidate cached controls after a changed provider configuration."""
+        del configuration_revision
+        self._stale_providers.add(provider_id)
+        self._discovered_voices = {
+            key: value
+            for key, value in self._discovered_voices.items()
+            if key[0] != provider_id
+        }
+        if provider_id != self._selected_provider_id:
+            return
+        self.app.workers.cancel_group(self, "stts-catalog-discovery")
+        self.app.workers.cancel_group(self, "stts-voice-discovery")
+        self._catalog_generation_allowed = False
+        display_name = self._provider_display_name(provider_id)
+        self._set_provider_status(f"{display_name} settings changed; refresh models")
+        self._sync_generate_enabled()
+
+    def _rehydrate_handler_state(self) -> None:
+        handler = getattr(self.app, "_stts_handler", None)
+        snapshot_getter = getattr(handler, "playground_state", None)
+        if not callable(snapshot_getter):
+            return
+        try:
+            state = snapshot_getter()
+        except Exception as error:
+            logger.debug(
+                "Could not rehydrate TTS Playground state ({})",
+                type(error).__name__,
+            )
+            return
+        artifact = getattr(state, "artifact", None)
+        if isinstance(artifact, STTSGeneratedAudio) and artifact.path.exists():
+            self._store_delivered_artifact(artifact, announce=False)
+        active_operation_id = getattr(state, "active_operation_id", None)
+        if getattr(state, "generation_active", False) and isinstance(
+            active_operation_id,
+            str,
+        ):
+            self._generation_operation_id = active_operation_id
+            self.query_one("#generation-status-container").remove_class("hidden")
+            self.query_one("#generation-status-text", Static).update(
+                "Generation in progress…"
+            )
+            self.query_one("#tts-generate-btn", Button).disabled = True

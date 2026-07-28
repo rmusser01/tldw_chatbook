@@ -30,6 +30,28 @@ from textual.widgets import Input, Select, Static
 from .speech_playground_model import AXIS_CONTROLS
 
 #: Chip label per axis. Keys are exactly :data:`AXIS_CONTROLS`.
+#: What an axis says when it has options but none is chosen yet.
+AXIS_PROMPTS: dict[str, str] = {
+    "tts-provider-select": "Choose a provider",
+    "tts-model-select": "Choose a model",
+    "tts-voice-select": "Choose a voice",
+    "tts-language-select": "Choose a language",
+    "tts-format-select": "Choose a format",
+    "tts-speed-input": "",
+}
+
+#: What it says when the selected provider offers nothing for that axis.
+#: Textual's default prompt is the bare word "Select", which on a provider
+#: with no languages reads as an instruction the user cannot follow.
+AXIS_EMPTY_PROMPTS: dict[str, str] = {
+    "tts-provider-select": "No providers available",
+    "tts-model-select": "No models for this provider",
+    "tts-voice-select": "No voices for this model",
+    "tts-language-select": "Not used by this provider",
+    "tts-format-select": "No formats available",
+    "tts-speed-input": "",
+}
+
 AXIS_LABELS: dict[str, str] = {
     "tts-provider-select": "Provider",
     "tts-model-select": "Model",
@@ -136,6 +158,7 @@ class SpeechAxisRow(Grid):
             id=axis,
             classes="speech-axis-control",
             allow_blank=True,
+            prompt=AXIS_PROMPTS[axis] if options else AXIS_EMPTY_PROMPTS[axis],
         )
         # Only set a value we can honour. `Select.BLANK` is itself falsy and
         # passing it explicitly is rejected as an illegal value; leaving the

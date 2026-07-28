@@ -54,3 +54,33 @@ def test_the_delivery_lookup_names_both_playgrounds():
         "succeed and produce nothing on screen"
     )
     assert "TTSPlaygroundWidget" in source
+
+
+@pytest.mark.unit
+def test_a_provider_config_change_invalidates_both_playgrounds():
+    """The same defect as delivery, in the invalidation path.
+
+    `on_stts_provider_configuration_changed` queried the legacy widget by
+    type selector, so changing a provider's settings left the rebuilt pane
+    serving a stale catalog -- wrong models and voices, with nothing on
+    screen to say so.
+    """
+    import inspect
+
+    from tldw_chatbook.Event_Handlers.STTS_Events import stts_events
+
+    source = inspect.getsource(
+        stts_events.STTSEventHandler.on_stts_provider_configuration_changed
+    )
+    assert "SpeechPlaygroundPane" in source, (
+        "the rebuilt pane is never invalidated; it will serve a stale "
+        "catalog after a provider is reconfigured"
+    )
+    assert "TTSPlaygroundWidget" in source
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("host", HOSTS, ids=lambda h: h.__name__)
+def test_both_playgrounds_can_be_invalidated(host):
+    """Whatever the query returns must carry the callback."""
+    assert callable(getattr(host, "mark_provider_configuration_changed", None))
