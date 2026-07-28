@@ -177,6 +177,60 @@ And when a test asserts a configuration default, make it state *why* that value
 is right, not just what it is. `assert enabled is False` is unfalsifiable
 documentation of whatever was there when it was written.
 
+## A green suite says nothing about installs that are not yours
+
+**The trap.** The suite runs where every optional extra is already installed. It
+therefore cannot see a dependency that is *declared* optional but has become
+*mandatory to boot* — the one environment it never tests is the plain install.
+
+**What happened.** 2026-07-27: the app died on start with
+`RuntimeError: Unable to resolve default chat screen`. `aiohttp` is optional —
+declared only in the `[websearch]`/`[all-tools]` extras, and registered
+`"aiohttp": False` in `Utils/optional_deps.py` — but the `/generate-image`
+console feature had quietly wired it onto the **default** screen's import chain:
+
+```
+UI/Screens/chat_screen.py
+  -> Chat/console_generate_image.py        (ImageGenerationService)
+    -> Media_Creation/image_generation_service.py
+      -> Media_Creation/swarmui_client.py  -> import aiohttp   (module scope)
+```
+
+Nothing was red. No test asserted that the default route resolves *without* the
+extras, so the suite was structurally blind to a total boot failure.
+
+Two multipliers made it worse:
+
+- **The masking cost more time than the bug.** `ScreenRoute.load_screen_class()`
+  catches `ImportError` and returns `None`, by design, so one broken optional
+  screen cannot break navigation. For the *default* screen that turned a precise
+  `ModuleNotFoundError: No module named 'aiohttp'` into a message naming neither
+  the module nor the file that imported it.
+- **The obvious suspect was innocent.** The only dirty file in the tree was a
+  `.tcss` whose diff was a regenerated timestamp comment. Reproducing first and
+  reading the traceback cost one command; guessing from `git status` would have
+  cost the session.
+
+**What to do.** When a feature adds an import to a screen module, check whether
+the new chain reaches an optional dependency — the import that breaks boot is
+rarely the one you wrote, it is three hops down. Guard boot-critical routes with
+a test that simulates absence, and run it in a **subprocess**: `sys.modules` is
+process-global, so an unrelated earlier test that imported the package gives a
+false pass.
+
+```python
+class _BlockAiohttp:                       # meta-path finder, installed first
+    def find_spec(self, name, path=None, target=None):
+        if name == "aiohttp" or name.startswith("aiohttp."):
+            raise ImportError("simulated missing aiohttp")
+        return None
+```
+
+See `Tests/Utils/test_optional_import_deferral.py` (the aiohttp section) and
+`Tests/UI/test_screen_navigation.py` (`screen_load_error`). And when a resolver
+degrades a failure to `None` on purpose, give callers for whom it is *fatal* a
+way to ask why — a graceful contract should not also be a silent one.
+
 ---
 
 ## Related
