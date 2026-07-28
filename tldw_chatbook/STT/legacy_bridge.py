@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from dataclasses import replace
 from threading import RLock
 from typing import Any, Protocol, cast
 
@@ -177,6 +178,10 @@ class LegacyTranscriptionBridge:
                 legacy_provider_id,
                 [],
             )
+            effective_device, effective_precision = self._execution_config(
+                backend,
+                model,
+            )
         except Exception:
             return RuntimeObservation(
                 provider_id=provider.provider_id,
@@ -197,7 +202,11 @@ class LegacyTranscriptionBridge:
             provider_id=provider.provider_id,
             model_id=model.model_id,
             available=True,
-            capabilities=model.capabilities,
+            capabilities=replace(
+                model.capabilities,
+                execution_devices=frozenset({effective_device}),
+                precisions=frozenset({effective_precision}),
+            ),
         )
 
     def transcribe(
@@ -222,9 +231,17 @@ class LegacyTranscriptionBridge:
 
         legacy_progress = self._legacy_progress_callback(request)
         try:
+            backend = self._get_backend()
+            execution_config = self._execution_config(backend, model)
+            effective_device, effective_precision = execution_config
+            if effective_precision != request.precision or (
+                request.request.device is not ExecutionDevice.AUTO
+                and effective_device is not request.request.device
+            ):
+                raise LegacyTranscriptionBridgeError()
             source = request.request.source
             if type(source) is FileAudioSource:
-                result = self._get_backend().transcribe(
+                result = backend.transcribe(
                     audio_path=str(source.path),
                     provider=self._legacy_provider_id,
                     model=request.model_id,
@@ -241,7 +258,7 @@ class LegacyTranscriptionBridge:
                     batch_route_resolved=True,
                 )
             elif type(source) is BufferAudioSource:
-                result = self._get_backend().transcribe_buffer(
+                result = backend.transcribe_buffer(
                     audio_data=source.audio,
                     sample_rate=source.sample_rate,
                     channels=source.channels,
@@ -260,7 +277,14 @@ class LegacyTranscriptionBridge:
                 )
             else:
                 raise TypeError("unsupported audio source")
-            return self._normalize_result(request, model, result)
+            if self._execution_config(backend, model) != execution_config:
+                raise LegacyTranscriptionBridgeError()
+            return self._normalize_result(
+                request,
+                model,
+                result,
+                effective_device=effective_device,
+            )
         except LegacyTranscriptionBridgeError:
             raise
         except Exception:
@@ -298,6 +322,8 @@ class LegacyTranscriptionBridge:
         request: ResolvedTranscriptionRequest,
         model: ModelMetadata,
         result: object,
+        *,
+        effective_device: ExecutionDevice,
     ) -> ProviderTranscriptionOutput:
         if type(result) is not dict:
             raise LegacyTranscriptionBridgeError()
@@ -316,29 +342,26 @@ class LegacyTranscriptionBridge:
             duration = max((segment.end_seconds for segment in segments), default=0.0)
         numeric_duration = cast("int | float", duration)
 
-        effective_language = legacy_result.get(
-            "language",
-            request.effective_language,
-        )
-        detected_language = legacy_result.get("detected_language")
-        if type(effective_language) is str:
-            effective_language = effective_language.strip().lower()
-        if (
-            type(effective_language) is not str
-            or effective_language != "auto"
-            and effective_language not in model.capabilities.languages
-        ):
-            effective_language = request.effective_language
-        if type(detected_language) is str:
-            detected_language = detected_language.strip().lower()
-        if (
-            type(detected_language) is not str
-            or detected_language == "auto"
-            or detected_language not in model.capabilities.languages
-        ):
-            detected_language = None
+        effective_language = request.effective_language
+        detected_language = None
+        if request.requested_language == "auto":
+            for candidate in (
+                legacy_result.get("detected_language"),
+                legacy_result.get("language"),
+            ):
+                if type(candidate) is not str:
+                    continue
+                candidate = candidate.strip().lower()
+                if candidate in model.capabilities.languages:
+                    detected_language = candidate
+                    break
 
-        device = self._effective_device(legacy_result.get("device"), model)
+        reported_device = legacy_result.get("device")
+        if (
+            reported_device is not None
+            and self._parse_device(reported_device) is not effective_device
+        ):
+            raise LegacyTranscriptionBridgeError()
         has_speakers = any(segment.speaker is not None for segment in segments)
         diarization = legacy_result.get("diarization_performed")
         produced_diarization = diarization is True or has_speakers
@@ -353,7 +376,7 @@ class LegacyTranscriptionBridge:
             segments=segments,
             effective_language=effective_language,
             detected_language=detected_language,
-            effective_device=device,
+            effective_device=effective_device,
             produced_capabilities=ProducedCapabilities(
                 timestamps=timestamps,
                 punctuation=model.capabilities.punctuation,
@@ -391,19 +414,37 @@ class LegacyTranscriptionBridge:
         )
 
     @staticmethod
-    def _effective_device(value: object, model: ModelMetadata) -> ExecutionDevice:
+    def _parse_device(value: object) -> ExecutionDevice:
         aliases = {
             "cpu": ExecutionDevice.CPU,
             "cuda": ExecutionDevice.CUDA,
             "metal": ExecutionDevice.METAL,
             "mps": ExecutionDevice.METAL,
         }
-        if type(value) is str and value in aliases:
-            return aliases[value]
-        devices = model.capabilities.execution_devices
-        if ExecutionDevice.CPU in devices:
-            return ExecutionDevice.CPU
-        return sorted(devices, key=lambda device: device.value)[0]
+        if type(value) is not str:
+            raise LegacyTranscriptionBridgeError()
+        normalized = value.strip().lower()
+        if normalized not in aliases:
+            raise LegacyTranscriptionBridgeError()
+        return aliases[normalized]
+
+    @classmethod
+    def _execution_config(
+        cls,
+        backend: _LegacyBackend,
+        model: ModelMetadata,
+    ) -> tuple[ExecutionDevice, str]:
+        device = cls._parse_device(backend.config.get("device"))
+        precision = backend.config.get("compute_type")
+        if (
+            device not in model.capabilities.execution_devices
+            or type(precision) is not str
+        ):
+            raise LegacyTranscriptionBridgeError()
+        precision = precision.strip().lower()
+        if precision not in model.capabilities.precisions:
+            raise LegacyTranscriptionBridgeError()
+        return device, precision
 
     def close(self) -> None:
         """Release an already-created retained backend without constructing it."""

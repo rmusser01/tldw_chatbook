@@ -17,6 +17,7 @@ from tldw_chatbook.STT.contracts import (
     FileAudioSource,
     InputKind,
     LanguageInputMode,
+    PipelineCapabilities,
     ResolvedTranscriptionRequest,
     TimestampGranularity,
     TranscriptionPhase,
@@ -24,18 +25,29 @@ from tldw_chatbook.STT.contracts import (
     TranscriptionRequest,
     TranscriptionTask,
 )
+from tldw_chatbook.STT.coordinator import (
+    TranscriptionCoordinator,
+    TranscriptionCoordinatorError,
+)
 from tldw_chatbook.STT.legacy_bridge import (
     LegacyTranscriptionBridge,
     LegacyTranscriptionBridgeError,
 )
 from tldw_chatbook.STT.registry import (
     CapabilitySet,
+    CatalogDeclarations,
     ModelMetadata,
     ProviderMetadata,
+    ProviderRegistry,
 )
+from tldw_chatbook.STT.routing import RoutingPolicy, TranscriptionRouter
 
 
-def _capabilities() -> CapabilitySet:
+def _capabilities(
+    *,
+    devices: frozenset[ExecutionDevice] = frozenset({ExecutionDevice.CPU}),
+    precisions: frozenset[str] = frozenset({"int8"}),
+) -> CapabilitySet:
     return CapabilitySet(
         languages=frozenset({"en", "fr"}),
         automatic_language=True,
@@ -56,8 +68,8 @@ def _capabilities() -> CapabilitySet:
         punctuation=True,
         capitalization=True,
         language_input_mode=LanguageInputMode.AUTOMATIC,
-        execution_devices=frozenset({ExecutionDevice.CPU}),
-        precisions=frozenset({"int8"}),
+        execution_devices=devices,
+        precisions=precisions,
     )
 
 
@@ -69,13 +81,17 @@ def _provider() -> ProviderMetadata:
     )
 
 
-def _model() -> ModelMetadata:
+def _model(
+    capabilities: CapabilitySet | None = None,
+    *,
+    default_precision: str = "int8",
+) -> ModelMetadata:
     return ModelMetadata(
         provider_id="retained-whisper",
         model_id="base",
         display_name="Base",
-        capabilities=_capabilities(),
-        default_precision="int8",
+        capabilities=capabilities or _capabilities(),
+        default_precision=default_precision,
         semantic_default_eligible=False,
         enforces_language_hint=True,
     )
@@ -85,6 +101,9 @@ def _request(
     source: FileAudioSource | BufferAudioSource,
     *,
     task: TranscriptionTask = TranscriptionTask.TRANSCRIBE,
+    language: str = "fr",
+    precision: str = "int8",
+    device: ExecutionDevice = ExecutionDevice.CPU,
     progress: object = None,
 ) -> ResolvedTranscriptionRequest:
     request = TranscriptionRequest(
@@ -94,10 +113,10 @@ def _request(
         source=source,
         provider_id="retained-whisper",
         model_id="base",
-        language="fr",
+        language=language,
         task=task,
-        precision="int8",
-        device=ExecutionDevice.CPU,
+        precision=precision,
+        device=device,
         vad=True,
         diarization=True,
         progress=progress,  # type: ignore[arg-type]
@@ -106,9 +125,9 @@ def _request(
         request=request,
         provider_id="retained-whisper",
         model_id="base",
-        requested_language="fr",
-        effective_language="fr",
-        precision="int8",
+        requested_language=language,
+        effective_language=language,
+        precision=precision,
     )
 
 
@@ -117,6 +136,8 @@ class _Backend:
         self.config = {
             "default_provider": "faster-whisper",
             "default_language": "en",
+            "device": "cpu",
+            "compute_type": "int8",
         }
         self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
         self.result: dict[str, Any] = {
@@ -169,12 +190,37 @@ class _Backend:
         self.calls.append(("cleanup", (), {}))
 
 
-def _bridge(backend: _Backend) -> LegacyTranscriptionBridge:
+def _bridge(
+    backend: _Backend,
+    model: ModelMetadata | None = None,
+) -> LegacyTranscriptionBridge:
     return LegacyTranscriptionBridge(
         backend_factory=lambda: backend,
         provider_metadata=_provider(),
-        models=(_model(),),
+        models=(model or _model(),),
         legacy_provider_id="faster-whisper",
+    )
+
+
+def _coordinator(
+    backend: _Backend,
+    model: ModelMetadata | None = None,
+) -> TranscriptionCoordinator:
+    selected_model = model or _model()
+    bridge = _bridge(backend, selected_model)
+    registry = ProviderRegistry.sealed(
+        CatalogDeclarations(
+            providers=(_provider(),),
+            models=(selected_model,),
+        ),
+        adapters=(bridge,),
+    )
+    return TranscriptionCoordinator(
+        registry=registry,
+        router=TranscriptionRouter(
+            RoutingPolicy(validated_v3_languages=frozenset({"fr"}))
+        ),
+        pipeline=PipelineCapabilities(),
     )
 
 
@@ -242,7 +288,7 @@ def test_bridge_converts_file_request_and_normalizes_legacy_dictionary() -> None
     }
     assert output.text == "bonjour"
     assert output.effective_language == "fr"
-    assert output.detected_language == "fr"
+    assert output.detected_language is None
     assert output.effective_device is ExecutionDevice.CPU
     assert output.duration_seconds == 1.25
     assert output.segments[0].start_seconds == 0.0
@@ -366,6 +412,85 @@ def test_bridge_normalizes_legacy_unknown_language_values() -> None:
 
     assert output.effective_language == "fr"
     assert output.detected_language is None
+
+
+def test_coordinator_bridge_auto_language_records_concrete_detection() -> None:
+    backend = _Backend()
+    backend.result.pop("detected_language")
+    request = _request(
+        FileAudioSource(Path("/tmp/example.wav")),
+        language="auto",
+    ).request
+
+    result = _coordinator(backend).transcribe(request)
+
+    assert result.provenance.requested_language == "auto"
+    assert result.provenance.effective_language == "auto"
+    assert result.provenance.detected_language == "fr"
+
+
+def test_coordinator_bridge_explicit_language_does_not_report_detection() -> None:
+    backend = _Backend()
+    request = _request(FileAudioSource(Path("/tmp/example.wav"))).request
+
+    result = _coordinator(backend).transcribe(request)
+
+    assert result.provenance.requested_language == "fr"
+    assert result.provenance.effective_language == "fr"
+    assert result.provenance.detected_language is None
+
+
+def test_coordinator_bridge_uses_observed_nondefault_device_and_precision() -> None:
+    capabilities = _capabilities(
+        devices=frozenset({ExecutionDevice.CPU, ExecutionDevice.CUDA}),
+        precisions=frozenset({"int8", "float32"}),
+    )
+    model = _model(capabilities)
+    backend = _Backend()
+    backend.config["device"] = "cuda"
+    backend.config["compute_type"] = "float32"
+    backend.result.pop("device")
+    request = _request(
+        FileAudioSource(Path("/tmp/example.wav")),
+        device=ExecutionDevice.CUDA,
+        precision="float32",
+    ).request
+
+    result = _coordinator(backend, model).transcribe(request)
+
+    assert result.provenance.requested_device is ExecutionDevice.CUDA
+    assert result.provenance.effective_device is ExecutionDevice.CUDA
+    assert result.provenance.precision == "float32"
+    assert backend.config["device"] == "cuda"
+    assert backend.config["compute_type"] == "float32"
+
+
+def test_coordinator_bridge_rejects_unobserved_precision() -> None:
+    capabilities = _capabilities(
+        precisions=frozenset({"int8", "float32"}),
+    )
+    model = _model(capabilities)
+    backend = _Backend()
+    request = _request(
+        FileAudioSource(Path("/tmp/example.wav")),
+        precision="float32",
+    ).request
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        _coordinator(backend, model).transcribe(request)
+
+    assert caught.value.failure.phase is TranscriptionPhase.LOADING
+
+
+def test_coordinator_bridge_does_not_guess_a_missing_device() -> None:
+    backend = _Backend()
+    backend.config.pop("device")
+    request = _request(FileAudioSource(Path("/tmp/example.wav"))).request
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        _coordinator(backend).transcribe(request)
+
+    assert caught.value.failure.phase is TranscriptionPhase.LOADING
 
 
 def test_close_does_not_construct_an_unused_backend() -> None:
