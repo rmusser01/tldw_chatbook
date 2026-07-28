@@ -233,3 +233,82 @@ def test_run_turn_called_twice_on_one_service_gets_two_separate_logs(wired):
             "numbering must restart per tree, not continue across "
             f"run_turn calls; got {numbers}"
         )
+
+
+def test_tool_is_offered_to_the_primary_agent_only(wired, monkeypatch):
+    """Primary + at least one other disclosable schema (here: the builtin
+    ``calculator``, allow-listed so it lands in ``active``) -> offered.
+
+    Controller ruling (post-review of the original spec): search_run_log is
+    additionally gated on the run having at least one OTHER disclosable
+    schema (``runtime_schemas or active`` non-empty), mirroring every other
+    runtime tool's own gate (spawn_subagent on max_subagents>0, find_tools/
+    load_tools on offer_find_load, skill_file on a non-empty authorized
+    set). This test now allow-lists ``calculator`` so ``active`` is
+    non-empty and the assertion is exercising "primary vs subagent",
+    exactly as it did before that ruling -- not the separate "nothing else
+    disclosed" case, which ``test_tool_is_not_offered_when_nothing_else_is_disclosed``
+    below covers.
+    """
+    from tldw_chatbook.Agents.agent_models import SEARCH_RUN_LOG_TOOL_NAME
+
+    db, registry, root = wired
+    offered = []
+
+    def capture(**kwargs):
+        names = [t["function"]["name"] for t in kwargs.get("tools", [])]
+        offered.append(names)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    service = AgentService(db, registry, chat_call=capture)
+    service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_subagents=0),
+        ),
+        api_endpoint="openai",
+    )
+    assert any(SEARCH_RUN_LOG_TOOL_NAME in names for names in offered)
+
+
+def test_tool_is_not_offered_when_nothing_else_is_disclosed(wired, monkeypatch):
+    """Controller ruling: an otherwise-tool-less primary run (empty
+    allow-list, max_subagents=0, no skills/install/run-script wiring) must
+    NOT be offered search_run_log even though the writer is active.
+
+    Such a run can only ever produce model-turn log records -- it has no
+    tool results, so nothing was ever truncated and there is nothing to
+    recover -- so the tool would buy it nothing while changing the
+    provider payload of a deliberately tool-less run (task-243 minor m3:
+    a native-capable endpoint with no disclosable schemas must send no
+    ``tools=`` kwarg at all).
+    """
+    from tldw_chatbook.Agents.agent_models import SEARCH_RUN_LOG_TOOL_NAME
+
+    db, registry, root = wired
+    offered = []
+
+    def capture(**kwargs):
+        offered.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    service = AgentService(db, registry, chat_call=capture)
+    service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            budget=RunBudget(max_subagents=0),
+        ),
+        api_endpoint="openai",
+    )
+    assert len(offered) == 1
+    assert "tools" not in offered[0], (
+        "a deliberately tool-less run must never gain search_run_log as its "
+        f"sole disclosed tool; got kwargs {offered[0]!r}"
+    )

@@ -22,6 +22,7 @@ from .agent_models import (
     RUN_DONE,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     RUN_STUCK,
+    SEARCH_RUN_LOG_TOOL_NAME,
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
@@ -254,6 +255,14 @@ class LoopDeps:
     # `None` (the default) means the run is not wired for it and a call by
     # that name falls through to the generic deps.invoke_tool path.
     run_skill_script: Callable[[str, str, list[str]], ToolResult] | None = None
+    # search_run_log: the seventh runtime tool (run-log query). Wired ONLY
+    # for the top-level agent (agent_kind == primary), like install_skill:
+    # a depth-1 child has max_subagents clamped to 0, so its "subtree" is
+    # itself and its short history is already in its context -- the tool
+    # would buy it nothing while widening what it can see. `None` (the
+    # default) means the run is not wired for it and a call by that name
+    # falls through to the generic deps.invoke_tool path.
+    search_run_log: Callable[[dict], ToolResult] | None = None
     # on_record: full-fidelity capture for the run log (run_log.py). Called
     # with (record_type, payload) at the two points where the COMPLETE value
     # exists -- which the step log does not carry, since `add()` truncates
@@ -677,6 +686,12 @@ def run_agent_loop(
                         str(call.args.get("script_path", "")),
                         [str(item) for item in raw_args],
                     )
+                elif (
+                    call.name == SEARCH_RUN_LOG_TOOL_NAME
+                    and deps.search_run_log is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.search_run_log(dict(call.args))
                 else:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.invoke_tool(call)

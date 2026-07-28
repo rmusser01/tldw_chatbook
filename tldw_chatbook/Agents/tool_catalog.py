@@ -23,6 +23,7 @@ from .agent_models import (
     LOAD_TOOLS_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     RunBudget,
+    SEARCH_RUN_LOG_TOOL_NAME,
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
@@ -150,6 +151,46 @@ RUN_SKILL_SCRIPT_TOOL_SCHEMA = ToolSchema(
             },
         },
         "required": ["skill_name", "script_path"],
+    },
+)
+
+
+SEARCH_RUN_LOG_TOOL_SCHEMA = ToolSchema(
+    id="runtime:search_run_log",
+    name=SEARCH_RUN_LOG_TOOL_NAME,
+    description=(
+        "Search this run's own complete log. Your context holds a truncated "
+        "view; the log holds every model turn, tool call, and tool result in "
+        "full. Use it to recover a truncated result or recall an earlier step "
+        "instead of re-running work. Prefer 'contains' (literal substring, "
+        "searches the whole record); 'pattern' is a regular expression and "
+        "only examines each record's first 500 characters."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "contains": {
+                "type": "string",
+                "description": "Literal substring to find (case-insensitive).",
+            },
+            "pattern": {
+                "type": "string",
+                "description": "Regular expression; first 500 chars per record.",
+            },
+            "tool": {"type": "string", "description": "Filter by tool name."},
+            "type": {
+                "type": "string",
+                "description": "Filter by record type: model, tool_call, tool_result.",
+            },
+            "status": {"type": "string", "description": "Filter: ok or error."},
+            "from_record": {"type": "integer", "description": "Lowest record number."},
+            "to_record": {"type": "integer", "description": "Highest record number."},
+            "context": {
+                "type": "integer",
+                "description": "Records to include either side of each hit.",
+            },
+        },
+        "required": [],
     },
 )
 

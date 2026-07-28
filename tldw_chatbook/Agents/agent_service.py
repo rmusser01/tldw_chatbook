@@ -49,6 +49,7 @@ from .tool_catalog import (
     INSTALL_SKILL_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
     RUN_SKILL_SCRIPT_TOOL_SCHEMA,
+    SEARCH_RUN_LOG_TOOL_SCHEMA,
     SKILL_FILE_TOOL_SCHEMA,
     SPAWN_TOOL_SCHEMA,
     ToolCatalogRegistry,
@@ -486,6 +487,36 @@ class AgentService:
         # applied in the bridge closure and the service, not here.
         if self._run_skill_script_tool is not None:
             runtime_schemas.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
+        # search_run_log (7th runtime tool): primary agent only, like
+        # install_skill above -- a depth-1 child's max_subagents is always
+        # clamped to 0, so its "subtree" is only itself and its short
+        # history is already in its context; letting it search would only
+        # widen what it can see, into its parent's whole run tree, breaking
+        # the isolation spawn_subagent promises. Also gated on the writer
+        # actually being active: an inactive writer means no log directory
+        # was ever created, so there is nothing to search.
+        #
+        # Placed LAST, after every other runtime_schemas append above, and
+        # additionally requires `runtime_schemas or active` to be non-empty
+        # (controller ruling, post-review of the original spec): unlike
+        # every OTHER runtime tool -- spawn_subagent gated on
+        # `max_subagents > 0`, find_tools/load_tools on `offer_find_load`,
+        # skill_file on a non-empty authorized set -- an unconditional
+        # `is_active` gate would offer this tool even to a run with
+        # nothing else disclosed at all (empty allow-list, no sub-agents,
+        # no skills). Such a run can only ever produce model-turn log
+        # records -- it has no tool results, so nothing was ever
+        # truncated and there is nothing to recover -- so the tool would
+        # buy it nothing while changing the provider payload (adding a
+        # `tools=` kwarg) of a deliberately tool-less run. See task-243
+        # minor m3: a native-capable endpoint with no disclosable schemas
+        # must send no `tools=` kwarg at all.
+        if (
+            agent_kind == AGENT_KIND_PRIMARY
+            and self.run_log_writer.is_active
+            and (runtime_schemas or active)
+        ):
+            runtime_schemas.append(SEARCH_RUN_LOG_TOOL_SCHEMA)
 
         def find_tools(query: str):
             # Q7(b): never surface a disallowed tool through find_tools,
@@ -724,6 +755,30 @@ class AgentService:
                 return ToolResult(ok=False, error=f"skill_file: {exc}")
             return ToolResult(ok=True, content=str(content))
 
+        def search_run_log(args: dict) -> ToolResult:
+            """Query THIS run's log. Reads only what this agent produced."""
+            from .run_log_search import format_results, load_records, search_records
+
+            log_dir = self.run_log_writer.log_dir
+            if log_dir is None:
+                return ToolResult(ok=False, error="No run log is available.")
+            try:
+                records = load_records(log_dir)
+                hits = search_records(
+                    records,
+                    contains=str(args.get("contains", "")),
+                    pattern=str(args.get("pattern", "")),
+                    tool=str(args.get("tool", "")),
+                    type=str(args.get("type", "")),
+                    status=str(args.get("status", "")),
+                    from_record=int(args.get("from_record") or 0),
+                    to_record=int(args.get("to_record") or 0),
+                    context=int(args.get("context") or 0),
+                )
+            except (TypeError, ValueError) as exc:
+                return ToolResult(ok=False, error=f"Invalid search arguments: {exc}")
+            return ToolResult(ok=True, content=format_results(hits))
+
         def on_record(record_type: str, payload: dict) -> int | None:
             # MUST return the record number: Task 7 threads it into the
             # truncation trailer so a cut result points at its full copy.
@@ -770,6 +825,9 @@ class AgentService:
                 else None
             ),
             run_skill_script=self._run_skill_script_tool,
+            search_run_log=(
+                search_run_log if agent_kind == AGENT_KIND_PRIMARY else None
+            ),
             on_record=on_record,
         )
         try:
