@@ -2196,17 +2196,25 @@ async def test_exact_profile_catalog_lifecycle_failure_projects_but_never_bypass
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("voice_fails", (False, True))
+@pytest.mark.parametrize(
+    "voice_error",
+    (
+        None,
+        RuntimeError("private voice detail"),
+        TTSProviderReconfiguringError("private reconfiguring detail"),
+        TTSRegistryClosedError("private closed detail"),
+    ),
+    ids=("success", "generic", "reconfiguring", "closed"),
+)
 async def test_fresh_not_configured_catalog_makes_exact_profile_unavailable(
     audio_cpp_playground: FakeTTSService,
-    voice_fails: bool,
+    voice_error: Exception | None,
 ) -> None:
     service = audio_cpp_playground
     service.catalogs["audio_cpp"] = _audio_catalog(
         health=ProviderHealth(state="not_configured", fresh=True)
     )
-    if voice_fails:
-        service.voice_error = RuntimeError("private voice detail")
+    service.voice_error = voice_error
     preset = _profile_preset()
     app = _PlaygroundHost(preset=preset)
 

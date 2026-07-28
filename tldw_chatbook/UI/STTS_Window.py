@@ -1026,7 +1026,7 @@ class TTSPlaygroundWidget(Widget):
                 if provider_id == self._selected_provider_id:
                     preset = self._profile_preset
                     if preset is not None and preset.provider_id == provider_id:
-                        if preset.availability != "unavailable":
+                        if self._profile_effective_availability != "unavailable":
                             self._profile_effective_availability = "unverified"
                         if (
                             isinstance(error, TTSProviderReconfiguringError)
