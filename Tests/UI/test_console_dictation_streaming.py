@@ -9,6 +9,8 @@ that arrive mid-capture rather than out of a blocking call.
 
 from __future__ import annotations
 
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -20,6 +22,7 @@ from Tests.UI.test_console_dictation import (
     _wait_for_mic_label,
 )
 from tldw_chatbook.Chat import console_voice_input as voice_module
+from tldw_chatbook.Chat.console_voice_input import VoiceFailed
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -42,6 +45,11 @@ class FakeDictationService:
         self.on_partial = None
         self.on_final = None
         self.on_error = None
+        #: Set once `stop_dictation()` is running; if `stop_gate` is set too,
+        #: it blocks there until released, so a test can drain events while
+        #: the stop worker is provably mid-flight.
+        self.stop_entered = threading.Event()
+        self.stop_gate: threading.Event | None = None
         # `ConsoleVoiceInputController._release` reaches for this to guarantee
         # the microphone is freed even when `stop_dictation()` forgets.
         self._audio_service = SimpleNamespace(stop_recording=self._record_release)
@@ -70,6 +78,9 @@ class FakeDictationService:
 
     def stop_dictation(self) -> None:
         self.stop_calls += 1
+        self.stop_entered.set()
+        if self.stop_gate is not None:
+            self.stop_gate.wait(timeout=4)
 
     def emit_partial(self, text: str) -> None:
         assert self.on_partial is not None, "start_dictation() has not run yet"
@@ -193,6 +204,13 @@ async def test_partials_stay_out_of_the_draft_and_finals_insert_once_at_the_care
         assert service.stop_calls == 1
         assert service.release_calls == 1
 
+        # A success keeps its session, so the last partial the recognizer
+        # flushes as it joins arrives with the button already idle. It must not
+        # linger -- Task 14 renders this field in the chip.
+        service.emit_partial("ghost text")
+        await pilot.pause()
+        assert console._console_dictation_partial == ""
+
 
 @pytest.mark.asyncio
 async def test_mid_capture_failure_is_visible_preserves_draft_and_recovers_idle(
@@ -277,3 +295,159 @@ async def test_unavailable_microphone_fails_once_with_an_actionable_remedy(monke
         assert len(matching) == 1
         assert "speech_recording" in str(matching[0].args[0])
         assert matching[0].kwargs.get("severity") == "error"
+
+
+@pytest.mark.asyncio
+async def test_a_silent_capture_tells_the_user_and_leaves_the_draft_alone(monkeypatch):
+    """Nothing recognized must not smuggle whitespace into the draft.
+
+    The one-shot backend raised in this case; an empty transcript still pads to
+    a stray space at the caret and gets persisted to the session draft.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello world")
+        for _ in range(5):
+            composer.move_cursor_left()
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        stored_before = store.session_draft(session_id)
+
+        # Capture 1: the recognizer never says anything at all.
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert composer.draft_text() == "hello world"
+        assert store.session_draft(session_id) == stored_before
+        assert console._console_dictation_state == "idle"
+        assert [
+            call
+            for call in notify.call_args_list
+            if "No audio was captured from the microphone." in str(call.args[0])
+            and call.kwargs.get("severity") == "error"
+        ]
+        notify.reset_mock()
+
+        # Capture 2: the recognizer produces in-flight text but finalizes only
+        # whitespace -- heard something, transcribed nothing.
+        # The chip collapsing on `idle` reflows the action row, so let the
+        # layout settle; `click` returns False when it lands on the wrong
+        # widget, which would otherwise look like a silent behavioral failure.
+        await pilot.pause(0.5)
+        assert await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        service.emit_partial("mmm")
+        service.emit_final("   ")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert composer.draft_text() == "hello world"
+        assert store.session_draft(session_id) == stored_before
+        assert [
+            call
+            for call in notify.call_args_list
+            if "Transcription returned no speech." in str(call.args[0])
+            and call.kwargs.get("severity") == "error"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_one_failure_draining_before_the_stop_worker_shows_one_toast(monkeypatch):
+    """Interleaving A: the event path wins, and the stop worker stays quiet."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        session = console._console_dictation_session
+
+        # The stop is requested first, but the mid-capture failure drains
+        # before the worker gets its first tick.
+        console._request_console_dictation_stop()
+        console._handle_console_dictation_event(
+            chat_screen_module.ConsoleDictationEvent(
+                session,
+                VoiceFailed(reason="Microphone was disconnected"),
+            )
+        )
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        for _ in range(5):
+            await pilot.pause(0.01)
+
+        assert composer.draft_text() == "keep this draft"
+        assert console._console_dictation_state == "idle"
+        assert [str(call.args[0]) for call in notify.call_args_list] == [
+            "Dictation failed: Microphone was disconnected"
+        ]
+        # The worker must not finish a capture the screen no longer owns: the
+        # failure path already released that microphone.
+        assert service.stop_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_one_failure_draining_during_the_stop_worker_shows_one_toast(monkeypatch):
+    """Interleaving B: the stop worker is mid-flight when the failure lands."""
+    service = FakeDictationService()
+    service.stop_gate = threading.Event()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        session = console._console_dictation_session
+
+        console._request_console_dictation_stop()
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline and not service.stop_entered.is_set():
+            await pilot.pause(0.01)
+        assert service.stop_entered.is_set()
+
+        # The worker is blocked inside `stop_dictation()`; the failure lands now.
+        console._handle_console_dictation_event(
+            chat_screen_module.ConsoleDictationEvent(
+                session,
+                VoiceFailed(reason="Microphone was disconnected"),
+            )
+        )
+        service.stop_gate.set()
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        for _ in range(5):
+            await pilot.pause(0.01)
+
+        assert composer.draft_text() == "keep this draft"
+        assert console._console_dictation_state == "idle"
+        assert [str(call.args[0]) for call in notify.call_args_list] == [
+            "Dictation failed: Microphone was disconnected"
+        ]
+        # This worker did own the capture, so it did finish it -- it just has
+        # nothing left to say about it.
+        assert service.stop_calls == 1

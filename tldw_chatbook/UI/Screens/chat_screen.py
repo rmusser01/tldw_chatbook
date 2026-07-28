@@ -586,6 +586,7 @@ class ConsoleStreamingDictationSession:
         self._segments: list[str] = []
         self._failure = ""
         self._in_blocking_call = False
+        self._heard_recognizer_output = False
         self._controller = ConsoleVoiceInputController(
             emit=self._handle_event,
             spawn=lambda thunk: thunk(),
@@ -607,9 +608,18 @@ class ConsoleStreamingDictationSession:
             forward = True
             if isinstance(event, VoiceFinal):
                 text = event.text.strip()
-                if text:
-                    with self._lock:
+                with self._lock:
+                    # A final that strips to nothing still proves the
+                    # recognizer ran and produced output; only its text is
+                    # discarded. `stop_and_transcribe()` needs that distinction
+                    # to pick between the two silent-capture messages.
+                    self._heard_recognizer_output = True
+                    if text:
                         self._segments.append(text)
+            elif isinstance(event, VoicePartial):
+                if event.text.strip():
+                    with self._lock:
+                        self._heard_recognizer_output = True
             elif isinstance(event, VoiceFailed):
                 with self._lock:
                     self._failure = (f"{event.reason} {event.remedy}").strip()
@@ -658,6 +668,7 @@ class ConsoleStreamingDictationSession:
         with self._lock:
             self._segments.clear()
             self._failure = ""
+            self._heard_recognizer_output = False
         with self._blocking_call():
             self._controller.start()
         failure = self._take_failure()
@@ -674,11 +685,19 @@ class ConsoleStreamingDictationSession:
         Blocks until the controller reaches `idle`, so the screen inserts
         exactly once, with the whole transcript, at that moment.
 
+        Never returns an empty transcript, matching the one-shot backend this
+        replaced (`Audio/console_dictation.py`): it raised rather than hand
+        back nothing, and the screen's insertion has no empty case -- an empty
+        transcript still pads to a stray space at the caret, silently, and gets
+        persisted to the session draft. The two messages are that backend's,
+        verbatim, so a silent capture reads exactly as it always did.
+
         Returns:
-            The accumulated segments, space-joined.
+            The accumulated segments, space-joined. Never empty.
 
         Raises:
-            RuntimeError: The controller failed while finishing.
+            RuntimeError: The controller failed while finishing, or nothing
+                was transcribed.
         """
         with self._blocking_call():
             self._controller.stop()
@@ -686,7 +705,15 @@ class ConsoleStreamingDictationSession:
         if failure:
             raise RuntimeError(failure)
         with self._lock:
-            return " ".join(self._segments)
+            transcript = " ".join(self._segments)
+            heard = self._heard_recognizer_output
+        if transcript:
+            return transcript
+        raise RuntimeError(
+            "Transcription returned no speech."
+            if heard
+            else "No audio was captured from the microphone."
+        )
 
     def discard(self) -> None:
         """Release the microphone without the blocking join.
@@ -4437,7 +4464,13 @@ class ChatScreen(BaseAppScreen):
             return
         event = message.event
         if isinstance(event, VoicePartial):
-            self._console_dictation_partial = event.text
+            # Only while the microphone is live. A successful capture keeps its
+            # session (only failures drop it), so the staleness check above
+            # cannot catch the partial the recognizer flushes as
+            # `stop_dictation()` joins -- that one drains after the state is
+            # already `idle` and would leave a ghost in the chip.
+            if self._console_dictation_state == "recording":
+                self._console_dictation_partial = event.text
             return
         if isinstance(event, VoiceFinal):
             # The segment is committed; the partial that previewed it is spent.
@@ -4554,21 +4587,40 @@ class ChatScreen(BaseAppScreen):
                 severity="warning",
             )
 
-    async def _stop_console_dictation(self) -> None:
-        session = self._console_dictation_session
+    async def _stop_console_dictation(self, session: Any) -> None:
+        """Finish the capture this stop was requested for, and only that one.
+
+        The session is captured on the UI thread by
+        `_request_console_dictation_stop` rather than read here, and re-checked
+        after every await: a mid-capture `VoiceFailed` can drain at any point
+        in between, and it tears the capture down and tells the user itself.
+        Whichever side loses that race must stay silent, or one failure becomes
+        two toasts -- the second one either a duplicate or an internal string
+        ("Microphone dictation is not recording.") that means nothing to a user.
+
+        Args:
+            session: The dictation session that was live when the user (or the
+                wall timer) asked to stop.
+        """
         origin_session_id = self._console_dictation_origin_session_id
         if session is None:
             self._notify_console_dictation_error(
                 RuntimeError("Microphone dictation is not recording.")
             )
             return
+        if self._console_dictation_session is not session:
+            logger.debug("Console dictation stop skipped; the capture was torn down")
+            return
         try:
             transcript = await asyncio.to_thread(session.stop_and_transcribe)
         except Exception as exc:
             await asyncio.to_thread(session.discard)
-            self._notify_console_dictation_error(exc)
+            if self._console_dictation_session is session:
+                self._notify_console_dictation_error(exc)
             return
         if not self.is_mounted:
+            return
+        if self._console_dictation_session is not session:
             return
         self._insert_console_dictation(
             origin_session_id=origin_session_id,
@@ -4581,10 +4633,14 @@ class ChatScreen(BaseAppScreen):
     def _request_console_dictation_stop(self) -> None:
         if self._console_dictation_state != "recording":
             return
+        # Read on the UI thread, atomically with the state change, so the
+        # worker finishes the capture the user stopped rather than whatever is
+        # in the field by the time it first ticks.
+        session = self._console_dictation_session
         self._cancel_console_dictation_timer()
         self._set_console_dictation_state("transcribing")
         self.run_worker(
-            self._stop_console_dictation(),
+            self._stop_console_dictation(session),
             exclusive=True,
             group="console-dictation-stop",
             exit_on_error=False,
