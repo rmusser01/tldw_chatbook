@@ -10,7 +10,9 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 from textual.app import App, ComposeResult
+from textual.color import Color
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Label, ListView, Static, TextArea, Tree
 
@@ -22,6 +24,7 @@ from tldw_chatbook.Notes.file_notes_git_service import (  # noqa: E402
     GitActionResult,
     GitCommandResult,
     GitMutationAdmissionError,
+    coalesce_session_changes,
 )
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
 from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
@@ -32,6 +35,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
     SequencedSessionChange,
     SessionBinding,
     SessionChange,
+    SessionChangeAction,
     SessionChangeGroup,
     SessionGitRow,
     SessionGitRowState,
@@ -41,6 +45,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (  # noqa: E402
     LibraryFileNotesGitPanel,
     SessionGitTrustDialog,
+    _middle_elide_cells,
 )
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
     LibraryFileNotesWorkspace,
@@ -337,16 +342,26 @@ def _row(
     stage_action: SessionGitStageAction | None = None,
     unstage_eligible: bool = False,
     disabled_reason: str | None = None,
+    latest_action: SessionChangeAction = "modified",
+    source_path: str | None = None,
+    destination_path: str | None = None,
 ) -> SessionGitRow:
+    source = source_path or f"note-{group_id}.md"
+    current = destination_path or source
     return SessionGitRow(
         SessionChangeGroup(
             group_id=group_id,
-            endpoints=(f"note-{group_id}.md",),
-            source_path=f"note-{group_id}.md",
-            destination_path=None,
-            current_path=f"note-{group_id}.md",
-            latest_action="modified",
+            endpoints=(
+                (source,) if destination_path is None else (source, destination_path)
+            ),
+            source_path=source,
+            destination_path=destination_path,
+            current_path=current,
+            latest_action=latest_action,
             latest_sequence=group_id,
+            move_edges=(
+                () if destination_path is None else ((source, destination_path),)
+            ),
         ),
         state,
         stage_action=stage_action,
@@ -447,8 +462,17 @@ async def _assert_visible_panel_buttons_fit(panel, pilot) -> None:
         button.focus()
         await pilot.pause()
         assert button.has_focus
+        label = str(button.label)
+        assert button.render().plain == label
+        assert cell_len(label) <= button.content_region.width
         assert button.region.x >= bounds.x
         assert button.region.right <= bounds.right
+        assert button.region.y >= bounds.y
+        assert button.region.bottom <= bounds.bottom
+        assert not button.styles.outline
+        assert button.styles.background == Color.parse("#51677e")
+        assert button.styles.text_style.bold
+        assert button.styles.text_style.underline
 
 
 @pytest.mark.asyncio
@@ -458,6 +482,10 @@ async def test_panel_renders_repository_scope_and_complete_file_state() -> None:
         panel.render_status(_status(_row("unstaged", stage_action="stage")))
         await pilot.pause()
 
+        assert (
+            _text(panel.query_one("#file-notes-git-title", Static))
+            == "Prepare session for commit"
+        )
         assert "/canonical/repository" in _text(
             panel.query_one("#file-notes-git-repository", Static)
         )
@@ -466,10 +494,120 @@ async def test_panel_renders_repository_scope_and_complete_file_state() -> None:
         )
         assert (
             _text(panel.query_one("#file-notes-git-scope", Static))
-            == "Session paths only"
+            == "Session paths only · stages complete file state"
         )
-        assert "content, deletion, and mode" in _text(
-            panel.query_one("#file-notes-git-complete-state", Static)
+        assert _text(panel.query_one("#file-notes-git-guide", Static)) == (
+            "Up/Down Select | Tab Actions | Enter Run | Esc Back"
+        )
+        assert _text(panel.query_one("#file-notes-git-status", Static)).startswith(
+            "Status: CURRENT · READY"
+        )
+
+
+@pytest.mark.parametrize(
+    ("latest_action", "verb"),
+    [
+        ("created", "CREATED"),
+        ("modified", "EDITED"),
+        ("moved", "MOVED"),
+        ("deleted", "DELETED"),
+        ("restored", "RESTORED"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_rows_project_note_intent_on_a_separate_primary_line(
+    latest_action: SessionChangeAction,
+    verb: str,
+) -> None:
+    row = _row(
+        "unstaged",
+        latest_action=latest_action,
+        source_path="folder/before.md",
+        destination_path=("folder/after.md" if latest_action == "moved" else None),
+        stage_action="stage",
+    )
+    panel = LibraryFileNotesGitPanel()
+    async with _PanelHarness(panel).run_test() as pilot:
+        panel.render_status(_status(row))
+        await pilot.pause()
+
+        primary = _text(panel.query_one(".file-notes-git-row-primary", Static))
+        semantic = _text(panel.query_one(".file-notes-git-row-secondary", Static))
+        assert primary.startswith(verb)
+        assert "folder/before.md" in primary
+        if latest_action == "moved":
+            assert "-> folder/after.md" in primary
+        assert semantic == "READY TO STAGE · Git: unstaged"
+
+
+@pytest.mark.parametrize(
+    ("changes", "state", "expected_primary", "expected_secondary"),
+    [
+        (
+            (
+                SessionChange("created", "draft.md"),
+                SessionChange("deleted", "draft.md"),
+            ),
+            "unstaged",
+            "DELETED   draft.md",
+            "READY TO STAGE · Git: unstaged",
+        ),
+        (
+            (
+                SessionChange("deleted", "restored.md"),
+                SessionChange("restored", "restored.md"),
+            ),
+            "unstaged",
+            "RESTORED  restored.md",
+            "READY TO STAGE · Git: unstaged",
+        ),
+        (
+            (SessionChange("modified", "unchanged.md"),),
+            "clean",
+            "EDITED    unchanged.md",
+            "NO ACTION · matches HEAD",
+        ),
+        (
+            (
+                SessionChange("moved", "original.md", "middle.md"),
+                SessionChange("moved", "middle.md", "final.md"),
+            ),
+            "unstaged",
+            "MOVED     original.md -> final.md",
+            "READY TO STAGE · Git: unstaged",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_coalesced_histories_project_latest_note_intent(
+    changes: tuple[SessionChange, ...],
+    state: SessionGitRowState,
+    expected_primary: str,
+    expected_secondary: str,
+) -> None:
+    (group,) = coalesce_session_changes(
+        tuple(
+            SequencedSessionChange(sequence, change)
+            for sequence, change in enumerate(changes, 1)
+        )
+    )
+    row = SessionGitRow(
+        group,
+        state,
+        stage_action="stage" if state == "unstaged" else None,
+    )
+    panel = LibraryFileNotesGitPanel()
+    async with _PanelHarness(panel).run_test() as pilot:
+        panel.render_status(_status(row))
+        await pilot.pause()
+
+        assert (
+            _text(panel.query_one(".file-notes-git-row-primary", Static))
+            == expected_primary
+        )
+        assert (
+            _text(panel.query_one(".file-notes-git-row-secondary", Static))
+            == expected_secondary
         )
 
 
@@ -520,11 +658,17 @@ async def test_trust_dialog_escapes_repository_path_controls_and_markup() -> Non
         assert "\x1b" not in rendered
 
 
+@pytest.mark.parametrize(
+    "size",
+    [(150, 42), (70, 28), (70, 24), (40, 20)],
+)
 @pytest.mark.asyncio
-async def test_panel_action_controls_fit_with_focus_at_24_cells() -> None:
+async def test_focused_controls_keep_complete_labels_and_fit(
+    size: tuple[int, int],
+) -> None:
     panel = LibraryFileNotesGitPanel()
     panel.styles.display = "block"
-    async with _PanelHarness(panel).run_test(size=(24, 40)) as pilot:
+    async with _PanelHarness(panel).run_test(size=size) as pilot:
         panel.render_untrusted("/repo")
         await pilot.pause()
         await _assert_visible_panel_buttons_fit(panel, pilot)
@@ -543,6 +687,205 @@ async def test_panel_action_controls_fit_with_focus_at_24_cells() -> None:
 
 
 @pytest.mark.asyncio
+async def test_action_controls_fit_from_visible_label_cells_and_recompute() -> None:
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    async with _PanelHarness(panel).run_test(size=(70, 28)) as pilot:
+        panel.render_untrusted("/repo")
+        await pilot.pause()
+        assert not panel.has_class("-stack-actions")
+
+        await pilot.resize_terminal(40, 20)
+        await pilot.pause()
+        assert panel.has_class("-stack-actions")
+        await _assert_visible_panel_buttons_fit(panel, pilot)
+
+        panel.render_status(
+            _status(
+                _row(
+                    "owned_newer_edits",
+                    stage_action="stage_update",
+                    unstage_eligible=True,
+                )
+            )
+        )
+        await pilot.pause()
+        assert not panel.has_class("-stack-actions")
+        await _assert_visible_panel_buttons_fit(panel, pilot)
+
+
+def test_middle_elide_cells_preserves_graphemes_width_and_path_ends() -> None:
+    text = "notes/资料/emoji-👩‍💻-very-long-folder/final.md"
+
+    result = _middle_elide_cells(text, 24)
+
+    assert cell_len(result) <= 24
+    assert result.startswith("notes/")
+    assert result.endswith("final.md")
+    assert "..." in result
+    assert "👩" not in result or "👩‍💻" in result
+    assert "💻" not in result or "👩‍💻" in result
+    assert "\u200d" not in result or "👩‍💻" in result
+
+
+@pytest.mark.asyncio
+async def test_middle_elide_recomputes_mounted_path_labels_after_resize() -> None:
+    source = "source/" + "before-folder/" * 2 + "before-note.md"
+    destination = "destination/" + "after-folder/" * 2 + "final-note.md"
+    row = _row(
+        "unstaged",
+        stage_action="stage",
+        latest_action="moved",
+        source_path=source,
+        destination_path=destination,
+    )
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    async with _PanelHarness(panel).run_test(size=(150, 42)) as pilot:
+        panel.render_status(_status(row))
+        await pilot.pause()
+        primary = panel.query_one(".file-notes-git-row-primary", Static)
+        selected = panel.query_one("#file-notes-git-selected-note", Static)
+        assert _text(primary) == f"MOVED     {source} -> {destination}"
+        assert _text(selected) == f"Selected note: {source} -> {destination}"
+
+        await pilot.resize_terminal(40, 20)
+        await pilot.pause()
+        assert "..." in _text(primary)
+        assert _text(primary).startswith("MOVED")
+        assert _text(primary).endswith("final-note.md")
+        assert "..." in _text(selected)
+        assert _text(selected).startswith("Selected note: ")
+        assert _text(selected).endswith("final-note.md")
+
+        await pilot.resize_terminal(150, 42)
+        await pilot.pause()
+        assert _text(primary) == f"MOVED     {source} -> {destination}"
+        assert _text(selected) == f"Selected note: {source} -> {destination}"
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> None:
+    long_source = "source-leading/" + "deep-session-folder/" * 8 + "before-note.md"
+    long_destination = (
+        "destination-leading/" + "another-deep-folder/" * 8 + "final-note.md"
+    )
+    long_reason = "index diagnostic " * 18
+    rows = (
+        _row(
+            "owned_newer_edits",
+            group_id=1,
+            stage_action="stage_update",
+            unstage_eligible=True,
+            latest_action="moved",
+            source_path=long_source,
+            destination_path=long_destination,
+        ),
+        _row(
+            "error",
+            group_id=2,
+            disabled_reason=long_reason,
+        ),
+        *tuple(
+            _row(
+                "unstaged",
+                group_id=group_id,
+                stage_action="stage",
+            )
+            for group_id in range(3, 10)
+        ),
+    )
+    repository = _repository(
+        "/repository/" + "very-long-authority-path/" * 10 + "notes"
+    )
+    status = SessionGitStatus(
+        binding_generation=1,
+        status_generation=1,
+        state="ready",
+        rows=rows,
+        repository=repository,
+        head=HeadIdentity.attached(
+            "feature/a-very-long-prepare-session-branch",
+            "a" * 40,
+        ),
+    )
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    async with _PanelHarness(panel).run_test(size=(40, 20)) as pilot:
+        panel.render_status(status)
+        panel.set_current_status(
+            "Status: STALE · ERROR — " + long_reason + "Retry Refresh."
+        )
+        panel.set_last_action(
+            "Last action: FAILED — " + long_reason + "retry the action, then Refresh"
+        )
+        await pilot.pause()
+
+        bounds = panel.content_region
+        fixed_selectors = (
+            "#file-notes-git-repository",
+            "#file-notes-git-status",
+            "#file-notes-git-action-status",
+            "#file-notes-git-selected-note",
+        )
+        for selector in fixed_selectors:
+            widget = panel.query_one(selector, Static)
+            assert widget.display
+            assert 0 < widget.region.height <= 2
+            assert widget.region.y >= bounds.y
+            assert widget.region.bottom <= bounds.bottom
+            assert cell_len(_text(widget)) <= (
+                widget.content_region.width * widget.region.height
+            )
+
+        list_view = panel.query_one("#file-notes-git-rows", ListView)
+        assert list_view.region.height >= 1
+        assert (
+            list_view.region.bottom
+            <= panel.query_one(
+                "#file-notes-git-status",
+                Static,
+            ).region.y
+        )
+        for item in panel.query(".file-notes-git-row"):
+            assert item.region.height == 2
+
+        primary = _text(panel.query_one(".file-notes-git-row-primary", Static))
+        assert primary.startswith("MOVED")
+        assert "source-" in primary
+        assert primary.endswith("final-note.md")
+        assert "..." in primary
+        primary_widget = panel.query_one(
+            ".file-notes-git-row-primary",
+            Static,
+        )
+        assert cell_len(primary) <= primary_widget.content_region.width
+
+        selected = panel.query_one("#file-notes-git-selected-note", Static)
+        selected_text = _text(selected)
+        assert selected_text.startswith("Selected note: ")
+        assert selected_text.endswith("final-note.md")
+        assert "..." in selected_text
+
+        failure = next(
+            widget
+            for widget in panel.query(".file-notes-git-row-secondary")
+            if _text(widget).startswith("FAILED")
+        )
+        failure_text = _text(failure)
+        assert failure_text.endswith("; retry, Refresh")
+        assert cell_len(failure_text) <= failure.content_region.width
+
+        assert _text(panel.query_one("#file-notes-git-status", Static)).endswith(
+            "Retry Refresh."
+        )
+        assert _text(panel.query_one("#file-notes-git-action-status", Static)).endswith(
+            "then Refresh"
+        )
+        await _assert_visible_panel_buttons_fit(panel, pilot)
+
+
+@pytest.mark.asyncio
 async def test_ready_status_without_rows_renders_explicit_empty_state() -> None:
     panel = LibraryFileNotesGitPanel()
     panel.styles.display = "block"
@@ -554,85 +897,105 @@ async def test_ready_status_without_rows_renders_explicit_empty_state() -> None:
         assert _text(empty) == "No current-session Git changes."
 
 
-@pytest.mark.parametrize(
-    (
-        "row",
-        "stage_label",
-        "unstage_enabled",
-        "stage_all",
-        "unstage_all",
-        "reason",
+_ROW_REASONS: dict[SessionGitRowState, str] = {
+    "conflict": "conflict",
+    "unsupported": "skip-worktree",
+    "nested_repository": "nested repository",
+    "unsafe_closure": "outside session lineage",
+    "ambiguous_lineage": "ambiguous lineage",
+    "unavailable": "Git unavailable",
+    "error": "status failed",
+}
+_ROW_SEMANTICS: dict[SessionGitRowState, tuple[str, ...]] = {
+    "unstaged": ("READY TO STAGE", "Git: unstaged"),
+    "owned": ("STAGED", "by Chatbook"),
+    "owned_newer_edits": ("UPDATE AVAILABLE", "newer note edits are not staged"),
+    "owned_topology_changed": (
+        "UPDATE REQUIRED",
+        "stage the moved note before unstaging",
     ),
+    "external_staged": ("BLOCKED", "already staged outside Chatbook", "Refresh"),
+    "external_partial": ("BLOCKED", "already staged outside Chatbook", "Refresh"),
+    "clean": ("NO ACTION", "matches HEAD"),
+    "ignored": ("BLOCKED", "ignored by Git", "ignore rule", "Refresh"),
+    "conflict": ("BLOCKED", "conflict", "outside Chatbook", "Refresh"),
+    "unsupported": ("BLOCKED", "skip-worktree", "outside Chatbook", "Refresh"),
+    "nested_repository": (
+        "BLOCKED",
+        "nested repository",
+        "outside Chatbook",
+        "Refresh",
+    ),
+    "unsafe_closure": (
+        "BLOCKED",
+        "outside session lineage",
+        "outside Chatbook",
+        "Refresh",
+    ),
+    "ambiguous_lineage": (
+        "BLOCKED",
+        "ambiguous lineage",
+        "outside Chatbook",
+        "Refresh",
+    ),
+    "unavailable": ("BLOCKED", "Git unavailable", "restore Git", "Refresh"),
+    "error": ("FAILED", "status failed", "retry", "Refresh"),
+}
+
+
+@pytest.mark.parametrize(
+    ("state", "stage_action", "unstage_eligible"),
     [
-        (_row("unstaged", stage_action="stage"), "Stage selected", False, True, False, None),
-        (_row("owned", unstage_eligible=True), None, True, False, True, None),
-        (
-            _row(
-                "owned_newer_edits",
-                stage_action="stage_update",
-                unstage_eligible=True,
-            ),
-            "Stage update",
-            True,
-            True,
-            True,
-            None,
-        ),
-        (
-            _row(
-                "owned_topology_changed",
-                stage_action="stage_update",
-                disabled_reason="Unstage requires Stage update",
-            ),
-            "Stage update",
-            False,
-            True,
-            False,
-            "Unstage requires Stage update",
-        ),
-        (_row("external_staged", disabled_reason="external index state"), None, False, False, False, "external index state"),
-        (_row("external_partial", disabled_reason="external index state"), None, False, False, False, "external index state"),
-        (_row("clean"), None, False, False, False, None),
-        (_row("ignored", disabled_reason="ignored"), None, False, False, False, "ignored"),
-        (_row("conflict", disabled_reason="conflict"), None, False, False, False, "conflict"),
-        (_row("unsupported", disabled_reason="skip-worktree"), None, False, False, False, "skip-worktree"),
-        (_row("nested_repository", disabled_reason="nested repository"), None, False, False, False, "nested repository"),
-        (_row("unsafe_closure", disabled_reason="outside session lineage"), None, False, False, False, "outside session lineage"),
-        (_row("ambiguous_lineage", disabled_reason="ambiguous lineage"), None, False, False, False, "ambiguous lineage"),
-        (_row("unavailable", disabled_reason="Git unavailable"), None, False, False, False, "Git unavailable"),
-        (_row("error", disabled_reason="status failed"), None, False, False, False, "status failed"),
+        ("unstaged", "stage", False),
+        ("owned", None, True),
+        ("owned_newer_edits", "stage_update", True),
+        ("owned_topology_changed", "stage_update", False),
+        ("external_staged", None, False),
+        ("external_partial", None, False),
+        ("clean", None, False),
+        ("ignored", None, False),
+        ("conflict", None, False),
+        ("unsupported", None, False),
+        ("nested_repository", None, False),
+        ("unsafe_closure", None, False),
+        ("ambiguous_lineage", None, False),
+        ("unavailable", None, False),
+        ("error", None, False),
     ],
 )
 @pytest.mark.asyncio
 async def test_row_action_table_is_driven_by_row_policy(
-    row: SessionGitRow,
-    stage_label: str | None,
-    unstage_enabled: bool,
-    stage_all: bool,
-    unstage_all: bool,
-    reason: str | None,
+    state: SessionGitRowState,
+    stage_action: SessionGitStageAction | None,
+    unstage_eligible: bool,
 ) -> None:
+    row = _row(
+        state,
+        stage_action=stage_action,
+        unstage_eligible=unstage_eligible,
+        disabled_reason=_ROW_REASONS.get(state),
+    )
     panel = LibraryFileNotesGitPanel()
-    async with _PanelHarness(panel).run_test() as pilot:
+    async with _PanelHarness(panel).run_test(size=(150, 42)) as pilot:
         panel.render_status(_status(row))
         await pilot.pause()
 
         stage = panel.query_one("#file-notes-git-stage-selected", Button)
         unstage = panel.query_one("#file-notes-git-unstage-selected", Button)
-        assert stage.display is (stage_label is not None)
-        if stage_label is not None:
-            assert str(stage.label) == stage_label
+        assert stage.display is (stage_action is not None)
+        if stage_action is not None:
+            expected = "Stage update" if stage_action == "stage_update" else "Stage"
+            assert str(stage.label) == expected
             assert not stage.disabled
-        assert unstage.display is unstage_enabled
+        assert unstage.display is unstage_eligible
         assert panel.query_one("#file-notes-git-stage-all", Button).disabled is (
-            not stage_all
+            stage_action is None
         )
         assert panel.query_one("#file-notes-git-unstage-all", Button).disabled is (
-            not unstage_all
+            not unstage_eligible
         )
-        row_text = _text(panel.query_one(".file-notes-git-row-copy", Static))
-        if reason is not None:
-            assert reason in row_text
+        row_text = _text(panel.query_one(".file-notes-git-row-secondary", Static))
+        assert all(fragment in row_text for fragment in _ROW_SEMANTICS[state])
 
 
 @pytest.mark.asyncio
@@ -673,6 +1036,55 @@ async def test_selection_uses_stable_group_id_across_refresh() -> None:
         assert rows.index == 0
 
 
+@pytest.mark.asyncio
+async def test_selected_and_bulk_labels_report_selection_and_independent_counts() -> None:
+    first = _row(
+        "unstaged",
+        group_id=11,
+        stage_action="stage",
+        source_path="folder/first.md",
+    )
+    selected = _row(
+        "owned_newer_edits",
+        group_id=22,
+        stage_action="stage_update",
+        unstage_eligible=True,
+        source_path="folder/second.md",
+    )
+    panel = LibraryFileNotesGitPanel()
+    async with _PanelHarness(panel).run_test() as pilot:
+        panel.render_status(_status(first, selected))
+        await pilot.pause()
+
+        selected_note = panel.query_one("#file-notes-git-selected-note", Static)
+        stage_selected = panel.query_one(
+            "#file-notes-git-stage-selected",
+            Button,
+        )
+        unstage_selected = panel.query_one(
+            "#file-notes-git-unstage-selected",
+            Button,
+        )
+        assert _text(selected_note).startswith("Selected note: ")
+        assert "folder/first.md" in _text(selected_note)
+        assert str(stage_selected.label) == "Stage"
+        assert (
+            str(panel.query_one("#file-notes-git-stage-all", Button).label)
+            == "Stage all (2)"
+        )
+        assert (
+            str(panel.query_one("#file-notes-git-unstage-all", Button).label)
+            == "Unstage all (1)"
+        )
+
+        rows = panel.query_one("#file-notes-git-rows", ListView)
+        rows.index = 1
+        await pilot.pause()
+        assert "folder/second.md" in _text(selected_note)
+        assert str(stage_selected.label) == "Stage update"
+        assert str(unstage_selected.label) == "Unstage"
+
+
 @pytest.mark.parametrize("state", ["stale", "error"])
 @pytest.mark.asyncio
 async def test_stale_and_error_retain_rows_but_only_refresh_is_available(
@@ -680,12 +1092,14 @@ async def test_stale_and_error_retain_rows_but_only_refresh_is_available(
 ) -> None:
     panel = LibraryFileNotesGitPanel()
     async with _PanelHarness(panel).run_test() as pilot:
+        panel.set_last_action("Last action: STAGED — 1 session note staged.")
         panel.render_status(
             _status(
                 _row("unstaged", stage_action="stage"),
                 state=state,
                 message="status failed; retry",
-            )
+            ),
+            retain_rows=True,
         )
         await pilot.pause()
 
@@ -693,9 +1107,72 @@ async def test_stale_and_error_retain_rows_but_only_refresh_is_available(
         assert not panel.query_one("#file-notes-git-refresh", Button).disabled
         assert panel.query_one("#file-notes-git-stage-selected", Button).disabled
         assert panel.query_one("#file-notes-git-stage-all", Button).disabled
+        expected = "STALE" if state == "stale" else "STALE · ERROR"
+        assert expected in _text(panel.query_one("#file-notes-git-status", Static))
         assert "status failed; retry" in _text(
-            panel.query_one("#file-notes-git-action-status", Static)
+            panel.query_one("#file-notes-git-status", Static)
         )
+        assert (
+            _text(panel.query_one("#file-notes-git-action-status", Static))
+            == "Last action: STAGED — 1 session note staged."
+        )
+
+
+@pytest.mark.parametrize(
+    "authority_loss",
+    [
+        lambda panel: panel.render_untrusted("/different/repository"),
+        lambda panel: panel.render_unavailable(
+            "This notes folder is not in a Git worktree."
+        ),
+        lambda panel: panel.render_status(
+            _status(
+                state="unavailable",
+                message="Git is unavailable; restore Git, then Refresh.",
+            )
+        ),
+    ],
+    ids=("untrusted", "discovery-unavailable", "status-unavailable"),
+)
+@pytest.mark.asyncio
+async def test_authority_loss_clears_rows_selection_and_mutation_actions(
+    authority_loss: Callable[[LibraryFileNotesGitPanel], None],
+) -> None:
+    panel = LibraryFileNotesGitPanel()
+    async with _PanelHarness(panel).run_test() as pilot:
+        panel.render_status(
+            _status(
+                _row("unstaged", group_id=11, stage_action="stage"),
+                _row(
+                    "owned",
+                    group_id=22,
+                    unstage_eligible=True,
+                ),
+            )
+        )
+        await pilot.pause()
+        rows = panel.query_one("#file-notes-git-rows", ListView)
+        rows.index = 1
+        await pilot.pause()
+        assert panel.selected_group_id == 22
+
+        authority_loss(panel)
+        await _wait_until(
+            pilot,
+            lambda: len(panel.query(".file-notes-git-row")) == 0,
+            "authority loss did not clear rendered rows",
+        )
+
+        assert panel.rows == ()
+        assert panel.selected_group_id is None
+        for selector in (
+            "#file-notes-git-stage-selected",
+            "#file-notes-git-unstage-selected",
+            "#file-notes-git-stage-all",
+            "#file-notes-git-unstage-all",
+        ):
+            button = panel.query_one(selector, Button)
+            assert not button.display
 
 
 @pytest.mark.asyncio
@@ -719,7 +1196,7 @@ async def test_untrusted_shows_only_trust_action_and_checking_keeps_back_enabled
         assert not panel.query_one("#file-notes-git-back", Button).disabled
         assert panel.query_one("#file-notes-git-stage-all", Button).disabled
         assert "Checking" in _text(
-            panel.query_one("#file-notes-git-action-status", Static)
+            panel.query_one("#file-notes-git-status", Static)
         )
 
 
