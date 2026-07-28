@@ -930,7 +930,23 @@ So Task 6 splits:
   `_sync_generate_enabled` -- 5 methods, ~322 lines) onto a mixin the pane
   inherits. Because the pane uses the same control ids, their `query_one`
   calls resolve unchanged. Append a `SpeechTake` on completion.
-- **6d — retire the legacy branch.** Only after 6c is green.
+- **6d — retire the legacy branch.** BLOCKED, and not on test colour.
+
+  6c makes Generate reach synthesis, but the rebuilt pane has no catalog:
+  nothing populates the provider, model, voice, language or format options,
+  so the axes render as empty selects and a generation attempt resolves
+  nothing. Retiring the legacy branch now would ship a screen that looks
+  complete and cannot synthesize.
+
+  The catalog closure is **32 methods, ~771 lines** -- `_load_provider_catalog`
+  and its worker, `_load_provider_voices` and its worker, `_apply_catalog`,
+  the request-token staleness machinery, the provider status copy, and
+  `_show_provider_specific_controls`. That is more than twice the generate
+  closure and its own piece of work, not a step inside this one.
+
+  So phase 1 ends after 6c with the legacy branch intact and the rebuilt pane
+  reachable beside it. Catalog adoption and retirement become **phase 1b**,
+  planned separately.
 
 ### Task 6 (original, superseded): Wire behaviour and retire the legacy playground
 
