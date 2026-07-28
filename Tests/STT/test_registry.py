@@ -251,7 +251,7 @@ def test_capability_set_rejects_malformed_fields(
 )
 def test_registry_metadata_values_are_frozen_and_slotted(metadata: object) -> None:
     assert not hasattr(metadata, "__dict__")
-    field_name = fields(metadata)[0].name
+    field_name = fields(metadata)[0].name  # type: ignore[arg-type]
     with pytest.raises(FrozenInstanceError):
         setattr(metadata, field_name, object())
 
@@ -594,7 +594,10 @@ def test_runtime_observation_forbids_loss_of_every_semantic_field(
     runtime_value: object,
 ) -> None:
     registry = ProviderRegistry.sealed(_declarations())
-    runtime_capabilities = replace(_capabilities(), **{field_name: runtime_value})
+    runtime_capabilities = replace(
+        _capabilities(),
+        **{field_name: runtime_value},  # type: ignore[arg-type]
+    )
     observation = RuntimeObservation(
         provider_id="test-provider",
         model_id="model-a",
@@ -656,7 +659,10 @@ def test_runtime_observation_forbids_device_or_precision_escalation(
         provider_id="test-provider",
         model_id="model-a",
         available=True,
-        capabilities=replace(_capabilities(), **{field_name: runtime_value}),
+        capabilities=replace(
+            _capabilities(),
+            **{field_name: runtime_value},  # type: ignore[arg-type]
+        ),
     )
 
     with pytest.raises(RuntimeCapabilityError, match=field_name):
