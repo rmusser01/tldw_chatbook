@@ -905,23 +905,25 @@ def test_failure_allows_absent_artifact_and_effective_device() -> None:
     assert failure.effective_device is None
 
 
-def test_progress_repr_and_str_exclude_attempt_and_job_identity() -> None:
+def test_progress_repr_and_str_exclude_caller_controlled_detail_and_identity() -> None:
     progress = TranscriptionProgress(
         attempt_id="attempt-TOKEN-SECRET",
         batch_id="batch-TOKEN-SECRET",
         job_id="job-TOKEN-SECRET",
         phase=TranscriptionPhase.TRANSCRIBING,
         fraction=0.25,
-        detail_code="decode.segment_1-ready",
+        detail_code="customer-secret-token",
     )
 
-    assert repr(progress) == (
-        "TranscriptionProgress(phase='transcribing', fraction=0.25, "
-        "detail_code='decode.segment_1-ready')"
+    assert progress.detail_code == "customer-secret-token"
+    assert (
+        repr(progress) == "TranscriptionProgress(phase='transcribing', fraction=0.25)"
     )
-    assert str(progress) == "transcribing: 25% (decode.segment_1-ready)"
+    assert str(progress) == "transcribing: 25%"
     assert "TOKEN-SECRET" not in repr(progress)
     assert "TOKEN-SECRET" not in str(progress)
+    assert "customer-secret-token" not in repr(progress)
+    assert "customer-secret-token" not in str(progress)
 
 
 @pytest.mark.parametrize(

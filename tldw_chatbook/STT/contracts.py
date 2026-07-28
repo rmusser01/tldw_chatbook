@@ -377,11 +377,11 @@ class TranscriptionProgress:
                 )
 
     def __repr__(self) -> str:
-        """Render progress without exposing attempt, batch, or job identities."""
+        """Render progress without exposing caller-controlled text or identities."""
 
         return (
             f"{type(self).__name__}(phase={self.phase.value!r}, "
-            f"fraction={self.fraction!r}, detail_code={self.detail_code!r})"
+            f"fraction={self.fraction!r})"
         )
 
     def __str__(self) -> str:
@@ -390,8 +390,6 @@ class TranscriptionProgress:
         rendered = self.phase.value
         if self.fraction is not None:
             rendered = f"{rendered}: {self.fraction:.0%}"
-        if self.detail_code is not None:
-            rendered = f"{rendered} ({self.detail_code})"
         return rendered
 
 
