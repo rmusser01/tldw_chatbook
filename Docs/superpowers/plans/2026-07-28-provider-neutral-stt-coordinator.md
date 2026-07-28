@@ -12,8 +12,8 @@
 
 ## Scope and ADR
 
-ADR required: yes  
-ADR path: `backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md`  
+ADR required: yes
+ADR path: `backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md`
 Reason: ADR-025 already governs the provider boundary, language routing, fallback policy, and compatibility facade; this task implements that decision without changing it.
 
 Included:
