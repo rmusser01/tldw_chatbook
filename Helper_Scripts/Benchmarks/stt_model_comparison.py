@@ -96,6 +96,7 @@ REQUIRED_MODEL_FILES = {
             "config.json",
             "model.bin",
             "tokenizer.json",
+            "vocabulary.txt",
         }
     ),
 }
@@ -614,6 +615,7 @@ def _selected_filenames(model_id: str) -> set[str] | None:
             "preprocessor_config.json",
             "tokenizer.json",
             "vocabulary.json",
+            "vocabulary.txt",
         }
     if not model_id.startswith("parakeet_"):
         return None

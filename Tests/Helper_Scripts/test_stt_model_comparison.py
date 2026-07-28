@@ -128,6 +128,7 @@ def _model_directories(tmp_path: Path) -> dict[str, Path]:
                 "model.bin",
                 "tokenizer.json",
                 "preprocessor_config.json",
+                "vocabulary.txt",
             ):
                 (directory / filename).write_bytes(filename.encode())
         else:
@@ -315,6 +316,7 @@ def test_main_rejects_each_invalid_model_input_before_touching_output(
         ("faster_whisper", "config.json"),
         ("faster_whisper", "model.bin"),
         ("faster_whisper", "tokenizer.json"),
+        ("faster_whisper", "vocabulary.txt"),
     ],
 )
 def test_main_rejects_incomplete_model_before_touching_output(
@@ -697,6 +699,10 @@ def test_main_writes_identity_timings_hashes_and_separate_silence(
     assert {
         "name": "preprocessor_config.json",
         "size_bytes": len(b"preprocessor_config.json"),
+    } in report["models"]["faster_whisper"]["files"]
+    assert {
+        "name": "vocabulary.txt",
+        "size_bytes": len(b"vocabulary.txt"),
     } in report["models"]["faster_whisper"]["files"]
     speech_row = next(row for row in report["rows"] if row["case_id"] == "speech")
     assert speech_row["elapsed_seconds"] >= 0
