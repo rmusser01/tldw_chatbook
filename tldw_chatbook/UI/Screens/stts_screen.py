@@ -18,7 +18,6 @@ from ..Lab_Modules.lab_speech_status import (
     speech_dependencies_available,
 )
 from ..Lab_Modules.lab_workbench import LAB_RAIL_ROW_CLASS
-from ..Speech.speech_playground_pane import SpeechPlaygroundPane
 from ..STTS_Window import STTSWindow
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from .lab_frame import LabScreen
@@ -70,8 +69,6 @@ class STTSScreen(LabScreen):
         """
         super().__init__(app_instance, "stts", **kwargs)
         self.stts_window: STTSWindow | None = None
-        #: PROPOSAL SCOPE: which view the redesigned pane covers so far.
-        self._redesign_view = "playground"
 
     def lab_header_state(self) -> WorkbenchHeaderState:
         """Return the Speech header copy and derived readiness.
@@ -137,21 +134,22 @@ class STTSScreen(LabScreen):
         )
 
     def build_lab_body(self) -> Widget:
-        """Build the body for the current view.
+        """Build the body: the window, which owns view switching.
 
-        PROPOSAL SCOPE: the playground is the redesigned Console-grammar
-        pane; every other view still mounts the legacy window. Extending the
-        rest is the next step, not an oversight.
+        Returning the playground pane directly -- as this did while the
+        rebuild was the only redesigned view -- left `self.stts_window` None
+        forever, and every rail press hit its `is None` guard and did
+        nothing. TTS Settings, AudioBook and Speech Recognition were all
+        unreachable; only Voice Cloning worked, because it pushes a screen
+        before that check.
+
+        The window mounts `SpeechPlaygroundPane` for the playground view
+        itself, so the rebuild is still what the user lands on.
 
         Returns:
-            ``SpeechPlaygroundPane`` for the playground, otherwise the
-            ``STTSWindow``, mounted after first paint like every Lab body.
+            The ``STTSWindow``, mounted after first paint like every Lab
+            body.
         """
-        if self._redesign_view == "playground":
-            return SpeechPlaygroundPane(
-                id="speech-playground-pane",
-                capability_line=speech_capability_text(),
-            )
         self.stts_window = STTSWindow(self.app_instance, classes="window")
         self.stts_window.styles.height = "1fr"
         return self.stts_window

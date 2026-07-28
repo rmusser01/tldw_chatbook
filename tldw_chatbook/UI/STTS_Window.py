@@ -3372,8 +3372,14 @@ class STTSWindow(Container):
         matching content widget; the screen only points it at a view.
         """
         with Container(classes="stts-content"):
-            # Show playground by default
+            # Seeds the default view, and records it: `watch_current_view`
+            # would otherwise mount a SECOND playground on the first change,
+            # because its `remove_children()` is deferred and the new widget
+            # lands while the old one is still there. Legacy got away with
+            # the same shape only because its widget carried no id to
+            # collide on.
             yield SpeechPlaygroundPane(id="speech-playground-pane")
+        self._mounted_view = "playground"
 
     def _speech_capability_status_text(self) -> str:
         """Return a concise local speech dependency status for the sidebar."""
@@ -3424,6 +3430,9 @@ class STTSWindow(Container):
         which took down the whole screen. Mirrors the same QueryError
         tolerance `LLMManagementWindow.watch_active_view` carries.
         """
+        if new_view == getattr(self, "_mounted_view", None):
+            return
+
         try:
             content_container = self.query_one(".stts-content", Container)
         except QueryError:
@@ -3445,6 +3454,7 @@ class STTSWindow(Container):
         content_container.remove_children()
 
         # Add new content based on view
+        self._mounted_view = new_view
         if new_view == "playground":
             content_container.mount(
                 SpeechPlaygroundPane(id="speech-playground-pane")
