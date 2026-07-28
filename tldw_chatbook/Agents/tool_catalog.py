@@ -23,6 +23,7 @@ from .agent_models import (
     LOAD_TOOLS_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     RunBudget,
+    SEARCH_RUN_LOG_TOOL_NAME,
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
@@ -150,6 +151,71 @@ RUN_SKILL_SCRIPT_TOOL_SCHEMA = ToolSchema(
             },
         },
         "required": ["skill_name", "script_path"],
+    },
+)
+
+
+SEARCH_RUN_LOG_TOOL_SCHEMA = ToolSchema(
+    id="runtime:search_run_log",
+    name=SEARCH_RUN_LOG_TOOL_NAME,
+    description=(
+        "Search this run's own complete log. Your context holds a truncated "
+        "view; the log holds every model turn, tool call, and tool result in "
+        "full. Use it to recover a truncated result or recall an earlier step "
+        "instead of re-running work. 'contains' (literal substring) and "
+        "'pattern' (regular expression, first 500 characters per record "
+        "only) both match a record's CONTENT ONLY -- never its metadata. "
+        "Use 'tool', 'type', 'status', and 'kind' to filter by metadata "
+        "instead -- e.g. to find every call to a specific tool, filter "
+        "with 'tool' rather than 'contains', since the tool's name may "
+        "never appear inside its own arguments or result. A record's "
+        "rendered content is windowed: when 'contains' or 'pattern' is set, "
+        "the window is centred on that record's first match; otherwise it "
+        "starts at the beginning. When a record is shown only partially, "
+        "the render states the character range and total size, and the "
+        "'offset' to pass next to keep reading."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "contains": {
+                "type": "string",
+                "description": "Literal substring to find in a record's content "
+                "(case-insensitive). Never matches metadata such as the tool "
+                "name -- use 'tool' for that.",
+            },
+            "pattern": {
+                "type": "string",
+                "description": "Regular expression over a record's content "
+                "only; first 500 chars per record.",
+            },
+            "tool": {"type": "string", "description": "Filter by tool name."},
+            "type": {
+                "type": "string",
+                "description": "Filter by record type: model, tool_call, tool_result.",
+            },
+            "status": {"type": "string", "description": "Filter: ok or error."},
+            "kind": {
+                "type": "string",
+                "description": "Filter by agent kind: primary or subagent.",
+            },
+            "from_record": {"type": "integer", "description": "Lowest record number."},
+            "to_record": {"type": "integer", "description": "Highest record number."},
+            "context": {
+                "type": "integer",
+                "description": "Records to include either side of each hit.",
+            },
+            "offset": {
+                "type": "integer",
+                "description": "Character offset into each record's rendered "
+                "content to start from. Use this to page through a record "
+                "larger than the render window -- the previous result names "
+                "the offset to pass next. Defaults to 0; ignored in favour "
+                "of a match-centred window when 'contains' or 'pattern' "
+                "matches and no offset is given.",
+            },
+        },
+        "required": [],
     },
 )
 

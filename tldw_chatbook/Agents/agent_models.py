@@ -34,6 +34,7 @@ LOAD_TOOLS_NAME = "load_tools"
 SKILL_FILE_TOOL_NAME = "skill_file"
 INSTALL_SKILL_TOOL_NAME = "install_skill"
 RUN_SKILL_SCRIPT_TOOL_NAME = "run_skill_script"
+SEARCH_RUN_LOG_TOOL_NAME = "search_run_log"
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -42,6 +43,7 @@ RUNTIME_TOOL_NAMES = frozenset(
         SKILL_FILE_TOOL_NAME,
         INSTALL_SKILL_TOOL_NAME,
         RUN_SKILL_SCRIPT_TOOL_NAME,
+        SEARCH_RUN_LOG_TOOL_NAME,
     }
 )
 
