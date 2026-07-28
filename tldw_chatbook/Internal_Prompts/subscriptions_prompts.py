@@ -2,23 +2,21 @@
 """Subscriptions prompt specs. Defaults moved verbatim from
 Subscriptions/content_processor.py (analysis_system, and the four
 _build_analysis_prompt branches for rss/atom/json_feed, url_change, podcast,
-and the generic fallback), Subscriptions/recursive_summarizer.py
-(_get_system_prompt), and Subscriptions/briefing_generator.py (the LLM
-analysis prompt built in _generate_sections_with_llm).
+and the generic fallback).
 
-The four per-type analysis prompts and `briefing` were f-strings in source
-with complex interpolations (dict .get() calls, content[:5000]/content[:3000]
-slices, an f"{...:.1f}" format spec). Registry templates use simple named
-tokens instead ({name}, {content}, {change_percentage}, ...); the slicing,
-`.get()` fallback lookups, and numeric formatting are precomputed in code
-before calling render_internal_prompt. All other text is verbatim.
+The four per-type analysis prompts were f-strings in source with complex
+interpolations (dict .get() calls, content[:5000]/content[:3000] slices, an
+f"{...:.1f}" format spec). Registry templates use simple named tokens instead
+({name}, {content}, {change_percentage}, ...); the slicing, `.get()` fallback
+lookups, and numeric formatting are precomputed in code before calling
+render_internal_prompt. All other text is verbatim.
 
-Scope note: the ONE-LINE LLM system role hardcoded alongside the briefing
-analysis prompt (briefing_generator.py, next to the prompt built in
-_generate_sections_with_llm: "You are an expert analyst creating executive
-briefings from aggregated content.") is deliberately NOT migrated here. Only
-the `briefing` prompt below (the analysis/user prompt) is in scope for P2;
-the system-role one-liner is deferred to a later pass.
+Removed in TASK-1211: `subscriptions.recursive_summarizer_system` and
+`subscriptions.briefing` described `recursive_summarizer.py` and
+`briefing_generator.py`, which were retired as unreachable. A spec whose
+`used_in` points at a deleted module is worse than no spec -- it presents a
+customisation surface for code that cannot run. Their text is recoverable from
+git history if the briefing work wants it back.
 """
 
 from .catalog import PromptSpec, register
@@ -148,52 +146,6 @@ Please provide a helpful analysis including:
         contract_note=(
             "The processing_options.analysis_prompt per-subscription "
             "override (code-side .replace channel) outranks the registry."
-        ),
-    )
-)
-
-register(
-    PromptSpec(
-        id="subscriptions.recursive_summarizer_system",
-        subsystem="subscriptions",
-        title="Recursive summarizer — system prompt",
-        description="System prompt for the recursive (chunk-and-merge) content summarizer.",
-        used_in="Subscriptions/recursive_summarizer.py (RecursiveSummarizer._get_system_prompt)",
-        default="""You are an expert content summarizer. Your task is to create clear, accurate summaries that preserve the key information while significantly reducing length. 
-
-Key principles:
-1. Maintain factual accuracy
-2. Preserve the most important information
-3. Use clear, concise language
-4. Maintain logical flow
-5. Respect the requested token limit""",
-    )
-)
-
-register(
-    PromptSpec(
-        id="subscriptions.briefing",
-        subsystem="subscriptions",
-        title="Briefing generator — analysis prompt",
-        description="LLM analysis prompt used to generate a briefing from aggregated subscription content.",
-        used_in="Subscriptions/briefing_generator.py (BriefingGenerator._generate_sections_with_llm, default prompt branch)",
-        default="""Analyze the following content from various subscriptions and generate a comprehensive briefing:
-
-{content_summary}
-
-Please provide:
-1. Executive Summary (2-3 paragraphs highlighting the most important developments)
-2. Key Insights (bullet points of significant findings or patterns)
-3. Trending Topics (identify common themes across sources)
-4. Recommended Actions (actionable items based on the content)
-
-Format each section clearly with appropriate headers.""",
-        required_placeholders=("content_summary",),
-        contract_note=(
-            "Output is parsed by _parse_llm_sections, which substring-"
-            "matches the four section labels (Executive Summary / Key "
-            "Insights / Trending Topics / Recommended Actions) — keep them "
-            "verbatim."
         ),
     )
 )

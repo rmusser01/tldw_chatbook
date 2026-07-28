@@ -179,6 +179,45 @@ documentation of whatever was there when it was written.
 
 ---
 
+## Measure a dead-code graph from both ends
+
+**TASK-1211, 2026-07-28.** The audit that scoped this retirement measured the island
+by walking *outward* from `BriefingGenerator` — who imports it, who imports them —
+and arrived at ~5,100 LOC across 11 files.
+
+Walking the other direction, *down* from the scheduler that was about to be
+deleted, found the chain kept going:
+
+```
+textual_scheduler_worker  →  sole importer of Event_Handlers/subscription_events.py
+                          →  sole importer of subscription_ingest_worker.py
+                          →  sole caller of Subscriptions/content_processor.py
+```
+
+The real island was 8,148 lines across 13 files, plus a fourth module left
+deliberately in place. Deleting only what the outward walk found would have
+orphaned two files silently — the exact state that made this island expensive to
+diagnose in the first place: dead, but with importers a grep can point at.
+
+**Why one direction is not enough.** The outward walk answers "what does this dead
+thing depend on?" The downward walk answers "what depended on it and is about to
+become dead?" A retirement needs both: the first bounds what you may delete, the
+second bounds what your deletion *creates*.
+
+**What to do.** Before deleting a module, list its importers *and* list what it
+uniquely imports. Anything it is the sole importer of joins the removal set, and
+you recurse. Then re-run the runtime import trace afterwards — if a module you
+kept is still in `sys.modules` with no caller, you have made a new orphan and
+should either wire it, delete it, or file it. Filing is acceptable; silence is
+not.
+
+Corroboration is worth seeking: TASK-813's notes had already reached the same
+conclusion about `subscription_events` from the other direction months earlier
+(`handle_add_subscription` has zero dispatchers). A prior investigation's notes
+are cheaper than re-deriving the graph.
+
+---
+
 ## Related
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects

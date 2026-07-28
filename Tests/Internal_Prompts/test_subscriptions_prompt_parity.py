@@ -203,51 +203,8 @@ Please provide a helpful analysis including:
     assert rendered == original
 
 
-def test_recursive_summarizer_system_matches_source_literal():
-    # recursive_summarizer.py _get_system_prompt — static literal, zero
-    # placeholders. Note the trailing space after "length." before the
-    # blank line, preserved verbatim from source.
-    original = """You are an expert content summarizer. Your task is to create clear, accurate summaries that preserve the key information while significantly reducing length. 
-
-Key principles:
-1. Maintain factual accuracy
-2. Preserve the most important information
-3. Use clear, concise language
-4. Maintain logical flow
-5. Respect the requested token limit"""
-    assert CATALOG["subscriptions.recursive_summarizer_system"].default == original
-
-
-def test_briefing_parity():
-    # briefing_generator.py _generate_sections_with_llm, default (non-custom)
-    # prompt branch.
-    content_summary = "Source A: 3 new items.\nSource B: 1 new item with {braces} in it."
-    original = f"""Analyze the following content from various subscriptions and generate a comprehensive briefing:
-
-{content_summary}
-
-Please provide:
-1. Executive Summary (2-3 paragraphs highlighting the most important developments)
-2. Key Insights (bullet points of significant findings or patterns)
-3. Trending Topics (identify common themes across sources)
-4. Recommended Actions (actionable items based on the content)
-
-Format each section clearly with appropriate headers."""
-    rendered = render_internal_prompt(
-        "subscriptions.briefing", content_summary=content_summary
-    )
-    assert rendered == original
-
-
-def test_briefing_contract_note_pins_section_labels():
-    # _parse_llm_sections substring-matches these four labels; if the
-    # default text or the contract note ever drops one, this test catches it.
-    default_text = CATALOG["subscriptions.briefing"].default
-    for label in (
-        "Executive Summary",
-        "Key Insights",
-        "Trending Topics",
-        "Recommended Actions",
-    ):
-        assert label in default_text
-        assert label in (CATALOG["subscriptions.briefing"].contract_note or "")
+# `test_recursive_summarizer_system_matches_source_literal`, `test_briefing_parity`
+# and `test_briefing_contract_note_pins_section_labels` were removed with their
+# subjects in TASK-1211: `recursive_summarizer.py` and `briefing_generator.py` were
+# unreachable and are gone, and their prompt specs were unregistered with them.
+# A parity test pinning a spec to a source literal cannot outlive the source.
