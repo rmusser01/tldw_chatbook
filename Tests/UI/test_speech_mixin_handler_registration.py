@@ -17,9 +17,7 @@ from textual.widgets import Select
 
 from tldw_chatbook.UI.Speech.speech_catalog_mixin import SpeechCatalogMixin
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
-from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
-
-HOSTS = (TTSPlaygroundWidget, SpeechPlaygroundPane)
+HOSTS = (SpeechPlaygroundPane,)
 
 
 @pytest.mark.unit

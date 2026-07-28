@@ -83,7 +83,7 @@ class SpeechPlaybackMixin:
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
-        logger.debug(f"TTSPlaygroundWidget received button press: {event.button.id}")
+        logger.debug(f"Playground received button press: {event.button.id}")
         if event.button.id == "tts-generate-btn":
             self._generate_tts()
             event.stop()  # Prevent event from bubbling up
@@ -807,6 +807,6 @@ class SpeechPlaybackMixin:
             else:
                 self._release_playback_artifact()
 
-            logger.debug("TTSPlaygroundWidget cleanup completed")
+            logger.debug("Playground cleanup completed")
         except Exception as e:
-            logger.error(f"Error during TTSPlaygroundWidget cleanup: {e}")
+            logger.error(f"Error during Playground cleanup: {e}")

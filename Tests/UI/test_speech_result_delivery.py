@@ -12,9 +12,7 @@ import pytest
 
 from tldw_chatbook.UI.Speech.speech_playback_mixin import SpeechPlaybackMixin
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
-from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
-
-HOSTS = (TTSPlaygroundWidget, SpeechPlaygroundPane)
+HOSTS = (SpeechPlaygroundPane,)
 
 
 @pytest.mark.unit
@@ -27,12 +25,14 @@ def test_both_playgrounds_can_receive_a_delivered_artifact(host):
 
 
 @pytest.mark.unit
-def test_delivery_is_one_implementation_not_two():
-    """Two copies of the completion path drift, and the take-handling bug
-    then depends on which pane the user happens to be looking at."""
+def test_delivery_comes_from_the_shared_mixin():
+    """The completion path is inherited, not redefined on the pane.
+
+    A pane-local copy would drift from the mixin the moment either changed,
+    and the mixin is what the remaining Speech surfaces will inherit.
+    """
     assert (
         SpeechPlaygroundPane._generation_complete
-        is TTSPlaygroundWidget._generation_complete
         is SpeechPlaybackMixin._generation_complete
     )
 
@@ -50,10 +50,9 @@ def test_the_delivery_lookup_names_both_playgrounds():
 
     source = inspect.getsource(stts_events.STTSEventHandler._mounted_playground)
     assert "SpeechPlaygroundPane" in source, (
-        "the rebuilt pane is not reachable for delivery; generations will "
+        "the playground is not reachable for delivery; generations will "
         "succeed and produce nothing on screen"
     )
-    assert "TTSPlaygroundWidget" in source
 
 
 @pytest.mark.unit
@@ -73,10 +72,9 @@ def test_a_provider_config_change_invalidates_both_playgrounds():
         stts_events.STTSEventHandler.on_stts_provider_configuration_changed
     )
     assert "SpeechPlaygroundPane" in source, (
-        "the rebuilt pane is never invalidated; it will serve a stale "
+        "the playground is never invalidated; it will serve a stale "
         "catalog after a provider is reconfigured"
     )
-    assert "TTSPlaygroundWidget" in source
 
 
 @pytest.mark.unit

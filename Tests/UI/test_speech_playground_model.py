@@ -103,42 +103,14 @@ def test_every_classified_control_is_a_known_playground_control():
     assert classified <= ALL_PLAYGROUND_CONTROLS
 
 
-@pytest.mark.unit
-def test_the_inventory_matches_the_live_widget():
-    """The model's inventory must equal what the widget actually composes.
+# `test_the_inventory_matches_the_live_widget` lived here. It parsed
+# `TTSPlaygroundWidget`'s source and diffed the ids both ways, which is what
+# kept the rebuild honest while the two playgrounds coexisted. That widget is
+# now deleted, so there is no live source to diff against -- and the guard it
+# provided has moved to `test_speech_playground_completeness.py`, which
+# asserts the same thing against what the pane actually mounts, per provider.
+#
+# `LEGACY_PLAYGROUND_CONTROLS` stays as the frozen record of what the legacy
+# screen offered. It is the yardstick that test measures against; without it
+# "nothing was dropped" has nothing to mean.
 
-    This is the guard against silently dropping a control in the rebuild: it
-    reads the ids straight out of `TTSPlaygroundWidget` and diffs both ways,
-    so a control that exists but is unclassified fails here rather than
-    going missing on screen three phases later.
-    """
-    import re
-    from pathlib import Path
-
-    source = Path(
-        "tldw_chatbook/UI/STTS_Window.py"
-    ).read_text(encoding="utf-8").split("\n")
-    start = next(
-        i
-        for i, line in enumerate(source, 1)
-        if line.startswith("class TTSPlaygroundWidget")
-    )
-    end = next(
-        i for i, line in enumerate(source, 1) if i > start and line.startswith("class ")
-    )
-    live = {
-        match.group(1)
-        for line in source[start - 1 : end - 1]
-        for match in re.finditer(r'id="([a-z0-9_-]+)"', line)
-    }
-
-    assert live - LEGACY_PLAYGROUND_CONTROLS == set(), (
-        "the widget composes controls the model does not know about"
-    )
-    assert LEGACY_PLAYGROUND_CONTROLS - live == set(), (
-        "the model files a control as legacy that the widget does not compose "
-        "-- if it is new, it belongs in NEW_PLAYGROUND_CONTROLS"
-    )
-    # Additions are deliberate and must not leak into the legacy set.
-    assert NEW_PLAYGROUND_CONTROLS & live == set()
-    assert ALL_PLAYGROUND_CONTROLS == LEGACY_PLAYGROUND_CONTROLS | NEW_PLAYGROUND_CONTROLS

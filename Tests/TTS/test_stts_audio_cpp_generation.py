@@ -34,7 +34,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
 )
 from tldw_chatbook.UI import STTS_Window
-from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
+from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 
 
 def _snapshot(
@@ -273,7 +273,7 @@ class _SnapshotHost(App[None]):
         self.generation_events: list[STTSPlaygroundGenerateEvent] = []
 
     def compose(self) -> ComposeResult:
-        yield TTSPlaygroundWidget()
+        yield SpeechPlaygroundPane()
 
     @on(STTSPlaygroundGenerateEvent)
     def capture_generation(self, event: STTSPlaygroundGenerateEvent) -> None:
@@ -288,7 +288,7 @@ class _EndToEndHost(App[None]):
         self._stts_handler._stts_service = native_service
 
     def compose(self) -> ComposeResult:
-        yield TTSPlaygroundWidget()
+        yield SpeechPlaygroundPane()
 
     @on(STTSPlaygroundGenerateEvent)
     def generate(self, event: STTSPlaygroundGenerateEvent) -> None:
@@ -328,18 +328,16 @@ async def test_playground_captures_audio_cpp_request_before_controls_change(
 ) -> None:
     service = _SnapshotService()
     monkeypatch.setattr(
-        STTS_Window,
-        "get_cli_setting",
-        lambda section, key, default=None: (
+        SpeechPlaygroundPane,
+        "_cli_setting",
+        lambda self, *a, **k: (lambda section, key, default=None: (
             "audio_cpp"
             if (section, key) == ("app_tts", "default_provider")
             else default
-        ),
+        ))(*a, **k),
     )
     monkeypatch.setattr(
-        STTS_Window,
-        "get_tts_service",
-        lambda: _resolved(service),
+        SpeechPlaygroundPane, "_tts_service_factory", lambda self: _resolved(service)
     )
     app = _SnapshotHost()
 
@@ -351,7 +349,7 @@ async def test_playground_captures_audio_cpp_request_before_controls_change(
         text_area.text = "original private text"
         await pilot.pause()
 
-        app.query_one(TTSPlaygroundWidget)._generate_tts()
+        app.query_one(SpeechPlaygroundPane)._generate_tts()
         await pilot.pause()
         assert len(app.generation_events) == 1
         request = app.generation_events[0].request
@@ -377,24 +375,22 @@ async def test_playground_shortcut_does_not_replace_active_operation(
 ) -> None:
     service = _SnapshotService()
     monkeypatch.setattr(
-        STTS_Window,
-        "get_cli_setting",
-        lambda section, key, default=None: (
+        SpeechPlaygroundPane,
+        "_cli_setting",
+        lambda self, *a, **k: (lambda section, key, default=None: (
             "audio_cpp"
             if (section, key) == ("app_tts", "default_provider")
             else default
-        ),
+        ))(*a, **k),
     )
     monkeypatch.setattr(
-        STTS_Window,
-        "get_tts_service",
-        lambda: _resolved(service),
+        SpeechPlaygroundPane, "_tts_service_factory", lambda self: _resolved(service)
     )
     app = _SnapshotHost()
 
     async with app.run_test(size=(160, 60)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         app.query_one("#tts-text-input", TextArea).text = "only once"
         await pilot.pause()
 
@@ -416,24 +412,22 @@ async def test_playground_shortcut_rejects_stale_configuration_revision(
 ) -> None:
     service = _SnapshotService()
     monkeypatch.setattr(
-        STTS_Window,
-        "get_cli_setting",
-        lambda section, key, default=None: (
+        SpeechPlaygroundPane,
+        "_cli_setting",
+        lambda self, *a, **k: (lambda section, key, default=None: (
             "audio_cpp"
             if (section, key) == ("app_tts", "default_provider")
             else default
-        ),
+        ))(*a, **k),
     )
     monkeypatch.setattr(
-        STTS_Window,
-        "get_tts_service",
-        lambda: _resolved(service),
+        SpeechPlaygroundPane, "_tts_service_factory", lambda self: _resolved(service)
     )
     app = _SnapshotHost()
 
     async with app.run_test(size=(160, 60)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         app.query_one("#tts-text-input", TextArea).text = "stale request"
         await pilot.pause()
 
@@ -452,18 +446,16 @@ async def test_playground_stores_delivered_artifact_not_current_selectors(
 ) -> None:
     service = _SnapshotService()
     monkeypatch.setattr(
-        STTS_Window,
-        "get_cli_setting",
-        lambda section, key, default=None: (
+        SpeechPlaygroundPane,
+        "_cli_setting",
+        lambda self, *a, **k: (lambda section, key, default=None: (
             "audio_cpp"
             if (section, key) == ("app_tts", "default_provider")
             else default
-        ),
+        ))(*a, **k),
     )
     monkeypatch.setattr(
-        STTS_Window,
-        "get_tts_service",
-        lambda: _resolved(service),
+        SpeechPlaygroundPane, "_tts_service_factory", lambda self: _resolved(service)
     )
     app = _SnapshotHost()
     artifact_path = tmp_path / "actual-response.wav"
@@ -482,7 +474,7 @@ async def test_playground_stores_delivered_artifact_not_current_selectors(
 
     async with app.run_test(size=(160, 60)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         app.query_one("#tts-model-select", Select).value = "model-2"
         widget._generation_complete(artifact)
         await pilot.pause()
@@ -506,24 +498,24 @@ async def test_audio_cpp_playground_runs_end_to_end_through_handler(
         _Response(_CountingStream((b"RIFF", b"end-to-end")))
     )
     monkeypatch.setattr(
-        STTS_Window,
-        "get_cli_setting",
-        lambda section, key, default=None: (
+        SpeechPlaygroundPane,
+        "_cli_setting",
+        lambda self, *a, **k: (lambda section, key, default=None: (
             "audio_cpp"
             if (section, key) == ("app_tts", "default_provider")
             else default
-        ),
+        ))(*a, **k),
     )
     monkeypatch.setattr(
-        STTS_Window,
-        "get_tts_service",
-        lambda: _resolved(catalog_service),
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: (lambda: _resolved(catalog_service))(),
     )
     app = _EndToEndHost(native_service)
 
     async with app.run_test(size=(160, 60)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         app.query_one("#tts-text-input", TextArea).text = "synthesize this"
         await pilot.pause()
 
@@ -553,24 +545,24 @@ async def test_catalog_refresh_does_not_cancel_handler_generation(
     release = asyncio.Event()
     native_service = _NativeService(_Response(_CountingStream((), blocked=release)))
     monkeypatch.setattr(
-        STTS_Window,
-        "get_cli_setting",
-        lambda section, key, default=None: (
+        SpeechPlaygroundPane,
+        "_cli_setting",
+        lambda self, *a, **k: (lambda section, key, default=None: (
             "audio_cpp"
             if (section, key) == ("app_tts", "default_provider")
             else default
-        ),
+        ))(*a, **k),
     )
     monkeypatch.setattr(
-        STTS_Window,
-        "get_tts_service",
-        lambda: _resolved(catalog_service),
+        SpeechPlaygroundPane,
+        "_tts_service_factory",
+        lambda self: (lambda: _resolved(catalog_service))(),
     )
     app = _EndToEndHost(native_service)
 
     async with app.run_test(size=(160, 60)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         app.query_one("#tts-text-input", TextArea).text = "synthesize this"
         await pilot.pause()
         widget._generate_tts()

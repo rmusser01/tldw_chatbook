@@ -1,3 +1,16 @@
+"""Playground behaviour, driven through the rebuilt pane.
+
+These tests were written against `TTSPlaygroundWidget` and moved with the
+code: the catalog, synthesis and playback paths they cover now live in the
+shared mixins, and `SpeechPlaygroundPane` is the surface that hosts them.
+Porting them found nine real defects in the pane (task-1266), so the
+assertions are unchanged -- only the host and the two patch seams differ.
+
+Service and settings are patched through the pane's `_tts_service_factory`
+and `_cli_setting` hooks rather than on the `STTS_Window` module, which is
+where they lived back when the code did.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -28,7 +41,7 @@ from tldw_chatbook.TTS.adapter_types import (
 from tldw_chatbook.TTS.playground_types import STTSGeneratedAudio
 from tldw_chatbook.TTS.legacy_catalogs import legacy_catalog
 from tldw_chatbook.UI import STTS_Window
-from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
+from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.stts_playground_catalog import (
     LOADING_SELECT_VALUE,
     SERVER_DEFAULT_VOICE_ID,
@@ -197,7 +210,7 @@ class _PlaygroundHost(App[None]):
         self.generation_events: list[STTSPlaygroundGenerateEvent] = []
 
     def compose(self) -> ComposeResult:
-        yield TTSPlaygroundWidget()
+        yield SpeechPlaygroundPane()
 
     def notify(
         self,
@@ -228,14 +241,13 @@ def audio_cpp_playground(
             return "audio_cpp"
         return default
 
-    monkeypatch.setattr(STTS_Window, "get_cli_setting", get_setting)
+    monkeypatch.setattr(SpeechPlaygroundPane, "_cli_setting",
+                        lambda self, *a, **k: get_setting(*a, **k))
     monkeypatch.setattr(
-        STTS_Window,
-        "get_tts_service",
-        lambda: _resolved(service),
+        SpeechPlaygroundPane, "_tts_service_factory", lambda self: _resolved(service)
     )
     monkeypatch.setattr(
-        TTSPlaygroundWidget,
+        SpeechPlaygroundPane,
         "_check_higgs_installation",
         lambda self: None,
     )
@@ -348,7 +360,7 @@ async def test_playground_generates_with_sentinel_shaped_remote_ids(
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
         await pilot.pause()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         model_select = app.query_one("#tts-model-select", Select)
         voice_select = app.query_one("#tts-voice-select", Select)
 
@@ -379,7 +391,7 @@ async def test_configuration_change_marks_catalog_stale_without_connecting(
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
         await pilot.pause()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         model_values = _option_values(app.query_one("#tts-model-select", Select))
         calls_before = list(service.catalog_calls)
 
@@ -437,7 +449,7 @@ async def test_superseded_catalog_failure_cannot_overwrite_newer_success(
 
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         first_started = asyncio.Event()
         release_first = asyncio.Event()
         call_count = 0
@@ -497,7 +509,7 @@ async def test_superseded_catalog_success_cannot_invalidate_newer_success(
 
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         first_started = asyncio.Event()
         release_first = asyncio.Event()
         call_count = 0
@@ -561,7 +573,7 @@ async def test_superseded_same_model_voice_result_cannot_overwrite_newer_success
 
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         first_started = asyncio.Event()
         release_first = asyncio.Event()
         call_count = 0
@@ -637,7 +649,7 @@ async def test_catalog_generation_is_reserved_before_exclusive_worker_cancellati
 
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         baseline_catalog = widget._catalogs["audio_cpp"]
         first_started = asyncio.Event()
         first_returned_on_cancel = asyncio.Event()
@@ -697,7 +709,7 @@ async def test_voice_generation_is_reserved_before_exclusive_worker_cancellation
 
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         model_id = "<opaque:model>"
         request_key = ("audio_cpp", model_id)
         baseline_voices = widget._discovered_voices[request_key]
@@ -768,7 +780,7 @@ async def test_voice_discovery_does_not_cancel_inflight_catalog_refresh(
         await app.workers.wait_for_complete()
         service.catalog_started = asyncio.Event()
         service.allow_catalog = asyncio.Event()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
 
         widget._load_provider_catalog("audio_cpp", refresh=True)
         await service.catalog_started.wait()
@@ -809,7 +821,7 @@ async def test_catalog_revision_invalidates_old_voices_before_rediscovery(
         service.catalogs["audio_cpp"] = _audio_catalog(revision=12)
         service.voice_started = asyncio.Event()
         service.allow_voices = asyncio.Event()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         notices_before = list(app.notices)
         widget._load_provider_catalog("audio_cpp", refresh=True)
         await service.voice_started.wait()
@@ -856,7 +868,7 @@ async def test_catalog_revision_falls_back_only_after_refreshed_voice_is_removed
         service.voice_started = asyncio.Event()
         service.allow_voices = asyncio.Event()
         notices_before = list(app.notices)
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         widget._load_provider_catalog("audio_cpp", refresh=True)
         await service.voice_started.wait()
         await pilot.pause()
@@ -892,7 +904,7 @@ async def test_voice_discovery_failure_releases_pending_explicit_voice(
 
         service.catalogs["audio_cpp"] = _audio_catalog(revision=12)
         service.voice_error = RuntimeError("untrusted upstream detail")
-        app.query_one(TTSPlaygroundWidget)._load_provider_catalog(
+        app.query_one(SpeechPlaygroundPane)._load_provider_catalog(
             "audio_cpp",
             refresh=True,
         )
@@ -905,7 +917,7 @@ async def test_voice_discovery_failure_releases_pending_explicit_voice(
             == "Voices are unavailable; the provider default remains available"
         )
 
-        app.query_one(TTSPlaygroundWidget).action_generate_tts()
+        app.query_one(SpeechPlaygroundPane).action_generate_tts()
         await pilot.pause()
 
         assert len(app.generation_events) == 1
@@ -927,7 +939,8 @@ async def test_voice_discovery_failure_overrides_configured_explicit_default(
         }
         return configured.get((section, key), default)
 
-    monkeypatch.setattr(STTS_Window, "get_cli_setting", get_setting)
+    monkeypatch.setattr(SpeechPlaygroundPane, "_cli_setting",
+                        lambda self, *a, **k: get_setting(*a, **k))
     service.voice_error = RuntimeError("untrusted upstream detail")
     app = _PlaygroundHost()
 
@@ -936,7 +949,7 @@ async def test_voice_discovery_failure_overrides_configured_explicit_default(
         app.query_one("#tts-text-input", TextArea).text = "configured fallback"
         await pilot.pause()
 
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         assert app.query_one("#tts-voice-select", Select).value == (
             SERVER_DEFAULT_VOICE_ID
         )
@@ -980,7 +993,8 @@ async def test_voice_discovery_lifecycle_failure_preserves_pending_selection(
         }
         return configured.get((section, key), default)
 
-    monkeypatch.setattr(STTS_Window, "get_cli_setting", get_setting)
+    monkeypatch.setattr(SpeechPlaygroundPane, "_cli_setting",
+                        lambda self, *a, **k: get_setting(*a, **k))
     service.voice_error = lifecycle_error
     app = _PlaygroundHost()
 
@@ -989,7 +1003,7 @@ async def test_voice_discovery_lifecycle_failure_preserves_pending_selection(
         app.query_one("#tts-text-input", TextArea).text = "lifecycle pending"
         await pilot.pause()
 
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         status = str(app.query_one("#tts-provider-status", Static).render()).lower()
         assert widget._pending_voice_selections == {"audio_cpp": "[voice]"}
         assert app.query_one("#tts-generate-btn", Button).disabled is True
@@ -1017,7 +1031,8 @@ async def test_server_default_override_survives_provider_switch(
         }
         return configured.get((section, key), default)
 
-    monkeypatch.setattr(STTS_Window, "get_cli_setting", get_setting)
+    monkeypatch.setattr(SpeechPlaygroundPane, "_cli_setting",
+                        lambda self, *a, **k: get_setting(*a, **k))
     app = _PlaygroundHost()
 
     async with app.run_test(size=(180, 70)) as pilot:
@@ -1052,7 +1067,7 @@ async def test_stale_model_voice_failure_cannot_release_current_pending_voice(
 
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         voice_select = app.query_one("#tts-voice-select", Select)
         model_select = app.query_one("#tts-model-select", Select)
         voice_select.value = "[voice]"
@@ -1227,7 +1242,7 @@ async def test_higgs_saved_profile_is_prefixed_exactly_once_in_request(
 ) -> None:
     del audio_cpp_playground
     monkeypatch.setattr(
-        TTSPlaygroundWidget,
+        SpeechPlaygroundPane,
         "_higgs_profile_choices",
         staticmethod(lambda: [("Saved voice", "profile:saved-voice")]),
     )
@@ -1246,7 +1261,7 @@ async def test_higgs_saved_profile_is_prefixed_exactly_once_in_request(
         app.query_one("#tts-text-input", TextArea).text = "use saved profile"
         await pilot.pause()
 
-        app.query_one(TTSPlaygroundWidget)._generate_tts()
+        app.query_one(SpeechPlaygroundPane)._generate_tts()
         await pilot.pause()
 
         assert len(app.generation_events) == 1
@@ -1323,7 +1338,7 @@ async def test_playback_uses_dedicated_widget_worker_group(
     worker_calls = 0
 
     def run_worker(
-        _self: TTSPlaygroundWidget,
+        _self: SpeechPlaygroundPane,
         awaitable: object,
         **kwargs: object,
     ) -> SimpleNamespace:
@@ -1339,13 +1354,13 @@ async def test_playback_uses_dedicated_widget_worker_group(
 
     async with app.run_test(size=(180, 70)):
         await app.workers.wait_for_complete()
-        monkeypatch.setattr(TTSPlaygroundWidget, "run_worker", run_worker)
+        monkeypatch.setattr(SpeechPlaygroundPane, "run_worker", run_worker)
         monkeypatch.setattr(
-            TTSPlaygroundWidget,
+            SpeechPlaygroundPane,
             "_ensure_audio_player",
             lambda _self: True,
         )
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         widget.current_audio_artifact = artifact
         widget.current_audio_file = artifact.path
 
@@ -1391,7 +1406,7 @@ async def test_playback_uses_artifact_captured_before_worker_runs(
     jobs: list[object] = []
 
     def run_worker(
-        _self: TTSPlaygroundWidget,
+        _self: SpeechPlaygroundPane,
         job: object,
         **_kwargs: object,
     ) -> SimpleNamespace:
@@ -1423,8 +1438,8 @@ async def test_playback_uses_artifact_captured_before_worker_runs(
 
     async with app.run_test(size=(180, 70)):
         await app.workers.wait_for_complete()
-        monkeypatch.setattr(TTSPlaygroundWidget, "run_worker", run_worker)
-        widget = app.query_one(TTSPlaygroundWidget)
+        monkeypatch.setattr(SpeechPlaygroundPane, "run_worker", run_worker)
+        widget = app.query_one(SpeechPlaygroundPane)
         widget.current_audio_artifact = old_artifact
         widget.current_audio_file = old_path
 
@@ -1527,7 +1542,7 @@ async def test_playback_lease_survives_replacement_until_playback_ends(
 
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
 
         widget._play_audio()
         await _wait_until(
@@ -1607,7 +1622,7 @@ async def test_export_uses_artifact_captured_before_dialog_completes(
             "push_screen",
             lambda _screen, callback: callbacks.append(callback),
         )
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         widget.current_audio_artifact = old_artifact
         widget.current_audio_file = old_path
 
@@ -1655,7 +1670,7 @@ async def test_export_cancel_releases_captured_artifact(
             "push_screen",
             lambda _screen, callback: callbacks.append(callback),
         )
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
         widget.current_audio_artifact = artifact
         widget.current_audio_file = path
 
@@ -1678,7 +1693,7 @@ async def test_audio_export_rejects_unsafe_dialog_destination(
 
     async with app.run_test(size=(180, 70)):
         await app.workers.wait_for_complete()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
 
         widget._handle_audio_export(
             str(unsafe_destination),
@@ -1752,7 +1767,7 @@ async def test_new_mount_rehydrates_handler_owned_artifact(
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
         await pilot.pause()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
 
         assert widget.current_audio_artifact is artifact
         assert widget.current_audio_file == path
@@ -1779,7 +1794,7 @@ async def test_new_mount_rehydrates_active_generation_without_starting_another(
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
         await pilot.pause()
-        widget = app.query_one(TTSPlaygroundWidget)
+        widget = app.query_one(SpeechPlaygroundPane)
 
         assert widget._generation_operation_id == "active-operation"
         assert app.query_one("#tts-generate-btn", Button).disabled is True

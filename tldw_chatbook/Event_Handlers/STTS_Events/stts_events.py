@@ -944,21 +944,11 @@ class STTSEventHandler:
     def _mounted_playground(self, operation_id: str) -> Any | None:
         if operation_id != self._active_playground_operation_id:
             return None
-        # Either playground may be mounted. Looking up only the legacy
-        # widget meant the rebuilt pane could start a generation and never
-        # receive its result: the audio was delivered to a widget that was
-        # not on screen, so the take silently never appeared.
         from tldw_chatbook.UI.Speech.speech_playground_pane import (
             SpeechPlaygroundPane,
         )
-        from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
-
         try:
-            for host in (SpeechPlaygroundPane, TTSPlaygroundWidget):
-                found = self.app.query(host)
-                if found:
-                    return found.first()
-            raise LookupError("no playground mounted")
+            return self.app.query_one(SpeechPlaygroundPane)
         except Exception as error:
             logger.debug(
                 "TTS Playground is not mounted ({})",
@@ -1607,13 +1597,11 @@ class STTSEventHandler:
         event: STTSProviderConfigurationChanged,
     ) -> None:
         """Invalidate any mounted Playground for the changed provider."""
-        # Both playgrounds, for the same reason delivery names both: a
-        # selector naming only the legacy widget left the rebuilt pane
-        # serving a stale catalog after a provider's settings changed, with
-        # nothing to indicate it.
-        for widget in self.app.query(
-            "TTSPlaygroundWidget, SpeechPlaygroundPane"
-        ):
+        from tldw_chatbook.UI.Speech.speech_playground_pane import (
+            SpeechPlaygroundPane,
+        )
+
+        for widget in self.app.query(SpeechPlaygroundPane):
             callback = getattr(widget, "mark_provider_configuration_changed", None)
             if callable(callback):
                 callback(event.provider_id, event.configuration_revision)

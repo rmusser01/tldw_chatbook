@@ -12,7 +12,6 @@ from textual.app import App, ComposeResult
 
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_synthesis_mixin import SpeechSynthesisMixin
-from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
 
 
 class _Harness(App[None]):
@@ -21,14 +20,16 @@ class _Harness(App[None]):
 
 
 @pytest.mark.unit
-def test_both_playgrounds_share_one_synthesis_implementation():
-    """Not two copies. A duplicated 322-line generate path drifts until only
-    one of them is right, and the bug lands in whichever the user is on."""
-    assert issubclass(TTSPlaygroundWidget, SpeechSynthesisMixin)
+def test_synthesis_comes_from_the_shared_mixin():
+    """The 322-line generate path is inherited, not copied into the pane.
+
+    It lived in the legacy widget until that was retired; keeping it in the
+    mixin is what let the pane adopt it whole rather than reimplementing it,
+    and is what the remaining Speech surfaces will inherit in turn."""
     assert issubclass(SpeechPlaygroundPane, SpeechSynthesisMixin)
     assert (
-        SpeechPlaygroundPane._generate_tts is TTSPlaygroundWidget._generate_tts
-    ), "the two panes resolved to different generate implementations"
+        SpeechPlaygroundPane._generate_tts is SpeechSynthesisMixin._generate_tts
+    ), "the pane redefined generate instead of inheriting it"
 
 
 @pytest.mark.asyncio

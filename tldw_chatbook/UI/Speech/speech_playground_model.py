@@ -98,7 +98,7 @@ PROVIDER_PARAMS: dict[str, tuple[str, ...]] = {
 #:
 #: Listed rather than derived so the rebuild can be checked for completeness.
 #: `test_the_inventory_matches_the_live_widget` diffs this against the ids
-#: `TTSPlaygroundWidget` actually composes, in both directions -- that is the
+#: the legacy `TTSPlaygroundWidget` composed before it was retired. It is a
 #: guard against silently dropping a capability while re-siting 57 controls.
 _UNSPLIT_CONTROLS: tuple[str, ...] = (
     "tts-text-input",
