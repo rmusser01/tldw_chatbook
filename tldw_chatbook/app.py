@@ -3634,15 +3634,16 @@ class TldwCli(
                 policy_enforcer=self.service_policy_enforcer,
             )
         )
-        self.media_reading_scope_service = MediaReadingScopeService(
-            local_service=self.local_media_reading_service,
-            server_service=self.server_media_reading_service,
-            policy_enforcer=self.service_policy_enforcer,
-        )
         self._wire_library_collections_services()
         self._wire_workspace_registry_services()
         self._wire_prompt_chatbook_services()
         self._wire_watchlists_and_notifications_services()
+        self.media_reading_scope_service = MediaReadingScopeService(
+            local_service=self.local_media_reading_service,
+            server_service=self.server_media_reading_service,
+            policy_enforcer=self.service_policy_enforcer,
+            sync_scope_service=self.sync_scope_service,
+        )
         self._wire_writing_services()
 
         self.loguru_logger.debug(
@@ -3731,10 +3732,8 @@ class TldwCli(
         self._rag_admin_services_lock = threading.Lock()
         self._wire_evaluation_services()
         self._wire_study_services()
-        self._wire_writing_services()
         self._wire_research_services()
         self._wire_character_persona_services()
-        self._wire_chat_conversation_services()
 
         # --- Initialize worker handler registry ---
         self._init_worker_handlers()
@@ -4373,6 +4372,7 @@ class TldwCli(
             local_service=self.local_chat_conversation_service,
             server_service=self.server_chat_conversation_service,
             policy_enforcer=self.service_policy_enforcer,
+            sync_scope_service=self.sync_scope_service,
         )
         self._wire_citation_artifact_ownership()
 
@@ -4384,16 +4384,12 @@ class TldwCli(
                 "Local writing service unavailable during app wiring"
             )
             self.local_writing_service = None
-        try:
-            self.server_writing_service = ServerWritingService.from_config(
-                self.app_config,
+        self.server_writing_service = (
+            ServerWritingService.from_server_context_provider(
+                self.server_context_provider,
                 policy_enforcer=self.service_policy_enforcer,
             )
-        except ValueError:
-            self.server_writing_service = ServerWritingService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
+        )
         self.writing_scope_service = WritingScopeService(
             local_service=self.local_writing_service,
             server_service=self.server_writing_service,
