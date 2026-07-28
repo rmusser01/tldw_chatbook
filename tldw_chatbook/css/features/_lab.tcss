@@ -596,3 +596,26 @@
     min-height: 1;
     border: none;
 }
+
+/* Take rows: summary left, per-row actions right, one row each. Per-row
+ * controls are what make comparison possible -- a single player bound to the
+ * latest take would force a re-generate to hear an earlier option again. */
+.speech-take-row {
+    height: 1;
+    min-height: 1;
+}
+
+.speech-take-summary {
+    width: 1fr;
+    height: 1;
+}
+
+.speech-take-action {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    border: none;
+    padding: 0 1;
+    margin-left: 1;
+}
