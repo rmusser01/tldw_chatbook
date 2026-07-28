@@ -7,6 +7,15 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.UI.test_console_native_chat_flow import (
+    RestoredConsoleHarness,
+    _configure_native_ready_console,
+)
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    _visible_text,
+)
+
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -446,3 +455,93 @@ def test_chat_screen_forwards_install_decided_to_controller_with_request_id(
     controller.resolve_pending_skill_install.assert_called_once_with(
         True, request_id="round-9"
     )
+
+
+@pytest.mark.asyncio
+async def test_restored_pending_install_never_mounts_an_actionable_card_through_the_real_screen():
+    """Drive the drop through the REAL screen boundary, not just `from_dict` in isolation.
+
+    `test_restored_state_drops_the_pending_install_so_no_dead_card_appears`
+    (above) pins the contract at the `TaskResumeState.from_dict` unit level.
+    This test proves the same thing through the seam a real tab switch
+    actually uses -- `ChatScreen.restore_state`, which `app.py`'s
+    `handle_screen_navigation` calls on every navigation -- so a regression
+    that plumbed `pending_skill_install` back through `from_dict` would show
+    up here as an actually-mounted, actually-visible `SkillInstallConfirmCard`,
+    not merely a field on a dataclass nobody rendered.
+
+    The snapshot shape mirrors what `ChatScreen.save_state` /
+    `_serialize_native_console_state` actually produce (one session is
+    required -- `_restore_native_console_state` returns before touching
+    `task_resume_state` at all when `sessions` is empty, which would make
+    this test pass for the wrong reason).
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Widgets.Chat_Widgets.skill_install_confirm_card import (
+        SkillInstallConfirmCard,
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    session_id = "restored-session-1"
+    saved_state = {
+        "interface_type": "native_console",
+        "native_console_state": {
+            "version": 1,
+            "active_session_id": session_id,
+            "sessions": [
+                {
+                    "id": session_id,
+                    "title": "Restored session",
+                    "workspace_id": "default",
+                    "persisted_conversation_id": None,
+                    "draft": "",
+                    "settings": None,
+                    "updated_at": None,
+                    "character_id": None,
+                    "character_name": None,
+                }
+            ],
+            "messages_by_session": {session_id: []},
+            "task_resume_state": {
+                "summary": "Restored summary text should survive",
+                "last_step": "",
+                "pending_approval": None,
+                "pending_skill_install": {
+                    "url": "https://example.com/skill",
+                    "timeout_seconds": 120.0,
+                    "request_id": "restored-round-1",
+                },
+                "pending_skill_script": None,
+                "diff_summary": "",
+                "next_action": "",
+            },
+            "image_view_modes": {},
+        },
+    }
+
+    host = RestoredConsoleHarness(app, saved_state)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.pause()
+
+        # The restore-side drop itself: a snapshot's pending_skill_install
+        # must never repopulate the live screen's task-resume state.
+        assert console._task_resume_state.pending_skill_install is None
+        assert console._task_resume_state.has_pending_skill_install() is False
+
+        # ...and therefore no actionable card is mounted/visible.
+        install_card = console.query_one(
+            "#chat-skill-install-card", SkillInstallConfirmCard
+        )
+        assert install_card.display is False
+
+        # An unrelated resume field from the SAME snapshot must still survive
+        # the restore -- the drop is scoped to the two skill-confirm fields.
+        assert (
+            console._task_resume_state.summary
+            == "Restored summary text should survive"
+        )
+        assert "Restored summary text should survive" in _visible_text(console)

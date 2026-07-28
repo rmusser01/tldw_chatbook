@@ -893,6 +893,95 @@ async def test_on_resize_alone_regrows_wrap_budget_within_one_pause() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sync_state_schedules_exactly_one_deferred_fit_pass(monkeypatch) -> None:
+    """TASK-1191 regression guard for `_schedule_recomposed_content_fit`'s
+    scheduling shape, not just its outcome.
+
+    The other TASK-1191 tests in this file (`test_rail_title_budget_scales_
+    with_terminal_width`, `test_on_resize_alone_regrows_wrap_budget_within_
+    one_pause`) prove the tray still converges within a single
+    `pilot.pause()` -- an outcome that a reintroduced two-`call_later`-hop
+    fan-out could still satisfy by coincidence in a fast test run. This test
+    instead pins the SCHEDULING CALLS `sync_state()` itself makes: exactly
+    one `call_after_refresh` registration for the fit-and-restore-scroll
+    closure, and zero `call_later`/`set_timer` calls from this seam --
+    the old shape `_schedule_recomposed_content_fit`'s docstring describes
+    (two `call_later` hops plus a 0.01s `set_timer` scroll-restore, commit
+    1115fa624, collapsed by TASK-1191's f10c6bcdd).
+
+    `call_after_refresh`/`call_later`/`set_timer` are spied at the INSTANCE
+    level with record-and-forward wrappers, so the tray still settles
+    normally (behavior preserved) while every scheduling call is captured.
+    The fit seam's own callback is a nested closure literally named
+    `fit_and_restore_scroll` inside `_schedule_recomposed_content_fit`, so
+    it is identified by `callback.__name__` -- discriminating it from any
+    other legitimate `call_after_refresh` use on this widget (`on_mount`,
+    `on_resize`) rather than assuming every recorded call belongs to this
+    seam.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        # Settle the tray's own on_mount fit pass first so it cannot leak
+        # into the calls recorded below.
+        await pilot.pause()
+
+        recorded: dict[str, list] = {
+            "call_after_refresh": [],
+            "call_later": [],
+            "set_timer": [],
+        }
+        original_call_after_refresh = tray.call_after_refresh
+        original_call_later = tray.call_later
+        original_set_timer = tray.set_timer
+
+        def _call_after_refresh_spy(callback, *args, **kwargs):
+            recorded["call_after_refresh"].append(callback)
+            return original_call_after_refresh(callback, *args, **kwargs)
+
+        def _call_later_spy(callback, *args, **kwargs):
+            recorded["call_later"].append(callback)
+            return original_call_later(callback, *args, **kwargs)
+
+        def _set_timer_spy(delay, callback=None, *, name=None, pause=False):
+            recorded["set_timer"].append(callback)
+            return original_set_timer(delay, callback, name=name, pause=pause)
+
+        monkeypatch.setattr(tray, "call_after_refresh", _call_after_refresh_spy)
+        monkeypatch.setattr(tray, "call_later", _call_later_spy)
+        monkeypatch.setattr(tray, "set_timer", _set_timer_spy)
+
+        tray.sync_state(_base_grouped_workspace_state())
+
+        # No call_later fan-out and no set_timer scroll-restore hop -- the
+        # old two-hop-plus-timer shape this pins against regressing to.
+        assert recorded["call_later"] == []
+        assert recorded["set_timer"] == []
+
+        # Exactly one deferred fit pass was scheduled via call_after_refresh,
+        # and it is THE fit seam's own callback (by name), not some other
+        # call_after_refresh use miscounted as this seam.
+        fit_callbacks = [
+            callback
+            for callback in recorded["call_after_refresh"]
+            if getattr(callback, "__name__", None) == "fit_and_restore_scroll"
+        ]
+        assert len(fit_callbacks) == 1
+        assert recorded["call_after_refresh"] == fit_callbacks
+
+        # Let the scheduled pass actually run so the tray settles normally
+        # before the harness tears down (spies forward to the real
+        # primitives, so this is unaffected by the patch above).
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
 async def test_console_conversation_star_uses_recognizable_star_glyphs():
     """TASK-357: the star toggle must use a recognizable ★/☆ pair, not the
     near-invisible one-cell '*'/'.' distinction."""
