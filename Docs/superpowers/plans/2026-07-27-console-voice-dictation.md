@@ -138,10 +138,12 @@ LOCAL_PROVIDER_MODULES: dict[str, str] = {
     "lightning-whisper-mlx": "lightning_whisper_mlx",
 }
 
+CAPTURE_REASON = "No microphone backend installed."
 CAPTURE_REMEDY = (
     "Microphone support isn't installed. "
     "Install with: pip install 'tldw_chatbook[speech_recording]'"
 )
+PROVIDER_REASON = "No speech-to-text provider installed."
 PROVIDER_REMEDY = (
     "No speech-to-text provider installed. "
     "Install with: pip install 'tldw_chatbook[transcription_faster_whisper]'"
@@ -193,7 +195,7 @@ def probe() -> Availability:
         return Availability(
             ok=False,
             kind="missing-capture",
-            reason="No microphone backend installed.",
+            reason=CAPTURE_REASON,
             remedy=CAPTURE_REMEDY,
         )
     if not installed_local_providers():
@@ -201,7 +203,7 @@ def probe() -> Availability:
         return Availability(
             ok=False,
             kind="missing-provider",
-            reason="No speech-to-text provider installed.",
+            reason=PROVIDER_REASON,
             remedy=PROVIDER_REMEDY,
         )
     return Availability(ok=True)
@@ -457,8 +459,13 @@ class FakeDictationService:
         self._callbacks["on_error"](error)
 
 
-def _controller(monkeypatch, service=None):
-    """Build a controller with a synchronous spawn and a fake service."""
+def _controller(monkeypatch, service=None, spawn=None):
+    """Build a controller with a fake service.
+
+    `spawn` defaults to running the thunk inline, which is what makes the
+    state machine testable without an event loop. Pass a deferring spawn to
+    freeze the controller mid-`preparing`.
+    """
     monkeypatch.setattr(cvi, "capture_available", lambda: True)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
     _stub_settings(monkeypatch, {"transcription.provider": "faster-whisper"})
@@ -467,7 +474,7 @@ def _controller(monkeypatch, service=None):
     events = []
     controller = cvi.ConsoleVoiceInputController(
         emit=events.append,
-        spawn=lambda thunk: thunk(),  # synchronous: no worker in unit tests
+        spawn=spawn or (lambda thunk: thunk()),
         service_factory=lambda **kwargs: service,
     )
     return controller, events, service
@@ -483,16 +490,36 @@ def test_start_transitions_preparing_then_listening(monkeypatch):
     assert controller.is_active is True
 
 
-def test_second_start_while_preparing_is_a_no_op(monkeypatch):
+def test_second_start_while_listening_is_a_no_op(monkeypatch):
     """Rejected by our own state, not left to the service's lock."""
-    controller, events, service = _controller(monkeypatch)
+    controller, events, _ = _controller(monkeypatch)
     controller.start()
+    assert controller.state == cvi.STATE_LISTENING
     events.clear()
 
     controller.start()
 
     assert events == []
-    assert service.kwargs is not None
+
+
+def test_start_while_still_preparing_is_a_no_op(monkeypatch):
+    """The preparing window is real once `spawn` is a worker, so cover it.
+
+    A deferring spawn captures the thunk instead of running it, which is the
+    only way to observe the controller mid-`preparing`. With the inline spawn
+    used elsewhere, `start()` has already reached `listening` on return.
+    """
+    pending = []
+    controller, events, _ = _controller(monkeypatch, spawn=pending.append)
+
+    controller.start()
+    assert controller.state == cvi.STATE_PREPARING
+    events.clear()
+
+    controller.start()
+
+    assert events == []
+    assert len(pending) == 1  # the second start never queued more work
 
 
 def test_stop_returns_to_idle(monkeypatch):
@@ -701,7 +728,7 @@ class ConsoleVoiceInputController:
 
         effective = resolve()
         if effective is None:
-            self._fail(PROVIDER_REMEDY.split(".")[0] + ".", PROVIDER_REMEDY)
+            self._fail(PROVIDER_REASON, PROVIDER_REMEDY)
             return
 
         if effective.was_overridden and not self._override_announced:
@@ -854,14 +881,23 @@ def _visible(widget) -> bool:
 
 
 @pytest.mark.asyncio
-async def test_chip_is_hidden_when_idle():
+async def test_idle_collapses_a_chip_that_was_showing():
+    """Show it first: asserting width==0 on a never-shown chip proves nothing.
+
+    The chip starts at width 0 from `compose()`, so a bare idle assertion
+    would pass even if `set_voice_status` were a no-op.
+    """
     app = ComposerApp()
     async with app.run_test():
         composer = app.query_one(ConsoleComposerBar)
-        composer.set_voice_status(STATE_IDLE)
-        await app.workers.wait_for_complete()
+        composer.set_voice_status(STATE_LISTENING, partial="hello", elapsed_seconds=1)
         chip = composer.query_one("#console-voice-status", Static)
+        assert chip.styles.width.value > 0
+
+        composer.set_voice_status(STATE_IDLE)
+
         assert chip.styles.width.value == 0
+        assert str(chip.renderable) == ""
 
 
 @pytest.mark.asyncio
@@ -1190,7 +1226,7 @@ git commit -m "feat(console): insert dictated segments into the composer draft"
 
 **Interfaces:**
 - Consumes: `ConsoleVoiceInputController`, all `Voice*` events, `STATE_*` (Task 3); `set_voice_status` (Task 4); `insert_dictated_text` (Task 5).
-- Produces: nested message classes `ConsoleComposerBar.VoiceStateChanged(state: str)`, `.VoiceFailure(reason: str, remedy: str)`, `.VoiceOverride(configured: str, effective: str)`; methods `toggle_dictation() -> None`, `stop_dictation() -> None`, `abandon_dictation() -> None`, property `dictation_active: bool`.
+- Produces: nested message classes `ConsoleComposerBar.VoiceStateChanged(state: str)`, `.VoiceTick()`, `.VoiceFailure(reason: str, remedy: str)`, `.VoiceOverride(configured: str, effective: str)`; methods `toggle_dictation() -> None`, `stop_dictation() -> None`, `abandon_dictation() -> None`, property `dictation_active: bool`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1289,11 +1325,18 @@ Add the message classes inside `ConsoleComposerBar`, next to the other nested cl
 
 ```python
     class VoiceStateChanged(Message):
-        """Dictation entered a new state. Handled by ChatScreen."""
+        """Dictation entered a NEW state. Also handled by ChatScreen.
+
+        Only posted on a real transition -- ChatScreen's deferred send keys
+        off this message, so a repaint must not masquerade as a transition.
+        """
 
         def __init__(self, state: str) -> None:
             super().__init__()
             self.state = state
+
+    class VoiceTick(Message):
+        """The chip needs repainting; the state did not change."""
 
     class VoiceFailure(Message):
         """Dictation could not start or stop."""
@@ -1368,10 +1411,10 @@ Add the controller plumbing:
 
         if isinstance(event, VoicePartial):
             self._voice_partial = event.text
-            self.post_message(self.VoiceStateChanged(self._voice_state))
+            self.post_message(self.VoiceTick())
         elif isinstance(event, VoiceFinal):
             self._voice_partial = ""
-            self.post_message(self.VoiceStateChanged(self._voice_state))
+            self.post_message(self.VoiceTick())
             # `call_later` is safe from this worker thread: it wraps the
             # callback in an events.Callback and hands it to `post_message`
             # (message_pump.py:504), so ordering with the message above is
@@ -1443,6 +1486,12 @@ Add the controller plumbing:
             "finishing": "Finishing…",
         }
         self._render_voice_chip(messages.get(event.state, ""))
+
+    @on(VoiceTick)
+    def _handle_voice_tick(self, event: "ConsoleComposerBar.VoiceTick") -> None:
+        """Repaint the chip for a new partial without faking a transition."""
+        event.stop()
+        self._render_voice_chip()
 
     @on(VoiceFailure)
     def _handle_voice_failure(self, event: "ConsoleComposerBar.VoiceFailure") -> None:
