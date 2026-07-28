@@ -15,6 +15,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SequencedSessionChange,
     SessionChangeAction,
     SessionChangeGroup,
+    SessionChangeTopology,
     SessionGitRow,
     StagingOwnership,
 )
@@ -68,6 +69,7 @@ class _GroupBuilder:
     current_path: str
     latest_action: SessionChangeAction
     latest_sequence: int
+    move_edges: list[tuple[str, str]]
 
     def add_endpoint(self, path: str) -> None:
         if path not in self.endpoints:
@@ -82,6 +84,7 @@ class _GroupBuilder:
             current_path=self.current_path,
             latest_action=self.latest_action,
             latest_sequence=self.latest_sequence,
+            move_edges=tuple(self.move_edges),
         )
 
 
@@ -105,6 +108,7 @@ def coalesce_session_changes(
                 current_path=path,
                 latest_action=change.action,
                 latest_sequence=sequenced.sequence,
+                move_edges=[],
             )
             builders.append(builder)
 
@@ -116,6 +120,7 @@ def coalesce_session_changes(
                 del active_paths[path]
             builder.add_endpoint(path)
             builder.add_endpoint(destination)
+            builder.move_edges.append((path, destination))
             builder.destination_path = destination
             builder.current_path = destination
             active_paths[destination] = builder
@@ -245,12 +250,24 @@ def unstage_group_is_closed(
     group: SessionChangeGroup,
     baselines: Mapping[str, IndexBaseline],
     current_index_entries: Mapping[str, IndexEntry],
+    ownership: StagingOwnership,
 ) -> bool:
-    """Return whether baseline restoration stays inside one session lineage."""
-    return compute_unstage_closure(
+    """Return whether replacement conflicts are exact same-group ownership."""
+    closure = compute_unstage_closure(
         baselines,
         current_index_entries,
-    ).issubset(group.endpoints)
+    )
+    if (
+        not closure.issubset(group.endpoints)
+        or ownership.topology_signature != group.topology_signature
+    ):
+        return False
+    return all(
+        ownership.post_stage_entries.get(path) == entry
+        and path in ownership.post_stage_entries
+        for path, entry in current_index_entries.items()
+        if path in closure
+    )
 
 
 def stage_pathspecs(
@@ -299,14 +316,14 @@ def ownership_signature_matches(
     *,
     repository: RepositoryIdentity,
     head: HeadIdentity,
-    topology: tuple[str, ...],
+    topology: SessionChangeTopology,
     current_index_entries: Mapping[str, IndexEntry],
 ) -> bool:
     """Compare exact repository, HEAD, topology, entry, and flag evidence."""
     if (
         ownership.repository != repository
         or ownership.head != head
-        or ownership.approved_endpoint_topology != topology
+        or ownership.topology_signature != topology
     ):
         return False
     return all(
@@ -534,11 +551,12 @@ def _classify_group(
             "ignored",
             disabled_reason="Ignored by Git",
         )
-    if any(index_entry_has_unsupported_semantics(entry) for entry in entries):
+    unsupported_reason = _unsupported_semantic_reason(entries)
+    if unsupported_reason is not None:
         return SessionGitRow(
             group,
             "unsupported",
-            disabled_reason="Unsupported Git index state",
+            disabled_reason=unsupported_reason,
         )
     if not stage_group_is_closed(group, all_index_entries):
         return SessionGitRow(
@@ -562,9 +580,15 @@ def _classify_group(
             all_index_entries.get(path) == expected
             for path, expected in owned.post_stage_entries.items()
         )
+        unowned_staged = any(
+            path not in owned.post_stage_entries
+            for record in records
+            for path in _staged_record_paths(record)
+        )
         if (
             owned_entries_match
-            and owned.approved_endpoint_topology != group.endpoints
+            and not unowned_staged
+            and owned.topology_signature != group.topology_signature
         ):
             return SessionGitRow(
                 group,
@@ -572,7 +596,11 @@ def _classify_group(
                 stage_action="stage_update",
                 disabled_reason="Path lineage changed; Stage update required",
             )
-        if owned_entries_match:
+        if (
+            owned_entries_match
+            and not unowned_staged
+            and owned.topology_signature == group.topology_signature
+        ):
             if unstaged:
                 return SessionGitRow(
                     group,
@@ -601,3 +629,34 @@ def _classify_group(
     if unstaged:
         return SessionGitRow(group, "unstaged", stage_action="stage")
     return SessionGitRow(group, "clean")
+
+
+def _staged_record_paths(record: PorcelainRecord) -> tuple[str, ...]:
+    if (
+        record.kind not in {"ordinary", "rename"}
+        or record.index_status == "."
+    ):
+        return ()
+    return tuple(
+        path
+        for path in (record.path, record.original_path)
+        if path is not None
+    )
+
+
+def _unsupported_semantic_reason(
+    entries: Sequence[IndexEntry],
+) -> str | None:
+    reasons = {
+        flag
+        for entry in entries
+        for flag in entry.semantic_flags
+    }
+    if any(
+        entry.object_id and set(entry.object_id) == {"0"}
+        for entry in entries
+    ):
+        reasons.add("intent-to-add")
+    if not reasons:
+        return None
+    return f"Unsupported Git index state: {', '.join(sorted(reasons))}"

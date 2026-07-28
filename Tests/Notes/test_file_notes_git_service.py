@@ -84,14 +84,27 @@ def _repository() -> RepositoryIdentity:
 
 def _ownership(
     group: SessionChangeGroup,
-    entries: Mapping[str, IndexEntry],
+    entries: Mapping[str, IndexEntry | None],
     *,
     topology: tuple[str, ...] | None = None,
+    topology_group: SessionChangeGroup | None = None,
 ) -> StagingOwnership:
+    approved_group = topology_group or group
+    approved_endpoints = topology or approved_group.endpoints
     return StagingOwnership(
         repository=_repository(),
         head=HeadIdentity.attached("refs/heads/main", OID_B),
-        approved_endpoint_topology=topology or group.endpoints,
+        approved_endpoint_topology=approved_endpoints,
+        approved_move_edges=(
+            ()
+            if topology is not None
+            else approved_group.move_edges
+        ),
+        approved_current_path=(
+            approved_endpoints[-1]
+            if topology is not None
+            else approved_group.current_path
+        ),
         original_baselines={
             path: IndexBaseline(entry=None) for path in entries
         },
@@ -212,6 +225,27 @@ def test_display_text_sanitizes_controls_without_changing_raw_paths() -> None:
 
     assert groups[0].endpoints == ("line\none.md", "tab\tfinal.md")
     assert groups[0].display_text == r"line\none.md → tab\tfinal.md"
+
+
+@pytest.mark.parametrize("control", ["\x80", "\x9b", "\x9f"])
+def test_display_text_sanitizes_c1_controls_without_changing_paths(
+    control: str,
+) -> None:
+    path = f"c1-{control}.md"
+    (group,) = coalesce_session_changes((_change(1, "modified", path),))
+
+    assert group.endpoints == (path,)
+    assert group.display_text == f"c1-\\x{ord(control):02x}.md"
+
+
+def test_display_sanitizes_surrogateescaped_bytes_but_raw_path_round_trips() -> None:
+    raw_path = b"byte-\x9b.md"
+    path = os.fsdecode(raw_path)
+    (group,) = coalesce_session_changes((_change(1, "modified", path),))
+
+    assert group.endpoints == (path,)
+    assert os.fsencode(group.endpoints[0]) == raw_path
+    assert group.display_text == r"byte-\x9b.md"
 
 
 def test_session_group_copies_endpoint_sequences_to_an_immutable_tuple() -> None:
@@ -560,6 +594,129 @@ def test_changed_topology_needs_matching_owned_post_stage_entries_for_update() -
     assert not row.unstage_eligible
 
 
+def test_owned_group_with_externally_staged_second_endpoint_is_not_owned() -> None:
+    group = SessionChangeGroup(
+        group_id=1,
+        endpoints=("old.md", "new.md"),
+        source_path="old.md",
+        destination_path="new.md",
+        current_path="new.md",
+        latest_action="moved",
+        latest_sequence=2,
+        move_edges=(("old.md", "new.md"),),
+    )
+    owned_entry = _entry("old.md", object_id=OID_A)
+    external_entry = _entry("new.md", object_id=OID_B)
+    ownership = _ownership(
+        group,
+        {"old.md": owned_entry},
+    )
+
+    (row,) = classify_session_rows(
+        (group,),
+        (
+            PorcelainRecord("ordinary", "old.md", "M", "."),
+            PorcelainRecord("ordinary", "new.md", "A", "."),
+        ),
+        {"old.md": owned_entry, "new.md": external_entry},
+        {group.group_id: ownership},
+    )
+
+    assert row.state == "external_staged"
+    assert row.stage_action is None
+    assert not row.unstage_eligible
+
+
+def test_topology_changed_group_with_new_external_stage_cannot_stage_update() -> None:
+    before = coalesce_session_changes((_change(1, "modified", "old.md"),))[0]
+    after = coalesce_session_changes(
+        (
+            _change(1, "modified", "old.md"),
+            _change(2, "moved", "old.md", "new.md"),
+        )
+    )[0]
+    owned_entry = _entry("old.md", object_id=OID_A)
+    external_entry = _entry("new.md", object_id=OID_B)
+    ownership = _ownership(
+        after,
+        {"old.md": owned_entry},
+        topology_group=before,
+    )
+
+    (row,) = classify_session_rows(
+        (after,),
+        (
+            PorcelainRecord("ordinary", "old.md", "M", "."),
+            PorcelainRecord("ordinary", "new.md", "A", "M"),
+        ),
+        {"old.md": owned_entry, "new.md": external_entry},
+        {after.group_id: ownership},
+    )
+
+    assert row.state == "external_partial"
+    assert row.stage_action is None
+    assert not row.unstage_eligible
+
+
+def test_move_reversal_changes_exact_topology_despite_same_endpoint_set() -> None:
+    staged_group = coalesce_session_changes(
+        (_change(1, "moved", "a.md", "b.md"),)
+    )[0]
+    reversed_group = coalesce_session_changes(
+        (
+            _change(1, "moved", "a.md", "b.md"),
+            _change(2, "moved", "b.md", "a.md"),
+        )
+    )[0]
+    post_entry = _entry("b.md", object_id=OID_B)
+    ownership = _ownership(
+        reversed_group,
+        {"b.md": post_entry},
+        topology_group=staged_group,
+    )
+
+    assert staged_group.endpoints == reversed_group.endpoints
+    assert staged_group.topology_signature != reversed_group.topology_signature
+    (row,) = classify_session_rows(
+        (reversed_group,),
+        (),
+        {"b.md": post_entry},
+        {reversed_group.group_id: ownership},
+    )
+    assert row.state == "owned_topology_changed"
+    assert row.stage_action == "stage_update"
+    assert not row.unstage_eligible
+
+
+def test_newer_body_edit_preserves_move_topology_and_unstage_eligibility() -> None:
+    staged_group = coalesce_session_changes(
+        (_change(1, "moved", "a.md", "b.md"),)
+    )[0]
+    edited_group = coalesce_session_changes(
+        (
+            _change(1, "moved", "a.md", "b.md"),
+            _change(2, "modified", "b.md"),
+        )
+    )[0]
+    post_entry = _entry("b.md", object_id=OID_B)
+    ownership = _ownership(
+        edited_group,
+        {"b.md": post_entry},
+        topology_group=staged_group,
+    )
+
+    assert staged_group.topology_signature == edited_group.topology_signature
+    (row,) = classify_session_rows(
+        (edited_group,),
+        (PorcelainRecord("ordinary", "b.md", "M", "M"),),
+        {"b.md": post_entry},
+        {edited_group.group_id: ownership},
+    )
+    assert row.state == "owned_newer_edits"
+    assert row.stage_action == "stage_update"
+    assert row.unstage_eligible
+
+
 def test_tracked_ancestor_and_descendant_paths_expand_stage_closure() -> None:
     entries = {
         "ancestor": _entry("ancestor"),
@@ -624,8 +781,60 @@ def test_out_of_lineage_unstage_replacement_closure_blocks_the_group() -> None:
     group = _single_group("tree")
     baselines = {"tree": IndexBaseline(_entry("tree", object_id=OID_B))}
     current = {"tree/external.md": _entry("tree/external.md")}
+    ownership = _ownership(group, {})
 
-    assert not unstage_group_is_closed(group, baselines, current)
+    assert not unstage_group_is_closed(
+        group,
+        baselines,
+        current,
+        ownership,
+    )
+
+
+def test_unstage_closure_requires_exact_same_group_owned_conflicts() -> None:
+    group = SessionChangeGroup(
+        group_id=1,
+        endpoints=("tree", "tree/child.md"),
+        source_path="tree",
+        destination_path="tree/child.md",
+        current_path="tree/child.md",
+        latest_action="moved",
+        latest_sequence=2,
+        move_edges=(("tree", "tree/child.md"),),
+    )
+    baselines = {"tree": IndexBaseline(_entry("tree", object_id=OID_A))}
+    current_child = _entry("tree/child.md", object_id=OID_B)
+    unowned = _ownership(group, {"tree": None})
+    mismatched = _ownership(
+        group,
+        {
+            "tree": None,
+            "tree/child.md": _entry("tree/child.md", object_id=OID_C),
+        },
+    )
+    owned = _ownership(
+        group,
+        {"tree": None, "tree/child.md": current_child},
+    )
+
+    assert not unstage_group_is_closed(
+        group,
+        baselines,
+        {"tree/child.md": current_child},
+        unowned,
+    )
+    assert not unstage_group_is_closed(
+        group,
+        baselines,
+        {"tree/child.md": current_child},
+        mismatched,
+    )
+    assert unstage_group_is_closed(
+        group,
+        baselines,
+        {"tree/child.md": current_child},
+        owned,
+    )
 
 
 def test_transient_move_endpoints_are_omitted_from_stage_pathspecs() -> None:
@@ -672,15 +881,25 @@ def test_clean_tracked_endpoints_are_omitted_from_stage_pathspecs() -> None:
 
 
 @pytest.mark.parametrize(
-    "entry",
+    ("entry", "expected_reason"),
     [
-        _entry("note.md", flags=("skip-worktree",)),
-        _entry("note.md", flags=("assume-unchanged",)),
-        _entry("note.md", object_id=ZERO_OID),
+        (
+            _entry("note.md", flags=("skip-worktree",)),
+            "skip-worktree",
+        ),
+        (
+            _entry("note.md", flags=("assume-unchanged",)),
+            "assume-unchanged",
+        ),
+        (
+            _entry("note.md", object_id=ZERO_OID),
+            "intent-to-add",
+        ),
     ],
 )
 def test_nondefault_semantics_and_intent_to_add_are_blocked(
     entry: IndexEntry,
+    expected_reason: str,
 ) -> None:
     assert index_entry_has_unsupported_semantics(entry)
 
@@ -691,6 +910,8 @@ def test_nondefault_semantics_and_intent_to_add_are_blocked(
         {},
     )
     assert row.state == "unsupported"
+    assert row.disabled_reason is not None
+    assert expected_reason in row.disabled_reason
     assert not row.stage_eligible
     assert not row.unstage_eligible
 
@@ -759,28 +980,32 @@ def test_ownership_signature_matches_repository_head_topology_and_entries() -> N
         ownership,
         repository=repository,
         head=head,
-        topology=group.endpoints,
+        topology=group.topology_signature,
         current_index_entries={"note.md": post_entry},
     )
     assert not ownership_signature_matches(
         ownership,
         repository=repository,
         head=HeadIdentity.detached(OID_B),
-        topology=group.endpoints,
+        topology=group.topology_signature,
         current_index_entries={"note.md": post_entry},
     )
     assert not ownership_signature_matches(
         ownership,
         repository=repository,
         head=head,
-        topology=("note.md", "new.md"),
+        topology=(
+            ("note.md", "new.md"),
+            (),
+            "new.md",
+        ),
         current_index_entries={"note.md": post_entry},
     )
     assert not ownership_signature_matches(
         ownership,
         repository=repository,
         head=head,
-        topology=group.endpoints,
+        topology=group.topology_signature,
         current_index_entries={
             "note.md": _entry(
                 "note.md",
@@ -797,6 +1022,8 @@ def test_ownership_signature_preserves_an_exact_post_stage_absence() -> None:
         repository=_repository(),
         head=HeadIdentity.detached(OID_A),
         approved_endpoint_topology=group.endpoints,
+        approved_move_edges=group.move_edges,
+        approved_current_path=group.current_path,
         original_baselines={
             "deleted.md": IndexBaseline(_entry("deleted.md"))
         },
@@ -807,14 +1034,14 @@ def test_ownership_signature_preserves_an_exact_post_stage_absence() -> None:
         ownership,
         repository=ownership.repository,
         head=ownership.head,
-        topology=group.endpoints,
+        topology=group.topology_signature,
         current_index_entries={},
     )
     assert not ownership_signature_matches(
         ownership,
         repository=ownership.repository,
         head=ownership.head,
-        topology=group.endpoints,
+        topology=group.topology_signature,
         current_index_entries={"deleted.md": _entry("deleted.md")},
     )
 

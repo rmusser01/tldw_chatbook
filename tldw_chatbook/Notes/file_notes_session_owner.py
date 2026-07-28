@@ -36,6 +36,11 @@ SessionGitRowState = Literal[
 ]
 SessionGitStageAction = Literal["stage", "stage_update"]
 SessionGitStatusState = Literal["ready", "stale", "unavailable", "error"]
+SessionChangeTopology = tuple[
+    tuple[str, ...],
+    tuple[tuple[str, str], ...],
+    str,
+]
 _TRANSITION_KINDS = frozenset({"root", "path", "source", "screen"})
 
 
@@ -70,12 +75,18 @@ def _sanitize_display_path(path: str) -> str:
         "\r": r"\r",
         "\t": r"\t",
     }
-    return "".join(
-        replacements.get(character, f"\\x{ord(character):02x}")
-        if ord(character) < 32 or ord(character) == 127
-        else character
-        for character in path
-    )
+    display: list[str] = []
+    for character in path:
+        codepoint = ord(character)
+        if character in replacements:
+            display.append(replacements[character])
+        elif codepoint < 32 or 127 <= codepoint <= 159:
+            display.append(f"\\x{codepoint:02x}")
+        elif 0xDC80 <= codepoint <= 0xDCFF:
+            display.append(f"\\x{codepoint - 0xDC00:02x}")
+        else:
+            display.append(character)
+    return "".join(display)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,9 +144,20 @@ class SessionChangeGroup:
     current_path: str
     latest_action: SessionChangeAction
     latest_sequence: int
+    move_edges: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "endpoints", tuple(self.endpoints))
+        object.__setattr__(
+            self,
+            "move_edges",
+            tuple(tuple(edge) for edge in self.move_edges),
+        )
+
+    @property
+    def topology_signature(self) -> SessionChangeTopology:
+        """Return exact ordered move topology and active endpoint identity."""
+        return self.endpoints, self.move_edges, self.current_path
 
     @property
     def display_text(self) -> str:
@@ -178,6 +200,8 @@ class StagingOwnership:
     repository: RepositoryIdentity
     head: HeadIdentity
     approved_endpoint_topology: tuple[str, ...]
+    approved_move_edges: tuple[tuple[str, str], ...]
+    approved_current_path: str
     original_baselines: Mapping[str, IndexBaseline]
     post_stage_entries: Mapping[str, IndexEntry | None]
 
@@ -197,6 +221,11 @@ class StagingOwnership:
         )
         object.__setattr__(
             self,
+            "approved_move_edges",
+            tuple(tuple(edge) for edge in self.approved_move_edges),
+        )
+        object.__setattr__(
+            self,
             "original_baselines",
             MappingProxyType(baselines),
         )
@@ -204,6 +233,15 @@ class StagingOwnership:
             self,
             "post_stage_entries",
             MappingProxyType(post_stage_entries),
+        )
+
+    @property
+    def topology_signature(self) -> SessionChangeTopology:
+        """Return the exact topology approved by the last Stage."""
+        return (
+            self.approved_endpoint_topology,
+            self.approved_move_edges,
+            self.approved_current_path,
         )
 
 

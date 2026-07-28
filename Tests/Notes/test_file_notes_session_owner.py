@@ -73,6 +73,8 @@ def _git_owner_state():
         repository=repository,
         head=HeadIdentity.attached("refs/heads/main", "b" * 40),
         approved_endpoint_topology=("note.md",),
+        approved_move_edges=(),
+        approved_current_path="note.md",
         original_baselines={"note.md": IndexBaseline(None)},
         post_stage_entries={"note.md": entry},
     )
