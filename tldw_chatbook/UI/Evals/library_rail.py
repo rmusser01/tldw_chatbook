@@ -168,11 +168,18 @@ class LibraryRail(NotifyMixin, Vertical):
 
     def compose(self) -> ComposeResult:
         self._row_targets = {}
-        yield from self._benches_section()
+        # Read once, reused by _benches_section (to decide first-run
+        # primacy, TASK-1076) and by the sections below -- rather than each
+        # of the three sections independently re-querying the same rows.
+        datasets = self.view_model.datasets()
+        run_groups = self.view_model.run_groups()
+        yield from self._benches_section(
+            is_first_run=not datasets and not run_groups
+        )
         yield from self._section(
             section_id="datasets",
             title="Datasets",
-            rows=self.view_model.datasets(),
+            rows=datasets,
             kind="dataset",
             empty_copy="No datasets yet.",
             row_label=_dataset_row_label,
@@ -181,7 +188,7 @@ class LibraryRail(NotifyMixin, Vertical):
         yield from self._section(
             section_id="runs",
             title="Runs",
-            rows=self.view_model.run_groups(),
+            rows=run_groups,
             kind="run_group",
             empty_copy="No runs yet.",
             row_label=_run_group_row_label,
@@ -319,7 +326,7 @@ class LibraryRail(NotifyMixin, Vertical):
             body.styles.display = "none"
         return body
 
-    def _benches_section(self) -> ComposeResult:
+    def _benches_section(self, *, is_first_run: bool) -> ComposeResult:
         """The Benches section, with classic (non-word-bench) tasks
         rendered in a labelled subgroup beneath the word benches -- per the
         design spec's "Classic orchestrator tasks appear in a labelled
@@ -331,6 +338,11 @@ class LibraryRail(NotifyMixin, Vertical):
         design mockup's own worked example (2 word benches + 2 classic
         tasks -> "BENCHES (4)") -- the section's count is "how many rows
         are under this header," not "how many word benches exist."
+
+        Args:
+            is_first_run: Whether Datasets and Runs are ALSO both empty --
+                see ``_benches_section_body``'s ``is_first_run`` for what
+                this changes.
         """
         benches = self.view_model.benches()
         classic_tasks = self.view_model.classic_tasks()
@@ -350,13 +362,17 @@ class LibraryRail(NotifyMixin, Vertical):
             ),
             classes="evals-rail-section-header",
         )
-        yield self._benches_section_body(benches, classic_tasks, open_state)
+        yield self._benches_section_body(
+            benches, classic_tasks, open_state, is_first_run=is_first_run
+        )
 
     def _benches_section_body(
         self,
         benches: list[dict[str, Any]],
         classic_tasks: list[dict[str, Any]],
         open_state: bool,
+        *,
+        is_first_run: bool = False,
     ) -> Vertical:
         children: list[Any] = []
         if benches:
@@ -389,7 +405,32 @@ class LibraryRail(NotifyMixin, Vertical):
                 # classic task also present, this text would just be a
                 # redundant wall above a real list; the actionable button
                 # below still renders either way.
-                if provider_ready:
+                if provider_ready and is_first_run:
+                    # TASK-1076: a genuinely first-run rail (no benches, no
+                    # classic tasks, no datasets, no runs -- every count is
+                    # zero at once) offered three equal-weight affordances
+                    # ("Create sample bench" / "+ New dataset" / no action
+                    # for Runs) with nothing marking which one is the
+                    # intended starting point, or that a bench itself sets
+                    # up a dataset. Only this fully-empty condition gets the
+                    # callout; a user who already has datasets or runs is
+                    # past "first open" and the plain copy below still
+                    # applies. Styled distinctly from
+                    # `.evals-rail-empty-copy` (bold/primary vs. muted) so
+                    # it reads as the recommended path at a glance, not just
+                    # in wording -- see `.evals-rail-first-run-hint` in
+                    # features/_evals.tcss.
+                    children.append(
+                        Static(
+                            "Start here — no benches yet. The sample "
+                            "bench below builds a dataset and a target for "
+                            "you, then runs it.",
+                            id="evals-rail-first-run-hint",
+                            classes="evals-rail-first-run-hint",
+                            markup=False,
+                        )
+                    )
+                elif provider_ready:
                     children.append(
                         Static(
                             "No benches yet.",

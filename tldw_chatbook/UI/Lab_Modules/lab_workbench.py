@@ -34,8 +34,17 @@ from .lab_rail_layout import LAB_RAIL_INSPECTOR, LAB_RAIL_LEFT, LabRailLayout
 #: "Download Models" rendered as "Download". Matches `#mcp-hub-rail`.
 LAB_RAIL_MIN_WIDTH = 24
 LAB_RAIL_MAX_WIDTH = 32
-#: Width of the expanded inspector.
-LAB_INSPECTOR_WIDTH = 30
+#: Bounds of the expanded inspector, mirroring `#lab-inspector` in
+#: features/_lab.tcss (TASK-1076). Was a hard `30` at every terminal width --
+#: the same anti-pattern the rail bounds above already document -- which
+#: left the Evals cell inspector's readiness/probe text (e.g. "K requested
+#: 20 * K returned 20 * canary degenerate") wrapping mid-phrase at 200
+#: columns with most of the terminal unused. `2fr` in the CSS (a heavier
+#: weight than the rail's `1fr`, since a fixed pane was previously eating
+#: this whole width) grows it between these bounds; `#lab-body` stays `4fr`
+#: so the grid keeps the larger share.
+LAB_INSPECTOR_MIN_WIDTH = 30
+LAB_INSPECTOR_MAX_WIDTH = 50
 #: Width of a collapsed rail's handle, matching Console's.
 LAB_HANDLE_WIDTH = 11
 #: Class every rail row carries; styled app-tier in features/_lab.tcss.
