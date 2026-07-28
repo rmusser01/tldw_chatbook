@@ -668,6 +668,120 @@ async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session() -
 
 
 @pytest.mark.asyncio
+async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round() -> None:
+    """TASK-1141 review round 1 (reviewer-reproduced live on HEAD before
+    this fix): `_current_park_round_ids` alone only inspects the three
+    LIVE `_parked_*_payloads` maps -- every owning bridge's own `finally`
+    pops its round out of those maps once resolved (see
+    `request_mcp_approvals`'s teardown), so a re-invocation of the shared
+    park seam that lands AFTER that teardown found every live map empty
+    and fell straight into the "no identity to key on" unconditional-toast
+    fallback, re-firing the toast for a round with no card left at all --
+    despite that round's id already sitting in
+    `_console_toasted_park_round_ids` (documented as never-pruned
+    precisely so a case like this could be recognized). Tears down
+    round-1 exactly like `request_mcp_approvals`'s own `finally`
+    (``discard_pending_round`` + popping the retained payload) directly,
+    rather than through a live worker thread, to isolate the guard's own
+    post-teardown fallback logic from timing.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        controller.add_pending_round(background, "round-1")
+        controller._parked_approval_payloads[background] = {
+            "round_id": "round-1",
+            "session_id": background,
+            "calls": [],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        # Tear down round-1 exactly like `request_mcp_approvals`'s own
+        # `finally` does once it resolves: discard the round id, then pop
+        # the retained payload (no sibling round left, so the pop fires
+        # -- mirrors the real "not still_armed_same_session" branch).
+        controller.discard_pending_round(background, "round-1")
+        controller._parked_approval_payloads.pop(background, None)
+        assert background not in controller._parked_approval_payloads
+
+        # A stray re-invocation of the shared park seam landing AFTER
+        # teardown -- the exact hazard the reviewer reproduced live.
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        toasts = [n for n in notifications if "needs approval" in n]
+        assert len(toasts) == 1, f"expected NO second toast post-teardown, got {toasts}"
+
+
+@pytest.mark.asyncio
+async def test_park_toast_fires_once_for_a_new_round_arriving_after_teardown() -> None:
+    """TASK-1141 review round 1: the post-teardown fallback guard added
+    above (see the sibling test) must not over-suppress a genuinely NEW
+    round for the same session that parks only after the previous one
+    fully resolved and tore down -- distinct from ``test_park_toast_
+    fires_again_for_a_genuinely_new_round_same_session`` above in that
+    this pins the specific "arrives after the post-teardown fallback path
+    was exercised" shape the review round targeted.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        controller.add_pending_round(background, "round-1")
+        controller._parked_approval_payloads[background] = {
+            "round_id": "round-1",
+            "session_id": background,
+            "calls": [],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        controller.discard_pending_round(background, "round-1")
+        controller._parked_approval_payloads.pop(background, None)
+
+        # A genuinely NEW round (different id) parks for the same session
+        # AFTER the previous one's full teardown.
+        controller.add_pending_round(background, "round-2")
+        controller._parked_approval_payloads[background] = {
+            "round_id": "round-2",
+            "session_id": background,
+            "calls": [],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        toasts = [n for n in notifications if "needs approval" in n]
+        assert len(toasts) == 2, f"expected the new round to toast, got {toasts}"
+
+
+@pytest.mark.asyncio
 async def test_background_completion_fires_single_toast() -> None:
     """Task 10 (background completion toasts, parallel-agents spec): a
     NON-viewed session's run finishing (COMPLETED) or failing (FAILED)

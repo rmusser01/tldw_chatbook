@@ -2069,6 +2069,21 @@ class ChatScreen(BaseAppScreen):
         # this screen instance has EVER parked", not by anything unbounded
         # over a session's lifetime.
         self._console_toasted_park_round_ids: set[str] = set()
+        #: TASK-1141 review round 1: the LAST non-empty snapshot of
+        #: `_current_park_round_ids(controller, session_id)`, per session
+        #: id -- the fallback identity `_park_console_approval` consults
+        #: when a re-invocation arrives AFTER the round's own teardown has
+        #: already popped it from every live `_parked_*_payloads` map (so
+        #: `_current_park_round_ids` alone reads back empty and can no
+        #: longer distinguish "a stray post-teardown re-announcement of a
+        #: round already toasted" from "a session this screen has never
+        #: parked anything for"). Overwritten (not merged) on every
+        #: non-empty snapshot -- only the MOST RECENT live round/request
+        #: id set for a session is a useful fallback key, since anything
+        #: older has already been superseded or resolved. Never pruned,
+        #: for the same "bounded by distinct sessions ever parked" reason
+        #: as `_console_toasted_park_round_ids` above.
+        self._console_last_parked_round_ids: dict[str, frozenset[str]] = {}
         self._console_agent_drilldown_run_id: str | None = None
         # Finding C: the conversation the drill-in was set for -- used to
         # detect a conversation/session switch and drop back to the
@@ -15940,6 +15955,25 @@ class ChatScreen(BaseAppScreen):
         this falls back to the pre-TASK-1141 unconditional toast --
         preserving every existing direct-call test's behavior.
 
+        TASK-1141 review round 1: the live-map lookup above alone is
+        blind to a re-invocation that arrives AFTER the round's own
+        teardown -- every owning bridge's `finally` pops its round out of
+        `_parked_*_payloads` once resolved (`request_mcp_approvals`'
+        docstring on that pop explains why), so a STRAY re-invocation
+        landing post-teardown finds all three maps empty and, pre-review,
+        fell straight into the "no identity to key on" unconditional-toast
+        branch above -- exactly the live-reproduced gap this review round
+        closes. `_console_last_parked_round_ids` remembers the most recent
+        NON-empty snapshot `_current_park_round_ids` ever returned for
+        `session_id`; when the live lookup now comes back empty, that
+        remembered snapshot is consulted instead: if every id in it is
+        already in `_console_toasted_park_round_ids`, this is a
+        post-teardown re-announcement of an already-surfaced round --
+        absorbed, same as the still-live case. Only when NO snapshot was
+        ever recorded for `session_id` (this screen has truly never seen a
+        live round for it -- the standalone test-seam case) does the
+        unconditional-toast fallback still apply.
+
         Args:
             session_id: The parked round's OWNING session.
         """
@@ -15950,6 +15984,11 @@ class ChatScreen(BaseAppScreen):
             controller.set_run_pending_approval(session_id, True)
         current_round_ids = self._current_park_round_ids(controller, session_id)
         if current_round_ids:
+            # Remember this as the most recent LIVE snapshot for
+            # `session_id`, unconditionally -- consulted below by a later
+            # invocation that arrives after this round's own teardown has
+            # already emptied every live map (review round 1).
+            self._console_last_parked_round_ids[session_id] = current_round_ids
             new_round_ids = current_round_ids - self._console_toasted_park_round_ids
             if not new_round_ids:
                 # Every round/request id currently parked for this session
@@ -15958,6 +15997,19 @@ class ChatScreen(BaseAppScreen):
                 # already surfaced, not a genuinely new one.
                 return
             self._console_toasted_park_round_ids.update(current_round_ids)
+        else:
+            # Nothing is currently live for `session_id` in any of the
+            # three bridges' payload maps. Fall back to the last snapshot
+            # this screen ever saw live for it (review round 1): if every
+            # id in that snapshot was already toasted, this is a stray
+            # post-teardown re-invocation for an already-surfaced round --
+            # absorbed. No snapshot at all means this screen has never
+            # parked a round for `session_id` (the standalone test-seam
+            # usage this method's own docstring describes), so it falls
+            # through and toasts, preserving that pre-TASK-1141 behavior.
+            last_round_ids = self._console_last_parked_round_ids.get(session_id)
+            if last_round_ids and last_round_ids <= self._console_toasted_park_round_ids:
+                return
         session_title, workspace_name = self._console_session_title_and_workspace_name(
             controller, session_id
         )
