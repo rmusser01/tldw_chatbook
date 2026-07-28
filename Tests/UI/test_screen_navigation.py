@@ -2592,3 +2592,100 @@ def test_push_initial_screen_fatal_error_names_the_underlying_cause(monkeypatch)
     assert "ModuleNotFoundError" in message, message
     # Chained, so the traceback shows the real import failure too.
     assert isinstance(excinfo.value.__cause__, ImportError)
+
+
+@pytest.mark.asyncio
+async def test_navigation_survives_screen_construction_failure(monkeypatch):
+    """A screen whose ``__init__`` raises must not take the whole app down.
+
+    Root cause of the reported "app crashes when clicking onto MCP": the MCP
+    canvases read ``Select.NULL`` at construction time, which does not exist
+    before Textual 8. ``_complete_screen_navigation`` guarded ``save_state``,
+    ``restore_state`` and ``apply_navigation_context`` but ran
+    ``_create_navigation_screen`` unguarded, so the AttributeError escaped the
+    ``NavigateToScreen`` handler and Textual exited the app (return_code 1).
+
+    Any screen that fails to build is a broken destination, never a dead app:
+    the user must be told and left on the screen they were already using.
+    """
+    app = _build_test_app()
+
+    class ExplodingScreen:
+        screen_name = "mcp"
+
+        def __init__(self, app_instance):
+            raise AttributeError("type object 'Select' has no attribute 'NULL'")
+
+    def fake_resolve(target):
+        return "mcp", "mcp", ExplodingScreen
+
+    switched_screens = []
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    notifications = []
+
+    class FakeOutgoingScreen:
+        screen_name = "chat"
+
+    # Same shim the flush/veto tests use: the handler reads self.screen for
+    # the outgoing save-state step, which needs a live screen stack.
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: FakeOutgoingScreen())
+    )
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notifications.append(message)
+    )
+
+    # Must not raise: an escaping exception here is what killed the app.
+    await app.handle_screen_navigation(NavigateToScreen("mcp"))
+
+    assert switched_screens == [], "a screen that failed to build must not be switched to"
+    assert notifications, "the user must be told the destination failed to open"
+
+
+@pytest.mark.asyncio
+async def test_navigation_survives_screen_mount_failure(monkeypatch):
+    """A screen that raises while mounting must not take the whole app down.
+
+    Sibling of the construction guard: the MCP audit canvas reads
+    ``Select.NULL`` inside ``compose()``, so the same AttributeError can
+    surface from ``switch_screen`` (which drives compose/mount) rather than
+    from ``__init__``. Both legs must fail soft.
+    """
+    app = _build_test_app()
+
+    class FakeScreen:
+        screen_name = "mcp"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def fake_resolve(target):
+        return "mcp", "mcp", FakeScreen
+
+    async def exploding_switch_screen(screen):
+        raise AttributeError("type object 'Select' has no attribute 'NULL'")
+
+    notifications = []
+
+    class FakeOutgoingScreen:
+        screen_name = "chat"
+
+    # Same shim the flush/veto tests use: the handler reads self.screen for
+    # the outgoing save-state step, which needs a live screen stack.
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: FakeOutgoingScreen())
+    )
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", exploding_switch_screen)
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notifications.append(message)
+    )
+
+    await app.handle_screen_navigation(NavigateToScreen("mcp"))
+
+    assert notifications, "the user must be told the destination failed to open"

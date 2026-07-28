@@ -6206,6 +6206,23 @@ class TldwCli(
             if callable(release_navigation):
                 release_navigation()
 
+    def _notify_navigation_failure(self, screen_name: str) -> None:
+        """Tell the user a destination failed to open, without raising.
+
+        Navigation failures are reported where they happen so the user is
+        not left staring at an unchanged screen wondering whether the click
+        registered. ``notify`` itself is guarded: this runs on the crash
+        path, and a failure to display the message must not replace one
+        escaping exception with another.
+        """
+        try:
+            self.notify(
+                f"Couldn't open {screen_name}. Staying on the current screen.",
+                severity="error",
+            )
+        except Exception:
+            logger.debug(f"Could not surface navigation failure for {screen_name!r}.")
+
     async def _complete_screen_navigation(
         self,
         *,
@@ -6257,7 +6274,23 @@ class TldwCli(
                 )
 
         if screen_class:
-            new_screen = self._create_navigation_screen(screen_name, screen_class)
+            try:
+                new_screen = self._create_navigation_screen(screen_name, screen_class)
+            except Exception as exc:
+                # A destination that cannot even be constructed is a broken
+                # destination, never a dead app. This ran unguarded until
+                # 2026-07-28: the MCP canvases read `Select.NULL` (Textual 8+)
+                # at construction time, so on an older Textual the
+                # AttributeError escaped this handler and Textual exited the
+                # whole app rather than the user simply failing to reach MCP.
+                logger.opt(exception=True).error(
+                    "Screen construction failed "
+                    "(route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+                self._notify_navigation_failure(screen_name)
+                return
 
             restored_state = self.screen_state_store.restore(
                 current_tab_value,
@@ -6299,7 +6332,21 @@ class TldwCli(
                     )
 
             # Use switch_screen to replace the current screen
-            await self.switch_screen(new_screen)
+            try:
+                await self.switch_screen(new_screen)
+            except Exception as exc:
+                # Sibling of the construction guard above: a screen can also
+                # fail while composing/mounting (the MCP audit canvas reads
+                # `Select.NULL` inside compose()), and Textual surfaces that
+                # through switch_screen. Same rule -- report the broken
+                # destination instead of taking the app down with it.
+                logger.opt(exception=True).error(
+                    "Screen mount failed (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+                self._notify_navigation_failure(screen_name)
+                return
 
             # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
             self.current_tab = current_tab_value
