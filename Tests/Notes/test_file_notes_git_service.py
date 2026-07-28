@@ -1162,12 +1162,17 @@ def test_git_environment_removes_repository_and_config_injection() -> None:
     assert sanitized["FILTER_HELPER_CONTEXT"] == "preserved"
     assert sanitized["GIT_AUTHOR_NAME"] == "ordinary-config-remains"
     assert sanitized["GIT_TERMINAL_PROMPT"] == "0"
-    assert sanitized["LC_ALL"] == "C"
+    assert "LC_ALL" not in sanitized
 
 
 def test_status_environment_and_argv_disable_side_channel_writes() -> None:
     environment = build_git_environment(
-        {"PATH": "/private/bin"},
+        {
+            "PATH": "/private/bin",
+            "LANG": "de_DE.UTF-8",
+            "LC_ALL": "de_DE.UTF-8",
+            "FILTER_HELPER_CONTEXT": "preserved",
+        },
         for_status=True,
     )
     argv = build_status_argv(
@@ -1176,6 +1181,9 @@ def test_status_environment_and_argv_disable_side_channel_writes() -> None:
     )
 
     assert environment["GIT_OPTIONAL_LOCKS"] == "0"
+    assert environment["LANG"] == "de_DE.UTF-8"
+    assert environment["LC_ALL"] == "de_DE.UTF-8"
+    assert environment["FILTER_HELPER_CONTEXT"] == "preserved"
     assert argv[:2] == ("/private/bin/git", "--literal-pathspecs")
     assert ("-c", "core.fsmonitor=false") == argv[2:4]
     pairs = tuple(

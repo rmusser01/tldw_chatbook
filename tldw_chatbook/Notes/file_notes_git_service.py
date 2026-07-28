@@ -183,6 +183,7 @@ def build_git_environment(
     ambient: Mapping[str, str] | None = None,
     *,
     for_status: bool = False,
+    stable_locale: bool = False,
 ) -> dict[str, str]:
     """Return ordinary process context without Git redirection/injection."""
     source = os.environ if ambient is None else ambient
@@ -196,7 +197,8 @@ def build_git_environment(
         )
     }
     environment["GIT_TERMINAL_PROMPT"] = "0"
-    environment["LC_ALL"] = "C"
+    if stable_locale:
+        environment["LC_ALL"] = "C"
     if for_status:
         environment["GIT_OPTIONAL_LOCKS"] = "0"
     return environment
@@ -1374,7 +1376,10 @@ class FileNotesGitService:
             result = await self._runner.run(
                 (self._git_executable, *arguments),
                 cwd=str(root),
-                environment=build_git_environment(self._environment),
+                environment=build_git_environment(
+                    self._environment,
+                    stable_locale=True,
+                ),
                 timeout=self._discovery_timeout,
             )
         except OSError:
@@ -1550,7 +1555,10 @@ class FileNotesGitService:
             return await self._runner.run(
                 (self._git_executable, *arguments),
                 cwd=str(root),
-                environment=build_git_environment(self._environment),
+                environment=build_git_environment(
+                    self._environment,
+                    stable_locale=True,
+                ),
                 timeout=self._discovery_timeout,
             )
         except OSError as error:
