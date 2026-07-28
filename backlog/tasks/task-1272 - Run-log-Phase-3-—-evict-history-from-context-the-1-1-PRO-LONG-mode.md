@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 00:00'
-updated_date: '2026-07-28 22:33'
+updated_date: '2026-07-28 22:55'
 labels:
   - agents
   - run-log
@@ -118,10 +118,65 @@ logged at warning, and degrades to sending the full history for that turn.
 Files: tldw_chatbook/Agents/run_log_eviction.py (new),
 tldw_chatbook/Agents/agent_service.py, tldw_chatbook/Agents/agent_models.py,
 tldw_chatbook/Agents/agent_runtime.py, tldw_chatbook/Chat/console_history_budget.py,
-Tests/Agents/test_run_log_eviction.py (new, 13 tests), design spec doc updated
-(§8, §10).
+Tests/Agents/test_run_log_eviction.py, design spec doc updated (§8, §10).
 
-AC #6 (live run against a local small-context model) is NOT verified here --
-no local model available in this environment; left open for live verification
-per the repo's live-verification rule.
+AC #6 (live run against a local small-context model) was later performed by the
+coordinator against llama.cpp gemma-4-26B and confirmed the mechanism works as
+designed, but also found the defect recorded below -- see that finding for the
+fix. Live verification is otherwise not reproducible inside this sandbox (no
+local model available here).
+
+--- FOLLOW-UP (2026-07-28, same day): live-verified task-instruction amnesia ---
+
+The round-boundary fix above is necessary but was not sufficient. Live testing
+(coordinator, llama.cpp gemma-4-26B, fence protocol, a read-four-files-then-
+report task) found that once eviction actually started dropping rounds, the
+agent would either return an empty answer or derail into narrating about its
+own log instead of finishing. A flag-on-but-inactive control run (large window,
+eviction never fires) was byte-identical to flag-off, isolating the cause to
+eviction ACTUALLY DROPPING rounds, not to the flag itself.
+
+Root cause: bound_messages_to_window's contract -- preserve the leading system
+prefix and "the current turn" (the LAST role="user" row to the end) -- means
+something different for an agent run than for a Console chat, and nothing in
+run_log_eviction.py pinned the difference. Console: every new human message
+restates intent, so "the last one" is the live context. An agent run: exactly
+ONE real role="user" row exists -- the task, as the very first message -- and
+every later row bearing that role is a fence tool-result wearing it. So "the
+last user message" in an agent run is a tool result, and the task instruction
+sits in kept_turns[0], the OLDEST group, evictable like any other round. Once
+dropped, the agent no longer knows what it was asked to do.
+
+Fix: extended (not forked) the primitive. bound_messages_to_window gained
+pin_first_user: bool = False (default off; no Console call site passes it, so
+Console is unaffected -- confirmed by a full Tests/Chat run showing only the
+pre-existing 4 failures / 13 errors). When True, the pinned prefix extends
+through the first role="user" row found after the leading system rows. This
+scan needs no protocol awareness, unlike the backward "last user" search: no
+tool result can ever be emitted before the task that triggered it, so the
+FIRST role="user" row scanning forward is unambiguously the task, for either
+protocol. run_log_eviction.bound_history_for_send now always passes
+pin_first_user=True.
+
+Degenerate case, decided deliberately per the coordinator's instruction: if the
+pinned prefix (system + task) plus the current turn alone already exceed the
+window, the primitive's existing "if nothing fits, drop every middle turn"
+fallback still returns them as-is -- an over-budget payload the provider may
+reject, rather than ever silently dropping the task instruction. This required
+no new code: it is the same fallback that already governs the plain
+system-prefix-only case.
+
+Verified with the exact behavioural bar requested: forced pin_first_user=False
+at the production call site, confirmed the new regression tests FAIL for both
+protocols (fence and native) with the same "task instruction missing from a
+payload actually sent" assertion the coordinator's live run exhibited, restored
+the fix, confirmed all tests pass again. Full Tests/Agents (553) and Tests/Chat
+(2684 passed / 4 known failures / 13 known errors) both re-run clean afterward.
+
+LESSON for future reuse of bound_messages_to_window: "preserve the current
+turn" is not a self-evidently-safe invariant to inherit by default -- it is
+defined relative to what "a turn" means for the CALLER's payload shape, and an
+agent run's shape (one real user row, everything after it is loop-generated)
+breaks the assumption Console was built under. Always ask what a caller's
+FIRST user-role row means, not just its last.
 <!-- SECTION:NOTES:END -->

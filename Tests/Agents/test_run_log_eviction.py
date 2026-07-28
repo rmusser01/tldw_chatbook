@@ -224,6 +224,103 @@ def test_fixed_round_boundary_trims_a_native_run_without_orphaning():
 
 
 # --------------------------------------------------------------------------
+# Live-verified 2026-07-28: without `pin_first_user`, the round-boundary fix
+# above still lets the task instruction -- the payload's only REAL
+# role="user" row -- fall into `kept_turns[0]`, the OLDEST group, and get
+# dropped first. Reproduced live against llama.cpp gemma-4-26B: the agent
+# lost track of its own task and started narrating about its log instead of
+# finishing. These tests pin that down at both the primitive and the
+# production seam, for both protocols.
+# --------------------------------------------------------------------------
+
+_TASK_TEXT = "start the task"
+
+
+def test_pin_first_user_survives_fence_even_when_everything_else_drops():
+    payload = _build_fence_rounds(6)
+    starved = bound_messages_to_window(
+        payload, model="m", provider="p", response_reservation=0,
+        window=10, count_fn=_wordcount,  # far too small to keep anything else
+        is_turn_boundary=_make_round_boundary(native=False),
+        pin_first_user=True,
+    )
+    assert starved.dropped_turns > 0, "test only meaningful if something dropped"
+    assert any(
+        m.get("role") == "user" and m.get("content") == _TASK_TEXT
+        for m in starved.messages
+    ), "the task instruction must survive no matter how tight the window"
+
+
+def test_without_the_pin_the_same_budget_drops_the_task_instruction():
+    """The behavioural bar the coordinator asked for, expressed directly:
+    the exact same payload and budget, with `pin_first_user` OFF, loses the
+    task instruction -- proving the pin is load-bearing, not redundant with
+    the round-boundary fix alone."""
+    payload = _build_fence_rounds(6)
+    unpinned = bound_messages_to_window(
+        payload, model="m", provider="p", response_reservation=0,
+        window=10, count_fn=_wordcount,
+        is_turn_boundary=_make_round_boundary(native=False),
+        pin_first_user=False,
+    )
+    assert not any(
+        m.get("role") == "user" and m.get("content") == _TASK_TEXT
+        for m in unpinned.messages
+    ), (
+        "expected the task instruction to be dropped WITHOUT the pin -- if "
+        "this now passes, the round-boundary fix alone became sufficient "
+        "and this regression test needs revisiting"
+    )
+
+
+def test_pin_first_user_survives_native_even_when_everything_else_drops():
+    payload = _build_native_rounds(6)
+    starved = bound_messages_to_window(
+        payload, model="m", provider="p", response_reservation=0,
+        window=10, count_fn=_wordcount,
+        is_turn_boundary=_make_round_boundary(native=True),
+        pin_first_user=True,
+    )
+    assert starved.dropped_turns > 0
+    assert any(
+        m.get("role") == "user" and m.get("content") == _TASK_TEXT
+        for m in starved.messages
+    )
+
+
+def test_without_the_pin_the_same_budget_drops_the_task_instruction_native():
+    payload = _build_native_rounds(6)
+    unpinned = bound_messages_to_window(
+        payload, model="m", provider="p", response_reservation=0,
+        window=10, count_fn=_wordcount,
+        is_turn_boundary=_make_round_boundary(native=True),
+        pin_first_user=False,
+    )
+    assert not any(
+        m.get("role") == "user" and m.get("content") == _TASK_TEXT
+        for m in unpinned.messages
+    )
+
+
+def test_pin_does_not_change_console_default_behaviour():
+    """`pin_first_user` defaults to False, so every existing Console call
+    site (which never passes it) is completely unaffected."""
+    payload = _build_fence_rounds(6)
+    default = bound_messages_to_window(
+        payload, model="m", provider="p", response_reservation=0,
+        window=10, count_fn=_wordcount,
+        is_turn_boundary=_make_round_boundary(native=False),
+    )
+    explicit_false = bound_messages_to_window(
+        payload, model="m", provider="p", response_reservation=0,
+        window=10, count_fn=_wordcount,
+        is_turn_boundary=_make_round_boundary(native=False),
+        pin_first_user=False,
+    )
+    assert default == explicit_false
+
+
+# --------------------------------------------------------------------------
 # bound_history_for_send: the actual production entry point
 # --------------------------------------------------------------------------
 
@@ -488,3 +585,60 @@ def test_flag_on_and_log_active_native_protocol_drops_old_rounds_intact(
     assert any(f"MARK{n}_" in str(m.get("content", "")) for m in last_payload)
     assert any("Context note" in str(m.get("content", "")) for m in last_payload)
     assert _native_ids_paired(last_payload)
+
+
+def test_flag_on_fence_protocol_task_instruction_survives_a_starving_window(
+    db, tmp_path, monkeypatch
+):
+    """Live-verified 2026-07-28 regression (runs C/D against llama.cpp
+    gemma-4-26B, fence protocol): under a window so tight that eviction
+    drops everything it can, the task instruction must still be present in
+    EVERY payload actually sent -- not just the final one, since the live
+    defect derailed the agent mid-run, not only at the end.
+    """
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 50)
+    n = 8
+    chat = ScriptedChat(_fence_replies(n))
+    service = AgentService(db=db, registry=_make_registry(n), chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": _TASK_TEXT}],
+        config=_run_config(native_tools=False),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.final_text == "done."
+    assert len(chat.calls) > 1, "test needs multiple rounds to be meaningful"
+    for call in chat.calls:
+        payload = call["messages_payload"]
+        assert any(
+            m.get("role") == "user" and m.get("content") == _TASK_TEXT
+            for m in payload
+        ), "task instruction missing from a payload actually sent"
+
+
+def test_flag_on_native_protocol_task_instruction_survives_a_starving_window(
+    db, tmp_path, monkeypatch
+):
+    """The same regression, native protocol."""
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 50)
+    n = 8
+    chat = ScriptedChat(_native_replies(n))
+    service = AgentService(db=db, registry=_make_registry(n), chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": _TASK_TEXT}],
+        config=_run_config(native_tools=True),
+        api_endpoint="groq",
+    )
+    assert outcome.final_text == "done."
+    assert len(chat.calls) > 1, "test needs multiple rounds to be meaningful"
+    for call in chat.calls:
+        payload = call["messages_payload"]
+        assert any(
+            m.get("role") == "user" and m.get("content") == _TASK_TEXT
+            for m in payload
+        ), "task instruction missing from a payload actually sent"

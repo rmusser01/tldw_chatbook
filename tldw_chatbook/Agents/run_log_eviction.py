@@ -113,6 +113,26 @@ def _make_round_boundary(*, native: bool) -> Callable[[dict[str, Any]], bool]:
     return boundary
 
 
+def _pinned_prefix_len(payload: list[dict[str, Any]]) -> int:
+    """How many leading rows `bound_messages_to_window(pin_first_user=True)`
+    pins: the leading system rows plus, ambiguity-free, everything up to and
+    including the first `role == "user"` row after them (the task
+    instruction -- see `bound_history_for_send`'s `pin_first_user=True`).
+
+    Mirrors that function's own prefix computation on the ORIGINAL payload
+    rather than reading it back off the result, so the synthetic note can be
+    spliced at the exact boundary; not a reimplementation of the trimming
+    itself, only of the few lines that locate this one insertion point.
+    """
+    index = 0
+    while index < len(payload) and payload[index].get("role") == "system":
+        index += 1
+    for i in range(index, len(payload)):
+        if payload[i].get("role") == "user":
+            return i + 1
+    return index
+
+
 def _synthetic_note(dropped_rounds: int) -> dict[str, str]:
     """Build the placeholder telling the model what was evicted.
 
@@ -209,19 +229,25 @@ def bound_history_for_send(
             window=window,
             count_fn=count_fn,
             is_turn_boundary=_make_round_boundary(native=native),
+            # Live-verified 2026-07-28: without this, the task instruction
+            # -- the payload's only REAL role="user" row -- sits in the
+            # middle of history like any other droppable round and a tight
+            # enough window silently evicted it, leaving the agent with no
+            # memory of what it was asked to do (it then narrated about
+            # its own log instead of finishing). See the parameter's
+            # docstring in console_history_budget.py.
+            pin_first_user=True,
         )
         if not bound.dropped_turns:
             return payload
         # Splice the note in right where the dropped rounds were: after the
-        # leading system prefix (recomputed here on the ORIGINAL payload --
-        # a 3-line scan, not a re-implementation of the trimmer itself --
-        # because `bound_messages_to_window` preserves that prefix
-        # untouched, so its length is identical in `bound.messages`).
-        sys_end = 0
-        while sys_end < len(payload) and payload[sys_end].get("role") == "system":
-            sys_end += 1
+        # PINNED prefix (recomputed here on the ORIGINAL payload -- a small
+        # scan mirroring `bound_messages_to_window`'s own `pin_first_user`
+        # logic, not a re-implementation of the trimmer itself -- because
+        # that prefix is preserved verbatim, so its length is identical in
+        # `bound.messages`).
         result = list(bound.messages)
-        result.insert(sys_end, _synthetic_note(bound.dropped_turns))
+        result.insert(_pinned_prefix_len(payload), _synthetic_note(bound.dropped_turns))
         return result
     except Exception:  # noqa: BLE001 -- eviction must never abort a run
         logger.opt(exception=True).warning(

@@ -139,6 +139,7 @@ def bound_messages_to_window(
     window: int | None = None,
     count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
     is_turn_boundary: Callable[[dict[str, Any]], bool] | None = None,
+    pin_first_user: bool = False,
 ) -> BoundResult:
     """Drop oldest whole turns until the payload fits the model window.
 
@@ -163,6 +164,24 @@ def bound_messages_to_window(
             its own predicate here — see
             ``Agents.run_log_eviction._make_round_boundary`` — because an
             agent payload carries tool rows Console's payloads never do.
+        pin_first_user: When ``True``, extends the pinned prefix (which is
+            never dropped, regardless of budget) to also cover everything
+            up to and including the FIRST ``role == "user"`` row found
+            after the leading system rows. ``False`` (every Console call
+            site) keeps the original contract, where only the leading
+            system rows and "the current turn" (the LAST boundary row
+            onward) are pinned. Console's "last user message" framing
+            means something different for an agent run: there is exactly
+            ONE real ``role == "user"`` row -- the task instruction -- and
+            every later one is a tool-result row wearing the same role
+            (see ``Agents.run_log_eviction``'s fence handling), so without
+            this the task instruction sits in the middle of history like
+            any other droppable turn and a tight enough window silently
+            drops it. A forward scan needs no protocol awareness the way
+            the backward "last user" search does: no tool result can ever
+            be emitted before the task that triggered it, so the first
+            ``role == "user"`` row scanning forward is unambiguously the
+            task, for either tool-call protocol.
 
     Returns:
         ``BoundResult(messages, dropped_count, dropped_turns)``.
@@ -190,6 +209,20 @@ def bound_messages_to_window(
     sys_end = 0
     while sys_end < len(messages) and messages[sys_end].get("role") == "system":
         sys_end += 1
+    # TASK-1272 follow-up (agent-run amnesia fix, live-verified 2026-07-28):
+    # extend the pinned prefix through the first real user row -- see
+    # `pin_first_user`'s docstring above for why this needs no protocol
+    # awareness. Degenerate case, decided deliberately rather than left
+    # implicit: if the resulting prefix plus the current turn alone already
+    # exceeds budget, the binary search below still returns them (its
+    # existing "if nothing fits, drop every middle turn" fallback) rather
+    # than trimming either -- an over-budget payload the provider may
+    # reject is preferred over silently dropping the task instruction.
+    if pin_first_user:
+        for index in range(sys_end, len(messages)):
+            if messages[index].get("role") == "user":
+                sys_end = index + 1
+                break
     system_prefix = messages[:sys_end]
     rest = messages[sys_end:]
 

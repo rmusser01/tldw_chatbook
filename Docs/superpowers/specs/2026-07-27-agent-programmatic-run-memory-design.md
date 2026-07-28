@@ -523,6 +523,42 @@ spliced in where the dropped rounds were, naming a count and
 `search_run_log` — never a specific record number, which the loop cannot
 derive accurately for a dropped round.
 
+**Live-verified defect, fixed same day (2026-07-28): the task instruction is
+not automatically safe just because eviction operates on whole rounds.**
+`bound_messages_to_window`'s contract — preserve the leading system prefix
+and "the current turn," from the LAST `role == "user"` row to the end — means
+something different for an agent run than for a Console chat, and that
+difference is exactly the kind of assumption that bites the next person who
+reuses the primitive without re-deriving it. For Console, every new human
+message restates intent, so "the last one" is always the live, relevant
+context. An agent run has exactly ONE real `role == "user"` row — the task —
+as the very first message; every later one bearing that role is a fence
+tool-result wearing it (§10.1's own round-boundary fix; §14.1's fence-vs-
+native trap). So "the last user message" in an agent run is a tool result,
+not the task, and the task sits in `kept_turns[0]` — the OLDEST, first-to-
+drop group — like any other droppable round. A live run against llama.cpp
+gemma-4-26B (fence protocol) reproduced this directly: with eviction firing,
+the task instruction dropped mid-run and the agent stopped executing its
+remaining steps, narrating about its own log instead of finishing. A flag-on,
+eviction-inactive control run (large window) was byte-identical to flag-off,
+confirming the failure correlates with eviction actually dropping rounds, not
+with the flag itself.
+
+Fixed by extending, not forking, the primitive: `bound_messages_to_window`
+gained `pin_first_user: bool = False` (default off, so every Console call
+site — which never passes it — is unaffected), which extends the pinned
+prefix through the first `role == "user"` row found after the leading system
+rows. No protocol awareness is needed for this direction of the scan (unlike
+the backward "last user" search `_make_round_boundary` corrects): no tool
+result can ever be emitted before the task that triggered it, so the first
+`role == "user"` row scanning forward is unambiguously the task, for either
+protocol. `run_log_eviction.bound_history_for_send` always passes
+`pin_first_user=True`. Degenerate case, decided deliberately: if the pinned
+prefix plus the current turn alone already exceed budget, the primitive's
+existing "if nothing fits, drop every middle turn" fallback still returns
+them — an over-budget payload the provider may reject is accepted in
+preference to ever silently dropping the task instruction.
+
 ### 10.1 Which goals each phase actually delivers
 
 | Goal (§2.1) | Phase 1 | Phase 2 | Phase 3 |
