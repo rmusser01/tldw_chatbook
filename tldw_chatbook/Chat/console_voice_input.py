@@ -247,6 +247,10 @@ class ConsoleVoiceInputController:
         # teardown path (unmount, app quit); the controller is not expected
         # to `start()` again afterward.
         self._abandoned = False
+        # Per-attempt (not per-instance) latch: set when the service reports a
+        # real cause through `on_error`, cleared at the top of every
+        # `_run_begin()` so a failed attempt can never silence a later one.
+        self._error_reported = False
 
     @property
     def state(self) -> str:
@@ -349,6 +353,11 @@ class ConsoleVoiceInputController:
 
     def _run_begin(self, effective: EffectiveConfig) -> None:
         """The actual work of `_begin()`, shielded from its caller by `_begin()`."""
+        # Cleared per attempt, before anything can set it: `on_error` fires
+        # synchronously from inside `start_dictation()` (see
+        # `_report_service_error`), and a latch left over from an earlier
+        # failed attempt would silence this attempt's fallback report.
+        self._error_reported = False
         try:
             service = self._service_factory(
                 transcription_provider=effective.provider,
@@ -360,11 +369,22 @@ class ConsoleVoiceInputController:
                 on_partial_transcript=lambda text: self._emit(VoicePartial(text)),
                 on_final_transcript=lambda text: self._emit(VoiceFinal(text)),
                 on_state_change=lambda _state: None,  # our state machine is authoritative
-                on_error=lambda error: self._fail(str(error)),
+                on_error=self._report_service_error,
                 save_audio=self.save_audio_requested,
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the user verbatim
             logger.opt(exception=True).warning("Console dictation failed to start")
+            # `on_error` is invoked from *inside* `start_dictation()`, i.e.
+            # from inside the `try` above, so this `exc` can be the real
+            # cause's own `_fail()` emit raising rather than a start failure.
+            # Reporting again would bury the real cause under plumbing --
+            # the same latch `_fail_not_started()` consults, for the same
+            # reason.
+            if self._error_reported:
+                logger.debug(
+                    "Console dictation start crashed after the service reported the cause"
+                )
+                return
             self._fail(str(exc))
             return
 
@@ -384,22 +404,51 @@ class ConsoleVoiceInputController:
             return
 
         if not started:
-            self._service = None
+            self._claim_service()  # drop it; the service already cleaned up
             self._fail_not_started()
             return
 
         self._enter_listening()
 
+    def _report_service_error(self, error: Any) -> None:
+        """Turn a service-reported error into a failure, recording that we did.
+
+        `LazyLiveDictationService` reports through this callback
+        *synchronously, from inside `start_dictation()`*, and then returns
+        `False` rather than raising -- all three of its failure branches do
+        (`dictation_service_lazy.py` lines 285-290, 323-329 and 332-335, each
+        `self._notify_error(...)` followed by `return False`). Without the
+        latch, that one failure produces two `VoiceFailed` events: the real
+        cause from here, then `_fail_not_started()`'s generic one, which
+        arrives *last* and buries the actionable diagnostic in the UI.
+
+        Args:
+            error: The exception the service reported.
+        """
+        # Set before `_fail()`, which emits and can therefore raise: the
+        # report has happened either way, and the service's own
+        # `_notify_error()` only logs whatever escapes this callback.
+        self._error_reported = True
+        self._fail(str(error))
+
     def _fail_not_started(self) -> None:
         """Report that `start_dictation()` returned `False`.
 
-        Stays quiet if `abandon()` landed in the narrow window between the
-        claim above and this check: the controller is already idle and torn
-        down at that point, so a `VoiceFailed`/`VoiceStateChanged(idle)` pair
-        here would be noise on top of teardown, not a real report.
+        Stays quiet in two cases. If `abandon()` landed in the narrow window
+        between the claim above and this check, the controller is already
+        idle and torn down, so a `VoiceFailed`/`VoiceStateChanged(idle)` pair
+        here would be noise on top of teardown. And if the service already
+        told us *why* it could not start (see `_report_service_error`), this
+        generic message would land second and bury that real cause.
         """
-        if not self._abandoned:
-            self._fail("Could not start the microphone.")
+        if self._abandoned:
+            return
+        if self._error_reported:
+            logger.debug(
+                "Console dictation start failed; real cause already reported by the service"
+            )
+            return
+        self._fail("Could not start the microphone.")
 
     def _enter_listening(self) -> None:
         """Atomically transition to `listening`, re-checking abandonment.
@@ -425,12 +474,44 @@ class ConsoleVoiceInputController:
                 logger.debug("Console dictation stop ignored in state {}", self._state)
                 return
             self._state = STATE_FINISHING
-        self._emit(VoiceStateChanged(STATE_FINISHING))
-        self._spawn(self._finish)
+        # Same guard `start()` carries, for the same reason: nothing else
+        # unwinds `finishing`, so a raising emit or a `spawn()` that fails to
+        # schedule would wedge the machine there forever with `is_active`
+        # true. `_finish()` is an exception boundary (see its docstring), so
+        # with an inline `spawn` this `try` cannot transitively swallow
+        # `_finish()`'s own `_fail()` and cascade a mislabeled failure.
+        try:
+            self._emit(VoiceStateChanged(STATE_FINISHING))
+            self._spawn(self._finish)
+        except Exception as exc:  # noqa: BLE001 - finishing must never wedge
+            logger.opt(exception=True).warning("Console dictation could not be finished")
+            # The microphone is live and no worker will ever run `_finish()`
+            # now, so drop it here rather than leave it recording behind an
+            # idle state machine.
+            service = self._claim_service()
+            if service is not None:
+                self._release(service)
+            self._fail(str(exc))
+            return
 
     def _finish(self) -> None:
-        """Blocking half of stop(); always runs via `spawn`."""
-        service, self._service = self._service, None
+        """Blocking half of stop(); always runs via `spawn`.
+
+        An exception boundary, exactly like `_begin()`: with an inline
+        `spawn` this runs synchronously inside `stop()`'s try around the
+        `spawn()` call, and `_run_finish()`'s `_fail()` has a raising emit as
+        its whole reason for existing -- letting that reach `stop()`'s guard
+        would re-fire a second, mislabeled `VoiceFailed` describing this
+        method's plumbing instead of the real cause.
+        """
+        try:
+            self._run_finish()
+        except Exception:  # noqa: BLE001 - nothing may escape _finish(); see docstring
+            logger.opt(exception=True).warning("Console dictation _finish() raised unexpectedly")
+
+    def _run_finish(self) -> None:
+        """The actual work of `_finish()`, shielded from its caller by `_finish()`."""
+        service = self._claim_service()
         try:
             if service is not None:
                 service.stop_dictation()
@@ -438,7 +519,41 @@ class ConsoleVoiceInputController:
             logger.opt(exception=True).warning("Console dictation failed to stop")
             self._fail(str(exc))
             return
-        self._set_state(STATE_IDLE)
+        self._enter_idle()
+
+    def _enter_idle(self) -> None:
+        """Atomically return to `idle`, re-checking abandonment.
+
+        The mirror of `_enter_listening()`, and needed for the same reason:
+        `_run_finish()` runs on a worker thread while `abandon()` fires from
+        the UI thread, so teardown can complete while this is still in
+        flight. Announcing `idle` again afterwards would emit a state change
+        for a controller that has already been torn down -- and a later task
+        treats `VoiceStateChanged(idle)` as the trigger to send a deferred
+        message.
+        """
+        with self._state_lock:
+            if self._abandoned:
+                return
+            self._state = STATE_IDLE
+        self._emit(VoiceStateChanged(STATE_IDLE))
+
+    def _claim_service(self) -> Any | None:
+        """Take sole ownership of the current service, under `_state_lock`.
+
+        Every other read-and-clear of `self._service` is serialized against
+        `abandon()` this way. Without the lock, `abandon()` on the UI thread
+        and `_run_finish()` on a worker can both come away with the same
+        service (double release), or `_run_finish()` can call
+        `stop_dictation()` on one `abandon()` has already released -- which
+        lands in its `except` and reports a spurious failure after teardown.
+
+        Returns:
+            The service that was held, or None if there was none to take.
+        """
+        with self._state_lock:
+            service, self._service = self._service, None
+        return service
 
     def abandon(self) -> None:
         """Release the microphone without waiting on the 2s join.
@@ -458,7 +573,11 @@ class ConsoleVoiceInputController:
             self._release(service)
 
     def _release(self, service: Any) -> None:
-        """Best-effort microphone release used by `abandon()`. Never raises.
+        """Best-effort microphone release, skipping the 2s join. Never raises.
+
+        Used by `abandon()` at teardown, by `_run_begin()` when `abandon()`
+        won the race, and by `stop()` when no worker will ever run
+        `_finish()`.
 
         Args:
             service: The dictation service instance to release.

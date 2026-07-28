@@ -831,3 +831,357 @@ def test_begin_not_started_stays_quiet_when_abandoned_in_the_gap(monkeypatch):
     failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
     assert failures == []
     assert controller.state == cvi.STATE_IDLE
+
+
+# -- Fix round 4: the real service's synchronous on_error contract (one -----
+# -- failure, two VoiceFailed events), and the stop() path never getting ----
+# -- the hardening the start() path did ------------------------------------
+
+
+class NotifyingFakeDictationService(FakeDictationService):
+    """Mirrors `LazyLiveDictationService.start_dictation()`'s real contract.
+
+    All three of its failure branches call `self._notify_error(e)`
+    **synchronously, before returning** and then `return False` rather than
+    raising: `dictation_service_lazy.py` lines 285-290 (audio/transcription
+    init failure), 323-329 (`start_recording()` returned `False`) and 332-335
+    (catch-all). `_notify_error()` (702-714) wraps the `on_error(...)` call in
+    its own log-only try/except, so an exception escaping the controller's
+    callback is swallowed there -- it never turns into a raise out of
+    `start_dictation()`.
+
+    `FakeDictationService` models the *raising* shape instead, which is why
+    the double-`VoiceFailed` this class reproduces went unnoticed.
+    """
+
+    def __init__(self, error: Exception | None, shield_callback: bool = True, **kwargs):
+        super().__init__(**kwargs)
+        self.start_result = False
+        self.sync_error = error
+        # `_notify_error()` shields itself from a raising `on_error`. A
+        # service that does not is the only way our callback's own failure
+        # can reach `_run_begin()`'s `try`, so it is worth covering.
+        self.shield_callback = shield_callback
+
+    def start_dictation(self, **callbacks):
+        self._callbacks = callbacks
+        if self.sync_error is not None:
+            if not self.shield_callback:
+                callbacks["on_error"](self.sync_error)
+            else:
+                try:
+                    callbacks["on_error"](self.sync_error)
+                except Exception:  # noqa: BLE001 - mirrors _notify_error()'s log-only catch
+                    pass
+        return self.start_result
+
+
+class LockAuditingController(cvi.ConsoleVoiceInputController):
+    """Records whether `_state_lock` was held on each `_service` touch.
+
+    `self._service` is read-and-cleared from a worker thread (`_run_finish`)
+    and from the UI thread (`abandon`), so every touch has to happen under
+    `_state_lock`. A plain instance attribute offers no seam to observe that,
+    hence the property. `_state_lock` does not exist yet when the base
+    `__init__` makes its first assignment, which is why the recorder tolerates
+    its absence.
+    """
+
+    def __init__(self, **kwargs):
+        self.service_touches: list[bool] = []
+        self._service_value = None
+        super().__init__(**kwargs)
+
+    def _lock_held(self) -> bool:
+        lock = self.__dict__.get("_state_lock")
+        return bool(lock.locked()) if lock is not None else True
+
+    @property
+    def _service(self):
+        self.service_touches.append(self._lock_held())
+        return self._service_value
+
+    @_service.setter
+    def _service(self, value):
+        self.service_touches.append(self._lock_held())
+        self._service_value = value
+
+
+def test_synchronous_on_error_is_the_only_failure_reported(monkeypatch):
+    """One real failure must produce exactly one `VoiceFailed`, carrying the
+    real cause.
+
+    Against the *real* dependency this needs no exception and no race: the
+    service reports through `on_error` synchronously and then returns `False`,
+    so the controller's `on_error` fires `_fail(real cause)` and the
+    `if not started:` path then fired `_fail("Could not start the
+    microphone.")` on top. The generic one arrived **last**, so a UI showing
+    the latest failure buried the actionable diagnostic.
+    """
+    service = NotifyingFakeDictationService(RuntimeError("no input device"))
+    controller, events, _ = _controller(monkeypatch, service)
+
+    controller.start()
+
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert "no input device" in failures[0].reason
+    assert controller.state == cvi.STATE_IDLE
+    assert controller._service is None
+    # The load-bearing ordering still holds on this path too.
+    failed_index = next(i for i, e in enumerate(events) if isinstance(e, cvi.VoiceFailed))
+    idle_index = next(
+        i
+        for i, e in enumerate(events)
+        if isinstance(e, cvi.VoiceStateChanged) and e.state == cvi.STATE_IDLE
+    )
+    assert failed_index < idle_index
+
+
+def test_not_started_fallback_is_per_attempt_not_per_instance(monkeypatch):
+    """A failed attempt must not silence the next one.
+
+    Attempt 1 reports the real cause through `on_error`, which sets the
+    suppression latch. Attempt 2 fails the other way -- `start_dictation()`
+    just returns `False`, with no `on_error` at all -- so the generic fallback
+    is the only report available and must still be emitted.
+    """
+    service = NotifyingFakeDictationService(RuntimeError("no input device"))
+    controller, events, _ = _controller(monkeypatch, service)
+
+    controller.start()
+    assert controller.state == cvi.STATE_IDLE
+    events.clear()
+
+    service.sync_error = None  # this time the service reports nothing at all
+    controller.start()
+
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert failures[0].reason == "Could not start the microphone."
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_synchronous_on_error_does_not_cascade_through_run_begin(monkeypatch):
+    """The last place a `_fail()` still sits transitively inside a `try`.
+
+    `on_error` is invoked from *inside* `start_dictation()`, which
+    `_run_begin()` wraps -- so if our callback's own `_fail()` emit raises and
+    the service does not shield the callback, `_run_begin()`'s `except` would
+    catch it and fire a second `VoiceFailed` carrying the plumbing message.
+    The same per-attempt latch closes it: the real cause has already been
+    reported, so the fallback stays quiet.
+    """
+    service = NotifyingFakeDictationService(
+        RuntimeError("no input device"), shield_callback=False
+    )
+
+    recorded = []
+
+    def emit_raising_on_idle(event):
+        recorded.append(event)
+        if isinstance(event, cvi.VoiceStateChanged) and event.state == cvi.STATE_IDLE:
+            raise RuntimeError("widget torn down mid-delivery")
+
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    controller = cvi.ConsoleVoiceInputController(
+        emit=emit_raising_on_idle,
+        spawn=lambda thunk: thunk(),
+        service_factory=lambda **kwargs: service,
+    )
+
+    controller.start()  # must NOT raise: _begin() is a thread boundary
+
+    failures = [e for e in recorded if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert "no input device" in failures[0].reason
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_stop_returns_to_idle_when_spawn_raises(monkeypatch):
+    """`stop()` never got `start()`'s wedge guard: a `spawn()` that fails to
+    schedule left `finishing` set forever, with `is_active` true and nothing
+    else able to unwind it. The microphone must not be left recording behind
+    the resulting idle state either.
+    """
+    calls = {"n": 0}
+
+    def spawn(thunk):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            thunk()  # start()'s _begin() runs inline, reaching `listening`
+            return
+        raise RuntimeError("worker pool exhausted")
+
+    audio = FakeAudioService()
+    service = FakeDictationService()
+    service._audio_service = audio
+    controller, events, _ = _controller(monkeypatch, service=service, spawn=spawn)
+    controller.start()
+    assert controller.state == cvi.STATE_LISTENING
+    events.clear()
+
+    controller.stop()
+
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert "worker pool exhausted" in failures[0].reason
+    assert controller.state == cvi.STATE_IDLE
+    assert controller.is_active is False
+    assert audio.stop_called is True
+    assert controller._service is None
+
+
+def test_stop_does_not_wedge_finishing_when_the_finishing_emit_raises(monkeypatch):
+    """The other half of the same wedge: the `VoiceStateChanged(finishing)`
+    emit itself raising (a Textual `post_message` racing widget teardown).
+    """
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    recorded = []
+
+    def emit_raising_on_finishing(event):
+        recorded.append(event)
+        if isinstance(event, cvi.VoiceStateChanged) and event.state == cvi.STATE_FINISHING:
+            raise RuntimeError("widget torn down")
+
+    service = FakeDictationService()
+    controller = cvi.ConsoleVoiceInputController(
+        emit=emit_raising_on_finishing,
+        spawn=lambda thunk: thunk(),
+        service_factory=lambda **kwargs: service,
+    )
+    controller.start()
+    assert controller.state == cvi.STATE_LISTENING
+
+    controller.stop()
+
+    assert controller.state == cvi.STATE_IDLE
+    assert controller.is_active is False
+    failures = [e for e in recorded if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert "widget torn down" in failures[0].reason
+
+
+def test_finish_failure_does_not_cascade_into_a_second_voicefailed(monkeypatch):
+    """`stop()`'s new guard must not re-absorb `_finish()`'s own `_fail()`.
+
+    The exact trap that recurred three times: with the default inline `spawn`,
+    the guard around `self._spawn(self._finish)` transitively covers all of
+    `_finish()`, so `_fail()`'s second emit raising would be caught there and
+    re-fired as a second `VoiceFailed` carrying the plumbing message instead
+    of the real cause. `_finish()` is an exception boundary, so `stop()` must
+    not raise and must report exactly once.
+    """
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    recorded = []
+
+    def emit_raising_on_idle(event):
+        recorded.append(event)
+        if isinstance(event, cvi.VoiceStateChanged) and event.state == cvi.STATE_IDLE:
+            raise RuntimeError("widget torn down mid-delivery")
+
+    def stop_dictation_boom():
+        raise RuntimeError("device gone")
+
+    service = FakeDictationService()
+    controller = cvi.ConsoleVoiceInputController(
+        emit=emit_raising_on_idle,
+        spawn=lambda thunk: thunk(),
+        service_factory=lambda **kwargs: service,
+    )
+    controller.start()
+    assert controller.state == cvi.STATE_LISTENING
+    monkeypatch.setattr(service, "stop_dictation", stop_dictation_boom)
+    recorded.clear()
+
+    controller.stop()  # must NOT raise: _finish() is a thread boundary
+
+    failures = [e for e in recorded if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert "device gone" in failures[0].reason
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_stale_finish_after_abandon_does_not_emit_a_spurious_idle(monkeypatch):
+    """`_run_finish()` must re-check abandonment before announcing `idle`.
+
+    Freeze `_finish()` mid-flight (deferring spawn), tear the controller down
+    with `abandon()`, then let the stale thunk run: it must not emit a state
+    change for a controller that is already torn down -- a later task treats
+    `VoiceStateChanged(idle)` as the trigger to send a deferred message. It
+    must also not call `stop_dictation()` on the service `abandon()` already
+    released, which would land in `_run_finish()`'s `except` and report a
+    spurious failure after teardown.
+    """
+    pending = []
+    defer = {"on": False}
+
+    def spawn(thunk):
+        if defer["on"]:
+            pending.append(thunk)
+        else:
+            thunk()
+
+    audio = FakeAudioService()
+    service = FakeDictationService()
+    service._audio_service = audio
+    controller, events, _ = _controller(monkeypatch, service=service, spawn=spawn)
+
+    controller.start()
+    assert controller.state == cvi.STATE_LISTENING
+
+    defer["on"] = True
+    controller.stop()
+    assert controller.state == cvi.STATE_FINISHING
+    assert len(pending) == 1
+
+    controller.abandon()
+    assert controller.state == cvi.STATE_IDLE
+    assert audio.stop_called is True
+    events.clear()
+
+    pending[0]()  # the frozen _finish() thunk finally runs, after teardown
+
+    assert events == []
+    assert controller.state == cvi.STATE_IDLE
+    assert service.stopped is False  # abandon() had already taken the service
+
+
+def test_finish_claims_the_service_under_the_state_lock(monkeypatch):
+    """The read-and-clear of `self._service` in the stop path must be locked.
+
+    Every other touch of that attribute is serialized against `abandon()`;
+    `_finish()`'s was not, so a UI-thread `abandon()` during teardown could
+    come away with the same service (double release) or leave `_run_finish()`
+    calling `stop_dictation()` on one already released.
+    """
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    service = FakeDictationService()
+    events = []
+    controller = LockAuditingController(
+        emit=events.append,
+        spawn=lambda thunk: thunk(),
+        service_factory=lambda **kwargs: service,
+    )
+    controller.start()
+    assert controller.state == cvi.STATE_LISTENING
+    controller.service_touches.clear()
+
+    controller.stop()
+
+    assert controller.service_touches  # the claim really happened...
+    assert all(controller.service_touches)  # ...and every touch held the lock
+    assert service.stopped is True
+    assert controller.state == cvi.STATE_IDLE
