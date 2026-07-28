@@ -45,6 +45,14 @@ from .registry import (
     RuntimeObservation,
     TranscriptionAdapter,
 )
+from .routing import (
+    ResolvedTranscriptionRequest,
+    RoutingPolicy,
+    RoutingResolutionError,
+    TranscriptionRouter,
+    build_builtin_declarations,
+    build_builtin_registry,
+)
 
 __all__ = [
     "MAX_BUFFER_AUDIO_BYTES",
@@ -88,4 +96,10 @@ __all__ = [
     "RuntimeCapabilityError",
     "RuntimeObservation",
     "TranscriptionAdapter",
+    "ResolvedTranscriptionRequest",
+    "RoutingPolicy",
+    "RoutingResolutionError",
+    "TranscriptionRouter",
+    "build_builtin_declarations",
+    "build_builtin_registry",
 ]

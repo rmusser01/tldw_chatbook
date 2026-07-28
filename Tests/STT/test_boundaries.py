@@ -20,7 +20,6 @@ _FORBIDDEN_IMPORTS = (
     "transformers",
     "httpx",
     "requests",
-    "tldw_chatbook.STT.routing",
     "tldw_chatbook.Local_Ingestion.transcription_service",
 )
 # The application package has its own pre-existing imports, including Textual.
@@ -83,6 +82,12 @@ _EXPECTED_EXPORTS = (
     "RuntimeCapabilityError",
     "RuntimeObservation",
     "TranscriptionAdapter",
+    "ResolvedTranscriptionRequest",
+    "RoutingPolicy",
+    "RoutingResolutionError",
+    "TranscriptionRouter",
+    "build_builtin_declarations",
+    "build_builtin_registry",
 )
 
 
@@ -160,6 +165,7 @@ def test_contracts_import_without_runtime_or_legacy_dependencies() -> None:
             attempted_imports.clear()
             import tldw_chatbook.STT.contracts
             import tldw_chatbook.STT.registry
+            import tldw_chatbook.STT.routing
         finally:
             builtins.__import__ = original_import
 
