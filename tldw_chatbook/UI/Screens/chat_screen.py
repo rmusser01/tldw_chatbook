@@ -7533,11 +7533,21 @@ class ChatScreen(BaseAppScreen):
         Parallel-agents spec §6, fix round 2 (live-smoke finding): the Agent
         section's persisted preference defaults collapsed (``agent_open=
         False``, see ``ConsoleRailPreferences``) and nothing previously
-        reopened it, so its BODY -- where the fleet summary line
-        (``#console-agent-fleet-summary``) lives -- stayed ``display: none``
-        even while another session was running or parked on an approval.
-        Scrolling the rail only ever reached the still-collapsed header; the
-        line itself was unreachable regardless of scroll position.
+        reopened it, so its BODY -- the status/step/sub-agent detail for
+        the viewed session's own run -- stayed ``display: none`` even
+        while another session was running or parked on an approval.
+        Scrolling the rail only ever reached the still-collapsed header;
+        that detail was unreachable regardless of scroll position.
+
+        TASK-1140 (UAT F1, fix round 1): ``#console-agent-fleet-summary``
+        itself no longer lives inside this section's body -- it is now a
+        pinned, non-scrolling sibling of the rail's own header (see the
+        compose block a few hundred lines up), painted unconditionally
+        whenever the fleet has anything to report, independent of this
+        section's open/collapsed state. This method's force-open still
+        matters for the Agent section's OWN contextual detail (status/
+        steps/sub-agents for whichever conversation is viewed), just not
+        for fleet-line visibility anymore.
 
         Mirrors ``_apply_pending_launch_inspector_auto_open``: an ephemeral
         override applied to the RENDERED rail state only, never written back
@@ -7545,8 +7555,8 @@ class ChatScreen(BaseAppScreen):
         takes effect the moment the fleet goes quiet (``fleet_summary_
         counts()`` returns to ``(0, 0)``). Uses ``_console_agent_fleet_
         summary_line()`` -- the exact same non-empty-string signal the
-        fleet Static's own ``display`` toggles on -- so "must render open"
-        and "has a line to show" can never disagree.
+        pinned fleet Static's own ``display`` toggles on -- so "must render
+        the section open" and "has a line to show" can never disagree.
 
         TASK-915: fix round 3 (live-smoke finding). Round 2's force was a
         one-shot-per-rendered-state override, but the 0.2s sync tick
@@ -9721,6 +9731,51 @@ class ChatScreen(BaseAppScreen):
                         collapse_button.styles.min_width = 3
                         collapse_button.styles.max_width = 3
                         yield collapse_button
+
+                    # TASK-1140 (UAT F1, fix round 1): the fleet summary --
+                    # "N other agents running, M waiting for approval."
+                    # (parallel-agents spec §6, PA-T8) -- is pinned HERE, a
+                    # plain sibling of `left_rail_header` inside the
+                    # non-scrolling `left_rail` Vertical, deliberately
+                    # OUTSIDE `#console-left-rail-body` (the `VerticalScroll`
+                    # every section below shares). `#console-left-rail-body`
+                    # is CSS `height: 1fr` -- it only ever claims whatever
+                    # vertical space is left over after ITS non-scrolling
+                    # siblings (the header, this line) are laid out, so this
+                    # widget is painted unconditionally: independent of rail
+                    # scroll position, which sections are open/collapsed,
+                    # and how much step content the Agent section carries.
+                    # Round 1 (compose-order-only, fleet line first inside
+                    # the Agent section body) was insufficient -- Session
+                    # and Model are BOTH open by persisted default
+                    # (`ConsoleRailPreferences.session_open`/`model_open`)
+                    # and together already exceed the rail body's own
+                    # ~10-row visible budget in a 44-row terminal, so any
+                    # position inside that shared scrollable flow could
+                    # still land below the fold before a user ever touches
+                    # the Agent section's own content.
+                    #
+                    # Present but display:none when both counts are zero
+                    # (mirrors the recovery Static in the Model section),
+                    # so `_sync_console_agent_section`'s targeted update
+                    # never needs to mount/unmount it -- and the pinned slot
+                    # collapses to zero rows rather than leaving a blank
+                    # line (`height: auto` + `display: none` both cooperate
+                    # here: Textual excludes a `display: none` widget from
+                    # layout entirely).
+                    fleet_line = self._console_agent_fleet_summary_line()
+                    fleet_summary = Static(
+                        fleet_line,
+                        id="console-agent-fleet-summary",
+                        classes="console-agent-section-fleet-summary",
+                        markup=False,
+                    )
+                    fleet_summary.styles.height = "auto"
+                    fleet_summary.styles.display = (
+                        "block" if fleet_line else "none"
+                    )
+                    yield fleet_summary
+
                     with VerticalScroll(
                         id="console-left-rail-body",
                         classes="console-left-rail-body",
@@ -9902,43 +9957,27 @@ class ChatScreen(BaseAppScreen):
                         if not rail_state.agent_open:
                             agent_body.styles.display = "none"
                         with agent_body:
-                            # Parallel-agents spec §6 (PA-T8): fleet summary
-                            # -- "N other agents running, M waiting for
-                            # approval." Present but display:none when both
-                            # counts are zero (mirrors the recovery Static
-                            # above), so `_sync_console_agent_section`'s
-                            # targeted update never needs to mount/unmount.
-                            #
-                            # TASK-1140 (UAT F1): mounted FIRST, directly
-                            # under the section header -- above the viewed
-                            # session's status/step/sub-agent lines. Those
-                            # grow unboundedly with step content (`.console-
-                            # agent-section-steps` is `height: auto` +
-                            # wrapping text), so with the fleet line last, a
-                            # single long-running/step-heavy viewed session
-                            # pushed it below the rail's scroll fold even
-                            # though its own display chain was all-True
-                            # (`#console-left-rail-body` is a shared
-                            # `VerticalScroll` across every rail section, so
-                            # "displayed" and "on-screen without scrolling"
-                            # are different questions). Placement is the
-                            # only change here -- id, verbatim copy,
-                            # hidden-at-zero, and the auto-open/sticky-
-                            # collapse machinery below all key off `_console
-                            # _agent_fleet_summary_line()`'s return value,
-                            # not this line's position in the body.
-                            fleet_line = self._console_agent_fleet_summary_line()
-                            fleet_summary = Static(
-                                fleet_line,
-                                id="console-agent-fleet-summary",
-                                classes="console-agent-section-fleet-summary",
-                                markup=False,
-                            )
-                            fleet_summary.styles.display = (
-                                "block" if fleet_line else "none"
-                            )
-                            yield fleet_summary
-
+                            # TASK-1140 (UAT F1, fix round 1): the fleet
+                            # summary Static used to mount HERE (first, per
+                            # round 1's compose-order-only fix). Round 1's
+                            # own harness proved that placement insufficient
+                            # once the reviewer ran it against Session/Model
+                            # left at their real PERSISTED DEFAULTS (both
+                            # open) rather than collapsed: those two
+                            # sections alone already exceed the rail's own
+                            # ~10-row visible budget in a 44-row terminal,
+                            # so ANY position inside the shared, scrollable
+                            # `#console-left-rail-body` -- including the top
+                            # of the Agent section -- can still land below
+                            # the fold. The widget now lives OUTSIDE that
+                            # scrollable flow entirely (see `left_rail_header`
+                            # below, a few hundred lines up in this same
+                            # compose method) so it is painted regardless of
+                            # scroll position, section open/collapsed state,
+                            # or step-content length. Not duplicated here --
+                            # two widgets sharing one id is invalid, and the
+                            # pinned copy already covers "does the Agent
+                            # section's own busy state show a fleet line".
                             status_line, steps_text, subagents_text = (
                                 self._console_agent_section_lines()
                             )

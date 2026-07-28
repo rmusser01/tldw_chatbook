@@ -683,41 +683,157 @@ class _TallStepsFleetBridge:
         return []
 
 
+async def _setup_tall_steps_and_parked_fleet(
+    console, *, collapse_session_and_model: bool
+):
+    """Shared AC#2 repro rig: a done viewed session with several long step
+    bullets (the tall Agent-section content F1 called out) plus a parked
+    background session (the fleet-busy signal). Returns the mounted
+    ``#console-agent-fleet-summary`` widget after a settle pause.
+
+    ``collapse_session_and_model`` toggles whether Session/Model -- both
+    open by PERSISTED DEFAULT (``ConsoleRailPreferences.session_open``/
+    ``model_open``) -- are left at that default or explicitly collapsed.
+    Both arrangements must find the fleet line painted post-fix (round 1,
+    reorder-only, only passed the collapsed case -- see task-1140's
+    Implementation Notes for the reviewer's revert-check against that
+    placement).
+    """
+    controller = console._ensure_console_chat_controller()
+    store = controller.store
+    viewed = store.active_session_id
+    background = controller.new_session().id
+    store.switch_session(viewed)  # keep viewing the first (done) session
+
+    # Done viewed session with several long step bullets -- the tall
+    # rail content that pushed the fleet line below the fold live.
+    console._console_agent_bridge = _TallStepsFleetBridge()
+
+    # A parked background session needing approval -- same fleet-busy
+    # signal the sibling reachability test drives via a running session,
+    # here via the approval path so the fleet line reads "waiting for
+    # approval" (matching UAT's own repro).
+    console._park_console_approval(background)
+
+    if collapse_session_and_model:
+        console._set_console_rail_preference(
+            section_updates={"session": False, "model": False},
+            notify_on_failure=False,
+        )
+
+    await console._sync_native_console_chat_ui()
+    return console.query_one("#console-agent-fleet-summary", Static)
+
+
+def _assert_painted_at_own_region(host, widget) -> None:
+    """AC#2: viewport intersection via the compositor's own hit-test, not
+    a raw ``region.y`` bound and not just the display chain.
+
+    ``Widget.region`` is reported in an UNCLIPPED coordinate space --  a
+    widget scrolled out of (or, pre-round-1-fix, simply positioned below
+    the fold within) a scrollable ancestor still has a ``region``, just
+    one that ancestor never paints -- so comparing ``region.y`` to
+    ``console.size.height`` alone cannot distinguish "below THIS specific
+    scrollable ancestor's fold" from "within it". ``App.get_widget_at``
+    asks the compositor what is ACTUALLY painted at that cell, the same
+    bar a live terminal renders against.
+    """
+    region = widget.region
+    try:
+        hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
+    except Exception as exc:  # textual.errors.NoWidget
+        pytest.fail(
+            f"nothing is painted at {widget!r}'s own region {region!r}: {exc}"
+        )
+    assert hit_widget is widget, (
+        f"the compositor paints {hit_widget!r} at {region!r}, not {widget!r} "
+        "itself -- the widget's display chain is all-True but it is not "
+        "actually visible on screen"
+    )
+
+
 @pytest.mark.asyncio
-async def test_fleet_summary_line_intersects_the_visible_viewport() -> None:
-    """AC#2 (task-1140 / UAT F1): the sibling ``test_fleet_summary_line_is_
-    reachable_on_the_live_rendered_surface`` above only walks the widget's
-    ancestor *display* chain -- ``Widget.display`` is a per-widget flag,
-    orthogonal to scroll position, so it structurally cannot catch a
-    widget that is displayed but scrolled below the rail's fold. UAT's
-    headless proof of F1 found exactly that: with a done viewed session
-    (several step bullets) and a parked background session, `#console-
-    agent-fleet-summary`'s region was `y=48` in a 44-row viewport -- off
-    the bottom of the screen -- while every ancestor in its display chain
-    reported `display=True`.
+async def test_fleet_summary_line_intersects_the_visible_viewport_default_sections() -> None:
+    """AC#2 (task-1140 / UAT F1), fix round 1 regression: Session and Model
+    are BOTH open by PERSISTED DEFAULT (``ConsoleRailPreferences.
+    session_open``/``model_open``) -- the layout every real session
+    actually starts in, never explicitly collapsed by anything in this
+    test. Round 1's fix (reorder-only: fleet line moved to the top of the
+    Agent section body, still inside the shared, scrollable
+    ``#console-left-rail-body``) was reviewed and found insufficient
+    against exactly this arrangement: Session alone renders far more
+    content than the rail body's own ~10-row visible budget in a 44-row
+    terminal, so the Agent section -- and anything inside it, regardless
+    of its own position -- could still land below the fold before a user
+    ever touches the Agent section's own step content.
 
-    Session and Model (both open-by-default, `ConsoleRailPreferences.
-    session_open`/`model_open`) are collapsed here so the ONLY variable
-    under test is the Agent section's OWN content -- exactly F1's scope
-    ("the viewed session's status and step bullets... push the fleet
-    line below the fold"), not an unrelated finding about how much of
-    the ~10-row rail viewport Session/Model themselves consume.
+    Round 2 pins the fleet line OUTSIDE the scrollable rail flow entirely
+    (a non-scrolling sibling of the rail's own header), so it is painted
+    unconditionally. This test is the reviewer's own repro (their one
+    change to the round-1 test harness: leave Session/Model at their real
+    defaults) promoted to a permanent regression guard -- see task-1140's
+    Implementation Notes for the revert-check confirming it fails against
+    the round-1 commit.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
 
-    The check itself uses the compositor's own hit-test
-    (`App.get_widget_at`) rather than a raw `region.y` bound: `region` is
-    reported in the SAME unclipped coordinate space regardless of scroll
-    offset (a widget scrolled out of its `VerticalScroll` ancestor still
-    has a `region`, just one the container never paints), so comparing it
-    to `console.size.height` alone cannot distinguish "below this
-    specific scrollable ancestor's fold" from "within it" -- the actual
-    rail viewport here is only ~10 rows, well short of the full 44-row
-    screen. `get_widget_at` asks the compositor what is ACTUALLY painted
-    at that cell, which is the same bar a live terminal renders against.
-    Before task-1140's fix (fleet line last in the Agent section body,
-    below status/steps/sub-agents), this assertion fails against the
-    same setup -- see task-1140's Implementation Notes for the revert-
-    check (pre-fix: region y=35, and the compositor paints a DIFFERENT
-    widget at that cell entirely).
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        fleet_summary = await _setup_tall_steps_and_parked_fleet(
+            console, collapse_session_and_model=False
+        )
+        await pilot.pause(0.3)
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+
+        assert (
+            getattr(fleet_summary.renderable, "plain", str(fleet_summary.renderable))
+            == "0 other agents running, 1 waiting for approval."
+        )
+        _assert_widget_and_ancestors_displayed(fleet_summary)
+        _assert_painted_at_own_region(host, fleet_summary)
+
+
+@pytest.mark.asyncio
+async def test_fleet_summary_line_intersects_the_visible_viewport_collapsed_sections() -> None:
+    """Same repro as the sibling default-sections test above, but with
+    Session/Model explicitly collapsed first. Kept alongside the default-
+    arrangement test (not replaced by it) -- the pinned fleet line must
+    stay painted across BOTH arrangements, since collapsing/reopening
+    other rail sections must never affect its own visibility.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        fleet_summary = await _setup_tall_steps_and_parked_fleet(
+            console, collapse_session_and_model=True
+        )
+        await pilot.pause(0.3)
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+
+        assert (
+            getattr(fleet_summary.renderable, "plain", str(fleet_summary.renderable))
+            == "0 other agents running, 1 waiting for approval."
+        )
+        _assert_widget_and_ancestors_displayed(fleet_summary)
+        _assert_painted_at_own_region(host, fleet_summary)
+
+
+@pytest.mark.asyncio
+async def test_fleet_summary_line_occupies_no_row_when_fleet_is_quiet() -> None:
+    """Hidden-at-zero (task-1140 fix round 1 requirement): pinning the
+    fleet line as a non-scrolling sibling of the rail header must not
+    leave a blank row when both counts are zero -- ``display: none``
+    excludes it from layout entirely, same contract as before it was
+    pinned (mirrors the Model section's ``#console-model-section-recovery``
+    Static). Asserted directly against the rendered region/size, not just
+    the ``styles.display`` string, so a future CSS change that keeps
+    ``display: block`` but zeroes height some other way would still be
+    caught (or rather, would need an equally-zero rendered footprint).
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -729,49 +845,43 @@ async def test_fleet_summary_line_intersects_the_visible_viewport() -> None:
         store = controller.store
         viewed = store.active_session_id
         background = controller.new_session().id
-        store.switch_session(viewed)  # keep viewing the first (done) session
+        store.switch_session(viewed)
 
-        # Done viewed session with several long step bullets -- the tall
-        # rail content that pushed the fleet line below the fold live.
-        console._console_agent_bridge = _TallStepsFleetBridge()
+        # No fake bridge, no parked approval, no running background --
+        # fleet_summary_counts() stays (0, 0): the quiet baseline.
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
 
-        # A parked background session needing approval -- same fleet-busy
-        # signal the sibling reachability test drives via a running
-        # session, here via the approval path so the fleet line reads
-        # "waiting for approval" (matching UAT's own repro).
-        console._park_console_approval(background)
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+        assert not fleet_summary.display
+        assert fleet_summary.region.width == 0
+        assert fleet_summary.region.height == 0
 
-        # Collapse Session/Model -- see docstring: isolates the Agent
-        # section's own content as the only variable under test.
-        console._set_console_rail_preference(
-            section_updates={"session": False, "model": False},
-            notify_on_failure=False,
+        # Busy, then quiet again -- the docked slot must collapse back to
+        # zero rows, not retain a stale non-zero region from when it was
+        # last painted (`_sync_console_agent_section` toggles `styles.
+        # display` on every payload change, not just at compose time).
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg"),
+            session_id=background,
         )
         await console._sync_native_console_chat_ui()
         await pilot.pause(0.3)
-
         fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
-        assert (
-            getattr(fleet_summary.renderable, "plain", str(fleet_summary.renderable))
-            == "0 other agents running, 1 waiting for approval."
-        )
-        _assert_widget_and_ancestors_displayed(fleet_summary)
+        assert fleet_summary.display
+        assert fleet_summary.region.height > 0
 
-        # AC#2: viewport intersection, not just the display chain -- the
-        # exact gap `_assert_widget_and_ancestors_displayed` cannot catch.
-        region = fleet_summary.region
-        try:
-            hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
-        except Exception as exc:  # textual.errors.NoWidget
-            pytest.fail(
-                f"nothing is painted at the fleet summary's own region "
-                f"{region!r}: {exc}"
-            )
-        assert hit_widget is fleet_summary, (
-            f"the compositor paints {hit_widget!r} at {region!r}, not the "
-            "fleet summary itself -- the widget's display chain is all-"
-            "True but it is scrolled out of the rail's visible viewport"
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"),
+            session_id=background,
         )
+        controller.mark_session_visited(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.3)
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+        assert not fleet_summary.display
+        assert fleet_summary.region.width == 0
+        assert fleet_summary.region.height == 0
 
 
 def _agent_section_open(console) -> bool:
