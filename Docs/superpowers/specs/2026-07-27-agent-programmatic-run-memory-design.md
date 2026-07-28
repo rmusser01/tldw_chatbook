@@ -562,7 +562,7 @@ reviewers can check the reasoning rather than rediscover it.
   full-content access. The Console currently shows 160–200 characters of a result
   the model received at up to 16,000. The log is what makes "read the full
   content" answerable.
-- **task-895** — `glob_files`/`grep_files` ignore workspace folder roots that
+- **task-1265** — `glob_files`/`grep_files` ignore workspace folder roots that
   `read_file` honours (§9.4). Filed rather than fixed here.
 - **task-326 / task-327** — token budget and durability hardening; already merged
   into the substrate this builds on.

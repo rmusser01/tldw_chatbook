@@ -1,5 +1,5 @@
 ---
-id: TASK-895
+id: TASK-1265
 title: glob_files/grep_files ignore workspace folder roots that read_file honors
 status: To Do
 assignee: []
