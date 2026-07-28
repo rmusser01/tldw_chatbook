@@ -272,6 +272,37 @@ are cheaper than re-deriving the graph.
 
 ---
 
+## A property test with no deadline override is load-sensitive
+
+**TASK-1260, 2026-07-28.** `test_safe_paths_always_validate` failed once inside a
+three-directory run, passed alone, passed on re-run, and passed on a clean
+baseline with the identical command. It is a Hypothesis `@given` property that
+creates a `TemporaryDirectory` and up to four directories per example (the
+strategy yields 1-5 components; the loop walks `components[:-1]`, the last being
+the file), with no `settings(...)` override and no Hypothesis profile in
+`Tests/conftest.py` — so it runs under the default **200 ms per-example
+deadline**. On a machine with 10+ concurrent pytest processes, filesystem work
+crosses that.
+
+**The cost is in attribution, not in the failure.** Establishing that it was not
+a regression took five runs across two worktrees: the identical command on a
+clean pre-change baseline, `Tests/Utils/` with and without a newly added file in
+that same directory, the test alone, and a re-run to show intermittency. The
+failure was indistinguishable from a real regression at the moment it appeared,
+and it appeared while unrelated work was in flight.
+
+**What to do.** When a failure appears in a run that mixes suites: before
+anything else, check whether the test is a Hypothesis property with no deadline
+override. If it is, the load hypothesis is cheap to confirm — run it alone, then
+re-run the mixed command. Do not skip the clean-baseline run, though: "it's
+probably a flake" is the same shape of reasoning as "it's probably unrelated",
+and this repo has punished both.
+
+The durable fix is a Hypothesis profile registered once in `Tests/conftest.py`,
+not a per-file patch — other property files carry the same exposure.
+
+---
+
 ## Related
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects
