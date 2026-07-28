@@ -9902,6 +9902,43 @@ class ChatScreen(BaseAppScreen):
                         if not rail_state.agent_open:
                             agent_body.styles.display = "none"
                         with agent_body:
+                            # Parallel-agents spec §6 (PA-T8): fleet summary
+                            # -- "N other agents running, M waiting for
+                            # approval." Present but display:none when both
+                            # counts are zero (mirrors the recovery Static
+                            # above), so `_sync_console_agent_section`'s
+                            # targeted update never needs to mount/unmount.
+                            #
+                            # TASK-1140 (UAT F1): mounted FIRST, directly
+                            # under the section header -- above the viewed
+                            # session's status/step/sub-agent lines. Those
+                            # grow unboundedly with step content (`.console-
+                            # agent-section-steps` is `height: auto` +
+                            # wrapping text), so with the fleet line last, a
+                            # single long-running/step-heavy viewed session
+                            # pushed it below the rail's scroll fold even
+                            # though its own display chain was all-True
+                            # (`#console-left-rail-body` is a shared
+                            # `VerticalScroll` across every rail section, so
+                            # "displayed" and "on-screen without scrolling"
+                            # are different questions). Placement is the
+                            # only change here -- id, verbatim copy,
+                            # hidden-at-zero, and the auto-open/sticky-
+                            # collapse machinery below all key off `_console
+                            # _agent_fleet_summary_line()`'s return value,
+                            # not this line's position in the body.
+                            fleet_line = self._console_agent_fleet_summary_line()
+                            fleet_summary = Static(
+                                fleet_line,
+                                id="console-agent-fleet-summary",
+                                classes="console-agent-section-fleet-summary",
+                                markup=False,
+                            )
+                            fleet_summary.styles.display = (
+                                "block" if fleet_line else "none"
+                            )
+                            yield fleet_summary
+
                             status_line, steps_text, subagents_text = (
                                 self._console_agent_section_lines()
                             )
@@ -9923,23 +9960,6 @@ class ChatScreen(BaseAppScreen):
                                 classes="console-agent-section-subagents",
                                 markup=False,
                             )
-                            # Parallel-agents spec §6 (PA-T8): fleet summary
-                            # -- "N other agents running, M waiting for
-                            # approval." Present but display:none when both
-                            # counts are zero (mirrors the recovery Static
-                            # above), so `_sync_console_agent_section`'s
-                            # targeted update never needs to mount/unmount.
-                            fleet_line = self._console_agent_fleet_summary_line()
-                            fleet_summary = Static(
-                                fleet_line,
-                                id="console-agent-fleet-summary",
-                                classes="console-agent-section-fleet-summary",
-                                markup=False,
-                            )
-                            fleet_summary.styles.display = (
-                                "block" if fleet_line else "none"
-                            )
-                            yield fleet_summary
                             back_button = Button(
                                 "Back",
                                 id="console-agent-drilldown-back",

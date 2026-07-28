@@ -14,6 +14,11 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Chat.console_agent_bridge import (
+    AgentLiveSnapshot,
+    AgentLiveStep,
+    SubAgentSummary,
+)
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunMarker,
@@ -641,6 +646,132 @@ async def test_fleet_summary_line_is_reachable_on_the_live_rendered_surface() ->
         assert not fleet_summary.display or str(
             getattr(fleet_summary.renderable, "plain", fleet_summary.renderable)
         ) == ""
+
+
+class _TallStepsFleetBridge:
+    """Fake Console agent bridge: a DONE viewed run with several long step
+    bullets -- the exact shape task-1140/UAT F1 reproduced live (region
+    ``y=48`` in a 44-row viewport). ``.console-agent-section-steps`` is
+    ``height: auto`` with wrapping text (no ``nowrap``), so several
+    80-char-ish bullets reliably grow the section tall enough to push
+    anything BELOW them past the rail's scroll fold.
+    """
+
+    def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
+        return AgentLiveSnapshot(
+            status="done",
+            step=5,
+            steps=tuple(
+                AgentLiveStep(
+                    "tool_result",
+                    f"step {i}: a long rendered summary line padding out the "
+                    "agent rail section with wrapped content",
+                    "primary",
+                )
+                for i in range(5)
+            ),
+            subagents=(SubAgentSummary("research pricing", status="done"),),
+        )
+
+    def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
+        return self.live_snapshot(conversation_id)
+
+    def subagent_run(self, run_id: str):
+        return None
+
+    def subagent_runs(self, conversation_id: str) -> list:
+        return []
+
+
+@pytest.mark.asyncio
+async def test_fleet_summary_line_intersects_the_visible_viewport() -> None:
+    """AC#2 (task-1140 / UAT F1): the sibling ``test_fleet_summary_line_is_
+    reachable_on_the_live_rendered_surface`` above only walks the widget's
+    ancestor *display* chain -- ``Widget.display`` is a per-widget flag,
+    orthogonal to scroll position, so it structurally cannot catch a
+    widget that is displayed but scrolled below the rail's fold. UAT's
+    headless proof of F1 found exactly that: with a done viewed session
+    (several step bullets) and a parked background session, `#console-
+    agent-fleet-summary`'s region was `y=48` in a 44-row viewport -- off
+    the bottom of the screen -- while every ancestor in its display chain
+    reported `display=True`.
+
+    Session and Model (both open-by-default, `ConsoleRailPreferences.
+    session_open`/`model_open`) are collapsed here so the ONLY variable
+    under test is the Agent section's OWN content -- exactly F1's scope
+    ("the viewed session's status and step bullets... push the fleet
+    line below the fold"), not an unrelated finding about how much of
+    the ~10-row rail viewport Session/Model themselves consume.
+
+    The check itself uses the compositor's own hit-test
+    (`App.get_widget_at`) rather than a raw `region.y` bound: `region` is
+    reported in the SAME unclipped coordinate space regardless of scroll
+    offset (a widget scrolled out of its `VerticalScroll` ancestor still
+    has a `region`, just one the container never paints), so comparing it
+    to `console.size.height` alone cannot distinguish "below this
+    specific scrollable ancestor's fold" from "within it" -- the actual
+    rail viewport here is only ~10 rows, well short of the full 44-row
+    screen. `get_widget_at` asks the compositor what is ACTUALLY painted
+    at that cell, which is the same bar a live terminal renders against.
+    Before task-1140's fix (fleet line last in the Agent section body,
+    below status/steps/sub-agents), this assertion fails against the
+    same setup -- see task-1140's Implementation Notes for the revert-
+    check (pre-fix: region y=35, and the compositor paints a DIFFERENT
+    widget at that cell entirely).
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # keep viewing the first (done) session
+
+        # Done viewed session with several long step bullets -- the tall
+        # rail content that pushed the fleet line below the fold live.
+        console._console_agent_bridge = _TallStepsFleetBridge()
+
+        # A parked background session needing approval -- same fleet-busy
+        # signal the sibling reachability test drives via a running
+        # session, here via the approval path so the fleet line reads
+        # "waiting for approval" (matching UAT's own repro).
+        console._park_console_approval(background)
+
+        # Collapse Session/Model -- see docstring: isolates the Agent
+        # section's own content as the only variable under test.
+        console._set_console_rail_preference(
+            section_updates={"session": False, "model": False},
+            notify_on_failure=False,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.3)
+
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+        assert (
+            getattr(fleet_summary.renderable, "plain", str(fleet_summary.renderable))
+            == "0 other agents running, 1 waiting for approval."
+        )
+        _assert_widget_and_ancestors_displayed(fleet_summary)
+
+        # AC#2: viewport intersection, not just the display chain -- the
+        # exact gap `_assert_widget_and_ancestors_displayed` cannot catch.
+        region = fleet_summary.region
+        try:
+            hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
+        except Exception as exc:  # textual.errors.NoWidget
+            pytest.fail(
+                f"nothing is painted at the fleet summary's own region "
+                f"{region!r}: {exc}"
+            )
+        assert hit_widget is fleet_summary, (
+            f"the compositor paints {hit_widget!r} at {region!r}, not the "
+            "fleet summary itself -- the widget's display chain is all-"
+            "True but it is scrolled out of the rail's visible viewport"
+        )
 
 
 def _agent_section_open(console) -> bool:
