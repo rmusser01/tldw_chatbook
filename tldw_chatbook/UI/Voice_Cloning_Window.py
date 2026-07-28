@@ -41,6 +41,7 @@ from ..Widgets.enhanced_file_picker import (
 from ..Third_Party.textual_fspicker import Filters
 from ..Event_Handlers.STTS_Events.stts_events import STTSPlaygroundGenerateEvent
 from ..TTS import STTSPlaygroundRequest
+from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixin
 
 #######################################################################################################################
 #
@@ -48,7 +49,7 @@ from ..TTS import STTSPlaygroundRequest
 #
 
 
-class VoiceCloningWindow(Screen):
+class VoiceCloningWindow(DataTableClickSelectMixin, Screen):
     """
     Voice Cloning management window supporting multiple TTS backends.
 
@@ -338,6 +339,10 @@ class VoiceCloningWindow(Screen):
 
         # Update table
         table = self.query_one("#profile-table", DataTable)
+        # Rebuilding moves the cursor to row 0 before the key-based restore
+        # below puts it back; declaring the rebuild keeps that transient from
+        # being read as a selection (DataTableClickSelectMixin).
+        self.repopulating_table()
         table.clear()
 
         # Update test profile selector

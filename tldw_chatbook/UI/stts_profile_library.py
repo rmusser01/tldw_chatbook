@@ -1233,6 +1233,33 @@ class STTSProfileLibrary(Widget):
             rendered_offset + len(self._loaded_rows) >= self._total
         )
 
+    @on(DataTable.RowHighlighted, "#stts-profile-table")
+    def _handle_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """A single click, or an arrow key, landing on a profile row.
+
+        Textual fires `RowSelected` on *activation* -- Enter, or a second click
+        -- so handling only that left a clicked profile highlighted but not
+        selected, with the row actions still disabled (TASK-1180).
+
+        This pane cannot use `DataTableClickSelectMixin`: the mixin forwards to
+        a conventionally-named `on_data_table_row_selected`, and this handler is
+        bound by an `@on` selector so it only applies to this one table. The
+        pairing is explicit here instead.
+        """
+        if event.row_key is None or event.row_key.value is None:
+            return
+        # Only a focused table's cursor is being moved by a person; an
+        # unfocused one is rebuilding its own rows, and forwarding that would
+        # let a refresh select on the user's behalf. Same gate the mixin
+        # applies, spelled out here because this pane cannot use it.
+        table = getattr(event, "data_table", None)
+        if table is None or not table.has_focus:
+            return
+        event.stop()
+        self._handle_row_selected(
+            DataTable.RowSelected(table, event.cursor_row, event.row_key)
+        )
+
     @on(DataTable.RowSelected, "#stts-profile-table")
     def _handle_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()
