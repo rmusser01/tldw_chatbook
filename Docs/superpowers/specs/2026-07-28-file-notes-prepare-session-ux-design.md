@@ -225,7 +225,7 @@ with an old action summary.
 The promise appears only after the existing service reports a certain,
 successful checked postflight under the unchanged selected-root binding,
 repository and `HEAD` identity, ownership contract, and action snapshot, with
-at least one confirmed affected coalesced group. Nonzero, uncertain, mismatched,
+at least one confirmed affected coalesced group. Non-success, uncertain, mismatched,
 or zero-effect outcomes show counts plus failure/recovery text and no promise.
 The promise describes Chatbook's proven Git target/entry boundary; it does not
 supersede the existing configured-filter and concurrent-external-index
