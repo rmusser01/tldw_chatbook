@@ -498,11 +498,11 @@ class LegacyTranscriptionBridge:
 
         with self._backend_lock:
             backend = self._backend
-        if backend is not None:
-            try:
-                backend.cleanup()
-            except Exception:
-                return
+            if backend is not None:
+                try:
+                    backend.cleanup()
+                except Exception:
+                    return
 
     # The methods below preserve the existing facade without broad attribute
     # forwarding. Exceptions intentionally retain their historical behavior.

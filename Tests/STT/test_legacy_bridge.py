@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from threading import Event, Thread
 from typing import Any, Callable
 
 import pytest
@@ -637,3 +638,55 @@ def test_close_does_not_construct_an_unused_backend() -> None:
     bridge.close()
 
     assert constructed is False
+
+
+def test_close_blocks_transcription_until_cleanup_finishes() -> None:
+    cleanup_started = Event()
+    allow_cleanup = Event()
+    transcription_attempted = Event()
+    inference_started = Event()
+    errors: list[BaseException] = []
+
+    class BlockingCleanupBackend(_Backend):
+        def cleanup(self) -> None:
+            cleanup_started.set()
+            if not allow_cleanup.wait(timeout=5):
+                raise TimeoutError("test cleanup timed out")
+
+        def transcribe(self, *args: object, **kwargs: object) -> dict[str, Any]:
+            inference_started.set()
+            return super().transcribe(*args, **kwargs)
+
+    backend = BlockingCleanupBackend()
+    bridge = _bridge(backend)
+    request = _request(FileAudioSource(Path("/tmp/input.wav")))
+    assert bridge.config is backend.config
+
+    def close_bridge() -> None:
+        bridge.close()
+
+    def transcribe() -> None:
+        transcription_attempted.set()
+        try:
+            bridge.transcribe(request)
+        except BaseException as error:
+            errors.append(error)
+
+    close_thread = Thread(target=close_bridge)
+    transcribe_thread = Thread(target=transcribe)
+    close_thread.start()
+    assert cleanup_started.wait(timeout=1)
+    transcribe_thread.start()
+    assert transcription_attempted.wait(timeout=1)
+
+    try:
+        assert not inference_started.wait(timeout=0.2)
+    finally:
+        allow_cleanup.set()
+        close_thread.join(timeout=1)
+        transcribe_thread.join(timeout=1)
+
+    assert not close_thread.is_alive()
+    assert not transcribe_thread.is_alive()
+    assert inference_started.is_set()
+    assert errors == []
