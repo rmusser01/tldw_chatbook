@@ -4,6 +4,7 @@ import asyncio
 import shutil
 import subprocess
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2313,3 +2314,118 @@ def test_no_route_reaches_the_retired_ingest_screen():
         route = screen_registry._SCREEN_ROUTES[route_id]
         assert "media_ingest_screen" not in route.module_path, route_id
         assert route.class_name != "MediaIngestScreen", route_id
+
+
+# --- Startup-failure diagnosability -----------------------------------------
+# Root-caused 2026-07-27: `aiohttp` (an optional dependency) sat on the default
+# chat screen's import chain via Media_Creation/swarmui_client.py. With it
+# absent, `ScreenRoute.load_screen_class()` swallowed the ModuleNotFoundError
+# into a warning and returned None, so the app died on start with a bare
+# `RuntimeError: Unable to resolve default chat screen` -- naming neither the
+# missing module nor the file that imported it. `resolve_screen_target()` keeps
+# its graceful None contract (a broken optional screen must not break
+# navigation), but the fatal startup site must report the underlying cause.
+
+
+def test_screen_load_error_reports_underlying_import_failure(monkeypatch):
+    """`screen_load_error()` must return the exception blocking a route's load.
+
+    Args:
+        monkeypatch: pytest fixture; points the chat route at a module that
+            does not exist, so the load fails the way a missing dependency
+            deep in the import chain does.
+    """
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    route = screen_registry._SCREEN_ROUTES["chat"]
+    broken = replace(route, module_path="tldw_chatbook.UI.Screens.no_such_screen_xyz")
+    monkeypatch.setitem(screen_registry._SCREEN_ROUTES, "chat", broken)
+
+    # Precondition: the route resolves to None, i.e. the masked failure mode.
+    _name, _tab, screen_class = screen_registry.resolve_screen_target("chat")
+    assert screen_class is None
+
+    cause = screen_registry.screen_load_error("chat")
+    assert isinstance(cause, ImportError)
+    assert "no_such_screen_xyz" in str(cause)
+
+
+def test_screen_load_error_returns_none_for_a_loadable_route():
+    """A healthy route has no load failure to report."""
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    assert screen_registry.screen_load_error("chat") is None
+
+
+def test_screen_load_error_reports_missing_optional_dependency(monkeypatch):
+    """A dependency-gated route reports the gate, not a bare None.
+
+    The gate short-circuits before the import is attempted, so there is no
+    exception to surface -- but the caller still needs a reason, otherwise the
+    fatal startup message stays as uninformative as the bug this guards.
+
+    Args:
+        monkeypatch: pytest fixture; gates the chat route on a dependency
+            check name that `optional_deps` does not define, so
+            `dependencies_available()` reports False.
+    """
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    route = screen_registry._SCREEN_ROUTES["chat"]
+    gated = replace(route, dependency_check="definitely_not_a_real_dep_check")
+    monkeypatch.setitem(screen_registry._SCREEN_ROUTES, "chat", gated)
+
+    cause = screen_registry.screen_load_error("chat")
+    assert cause is not None
+    assert "definitely_not_a_real_dep_check" in str(cause)
+
+
+def test_screen_load_error_handles_unknown_route():
+    """An unroutable target reports a miss rather than raising."""
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    cause = screen_registry.screen_load_error("no_such_route_xyz")
+    assert cause is not None
+    assert "no_such_route_xyz" in str(cause)
+
+
+def test_push_initial_screen_fatal_error_names_the_underlying_cause(monkeypatch):
+    """The fatal startup error must name the real blocker, not just the symptom.
+
+    Exercises `_push_initial_screen()`'s unresolvable branch against a stub
+    `self` -- the method only reads `_initial_screen_pushed` and calls two
+    resolution helpers before raising, so this needs no Textual app boot.
+
+    Driven via `asyncio.run()` rather than an `async def` test: only
+    `Tests/UI/pytest.ini` sets `asyncio_mode = auto`, and there is no
+    repo-root pytest.ini, so a sweep spanning Tests/UI *and* other
+    directories resolves a different rootdir/config and would not collect
+    this as an async test.
+
+    Args:
+        monkeypatch: pytest fixture; points the chat route at a module that
+            does not exist, making the default screen unresolvable so the
+            fatal branch is reached.
+    """
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    route = screen_registry._SCREEN_ROUTES["chat"]
+    broken = replace(route, module_path="tldw_chatbook.UI.Screens.no_such_screen_xyz")
+    monkeypatch.setitem(screen_registry._SCREEN_ROUTES, "chat", broken)
+
+    stub = SimpleNamespace(
+        _initial_screen_pushed=False,
+        _resolve_initial_shell_route=lambda: "chat",
+        _resolve_screen_navigation_target=screen_registry.resolve_screen_target,
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(TldwCli._push_initial_screen(stub))
+
+    message = str(excinfo.value)
+    # The old message was exactly "Unable to resolve default chat screen" --
+    # it named neither the failing module nor the exception type.
+    assert "no_such_screen_xyz" in message, message
+    assert "ModuleNotFoundError" in message, message
+    # Chained, so the traceback shows the real import failure too.
+    assert isinstance(excinfo.value.__cause__, ImportError)

@@ -326,7 +326,7 @@ from .UI.Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from .UI.Navigation.screen_state_store import RuntimeIdentity, ScreenStateStore
-from .UI.Navigation.screen_registry import resolve_screen_target
+from .UI.Navigation.screen_registry import resolve_screen_target, screen_load_error
 from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from .UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from .UI.Screens.study_scope_models import StudyScopeContext
@@ -6943,11 +6943,25 @@ class TldwCli(
             self._resolve_screen_navigation_target(initial_tab)
         )
         if screen_class is None:
+            # Report why the configured target failed before falling back --
+            # otherwise a broken screen silently redirects to chat forever.
+            logger.warning(
+                f"Screen navigation: initial target {initial_tab!r} did not resolve"
+                f" ({screen_load_error(initial_tab)}); falling back to {TAB_CHAT!r}"
+            )
             resolved_screen_name = TAB_CHAT
             resolved_tab = TAB_CHAT
             _, _, screen_class = self._resolve_screen_navigation_target(TAB_CHAT)
             if screen_class is None:
-                raise RuntimeError("Unable to resolve default chat screen")
+                # Fatal: no screen to show. `resolve_screen_target()` degrades
+                # a failed route to None by design, so surface the underlying
+                # cause here -- a bare "unable to resolve" names neither the
+                # missing dependency nor the module that pulled it in.
+                cause = screen_load_error(TAB_CHAT)
+                message = f"Unable to resolve default chat screen ({TAB_CHAT!r})"
+                if cause is not None:
+                    message += f": {type(cause).__name__}: {cause}"
+                raise RuntimeError(message) from cause
 
         await self.push_screen(screen_class(self))
         self.current_tab = resolved_tab
