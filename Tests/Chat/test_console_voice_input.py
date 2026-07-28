@@ -54,3 +54,60 @@ def test_probe_does_not_import_transcription_service():
     cvi.probe()
 
     assert heavy not in sys.modules
+
+
+def test_capture_available_true_with_only_one_backend_installed(monkeypatch):
+    """any(), not all(): a single resolvable backend is enough.
+
+    Drives the real `capture_available()`/`_module_installed()` by patching
+    the `importlib.util.find_spec` seam, rather than patching
+    `capture_available` itself, so an `any()` -> `all()` mutation would fail
+    this test.
+    """
+    def fake_find_spec(name, *args, **kwargs):
+        return object() if name == "sounddevice" else None
+
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+
+    assert cvi.capture_available() is True
+
+
+def test_capture_available_false_with_no_backend_installed(monkeypatch):
+    """Neither pyaudio nor sounddevice resolves -> no capture backend."""
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", lambda name, *a, **k: None)
+
+    assert cvi.capture_available() is False
+
+
+def test_installed_local_providers_returns_subset_in_declared_order(monkeypatch):
+    """Only installed providers are returned, in LOCAL_PROVIDER_MODULES order.
+
+    `faster_whisper` is deliberately excluded from `installed` so the result
+    is a proper subset. The two that remain (`parakeet-mlx`,
+    `lightning-whisper-mlx`) are alphabetically out of order relative to each
+    other, so a stray `sorted()` in the implementation would also fail this
+    test. Patches `find_spec` directly so a real, potentially
+    machine-installed `parakeet_mlx` cannot leak into the result.
+    """
+    installed = {"parakeet_mlx", "lightning_whisper_mlx"}
+
+    def fake_find_spec(name, *args, **kwargs):
+        return object() if name in installed else None
+
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+
+    assert cvi.installed_local_providers() == ("parakeet-mlx", "lightning-whisper-mlx")
+
+
+@pytest.mark.parametrize("exc", [ImportError, ValueError])
+def test_module_installed_returns_false_when_find_spec_raises(monkeypatch, exc):
+    """A broken namespace package raises rather than returning None from
+    `find_spec`; `_module_installed` must swallow that and report False
+    instead of propagating.
+    """
+    def fake_find_spec(name, *args, **kwargs):
+        raise exc("broken namespace package")
+
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+
+    assert cvi._module_installed("broken.namespace.package") is False
