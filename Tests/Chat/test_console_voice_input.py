@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 
 import pytest
@@ -9,6 +10,72 @@ import pytest
 from tldw_chatbook.Chat import console_voice_input as cvi
 
 pytestmark = pytest.mark.unit
+
+
+# The in-process `test_probe_does_not_import_transcription_service` below only
+# proves `console_voice_input.probe()` stays cheap, and it runs inside a test
+# session that has already imported an unpredictable pile of other modules --
+# a real leak elsewhere could hide behind something pytest itself dragged in
+# first. This script runs in a *clean* interpreter and imports the actual
+# screen module Console mounts, so it also covers the path this file's other
+# test does not: `chat_screen`'s own imports (`from ...Chat import
+# console_voice_input`, `default_service_factory`, etc.) never reaching into
+# `tldw_chatbook.Audio` at module scope.
+_IMPORT_COST_GUARD_SCRIPT = """
+import sys
+
+import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401
+
+banned_exact = {"tldw_chatbook.Audio", "torch"}
+banned_prefixes = ("tldw_chatbook.Audio.", "torch.")
+
+leaked = []
+for name in sys.modules:
+    if name in banned_exact or any(name.startswith(p) for p in banned_prefixes):
+        leaked.append(name)
+        continue
+    if name.endswith("transcription_service"):
+        leaked.append(name)
+        continue
+    if name == "faster_whisper" or name.startswith("faster_whisper."):
+        leaked.append(name)
+        continue
+    if name == "nemo" or name.startswith("nemo."):
+        leaked.append(name)
+        continue
+    if name == "parakeet_mlx" or name.startswith("parakeet_mlx."):
+        leaked.append(name)
+        continue
+
+print(chr(10).join(sorted(leaked)))
+"""
+
+
+def test_screen_import_does_not_load_transcription_stack():
+    """Mounting the Console screen must never pull in the heavy STT stack.
+
+    `tldw_chatbook.Audio` (the package) chains to `transcription_service`,
+    which imports `faster_whisper` and `nemo.collections.asr` at module
+    scope -- seconds of startup cost for anyone with those extras installed.
+    Runs in a subprocess so the result reflects only what importing the
+    screen actually triggers, not whatever this test session happened to
+    import first.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _IMPORT_COST_GUARD_SCRIPT],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, (
+        f"import of tldw_chatbook.UI.Screens.chat_screen failed:\n{result.stderr}"
+    )
+    leaked = [line for line in result.stdout.splitlines() if line.strip()]
+    assert leaked == [], (
+        f"heavy transcription modules leaked into sys.modules: {leaked}\n"
+        f"stderr:\n{result.stderr}"
+    )
 
 
 def test_probe_reports_missing_capture(monkeypatch):
