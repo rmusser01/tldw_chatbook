@@ -804,6 +804,78 @@ async def test_warned_column_header_carries_the_warning_the_clean_one_does_not(
         assert "warned" in str(steered_col.label).lower()
 
 
+def _rendered_text(app: App) -> str:
+    """Join every compositor strip's segment text into one blob.
+
+    Textual 8.2.7 has no ``App.export_text()``; ``screen._compositor.
+    render_strips()`` is the way to read what was actually painted to the
+    screen, as opposed to inferring it from a widget's own data model
+    (``table.columns[...].label`` et al. -- see the test right below for
+    why that distinction is load-bearing here). Mirrors
+    ``Tests/UI/test_lab_mode_strip.py``'s own ``_rendered_text`` helper.
+    """
+    strips = app.screen._compositor.render_strips()
+    return "\n".join("".join(segment.text for segment in strip) for strip in strips)
+
+
+@pytest.mark.asyncio
+async def test_focused_results_grid_keeps_its_header_and_the_warned_marker(
+    evals_app, mixed_run_group
+):
+    """TASK-1034: a focused results grid used to lose its column header --
+    and the "[warned]" canary marker riding inside it -- entirely.
+
+    Root cause: the global fallback ``*:focus { outline: solid
+    $ds-focus-accent; }`` (``core/_reset.tcss``) draws its outline INSIDE
+    a widget's own box, painting over the widget's own first and last
+    rendered rows rather than sitting outside them like ``border`` does. A
+    ``DataTable``'s first rendered row is its column header, so as soon as
+    the grid's ``DataTable`` took keyboard focus -- which ``ResultsGrid.
+    on_mount`` (results_grid.py) does immediately on every fresh mount, so
+    this is not a rare interaction but the DEFAULT state right after
+    selecting a run group -- the outline's box-drawing top edge replaced
+    the header outright.
+
+    The tests above this one (``test_warned_column_header_carries_the_
+    warning_the_clean_one_does_not`` and
+    ``test_grid_content_survives_datatable_rendering_without_bracket_
+    corruption``) all read ``table.columns[...].label`` -- the DataTable's
+    stored data model, not what the compositor actually painted -- so none
+    of them could have caught this: the column label was always correct
+    in the data model, only its on-screen rendering vanished. This test
+    reads the real compositor output instead (``_rendered_text``, mirrors
+    ``test_lab_mode_strip.py``'s own use of ``screen._compositor.
+    render_strips()``) specifically WHILE the table holds focus, which
+    ``_select_run_group`` already leaves it in via ``on_mount``'s auto-
+    focus -- no extra ``table.focus()`` call needed, and none is made
+    here, so this test fails exactly the way live UAT did: on the
+    DEFAULT, no-extra-interaction path.
+    """
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, mixed_run_group["group_id"])
+        table = grid.query_one("#evals-grid-table", DataTable)
+
+        assert table.has_focus, (
+            "expected on_mount's auto-focus to have already put the grid "
+            "in the exact state that dropped its header during UAT"
+        )
+
+        rendered = _rendered_text(pilot.app)
+        assert "Snippet" in rendered, (
+            f"column header missing from the focused grid's rendered "
+            f"output:\n{rendered}"
+        )
+        assert "base" in rendered, (
+            f"target column header missing from the focused grid's "
+            f"rendered output:\n{rendered}"
+        )
+        assert "[warned]" in rendered, (
+            f"the warned-target canary marker is missing from the focused "
+            f"grid's rendered output:\n{rendered}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # TASK-1036: the degenerate-canary callout on the run view itself -- the
 # grid's ONLY signal used to be the nine-character "[warned]" column
