@@ -834,6 +834,65 @@ async def test_rail_title_budget_scales_with_terminal_width() -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_resize_alone_regrows_wrap_budget_within_one_pause() -> None:
+    """TASK-1191 fast-follow: `on_resize` must regrow the row-wrap budget on
+    its OWN, isolated from any caller also driving an explicit
+    `sync_state()`.
+
+    `test_rail_title_budget_scales_with_terminal_width` above proves the
+    budget grows with terminal width, but it re-calls `tray.sync_state()`
+    after every resize -- so it cannot tell whether `on_resize`'s own
+    `call_after_refresh(self._fit_height_to_content)` pass (see
+    `ConsoleWorkspaceContextTray.on_resize`) is doing the regrow work by
+    itself, or whether the explicit sync is silently carrying it. This test
+    resizes the mounted tray and reads its measured width/budget back with
+    no `sync_state()` call anywhere in between, single `pilot.pause()`
+    only -- the same one-deferred-pass path TASK-1191 collapsed
+    `_schedule_recomposed_content_fit` down to (`_fit_height_to_content`'s
+    docstring: `on_resize` already used `call_after_refresh` for this job
+    before TASK-1191 and is unchanged by it, but this is still the first
+    test to isolate that on_resize path from a follow-up sync).
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        narrow_row_width = tray._row_content_width
+        narrow_budget = tray._browser_title_budget()
+
+        # Resize only -- deliberately no `tray.sync_state()` call anywhere
+        # below, so any regrow observed here is `on_resize`'s own doing.
+        await pilot.resize_terminal(260, 60)
+        await pilot.pause()  # one pause only: the single fit pass must land here
+
+        wide_row_width = tray._row_content_width
+        wide_budget = tray._browser_title_budget()
+        settled_height = int(tray.region.height)
+
+    assert wide_row_width > narrow_row_width, (
+        "on_resize alone (no sync_state in between) must regrow the "
+        f"measured row content width (narrow={narrow_row_width}, "
+        f"wide={wide_row_width})"
+    )
+    assert wide_budget > narrow_budget, (
+        "on_resize alone (no sync_state in between) must regrow the row "
+        f"wrap budget (narrow={narrow_budget}, wide={wide_budget})"
+    )
+    assert settled_height > 0, (
+        "the tray height must converge within on_resize's single fit pass, "
+        f"got {settled_height}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_console_conversation_star_uses_recognizable_star_glyphs():
     """TASK-357: the star toggle must use a recognizable ★/☆ pair, not the
     near-invisible one-cell '*'/'.' distinction."""

@@ -500,7 +500,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         already use for this exact job -- defers the callback until Textual
         has processed the pending refresh (recompose + layout), so
         `virtual_region` is current when `_fit_height_to_content` reads it.
-        One deferred pass is sufficient; a second pass is still scheduled by
+        See `_fit_height_to_content`'s own docstring for why that single
+        read is trustworthy (not just deferred-until-current). One deferred
+        pass is sufficient; a second pass is still scheduled by
         `_maybe_relabel_for_width` itself, but only on the rare occasions a
         relabel is actually needed (first real width measurement, or a
         multi-cell width change) -- not unconditionally on every sync.
@@ -596,6 +598,34 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
 
     def _fit_height_to_content(self) -> None:
         """Expose the full tray content height to the parent scroll container.
+
+        TASK-1191: called from a single deferred `call_after_refresh` pass
+        (see `_schedule_recomposed_content_fit`), not several. One pass is
+        trustworthy here, not merely convenient, for two independent
+        reasons:
+
+        1. Every child's height is either resolved synchronously within
+           Textual's own layout pass or set explicitly before it. The
+           grouped conversation list's height is computed up front from
+           state at compose time (`_conversation_browser_list_height`,
+           wrap-aware since TASK-1142) rather than discovered from settled
+           geometry. The remaining top-level children -- free-text
+           `Static`s like `console-workspace-recovery` / `recovery_copy`
+           included -- are still plain WRAPPING Statics with no explicit
+           height, but Textual resolves a `Static`'s wrapped auto-height
+           synchronously as part of arranging its parent, in the same
+           layout pass `call_after_refresh` waits for; it is not a
+           multi-turn process for any of them. Nothing here is
+           fixed-height; the point is that "wrapped" and "settles over
+           several message turns" are not the same claim, and only the
+           first is true.
+        2. `#console-left-rail-body`'s CSS pins `scrollbar-gutter: stable`
+           (see that rule's own comment) specifically so this tray's
+           content width -- and therefore every wrapped child's line
+           count -- cannot shift out from under an already-scheduled fit
+           pass just because a row was added/removed and the scrollbar
+           toggled. Do not remove that CSS without re-auditing this
+           single-pass assumption.
 
         Returns:
             None.
