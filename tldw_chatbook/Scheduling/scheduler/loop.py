@@ -8,6 +8,7 @@ from typing import Any, Callable, Coroutine, Optional
 
 from loguru import logger
 
+from tldw_chatbook.Metrics.metrics_logger import log_counter
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
@@ -25,20 +26,63 @@ class SchedulerLoop:
         clock: Optional[Callable[[], datetime]] = None,
         watchlist_projection: WatchlistProjection | None = None,
         queue_reload_interval_ticks: int = 60,
+        expected_unhandled_types: frozenset[str] = frozenset(),
     ) -> None:
         self.db = db
         self.handlers = handlers
         self.poll_interval = poll_interval
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.queue_reload_interval_ticks = queue_reload_interval_ticks
+        #: Task types that are queued but deliberately have no handler. Declaring
+        #: one suppresses the startup warning below, so that a retired feature
+        #: does not look like a misconfiguration on every launch.
+        self.expected_unhandled_types = expected_unhandled_types
         self.running = False
         self._tick_count = 0
         self.queue = PriorityQueue(db, watchlist_projection=watchlist_projection)
+
+    def report_configuration(self) -> None:
+        """Log what this scheduler will and will not run, once, at startup.
+
+        Watchlist checks silently did nothing for the entire life of the feature
+        because a running scheduler and an unwired one looked identical from
+        outside: the handler was registered only behind a flag that shipped
+        false, and each dropped task produced one warning per poll that nobody
+        read (TASK-1210, TASK-1212).
+
+        Two things are reported: which handlers exist, so a wired scheduler can
+        be recognised at all, and which queued work has nowhere to go, so a
+        misconfiguration surfaces where it was made rather than where it bites.
+        """
+        registered = sorted(self.handlers)
+        logger.info(
+            "Scheduler starting: {count} handler(s) registered ({names}), "
+            "poll interval {interval}s, {queued} task(s) queued",
+            count=len(registered),
+            names=", ".join(registered) or "none",
+            interval=self.poll_interval,
+            queued=len(self.queue),
+        )
+
+        queued_types = {
+            task.get("type", "reminder") for task in getattr(self.queue, "_items", [])
+        }
+        orphaned = sorted(
+            queued_types - set(self.handlers) - set(self.expected_unhandled_types)
+        )
+        if orphaned:
+            logger.warning(
+                "Scheduler has queued work it cannot run: no handler registered "
+                "for task type(s) {types}. These tasks will be discarded on every "
+                "poll and their schedules will never fire.",
+                types=", ".join(orphaned),
+            )
 
     async def run(self) -> None:
         """Run the scheduler until :meth:`stop` is called."""
         self.running = True
         await asyncio.to_thread(self.queue.load)
+        self.report_configuration()
         while self.running:
             if (
                 self._tick_count > 0
@@ -58,6 +102,14 @@ class SchedulerLoop:
             task_id = task.get("id")
             handler = self.handlers.get(task_type)
             if handler is None:
+                # Counted separately from tasks that ran, so "the scheduler is
+                # busy" and "the scheduler is discarding everything" are
+                # distinguishable in metrics rather than only in a log line that
+                # repeats every poll (TASK-1212).
+                log_counter(
+                    "scheduler_tasks_unhandled",
+                    labels={"task_type": task_type},
+                )
                 logger.warning(
                     "No handler registered for task type {task_type}; skipping task {task_id}",
                     task_type=task_type,
