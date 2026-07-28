@@ -17,7 +17,7 @@ import time
 
 # Import the transcription service and related classes
 from tldw_chatbook.Local_Ingestion.transcription_service import (
-    TranscriptionService,
+    _LegacyTranscriptionBackend as TranscriptionService,
     TranscriptionError,
     PARAKEET_MLX_AVAILABLE,
 )

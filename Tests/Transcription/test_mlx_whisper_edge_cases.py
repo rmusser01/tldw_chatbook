@@ -18,7 +18,7 @@ import threading
 import time
 
 from tldw_chatbook.Local_Ingestion.transcription_service import (
-    TranscriptionService,
+    _LegacyTranscriptionBackend as TranscriptionService,
     TranscriptionError,
     protect_file_descriptors,
 )

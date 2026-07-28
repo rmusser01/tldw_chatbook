@@ -80,7 +80,7 @@ def _service(service_module, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         service_module, "get_cli_setting", lambda _key, default=None: default
     )
-    return service_module.TranscriptionService()
+    return service_module._LegacyTranscriptionBackend()
 
 
 def _install_fake_mlx(monkeypatch: pytest.MonkeyPatch) -> None:
