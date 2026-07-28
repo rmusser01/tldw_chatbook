@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 from collections.abc import Iterable
+from functools import partial
 
 from rich.cells import cell_len, split_graphemes
 from rich.markup import escape as escape_markup
@@ -13,6 +14,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Resize
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, ListItem, ListView, Static
 
 from tldw_chatbook.Notes.file_notes_session_owner import (
@@ -58,6 +60,32 @@ def _repository_path_for_display(path: str, *, markup: bool = False) -> str:
     return escape_markup(display) if markup else display
 
 
+def _grapheme_spans(text: str) -> list[tuple[int, int, int]]:
+    """Return Rich spans with regional-indicator pairs kept together."""
+    spans, _ = split_graphemes(text)
+    grouped: list[tuple[int, int, int]] = []
+    index = 0
+    while index < len(spans):
+        start, end, width = spans[index]
+        if index + 1 < len(spans):
+            next_start, next_end, next_width = spans[index + 1]
+            current_is_indicator = (
+                end == start + 1
+                and 0x1F1E6 <= ord(text[start]) <= 0x1F1FF
+            )
+            next_is_indicator = (
+                next_end == next_start + 1
+                and 0x1F1E6 <= ord(text[next_start]) <= 0x1F1FF
+            )
+            if current_is_indicator and next_is_indicator:
+                grouped.append((start, next_end, width + next_width))
+                index += 2
+                continue
+        grouped.append((start, end, width))
+        index += 1
+    return grouped
+
+
 def _middle_elide_cells(text: str, width: int) -> str:
     """Middle-elide on grapheme boundaries without exceeding cell width."""
     if width <= 0:
@@ -67,7 +95,7 @@ def _middle_elide_cells(text: str, width: int) -> str:
     if width <= 3:
         return "." * width
 
-    graphemes, _ = split_graphemes(text)
+    graphemes = _grapheme_spans(text)
     remaining = width - 3
     left_budget = (remaining + 1) // 2
     right_budget = remaining - left_budget
@@ -97,6 +125,45 @@ def _middle_elide_cells(text: str, width: int) -> str:
         used += grapheme_width
 
     return f"{text[:left_end]}...{text[right_start:]}"
+
+
+def _fit_two_line_copy(text: str, width: int) -> str:
+    """Fit copy to explicit lines so word wrapping cannot create a third."""
+    text = (
+        text.replace("\r\n", r"\n")
+        .replace("\r", r"\r")
+        .replace("\n", r"\n")
+    )
+    if width <= 0 or cell_len(text) <= width:
+        return text
+
+    fitted = _middle_elide_cells(text, max(width, width * 2 - 3))
+    if cell_len(fitted) <= width:
+        return fitted
+
+    graphemes = _grapheme_spans(fitted)
+    total_width = sum(grapheme_width for _, _, grapheme_width in graphemes)
+    first_width = 0
+    split_end = 0
+    split_key = (2, total_width)
+    ellipsis_start = fitted.find("...")
+    for _start, end, grapheme_width in graphemes:
+        first_width += grapheme_width
+        if first_width > width:
+            break
+        if total_width - first_width <= width:
+            if ellipsis_start >= 0 and ellipsis_start < end < ellipsis_start + 3:
+                continue
+            key = (
+                0 if fitted[end - 1].isspace() else 1,
+                abs(total_width - first_width * 2),
+            )
+            if key < split_key:
+                split_key = key
+                split_end = end
+    if split_end:
+        return f"{fitted[:split_end]}\n{fitted[split_end:]}"
+    return _middle_elide_cells(fitted, width)
 
 
 def _group_path_for_display(row: SessionGitRow) -> str:
@@ -302,6 +369,7 @@ class LibraryFileNotesGitPanel(Vertical):
     #file-notes-git-action-status {
         max-height: 2;
         overflow: hidden hidden;
+        text-wrap: nowrap;
     }
 
     #file-notes-git-repository {
@@ -572,7 +640,7 @@ class LibraryFileNotesGitPanel(Vertical):
         ):
             widget = self.query_one(selector, Static)
             width = widget.content_region.width or self.content_region.width
-            fitted = text if width <= 0 else _middle_elide_cells(text, width * 2)
+            fitted = text if width <= 0 else _fit_two_line_copy(text, width)
             widget.update(fitted)
 
     def _set_repository_text(self, text: str) -> None:
@@ -757,12 +825,19 @@ class LibraryFileNotesGitPanel(Vertical):
         self._replace_rows(None)
 
     def _sync_empty_state(self) -> None:
-        ready_empty = self._status_ready and not self._rows
+        ready_empty = (
+            not self._replacing_rows
+            and self._status_ready
+            and not self._rows
+        )
         self.query_one("#file-notes-git-empty", Static).display = ready_empty
-        self.query_one("#file-notes-git-rows", ListView).display = not ready_empty
+        self.query_one("#file-notes-git-rows", ListView).display = (
+            bool(self._rows) and not self._replacing_rows
+        )
 
     def _replace_rows(self, prior_group_id: int | None) -> None:
-        group_ids = tuple(row.group_id for row in self._rows)
+        rows = self._rows
+        group_ids = tuple(row.group_id for row in rows)
         if prior_group_id in group_ids:
             self._selected_group_id = prior_group_id
         elif group_ids:
@@ -770,10 +845,16 @@ class LibraryFileNotesGitPanel(Vertical):
         else:
             self._selected_group_id = None
         self._row_render_generation += 1
+        generation = self._row_render_generation
+        group_id = self._selected_group_id
+        self._replacing_rows = True
+        self.query_one("#file-notes-git-rows", ListView).display = False
         self.run_worker(
-            self._render_rows(
-                self._row_render_generation,
-                self._selected_group_id,
+            partial(
+                self._render_rows,
+                generation,
+                group_id,
+                rows,
             ),
             name="file-notes-git-render-rows",
             group="file-notes-git-render-rows",
@@ -784,15 +865,17 @@ class LibraryFileNotesGitPanel(Vertical):
         self,
         generation: int,
         group_id: int | None,
+        rows: tuple[SessionGitRow, ...],
     ) -> None:
         list_view = self.query_one("#file-notes-git-rows", ListView)
-        self._replacing_rows = True
         try:
             await list_view.clear()
-            await list_view.extend(_SessionGitListItem(row) for row in self._rows)
             if generation != self._row_render_generation:
                 return
-            group_ids = tuple(row.group_id for row in self._rows)
+            await list_view.extend(_SessionGitListItem(row) for row in rows)
+            if generation != self._row_render_generation:
+                return
+            group_ids = tuple(row.group_id for row in rows)
             list_view.index = (
                 group_ids.index(group_id)
                 if group_id is not None and group_id in group_ids
@@ -802,6 +885,7 @@ class LibraryFileNotesGitPanel(Vertical):
         finally:
             if generation == self._row_render_generation:
                 self._replacing_rows = False
+                self._sync_empty_state()
                 self._update_actions()
 
     @staticmethod
@@ -828,6 +912,8 @@ class LibraryFileNotesGitPanel(Vertical):
     def _update_actions(self) -> None:
         if not self.is_mounted:
             return
+        focused = self.screen.focused
+        back = self.query_one("#file-notes-git-back", Button)
         trust = self.query_one("#file-notes-git-trust", Button)
         refresh = self.query_one("#file-notes-git-refresh", Button)
         stage_selected = self.query_one(
@@ -882,6 +968,36 @@ class LibraryFileNotesGitPanel(Vertical):
         stage_all.disabled = not (can_mutate and stage_count > 0)
         unstage_all.disabled = not (can_mutate and unstage_count > 0)
         self._sync_action_layout(self.content_region.width)
+        self._repair_hidden_focus(focused, back, trust, refresh)
+
+    def _repair_hidden_focus(
+        self,
+        focused: Widget | None,
+        back: Button,
+        trust: Button,
+        refresh: Button,
+    ) -> None:
+        """Move hidden panel focus to one safe, visible recovery control."""
+        if focused is None or self not in focused.ancestors:
+            return
+        # Authorized rows are only hidden while their new generation mounts.
+        if self._replacing_rows and self._rows:
+            return
+        if all(
+            not isinstance(node, Widget) or node.display
+            for node in focused.ancestors_with_self
+        ):
+            return
+
+        if self._trust_available and trust.display:
+            target = trust
+        elif not self._trusted:
+            target = back
+        elif refresh.display and not refresh.disabled:
+            target = refresh
+        else:
+            target = back
+        self.screen.set_focus(target, scroll_visible=False)
 
     @on(ListView.Highlighted, "#file-notes-git-rows")
     def _row_highlighted(self, event: ListView.Highlighted) -> None:

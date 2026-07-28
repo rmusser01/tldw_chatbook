@@ -94,6 +94,14 @@ class _PanelHarness(App[None]):
         self.messages.append(message)
 
 
+class _PanelWithOutsideControlHarness(_PanelHarness):
+    """Mount one unrelated focus target beside the panel."""
+
+    def compose(self) -> ComposeResult:
+        yield Button("Outside panel", id="outside-panel-control")
+        yield self.panel
+
+
 class _DialogHarness(App[None]):
     """Open a Session Git trust dialog at mount."""
 
@@ -430,6 +438,14 @@ def _text(widget: Static | Label) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
+def _rendered_text(widget: Static) -> str:
+    """Return only the strips that are actually visible inside one Static."""
+    return "\n".join(
+        widget.render_line(y).text.rstrip()
+        for y in range(widget.content_region.height)
+    ).rstrip()
+
+
 def _assert_git_mutations_disabled(
     workspace: LibraryFileNotesWorkspace,
 ) -> None:
@@ -727,6 +743,10 @@ def test_middle_elide_cells_preserves_graphemes_width_and_path_ends() -> None:
     assert "💻" not in result or "👩‍💻" in result
     assert "\u200d" not in result or "👩‍💻" in result
 
+    flag_result = _middle_elide_cells("A🇺🇸BBBB", 6)
+    assert cell_len(flag_result) <= 6
+    assert ("🇺" in flag_result) == ("🇸" in flag_result)
+
 
 @pytest.mark.asyncio
 async def test_middle_elide_recomputes_mounted_path_labels_after_resize() -> None:
@@ -815,7 +835,7 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
         rows=rows,
         repository=repository,
         head=HeadIdentity.attached(
-            "feature/a-very-long-prepare-session-branch",
+            "feature/very-long-prepare-session-branch/final-note.md",
             "a" * 40,
         ),
     )
@@ -829,6 +849,7 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
         panel.set_last_action(
             "Last action: FAILED — " + long_reason + "retry the action, then Refresh"
         )
+        await pilot.pause()
         await pilot.pause()
 
         bounds = panel.content_region
@@ -905,6 +926,50 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
         assert _text(panel.query_one("#file-notes-git-action-status", Static)).endswith(
             "then Refresh"
         )
+
+        repository_rendered = _rendered_text(
+            panel.query_one("#file-notes-git-repository", Static)
+        )
+        assert repository_rendered.startswith("Repository:")
+        assert repository_rendered.endswith("final-note.md")
+
+        selected_rendered = _rendered_text(selected)
+        assert selected_rendered.startswith("Selected note:")
+        assert selected_rendered.endswith("final-note.md")
+
+        status_rendered = _rendered_text(
+            panel.query_one("#file-notes-git-status", Static)
+        )
+        assert status_rendered.startswith("Status: STALE · ERROR")
+        assert status_rendered.endswith("Retry Refresh.")
+
+        action_rendered = _rendered_text(
+            panel.query_one("#file-notes-git-action-status", Static)
+        )
+        assert action_rendered.startswith("Last action: FAILED")
+        assert action_rendered.endswith("then Refresh")
+
+        panel.set_current_status(
+            "Status: STALE · ERROR\nstatus detail\nRetry Refresh."
+        )
+        panel.set_last_action(
+            "Last action: FAILED\naction detail\nthen Refresh"
+        )
+        await pilot.pause()
+        multiline_status = _rendered_text(
+            panel.query_one("#file-notes-git-status", Static)
+        )
+        assert multiline_status.startswith("Status: STALE · ERROR")
+        assert multiline_status.endswith("Retry Refresh.")
+        assert len(multiline_status.splitlines()) <= 2
+
+        multiline_action = _rendered_text(
+            panel.query_one("#file-notes-git-action-status", Static)
+        )
+        assert multiline_action.startswith("Last action: FAILED")
+        assert multiline_action.endswith("then Refresh")
+        assert len(multiline_action.splitlines()) <= 2
+
         await _assert_visible_panel_buttons_fit(panel, pilot)
 
 
@@ -1180,6 +1245,8 @@ async def test_authority_loss_clears_rows_selection_and_mutation_actions(
         assert panel.selected_group_id == 22
 
         authority_loss(panel)
+        assert len(panel.query(".file-notes-git-row")) == 2
+        assert not rows.display
         await _wait_until(
             pilot,
             lambda: len(panel.query(".file-notes-git-row")) == 0,
@@ -1196,6 +1263,80 @@ async def test_authority_loss_clears_rows_selection_and_mutation_actions(
         ):
             button = panel.query_one(selector, Button)
             assert not button.display
+
+
+@pytest.mark.parametrize(
+    ("transition", "safe_selector"),
+    [
+        (
+            lambda panel: panel.render_untrusted("/replacement/repository"),
+            "#file-notes-git-trust",
+        ),
+        (
+            lambda panel: panel.render_unavailable("Git discovery failed."),
+            "#file-notes-git-back",
+        ),
+    ],
+    ids=("untrusted-prefers-trust", "unavailable-prefers-back"),
+)
+@pytest.mark.asyncio
+async def test_disappearing_mutation_focus_repairs_without_stealing_external_focus(
+    transition: Callable[[LibraryFileNotesGitPanel], None],
+    safe_selector: str,
+) -> None:
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    app = _PanelWithOutsideControlHarness(panel)
+    ready = _status(_row("unstaged", stage_action="stage"))
+    async with app.run_test() as pilot:
+        panel.render_status(ready)
+        await pilot.pause()
+        stage = panel.query_one("#file-notes-git-stage-selected", Button)
+        stage.focus()
+        await pilot.pause()
+        assert stage.has_focus
+
+        transition(panel)
+        await pilot.pause()
+        assert panel.query_one(safe_selector, Button).has_focus
+        await pilot.press("escape")
+        await _wait_until(
+            pilot,
+            lambda: len(app.messages) == 1,
+            "Escape did not emit Back after focus repair",
+        )
+        assert isinstance(app.messages[0], LibraryFileNotesGitPanel.BackRequested)
+
+        panel.render_status(ready)
+        await pilot.pause()
+        outside = app.query_one("#outside-panel-control", Button)
+        outside.focus()
+        await pilot.pause()
+        assert outside.has_focus
+        transition(panel)
+        await pilot.pause()
+        assert outside.has_focus
+
+
+@pytest.mark.asyncio
+async def test_row_render_worker_is_registered_lazily(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    panel = LibraryFileNotesGitPanel()
+    observed_work: list[object] = []
+
+    def capture_worker(work: object, **_kwargs: object) -> None:
+        observed_work.append(work)
+        if not callable(work):
+            getattr(work, "close")()
+
+    async with _PanelHarness(panel).run_test():
+        monkeypatch.setattr(panel, "run_worker", capture_worker)
+        panel.render_status(_status(_row("unstaged", stage_action="stage")))
+        panel.render_unavailable("Git discovery failed.")
+
+        assert len(observed_work) == 2
+        assert all(callable(work) for work in observed_work)
 
 
 @pytest.mark.asyncio
