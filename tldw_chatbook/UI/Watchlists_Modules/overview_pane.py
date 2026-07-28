@@ -33,32 +33,44 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
         value = self.data.get(key, "-")
         return f"{label}\n{value}"
 
+    #: The three answers this region can give about a profile (TASK-1020).
+    #: `LOADING` is the one that was missing: `data` starts as `{}` and is
+    #: filled by a worker, and on the server backend that worker is a network
+    #: call. Collapsing "not loaded yet" into either resolved answer is wrong
+    #: in one direction or the other -- into `EMPTY` it flashes first-run copy
+    #: at every user with sources on every visit, into `POPULATED` it delays
+    #: the first-run guidance a brand-new user needs for as long as the
+    #: request takes.
+    LOADING = "loading"
+    EMPTY = "empty"
+    POPULATED = "populated"
+
     @staticmethod
-    def profile_is_empty(data: dict) -> bool:
-        """Whether `data` says this profile has nothing in Watchlists yet.
+    def profile_state(data: dict) -> str:
+        """Which of the three states `data` describes.
 
-        The single definition of that question (Qodo #3 on PR #1017). It lived
-        here and, copied, on `WatchlistsCollectionsScreen`; two copies of a
-        predicate that decides what the Overview region and the Inspector each
-        say is a drift waiting to happen, and the two disagreeing is exactly
-        the confusing state TASK-998 set out to remove.
+        The single definition of that question (Qodo #3 on PR #1017, extended
+        by TASK-1020). It lived here and, copied, on
+        `WatchlistsCollectionsScreen`; two copies of a predicate that decides
+        what the Overview region and the Inspector each say is a drift waiting
+        to happen, and the two disagreeing is exactly the confusing state
+        TASK-998 set out to remove.
 
-        Guarded on `total_sources` being PRESENT, not merely falsy: `data`
-        starts as `{}` and is filled by a worker, so a plain zero-check would
-        show first-run copy for the tick before the numbers land and then swap
-        it -- a flash on every visit for users who do have sources. An absent
-        key means "not loaded yet", which is not the same answer as "loaded,
-        and empty".
+        `total_sources` being PRESENT is what separates loading from the two
+        resolved answers -- an absent key means "not loaded yet", which is not
+        the same answer as "loaded, and empty". `_refresh_overview_data`'s
+        failure branch publishes `total_sources: 0`, so a failed or timed-out
+        load resolves to `EMPTY` rather than sticking on `LOADING` forever.
 
         Args:
             data: The overview payload, as published to `overview_data`.
 
         Returns:
-            True only when the payload has loaded and reports nothing.
+            One of `LOADING`, `EMPTY`, `POPULATED`.
         """
         if "total_sources" not in data:
-            return False
-        return not any(
+            return OverviewPane.LOADING
+        has_anything = any(
             (
                 data.get("total_sources"),
                 data.get("total_items"),
@@ -66,18 +78,23 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
                 data.get("failed_runs"),
             )
         )
+        return OverviewPane.POPULATED if has_anything else OverviewPane.EMPTY
 
-    def _is_first_run(self) -> bool:
-        """Whether this profile has nothing for the cards to report.
+    @staticmethod
+    def profile_is_empty(data: dict) -> bool:
+        """Whether `data` says this profile has nothing in Watchlists yet.
 
-        Guarded on `total_sources` being PRESENT, not merely falsy: `data`
-        starts as `{}` and is filled by a worker, so a plain zero-check would
-        show the first-run panel for the tick before the numbers land and then
-        swap it for the grid -- a flash on every visit for users who do have
-        sources. An absent key means "not loaded yet", which is not the same
-        answer as "loaded, and empty".
+        Kept as the narrow "is this first run" question now that
+        `profile_state` answers the wider one; both resolved answers are
+        unchanged, and an unloaded payload is still not empty.
+
+        Args:
+            data: The overview payload, as published to `overview_data`.
+
+        Returns:
+            True only when the payload has loaded and reports nothing.
         """
-        return self.profile_is_empty(self.data)
+        return OverviewPane.profile_state(data) == OverviewPane.EMPTY
 
     def _first_run_body(self) -> str:
         """What to do next, phrased for what the user has actually done.
@@ -115,7 +132,21 @@ class OverviewPane(RecomposeCaptureGuard, Vertical):
         # are replaced -- not merely blanked -- by copy that names the two
         # controls that actually do something (`New` in the rail,
         # `New Source` under Sources). Every populated state is untouched.
-        if self._is_first_run():
+        state = self.profile_state(self.data)
+        if state == self.LOADING:
+            # TASK-1020. Neither the cards nor the first-run copy: both would
+            # be a claim about a profile nothing has reported on yet. One line
+            # rather than a skeleton, because the local backend resolves in
+            # milliseconds and a shimmering placeholder would be the flash
+            # this task exists to remove.
+            yield Static(
+                "Loading watchlist activity...",
+                id="overview-loading",
+                classes="watchlists-loading-state",
+            )
+            return
+
+        if state == self.EMPTY:
             with Vertical(id="overview-first-run"):
                 yield Static(
                     "Nothing is being watched yet.",

@@ -1,6 +1,8 @@
 # kokoro.py
 # Description: Kokoro TTS backend implementation supporting both ONNX and PyTorch
 #
+from __future__ import annotations
+
 # Imports
 import asyncio
 import os

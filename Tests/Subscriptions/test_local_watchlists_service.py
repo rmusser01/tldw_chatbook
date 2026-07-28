@@ -535,6 +535,27 @@ async def test_create_source_honors_inactive(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_create_source_persists_check_frequency(tmp_path):
+    """TASK-1210: the cadence chosen on the create form has to reach the column.
+
+    ``WatchlistProjection`` computes ``next_run_at`` from ``check_frequency``, so a
+    source that does not carry one is never queued and never checked.
+    """
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    result = await service.create_source(
+        {
+            "name": "Daily",
+            "source_type": "rss",
+            "url": "http://example.com/feed",
+            "check_frequency": 86_400,
+        }
+    )
+    stored = db.get_subscription(int(str(result["id"]).rsplit(":", 1)[-1]))
+    assert stored["check_frequency"] == 86_400
+
+
+@pytest.mark.asyncio
 async def test_execute_run_persists_items_and_evaluates_filters(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
 

@@ -59,25 +59,47 @@ Configure default TTS options:
 - API key management
 - Voice blend creation (Kokoro only)
 
-### Local generation profile storage
+### Voice generation profiles
 
-Chatbook now has a local database boundary for reusable TTS generation
-profiles. The default file is `tldw_chatbook_tts_profiles.db` in the current
-Chatbook user data directory. Advanced installations may override it in the
-configuration file:
+Chatbook can save and manage reusable exact audio.cpp generation selections.
+The local profile database defaults to `tldw_chatbook_tts_profiles.db` in the
+current Chatbook user data directory. Advanced installations may override it
+in the configuration file:
 
 ```toml
 [database]
 tts_profiles_db_path = "/absolute/path/to/tts-profiles.db"
 ```
 
-This is foundational storage, not a new profile-management screen. Speech
-Services does not yet offer an STTS profile library or controls to create,
-edit, delete, or assign profiles to characters. Character authority
-acquisition, assignment UI, roleplay voice routing, legacy-provider profile
-execution, and profile/card portability or synchronization are also deferred.
-Existing Playground and Console speech continue to use their current settings
-and request paths.
+To create and use a profile:
+
+1. Connect to an existing audio.cpp server and generate a complete WAV in the
+   **TTS Playground**.
+2. Play the result to confirm it is the voice you want.
+3. Choose **Save result as profile** and enter a unique name. Chatbook saves
+   the provider, model, optional exact voice, WAV format, and speed from that
+   successful result—not from selectors changed afterward.
+4. Open **Voice profiles** to search, page through, or refresh the library.
+5. Select a row to **Preview**, **Edit**, **Duplicate**, or **Delete** it.
+   Preview opens the Playground with the saved exact values without generating
+   speech; choose **Generate Speech** there when ready.
+
+Availability is observational and never rewrites a saved profile. **Available**
+means the current external server advertises the exact saved selection.
+**Unavailable** means the current authoritative catalog does not support it;
+refresh capabilities or edit the profile. **Unverified** means Chatbook could
+not make an authoritative determination, usually because discovery failed or
+became stale; refresh and retry.
+
+Profile-store failures are isolated from ordinary speech. If the library
+reports that profile storage is unavailable, the Playground and Console can
+still generate speech; choose **Refresh** in the library to retry opening or
+loading the store.
+
+Character authority acquisition, character assignment, roleplay voice routing,
+legacy-provider profile execution, and profile/card portability or
+synchronization remain deferred. This slice also does not manage an audio.cpp
+server process.
 
 Profiles are owned locally and contain generation choices, not provider
 connection details. They exclude server origins, credentials and API keys,
@@ -549,5 +571,5 @@ max_identifier_characters = 256
 
 ---
 
-**Last Updated**: 2026-07-26
-**Version**: 2.2 (Native external audio.cpp Console speech)
+**Last Updated**: 2026-07-27
+**Version**: 2.3 (Native audio.cpp voice profiles)

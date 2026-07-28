@@ -53,6 +53,11 @@ def test_restored_state_drops_the_pending_script_so_no_dead_card_appears():
     survived a save/restore cannot still be armed, so a restored card's
     buttons would all be silently dropped -- a dead card the user could click
     forever while it misrepresents an abandoned request as awaiting them.
+
+    TASK-1130: ``pending_skill_install`` now goes through the identical drop
+    (see ``test_console_skill_install_confirm.py::
+    test_restored_state_drops_the_pending_install_so_no_dead_card_appears``)
+    -- both skill-confirm fields are dropped on restore, symmetrically.
     """
     state = TaskResumeState(
         summary="Keep me",
@@ -62,9 +67,10 @@ def test_restored_state_drops_the_pending_script_so_no_dead_card_appears():
     restored = TaskResumeState.from_dict(state.to_dict())
     assert restored.pending_skill_script is None
     assert restored.has_pending_skill_script() is False
-    # ...and the asymmetry is scoped to the script card alone.
+    assert restored.pending_skill_install is None
+    assert restored.has_pending_skill_install() is False
+    # ...and only the skill-confirm fields are affected.
     assert restored.summary == "Keep me"
-    assert restored.pending_skill_install == {"name": "other"}
 
 
 def test_state_without_a_pending_script():

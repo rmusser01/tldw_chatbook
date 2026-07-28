@@ -205,6 +205,7 @@ from tldw_chatbook.Utils.Emoji_Handling import (
 )
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
+from tldw_chatbook.TTS import TTSProfileService
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
@@ -244,6 +245,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSAudioBookGenerateEvent,
 )
 from .Notes.Notes_Library import NotesInteropService
+from .Notes.file_notes_git_service import build_file_notes_session_owner
 from .Notes.notes_scope_service import NotesScopeService
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
@@ -3413,6 +3415,7 @@ class TldwCli(
         self._tts_profile_repository = TTSProfileRepository(get_tts_profiles_db_path())
         self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
         self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
+        self._tts_profile_service: TTSProfileService | None = None
         self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(
             self.app_config
         )
@@ -3422,6 +3425,16 @@ class TldwCli(
         load_runtime_policy_for_app(self)
         self.screen_state_store = ScreenStateStore()
         self.pending_handoffs = PendingHandoffStore()
+        self.file_notes_session_owner = build_file_notes_session_owner()
+        self._file_notes_session_owner_shutdown_task: asyncio.Task[None] | None = None
+        #: TASK-1143 (F5): count of Console agent runs/rounds the last
+        #: navigation-away teardown killed (``ChatScreen.on_unmount`` ->
+        #: ``ConsoleChatController.shutdown()``). The app outlives the
+        #: screen instance that recorded it -- screens are never cached
+        #: (``_create_navigation_screen``) -- so the NEXT Console mount
+        #: reads and clears this one-shot slot to show a single toast.
+        #: 0 means nothing to report.
+        self._console_fleet_teardown_notice: int = 0
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
@@ -4664,10 +4677,10 @@ class TldwCli(
         )
 
         watchlist_checks_enabled = get_cli_setting(
-            "scheduling", "watchlist_checks_enabled", False
+            "scheduling", "watchlist_checks_enabled", True
         )
         watchlist_checks_shadow = get_cli_setting(
-            "scheduling", "watchlist_checks_shadow", True
+            "scheduling", "watchlist_checks_shadow", False
         )
 
         watchlist_handler = None
@@ -6039,6 +6052,84 @@ class TldwCli(
                     pass
                 return
 
+        # TASK-1143 (F5): give the outgoing screen one awaited chance to
+        # ASK before it (and whatever it owns) is torn down -- e.g. Console
+        # unmounting cancels every in-flight run and denies every pending/
+        # parked approval round for its ConsoleChatController (see
+        # ChatScreen.on_unmount / ConsoleChatController.shutdown). Mirrors
+        # the flush-veto seam immediately above: False keeps the outgoing
+        # screen mounted exactly like a flush veto, only here the decision
+        # comes from a user-facing confirmation dialog rather than an
+        # unresolved save conflict.
+        confirm_navigation = getattr(current_screen, "confirm_navigation", None)
+        if callable(confirm_navigation):
+            try:
+                confirm_result = confirm_navigation()
+                if inspect.isawaitable(confirm_result):
+                    confirm_result = await confirm_result
+                if confirm_result is False:
+                    logger.info(
+                        f"Navigation to {screen_name} vetoed by the outgoing "
+                        "screen's confirm_navigation"
+                    )
+                    return
+            except Exception as exc:
+                # A broken confirm hook must not silently let navigation
+                # proceed and tear down live work the user was never asked
+                # about -- fail closed, same as the flush veto above.
+                logger.warning(
+                    "Screen navigation confirm failed (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+                try:
+                    self.notify(
+                        "Couldn't confirm leaving this screen; staying put.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
+                return
+
+        release_navigation = None
+        acquire_navigation = getattr(
+            current_screen,
+            "acquire_navigation_transition",
+            None,
+        )
+        if callable(acquire_navigation):
+            admission = acquire_navigation()
+            if admission is False:
+                logger.info(
+                    f"Navigation to {screen_name} vetoed by the outgoing "
+                    "screen's transition admission"
+                )
+                return
+            release_navigation = admission
+        try:
+            await self._complete_screen_navigation(
+                message=message,
+                requested_screen=requested_screen,
+                screen_name=screen_name,
+                current_tab_value=current_tab_value,
+                screen_class=screen_class,
+                current_screen=current_screen,
+            )
+        finally:
+            if callable(release_navigation):
+                release_navigation()
+
+    async def _complete_screen_navigation(
+        self,
+        *,
+        message: NavigateToScreen,
+        requested_screen: str,
+        screen_name: str,
+        current_tab_value: str,
+        screen_class: type | None,
+        current_screen: Any,
+    ) -> None:
+        """Save, construct, restore, and switch while transition admission is held."""
         runtime_identity = self._current_runtime_identity()
         outgoing_key = str(self.current_tab or "").strip()
         if not outgoing_key:
@@ -6419,6 +6510,19 @@ class TldwCli(
         ):
             return None
         return repository
+
+    async def _ensure_tts_profile_service(self) -> TTSProfileService | None:
+        """Return one profile service over the existing app-owned dependencies."""
+
+        repository = await self._ensure_tts_profile_repository()
+        if repository is None:
+            return None
+
+        profile_service = getattr(self, "_tts_profile_service", None)
+        if profile_service is None:
+            profile_service = TTSProfileService(repository, self.tts_service)
+            self._tts_profile_service = profile_service
+        return profile_service
 
     async def _close_tts_profile_repository(self) -> None:
         """Definitively close the app-owned profile repository once."""
@@ -7425,11 +7529,87 @@ class TldwCli(
         if client is not None and getattr(client, "sessions", None):
             await client.disconnect_all()
 
+    async def _shutdown_file_notes_session_owner(self) -> None:
+        """Settle the process-owned File Notes Git lifecycle exactly once."""
+        owner = getattr(self, "file_notes_session_owner", None)
+        if owner is None:
+            return
+        task = getattr(self, "_file_notes_session_owner_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                owner.shutdown_async(),
+                name="shutdown_file_notes_session_owner",
+            )
+            self._file_notes_session_owner_shutdown_task = task
+        await asyncio.shield(task)
+
+    async def _shutdown(self) -> None:
+        """Settle File Notes Git before Textual closes screens and replicas."""
+        cancellation: asyncio.CancelledError | None = None
+        owner_error: BaseException | None = None
+        shutdown_task = asyncio.current_task()
+        cancellation_requests = (
+            shutdown_task.cancelling() if shutdown_task is not None else 0
+        )
+        while True:
+            try:
+                await self._shutdown_file_notes_session_owner()
+            except asyncio.CancelledError as error:
+                next_cancellation_requests = (
+                    shutdown_task.cancelling()
+                    if shutdown_task is not None
+                    else 0
+                )
+                if next_cancellation_requests > cancellation_requests:
+                    cancellation = cancellation or error
+                    cancellation_requests = next_cancellation_requests
+                    continue
+                owner_error = error
+            except BaseException as error:
+                owner_error = error
+            break
+
+        shutdown_error: BaseException | None = None
+        try:
+            await super()._shutdown()
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+        except BaseException as error:
+            shutdown_error = error
+
+        if shutdown_error is not None:
+            if owner_error is not None:
+                shutdown_error.add_note(
+                    "File Notes session owner shutdown also failed before "
+                    "Textual screen teardown"
+                )
+            if cancellation is not None:
+                shutdown_error.add_note(
+                    "Application shutdown cancellation was also requested"
+                )
+            raise shutdown_error
+        if owner_error is not None:
+            if cancellation is not None:
+                owner_error.add_note(
+                    "Application shutdown cancellation was delayed while "
+                    "preserving the owner shutdown failure"
+                )
+            raise owner_error
+        if cancellation is not None:
+            raise cancellation
+
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
         import asyncio
 
         logging.info("--- App Unmounting ---")
+        try:
+            await self._shutdown_file_notes_session_owner()
+        except Exception as error:
+            self.loguru_logger.warning(
+                "File Notes session owner fallback shutdown failed "
+                f"type={type(error).__name__}"
+            )
         self._ui_ready = False
         self._stop_ui_responsiveness_monitor()
 
@@ -7735,21 +7915,6 @@ class TldwCli(
 
         logging.shutdown()
         self.loguru_logger.info("--- App Unmounted (Loguru) ---")
-
-    ########################################################################
-    #
-    # WATCHER - Handles UI changes when current_tab's VALUE changes
-    #
-    # ######################################################################
-    def watch_current_tab(self, old_tab: Optional[str], new_tab: str) -> None:
-        """Legacy tab-content watcher; retained as a permanent no-op.
-
-        Screen-based navigation (``self._use_screen_navigation``, set
-        unconditionally in ``__init__``) now owns every tab switch, so
-        this watcher's original show/hide dispatch (``_execute_tab_switch``,
-        task-577 PR2 T2) has been retired along with it.
-        """
-        return
 
     def _log_view_dimensions(self, view, parent):
         """Helper to log view dimensions after refresh."""

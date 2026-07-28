@@ -26,6 +26,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, Static
 
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .overview_pane import OverviewPane
 from .watchlist_tree import TreeScope
 
 
@@ -128,11 +129,18 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
     selected_entity = reactive[dict[str, Any] | None](None, recompose=True)
     scope = reactive[TreeScope | None](None, recompose=True)
     breadcrumb_labels = reactive[list[str]]([], recompose=True)
-    #: TASK-998. Whether this profile has nothing to select at all. Screen-
-    #: seeded like the three reactives above, for the same reason: the pane
-    #: has no service of its own, and "nothing is selected" and "nothing
-    #: exists to select" are different states that need different copy.
-    first_run = reactive(False, recompose=True)
+    #: TASK-998, widened by TASK-1020. What the profile behind this Inspector
+    #: reports: `loading`, `empty` or `populated` (`OverviewPane.LOADING` and
+    #: friends). Screen-seeded like the three reactives above, for the same
+    #: reason: the pane has no service of its own, and "nothing is selected",
+    #: "nothing exists to select" and "nothing has answered yet" are three
+    #: different states that need three different lines. It was a bool, and
+    #: `False` had to stand for both loading and populated -- so during the
+    #: in-flight window the rail told a brand-new user to "Select a source,
+    #: run, item, rule, or notification", naming five things that did not
+    #: exist. The value is the same one the Overview region keys off, so the
+    #: two regions cannot disagree.
+    profile_state = reactive(OverviewPane.LOADING, recompose=True)
 
     def compose(self):
         # No "Inspector" title here. `_build_inspector_pane` already opens the
@@ -158,7 +166,16 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             # cover both -- the populated copy is right and stays exactly as
             # it was. The id is shared so callers testing for "the Inspector
             # has nothing selected" keep working across both.
-            if self.first_run:
+            if self.profile_state == OverviewPane.LOADING:
+                # TASK-1020: the third state. Says nothing about what exists,
+                # because nothing has answered yet.
+                yield Static(
+                    "Loading...",
+                    id="inspector-empty-state",
+                    classes="watchlists-loading-state",
+                )
+                return
+            if self.profile_state == OverviewPane.EMPTY:
                 yield Static(
                     "Nothing to inspect yet.",
                     id="inspector-empty-state",
@@ -311,22 +328,56 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             )
         return levels
 
+    #: TASK-1120. Every entity the panes hand this Inspector comes out of
+    #: `watchlist_normalizers.py`, and every normalizer stamps an
+    #: `entity_kind`. That field is the backend's own answer to "what is
+    #: this", so it decides -- the shape heuristics below it are a fallback
+    #: for dicts assembled by hand (tree scopes, fixtures) that carry no kind.
+    _ENTITY_KINDS = {
+        "subscription": "source",
+        "watchlist_source": "source",
+        "watchlist_run": "run",
+        "watchlist_item": "item",
+        "watchlist_alert_rule": "rule",
+        "client_notification": "notification",
+    }
+
     @staticmethod
     def _entity_type(entity: dict[str, Any]) -> str:
-        # Alert rules are most specifically identified by their backend kind or
-        # rule id; check them first so they are never mistaken for items.
-        if entity.get("entity_kind") == "watchlist_alert_rule" or "rule_id" in entity:
-            return "rule"
-        if entity.get("entity_kind") == "client_notification":
-            return "notification"
-        if "source_type" in entity or "url" in entity:
-            return "source"
-        if "status" in entity and ("found_count" in entity or "processed_count" in entity):
-            return "run"
-        if "condition_type" in entity:
+        """Which kind of thing this entity is, and so which actions it gets.
+
+        Guessing from shape alone is what produced TASK-1120: the first test
+        used to be `"source_type" in entity or "url" in entity`, and a
+        normalized watchlist item carries BOTH -- `source_type` is the type of
+        the feed it came from and `url` is the article's own link. Every
+        fetched item was therefore typed `source`, and the Inspector offered
+        `Preview`/`Check now` over a blog post while `Mark reviewed`, `Ingest`
+        and `Ignore` were unreachable. A run had the mirror problem: its stats
+        live under `stats`, not as `found_count`/`processed_count` keys, so it
+        fell through every branch to `unknown`.
+
+        Args:
+            entity: A normalized watchlist entity, or a hand-built dict.
+
+        Returns:
+            One of source/run/item/rule/notification, or `unknown`.
+        """
+        kind = InspectorPane._ENTITY_KINDS.get(str(entity.get("entity_kind") or ""))
+        if kind is not None:
+            return kind
+        # Fallbacks, most specific first. `item_id` now outranks the source
+        # keys for the same reason the map exists at all.
+        if "rule_id" in entity or "condition_type" in entity:
             return "rule"
         if "item_id" in entity or "source_name" in entity:
             return "item"
+        if "run_id" in entity or (
+            "status" in entity
+            and ("found_count" in entity or "processed_count" in entity)
+        ):
+            return "run"
+        if "source_type" in entity or "url" in entity:
+            return "source"
         return "unknown"
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

@@ -1,9 +1,10 @@
 import pytest
 
 from textual.app import App
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
+from tldw_chatbook.UI.stts_profile_library import STTSProfileLibrary
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 from Tests.UI.test_screen_navigation import _build_test_app
 
@@ -22,6 +23,40 @@ class _SpeechHarness(App):
 
     async def on_mount(self) -> None:
         await self.push_screen(STTSScreen(self._app_instance))
+
+
+async def _wait_until(pilot, predicate, *, attempts: int = 100) -> None:
+    for _ in range(attempts):
+        if predicate():
+            return
+        await pilot.pause(0.01)
+    raise AssertionError("condition did not become true")
+
+
+@pytest.mark.asyncio
+async def test_speech_rail_exposes_and_opens_voice_profiles():
+    app = _SpeechHarness(_build_test_app())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = app.screen
+        assert isinstance(screen, STTSScreen)
+        await _wait_until(
+            pilot,
+            lambda: screen.stts_window is not None,
+        )
+
+        profile_row = screen.query_one("#lab-speech-row-profiles", Button)
+        assert "Voice Profiles" in str(profile_row.label)
+
+        await pilot.click("#lab-speech-row-profiles")
+        await _wait_until(
+            pilot,
+            lambda: len(screen.query(STTSProfileLibrary)) == 1,
+        )
+
+        assert screen.stts_window is not None
+        assert screen.stts_window.current_view == "profiles"
+        assert profile_row.has_class("is-active")
 
 
 @pytest.mark.asyncio

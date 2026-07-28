@@ -170,6 +170,32 @@ async def test_sources_pane_new_source_form_posts_request():
         assert payload["source_type"] == "rss"
         assert payload["active"] is True
         assert payload["tags"] == ["ai", "news"]
+        # Untouched, the cadence control reproduces the Subscriptions_DB
+        # column default rather than leaving the source unscheduled.
+        assert payload["check_frequency"] == 3600
+
+
+@pytest.mark.asyncio
+async def test_sources_pane_new_source_form_carries_selected_check_frequency():
+    """TASK-1210: the cadence the user picks has to reach the payload.
+
+    Without it every source lands on the database default and there is no way
+    to say "check this hourly" or "check this daily" from the screen at all.
+    """
+    app = SourcesPaneHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+
+        pane.query_one("#sources-create-name", Input).value = "Daily Feed"
+        pane.query_one("#sources-create-url", Input).value = "http://example.com/d"
+        pane.query_one("#sources-create-frequency", Select).value = 86_400
+        pane.query_one("#sources-create-submit", Button).press()
+        await pilot.pause()
+
+        _kind, payload = app.captured_messages[0]
+        assert payload["check_frequency"] == 86_400
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderDescriptor,
     TTSProviderSpec,
     TTSRequest,
+    TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
@@ -484,7 +485,7 @@ async def test_first_and_stale_transport_failures_have_safe_retryable_health() -
         assert stale.models == ready.models
         assert stale.health == TRANSIENT_HEALTH
 
-        assert await adapter.get_voices("model") == ("voice",)
+        assert await adapter.get_voices("model") == ()
         assert voice_requests == 1
 
 
@@ -857,6 +858,318 @@ async def test_known_model_voices_are_lazy_query_encoded_cached_and_refreshable(
 
 
 @pytest.mark.asyncio
+async def test_voice_discovery_accepts_identifiers_allowed_by_adapter_config() -> None:
+    model_id = "m" * 257
+    voice_id = "v" * 257
+    voice_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal voice_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model(model_id)))
+        voice_requests += 1
+        return _streaming_response(_voices_body(voice_id))
+
+    async with _adapter(
+        respond,
+        max_identifier_characters=300,
+    ) as adapter:
+        result = await adapter.observe_voices(model_id)
+        projected = await adapter.get_voices(model_id)
+
+    assert result.state == "complete"
+    assert result.model_id == model_id
+    assert result.voices == (voice_id,)
+    assert projected == (voice_id,)
+    assert voice_requests == 1
+
+
+@pytest.mark.asyncio
+async def test_voice_discovery_rejects_identifiers_above_adapter_config_limit() -> None:
+    model_id = "m" * 301
+    voice_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal voice_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model(model_id)))
+        voice_requests += 1
+        return _streaming_response(_voices_body("unexpected"))
+
+    async with _adapter(
+        respond,
+        max_identifier_characters=300,
+    ) as adapter:
+        catalog = await adapter.get_catalog()
+        result = await adapter.observe_voices(model_id)
+
+    assert catalog.health == CONTRACT_HEALTH
+    assert result.state == "unverified"
+    assert result.voices == ()
+    assert voice_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_observe_voices_caches_an_authoritative_empty_result() -> None:
+    voice_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal voice_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        voice_requests += 1
+        return _streaming_response(_voices_body())
+
+    async with _adapter(respond) as adapter:
+        first = await adapter.observe_voices("model")
+        cached = await adapter.observe_voices("model")
+
+    assert first.state == cached.state == "complete"
+    assert first.voices == cached.voices == ()
+    assert first.catalog_revision == cached.catalog_revision == 1
+    assert voice_requests == 1
+
+
+@pytest.mark.asyncio
+async def test_observe_voices_reports_missing_exact_model_without_a_voice_request() -> (
+    None
+):
+    voice_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal voice_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model("current")))
+        voice_requests += 1
+        return _streaming_response(_voices_body("unexpected"))
+
+    async with _adapter(respond) as adapter:
+        result = await adapter.observe_voices("missing")
+
+    assert result.provider_id == "audio_cpp"
+    assert result.model_id == "missing"
+    assert result.catalog_revision == 1
+    assert result.voices == ()
+    assert result.state == "model_missing"
+    assert voice_requests == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ("timeout", "transport", "contract"))
+async def test_observe_voices_caches_ambiguous_failures_and_refresh_recovers(
+    failure: str,
+) -> None:
+    voice_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal voice_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        voice_requests += 1
+        failed_attempts = 2 if failure in {"timeout", "transport"} else 1
+        if voice_requests <= failed_attempts:
+            if failure == "timeout":
+                raise httpx.ReadTimeout("voice timeout", request=request)
+            if failure == "transport":
+                raise httpx.ConnectError("voice transport", request=request)
+            return httpx.Response(404, content=b"voice response")
+        return _streaming_response(_voices_body("recovered"))
+
+    async with _adapter(respond) as adapter:
+        first = await adapter.observe_voices("model")
+        cached = await adapter.observe_voices("model")
+        recovered = await adapter.observe_voices("model", refresh=True)
+
+    assert first.state == cached.state == "unverified"
+    assert first.voices == cached.voices == ()
+    assert recovered.state == "complete"
+    assert recovered.voices == ("recovered",)
+    assert voice_requests == (3 if failure in {"timeout", "transport"} else 2)
+
+
+@pytest.mark.asyncio
+async def test_observe_voices_reports_unverified_after_catalog_reconfiguration_failure() -> (
+    None
+):
+    phase = "ready"
+    voice_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal voice_requests
+        if request.url.path == "/health":
+            if phase == "reconfiguring":
+                raise httpx.ConnectError("catalog transport", request=request)
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        voice_requests += 1
+        return _streaming_response(_voices_body("unexpected"))
+
+    async with _adapter(respond) as adapter:
+        await adapter.ensure_ready()
+        phase = "reconfiguring"
+        await adapter.get_catalog(refresh=True)
+        result = await adapter.observe_voices("model")
+
+    assert result.state == "unverified"
+    assert result.voices == ()
+    assert voice_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_catalog_refresh_does_not_publish_an_in_flight_voice_result() -> (
+    None
+):
+    phase = "ready"
+    voice_stream = BlockingStream(_voices_body("fetched-before-stale"))
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            if phase == "stale":
+                raise httpx.ConnectError("catalog transport", request=request)
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        return httpx.Response(200, stream=voice_stream)
+
+    async with _adapter(respond) as adapter:
+        await adapter.ensure_ready()
+        observation = asyncio.create_task(adapter.observe_voices("model"))
+        await voice_stream.started.wait()
+
+        phase = "stale"
+        stale_catalog = await adapter.get_catalog(refresh=True)
+        assert stale_catalog.revision == 1
+        assert stale_catalog.health == TRANSIENT_HEALTH
+
+        voice_stream.release.set()
+        result = await observation
+
+        assert result.state == "unverified"
+        assert result.voices == ()
+        assert adapter._voice_cache == {}
+        assert adapter._voice_shared_results == {}
+
+    assert voice_stream.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_observe_voices_reports_unverified_after_shutdown() -> None:
+    voice_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal voice_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        voice_requests += 1
+        return _streaming_response(_voices_body("unexpected"))
+
+    adapter = AudioCppAdapter(
+        _config(),
+        transport=httpx.MockTransport(respond),
+    )
+    await adapter.close()
+    result = await adapter.observe_voices("model")
+
+    assert result.state == "unverified"
+    assert result.voices == ()
+    assert voice_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_voice_observations_for_one_model_revision_are_coalesced() -> (
+    None
+):
+    voice_requests = 0
+    voice_started = asyncio.Event()
+    release_voice = asyncio.Event()
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal voice_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        voice_requests += 1
+        voice_started.set()
+        await release_voice.wait()
+        return _streaming_response(_voices_body("coalesced"))
+
+    async with _adapter(respond) as adapter:
+        first = asyncio.create_task(adapter.observe_voices("model", refresh=True))
+        await voice_started.wait()
+        second = asyncio.create_task(adapter.observe_voices("model", refresh=True))
+        await asyncio.sleep(0)
+        release_voice.set()
+        results = await asyncio.gather(first, second)
+
+    assert [result.state for result in results] == ["complete", "complete"]
+    assert [result.voices for result in results] == [("coalesced",), ("coalesced",)]
+    assert voice_requests == 1
+
+
+@pytest.mark.asyncio
+async def test_get_voices_projects_only_complete_observations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observations = iter(
+        (
+            TTSVoiceDiscoveryResult(
+                provider_id="audio_cpp",
+                model_id="model",
+                catalog_revision=1,
+                voices=("complete",),
+                state="complete",
+            ),
+            TTSVoiceDiscoveryResult(
+                provider_id="audio_cpp",
+                model_id="model",
+                catalog_revision=1,
+                voices=("not-authoritative",),
+                state="unverified",
+            ),
+            TTSVoiceDiscoveryResult(
+                provider_id="audio_cpp",
+                model_id="model",
+                catalog_revision=1,
+                voices=(),
+                state="model_missing",
+            ),
+        )
+    )
+
+    async with _adapter(
+        lambda _request: _streaming_response(_health_body())
+    ) as adapter:
+
+        async def observe_voices(
+            model_id: str,
+            refresh: bool = False,
+        ) -> TTSVoiceDiscoveryResult:
+            assert model_id == "model"
+            assert refresh is False
+            return next(observations)
+
+        monkeypatch.setattr(adapter, "observe_voices", observe_voices)
+
+        assert await adapter.get_voices("model") == ("complete",)
+        assert await adapter.get_voices("model") == ()
+        assert await adapter.get_voices("model") == ()
+
+
+@pytest.mark.asyncio
 async def test_unknown_and_removed_model_ids_never_fetch_voices() -> None:
     models = (_model("current"),)
     voice_requests = 0
@@ -1106,7 +1419,7 @@ async def test_concurrent_voice_fetches_for_one_model_revision_are_coalesced() -
         ("timeout", 2),
     ],
 )
-async def test_optional_voice_failures_cache_empty_without_health_mutation(
+async def test_optional_voice_failures_cache_unverified_and_project_empty(
     case: str,
     expected_requests: int,
 ) -> None:
@@ -1152,13 +1465,16 @@ async def test_optional_voice_failures_cache_empty_without_health_mutation(
 
     async with _adapter(respond) as adapter:
         before = await adapter.get_catalog()
-        assert await adapter.get_voices("model") == ()
+        first = await adapter.observe_voices("model")
+        cached = await adapter.observe_voices("model")
         assert await adapter.get_voices("model") == ()
         after = await adapter.get_catalog()
 
     assert after is before
     assert after.health == AVAILABLE_HEALTH
     assert after.revision == 1
+    assert first.state == cached.state == "unverified"
+    assert first.voices == cached.voices == ()
     assert voice_requests == expected_requests
     assert all(stream.close_count == 1 for stream in streams)
 
@@ -1180,16 +1496,26 @@ async def test_voice_cancellation_is_not_cached_and_closes_response() -> None:
         return _streaming_response(_voices_body("retried"))
 
     async with _adapter(respond) as adapter:
-        first = asyncio.create_task(adapter.get_voices("model"))
+        first = asyncio.create_task(adapter.observe_voices("model"))
         await blocked_stream.started.wait()
+        waiter = asyncio.create_task(adapter.observe_voices("model"))
+        await asyncio.sleep(0)
+        assert adapter._voice_lock_users == {(1, "model"): 2}
         first.cancel()
         with pytest.raises(asyncio.CancelledError):
             await first
 
-        assert await adapter.get_voices("model") == ("retried",)
+        retried = await waiter
+        cached = await adapter.observe_voices("model")
+        assert adapter._voice_shared_results == {}
+        assert adapter._voice_cache[(1, "model")].result == retried
+        assert cached == retried
+        assert voice_requests == 2
 
     assert voice_requests == 2
     assert blocked_stream.close_count == 1
+    assert retried.state == "complete"
+    assert retried.voices == ("retried",)
 
 
 class CountingTransport(httpx.AsyncBaseTransport):
