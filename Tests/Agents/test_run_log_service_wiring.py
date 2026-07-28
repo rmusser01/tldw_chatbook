@@ -162,6 +162,60 @@ def test_a_real_spawn_shares_the_parent_log_directory_and_counter(wired):
     )
 
 
+def test_parent_spawn_tool_call_record_precedes_the_childs_own_records(wired):
+    """F5 (Qodo #5, PR #1066 review): end-to-end counterpart of the pure-loop
+    test in test_run_log_on_record.py, driven through a REAL nested spawn
+    and the REAL RunLogWriter. `deps.spawn()` runs the child's ENTIRE loop
+    inline before returning to the parent's dispatch of spawn_subagent, so
+    before the F5 fix (both _emit_record calls at the content-assembly
+    point, AFTER dispatch) the child's own model/tool_call/tool_result
+    records -- written during that still-in-progress parent dispatch --
+    landed in the log BEFORE the parent's own tool_call record that caused
+    the spawn at all: backwards chronological order. After the fix, the
+    parent's tool_call record for spawn_subagent (its record number is
+    assigned BEFORE `deps.spawn()` runs) must precede every one of the
+    child's records.
+    """
+    db, registry, root = wired
+    replies = [
+        fence(SPAWN_TOOL_NAME, {"task": "child task"}),  # parent turn 1: spawns
+        "child says hi",  # CHILD turn 1
+        "parent final",  # parent turn 2
+    ]
+    service = AgentService(db, registry, chat_call=scripted_chat(replies))
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(),
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "delegate this"}],
+        config=config,
+        api_endpoint="llama_cpp",  # non-native: dispatches spawn via the fence
+    )
+    assert outcome.status == RUN_DONE and outcome.subagents_spawned == 1
+
+    run_dirs = [d for d in (root / "agent-runs").iterdir() if d.is_dir()]
+    assert len(run_dirs) == 1
+    records = all_records(run_dirs[0])
+
+    parent_spawn_call = next(
+        r
+        for r in records
+        if r.kind == "primary" and r.type == "tool_call" and r.tool == SPAWN_TOOL_NAME
+    )
+    child_first = min(
+        (r for r in records if r.kind == "subagent"), key=lambda r: r.number
+    )
+    assert parent_spawn_call.number < child_first.number, (
+        "the parent's spawn_subagent tool_call record must be the FIRST "
+        f"record of this spawn, not appear after the child's own records; "
+        f"got parent={parent_spawn_call.number}, child first={child_first.number}"
+    )
+
+
 def test_on_record_returns_the_assigned_record_number(wired, monkeypatch):
     """Round-1 review fix: a mutation that calls ``append(...)`` and then
     ``return None`` instead of returning its result still passed all 51

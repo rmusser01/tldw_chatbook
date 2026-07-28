@@ -10,11 +10,43 @@ expensive within the window. Python's `re` has no match timeout, and
 thread -- bounding the scan to the first 500 characters avoids runaway
 execution, not catastrophe within the bound. See also
 `file_operation_tools._MAX_GREP_LINE_SEARCH_CHARS`.
+
+F6 (Qodo #6, PR #1066 review): because `search_run_log` is a RUNTIME tool
+(agent_runtime.py dispatches it directly via `deps.search_run_log`, never
+through `deps.invoke_tool`), it also bypasses the ordinary per-tool timeout
+wrapper (`agent_service._call_with_timeout`) that every catalog tool gets.
+The 500-char scan window above bounds the INPUT to one regex evaluation but
+does not bound its WORST-CASE TIME -- a single catastrophic-backtracking
+match against even 500 characters can still run for a very long time. Two
+additional, independently-cheap layers narrow that, and NEITHER is a
+complete fix on its own:
+
+  1. A wall-clock deadline (`MAX_SEARCH_SECONDS`) checked between records in
+     `search_records`. This bounds the CUMULATIVE cost of scanning many
+     records, each individually fast. It CANNOT interrupt a single record
+     whose regex evaluation itself hangs -- `re.Pattern.search` is not
+     interruptible from pure Python without threads/signals, and this
+     module stays synchronous and dependency-free on purpose.
+  2. A pattern screen (`_looks_catastrophic`) that rejects the textbook
+     nested-quantifier shape (`(a+)+`, `(a*)*`, `(a+)*`, ...) BEFORE
+     compiling. This catches the common case that would hang on layer 1's
+     very first record, but it is a conservative STRING scan for one known
+     dangerous shape, not a general safety proof -- other constructs (e.g.
+     alternation-based blowups) can still be slow and are not screened.
+
+Together these make a catastrophic pattern's cost bounded in the common
+case and finite in the worst case a wall clock can observe -- they do not
+make it fast, and a sufficiently adversarial single-record pattern can
+still exceed both bounds before the deadline check next runs. `contains=`
+remains the only mode with no such caveat: it is linear and cannot
+backtrack by construction, and the tool description tells the model to
+prefer it.
 """
 
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 from .run_log_format import RunLogRecord, iter_records
@@ -24,6 +56,71 @@ from .run_log_format import RunLogRecord, iter_records
 #: makes such a pattern fast — only bounded. Mirrors
 #: `file_operation_tools._MAX_GREP_LINE_SEARCH_CHARS`.
 MAX_REGEX_SCAN_CHARS = 500
+
+#: F6: wall-clock ceiling on one `search_records` call, checked between
+#: records. Deliberately small -- this is meant to be a CHEAP, in-process
+#: log search over local files, not a bounded-but-still-slow operation.
+MAX_SEARCH_SECONDS = 5.0
+
+#: F6: characters that make a quantified group "already quantified" for the
+#: nested-quantifier screen below (`+`/`*`; `?` after either is a lazy
+#: variant of the same shape, handled separately).
+_QUANTIFIER_CHARS = ("+", "*")
+
+
+class RunLogSearchTimeout(Exception):
+    """A `search_records` call exceeded `MAX_SEARCH_SECONDS`. See F6."""
+
+
+class RunLogSearchPatternRejected(Exception):
+    """`pattern=` matched a known catastrophic-backtracking shape. See F6."""
+
+
+def _looks_catastrophic(pattern: str) -> bool:
+    """Cheap, conservative screen for the classic nested-quantifier shape.
+
+    Detects a parenthesised group whose content ends in a quantifier
+    (``+``/``*``, optionally followed by a lazy ``?``) immediately followed
+    by another quantifier outside the group -- e.g. ``(a+)+``, ``(a*)*``,
+    ``(a+)*``, ``(a*)+``, ``(a+){2,}``. This is THE textbook
+    catastrophic-backtracking signature. Deliberately a balanced-paren
+    STRING scan, not a regex: a regex screen for dangerous regexes would
+    itself need to be immune to the same class of attack. Conservative by
+    design -- it can miss more exotic catastrophic shapes (alternation-based
+    blowups, deeply nested cross-group cases) but is built to never flag an
+    ordinary pattern like ``(abc)+``, ``a+b*``, or ``(foo|bar)+``.
+
+    Args:
+        pattern: The model-supplied regex source, unmodified.
+
+    Returns:
+        ``True`` when the nested-quantifier shape is found, else ``False``.
+    """
+    stack: list[int] = []
+    n = len(pattern)
+    i = 0
+    while i < n:
+        ch = pattern[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "(":
+            stack.append(i)
+        elif ch == ")" and stack:
+            start = stack.pop()
+            inner_end = i - 1
+            if inner_end > start:
+                trailing = pattern[inner_end]
+                # A lazy quantifier (`+?`/`*?`) is the same dangerous shape
+                # one character further back.
+                if trailing == "?" and inner_end - 1 > start:
+                    trailing = pattern[inner_end - 1]
+                if trailing in _QUANTIFIER_CHARS:
+                    j = i + 1
+                    if j < n and (pattern[j] in _QUANTIFIER_CHARS or pattern[j] == "{"):
+                        return True
+        i += 1
+    return False
 
 
 def load_records(log_dir: Path) -> list[RunLogRecord]:
@@ -60,6 +157,7 @@ def search_records(
     to_record: int = 0,
     context: int = 0,
     limit: int = 50,
+    deadline_seconds: float = MAX_SEARCH_SECONDS,
 ) -> list[RunLogRecord]:
     """Filter ``records``; return hits plus optional neighbouring context.
 
@@ -67,7 +165,11 @@ def search_records(
         records: All loaded records, in order.
         contains: Literal substring (case-insensitive). Never compiled.
         pattern: Opt-in regex, searched only over the first
-            ``MAX_REGEX_SCAN_CHARS`` characters of each record.
+            ``MAX_REGEX_SCAN_CHARS`` characters of each record. Rejected
+            up front (``RunLogSearchPatternRejected``) when it matches the
+            classic nested-quantifier catastrophic-backtracking shape; see
+            the module docstring for why this is a partial, not complete,
+            defense.
         tool: Exact tool-name filter.
         type: Exact record-type filter.
         status: Exact status filter.
@@ -77,20 +179,44 @@ def search_records(
         context: Include this many records either side of each hit.
         limit: Maximum number of matching records returned; context records
             are returned in addition to this limit.
+        deadline_seconds: Wall-clock ceiling for this call, checked between
+            records (F6). Cannot interrupt a single record's regex
+            evaluation if THAT hangs; see the module docstring.
 
     Returns:
         Matching records in record order, deduplicated, with context records
         included (result may exceed ``limit`` when context is used).
+
+    Raises:
+        RunLogSearchPatternRejected: ``pattern`` matches a known
+            catastrophic-backtracking shape.
+        RunLogSearchTimeout: the scan exceeded ``deadline_seconds``.
     """
     compiled = None
     if pattern:
+        if _looks_catastrophic(pattern):
+            raise RunLogSearchPatternRejected(
+                f"pattern {pattern!r} looks like it could backtrack "
+                f"catastrophically (a quantifier applied to an "
+                f"already-quantified group, e.g. (a+)+, (a*)*, (a+)*). "
+                f"Use contains=<literal substring> instead -- it is "
+                f"unbounded and cannot backtrack."
+            )
         try:
             compiled = re.compile(pattern, re.IGNORECASE)
         except re.error:
             return []
     needle = contains.lower()
     hit_indexes: list[int] = []
+    started = time.monotonic()
     for index, record in enumerate(records):
+        if time.monotonic() - started > deadline_seconds:
+            raise RunLogSearchTimeout(
+                f"search exceeded its {deadline_seconds:g}s wall-clock "
+                f"budget after scanning {index} of {len(records)} records. "
+                f"Narrow the query -- add 'contains', or filter by 'tool', "
+                f"'type', 'from_record'/'to_record' -- and try again."
+            )
         if from_record and record.number < from_record:
             continue
         if to_record and record.number > to_record:
@@ -156,6 +282,12 @@ def format_results(
     to pass to continue reading. Before this, a partial render was silent,
     which is what let a model conclude matched content did not exist.
 
+    F7 (Qodo #7): when a record's ``truncated_from`` is set (the WRITER
+    itself capped it at ``run_log_max_record_bytes``), the block also says
+    so explicitly -- that content beyond the per-record storage cap was
+    never written and cannot be recovered, distinct from the windowing note
+    above (which is about what THIS render shows, not what the log stored).
+
     Args:
         records: Records to render.
         max_chars: Per-record content ceiling in the rendering.
@@ -207,6 +339,25 @@ def format_results(
         if start > 0 or end < total:
             continuation = f" Use offset={end} to continue." if end < total else ""
             body = f"{body}\n[showing chars {start}-{end} of {total} total.{continuation}]"
+        if record.truncated_from:
+            # F7 (Qodo #7): the writer caps any record over
+            # `run_log_max_record_bytes` and records the ORIGINAL size in
+            # `truncated_from` -- but this field was never rendered here, so
+            # a model recovering a capped record via search_run_log had no
+            # way to learn its tail was unrecoverable and could easily
+            # mistake the stored length for the whole result. Byte-accurate
+            # (not `total`, which is character length): `truncated_from` is
+            # UTF-8 bytes (run_log_format.py's own unit), and the two only
+            # coincide for pure-ASCII content.
+            stored_bytes = len(record.content.encode("utf-8"))
+            body = (
+                f"{body}\n[NOTE: this run's log could only store "
+                f"{stored_bytes} of this record's original "
+                f"{record.truncated_from} bytes (the per-record storage "
+                f"cap) -- the remaining "
+                f"{record.truncated_from - stored_bytes} bytes were never "
+                f"written and cannot be recovered from this run's log.]"
+            )
         blocks.append(f"{header}\n{body}")
     return "\n\n".join(blocks)
 

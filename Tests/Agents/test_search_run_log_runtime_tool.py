@@ -425,3 +425,149 @@ def test_real_closure_never_raises_on_a_junk_offset(tmp_path, monkeypatch):
     ]
     assert tool_results, "expected a search_run_log tool_result step"
     assert any("Invalid search arguments" in r for r in tool_results)
+
+
+# -- F2 (Qodo #2, PR #1066 review -- DECLINED, confirmed by test) ------------
+#
+# Qodo wanted these raw dict args routed through a Pydantic model before use.
+# Declined: every OTHER runtime tool this service wires (install_skill,
+# run_skill_script, skill_file) takes the same raw-dict-plus-defensive-cast
+# shape, and every argument here is ALREADY coerced defensively -- a bad
+# value returns a clean ToolResult error rather than raising. This section
+# drives the REAL closure (captured off a REAL AgentService the same way
+# test_on_record_returns_the_assigned_record_number does) with a string
+# where an int is expected, null, a nested object, and a list, for BOTH the
+# string-typed metadata filters and the int-typed range/paging arguments --
+# confirming none of them raise. If any gap had been found, it would have
+# been fixed here rather than merely asserted away.
+
+
+@pytest.fixture
+def wired(tmp_path, monkeypatch):
+    from tldw_chatbook.Agents import run_log as run_log_module
+
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = ToolCatalogRegistry()
+    reg.register_provider(BuiltinToolProvider())
+    return db, reg, tmp_path
+
+
+@pytest.fixture
+def real_search_run_log(wired, monkeypatch):
+    """The ACTUAL search_run_log closure a real AgentService wires into
+    LoopDeps, captured via a run_agent_loop spy -- mirrors
+    test_run_log_service_wiring.py::test_on_record_returns_the_assigned_record_number.
+    """
+    from tldw_chatbook.Agents import agent_service as agent_service_module
+
+    db, registry, _root = wired
+    captured: dict = {}
+    real_run_agent_loop = agent_service_module.run_agent_loop
+
+    def spy_run_agent_loop(config, messages, active, deps):
+        captured["deps"] = deps
+        return real_run_agent_loop(config, messages, active, deps)
+
+    monkeypatch.setattr(agent_service_module, "run_agent_loop", spy_run_agent_loop)
+
+    service = AgentService(
+        db, registry, chat_call=lambda **kw: {"choices": [{"message": {"content": "ok"}}]}
+    )
+    service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(model="m", system_prompt="s", budget=RunBudget()),
+        api_endpoint="openai",
+    )
+    deps = captured["deps"]
+    assert deps.search_run_log is not None
+    return deps.search_run_log
+
+
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        {"from_record": "not-a-number"},
+        {"to_record": "not-a-number"},
+        {"context": "not-a-number"},
+        {"offset": "not-a-number"},
+        {"from_record": {"nested": "object"}},
+        {"to_record": {"nested": "object"}},
+        {"context": {"nested": "object"}},
+        {"offset": {"nested": "object"}},
+        {"from_record": [1, 2, 3]},
+        {"to_record": [1, 2, 3]},
+        {"context": [1, 2, 3]},
+        {"offset": [1, 2, 3]},
+        {"from_record": float("nan")},
+    ],
+)
+def test_unparseable_numeric_args_return_a_clean_error_never_raise(
+    real_search_run_log, bad_args
+):
+    result = real_search_run_log(bad_args)
+    assert result.ok is False
+    assert "Invalid search arguments" in result.error
+
+
+@pytest.mark.parametrize(
+    "null_args",
+    [
+        {"from_record": None},
+        {"to_record": None},
+        {"context": None},
+        {"offset": None},
+    ],
+)
+def test_null_numeric_args_are_coerced_to_zero_not_an_error(
+    real_search_run_log, null_args
+):
+    # `args.get(key) or 0` treats an explicit `null`/None the same as a
+    # missing key -- a deliberate, already-safe coercion (not a gap): the
+    # model sent nothing usable, so "no filter/no offset" is the correct
+    # reading, distinct from a genuinely malformed value like a string or a
+    # nested object above, which DOES surface as an error.
+    result = real_search_run_log(null_args)
+    assert result.ok is True
+
+
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        {"contains": 123},
+        {"contains": None},
+        {"contains": {"nested": "object"}},
+        {"contains": [1, 2, 3]},
+        {"pattern": 123},
+        {"pattern": None},
+        {"pattern": {"nested": "object"}},
+        {"tool": 123},
+        {"tool": None},
+        {"tool": {"nested": "object"}},
+        {"tool": [1, 2, 3]},
+        {"type": None},
+        {"status": None},
+        {"kind": None},
+    ],
+)
+def test_string_typed_args_are_defensively_coerced_never_raise(
+    real_search_run_log, bad_args
+):
+    result = real_search_run_log(bad_args)
+    # str(...) on any of these never raises, so these must reach a normal
+    # (possibly empty) result -- never an exception.
+    assert result.ok is True
+
+
+def test_missing_args_dict_entirely_does_not_raise(real_search_run_log):
+    # An empty dict -- every key falls back to its documented default.
+    result = real_search_run_log({})
+    assert result.ok is True
+
+
+def test_args_is_not_even_a_dict_of_the_expected_shape(real_search_run_log):
+    # A model could plausibly hand back a flat, oddly-shaped dict (extra
+    # unrecognised keys) -- ignored, never raises.
+    result = real_search_run_log({"unexpected_key": "whatever", "contains": "x"})
+    assert result.ok is True

@@ -783,8 +783,49 @@ class AgentService:
             return ToolResult(ok=True, content=str(content))
 
         def search_run_log(args: dict) -> ToolResult:
-            """Query THIS run's log. Reads only what this agent produced."""
-            from .run_log_search import format_results, load_records, search_records
+            """Query THIS run's log. Reads only what this agent produced.
+
+            F2 (Qodo #2, PR #1066 review -- DECLINED): Qodo's finding wanted
+            these raw ``dict`` args routed through a Pydantic model before
+            use. Declined: every OTHER runtime tool this service wires
+            (``install_skill``, ``run_skill_script``, ``skill_file``) takes
+            the exact same raw-dict-plus-defensive-cast shape, and every
+            argument here is ALREADY coerced defensively (``str(...)`` for
+            the metadata filters below; ``int(... or 0)`` inside a single
+            ``try/except (TypeError, ValueError)`` for the numeric ones) --
+            a bad value already returns a clean ``ToolResult`` error rather
+            than raising, which is the property Pydantic would add. Giving
+            this one tool a model would make it the odd one out in this
+            module without changing behavior. See
+            ``Tests/Agents/test_search_run_log_runtime_tool.py`` for the
+            coverage confirming every argument is safely coerced (string
+            where an int is expected, null, a nested object, a list).
+
+            Args:
+                args: The model-supplied call arguments, straight off
+                    ``ToolCall.args`` (always a ``dict`` -- both parsing
+                    paths in ``native_tools.py``/``agent_runtime.py``
+                    guarantee that, never validated by a schema here).
+                    Recognised keys mirror ``search_records``'/
+                    ``format_results``' own parameters: ``contains``,
+                    ``pattern``, ``tool``, ``type``, ``status``, ``kind``,
+                    ``from_record``, ``to_record``, ``context``, ``offset``.
+
+            Returns:
+                ``ToolResult(ok=True, content=...)`` with the rendered hits
+                (or "No matching records."), or ``ok=False`` with a
+                human-readable error -- for a missing log, malformed
+                numeric arguments, a rejected catastrophic-looking
+                ``pattern``, or a search that exceeded its wall-clock
+                budget (F6). Never raises.
+            """
+            from .run_log_search import (
+                RunLogSearchPatternRejected,
+                RunLogSearchTimeout,
+                format_results,
+                load_records,
+                search_records,
+            )
 
             log_dir = self.run_log_writer.log_dir
             if log_dir is None:
@@ -814,6 +855,14 @@ class AgentService:
                 offset = int(args.get("offset") or 0)
             except (TypeError, ValueError) as exc:
                 return ToolResult(ok=False, error=f"Invalid search arguments: {exc}")
+            except (RunLogSearchPatternRejected, RunLogSearchTimeout) as exc:
+                # F6 (Qodo #6): a model-supplied `pattern=` that looks
+                # catastrophic, or a search that ran past its wall-clock
+                # budget -- both must degrade to a normal tool error, never
+                # raise into (and abort) this run. See run_log_search.py's
+                # module docstring for why neither defense is complete
+                # alone.
+                return ToolResult(ok=False, error=str(exc))
             # Final-review CRITICAL 1: render recovered records at THIS run's
             # own tool-result ceiling, not format_results' 400-char rendering
             # default. §6.1's whole point is that a truncation trailer points
@@ -856,8 +905,32 @@ class AgentService:
             )
 
         def on_record(record_type: str, payload: dict) -> int | None:
-            # MUST return the record number: Task 7 threads it into the
-            # truncation trailer so a cut result points at its full copy.
+            """Append one full-fidelity record to THIS run tree's log.
+
+            The ``LoopDeps.on_record`` callable: called by
+            ``agent_runtime.run_agent_loop`` (via its ``_emit_record``
+            helper) at the two points the COMPLETE value exists, before any
+            truncation. Wraps ``self.run_log_writer.append`` with this
+            run's identity (``run_id``, ``agent_kind``) and defensively
+            stringifies every payload field, so a malformed payload can
+            never raise here either.
+
+            Args:
+                record_type: ``"model"``, ``"tool_call"``, or
+                    ``"tool_result"`` (``_emit_record``'s own vocabulary;
+                    ``"spawn"`` is not currently emitted -- a spawn's
+                    dispatch is captured as an ordinary ``tool_call``/
+                    ``tool_result`` pair like any other tool).
+                payload: ``content``/``tool``/``status``/``call_id``, as
+                    built by ``_emit_record``'s ``**payload`` kwargs.
+
+            Returns:
+                The record number MUST be returned here, not swallowed:
+                Task 7 threads it into the truncation trailer so a cut
+                result points at its own full copy in the log (see
+                ``_truncate_tool_result``). ``None`` when the writer is
+                inactive or the underlying write failed -- never raises.
+            """
             return self.run_log_writer.append(
                 run_id=run_id,
                 kind=agent_kind,

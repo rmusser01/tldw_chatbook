@@ -126,6 +126,69 @@ def test_sandbox_fallback_directory_is_dotted_and_hidden_from_grep(
     )
 
 
+def test_workspace_folder_inside_the_sandbox_is_dotted_and_hidden_from_grep(
+    tmp_path, monkeypatch
+):
+    """task-1251 / F8 (Qodo #8, PR #1066 review): the edge case the
+    fallback-branch-only dotting decision missed -- a bound READ-WRITE
+    workspace folder whose resolved path lies INSIDE the sandbox root (a
+    deliberate but unusual binding; `add_folder_binding` has no guard
+    against it). `resolve_log_root()` takes the "workspace" branch here
+    (NOT the sandbox-fallback branch), so the pre-fix flag-only decision
+    would have kept the undotted name -- reproducing the exact
+    `PARENT_SECRET_API_KEY` disclosure `test_sandbox_fallback_directory_is_
+    dotted_and_hidden_from_grep` above guards against, just reached through
+    the other branch. Mirrors that test's plant-a-secret-and-grep shape
+    (task-1251 AC #3) but through a WORKSPACE folder binding, not the
+    no-workspace fallback.
+    """
+    import tldw_chatbook.Tools.file_operation_tools as file_tools
+    import tldw_chatbook.Tools.workspace_file_roots as ws_roots
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    workspace = sandbox / "bound-workspace"  # INSIDE the sandbox root
+    workspace.mkdir()
+    monkeypatch.setattr(file_tools, "_tool_sandbox_root", lambda: sandbox)
+    monkeypatch.setattr(
+        ws_roots,
+        "allowed_file_roots",
+        lambda write=False, sandbox_root=None: (sandbox, workspace),
+    )
+
+    # Positive control: grep_files genuinely scans the sandbox (which is
+    # what GrepFiles roots at, per §9.4 -- it never consults
+    # allowed_file_roots and so has no idea a workspace folder is bound at
+    # all), including this nested workspace directory.
+    (workspace / "control.txt").write_text("CONTROL_MARKER_2b7e\n", encoding="utf-8")
+    assert _grep("CONTROL_MARKER_2b7e"), (
+        "positive control failed: grep_files must find visible content "
+        "nested under the sandbox root"
+    )
+
+    writer = RunLogWriter()
+    writer.bind("run-secret")
+    assert writer.is_active, "writer must still activate for this binding"
+    assert writer.log_dir is not None
+    assert writer.log_dir.parent.name == ".agent-runs", (
+        f"a workspace folder resolving inside the sandbox root must still "
+        f"get the DOTTED name; got {writer.log_dir.parent.name!r}"
+    )
+    assert writer.log_dir.parent.parent == workspace
+
+    writer.append(
+        run_id="run-secret",
+        kind="primary",
+        type="model",
+        content="PARENT_SECRET_API_KEY=sk-live-xyz789",
+    )
+
+    assert _grep("PARENT_SECRET_API_KEY") == [], (
+        "grep_files must not be able to read the run log through a "
+        "workspace folder bound inside the sandbox root"
+    )
+
+
 def test_bound_workspace_folder_keeps_the_undotted_name(tmp_path, monkeypatch):
     """Sibling case: when `resolve_log_root()` reports a bound workspace
     folder (not the fallback), the directory must stay undotted -- it is

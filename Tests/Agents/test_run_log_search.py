@@ -1,9 +1,15 @@
 # Tests/Agents/test_run_log_search.py
 """Search: literal by default, structured filters, bounded regex."""
 
+import time
+
+import pytest
+
 from tldw_chatbook.Agents.run_log_format import RunLogRecord
 from tldw_chatbook.Agents.run_log_search import (
     MAX_REGEX_SCAN_CHARS,
+    RunLogSearchPatternRejected,
+    RunLogSearchTimeout,
     format_results,
     search_records,
 )
@@ -206,3 +212,88 @@ def test_limit_applies_to_hits_before_context_expansion():
     # Context should include records 3-9 (3 before and after record 6),
     # which is 7 records total (exceeding limit because context is additional).
     assert [r.number for r in result] == [3, 4, 5, 6, 7, 8, 9]
+
+
+# -- F6 (Qodo #6): a model-controlled regex must never hang the worker -------
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "(a+)+",
+        "(a*)*",
+        "(a+)*",
+        "(a*)+",
+        "(a+?)+",  # lazy variant, same shape
+        "((a+)+)+",  # nested twice
+        "prefix(a+)+suffix",  # not anchored at the pattern's start
+    ],
+)
+def test_catastrophic_pattern_shapes_are_rejected_quickly(pattern):
+    """Each of these is the textbook nested-quantifier shape named in the
+    finding. The screen must reject BEFORE compiling/executing -- this
+    itself proves nothing hung (a real hang would time the test out), and
+    the message must point the model at `contains=` instead.
+    """
+    started = time.monotonic()
+    with pytest.raises(RunLogSearchPatternRejected, match="contains"):
+        search_records(CORPUS, pattern=pattern)
+    # "quickly" -- a generous ceiling far below what an actual catastrophic
+    # match against even a short string would take (fractions of a second
+    # vs. an unreachable amount of time).
+    assert time.monotonic() - started < 1.0
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        r"\d{3}-\d{4}",
+        "(abc)+",
+        "a+b*",
+        "(foo|bar)+",
+        "[a-z]+",
+        "(ab)+c*",
+        "config.*file",
+        r"(a+)(b+)",  # two quantified groups, but NOT nested -- must not trip
+    ],
+)
+def test_ordinary_patterns_are_not_rejected(pattern):
+    """The screen is conservative by design -- it must never flag a normal
+    pattern, even ones with multiple quantified groups, as long as they are
+    not the specific nested shape."""
+    # Must not raise; whether it matches anything is irrelevant here.
+    search_records(CORPUS, pattern=pattern)
+
+
+def test_search_records_raises_a_clear_timeout_past_its_deadline():
+    """F6 layer 1: a wall-clock deadline checked between records. Uses a
+    near-zero deadline against a small corpus so the very first
+    between-record check trips it deterministically -- this does not (and
+    cannot, from pure Python) prove protection against a single hung regex
+    evaluation; see the module docstring for that limitation.
+    """
+    with pytest.raises(RunLogSearchTimeout, match="wall-clock"):
+        search_records(CORPUS, contains="config", deadline_seconds=0.0)
+
+
+def test_search_records_completes_well_within_a_generous_deadline():
+    # Regression guard: the deadline check itself must not be so aggressive
+    # it breaks an ordinary, fast search.
+    result = search_records(CORPUS, contains="config file", deadline_seconds=5.0)
+    assert [r.number for r in result] == [1, 4]
+
+
+# -- F7 (Qodo #7): a capped record must say so, not claim completeness -------
+
+
+def test_format_results_flags_a_record_the_writer_itself_capped():
+    record = rec(1, "y" * 50, truncated_from=1_000_000)
+    out = format_results([record])
+    assert "cannot be recovered" in out
+    assert "1000000" in out
+
+
+def test_format_results_says_nothing_extra_for_an_uncapped_record():
+    record = rec(1, "ordinary content")
+    out = format_results([record])
+    assert "cannot be recovered" not in out

@@ -1,6 +1,8 @@
 # Tests/Agents/test_run_log_on_record.py
 """on_record captures FULL fidelity at both loop call sites."""
 
+import pytest
+
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     ModelTurn,
@@ -218,3 +220,157 @@ def test_absent_hook_is_a_no_op():
     config = AgentConfig(model="m", system_prompt="s", budget=RunBudget())
     outcome = run_agent_loop(config, [{"role": "user", "content": "go"}], [], deps)
     assert outcome.final_text == "fine"
+
+
+# -- F5 (Qodo #5, PR #1066 review): tool_call must be durable BEFORE dispatch
+
+
+def test_tool_call_record_exists_even_when_the_tool_raises():
+    """A crash mid-dispatch must not erase the record that the call was
+    ever attempted -- that is the whole point of a crash-durable log. The
+    old placement (both _emit_record calls at the content-assembly point,
+    AFTER dispatch) meant a tool that raised left NO durable record at all.
+    This drives a tool whose invoke_tool raises, confirms the exception
+    still propagates (this test does not change that -- only capture
+    placement), and confirms the tool_call record was ALREADY written
+    (present in `seen`, standing in for "already flushed to disk") before
+    that exception ever happened.
+    """
+
+    def boom(call):
+        raise RuntimeError("the tool call hung and the worker was killed")
+
+    turns = [
+        ModelTurn(
+            text="",
+            tool_calls=(
+                ToolCall(name="calculator", args={"expr": "1+1"}, call_id="c1"),
+            ),
+            assistant_message={"role": "assistant", "content": ""},
+        ),
+    ]
+    seen, hook = collect()
+    deps = make_deps(turns, invoke=boom)
+    deps.on_record = hook
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_steps=8, max_model_turns=8),
+    )
+    with pytest.raises(RuntimeError, match="worker was killed"):
+        run_agent_loop(config, [{"role": "user", "content": "go"}], [], deps)
+
+    tool_calls = [p for kind, p in seen if kind == "tool_call"]
+    assert tool_calls, "the tool_call record must exist despite the crash"
+    assert tool_calls[0]["tool"] == "calculator"
+    assert tool_calls[0]["call_id"] == "c1"
+    assert "1+1" in tool_calls[0]["content"]
+    # The tool never returned, so no tool_result record can exist -- this
+    # confirms the ordering (tool_call written, THEN dispatch attempted),
+    # not merely that a tool_call record exists somewhere.
+    assert not [p for kind, p in seen if kind == "tool_result"]
+
+
+def test_tool_call_record_exists_even_when_the_tool_never_returns():
+    """Same durability property, phrased for the "hangs forever" case named
+    in the finding rather than "raises": a tool whose invoke_tool blocks
+    indefinitely (simulated here as never being called at all, since the
+    loop itself is synchronous and a real hang cannot be driven in a unit
+    test) must still have left its tool_call record. This is really the
+    same assertion as the "raises" test from the log's point of view: the
+    record exists before dispatch resolves, by whatever means it resolves.
+    """
+    seen, hook = collect()
+
+    def never_returns(call):
+        raise TimeoutError("simulated: this call never returned")
+
+    turns = [
+        ModelTurn(
+            text="",
+            tool_calls=(
+                ToolCall(name="calculator", args={"expr": "2+2"}, call_id="c9"),
+            ),
+            assistant_message={"role": "assistant", "content": ""},
+        ),
+    ]
+    deps = make_deps(turns, invoke=never_returns)
+    deps.on_record = hook
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_steps=8, max_model_turns=8),
+    )
+    with pytest.raises(TimeoutError):
+        run_agent_loop(config, [{"role": "user", "content": "go"}], [], deps)
+
+    tool_calls = [p for kind, p in seen if kind == "tool_call"]
+    assert tool_calls and tool_calls[0]["call_id"] == "c9"
+
+
+def test_spawn_tool_call_record_is_emitted_before_the_spawn_dispatch_runs():
+    """Pure-loop counterpart of the service-level ordering test in
+    test_run_log_service_wiring.py (which drives a REAL nested spawn through
+    RunLogWriter). Here `deps.spawn` itself appends records through the SAME
+    shared hook while it runs -- simulating a child's own on_record calls
+    happening DURING the parent's spawn dispatch, exactly as a real
+    spawn_subagent does (it runs the child's entire loop inline, BEFORE the
+    parent's own spawn_subagent tool_call/tool_result pair around it
+    finishes assembling). Before the F5 fix, the parent's tool_call record
+    for spawn_subagent was emitted AFTER `deps.spawn()` returned, so it
+    would have appeared AFTER these simulated child records below --
+    backwards. After the fix, it must appear FIRST.
+    """
+    from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME
+
+    seen, hook = collect()
+
+    def fake_spawn(task):
+        # Simulate a child writing its own records mid-dispatch, exactly
+        # as a real nested _run_one does through the shared writer.
+        hook("model", {"content": "child turn 1", "tool": "", "status": "", "call_id": ""})
+        hook(
+            "tool_call",
+            {"content": "{}", "tool": "child_tool", "status": "", "call_id": ""},
+        )
+        return ToolResult(ok=True, content="child done")
+
+    turns = [
+        ModelTurn(
+            text="",
+            tool_calls=(
+                ToolCall(
+                    name=SPAWN_TOOL_NAME, args={"task": "go investigate"}, call_id="s1"
+                ),
+            ),
+            assistant_message={"role": "assistant", "content": ""},
+        ),
+        ModelTurn(text="parent done"),
+    ]
+    deps = make_deps(turns, spawn=fake_spawn)
+    deps.on_record = hook
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(max_steps=8, max_model_turns=8, max_subagents=1),
+    )
+    outcome = run_agent_loop(config, [{"role": "user", "content": "go"}], [], deps)
+    assert outcome.final_text == "parent done"
+
+    kinds_in_order = [kind for kind, _ in seen]
+    parent_spawn_call_index = next(
+        i
+        for i, (kind, p) in enumerate(seen)
+        if kind == "tool_call" and p.get("tool") == SPAWN_TOOL_NAME
+    )
+    child_first_index = next(
+        i for i, (kind, p) in enumerate(seen) if p.get("tool") == "child_tool"
+    )
+    assert parent_spawn_call_index < child_first_index, (
+        "the parent's spawn_subagent tool_call record must be written "
+        "BEFORE the child's own records, not after -- got order "
+        f"{kinds_in_order}"
+    )

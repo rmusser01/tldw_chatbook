@@ -8,12 +8,24 @@ bypass. See the design spec §3.3, §7, §8, §9.2.
 
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 
 from loguru import logger
 
 from .run_log_format import RunLogRecord, encode_record
+
+#: F3 (Qodo #3): CLAUDE.md mandates "env vars -> config.toml -> defaults",
+#: but `_setting` below previously never consulted the environment at all.
+#: Named ``TLDW_AGENTS_<KEY>`` to match this repo's existing per-setting
+#: override convention -- e.g. ``TLDW_CONSOLE_LLAMA_CPP_BASE_URL`` in
+#: UI/Screens/chat_screen.py is ``TLDW_`` + the config SECTION
+#: (``console``) + the key. The ``[agents]`` section name gives the middle
+#: segment here.
+_ENV_PREFIX = "TLDW_AGENTS_"
+_ENV_TRUE = {"1", "true", "yes", "on"}
+_ENV_FALSE = {"0", "false", "no", "off"}
 
 #: Directory created inside the resolved root. Deliberately UNDOTTED when the
 #: run's log lands in a bound workspace folder: a dotted directory is
@@ -47,16 +59,74 @@ MANIFEST_NAME = "MANIFEST"
 _root_kind = threading.local()
 
 
+def _env_override(key: str) -> str | None:
+    """Read ``TLDW_AGENTS_<KEY>`` from the environment, or ``None`` if unset.
+
+    F3 (Qodo #3): the highest-priority tier below an explicit constructor
+    argument (CLAUDE.md: "env vars -> config.toml -> defaults"). Only a
+    non-empty string counts as "set" -- an env var present but blank falls
+    through to the TOML/default tiers, same as an unset one.
+
+    Args:
+        key: Key name within the ``[agents]`` section (e.g. ``run_log_dir_name``).
+
+    Returns:
+        The raw environment string, or ``None`` when not set to a
+        non-empty value.
+    """
+    value = os.environ.get(f"{_ENV_PREFIX}{key.upper()}")
+    return value if value not in (None, "") else None
+
+
+def _parse_env_bool(raw: str, key: str, default: bool) -> bool:
+    """Parse an env-var override for a boolean ``[agents]`` setting.
+
+    Args:
+        raw: The raw environment string (already confirmed non-empty).
+        key: Setting key, named in the warning on an unrecognised value.
+        default: Value returned when ``raw`` cannot be parsed as a boolean.
+
+    Returns:
+        ``True``/``False`` for a recognised token (case-insensitive
+        ``1``/``true``/``yes``/``on`` or ``0``/``false``/``no``/``off``),
+        else ``default``.
+    """
+    lowered = raw.strip().lower()
+    if lowered in _ENV_TRUE:
+        return True
+    if lowered in _ENV_FALSE:
+        return False
+    logger.warning(
+        f"run log: TLDW_AGENTS_{key.upper()}={raw!r} is not a recognised "
+        f"boolean; using default"
+    )
+    return default
+
+
 def _setting(key: str, default):
-    """Read one ``[agents]`` config key. Test seam: monkeypatched wholesale.
+    """Read one ``[agents]`` config key: env var, then TOML, then default.
+
+    F3 (Qodo #3): CLAUDE.md's documented priority is "env vars ->
+    config.toml -> defaults", but this previously skipped the env tier
+    entirely. An explicit constructor argument on ``RunLogWriter`` (see
+    ``__init__``) short-circuits this function altogether and is therefore
+    still the highest-priority override overall -- this only fixes the
+    ordering of the two tiers BELOW that.
 
     Args:
         key: Key name within the ``[agents]`` section.
         default: Value returned when unset or unreadable.
 
     Returns:
-        The configured value, or ``default``.
+        The env override (boolean-parsed when ``default`` is a ``bool``,
+        else the raw string) when set; otherwise the configured TOML value;
+        otherwise ``default``.
     """
+    env_value = _env_override(key)
+    if env_value is not None:
+        if isinstance(default, bool):
+            return _parse_env_bool(env_value, key, default)
+        return env_value
     try:
         from tldw_chatbook.config import get_cli_setting
 
@@ -67,23 +137,56 @@ def _setting(key: str, default):
 
 
 def _coerce_dir_name(value, default: str) -> str:
-    """Coerce dir_name defensively: non-string or empty falls back to default.
+    """Coerce dir_name defensively into a single, safe path COMPONENT.
+
+    F1 (Qodo #1, PR #1066 review ruling): ``dir_name`` is configurable
+    (``[agents] run_log_dir_name`` or an explicit constructor argument) and
+    therefore untrusted like any config value, and it is joined directly
+    onto the resolved log root (``root / dir_name`` in ``bind()``) --
+    pathlib's ``/`` operator REPLACES the whole path outright when the
+    right-hand side is absolute, so an unvalidated value could silently
+    redirect the log tree entirely rather than merely fail the later
+    containment check. This rejects a separator, ``.``/``..``, an absolute
+    form, or an empty/whitespace-only value UP FRONT and falls back to
+    ``default`` (logged at warning) so a bad config value degrades to
+    "log under the default name" rather than "logging silently disabled" --
+    a config typo should not be able to kill a crash-durability feature.
+    ``bind()``'s existing ``allowed_file_roots`` -> ``is_within``
+    containment check on the ASSEMBLED path remains as defense in depth
+    (it is what actually matters for ``run_id``, which is not vetted here).
+
+    Deliberately NOT routed through ``Utils/path_validation.validate_path``:
+    that function raises "Access to hidden files/directories is not
+    allowed" on any hidden (dotted) path component, and ``bind()``
+    intentionally dots this directory under the sandbox fallback -- a real,
+    reviewed fix for a sub-agent log-disclosure bug (a child could
+    ``grep_files`` its parent's log and extract secrets; see ``bind()``'s
+    own "Final-review CRITICAL 2" comment and the F8 sandbox-containment
+    check below it). Routing through ``validate_path`` would reject
+    ``.agent-runs`` outright and disable logging in the DEFAULT
+    configuration -- do not "fix" this by reaching for that function.
 
     Args:
         value: Value to coerce (from explicit arg or config).
         default: Default value if coercion fails.
 
     Returns:
-        A valid string directory name, or ``default``.
+        A safe, single-path-component directory name, or ``default``.
     """
     try:
-        s = str(value)
+        s = str(value).strip()
         if not s:
             raise ValueError("empty dir_name")
-        return s
+        if "/" in s or "\\" in s:
+            raise ValueError(f"dir_name contains a path separator: {s!r}")
+        if s in (".", ".."):
+            raise ValueError(f"dir_name is a path-traversal segment: {s!r}")
+        if Path(s).is_absolute():
+            raise ValueError(f"dir_name is absolute: {s!r}")
     except Exception:
         logger.opt(exception=True).warning("run log: invalid dir_name, using default")
         return default
+    return s
 
 
 def _coerce_positive_int(value, default: int, name: str) -> int:
@@ -147,6 +250,32 @@ def resolve_log_root() -> Path | None:
         return candidate
     _root_kind.is_sandbox_fallback = True
     return roots[0]
+
+
+class RunLogRecordNumber(int):
+    """A record number that also reports whether the LOG capped this record.
+
+    F7 (Qodo #7): a caller following a truncation trailer's pointer needs to
+    know whether the pointed-at record is itself complete -- ``append()``
+    already knows this (it is the same comparison that decides whether to
+    set ``truncated_from`` on the record), but plumbing it back to
+    ``agent_runtime._truncate_tool_result`` without this class would mean
+    either changing ``append()``'s / ``LoopDeps.on_record``'s return shape
+    (which ``test_on_record_returns_the_assigned_record_number`` pins as a
+    plain ``int``) or adding a whole new ``LoopDeps`` callable for one
+    boolean. Subclassing ``int`` instead means every existing caller --
+    equality, comparison, ``%06d`` formatting, ``isinstance(x, int)``,
+    hashing/set membership -- sees no difference at all, while a caller that
+    knows to look can read ``.truncated``. Callers that don't know about
+    this class read it exactly like a plain ``int`` and are unaffected.
+    """
+
+    truncated: bool
+
+    def __new__(cls, value: int, *, truncated: bool) -> "RunLogRecordNumber":
+        obj = super().__new__(cls, value)
+        obj.truncated = truncated
+        return obj
 
 
 class RunLogWriter:
@@ -213,7 +342,15 @@ class RunLogWriter:
 
     @property
     def is_active(self) -> bool:
-        """Whether records are currently being written."""
+        """Whether records are currently being written.
+
+        Returns:
+            ``True`` once ``bind()`` has successfully activated the writer
+            (root resolved, directory created); ``False`` before ``bind()``
+            is called, after a failed bind (disabled config, unresolvable
+            root, or a directory-creation failure), or once a later write
+            failure has deactivated it (see ``append()``).
+        """
         return self._active
 
     def bind(self, run_id: str) -> None:
@@ -242,6 +379,44 @@ class RunLogWriter:
             self._active = False
             return
         is_sandbox_fallback = getattr(_root_kind, "is_sandbox_fallback", False)
+        # F8 (Qodo #8, task-1251): the fallback FLAG only reports which
+        # BRANCH resolve_log_root() took internally -- but what the dotted
+        # name actually protects against is reachability from the
+        # sandbox-rooted file tools (grep_files/glob_files glob
+        # `_tool_sandbox_root()` directly and never consult
+        # `allowed_file_roots`, §9.4). A bound WORKSPACE folder can itself
+        # resolve inside (or equal to) the sandbox root -- e.g. a user (or a
+        # test/misconfiguration) binds a folder that lives under the tool
+        # sandbox -- in which case resolve_log_root() takes the "workspace"
+        # branch, `is_sandbox_fallback` stays False, and the log would get
+        # the undotted name while still being fully reachable by a
+        # sub-agent's grep_files/glob_files: exactly the disclosure the
+        # dotting exists to prevent. Checking actual containment against
+        # the sandbox root here, independent of which branch produced
+        # `root`, closes that gap -- and also covers a caller that
+        # monkeypatches `resolve_log_root` wholesale (many existing test
+        # fixtures do), which never touches the side-channel flag at all.
+        if not is_sandbox_fallback:
+            try:
+                from tldw_chatbook.Tools.file_operation_tools import (
+                    _tool_sandbox_root,
+                )
+
+                sandbox_root = _tool_sandbox_root().resolve()
+                resolved_root = root.resolve()
+                is_sandbox_fallback = (
+                    resolved_root == sandbox_root
+                    or sandbox_root in resolved_root.parents
+                )
+            except Exception:
+                # Cannot verify containment -- fail CLOSED (dot the name)
+                # rather than risk a workspace-folder root silently
+                # aliasing the sandbox and re-exposing the log.
+                logger.opt(exception=True).warning(
+                    "run log: cannot verify sandbox containment; dotting "
+                    "the log directory defensively"
+                )
+                is_sandbox_fallback = True
         dir_name = self._dir_name
         if is_sandbox_fallback and not dir_name.startswith("."):
             # Final-review CRITICAL 2: the undotted name exists so the log
@@ -344,8 +519,12 @@ class RunLogWriter:
             call_id: Provider ``tool_call_id``, when applicable.
 
         Returns:
-            The assigned record number, or ``None`` when the writer is
-            inactive or the write failed. Never raises.
+            The assigned record number as a ``RunLogRecordNumber`` (a plain
+            ``int`` for every purpose -- equality, formatting, hashing --
+            plus a ``.truncated`` attribute reporting whether THIS record's
+            content exceeded ``run_log_max_record_bytes`` and was cut), or
+            ``None`` when the writer is inactive or the write failed. Never
+            raises.
         """
         if not self._active or self.log_dir is None:
             return None
@@ -393,7 +572,7 @@ class RunLogWriter:
                 self._active = False
                 return None
             self._segment_size += len(payload)
-            return record.number
+            return RunLogRecordNumber(record.number, truncated=bool(truncated_from))
 
     def write_manifest(self, metadata: dict) -> None:
         """Write run-level convenience metadata. Never raises.

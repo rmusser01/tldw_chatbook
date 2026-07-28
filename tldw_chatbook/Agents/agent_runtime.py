@@ -273,7 +273,7 @@ class LoopDeps:
     # spawn_subagent, skill_file, install_skill and run_skill_script.
     # `None` (the default) is a no-op: behavior is byte-identical to
     # pre-run-log runs.
-    on_record: Callable[[str, dict], None] | None = None
+    on_record: Callable[[str, dict], int | None] | None = None
 
 
 def _catalog_lines(entries: list) -> str:
@@ -323,7 +323,14 @@ def _truncate_tool_result(
         record_number: The run-log record number the untruncated result was
             captured under, or ``None`` when logging is off or the capture
             failed. When given, the trailer points at it via
-            ``search_run_log`` instead of suggesting a re-issue.
+            ``search_run_log`` instead of suggesting a re-issue. F7 (Qodo
+            #7): may carry a truthy ``.truncated`` attribute (see
+            ``run_log.RunLogRecordNumber``) reporting that the LOG ITSELF
+            capped that record at ``run_log_max_record_bytes`` -- a plain
+            ``int`` (every pre-existing caller, including every test that
+            fabricates a bare record number) is read via ``getattr(...,
+            "truncated", False)`` and always treated as "not capped", so
+            this stays backward compatible.
 
     Returns:
         ``content`` unchanged when under the cap or when unlimited;
@@ -333,19 +340,35 @@ def _truncate_tool_result(
     if max_chars <= 0 or len(content) <= max_chars:
         return content
     if record_number is not None:
-        # TASK-1250: a bare from_record/to_record call renders the SAME
-        # first `max_chars` this trailer already cut -- format_results
-        # windows at this run's own tool-result ceiling, so it cannot show
-        # more in one call. Naming `contains=`/`offset=` here is what makes
-        # the pointer actually deliver content beyond this cut, instead of
-        # promising recovery a bare call can't provide.
-        recovery = (
-            f" The full result is recorded at record {record_number:06d} — "
-            f"search_run_log(from_record={record_number}, to_record={record_number}) "
-            f"renders it windowed at this same limit, so add contains=<term> to "
-            f"jump straight to a match, or offset=<n> to page past it (the "
-            f"rendered output states the next offset)."
-        )
+        # F7 (Qodo #7): a record the WRITER itself had to cap (content over
+        # run_log_max_record_bytes, 1MB default) has an unrecoverable tail
+        # of its own -- pointing at it as "the full result" would be a
+        # second, compounding false promise on top of this history cut.
+        # `getattr` defaults to False so a plain int (every record number
+        # before this fix, and every record that was NOT capped) takes the
+        # unconditional-recovery wording unchanged.
+        if getattr(record_number, "truncated", False):
+            recovery = (
+                f" Record {record_number:06d} holds as much as this run's "
+                f"log could store under its own per-record cap -- the "
+                f"remainder was never written and cannot be recovered. "
+                f"search_run_log(from_record={record_number}, "
+                f"to_record={record_number}) shows exactly how much was kept."
+            )
+        else:
+            # TASK-1250: a bare from_record/to_record call renders the SAME
+            # first `max_chars` this trailer already cut -- format_results
+            # windows at this run's own tool-result ceiling, so it cannot
+            # show more in one call. Naming `contains=`/`offset=` here is
+            # what makes the pointer actually deliver content beyond this
+            # cut, instead of promising recovery a bare call can't provide.
+            recovery = (
+                f" The full result is recorded at record {record_number:06d} — "
+                f"search_run_log(from_record={record_number}, to_record={record_number}) "
+                f"renders it windowed at this same limit, so add contains=<term> to "
+                f"jump straight to a match, or offset=<n> to page past it (the "
+                f"rendered output states the next offset)."
+            )
     else:
         recovery = (
             " Re-issue the call with a narrower query, or use the tool's "
@@ -541,6 +564,29 @@ def run_agent_loop(
                 verdicts = {}
 
         for call in calls:
+            # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE
+            # the dispatch chain below, not after. `call.name`/`call.args`
+            # are already known here, so nothing is gained by waiting -- and
+            # waiting is exactly the bug: the old placement sat at the
+            # content-assembly point, which runs AFTER the tool has already
+            # executed (including, for SPAWN_TOOL_NAME, after `deps.spawn`
+            # has run the ENTIRE child loop inline). A crash, a kill, or an
+            # indefinitely blocked tool left no durable record the call was
+            # ever attempted, and a child's own records -- written during
+            # the parent's still-in-progress spawn dispatch -- landed in the
+            # log BEFORE the parent's own record that caused them.
+            # MUST stay at this `for call in calls:` body level, OUTSIDE the
+            # `if verdict != "proceed": ... else: ...` pair below: that is
+            # what captures the review-hook refusal path too, and it is
+            # pinned by test_run_log_on_record.py.
+            _emit_record(
+                deps,
+                "tool_call",
+                content=json.dumps(call.args, sort_keys=True, default=str),
+                tool=call.name,
+                status="",
+                call_id=call.call_id,
+            )
             if deps.should_cancel():
                 return _outcome(RUN_CANCELLED)
             recent_calls.append((call.name, json.dumps(call.args, sort_keys=True)))
@@ -722,18 +768,14 @@ def run_agent_loop(
 
                 content = result.content if result.ok else f"ERROR: {result.error}"
 
+            # tool_result capture stays HERE, after dispatch: this is the
+            # first point the full result/error text exists. (The tool_call
+            # record for this same call was already emitted above, BEFORE
+            # dispatch -- see the comment at the top of this `for` body.)
             # Capture BEFORE _truncate_tool_result below: the log is the
             # lossless record, history is the capped view of it. This single
             # point covers every dispatch branch above -- builtin, MCP,
             # skill, runtime tools -- and the review-hook refusal path.
-            _emit_record(
-                deps,
-                "tool_call",
-                content=json.dumps(call.args, sort_keys=True, default=str),
-                tool=call.name,
-                status="",
-                call_id=call.call_id,
-            )
             # Final-review IMPORTANT 3: tool_catalog.py documents `status` as
             # "ok or error", but this used to write only "ok" (any
             # "proceed" verdict, even a dispatch that actually failed -- see

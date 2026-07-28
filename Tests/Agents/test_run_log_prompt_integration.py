@@ -33,6 +33,61 @@ def test_untruncated_content_is_returned_unchanged():
     assert _truncate_tool_result("short", 100, "t", record_number=7) == "short"
 
 
+def test_trailer_does_not_claim_full_recovery_when_the_log_itself_capped_the_record():
+    """F7 (Qodo #7): a plain int (every pre-existing caller, and every test
+    above) is treated as "not capped" -- but a `RunLogRecordNumber` whose
+    `.truncated` is True (see run_log.py) must flip the trailer's wording so
+    it never promises "the full result" for a record the log itself had to
+    cut. Constructed directly here (not through a real RunLogWriter) to
+    pin the CONTRACT `_truncate_tool_result` reads via `getattr(...,
+    "truncated", False)`, independent of run_log.py's own tests.
+    """
+    from tldw_chatbook.Agents.run_log import RunLogRecordNumber
+
+    capped = RunLogRecordNumber(412, truncated=True)
+    out = _truncate_tool_result("z" * 100, 10, "grep_files", record_number=capped)
+    assert "search_run_log" in out
+    assert "412" in out
+    assert "cannot be recovered" in out
+    assert "The full result is recorded" not in out
+
+
+def test_trailer_keeps_full_recovery_wording_for_a_plain_int_record_number():
+    """Regression guard for the fix above: an ordinary (non-capped) record
+    number -- a plain int, exactly like every pre-existing test in this
+    file uses -- must keep the unconditional "full result" wording."""
+    out = _truncate_tool_result("z" * 100, 10, "grep_files", record_number=412)
+    assert "The full result is recorded" in out
+    assert "cannot be recovered" not in out
+
+
+def test_end_to_end_a_really_capped_record_produces_an_honest_trailer(
+    tmp_path, monkeypatch
+):
+    """F7 (Qodo #7): the whole chain, not just one piece in isolation --
+    a REAL RunLogWriter (tiny max_record_bytes, over which a real result
+    exceeds), appended exactly the way agent_service.on_record does, its
+    REAL returned record number fed into the REAL _truncate_tool_result.
+    Before this fix, a record over the writer's own storage cap still got
+    the "The full result is recorded" trailer -- an unrecoverable tail the
+    agent was never told about.
+    """
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    writer = run_log_module.RunLogWriter(max_record_bytes=50)
+    writer.bind("run-1")
+
+    huge = "z" * 5000
+    number = writer.append(
+        run_id="run-1", kind="primary", type="tool_result", content=huge
+    )
+    assert number.truncated is True, "the writer itself must have capped this record"
+
+    trailer = _truncate_tool_result(huge, 100, "read_file", record_number=number)
+    assert "cannot be recovered" in trailer
+    assert "The full result is recorded" not in trailer
+    assert "search_run_log" in trailer
+
+
 def _service(tmp_path, capture):
     db = AgentRunsDB(tmp_path / "runs.db")
     registry = ToolCatalogRegistry()
