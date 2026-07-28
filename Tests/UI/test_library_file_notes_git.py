@@ -1708,8 +1708,6 @@ async def test_reopening_cached_status_keeps_mutation_controls_disabled(
             lambda: len(workspace._git_panel_widget.rows) == 2,
             "initial status did not finish",
         )
-        initial_status = owner.snapshot(binding).git_status
-        assert initial_status is not None
         workspace.query_one("#file-notes-git-stage-selected", Button).press()
         await _wait_until(
             pilot,
@@ -2539,6 +2537,16 @@ def test_action_summary_contract_matrix(tmp_path: Path) -> None:
         )
         action_key = workspace._capture_git_action_key(binding)
         assert action_key is not None
+        moved_group = next(
+            group
+            for group in coalesce_session_changes(action_key.changes)
+            if group.latest_action == "moved"
+        )
+        assert set(moved_group.endpoints) == {
+            "folder/one.md",
+            "folder/moved.md",
+        }
+        assert len(moved_group.endpoints) == 2
         stage_context = workspace._git_action_summary_context(
             "stage",
             (1,),
@@ -2554,8 +2562,8 @@ def test_action_summary_contract_matrix(tmp_path: Path) -> None:
                 GitActionResult(
                     "stage",
                     "success",
-                    (1,),
-                    staged_group_ids=(1,),
+                    (moved_group.group_id,),
+                    staged_group_ids=(moved_group.group_id,),
                 ),
                 stage_context,
                 "1 session note staged; "
@@ -2667,19 +2675,43 @@ def test_action_summary_contract_matrix(tmp_path: Path) -> None:
         replica.close()
 
 
+@pytest.mark.parametrize(
+    ("discovery", "expected_status", "visible_recovery"),
+    [
+        (
+            DiscoveryResult(
+                "unavailable",
+                message="Git is not installed",
+            ),
+            "Status: UNAVAILABLE — Git is not installed. Install or restore "
+            "Git, then reopen Prepare session for commit.",
+            "Install or restore Git, then reopen Prepare session for commit.",
+        ),
+        (
+            DiscoveryResult(
+                "not_repository",
+                message="Selected File Notes root is not in a Git worktree",
+            ),
+            "Status: UNAVAILABLE — This notes folder is not in a Git "
+            "worktree. Notes remain fully usable.",
+            "Notes remain fully usable.",
+        ),
+    ],
+    ids=("git-unavailable", "not-repository"),
+)
 @pytest.mark.asyncio
 async def test_unavailable_discovery_exposes_no_trust_or_mutation_action(
     tmp_path: Path,
+    discovery: DiscoveryResult,
+    expected_status: str,
+    visible_recovery: str,
 ) -> None:
     _root, owner, _binding, replica, git_service, workspace = _workspace_fixture(
         tmp_path,
         trusted=False,
     )
-    git_service.discovery_result = DiscoveryResult(
-        "unavailable",
-        message="Git is not installed",
-    )
-    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+    git_service.discovery_result = discovery
+    async with _WorkspaceHarness(workspace).run_test(size=(220, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         workspace.query_one("#file-notes-session-changes", Button).press()
         panel = workspace.query_one(
@@ -2688,10 +2720,11 @@ async def test_unavailable_discovery_exposes_no_trust_or_mutation_action(
         )
         await _wait_until(
             pilot,
-            lambda: "Git is not installed"
-            in _text(panel.query_one("#file-notes-git-status", Static)),
-            "Git discovery failure was not rendered",
+            lambda: visible_recovery
+            in _flat_text(panel.query_one("#file-notes-git-status", Static)),
+            "Git discovery recovery was not visibly rendered",
         )
+        assert panel._current_status_text == expected_status
         visible_actions = {
             button.id
             for button in panel.query(Button)

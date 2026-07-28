@@ -1302,6 +1302,49 @@ class LibraryFileNotesWorkspace(Vertical):
             return True
         return False
 
+    @staticmethod
+    def _git_discovery_failure_detail(discovery: DiscoveryResult) -> str:
+        """Project one discovery failure to reason plus feasible recovery."""
+        if discovery.state == "not_repository":
+            return (
+                "This notes folder is not in a Git worktree. "
+                "Notes remain fully usable."
+            )
+
+        defaults = {
+            "unavailable": "Git is unavailable",
+            "unsupported": "Git repository compatibility is unsupported",
+            "unsafe_root": "Selected File Notes root is unsafe",
+        }
+        recoveries = {
+            "unavailable": (
+                "Install or restore Git, then reopen Prepare session for "
+                "commit."
+            ),
+            "unsupported": (
+                "Resolve Git compatibility outside Chatbook, then reopen "
+                "Prepare session for commit."
+            ),
+            "unsafe_root": (
+                "Select or fix a safe notes root, then reopen Prepare session "
+                "for commit."
+            ),
+        }
+        reason = (
+            discovery.message
+            or defaults.get(
+                discovery.state,
+                "Git repository discovery is unavailable",
+            )
+        ).strip()
+        if reason and reason[-1] not in ".!?":
+            reason += "."
+        recovery = recoveries.get(
+            discovery.state,
+            "Reopen Prepare session for commit.",
+        )
+        return f"{reason} {recovery}"
+
     async def _open_session_git(self, *, force_prompt: bool = False) -> None:
         binding = self._session_binding
         service = self._session_git_service()
@@ -1319,7 +1362,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if discovery.state != "ready" or repository is None:
             self._clear_git_last_action()
             self._git_panel_widget.render_unavailable(
-                discovery.message or "Git repository status is unavailable."
+                self._git_discovery_failure_detail(discovery)
             )
             return
         snapshot = self._session_owner.snapshot(binding)
