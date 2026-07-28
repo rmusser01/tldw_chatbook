@@ -23,6 +23,70 @@ from tldw_chatbook.state import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION_ROOT = PROJECT_ROOT / "tldw_chatbook"
 APP_PATH = PRODUCTION_ROOT / "app.py"
+RETAINED_TLDW_REACTIVES = frozenset({"current_tab", "splash_screen_active"})
+RETIRED_TLDW_REACTIVES = frozenset(
+    {
+        "ccp_active_view",
+        "chat_api_provider_value",
+        "ccp_api_provider_value",
+        "rag_expansion_provider_value",
+        "current_editing_character_id",
+        "current_editing_character_data",
+        "chat_sidebar_collapsed",
+        "chat_right_sidebar_collapsed",
+        "chat_right_sidebar_width",
+        "conv_char_sidebar_left_collapsed",
+        "conv_char_sidebar_right_collapsed",
+        "evals_sidebar_collapsed",
+        "media_active_view",
+        "current_selected_note_id",
+        "current_selected_note_version",
+        "current_selected_note_title",
+        "current_selected_note_content",
+        "notes_sort_by",
+        "notes_sort_ascending",
+        "notes_preview_mode",
+        "notes_auto_save_enabled",
+        "notes_auto_save_timer",
+        "notes_last_save_time",
+        "chat_sidebar_selected_prompt_id",
+        "chat_sidebar_selected_prompt_system",
+        "chat_sidebar_selected_prompt_user",
+        "current_chat_is_ephemeral",
+        "current_chat_conversation_id",
+        "current_conv_char_tab_conversation_id",
+        "current_chat_active_character_data",
+        "current_ccp_character_details",
+        "active_chat_tab_id",
+        "chat_sessions",
+        "chat_sidebar_loaded_prompt_id",
+        "chat_sidebar_loaded_prompt_title_text",
+        "chat_sidebar_loaded_prompt_system_text",
+        "chat_sidebar_loaded_prompt_user_text",
+        "chat_sidebar_loaded_prompt_keywords_text",
+        "chat_sidebar_prompt_display_visible",
+        "current_prompt_id",
+        "current_prompt_uuid",
+        "current_prompt_name",
+        "current_prompt_author",
+        "current_prompt_details",
+        "current_prompt_system",
+        "current_prompt_user",
+        "current_prompt_keywords_str",
+        "current_prompt_version",
+        "_initial_media_view_slug",
+        "current_media_type_filter_slug",
+        "current_media_type_filter_display_name",
+        "media_current_page",
+        "current_loaded_media_item",
+        "chat_settings_mode",
+        "chat_settings_search_query",
+        "search_active_sub_tab",
+        "ingest_active_view",
+        "tools_settings_active_view",
+        "llm_active_view",
+    }
+)
 BOOTSTRAP_PATH = PRODUCTION_ROOT / "runtime_policy" / "bootstrap.py"
 SOURCE_STATE_PATH = PRODUCTION_ROOT / "runtime_policy" / "source_state.py"
 SCHEDULES_WORKBENCH_PATH = (
@@ -472,6 +536,71 @@ def _root_app_occurrences(
     return found
 
 
+def _root_app_target_occurrences(
+    path: Path,
+    targets: frozenset[str],
+) -> list[tuple[str, str, str, int]]:
+    """Collect root-app access for a set of exact state names in one AST walk."""
+    relative = str(path.relative_to(PROJECT_ROOT))
+    found: list[tuple[str, str, str, int]] = []
+    for node in ast.walk(_parse(path)):
+        target: str | None = None
+        kind: str | None = None
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in targets
+            and _is_root_app_expression(node.value)
+        ):
+            target = node.attr
+            kind = f"attribute_{type(node.ctx).__name__.lower()}"
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"getattr", "setattr", "delattr", "hasattr"}
+            and len(node.args) >= 2
+            and _is_root_app_expression(node.args[0])
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in targets
+        ):
+            target = node.args[1].value
+            kind = f"dynamic_{node.func.id}"
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and _constant_dynamic_name(node) in targets
+            and _is_root_mapping_expression(
+                node.func.value,
+                _is_root_app_expression,
+            )
+            and not _is_root_app_expression(node.func.value)
+        ):
+            target = _constant_dynamic_name(node)
+            kind = "mapping_get"
+        elif (
+            isinstance(node, ast.Subscript)
+            and _is_root_mapping_expression(
+                node.value,
+                _is_root_app_expression,
+            )
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value in targets
+        ):
+            target = node.slice.value
+            kind = f"mapping_{type(node.ctx).__name__.lower()}"
+        elif (
+            isinstance(node, ast.keyword)
+            and node.arg == "reactive_attr"
+            and isinstance(node.value, ast.Constant)
+            and node.value.value in targets
+        ):
+            target = node.value.value
+            kind = "reactive_attr"
+        if target is not None and kind is not None:
+            found.append((target, relative, kind, node.lineno))
+    return found
+
+
 def _class_body_bound_names(node: ast.AST) -> tuple[str, ...]:
     """Return names bound by one direct class-body assignment target."""
     if isinstance(node, ast.Name):
@@ -481,6 +610,28 @@ def _class_body_bound_names(node: ast.AST) -> tuple[str, ...]:
             name for element in node.elts for name in _class_body_bound_names(element)
         )
     return ()
+
+
+def _class_body_reactive_names(class_node: ast.ClassDef) -> frozenset[str]:
+    """Return names assigned by direct class-body ``reactive(...)`` calls."""
+    names: set[str] = set()
+    for statement in class_node.body:
+        if isinstance(statement, ast.Assign):
+            targets = statement.targets
+            value = statement.value
+        elif isinstance(statement, ast.AnnAssign):
+            targets = (statement.target,)
+            value = statement.value
+        else:
+            continue
+        if not (
+            isinstance(value, ast.Call)
+            and _chain(value.func).rsplit(".", 1)[-1] == "reactive"
+        ):
+            continue
+        for target in targets:
+            names.update(_class_body_bound_names(target))
+    return frozenset(names)
 
 
 class _TldwCliRootOccurrenceCollector(ast.NodeVisitor):
@@ -720,6 +871,24 @@ mapping["retired_state"]
     assert kinds.count("subscript_name") == 1
 
 
+def test_class_body_reactive_guard_detects_assignments_and_annotations() -> None:
+    tree = ast.parse(
+        """class TldwCli:
+    direct = reactive(0)
+    annotated: reactive[str] = reactive("")
+    qualified = textual.reactive(False)
+    unrelated = other_factory()
+"""
+    )
+    app_class = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+
+    assert _class_body_reactive_names(app_class) == {
+        "direct",
+        "annotated",
+        "qualified",
+    }
+
+
 def test_root_app_guard_detects_chained_dynamic_and_mapping_mutations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -769,6 +938,35 @@ destination.ingest_active_view
             "mapping_get",
         )
     )
+
+
+def test_root_app_target_guard_detects_retired_names_in_one_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = PROJECT_ROOT / "synthetic-root-app-target-guard.py"
+    tree = ast.parse(
+        """screen.app.retired_one
+setattr(screen.app, "retired_two", value)
+screen.app.__dict__["retired_one"] = value
+vars(screen.app).get("retired_two")
+handler(reactive_attr="retired_one")
+destination.retired_one
+"""
+    )
+    monkeypatch.setitem(globals(), "_parse", lambda _path: tree)
+
+    occurrences = _root_app_target_occurrences(
+        path,
+        frozenset({"retired_one", "retired_two"}),
+    )
+
+    assert occurrences == [
+        ("retired_one", "synthetic-root-app-target-guard.py", "attribute_load", 1),
+        ("retired_two", "synthetic-root-app-target-guard.py", "dynamic_setattr", 2),
+        ("retired_one", "synthetic-root-app-target-guard.py", "mapping_store", 3),
+        ("retired_two", "synthetic-root-app-target-guard.py", "mapping_get", 4),
+        ("retired_one", "synthetic-root-app-target-guard.py", "reactive_attr", 5),
+    ]
 
 
 def test_tldw_cli_root_guard_detects_only_root_owned_syntax(
@@ -1031,6 +1229,39 @@ def test_legacy_ccp_prompt_handlers_and_compatibility_exports_are_absent() -> No
         "CHARACTER_FILE_FILTERS",
     ):
         assert retired_name not in ingest_utils_source
+
+
+def test_tldw_cli_final_reactive_ownership_contract_is_exact() -> None:
+    """Freeze the reviewed 61-descriptor disposition at the app boundary."""
+    app_class = _class_definition(APP_PATH, "TldwCli")
+    assert len(RETAINED_TLDW_REACTIVES) == 2
+    assert len(RETIRED_TLDW_REACTIVES) == 59
+    assert RETAINED_TLDW_REACTIVES.isdisjoint(RETIRED_TLDW_REACTIVES)
+    assert _class_body_reactive_names(app_class) == RETAINED_TLDW_REACTIVES
+
+    violations: dict[
+        str, list[tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]]
+    ] = {}
+    for name in sorted(RETIRED_TLDW_REACTIVES):
+        occurrences = _tldw_cli_occurrences(name)
+        if occurrences:
+            violations[name] = [*occurrences]
+
+    for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
+        for name, relative, kind, line in _root_app_target_occurrences(
+            path,
+            RETIRED_TLDW_REACTIVES,
+        ):
+            violations.setdefault(name, []).append((relative, kind, line))
+
+    assert violations == {}
+
+    direct_methods = {
+        node.name
+        for node in app_class.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert "watch_current_tab" not in direct_methods
 
 
 def test_retired_destination_root_state_and_handlers_are_absent() -> None:

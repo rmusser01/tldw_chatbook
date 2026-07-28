@@ -34,21 +34,116 @@ TEMPLATE_NAMES = {
     "words",
     "xml",
 }
+RETAINED_TLDW_REACTIVES = frozenset({"current_tab", "splash_screen_active"})
+RETIRED_TLDW_REACTIVES = frozenset(
+    {
+        "ccp_active_view",
+        "chat_api_provider_value",
+        "ccp_api_provider_value",
+        "rag_expansion_provider_value",
+        "current_editing_character_id",
+        "current_editing_character_data",
+        "chat_sidebar_collapsed",
+        "chat_right_sidebar_collapsed",
+        "chat_right_sidebar_width",
+        "conv_char_sidebar_left_collapsed",
+        "conv_char_sidebar_right_collapsed",
+        "evals_sidebar_collapsed",
+        "media_active_view",
+        "current_selected_note_id",
+        "current_selected_note_version",
+        "current_selected_note_title",
+        "current_selected_note_content",
+        "notes_sort_by",
+        "notes_sort_ascending",
+        "notes_preview_mode",
+        "notes_auto_save_enabled",
+        "notes_auto_save_timer",
+        "notes_last_save_time",
+        "chat_sidebar_selected_prompt_id",
+        "chat_sidebar_selected_prompt_system",
+        "chat_sidebar_selected_prompt_user",
+        "current_chat_is_ephemeral",
+        "current_chat_conversation_id",
+        "current_conv_char_tab_conversation_id",
+        "current_chat_active_character_data",
+        "current_ccp_character_details",
+        "active_chat_tab_id",
+        "chat_sessions",
+        "chat_sidebar_loaded_prompt_id",
+        "chat_sidebar_loaded_prompt_title_text",
+        "chat_sidebar_loaded_prompt_system_text",
+        "chat_sidebar_loaded_prompt_user_text",
+        "chat_sidebar_loaded_prompt_keywords_text",
+        "chat_sidebar_prompt_display_visible",
+        "current_prompt_id",
+        "current_prompt_uuid",
+        "current_prompt_name",
+        "current_prompt_author",
+        "current_prompt_details",
+        "current_prompt_system",
+        "current_prompt_user",
+        "current_prompt_keywords_str",
+        "current_prompt_version",
+        "_initial_media_view_slug",
+        "current_media_type_filter_slug",
+        "current_media_type_filter_display_name",
+        "media_current_page",
+        "current_loaded_media_item",
+        "chat_settings_mode",
+        "chat_settings_search_query",
+        "search_active_sub_tab",
+        "ingest_active_view",
+        "tools_settings_active_view",
+        "llm_active_view",
+    }
+)
 
 INSTALLED_PROBE = r"""
 from pathlib import Path
+import ast
+import asyncio
 import json
 import os
+import sys
 import tomllib
+
+expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
+excluded_source_roots = (
+    Path(os.environ["CHECKOUT_ROOT"]).resolve(strict=True),
+    Path(os.environ["BUILD_SOURCE_ROOT"]).resolve(strict=True),
+)
+expected_reactives = frozenset(json.loads(os.environ["EXPECTED_REACTIVES"]))
+retired_reactives = frozenset(json.loads(os.environ["RETIRED_REACTIVES"]))
+assert expected_reactives == {"current_tab", "splash_screen_active"}
+assert len(retired_reactives) == 59
+assert expected_reactives.isdisjoint(retired_reactives)
+
+
+def is_under(path, root):
+    return path == root or path.is_relative_to(root)
+
+
+for entry in sys.path:
+    try:
+        resolved_entry = Path(entry or os.getcwd()).resolve(strict=True)
+    except (FileNotFoundError, OSError):
+        continue
+    assert not any(is_under(resolved_entry, root) for root in excluded_source_roots), (
+        resolved_entry,
+        excluded_source_roots,
+    )
 
 import tldw_chatbook
 from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
 from tldw_chatbook.Evals.config_loader import EvalConfigLoader
 from tldw_chatbook.RAG_Search.pipeline_loader import PipelineLoader
 from tldw_chatbook.app import TldwCli, get_app
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 
 package_root = Path(tldw_chatbook.__file__).resolve().parent
-expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve()
 expected_templates = set(json.loads(os.environ["EXPECTED_TEMPLATES"]))
 assert package_root.is_relative_to(expected_target)
 assert (package_root / "css" / "tldw_cli_modular.tcss").is_file()
@@ -65,7 +160,311 @@ assert (package_root / "Third_Party" / "aider" / "LICENSE.txt").is_file()
 assert (
     package_root / "Third_Party" / "textual_fspicker" / "LICENSE"
 ).is_file()
-assert isinstance(get_app(), TldwCli)
+
+
+def chain(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = chain(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    return ""
+
+
+def bound_names(node):
+    if isinstance(node, ast.Name):
+        return (node.id,)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return tuple(name for item in node.elts for name in bound_names(item))
+    return ()
+
+
+def class_body_reactives(class_node):
+    names = set()
+    for statement in class_node.body:
+        if isinstance(statement, ast.Assign):
+            targets = statement.targets
+            value = statement.value
+        elif isinstance(statement, ast.AnnAssign):
+            targets = (statement.target,)
+            value = statement.value
+        else:
+            continue
+        if not (
+            isinstance(value, ast.Call)
+            and chain(value.func).rsplit(".", 1)[-1] == "reactive"
+        ):
+            continue
+        for target in targets:
+            names.update(bound_names(target))
+    return frozenset(names)
+
+
+def is_root_app(node):
+    expression = chain(node)
+    return bool(expression) and expression.rsplit(".", 1)[-1] in {
+        "app",
+        "app_instance",
+    }
+
+
+def is_root_mapping(node, root_predicate):
+    if root_predicate(node):
+        return True
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr == "__dict__"
+        and root_predicate(node.value)
+    ):
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "vars"
+        and len(node.args) == 1
+        and root_predicate(node.args[0])
+    )
+
+
+def constant_name(node):
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"getattr", "setattr", "delattr", "hasattr"}
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.Constant)
+        and isinstance(node.args[1].value, str)
+    ):
+        return node.args[1].value
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+        return node.args[0].value
+    return None
+
+
+def root_accesses(tree, relative_path):
+    found = []
+    for node in ast.walk(tree):
+        target = None
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in retired_reactives
+            and is_root_app(node.value)
+        ):
+            target = node.attr
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"getattr", "setattr", "delattr", "hasattr"}
+            and len(node.args) >= 2
+            and is_root_app(node.args[0])
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in retired_reactives
+        ):
+            target = node.args[1].value
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and constant_name(node) in retired_reactives
+            and is_root_mapping(node.func.value, is_root_app)
+            and not is_root_app(node.func.value)
+        ):
+            target = constant_name(node)
+        elif (
+            isinstance(node, ast.Subscript)
+            and is_root_mapping(node.value, is_root_app)
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value in retired_reactives
+        ):
+            target = node.slice.value
+        elif (
+            isinstance(node, ast.keyword)
+            and node.arg == "reactive_attr"
+            and isinstance(node.value, ast.Constant)
+            and node.value.value in retired_reactives
+        ):
+            target = node.value.value
+        if target is not None:
+            found.append((relative_path, node.lineno, target))
+    return found
+
+
+class TldwCliRetiredAccesses(ast.NodeVisitor):
+    def __init__(self):
+        self.nested_class_depth = 0
+        self.found = []
+
+    def root_receiver(self, node):
+        return is_root_app(node) or (
+            self.nested_class_depth == 0 and chain(node) == "self"
+        )
+
+    def visit_ClassDef(self, node):
+        self.nested_class_depth += 1
+        self.generic_visit(node)
+        self.nested_class_depth -= 1
+
+    def visit_Attribute(self, node):
+        if node.attr in retired_reactives and self.root_receiver(node.value):
+            self.found.append((node.lineno, node.attr))
+        self.generic_visit(node)
+
+    def visit_Call(self, node):
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id in {"getattr", "setattr", "delattr", "hasattr"}
+            and len(node.args) >= 2
+            and self.root_receiver(node.args[0])
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in retired_reactives
+        ):
+            self.found.append((node.lineno, node.args[1].value))
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and constant_name(node) in retired_reactives
+            and is_root_mapping(node.func.value, self.root_receiver)
+            and not self.root_receiver(node.func.value)
+        ):
+            self.found.append((node.lineno, constant_name(node)))
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node):
+        if (
+            is_root_mapping(node.value, self.root_receiver)
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value in retired_reactives
+        ):
+            self.found.append((node.lineno, node.slice.value))
+        self.generic_visit(node)
+
+    def visit_keyword(self, node):
+        if (
+            self.nested_class_depth == 0
+            and node.arg == "reactive_attr"
+            and isinstance(node.value, ast.Constant)
+            and node.value.value in retired_reactives
+        ):
+            self.found.append((node.lineno, node.value.value))
+        self.generic_visit(node)
+
+
+app_path = package_root / "app.py"
+app_tree = ast.parse(app_path.read_text(encoding="utf-8"), filename=str(app_path))
+app_class = next(
+    node
+    for node in app_tree.body
+    if isinstance(node, ast.ClassDef) and node.name == "TldwCli"
+)
+assert class_body_reactives(app_class) == expected_reactives
+assert "watch_current_tab" not in {
+    node.name
+    for node in app_class.body
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+}
+assert retired_reactives.isdisjoint(
+    node.name
+    for node in app_class.body
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+)
+class_level_retired = []
+for statement in app_class.body:
+    if isinstance(statement, ast.Assign):
+        targets = statement.targets
+    elif isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+        targets = (statement.target,)
+    else:
+        continue
+    for target in targets:
+        class_level_retired.extend(
+            name for name in bound_names(target) if name in retired_reactives
+        )
+assert class_level_retired == []
+
+tldw_accesses = TldwCliRetiredAccesses()
+for statement in app_class.body:
+    tldw_accesses.visit(statement)
+assert tldw_accesses.found == []
+
+installed_root_accesses = []
+for source_path in sorted(package_root.rglob("*.py")):
+    source_tree = ast.parse(
+        source_path.read_text(encoding="utf-8"),
+        filename=str(source_path),
+    )
+    installed_root_accesses.extend(
+        root_accesses(source_tree, source_path.relative_to(package_root).as_posix())
+    )
+assert installed_root_accesses == []
+
+app = get_app()
+assert isinstance(app, TldwCli)
+assert all(not hasattr(app, name) for name in retired_reactives)
+
+
+async def wait_for(pilot, predicate, failure):
+    for _ in range(600):
+        if predicate():
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(failure)
+
+
+async def exercise_production_app():
+    async with app.run_test(size=(120, 40)) as pilot:
+        await wait_for(
+            pilot,
+            lambda: (
+                type(app.screen) is HomeScreen
+                and app.current_tab == "home"
+                and app.screen.is_mounted
+            ),
+            "installed production app did not mount registered Home",
+        )
+        app.post_message(NavigateToScreen("chat"))
+        await wait_for(
+            pilot,
+            lambda: (
+                type(app.screen) is ChatScreen
+                and app.current_tab == "chat"
+                and app.screen.is_mounted
+            ),
+            "installed production app did not navigate to registered Chat",
+        )
+        assert all(not hasattr(app, name) for name in retired_reactives)
+
+
+asyncio.run(exercise_production_app())
+
+loaded_package_paths = []
+for module_name, module in tuple(sys.modules.items()):
+    if module_name != "tldw_chatbook" and not module_name.startswith(
+        "tldw_chatbook."
+    ):
+        continue
+    module_file = getattr(module, "__file__", None)
+    if module_file:
+        loaded_package_paths.append((module_name, Path(module_file).resolve(strict=True)))
+    module_path = getattr(module, "__path__", None)
+    if module_path:
+        loaded_package_paths.extend(
+            (module_name, Path(path).resolve(strict=True)) for path in module_path
+        )
+
+assert loaded_package_paths
+for module_name, loaded_path in loaded_package_paths:
+    assert is_under(loaded_path, expected_target), (module_name, loaded_path)
+    assert not any(
+        is_under(loaded_path, source_root) for source_root in excluded_source_roots
+    ), (module_name, loaded_path, excluded_source_roots)
+
 print(package_root)
 """
 
@@ -221,13 +620,26 @@ def _target_hashes(target: Path) -> dict[str, str]:
     }
 
 
-def _private_child_env(state_root: Path, target: Path) -> dict[str, str]:
+def _private_child_env(
+    state_root: Path,
+    target: Path,
+    build_source_root: Path,
+) -> dict[str, str]:
     state_root = state_root.resolve(strict=True)
+    target = target.resolve(strict=True)
+    checkout_root = REPO_ROOT.resolve(strict=True)
+    build_source_root = build_source_root.resolve(strict=True)
     config_root = state_root / "config"
     data_root = state_root / "data"
     temp_root = state_root / "tmp"
     for path in (config_root, data_root, temp_root):
         path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    config_path = config_root / "config.toml"
+    config_path.write_text(
+        '[general]\ndefault_tab = "home"\n\n[splash_screen]\nenabled = false\n',
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
 
     env = os.environ.copy()
     for name in ("TLDW_TEST_CONFIG_ROOT", "TLDW_TEST_CONFIG_ROOT_OWNER"):
@@ -240,13 +652,17 @@ def _private_child_env(state_root: Path, target: Path) -> dict[str, str]:
             "LOCALAPPDATA": str(data_root),
             "XDG_CONFIG_HOME": str(config_root),
             "XDG_DATA_HOME": str(data_root),
-            "TLDW_CONFIG_PATH": str(config_root / "config.toml"),
+            "TLDW_CONFIG_PATH": str(config_path),
             "TMPDIR": str(temp_root),
             "TEMP": str(temp_root),
             "TMP": str(temp_root),
             "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONPATH": str(target.resolve(strict=True)),
-            "EXPECTED_TARGET": str(target.resolve(strict=True)),
+            "PYTHONPATH": str(target),
+            "EXPECTED_TARGET": str(target),
+            "CHECKOUT_ROOT": str(checkout_root),
+            "BUILD_SOURCE_ROOT": str(build_source_root),
+            "EXPECTED_REACTIVES": json.dumps(sorted(RETAINED_TLDW_REACTIVES)),
+            "RETIRED_REACTIVES": json.dumps(sorted(RETIRED_TLDW_REACTIVES)),
             "EXPECTED_TEMPLATES": json.dumps(sorted(TEMPLATE_NAMES)),
         }
     )
@@ -451,7 +867,11 @@ def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
     state_root.mkdir(mode=0o700)
     run_root.mkdir()
     _install_wheel(built_distributions, target)
-    env = _private_child_env(state_root, target)
+    env = _private_child_env(
+        state_root,
+        target,
+        built_distributions.source_root,
+    )
     before = _target_hashes(target)
     results = [
         _run_child([sys.executable, "-c", INSTALLED_PROBE], run_root, env)
