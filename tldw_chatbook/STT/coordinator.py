@@ -94,6 +94,7 @@ class _AdapterProgressGate:
                 )
             except TranscriptionCoordinatorError as error:
                 self._failure = error
+                self._active = False
                 raise
 
     def close(self) -> None:
@@ -367,6 +368,11 @@ class TranscriptionCoordinator:
             TranscriptionPhase.TRANSCRIBING,
             resolved=resolved,
         )
+        self._check_cancelled(
+            request,
+            phase=TranscriptionPhase.TRANSCRIBING,
+            resolved=resolved,
+        )
         progress_gate: _AdapterProgressGate | None = None
         adapter_request = resolved
         if request.progress is not None:
@@ -404,6 +410,11 @@ class TranscriptionCoordinator:
         self._emit_progress(
             request,
             TranscriptionPhase.POST_PROCESSING,
+            resolved=resolved,
+        )
+        self._check_cancelled(
+            request,
+            phase=TranscriptionPhase.POST_PROCESSING,
             resolved=resolved,
         )
         try:

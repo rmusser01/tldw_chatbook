@@ -788,6 +788,52 @@ def test_cancellation_immediately_before_execution_never_calls_transcribe() -> N
     assert adapter.transcribe_calls == []
 
 
+def test_cancellation_from_transcribing_progress_prevents_adapter_execution() -> None:
+    cancelled = False
+    token = _Token(lambda _: cancelled)
+    events: list[TranscriptionProgress] = []
+
+    def progress(event: TranscriptionProgress) -> None:
+        nonlocal cancelled
+        events.append(event)
+        if event.phase is TranscriptionPhase.TRANSCRIBING:
+            cancelled = True
+
+    coordinator, adapter = _coordinator()
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        coordinator.transcribe(_request(cancellation=token, progress=progress))
+
+    _assert_failure(caught, TranscriptionFailureCode.CANCELLED)
+    assert adapter.transcribe_calls == []
+    assert [event.phase for event in events] == [
+        TranscriptionPhase.QUEUED,
+        TranscriptionPhase.LOADING,
+        TranscriptionPhase.TRANSCRIBING,
+    ]
+
+
+def test_cancellation_from_post_processing_progress_prevents_success() -> None:
+    cancelled = False
+    token = _Token(lambda _: cancelled)
+    events: list[TranscriptionProgress] = []
+
+    def progress(event: TranscriptionProgress) -> None:
+        nonlocal cancelled
+        events.append(event)
+        if event.phase is TranscriptionPhase.POST_PROCESSING:
+            cancelled = True
+
+    coordinator, adapter = _coordinator()
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        coordinator.transcribe(_request(cancellation=token, progress=progress))
+
+    _assert_failure(caught, TranscriptionFailureCode.CANCELLED)
+    assert len(adapter.transcribe_calls) == 1
+    assert TranscriptionPhase.COMPLETE not in {event.phase for event in events}
+
+
 def test_success_normalizes_provenance_warnings_and_progress_without_percentages() -> (
     None
 ):
@@ -990,6 +1036,124 @@ def test_adapter_progress_close_waits_for_in_flight_delivery() -> None:
         TranscriptionPhase.COMPLETE,
     ]
     assert events[-1].phase is TranscriptionPhase.COMPLETE
+
+
+def test_adapter_cannot_redeliver_progress_after_swallowing_callback_failure() -> None:
+    secret = "RAW-SWALLOWED-CALLBACK-SECRET"
+    adapter_callback_calls: list[float] = []
+
+    def failing_sink(event: TranscriptionProgress) -> None:
+        if (
+            event.phase is TranscriptionPhase.TRANSCRIBING
+            and event.fraction is not None
+        ):
+            adapter_callback_calls.append(event.fraction)
+            raise RuntimeError(secret)
+
+    def swallowing_adapter(
+        request: ResolvedTranscriptionRequest,
+    ) -> ProviderTranscriptionOutput:
+        sink = request.request.progress
+        assert sink is not None
+        for fraction in (0.5, 0.7):
+            try:
+                sink(
+                    TranscriptionProgress(
+                        attempt_id="adapter-attempt",
+                        batch_id=None,
+                        job_id=None,
+                        phase=TranscriptionPhase.TRANSCRIBING,
+                        fraction=fraction,
+                    )
+                )
+            except TranscriptionCoordinatorError:
+                pass
+        return _output()
+
+    adapter = _Adapter(_provider(), (_model(),), output=swallowing_adapter)
+    coordinator, _ = _coordinator(adapter=adapter)
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        coordinator.transcribe(_request(progress=failing_sink))
+
+    _assert_failure(caught, TranscriptionFailureCode.INFERENCE_FAILED, secret=secret)
+    assert adapter_callback_calls == [0.5]
+
+
+def test_concurrent_adapter_progress_stops_after_first_callback_failure() -> None:
+    secret = "RAW-CONCURRENT-CALLBACK-SECRET"
+    first_delivery_started = Event()
+    release_first_delivery = Event()
+    second_attempt_started = Event()
+    adapter_callback_calls: list[float] = []
+    callback_threads: list[Thread] = []
+
+    def failing_sink(event: TranscriptionProgress) -> None:
+        if event.phase is not TranscriptionPhase.TRANSCRIBING:
+            return
+        if event.fraction is None:
+            return
+        adapter_callback_calls.append(event.fraction)
+        if len(adapter_callback_calls) == 1:
+            first_delivery_started.set()
+            assert release_first_delivery.wait(timeout=2)
+        raise RuntimeError(secret)
+
+    def invoke_progress(
+        sink: Callable[[TranscriptionProgress], None],
+        fraction: float,
+        started: Event | None = None,
+    ) -> None:
+        if started is not None:
+            started.set()
+        try:
+            sink(
+                TranscriptionProgress(
+                    attempt_id="adapter-attempt",
+                    batch_id=None,
+                    job_id=None,
+                    phase=TranscriptionPhase.TRANSCRIBING,
+                    fraction=fraction,
+                )
+            )
+        except TranscriptionCoordinatorError:
+            pass
+
+    def concurrent_adapter(
+        request: ResolvedTranscriptionRequest,
+    ) -> ProviderTranscriptionOutput:
+        sink = request.request.progress
+        assert sink is not None
+        first = Thread(target=invoke_progress, args=(sink, 0.5), daemon=True)
+        first.start()
+        callback_threads.append(first)
+        assert first_delivery_started.wait(timeout=2)
+
+        second = Thread(
+            target=invoke_progress,
+            args=(sink, 0.7, second_attempt_started),
+            daemon=True,
+        )
+        second.start()
+        callback_threads.append(second)
+        assert second_attempt_started.wait(timeout=2)
+
+        release_first_delivery.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+        assert not first.is_alive()
+        assert not second.is_alive()
+        return _output()
+
+    adapter = _Adapter(_provider(), (_model(),), output=concurrent_adapter)
+    coordinator, _ = _coordinator(adapter=adapter)
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        coordinator.transcribe(_request(progress=failing_sink))
+
+    _assert_failure(caught, TranscriptionFailureCode.INFERENCE_FAILED, secret=secret)
+    assert callback_threads
+    assert adapter_callback_calls == [0.5]
 
 
 def test_v3_normalization_keeps_routing_only_language_fields_and_warning() -> None:
