@@ -185,9 +185,11 @@ therefore cannot see a dependency that is *declared* optional but has become
 
 **What happened.** 2026-07-27: the app died on start with
 `RuntimeError: Unable to resolve default chat screen`. `aiohttp` is optional —
-declared only in the `[websearch]`/`[all-tools]` extras, and registered
-`"aiohttp": False` in `Utils/optional_deps.py` — but the `/generate-image`
-console feature had quietly wired it onto the **default** screen's import chain:
+at the time declared only in the `[websearch]`/`[all-tools]` extras (task-1262
+has since given image generation its own `[image_generation]` extra), and
+registered `"aiohttp": False` in `Utils/optional_deps.py` — but the
+`/generate-image` console feature had quietly wired it onto the **default**
+screen's import chain:
 
 ```
 UI/Screens/chat_screen.py
