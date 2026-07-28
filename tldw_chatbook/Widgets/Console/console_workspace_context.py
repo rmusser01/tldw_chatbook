@@ -144,6 +144,65 @@ def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def wrap_console_plain_text_uncapped(text: str, budget: int) -> tuple[str, ...]:
+    """Word-wrap ``text`` into budget-width lines with NO cap on line count
+    and no ellipsis.
+
+    TASK-1142 round-2 review (Qodo, PR #1050): ``_empty_copy_line_count``
+    used to call ``wrap_console_conversation_title``, which intentionally
+    hard-caps at ``_TITLE_WRAP_MAX_LINES`` (2) and ellipsizes the remainder
+    -- correct for a row TITLE (which really is rendered that way), but an
+    empty-copy ``Static`` has no such cap: Rich wraps it to as many lines
+    as it needs. Any empty-copy string that legitimately needs 3+ lines
+    (a narrower rail, longer copy, a future localization) would silently
+    undercount again through the capped helper, re-opening the exact
+    clipping bug TASK-1142 round 1 fixed (a later section's header pushed
+    out of the tray's own visible bounds). This is the SAME greedy
+    word-wrap rule ``wrap_console_conversation_title`` uses per line
+    (word-boundary wrap; a single token longer than one line hard-breaks
+    at the budget) with the two-line cap removed, so it cannot disagree
+    with that helper for text that already fits within the cap -- this is
+    strictly what it would compute with the cap lifted.
+
+    Args:
+        text: Raw text to wrap (already-rendered plain copy, not a title --
+            no blank-text fallback is applied).
+        budget: Target line width in terminal cells; clamped up to a floor
+            of ``_MIN_TITLE_WRAP_BUDGET``.
+
+    Returns:
+        A tuple of one or more raw text lines, each at most ``budget``
+        cells wide (an over-length spaceless token is the sole exception,
+        hard-broken at the budget instead). Empty for blank/whitespace-only
+        input.
+    """
+    budget = max(_MIN_TITLE_WRAP_BUDGET, int(budget))
+    remaining = str(text).strip()
+    if not remaining:
+        return ()
+    lines: list[str] = []
+    while remaining:
+        if cell_len(remaining) <= budget:
+            lines.append(remaining)
+            break
+        head = _cut_prefix_cells(remaining, budget)
+        on_boundary = head.endswith(" ") or (
+            len(head) < len(remaining) and remaining[len(head)] == " "
+        )
+        if on_boundary:
+            lines.append(head.rstrip())
+            remaining = remaining[len(head) :].lstrip()
+            continue
+        break_at = head.rfind(" ")
+        if break_at > 0:
+            lines.append(remaining[:break_at].rstrip())
+            remaining = remaining[break_at + 1 :].lstrip()
+        else:
+            lines.append(head)
+            remaining = remaining[len(head) :].lstrip()
+    return tuple(lines)
+
+
 def _marker_prefixed_name_lines(
     title: str, run_marker: str, budget: int
 ) -> tuple[str, ...]:
@@ -734,13 +793,19 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         workspace conversations." both silently wrapped to two lines above
         it.
 
-        Reuses the same word-wrap ``wrap_console_conversation_title``
-        already uses for row titles so this can never drift from a
-        plausible real render the way the flat constant did.
+        TASK-1142 round-2 review (Qodo, PR #1050): the first fix here called
+        ``wrap_console_conversation_title``, which hard-caps at two lines
+        and ellipsizes -- correct for a row title, but an empty-copy
+        ``Static`` wraps with no such cap. Any empty-copy string that
+        legitimately needs 3+ lines would silently undercount again through
+        that capped helper. Now uses ``wrap_console_plain_text_uncapped``
+        instead, which is the same per-line word-wrap rule with the cap
+        removed -- see its docstring for why a dedicated helper (rather
+        than reusing the row-title one) is required.
         """
         return max(
             _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT,
-            len(wrap_console_conversation_title(text, budget)),
+            len(wrap_console_plain_text_uncapped(text, budget)),
         )
 
     @staticmethod

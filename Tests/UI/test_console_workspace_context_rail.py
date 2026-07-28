@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -1917,6 +1918,126 @@ async def test_section_header_caret_is_clickable_at_its_rendered_screen_coordina
             "Real Click Chat A" in " ".join(text.split())
             for text in _conversation_row_texts(console)
         ), "expand via glyph-coordinate click did not take effect"
+
+
+@pytest.mark.asyncio
+async def test_empty_copy_estimator_handles_three_plus_line_wrap() -> None:
+    """TASK-1142 round-2 review (Qodo, PR #1050): ``_empty_copy_line_count``
+    called ``wrap_console_conversation_title``, which hard-caps at two
+    lines and ellipsizes -- correct for a row title, wrong for an
+    empty-copy ``Static``, which Rich wraps with no cap at all. The round-1
+    width-probe (100-220 columns) found no divergence only because the
+    CURRENT empty-copy strings ("No starred conversations." etc.) never
+    exceed two lines above the rail's minimum width. This forces a 3+-line
+    wrap through the real render seam -- a deliberately long empty-copy
+    string injected into an otherwise-real, `build_console_conversation_
+    browser_state`-built state and fed through `tray.sync_state()`, exactly
+    like every other state-injection test in this file -- and checks the
+    estimator against the REAL settled `Static` height, plus that a LATER
+    section header ("Chats") is still hittable at its rendered screen
+    coordinates (the round-1 coordinate-honest pattern): not just present,
+    not clipped out of the tray's own box by an undercounted estimate.
+
+    Verified (see TASK-1142's Implementation Notes / report) that reverting
+    ``_empty_copy_line_count`` to the capped ``wrap_console_conversation_
+    title`` makes this test fail: the injected text's true 3rd+ line goes
+    uncounted, `#console-workspace-conversations` is undersized by exactly
+    that many rows, and "Chats"'s header is pushed past the container's own
+    clipped bottom -- the same class of defect round 1 fixed for the
+    2-line case, now caught for 3+.
+    """
+    app = _build_test_app()
+    host = StyledConsoleHarness(app)
+
+    long_empty_copy = (
+        "This workspace currently has no starred conversations saved. Star "
+        "a saved chat from any workspace to pin it here for quick access "
+        "later, even after switching workspaces around."
+    )
+
+    # Tall enough that the injected multi-line empty copy doesn't push
+    # "Chats" below the rail's own scroll fold -- this test is about the
+    # estimator undercounting the tray's OWN box, not about needing to
+    # scroll first (round 1 already covers that: "you cannot click what is
+    # not on screen" is expected, not a bug).
+    async with host.run_test(size=(160, 70)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _seed_console_transcript_message(console)
+        await pilot.pause(0.2)
+
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        base_state = _base_grouped_workspace_state()
+        # All three sections empty (their real default empty_copy), built
+        # through the actual production state builder -- not hand-rolled.
+        empty_browser = build_console_conversation_browser_state(
+            rows=(),
+            active_workspace_id="ws-a",
+            group_collapse_preferences={"section:chats": False},
+        )
+        starred_section = next(
+            section
+            for section in empty_browser.sections
+            if section.section_id == "starred"
+        )
+        long_starred_section = replace(starred_section, empty_copy=long_empty_copy)
+        forced_sections = tuple(
+            long_starred_section if section.section_id == "starred" else section
+            for section in empty_browser.sections
+        )
+        forced_browser = replace(empty_browser, sections=forced_sections)
+        forced_state = replace(base_state, conversation_browser=forced_browser)
+
+        tray.sync_state(forced_state)
+        await pilot.pause()
+        await pilot.pause()
+
+        starred_empty = console.query_one(
+            "#console-conversation-browser-starred-empty", Static
+        )
+        assert starred_empty.region.height >= 3, (
+            "test setup did not force a 3+-line wrap -- widen the injected "
+            f"empty_copy text (rendered height={starred_empty.region.height})"
+        )
+
+        conversation_list = console.query_one("#console-workspace-conversations")
+        empty_copy_widgets = list(
+            conversation_list.query(".console-workspace-empty-copy").results(Static)
+        )
+        empty_copies_height = sum(
+            max(1, widget.region.height) for widget in empty_copy_widgets
+        )
+        row_buttons = list(
+            conversation_list.query(
+                ".console-workspace-conversation-row"
+            ).results(Button)
+        )
+        rows_height = sum(
+            int(button.styles.height.value) + 1 for button in row_buttons
+        )
+        header_count = len(
+            conversation_list.query(".console-conversation-browser-section-header")
+        ) + len(
+            conversation_list.query(".console-conversation-browser-group-header")
+        )
+        assert (
+            int(conversation_list.styles.height.value)
+            == rows_height + header_count + empty_copies_height
+        ), "the estimator disagrees with the real settled Static heights"
+
+        # Coordinate-honest: "Chats" (the LAST section, rendered after the
+        # 3+-line "Starred" empty copy) must still be hittable at its
+        # rendered screen coordinates -- not clipped out of the tray's own
+        # box by an undercounted estimate.
+        lines = _render_screen_lines(console)
+        x, y = _find_caret_in_row_with(lines, "Chats")
+        widget_at, _ = console.screen.get_widget_at(x, y)
+        assert (
+            getattr(widget_at, "id", None)
+            == "console-conversation-browser-section-toggle-chats"
+        ), f"Chats caret at ({x}, {y}) resolved to {widget_at!r}, not its toggle"
 
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
