@@ -588,14 +588,6 @@ def _root_app_target_occurrences(
         ):
             target = node.slice.value
             kind = f"mapping_{type(node.ctx).__name__.lower()}"
-        elif (
-            isinstance(node, ast.keyword)
-            and node.arg == "reactive_attr"
-            and isinstance(node.value, ast.Constant)
-            and node.value.value in targets
-        ):
-            target = node.value.value
-            kind = "reactive_attr"
         if target is not None and kind is not None:
             found.append((target, relative, kind, node.lineno))
     return found
@@ -632,6 +624,30 @@ def _class_body_reactive_names(class_node: ast.ClassDef) -> frozenset[str]:
         for target in targets:
             names.update(_class_body_bound_names(target))
     return frozenset(names)
+
+
+def _local_tldw_root_classes(path: Path) -> tuple[ast.ClassDef, ...]:
+    """Return ``TldwCli`` and its transitive, in-module class mixins."""
+    module = _parse(path)
+    classes = {
+        node.name: node for node in module.body if isinstance(node, ast.ClassDef)
+    }
+    root = classes["TldwCli"]
+    ordered: list[ast.ClassDef] = []
+    seen: set[str] = set()
+
+    def add_with_local_bases(class_node: ast.ClassDef) -> None:
+        if class_node.name in seen:
+            return
+        seen.add(class_node.name)
+        ordered.append(class_node)
+        for base in class_node.bases:
+            base_class = classes.get(base.id) if isinstance(base, ast.Name) else None
+            if base_class is not None:
+                add_with_local_bases(base_class)
+
+    add_with_local_bases(root)
+    return tuple(ordered)
 
 
 class _TldwCliRootOccurrenceCollector(ast.NodeVisitor):
@@ -940,7 +956,7 @@ destination.ingest_active_view
     )
 
 
-def test_root_app_target_guard_detects_retired_names_in_one_walk(
+def test_root_app_target_guard_detects_only_root_retired_names_in_one_walk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = PROJECT_ROOT / "synthetic-root-app-target-guard.py"
@@ -965,7 +981,35 @@ destination.retired_one
         ("retired_two", "synthetic-root-app-target-guard.py", "dynamic_setattr", 2),
         ("retired_one", "synthetic-root-app-target-guard.py", "mapping_store", 3),
         ("retired_two", "synthetic-root-app-target-guard.py", "mapping_get", 4),
-        ("retired_one", "synthetic-root-app-target-guard.py", "reactive_attr", 5),
+    ]
+
+
+def test_local_tldw_root_classes_include_transitive_in_module_mixins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tree = ast.parse(
+        """class RootStateMixin:
+    inherited = reactive(0)
+
+class QueueMixin(RootStateMixin):
+    pass
+
+class ExternalBase:
+    pass
+
+class App:
+    externally_qualified = reactive("must not be inherited")
+
+class TldwCli(QueueMixin, external.App):
+    direct = reactive(False)
+"""
+    )
+    monkeypatch.setitem(globals(), "_parse", lambda _path: tree)
+
+    assert [node.name for node in _local_tldw_root_classes(APP_PATH)] == [
+        "TldwCli",
+        "QueueMixin",
+        "RootStateMixin",
     ]
 
 
@@ -1233,17 +1277,28 @@ def test_legacy_ccp_prompt_handlers_and_compatibility_exports_are_absent() -> No
 
 def test_tldw_cli_final_reactive_ownership_contract_is_exact() -> None:
     """Freeze the reviewed 61-descriptor disposition at the app boundary."""
-    app_class = _class_definition(APP_PATH, "TldwCli")
+    root_owner_classes = _local_tldw_root_classes(APP_PATH)
     assert len(RETAINED_TLDW_REACTIVES) == 2
     assert len(RETIRED_TLDW_REACTIVES) == 59
     assert RETAINED_TLDW_REACTIVES.isdisjoint(RETIRED_TLDW_REACTIVES)
-    assert _class_body_reactive_names(app_class) == RETAINED_TLDW_REACTIVES
+    assert (
+        frozenset().union(
+            *(_class_body_reactive_names(node) for node in root_owner_classes)
+        )
+        == RETAINED_TLDW_REACTIVES
+    )
 
     violations: dict[
         str, list[tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]]
     ] = {}
     for name in sorted(RETIRED_TLDW_REACTIVES):
-        occurrences = _tldw_cli_occurrences(name)
+        occurrences: list[
+            tuple[str, str, tuple[str, ...], int] | tuple[str, str, int]
+        ] = []
+        for root_owner_class in root_owner_classes:
+            collector = _TldwCliRootOccurrenceCollector(APP_PATH, name)
+            collector.collect(root_owner_class)
+            occurrences.extend(collector.occurrences)
         if occurrences:
             violations[name] = [*occurrences]
 
@@ -1254,14 +1309,26 @@ def test_tldw_cli_final_reactive_ownership_contract_is_exact() -> None:
         ):
             violations.setdefault(name, []).append((relative, kind, line))
 
-    assert violations == {}
-
-    direct_methods = {
-        node.name
-        for node in app_class.body
+    root_methods = {
+        (owner.name, node.name, node.lineno)
+        for owner in root_owner_classes
+        for node in owner.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    assert "watch_current_tab" not in direct_methods
+    for name in sorted(RETIRED_TLDW_REACTIVES):
+        for owner, method, line in root_methods:
+            if method == f"watch_{name}":
+                violations.setdefault(name, []).append(
+                    (
+                        str(APP_PATH.relative_to(PROJECT_ROOT)),
+                        "watcher_definition",
+                        (owner, method),
+                        line,
+                    )
+                )
+
+    assert violations == {}
+    assert all(method != "watch_current_tab" for _owner, method, _line in root_methods)
 
 
 def test_retired_destination_root_state_and_handlers_are_absent() -> None:

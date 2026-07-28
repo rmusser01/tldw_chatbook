@@ -284,13 +284,6 @@ def root_accesses(tree, relative_path):
             and node.slice.value in retired_reactives
         ):
             target = node.slice.value
-        elif (
-            isinstance(node, ast.keyword)
-            and node.arg == "reactive_attr"
-            and isinstance(node.value, ast.Constant)
-            and node.value.value in retired_reactives
-        ):
-            target = node.value.value
         if target is not None:
             found.append((relative_path, node.lineno, target))
     return found
@@ -363,35 +356,64 @@ app_class = next(
     for node in app_tree.body
     if isinstance(node, ast.ClassDef) and node.name == "TldwCli"
 )
-assert class_body_reactives(app_class) == expected_reactives
-assert "watch_current_tab" not in {
+local_classes = {
+    node.name: node for node in app_tree.body if isinstance(node, ast.ClassDef)
+}
+root_owner_classes = []
+seen_root_classes = set()
+
+
+def add_root_owner_class(class_node):
+    if class_node.name in seen_root_classes:
+        return
+    seen_root_classes.add(class_node.name)
+    root_owner_classes.append(class_node)
+    for base in class_node.bases:
+        base_class = local_classes.get(base.id) if isinstance(base, ast.Name) else None
+        if base_class is not None:
+            add_root_owner_class(base_class)
+
+
+add_root_owner_class(app_class)
+assert (
+    frozenset().union(
+        *(class_body_reactives(node) for node in root_owner_classes)
+    )
+    == expected_reactives
+)
+root_methods = {
     node.name
-    for node in app_class.body
+    for owner in root_owner_classes
+    for node in owner.body
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
 }
-assert retired_reactives.isdisjoint(
-    node.name
-    for node in app_class.body
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-)
+assert "watch_current_tab" not in root_methods
+assert retired_reactives.isdisjoint(root_methods)
+assert {f"watch_{name}" for name in retired_reactives}.isdisjoint(root_methods)
 class_level_retired = []
-for statement in app_class.body:
-    if isinstance(statement, ast.Assign):
-        targets = statement.targets
-    elif isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
-        targets = (statement.target,)
-    else:
-        continue
-    for target in targets:
-        class_level_retired.extend(
-            name for name in bound_names(target) if name in retired_reactives
-        )
+for owner in root_owner_classes:
+    for statement in owner.body:
+        if isinstance(statement, ast.Assign):
+            targets = statement.targets
+        elif isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+            targets = (statement.target,)
+        else:
+            continue
+        for target in targets:
+            class_level_retired.extend(
+                name for name in bound_names(target) if name in retired_reactives
+            )
 assert class_level_retired == []
 
-tldw_accesses = TldwCliRetiredAccesses()
-for statement in app_class.body:
-    tldw_accesses.visit(statement)
-assert tldw_accesses.found == []
+tldw_accesses = []
+for owner in root_owner_classes:
+    owner_accesses = TldwCliRetiredAccesses()
+    for statement in owner.body:
+        owner_accesses.visit(statement)
+    tldw_accesses.extend(
+        (owner.name, line, name) for line, name in owner_accesses.found
+    )
+assert tldw_accesses == []
 
 installed_root_accesses = []
 for source_path in sorted(package_root.rglob("*.py")):
