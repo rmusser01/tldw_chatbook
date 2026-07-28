@@ -82,6 +82,7 @@ from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
     describe_stream_failure,
@@ -339,8 +340,15 @@ def build_tool_review_hook(
     (`"agent:builtin"`), `server_label="Built-in"`, and `reason=
     "risk_floored"` when `EffectiveToolState.risk_floored` else `"ask"`
     (built-ins never set `config_changed` -- see `resolve_builtin_state`'s
-    own docstring for why). Only a resolved `"ask"` state ever produces a
-    row: `"allow"` never prompts, and `"deny"` is refused outright by
+    own docstring for why). Every built-in row's `path_precheck_failed`
+    (TASK-1231/F3 AC2) is set via `Tools.file_operation_tools.
+    path_precheck_failed`: for `read_file`/`list_directory`/`write_file`
+    this pre-flights the SAME `allowed_file_roots`/`validate_path_multi`
+    check `invoke()` runs at dispatch, so the approval card can warn the
+    user this exact call will fail even if approved -- it never gates or
+    auto-denies; `False` for every other builtin tool and every MCP row.
+    Only a resolved `"ask"` state ever produces a row: `"allow"` never
+    prompts, and `"deny"` is refused outright by
     `invoke()`'s own gate WITHOUT ever reaching the user -- a tool the
     operator switched Off must not appear on the approval card at all.
     Nor does an `"ask"` tool that already has a live session approval
@@ -455,6 +463,13 @@ def build_tool_review_hook(
                     arguments=dict(call.args or {}),
                     reason="risk_floored" if state.risk_floored else "ask",
                     options=("approve_once", "approve_session", "deny"),
+                    # TASK-1231/F3 AC2: pre-flight the roots check for the
+                    # three file tools -- never gates or auto-denies, just
+                    # tells the card this specific path is doomed even if
+                    # approved (see path_precheck_failed's own docstring).
+                    path_precheck_failed=path_precheck_failed(
+                        call.name, call.args
+                    ),
                 )
             )
 
@@ -2211,6 +2226,7 @@ class ConsoleChatController:
                     "arguments": dict(call.arguments or {}),
                     "reason": call.reason,
                     "options": list(call.options),
+                    "path_precheck_failed": call.path_precheck_failed,
                 }
                 for call in pending
             ],

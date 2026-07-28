@@ -2101,6 +2101,117 @@ def test_review_hook_gates_builtins_with_no_mcp_provider():
     assert verdicts == {"write_thing": "proceed"}
 
 
+def _file_tool(name: str):
+    """A `Tool`-shaped double carrying a REAL file-tool name (read_file/
+    list_directory/write_file), so `path_precheck_failed` (looked up by
+    exact tool name) recognizes it. Unlike `_FakeMutatingTool`/`write_thing`
+    above, this name must be one of the three file tools for the
+    precheck to ever fire.
+    """
+    return type("_FakeFileTool", (), {"name": name})()
+
+
+def test_review_hook_flags_read_file_path_outside_roots(monkeypatch, tmp_path):
+    """TASK-1231/F3 AC2: a read_file row whose path the roots check will
+    reject must carry `path_precheck_failed=True` -- a WARNING only. The
+    row must still be offered every normal decision (never auto-denied);
+    the user can still approve it.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Tools import file_operation_tools as fot
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+
+    def _raise():
+        raise RuntimeError("no workspace registry in this test")
+
+    monkeypatch.setattr(wfr, "_registry_factory", _raise)
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x")
+
+    gate = _FakeBuiltinGate()
+    asked: dict[str, list[MCPPendingCall]] = {}
+
+    def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+        asked["pending"] = pending
+        return {p.llm_name: "approve_once" for p in pending}
+
+    hook = build_tool_review_hook(
+        gate, _FakeBuiltinProvider(_file_tool("read_file")), None, request_approvals
+    )
+    verdicts = hook(
+        [ToolCall(name="read_file", args={"file_path": str(outside)})]
+    )
+
+    row = asked["pending"][0]
+    assert row.path_precheck_failed is True
+    # Never auto-denied: still offered every normal decision, and still
+    # proceeds if the user approves anyway.
+    assert row.options == ("approve_once", "approve_session", "deny")
+    assert verdicts == {"read_file": "proceed"}
+
+
+def test_review_hook_does_not_flag_read_file_path_inside_roots(monkeypatch, tmp_path):
+    """Counterpart to the above: a path the roots check WOULD accept must
+    not carry the warning."""
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Tools import file_operation_tools as fot
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setattr(fot, "_tool_sandbox_root", lambda: sandbox.resolve())
+
+    def _raise():
+        raise RuntimeError("no workspace registry in this test")
+
+    monkeypatch.setattr(wfr, "_registry_factory", _raise)
+
+    inside = sandbox / "notes.txt"
+    inside.write_text("x")
+
+    gate = _FakeBuiltinGate()
+    asked: dict[str, list[MCPPendingCall]] = {}
+
+    def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+        asked["pending"] = pending
+        return {p.llm_name: "approve_once" for p in pending}
+
+    hook = build_tool_review_hook(
+        gate, _FakeBuiltinProvider(_file_tool("read_file")), None, request_approvals
+    )
+    hook([ToolCall(name="read_file", args={"file_path": str(inside)})])
+
+    row = asked["pending"][0]
+    assert row.path_precheck_failed is False
+
+
+def test_review_hook_leaves_non_file_builtins_unflagged():
+    """Scope guard (AC2): only read_file/list_directory/write_file are ever
+    pre-flighted -- every other builtin tool's row stays False regardless
+    of its arguments."""
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    gate = _FakeBuiltinGate()
+    asked: dict[str, list[MCPPendingCall]] = {}
+
+    def request_approvals(pending: list[MCPPendingCall]) -> dict[str, str]:
+        asked["pending"] = pending
+        return {p.llm_name: "approve_once" for p in pending}
+
+    hook = build_tool_review_hook(
+        gate, _FakeBuiltinProvider(_FakeMutatingTool()), None, request_approvals
+    )
+    hook([_builtin_call("write_thing")])
+
+    row = asked["pending"][0]
+    assert row.path_precheck_failed is False
+
+
 def test_allow_resolved_builtin_never_prompts():
     from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
 

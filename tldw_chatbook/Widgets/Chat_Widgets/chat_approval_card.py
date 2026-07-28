@@ -75,6 +75,15 @@ _REASON_SUFFIXES: dict[str, str] = {
     "risk_floored": " (high risk)",
 }
 
+#: TASK-1231/F3 AC2: appended (in addition to any `_REASON_SUFFIXES` badge)
+#: when the row's `path_precheck_failed` flag is set -- a file tool
+#: (read_file/list_directory/write_file) whose path argument will be
+#: rejected by the roots check regardless of the user's decision. This is
+#: a WARNING, never a gate: the row still offers every normal decision and
+#: the user can still approve it (it will then fail with the same
+#: recovery-route error `validate_path_multi` raises at dispatch).
+_PATH_PRECHECK_SUFFIX = " -- path outside allowed folders; will fail even if approved"
+
 _ARGS_SUMMARY_LIMIT = 80
 
 
@@ -101,7 +110,15 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
 
 
 def _format_row_header(entry: Mapping[str, Any]) -> str:
-    """Return one row's header line: ``"server · tool"`` (+ ×N, + reason badge)."""
+    """Return one row's header line: ``"server · tool"`` (+ ×N, + badges).
+
+    Badge order: the reason badge (``config_changed``/``risk_floored``)
+    first, then the roots pre-flight warning (TASK-1231/F3 AC2) last --
+    a row can carry both (e.g. a high-risk `write_file` call whose path is
+    ALSO outside every allowed root), and the pre-flight warning is the
+    more actionable of the two, so it reads last/closest to the reader's
+    eye rather than being buried before another badge.
+    """
     server_label = str(entry.get("server_label", "") or "")
     tool_name = str(entry.get("tool_name", "") or "")
     header = f"{server_label} · {tool_name}"
@@ -109,6 +126,8 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
     if count > 1:
         header += f" ×{count}"
     header += _REASON_SUFFIXES.get(str(entry.get("reason", "") or ""), "")
+    if entry.get("path_precheck_failed"):
+        header += _PATH_PRECHECK_SUFFIX
     return header
 
 

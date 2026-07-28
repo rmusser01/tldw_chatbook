@@ -604,13 +604,31 @@ def run_agent_loop(
                         n for n, _ in list(recent_calls)[-period * repeats :]
                     )
                 )
-                add(
-                    STEP_ERROR,
-                    summary=(
-                        f"loop detected: {names} repeated in a "
-                        f"{period}-cycle ({repeats}x)"
-                    ),
+                # Log-side detail (TASK-1231/F3 AC4): the period/repeats
+                # jargon that used to be the ONLY copy this trip produced is
+                # kept here, at debug level, for anyone actually debugging
+                # the cycle detector -- but it must never be the user-facing
+                # `summary` below, which console_chat_controller surfaces
+                # verbatim as "Agent run stuck: {summary}." Fleet-UX review
+                # F3: "loop detected: read_file repeated in a 1-cycle (3x)"
+                # reads as unexplained jargon to a first-run user.
+                logger.debug(
+                    f"loop detected: period={period} repeats={repeats} "
+                    f"tools={names}"
                 )
+                if period == 1:
+                    summary = (
+                        f"Agent stopped: it kept calling {names} with the "
+                        f"same arguments ({repeats} times) without making "
+                        "progress."
+                    )
+                else:
+                    summary = (
+                        f"Agent stopped: it kept repeating the same "
+                        f"sequence of tool calls ({names}) without making "
+                        "progress."
+                    )
+                add(STEP_ERROR, summary=summary)
                 return _outcome(RUN_STUCK)
 
             # P5 Task 4: a non-"proceed" verdict (an absent name defaults to

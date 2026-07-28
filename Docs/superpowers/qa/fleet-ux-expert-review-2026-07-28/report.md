@@ -62,10 +62,18 @@ truncation hides whatever the +64 chars say (a1-s3b). A first-run user
 literally cannot grant file access from where they stand (Default can't
 hold bindings; they must create a workspace, bind a folder in Settings, and
 work in a session of that workspace) and nothing on the failure path says
-so. The model then retries the identical path and the user is asked to
-approve the same doomed request again (a1-s3c) — approval fatigue with
-zero learning; the loop guard eventually kills the run with jargon
-("loop detected: read_file repeated in a 1-cycle (3x)" — prior UAT).
+so. The model then retries and the user is asked to approve another
+doomed request again (a1-s3c) — approval fatigue with zero learning; the
+loop guard eventually kills the run with jargon ("loop detected: read_file
+repeated in a 1-cycle (3x)" — prior UAT).
+(correction: external reviewer Qodo caught an over-claim here and in
+task-1231's original AC#3 — the captures show the follow-up ask was
+`list_directory(".")`, a DIFFERENT root-gated tool, not a retry of the
+identical `read_file` path. The fatigue pattern F3 describes is post-denial
+successive gated asks with no learning between them, not an identical
+retry; task-1231's AC#3 was reworded accordingly. The prior fleet-UAT's
+engine-level "read_file repeated in a 1-cycle (3x)" loop-guard evidence
+is unaffected and still stands.)
 
 ### F4 — Major: the status-glyph language has no legend
 ● ◆ ✓ ✗ carry the entire fleet-status story, yet no legend exists anywhere:
