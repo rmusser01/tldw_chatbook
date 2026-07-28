@@ -14,6 +14,7 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     FileNotesGitService,
     GitCommandResult,
     GitIndexParseError,
+    GitShutdownAffinityError,
     GitStatusAdmissionError,
     PorcelainV2ParseError,
     PorcelainPathOutsideSessionError,
@@ -42,8 +43,11 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     IndexEntry,
     RepositoryIdentity,
     SequencedSessionChange,
+    SessionBinding,
     SessionChange,
     SessionChangeGroup,
+    SessionGitRow,
+    SessionGitStatus,
     StagingOwnership,
 )
 
@@ -1158,6 +1162,7 @@ def test_git_environment_removes_repository_and_config_injection() -> None:
     assert sanitized["FILTER_HELPER_CONTEXT"] == "preserved"
     assert sanitized["GIT_AUTHOR_NAME"] == "ordinary-config-remains"
     assert sanitized["GIT_TERMINAL_PROMPT"] == "0"
+    assert sanitized["LC_ALL"] == "C"
 
 
 def test_status_environment_and_argv_disable_side_channel_writes() -> None:
@@ -1240,6 +1245,119 @@ class _DiscoveryFailureRunner:
         return None
 
 
+class _LocalizedDiscoveryRunner:
+    def __init__(self) -> None:
+        self.locales: list[str | None] = []
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        del argv, cwd, stdin, timeout
+        locale = environment.get("LC_ALL")
+        self.locales.append(locale)
+        if locale == "C":
+            return GitCommandResult(
+                128,
+                b"",
+                b"fatal: not a git repository\n",
+            )
+        return GitCommandResult(
+            128,
+            b"",
+            "schwerwiegend: kein Git-Repository\n".encode(),
+        )
+
+    def shutdown(self) -> None:
+        return None
+
+
+class _HeadDiscoveryRunner:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        symbolic: GitCommandResult,
+        revision: GitCommandResult,
+        reference: GitCommandResult | None = None,
+    ) -> None:
+        self.root = root
+        self.symbolic = symbolic
+        self.revision = revision
+        self.reference = reference
+        self.calls: list[tuple[str | bytes, ...]] = []
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        del cwd, environment, stdin, timeout
+        command = tuple(argv)
+        self.calls.append(command)
+        text = tuple(os.fsdecode(argument) for argument in command)
+        if "--is-inside-work-tree" in text:
+            return GitCommandResult(0, b"true\n", b"")
+        if "--show-toplevel" in text:
+            return GitCommandResult(0, os.fsencode(self.root) + b"\n", b"")
+        if "--absolute-git-dir" in text or "--git-common-dir" in text:
+            return GitCommandResult(
+                0,
+                os.fsencode(self.root / ".git") + b"\n",
+                b"",
+            )
+        if "symbolic-ref" in text:
+            return self.symbolic
+        if "HEAD^{commit}" in text:
+            return self.revision
+        if "show-ref" in text:
+            assert self.reference is not None
+            return self.reference
+        raise AssertionError(f"Unexpected Git command: {text!r}")
+
+    def shutdown(self) -> None:
+        return None
+
+
+async def _discover_with_head_results(
+    tmp_path: Path,
+    *,
+    symbolic: GitCommandResult,
+    revision: GitCommandResult,
+    reference: GitCommandResult | None = None,
+) -> tuple[DiscoveryResult, _HeadDiscoveryRunner]:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / ".git").mkdir()
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    runner = _HeadDiscoveryRunner(
+        root,
+        symbolic=symbolic,
+        revision=revision,
+        reference=reference,
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="/private/bin/git",
+        environment={"PATH": "/private/bin"},
+    )
+
+    discovery = await service.discover(binding)
+    await service.shutdown()
+    return discovery, runner
+
+
 async def _discover_with_failure(
     tmp_path: Path,
     result: GitCommandResult,
@@ -1276,6 +1394,33 @@ async def test_discover_preserves_genuine_not_repository_result(
 
     assert discovery.state == "not_repository"
     assert len(runner.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_discovery_forces_stable_locale_before_classifying_diagnostics(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    runner = _LocalizedDiscoveryRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={
+            "PATH": "/bin",
+            "LANG": "de_DE.UTF-8",
+            "LC_ALL": "de_DE.UTF-8",
+        },
+    )
+
+    discovery = await service.discover(binding)
+    await service.shutdown()
+
+    assert discovery.state == "not_repository"
+    assert runner.locales == ["C"]
 
 
 @pytest.mark.asyncio
@@ -1342,6 +1487,96 @@ async def test_discover_bounds_and_sanitizes_hostile_failure_stderr(
     assert "\t" not in message
     assert "\x00" not in message
     assert "\x1b" not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("symbolic", "revision", "reference", "expected"),
+    [
+        (
+            GitCommandResult(0, b"refs/heads/main\n", b""),
+            GitCommandResult(0, OID_A.encode("ascii") + b"\n", b""),
+            None,
+            HeadIdentity.attached("refs/heads/main", OID_A),
+        ),
+        (
+            GitCommandResult(1, b"", b""),
+            GitCommandResult(0, OID_B.encode("ascii") + b"\n", b""),
+            None,
+            HeadIdentity.detached(OID_B),
+        ),
+        (
+            GitCommandResult(0, b"refs/heads/new\n", b""),
+            GitCommandResult(1, b"", b""),
+            GitCommandResult(2, b"", b""),
+            HeadIdentity.unborn("refs/heads/new"),
+        ),
+    ],
+)
+async def test_head_semantics_require_expected_exit_combinations(
+    tmp_path: Path,
+    symbolic: GitCommandResult,
+    revision: GitCommandResult,
+    reference: GitCommandResult | None,
+    expected: HeadIdentity,
+) -> None:
+    discovery, _runner = await _discover_with_head_results(
+        tmp_path,
+        symbolic=symbolic,
+        revision=revision,
+        reference=reference,
+    )
+
+    assert discovery.state == "ready"
+    assert discovery.head == expected
+
+
+@pytest.mark.asyncio
+async def test_head_operational_failure_is_sanitized_and_never_detached(
+    tmp_path: Path,
+) -> None:
+    discovery, runner = await _discover_with_head_results(
+        tmp_path,
+        symbolic=GitCommandResult(
+            128,
+            b"",
+            b"fatal: permission denied\x00\x1b\n",
+        ),
+        revision=GitCommandResult(0, OID_A.encode("ascii") + b"\n", b""),
+    )
+
+    assert discovery.state == "unsupported"
+    assert discovery.head is None
+    assert discovery.message is not None
+    assert "permission denied" in discovery.message
+    assert "\n" not in discovery.message
+    assert "\x00" not in discovery.message
+    assert "\x1b" not in discovery.message
+    assert not any(
+        "HEAD^{commit}" in tuple(os.fsdecode(item) for item in call)
+        for call in runner.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_existing_unresolvable_branch_is_not_misclassified_as_unborn(
+    tmp_path: Path,
+) -> None:
+    discovery, runner = await _discover_with_head_results(
+        tmp_path,
+        symbolic=GitCommandResult(0, b"refs/heads/main\n", b""),
+        revision=GitCommandResult(1, b"", b""),
+        reference=GitCommandResult(0, b"", b""),
+    )
+
+    assert discovery.state == "unsupported"
+    assert discovery.head is None
+    assert discovery.message is not None
+    assert "does not resolve to a commit" in discovery.message
+    assert any(
+        "show-ref" in tuple(os.fsdecode(item) for item in call)
+        for call in runner.calls
+    )
 
 
 class _CompletedProcess:
@@ -1434,6 +1669,28 @@ class _StubbornProcess:
         self.kill_calls += 1
 
 
+class _SignalFailureProcess(_StubbornProcess):
+    def __init__(
+        self,
+        *,
+        terminate_error: OSError | None = None,
+        kill_error: OSError | None = None,
+    ) -> None:
+        super().__init__()
+        self.terminate_error = terminate_error
+        self.kill_error = kill_error
+
+    def terminate(self) -> None:
+        super().terminate()
+        if self.terminate_error is not None:
+            raise self.terminate_error
+
+    def kill(self) -> None:
+        super().kill()
+        if self.kill_error is not None:
+            raise self.kill_error
+
+
 @pytest.mark.asyncio
 async def test_runner_timeout_terminates_then_kills_with_two_bounded_waits(
     monkeypatch: pytest.MonkeyPatch,
@@ -1519,8 +1776,141 @@ async def test_runner_shutdown_returns_retained_finite_settlement(
         assert child.terminate_calls == 1
         assert child.kill_calls == 1
         assert child.wait_calls == 2
-        assert not runner._processes
-        assert not runner._cleanup_tasks
+        assert child in runner._processes
+    finally:
+        child._never.set()
+        command.cancel()
+        await asyncio.gather(command, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("terminate_error", "kill_error"),
+    [
+        (PermissionError("terminate denied"), None),
+        (None, OSError("kill failed")),
+        (
+            PermissionError("terminate denied"),
+            OSError("kill failed"),
+        ),
+    ],
+)
+async def test_runner_signal_failures_are_uncertain_and_remain_tracked(
+    monkeypatch: pytest.MonkeyPatch,
+    terminate_error: OSError | None,
+    kill_error: OSError | None,
+) -> None:
+    child = _SignalFailureProcess(
+        terminate_error=terminate_error,
+        kill_error=kill_error,
+    )
+
+    async def fake_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _SignalFailureProcess:
+        del argv, kwargs
+        return child
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "status"),
+            cwd="/repo",
+            environment={},
+            timeout=None,
+        )
+    )
+    await child.communicate_started.wait()
+
+    settlement = runner.shutdown()
+    confirmed = await asyncio.wait_for(settlement, timeout=1)
+    result = await asyncio.wait_for(command, timeout=1)
+
+    assert not confirmed
+    assert result.termination_uncertain
+    assert child.terminate_calls == 1
+    assert child.kill_calls == 1
+    assert child.wait_calls == 2
+    assert child in runner._processes
+
+
+@pytest.mark.asyncio
+async def test_runner_shutdown_fails_when_owned_run_task_raises() -> None:
+    runner = AsyncGitProcessRunner()
+    runner._loop = asyncio.get_running_loop()
+    runner._shutdown_event = asyncio.Event()
+
+    async def fail() -> None:
+        await asyncio.sleep(0)
+        raise RuntimeError("owned task failed")
+
+    task = asyncio.create_task(fail())
+    runner._run_tasks.add(task)  # type: ignore[arg-type]
+    task.add_done_callback(runner._run_tasks.discard)  # type: ignore[arg-type]
+
+    settlement = runner.shutdown()
+
+    assert not await asyncio.wait_for(settlement, timeout=1)
+    await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_runner_wrong_loop_shutdown_is_retryable_before_sealing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _StubbornProcess()
+
+    async def fake_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _StubbornProcess:
+        del argv, kwargs
+        return child
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "status"),
+            cwd="/repo",
+            environment={},
+            timeout=None,
+        )
+    )
+    await asyncio.wait_for(child.communicate_started.wait(), timeout=1)
+
+    try:
+        with pytest.raises(GitShutdownAffinityError):
+            await asyncio.wait_for(
+                asyncio.to_thread(runner.shutdown),
+                timeout=1,
+            )
+
+        assert not runner._sealed
+        assert runner._shutdown_event is not None
+        assert not runner._shutdown_event.is_set()
+        assert child.terminate_calls == 0
+        assert child.kill_calls == 0
+
+        settlement = runner.shutdown()
+        assert not await asyncio.wait_for(settlement, timeout=1)
+        assert (await asyncio.wait_for(command, timeout=1)).termination_uncertain
     finally:
         child._never.set()
         command.cancel()
@@ -1692,6 +2082,72 @@ class _DelayedStatusRunner:
         self.release_first_index.set()
 
 
+class _HeadFailureStatusRunner(_DelayedStatusRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.release_first_index.set()
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        text = tuple(os.fsdecode(argument) for argument in argv)
+        if "symbolic-ref" in text:
+            self.calls.append(tuple(argv))
+            return GitCommandResult(
+                128,
+                b"",
+                b"fatal: HEAD permission denied\x00\x1b\n",
+            )
+        return await super().run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+        )
+
+
+class _TwoPhaseStatusRunner(_DelayedStatusRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.second_index_started = asyncio.Event()
+        self.release_second_index = asyncio.Event()
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        text = tuple(os.fsdecode(argument) for argument in argv)
+        if "ls-files" not in text:
+            return await super().run(
+                argv,
+                cwd=cwd,
+                environment=environment,
+                stdin=stdin,
+                timeout=timeout,
+            )
+        self.calls.append(tuple(argv))
+        self.query_count += 1
+        if self.query_count == 1:
+            self.first_index_started.set()
+            await self.release_first_index.wait()
+        elif self.query_count == 2:
+            self.second_index_started.set()
+            await self.release_second_index.wait()
+        return GitCommandResult(0, b"", b"")
+
+
 def _status_service(
     tmp_path: Path,
 ) -> tuple[
@@ -1714,6 +2170,116 @@ def _status_service(
         environment={"PATH": "/bin"},
     )
     return owner, binding, service, runner
+
+
+def _publish_actionable_status(
+    owner: FileNotesSessionOwner,
+    binding: SessionBinding,
+    repository: RepositoryIdentity,
+    group: SessionChangeGroup,
+) -> SessionGitStatus:
+    generation = owner.next_status_generation(binding)
+    assert generation is not None
+    status = SessionGitStatus(
+        binding_generation=binding.generation,
+        status_generation=generation,
+        state="ready",
+        rows=(
+            SessionGitRow(
+                group,
+                "unstaged",
+                stage_action="stage",
+            ),
+        ),
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", OID_A),
+    )
+    assert owner.publish_status(binding, status)
+    return status
+
+
+@pytest.mark.asyncio
+async def test_head_uncertainty_retains_disabled_rows_and_clears_ownership(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("note\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    group = _single_group("note.md")
+    _publish_actionable_status(owner, binding, repository, group)
+    assert owner.publish_ownership(
+        binding,
+        {group.group_id: _ownership(group, {"note.md": _entry("note.md")})},
+    )
+    runner = _HeadFailureStatusRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+
+    result = await service.start_status(
+        binding,
+        (_change(1, "modified", "note.md"),),
+    )
+
+    assert result.state == "error"
+    assert result.message is not None
+    assert "permission denied" in result.message
+    assert "\n" not in result.message
+    assert "\x00" not in result.message
+    assert "\x1b" not in result.message
+    assert tuple(row.group_id for row in result.rows) == (group.group_id,)
+    assert all(not row.stage_eligible for row in result.rows)
+    assert all(not row.unstage_eligible for row in result.rows)
+    assert all(row.disabled_reason for row in result.rows)
+    snapshot = owner.snapshot(binding)
+    assert snapshot.git_status == result
+    assert not snapshot.staging_ownership
+
+
+@pytest.mark.asyncio
+async def test_repository_identity_loss_never_retains_previous_rows(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    group = _single_group("note.md")
+    _publish_actionable_status(owner, binding, repository, group)
+    assert owner.publish_ownership(
+        binding,
+        {group.group_id: _ownership(group, {"note.md": _entry("note.md")})},
+    )
+    (root / ".git").rename(root / ".git-replaced")
+    (root / ".git").mkdir()
+    runner = _DelayedStatusRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+
+    result = await service.start_status(
+        binding,
+        (_change(1, "modified", "note.md"),),
+    )
+
+    assert result.state == "stale"
+    assert not result.rows
+    snapshot = owner.snapshot(binding)
+    assert snapshot.trusted_repository is None
+    assert snapshot.git_status is None
+    assert not snapshot.staging_ownership
 
 
 @pytest.mark.asyncio
@@ -1744,6 +2310,72 @@ async def test_ten_status_triggers_coalesce_to_active_plus_latest_rerun(
     result = await asyncio.wait_for(first, timeout=1)
     assert runner.query_count == 2
     assert tuple(row.group.current_path for row in result.rows) == (paths[-1],)
+
+
+@pytest.mark.asyncio
+async def test_trigger_during_final_rerun_marks_result_stale_without_third_child(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    paths = ("one.md", "two.md", "three.md")
+    for path in paths:
+        (root / path).write_text(path, encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    runner = _TwoPhaseStatusRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={"PATH": "/bin"},
+    )
+    first = service.start_status(
+        binding,
+        (_change(1, "modified", paths[0]),),
+    )
+    await asyncio.wait_for(runner.first_index_started.wait(), timeout=1)
+    assert (
+        service.start_status(
+            binding,
+            (_change(2, "modified", paths[1]),),
+        )
+        is first
+    )
+    runner.release_first_index.set()
+    await asyncio.wait_for(runner.second_index_started.wait(), timeout=1)
+
+    assert (
+        service.start_status(
+            binding,
+            (_change(3, "modified", paths[2]),),
+        )
+        is first
+    )
+    runner.release_second_index.set()
+    result = await asyncio.wait_for(first, timeout=1)
+
+    assert runner.query_count == 2
+    assert result.state == "stale"
+    assert result.message is not None
+    assert "newer" in result.message.lower()
+    assert tuple(row.group.current_path for row in result.rows) == (paths[1],)
+    assert all(not row.stage_eligible for row in result.rows)
+    assert all(not row.unstage_eligible for row in result.rows)
+
+    refreshed = service.start_status(
+        binding,
+        (_change(3, "modified", paths[2]),),
+    )
+    assert refreshed is not first
+    refreshed_result = await asyncio.wait_for(refreshed, timeout=1)
+    assert runner.query_count == 3
+    assert refreshed_result.state == "ready"
+    assert tuple(
+        row.group.current_path for row in refreshed_result.rows
+    ) == (paths[2],)
 
 
 @pytest.mark.asyncio
@@ -1898,29 +2530,137 @@ async def test_owner_exposes_retained_git_shutdown_settlement() -> None:
 
 
 @pytest.mark.asyncio
-async def test_status_task_creation_failure_releases_admitted_lease(
+async def test_owner_wrong_loop_shutdown_can_retry_on_owning_loop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    owner, binding, service, _runner = _status_service(tmp_path)
+    root = tmp_path / "notes"
+    root.mkdir()
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    child = _StubbornProcess()
 
-    def fail_task_creation(coroutine: object) -> asyncio.Task[object]:
-        close = getattr(coroutine, "close", None)
-        if close is not None:
-            close()
-        raise RuntimeError("task creation failed")
+    async def fake_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _StubbornProcess:
+        del argv, kwargs
+        return child
 
-    monkeypatch.setattr(service, "_create_task", fail_task_creation)
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+    owner.attach_git_service(service)
+    status = service.start_status(
+        binding,
+        (_change(1, "modified", "note.md"),),
+    )
+    await asyncio.wait_for(child.communicate_started.wait(), timeout=1)
 
-    with pytest.raises(RuntimeError, match="task creation failed"):
-        service.start_status(
-            binding,  # type: ignore[arg-type]
-            (_change(1, "modified", "note.md"),),
+    try:
+        with pytest.raises(GitShutdownAffinityError):
+            await asyncio.wait_for(
+                asyncio.to_thread(owner.shutdown),
+                timeout=1,
+            )
+
+        assert owner.attached_git_service() is service
+        assert owner.record_change(
+            binding,
+            SessionChange("modified", "retry.md"),
         )
+        assert not service._sealed
+        assert not runner._sealed
+        assert child.terminate_calls == 0
+        assert child.kill_calls == 0
+
+        await asyncio.wait_for(owner.shutdown_async(), timeout=1)
+        assert owner.attached_git_service() is None
+        assert child.terminate_calls == 1
+        assert child.kill_calls == 1
+        assert (await status).state == "stale"
+    finally:
+        child._never.set()
+        status.cancel()
+        await asyncio.gather(status, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_creation", [1, 2])
+async def test_status_task_creation_failure_releases_admitted_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_creation: int,
+) -> None:
+    owner, binding, service, _runner = _status_service(tmp_path)
+    loop = asyncio.get_running_loop()
+    original_create_task = loop.create_task
+    failed_coroutines: list[object] = []
+    created_tasks: list[asyncio.Task[object]] = []
+    creation_count = 0
+
+    def fail_task_creation(
+        coroutine: object,
+        *args: object,
+        **kwargs: object,
+    ) -> asyncio.Task[object]:
+        nonlocal creation_count
+        creation_count += 1
+        if creation_count == failed_creation:
+            failed_coroutines.append(coroutine)
+            raise RuntimeError("task creation failed")
+        task = original_create_task(  # type: ignore[arg-type]
+            coroutine,
+            *args,
+            **kwargs,
+        )
+        created_tasks.append(task)  # type: ignore[arg-type]
+        return task  # type: ignore[return-value]
+
+    with monkeypatch.context() as context:
+        context.setattr(loop, "create_task", fail_task_creation)
+        with pytest.raises(RuntimeError, match="task creation failed"):
+            service.start_status(
+                binding,  # type: ignore[arg-type]
+                (_change(1, "modified", "note.md"),),
+            )
+
+    assert len(failed_coroutines) == 1
+    assert getattr(failed_coroutines[0], "cr_frame", None) is None
+    await asyncio.sleep(0)
+    assert all(task.done() for task in created_tasks)
 
     lease = owner.try_acquire_status(binding)  # type: ignore[arg-type]
     assert lease is not None
     lease.release()
+
+
+def test_create_task_closes_coroutine_without_running_loop() -> None:
+    service = FileNotesGitService(FileNotesSessionOwner())
+
+    async def operation() -> SessionGitStatus:
+        raise AssertionError("closed coroutine must not run")
+
+    coroutine = operation()
+
+    with pytest.raises(RuntimeError, match="no running event loop"):
+        service._create_task(coroutine)
+
+    assert coroutine.cr_frame is None
 
 
 @pytest.mark.asyncio

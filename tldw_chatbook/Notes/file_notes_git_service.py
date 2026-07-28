@@ -47,8 +47,8 @@ DiscoveryState = Literal[
     "unavailable",
     "unsupported",
     "unsafe_root",
-    "identity_changed",
 ]
+HeadReadFailureKind = Literal["unavailable", "error"]
 
 _REDIRECTING_GIT_ENVIRONMENT = frozenset(
     {
@@ -104,6 +104,14 @@ class DiscoveryResult:
     message: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _HeadReadFailure:
+    """Typed failure that cannot be confused with a semantic HEAD state."""
+
+    kind: HeadReadFailureKind
+    message: str
+
+
 GitStatusAdmissionReason = Literal[
     "untrusted",
     "mutation_active",
@@ -123,6 +131,12 @@ class GitStatusAdmissionError(RuntimeError):
     ) -> None:
         super().__init__(message)
         self.reason = reason
+
+
+class GitShutdownAffinityError(RuntimeError):
+    """Retryable refusal when active shutdown starts off its owning loop."""
+
+    retryable_shutdown = True
 
 
 class GitProcessRunner(Protocol):
@@ -182,6 +196,7 @@ def build_git_environment(
         )
     }
     environment["GIT_TERMINAL_PROMPT"] = "0"
+    environment["LC_ALL"] = "C"
     if for_status:
         environment["GIT_OPTIONAL_LOCKS"] = "0"
     return environment
@@ -268,7 +283,6 @@ class AsyncGitProcessRunner:
         self._kill_timeout = kill_timeout
         self._stderr_limit = stderr_limit
         self._processes: set[asyncio.subprocess.Process] = set()
-        self._cleanup_tasks: set[asyncio.Task[None]] = set()
         self._run_tasks: set[asyncio.Task[object]] = set()
         self._shutdown_event: asyncio.Event | None = None
         self._shutdown_settlement: Awaitable[bool] | None = None
@@ -300,6 +314,7 @@ class AsyncGitProcessRunner:
         process: asyncio.subprocess.Process | None = None
         communication: asyncio.Task[tuple[bytes, bytes]] | None = None
         shutdown_waiter: asyncio.Task[bool] | None = None
+        retain_process = False
         try:
             process = await asyncio.create_subprocess_exec(
                 *argv,
@@ -314,6 +329,7 @@ class AsyncGitProcessRunner:
                 stderr=asyncio.subprocess.PIPE,
             )
             self._processes.add(process)
+            retain_process = True
             communication = asyncio.create_task(process.communicate(stdin))
             shutdown_waiter = asyncio.create_task(
                 self._shutdown_event.wait()
@@ -325,10 +341,14 @@ class AsyncGitProcessRunner:
             )
             if communication in done:
                 stdout, stderr = communication.result()
+                retain_process = process.returncode is None
+                if retain_process:
+                    self._termination_uncertain = True
                 return GitCommandResult(
                     process.returncode,
                     stdout,
                     self._bounded_stderr(stderr),
+                    termination_uncertain=retain_process,
                 )
 
             shutdown_requested = shutdown_waiter in done
@@ -336,6 +356,8 @@ class AsyncGitProcessRunner:
                 process.terminate()
             except ProcessLookupError:
                 pass
+            except OSError:
+                self._termination_uncertain = True
             terminated = await self._bounded_process_wait(
                 process,
                 self._terminate_timeout,
@@ -345,6 +367,8 @@ class AsyncGitProcessRunner:
                     process.kill()
                 except ProcessLookupError:
                     pass
+                except OSError:
+                    self._termination_uncertain = True
                 terminated = await self._bounded_process_wait(
                     process,
                     self._kill_timeout,
@@ -366,6 +390,7 @@ class AsyncGitProcessRunner:
                     terminated = False
             if not terminated:
                 self._termination_uncertain = True
+            retain_process = not terminated
             return GitCommandResult(
                 process.returncode,
                 stdout,
@@ -374,7 +399,7 @@ class AsyncGitProcessRunner:
                 termination_uncertain=not terminated,
             )
         finally:
-            if process is not None:
+            if process is not None and not retain_process:
                 self._processes.discard(process)
             if shutdown_waiter is not None and not shutdown_waiter.done():
                 shutdown_waiter.cancel()
@@ -394,22 +419,29 @@ class AsyncGitProcessRunner:
         """Seal admissions and return retained finite cleanup settlement."""
         if self._shutdown_settlement is not None:
             return self._shutdown_settlement
+        running_loop: asyncio.AbstractEventLoop | None = None
+        if self._run_tasks:
+            assert self._loop is not None
+            assert self._shutdown_event is not None
+            try:
+                running_loop = asyncio.get_running_loop()
+            except RuntimeError as error:
+                raise GitShutdownAffinityError(
+                    "Active Git shutdown must be initiated from its event loop"
+                ) from error
+            if running_loop is not self._loop:
+                raise GitShutdownAffinityError(
+                    "Active Git shutdown must be initiated from its event loop"
+                )
         self._sealed = True
         if not self._run_tasks:
-            self._shutdown_settlement = _ImmediateSettlement(True)
-            return self._shutdown_settlement
-        assert self._loop is not None
-        assert self._shutdown_event is not None
-        try:
-            running_loop = asyncio.get_running_loop()
-        except RuntimeError as error:
-            raise RuntimeError(
-                "Active Git shutdown must be initiated from its event loop"
-            ) from error
-        if running_loop is not self._loop:
-            raise RuntimeError(
-                "Active Git shutdown must be initiated from its event loop"
+            self._shutdown_settlement = _ImmediateSettlement(
+                not self._termination_uncertain
+                and not self._processes
             )
+            return self._shutdown_settlement
+        assert running_loop is not None
+        assert self._shutdown_event is not None
         self._shutdown_event.set()
         settlement = _RetainedSettlement(
             running_loop.create_task(self._settle_shutdown())
@@ -435,26 +467,22 @@ class AsyncGitProcessRunner:
             for task in self._run_tasks
             if task is not current
         )
+        run_results: tuple[object, ...] = ()
         if run_tasks:
-            await asyncio.gather(
+            run_results = tuple(
+                await asyncio.gather(
                 *(asyncio.shield(task) for task in run_tasks),
                 return_exceptions=True,
             )
-        cleanup_tasks = tuple(
-            task
-            for task in self._cleanup_tasks
-            if task is not current
-        )
-        if cleanup_tasks:
-            await asyncio.gather(
-                *(asyncio.shield(task) for task in cleanup_tasks),
-                return_exceptions=True,
             )
-        self._cleanup_tasks.clear()
         return (
             not self._termination_uncertain
             and not self._processes
             and not self._run_tasks
+            and not any(
+                isinstance(result, BaseException)
+                for result in run_results
+            )
         )
 
     def _bounded_stderr(self, stderr: bytes) -> bytes:
@@ -499,6 +527,7 @@ class FileNotesGitService:
             int,
         ] | None = None
         self._rerun_available = False
+        self._status_dirty = False
         self._status_request_generation = 0
         self._shutdown_settlement: Awaitable[None] | None = None
 
@@ -597,16 +626,20 @@ class FileNotesGitService:
             git_dir_identity=_filesystem_identity(git_dir),
             git_common_dir_identity=_filesystem_identity(git_common_dir),
         )
-        head = await self._read_head(root)
-        if head is None:
+        head_result = await self._read_head(root)
+        if isinstance(head_result, _HeadReadFailure):
             return DiscoveryResult(
-                "unsupported",
-                message="Git HEAD could not be read safely",
+                (
+                    "unavailable"
+                    if head_result.kind == "unavailable"
+                    else "unsupported"
+                ),
+                message=head_result.message,
             )
         return DiscoveryResult(
             "ready",
             repository=repository,
-            head=head,
+            head=head_result,
         )
 
     async def revalidate_repository(
@@ -686,6 +719,9 @@ class FileNotesGitService:
                     repository,
                     self._status_request_generation,
                 )
+            else:
+                self._status_request_generation += 1
+                self._status_dirty = True
             waiter = self._status_waiter
             if waiter is None or waiter.done():
                 waiter = self._create_task(
@@ -706,6 +742,7 @@ class FileNotesGitService:
         request_generation = self._status_request_generation
         self._pending_status = None
         self._rerun_available = True
+        self._status_dirty = False
         cycle: asyncio.Task[SessionGitStatus] | None = None
         try:
             cycle = self._create_task(
@@ -724,6 +761,7 @@ class FileNotesGitService:
             lease.release()
             self._pending_status = None
             self._rerun_available = False
+            self._status_dirty = False
             raise
         self._status_cycle = cycle
         self._status_waiter = waiter
@@ -734,16 +772,36 @@ class FileNotesGitService:
         """Seal admission and return retained finite service settlement."""
         if self._shutdown_settlement is not None:
             return self._shutdown_settlement
+        cycle = self._status_cycle
+        waiter = self._status_waiter
+        active_task = next(
+            (
+                task
+                for task in (cycle, waiter)
+                if task is not None and not task.done()
+            ),
+            None,
+        )
+        if active_task is not None:
+            try:
+                running_loop = asyncio.get_running_loop()
+            except RuntimeError as error:
+                raise GitShutdownAffinityError(
+                    "Active Git shutdown must be initiated from its event loop"
+                ) from error
+            if running_loop is not active_task.get_loop():
+                raise GitShutdownAffinityError(
+                    "Active Git shutdown must be initiated from its event loop"
+                )
+        runner_settlement = self._runner.shutdown()
         self._sealed = True
         binding = self._owner.current_binding()
         self._pending_status = None
         self._rerun_available = False
+        self._status_dirty = False
         if binding is not None:
             self._owner.clear_ownership(binding)
             self._owner.clear_status(binding)
-        runner_settlement = self._runner.shutdown()
-        cycle = self._status_cycle
-        waiter = self._status_waiter
         if (
             (cycle is None or cycle.done())
             and (waiter is None or waiter.done())
@@ -805,6 +863,7 @@ class FileNotesGitService:
         self._status_waiter = None
         self._pending_status = None
         self._rerun_available = False
+        self._status_dirty = False
         if binding is not None and (
             not runner_confirmed
             or any(isinstance(result, BaseException) for result in results)
@@ -826,6 +885,7 @@ class FileNotesGitService:
             self._status_cycle = None
             self._pending_status = None
             self._rerun_available = False
+            self._status_dirty = False
 
     async def _run_status_cycle(
         self,
@@ -861,16 +921,17 @@ class FileNotesGitService:
             next_lease = admission.lease
             if next_lease is None:
                 self._rerun_available = False
+                message = (
+                    "Git status rerun was suppressed because a mutation "
+                    "was admitted"
+                )
                 stale = self._local_status(
                     pending_binding,
                     "stale",
-                    rows=result.rows,
+                    rows=self._disabled_rows(result.rows, message),
                     repository=pending_repository,
                     head=result.head,
-                    message=(
-                        "Git status rerun was suppressed because a mutation "
-                        "was admitted"
-                    ),
+                    message=message,
                 )
                 return self._publish_cycle_result(
                     pending_binding,
@@ -885,6 +946,21 @@ class FileNotesGitService:
                 pending_changes,
                 pending_repository,
             )
+            if self._status_dirty:
+                self._status_dirty = False
+                dirty_generation = self._status_request_generation
+                message = (
+                    "Newer File Notes changes are known; refresh Git status"
+                )
+                result = self._local_status(
+                    pending_binding,
+                    "stale",
+                    rows=self._disabled_rows(result.rows, message),
+                    repository=result.repository,
+                    head=result.head,
+                    message=message,
+                )
+                pending_generation = dirty_generation
             return self._publish_cycle_result(
                 pending_binding,
                 result,
@@ -897,7 +973,13 @@ class FileNotesGitService:
         self,
         coroutine: object,
     ) -> asyncio.Task[SessionGitStatus]:
-        return asyncio.get_running_loop().create_task(coroutine)  # type: ignore[arg-type]
+        try:
+            return asyncio.get_running_loop().create_task(coroutine)  # type: ignore[arg-type]
+        except BaseException:
+            close = getattr(coroutine, "close", None)
+            if close is not None:
+                close()
+            raise
 
     def _publish_cycle_result(
         self,
@@ -939,14 +1021,14 @@ class FileNotesGitService:
             )
         sparse = await self._sparse_checkout_state(repository)
         if sparse is None:
-            return self._publish_status_result(
+            return self._failed_status(
                 binding,
                 "error",
                 repository=repository,
                 message="Unable to verify sparse-checkout state",
             )
         if sparse:
-            return self._publish_status_result(
+            return self._failed_status(
                 binding,
                 "unavailable",
                 repository=repository,
@@ -970,20 +1052,26 @@ class FileNotesGitService:
             repository_groups.append(mapped_group)
             original_groups[group.group_id] = group
 
-        head = await self._read_head(root)
-        if head is None:
-            return self._publish_status_result(
+        head_result = await self._read_head(root)
+        if isinstance(head_result, _HeadReadFailure):
+            self._owner.clear_ownership(binding)
+            return self._failed_status(
                 binding,
-                "error",
+                (
+                    "unavailable"
+                    if head_result.kind == "unavailable"
+                    else "error"
+                ),
                 repository=repository,
-                message="Git HEAD could not be read safely",
+                message=head_result.message,
             )
+        head = head_result
         index_result = await self._run_status_command(
             repository,
             build_index_argv(self._git_executable_or_raise()),
         )
         if not _command_succeeded(index_result):
-            return self._publish_status_result(
+            return self._failed_status(
                 binding,
                 "stale",
                 repository=repository,
@@ -996,7 +1084,7 @@ class FileNotesGitService:
         try:
             index_entries = parse_index_entries_z(index_result.stdout)
         except GitIndexParseError as error:
-            return self._publish_status_result(
+            return self._failed_status(
                 binding,
                 "error",
                 repository=repository,
@@ -1037,7 +1125,7 @@ class FileNotesGitService:
                 ),
             )
             if not _command_succeeded(status_result):
-                return self._publish_status_result(
+                return self._failed_status(
                     binding,
                     "stale",
                     repository=repository,
@@ -1053,7 +1141,7 @@ class FileNotesGitService:
                     allowed_paths=allowed_paths,
                 )
             except PorcelainV2ParseError as error:
-                return self._publish_status_result(
+                return self._failed_status(
                     binding,
                     "error",
                     repository=repository,
@@ -1079,7 +1167,7 @@ class FileNotesGitService:
             or classified_by_id[group.group_id]
             for group in groups
         )
-        return self._publish_status_result(
+        return self._local_status(
             binding,
             "ready",
             rows=rows,
@@ -1191,16 +1279,26 @@ class FileNotesGitService:
             None,
         )
 
-    def _publish_status_result(
+    def _failed_status(
         self,
         binding: SessionBinding,
-        state: Literal["ready", "stale", "unavailable", "error"],
+        state: Literal["stale", "unavailable", "error"],
         *,
-        rows: tuple[SessionGitRow, ...] = (),
-        repository: RepositoryIdentity | None = None,
+        repository: RepositoryIdentity,
         head: HeadIdentity | None = None,
         message: str | None = None,
     ) -> SessionGitStatus:
+        rows: tuple[SessionGitRow, ...] = ()
+        snapshot = self._owner.snapshot(binding)
+        previous = snapshot.git_status
+        if (
+            binding == self._owner.current_binding()
+            and snapshot.trusted_repository == repository
+            and previous is not None
+            and previous.binding_generation == binding.generation
+            and previous.repository == repository
+        ):
+            rows = self._disabled_rows(previous.rows, message)
         return self._local_status(
             binding,
             state,
@@ -1208,6 +1306,22 @@ class FileNotesGitService:
             repository=repository,
             head=head,
             message=message,
+        )
+
+    @staticmethod
+    def _disabled_rows(
+        rows: tuple[SessionGitRow, ...],
+        message: str | None,
+    ) -> tuple[SessionGitRow, ...]:
+        reason = message or "Git status refresh is required"
+        return tuple(
+            replace(
+                row,
+                stage_action=None,
+                unstage_eligible=False,
+                disabled_reason=row.disabled_reason or reason,
+            )
+            for row in rows
         )
 
     def _local_status(
@@ -1290,34 +1404,178 @@ class FileNotesGitService:
             resolved_paths.append(resolved)
         return resolved_paths[0], resolved_paths[1], resolved_paths[2]
 
-    async def _read_head(self, root: Path) -> HeadIdentity | None:
-        symbolic = await self._run_discovery(
+    async def _read_head(
+        self,
+        root: Path,
+    ) -> HeadIdentity | _HeadReadFailure:
+        symbolic = await self._run_head_probe(
             root,
-            ("symbolic-ref", "-q", "HEAD"),
+            ("symbolic-ref", "--quiet", "HEAD"),
         )
-        revision = await self._run_discovery(
+        if isinstance(symbolic, _HeadReadFailure):
+            return symbolic
+        if symbolic.timed_out or symbolic.termination_uncertain:
+            return self._head_command_failure(
+                symbolic,
+                "Git symbolic HEAD read failed",
+            )
+
+        branch: str | None
+        if symbolic.returncode == 0:
+            branch = _single_git_value(symbolic.stdout)
+            if branch is None or not branch.startswith("refs/"):
+                return _HeadReadFailure(
+                    "error",
+                    "Git symbolic HEAD output is malformed",
+                )
+        elif (
+            symbolic.returncode == 1
+            and symbolic.stdout == b""
+            and symbolic.stderr == b""
+        ):
+            branch = None
+        else:
+            return self._head_command_failure(
+                symbolic,
+                "Git symbolic HEAD read failed",
+            )
+
+        revision = await self._run_head_probe(
             root,
-            ("rev-parse", "--verify", "HEAD^{commit}"),
+            ("rev-parse", "--verify", "--quiet", "HEAD^{commit}"),
         )
-        if symbolic is None or revision is None:
-            return None
-        branch = (
-            _single_git_value(symbolic.stdout)
-            if symbolic.returncode == 0
-            else None
-        )
-        object_id = (
-            _ascii_object_id(revision.stdout)
-            if revision.returncode == 0
-            else None
-        )
-        if branch is not None:
+        if isinstance(revision, _HeadReadFailure):
+            return revision
+        if revision.timed_out or revision.termination_uncertain:
+            return self._head_command_failure(
+                revision,
+                "Git HEAD commit read failed",
+            )
+        if revision.returncode == 0:
+            object_id = _ascii_object_id(revision.stdout)
             if object_id is None:
-                return HeadIdentity.unborn(branch)
+                return _HeadReadFailure(
+                    "error",
+                    "Git HEAD commit output is malformed",
+                )
+            if branch is None:
+                return HeadIdentity.detached(object_id)
             return HeadIdentity.attached(branch, object_id)
-        if object_id is not None:
-            return HeadIdentity.detached(object_id)
-        return None
+
+        if branch is None:
+            return self._head_command_failure(
+                revision,
+                "Detached Git HEAD does not resolve to a commit",
+            )
+        if not (
+            revision.returncode == 1
+            and revision.stdout == b""
+            and revision.stderr == b""
+        ):
+            return self._head_command_failure(
+                revision,
+                "Git HEAD commit read failed",
+            )
+
+        reference = await self._run_head_probe(
+            root,
+            ("show-ref", "--exists", branch),
+        )
+        if isinstance(reference, _HeadReadFailure):
+            return reference
+        if reference.timed_out or reference.termination_uncertain:
+            return self._head_command_failure(
+                reference,
+                "Git HEAD reference lookup failed",
+            )
+        if (
+            reference.returncode == 2
+            and reference.stdout == b""
+            and reference.stderr == b""
+        ):
+            return HeadIdentity.unborn(branch)
+        if (
+            reference.returncode == 0
+            and reference.stdout == b""
+            and reference.stderr == b""
+        ):
+            return _HeadReadFailure(
+                "error",
+                "Git HEAD reference exists but does not resolve to a commit",
+            )
+        if reference.returncode != 129:
+            return self._head_command_failure(
+                reference,
+                "Git HEAD reference lookup failed",
+            )
+
+        fallback = await self._run_head_probe(
+            root,
+            ("show-ref", "--verify", "--quiet", branch),
+        )
+        if isinstance(fallback, _HeadReadFailure):
+            return fallback
+        if fallback.timed_out or fallback.termination_uncertain:
+            return self._head_command_failure(
+                fallback,
+                "Git HEAD reference lookup failed",
+            )
+        if (
+            fallback.returncode == 1
+            and fallback.stdout == b""
+            and fallback.stderr == b""
+        ):
+            return HeadIdentity.unborn(branch)
+        if (
+            fallback.returncode == 0
+            and fallback.stdout == b""
+            and fallback.stderr == b""
+        ):
+            return _HeadReadFailure(
+                "error",
+                "Git HEAD reference exists but does not resolve to a commit",
+            )
+        return self._head_command_failure(
+            fallback,
+            "Git HEAD reference lookup failed",
+        )
+
+    async def _run_head_probe(
+        self,
+        root: Path,
+        arguments: Sequence[str],
+    ) -> GitCommandResult | _HeadReadFailure:
+        assert self._git_executable is not None
+        try:
+            return await self._runner.run(
+                (self._git_executable, *arguments),
+                cwd=str(root),
+                environment=build_git_environment(self._environment),
+                timeout=self._discovery_timeout,
+            )
+        except OSError as error:
+            diagnostic = sanitize_git_stderr(
+                str(error).encode("utf-8", "replace")
+            )
+            message = "Git HEAD process could not start"
+            if diagnostic:
+                message = f"{message}: {diagnostic}"
+            return _HeadReadFailure("unavailable", message)
+
+    @staticmethod
+    def _head_command_failure(
+        result: GitCommandResult,
+        fallback: str,
+    ) -> _HeadReadFailure:
+        kind: HeadReadFailureKind = (
+            "unavailable"
+            if result.timed_out or result.termination_uncertain
+            else "error"
+        )
+        return _HeadReadFailure(
+            kind,
+            _command_failure_message(result, fallback),
+        )
 
     def _repository_identity_matches(
         self,

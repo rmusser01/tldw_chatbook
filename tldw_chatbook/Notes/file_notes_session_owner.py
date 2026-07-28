@@ -797,14 +797,25 @@ class FileNotesSessionOwner:
                     self._git_shutdown_settlement = settlement
         except BaseException as error:
             with self._shutdown_condition:
-                self._shutdown_error = error
-                self._shutdown_state = "failed"
+                if getattr(error, "retryable_shutdown", False):
+                    self._shutdown = False
+                    self._shutdown_error = None
+                    self._git_shutdown_settlement = None
+                    self._shutdown_state = "open"
+                else:
+                    self._shutdown_error = error
+                    self._shutdown_state = "failed"
                 self._shutdown_condition.notify_all()
             raise
         with self._shutdown_condition:
             self._git_service = None
             self._shutdown_state = "closed"
             self._shutdown_condition.notify_all()
+
+    async def shutdown_async(self) -> None:
+        """Shut down on the current loop, then await retained settlement."""
+        self.shutdown()
+        await self.settle_git_shutdown()
 
     async def settle_git_shutdown(self) -> None:
         """Await the retained attached-service settlement, if any."""
