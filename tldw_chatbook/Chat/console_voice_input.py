@@ -128,9 +128,14 @@ def resolve() -> EffectiveConfig | None:
     if not installed:
         return None
 
-    configured = get_cli_setting("transcription", "provider", None) or get_cli_setting(
-        "STTSettings", "default_stt_provider", ""
-    )
+    # Key names matter and are easy to get wrong: the [transcription] section
+    # uses `default_provider`/`default_model`/`default_language` (config.py:3333),
+    # and the raw TOML section `STTSettings` is stored in the loaded config under
+    # `STT_settings` (config.py:1548). Reading `provider`/`model`/`language` or
+    # `STTSettings` silently returns the default and defeats this whole function.
+    configured = get_cli_setting(
+        "transcription", "default_provider", None
+    ) or get_cli_setting("STT_settings", "default_stt_provider", "")
     configured = str(configured or "")
 
     if configured in installed:
@@ -145,8 +150,8 @@ def resolve() -> EffectiveConfig | None:
                 provider,
             )
 
-    model = get_cli_setting("transcription", "model", None)
-    language = get_cli_setting("transcription", "language", DEFAULT_LANGUAGE)
+    model = get_cli_setting("transcription", "default_model", None)
+    language = get_cli_setting("transcription", "default_language", DEFAULT_LANGUAGE)
 
     return EffectiveConfig(
         provider=provider,
