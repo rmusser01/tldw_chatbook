@@ -309,6 +309,8 @@ def build_tool_review_hook(
     builtin_provider: "BuiltinToolProvider",
     mcp_provider: MCPToolProvider | None,
     request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+    *,
+    workspace_id: str | None = None,
 ) -> Callable[[list["ToolCall"]], dict[str, str]]:
     """Build THIS run's run-level `review_tool_calls` hook (P5-T6/task-545).
 
@@ -414,6 +416,21 @@ def build_tool_review_hook(
             built-in gating; the method itself is owner-agnostic -- it
             only reads `MCPPendingCall` fields, never assumes MCP
             ownership).
+        workspace_id: THIS run's OWN workspace id (round 1 review CRITICAL
+            1) -- e.g. `self.store.session_workspace_id(session_id)` --
+            threaded into every builtin file-tool row's `path_precheck_
+            failed` computation via `Tools.file_operation_tools.
+            path_precheck_failed`'s own `workspace_id=` parameter. Must be
+            the SAME workspace id `ConsoleAgentBridge.run_reply` resolves
+            for this run's real dispatch (`BuiltinToolProvider(workspace_
+            id=...)`) -- otherwise the pre-flight can resolve a DIFFERENT
+            workspace than the one the call will actually run against
+            (e.g. whatever happens to be active in the UI for a parked
+            background session), making the warning wrong in either
+            direction. `None` (the default) reproduces the pre-existing
+            active-workspace fallback for a caller with no session
+            context at all; every caller that has a real session id MUST
+            resolve and pass its workspace id.
 
     Returns:
         A `review_tool_calls`-shaped callable suitable for `LoopDeps`/
@@ -431,6 +448,16 @@ def build_tool_review_hook(
             else []
         )
         mcp_claimed_names = {row.llm_name for row in mcp_pending}
+
+        # Minor (round 1 review): memoize `allowed_file_roots` across every
+        # builtin file-tool row THIS batch checks -- `workspace_id` is fixed
+        # for the whole call, so a turn with several read_file/write_file
+        # rows would otherwise re-hit the workspace registry (a fresh
+        # sqlite3 connection per `WorkspaceDB` operation) once per row.
+        # Fresh dict per `review_tool_calls` call -- never reused across
+        # turns, so a folder binding added/removed between turns is still
+        # picked up on the very next call.
+        path_roots_cache: dict[bool, tuple] = {}
 
         builtin_pending: list["MCPPendingCall"] = []
         for call in calls:
@@ -467,8 +494,15 @@ def build_tool_review_hook(
                     # three file tools -- never gates or auto-denies, just
                     # tells the card this specific path is doomed even if
                     # approved (see path_precheck_failed's own docstring).
+                    # `workspace_id=workspace_id` (round 1 review CRITICAL
+                    # 1): the pre-flight MUST resolve THIS run's own
+                    # workspace, never whatever happens to be active in the
+                    # UI -- see this function's own docstring.
                     path_precheck_failed=path_precheck_failed(
-                        call.name, call.args
+                        call.name,
+                        call.args,
+                        workspace_id=workspace_id,
+                        roots_cache=path_roots_cache,
                     ),
                 )
             )
@@ -6263,6 +6297,19 @@ class ConsoleChatController:
         # the bridge's registry actually dispatches through (its `_tools`
         # dict is stateless data rebuilt identically by any instance).
         builtin_review_provider = BuiltinToolProvider(gate=builtin_gate)
+        # Round 1 review CRITICAL 1: resolve THIS run's OWN workspace id --
+        # the SAME lookup `ConsoleAgentBridge.run_reply` makes
+        # (`self._store.session_workspace_id(session_id)`) for the real
+        # `BuiltinToolProvider(workspace_id=...)` dispatch below -- and
+        # thread it into the review hook so its `path_precheck_failed`
+        # pre-flight resolves the IDENTICAL workspace dispatch will, never
+        # whatever happens to be active in the UI for a parked/background
+        # session. `KeyError` (an already-closed session) degrades to
+        # `None`, matching `allowed_file_roots`'s own fail-safe posture.
+        try:
+            review_workspace_id = self.store.session_workspace_id(session_id)
+        except KeyError:
+            review_workspace_id = None
         # Task 9: bind THIS run's owning session id into the approval
         # bridge so `request_mcp_approvals` can (a) scope its cancellation
         # check to this run's own cancel event rather than falling back to
@@ -6273,6 +6320,7 @@ class ConsoleChatController:
             builtin_review_provider,
             mcp_provider,
             functools.partial(self.request_mcp_approvals, session_id=session_id),
+            workspace_id=review_workspace_id,
         )
 
         # Swap site: the agent loop runs synchronously on a worker thread via
@@ -6821,7 +6869,8 @@ class ConsoleChatController:
         limit (agent_runtime.py), not a raw exception -- so the concrete
         reason recorded on the last ``STEP_ERROR`` step (e.g. "step budget
         exhausted", "model-turn budget exhausted", "wall-clock budget
-        exhausted", "loop detected: ...") is surfaced when available.
+        exhausted", or the loop-guard's own user-facing "Agent stopped:
+        ..." copy -- TASK-1231/F3 AC4) is surfaced when available.
         """
         from tldw_chatbook.Agents.agent_models import RUN_STUCK, STEP_ERROR
 
@@ -6833,6 +6882,13 @@ class ConsoleChatController:
                 reason = step.summary
                 break
         if outcome.status == RUN_STUCK:
+            if reason.startswith("Agent stopped:"):
+                # Round 1 review (Minor): the loop-guard's own copy
+                # (agent_runtime.py) already reads as a complete,
+                # user-facing sentence -- prefixing "Agent run stuck: "
+                # here would double the lead-in ("Agent run stuck: Agent
+                # stopped: ...").
+                return reason
             return f"Agent run stuck: {reason or 'budget or loop limit reached'}."
         return f"Agent run failed: {reason or outcome.status}."
 

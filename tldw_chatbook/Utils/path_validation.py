@@ -12,25 +12,37 @@ from typing import Optional, Sequence, Union
 from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
-#: Actionable follow-up appended to the "outside every allowed root" denial
-#: (TASK-1231, fleet-UX review F3): on a fresh install every session starts
-#: on the Default workspace, which cannot hold folder bindings -- the FIRST
-#: file-tool call a model makes there is always rejected, and before this
-#: fix nothing on that path told a user what to do about it. Placed
-#: immediately after the core denial sentence and BEFORE the (often long)
-#: ``consulted`` root list built below: the Console transcript's live
-#: tool-step marker previews a tool's error at only 160 chars
-#: (``console_agent_bridge._STEP_MARKER_RESULT_LIMIT`` /
-#: ``_truncate_step_text``), so a long consulted-roots list would otherwise
-#: push this guidance past the truncation point before a human -- or the
-#: model deciding whether to retry -- ever sees it (fleet UAT observed
-#: exactly that: the pre-fix message truncated to "... (+64 chars)" with no
-#: recovery text at all). The consulted-roots detail is diagnostic, not
-#: actionable, so it is the part left to absorb any truncation, not this.
+#: Ultra-short recovery pointer, LED with (round 1 review CRITICAL 2): the
+#: full `ROOT_DENIAL_RECOVERY_HINT` sentence below is itself too long to
+#: survive the Console transcript's live tool-step-marker truncation
+#: (``console_agent_bridge._STEP_MARKER_RESULT_LIMIT`` = 160 chars) once
+#: the tool's own "Failed to {read/write/list} ... " prefix and the path
+#: itself are accounted for -- measured: for a realistic 45-60 char path,
+#: the visible (pre-truncation) budget is only ~155-158 chars, and the
+#: prefix + "Path '<path>' is outside every allowed root." core sentence
+#: alone already consumes ~95-135 of that, leaving too little room for
+#: "Settings > Workspaces" to ever appear. This pointer is deliberately the
+#: FIRST thing after the bare "outside every allowed root" acknowledgement
+#: -- before the path is even repeated -- so it is what survives
+#: truncation, not what gets cut. See `test_recovery_pointer_survives_real_
+#: transcript_truncation` (Tests/Utils/test_path_validation_multi.py) for
+#: the actual truncation math, not just an estimate.
+ROOT_DENIAL_RECOVERY_POINTER = (
+    "Fix: Settings > Workspaces -- create a workspace + bind a folder."
+)
+
+#: Fuller explanation appended AFTER the pointer above and the (now
+#: second-priority) path/consulted-roots detail (TASK-1231, fleet-UX review
+#: F3): on a fresh install every session starts on the Default workspace,
+#: which cannot hold folder bindings -- the FIRST file-tool call a model
+#: makes there is always rejected, and before this fix nothing on that path
+#: told a user what to do about it. This is the part truncation is allowed
+#: to eat into (along with the consulted-roots list) -- it is not the
+#: user's only route to the fix, `ROOT_DENIAL_RECOVERY_POINTER` above is.
 ROOT_DENIAL_RECOVERY_HINT = (
-    "To allow file access, bind a folder to this session's workspace in "
-    "Settings > Workspaces (the Default workspace cannot hold folder "
-    "bindings -- create a workspace first)."
+    "The Default workspace cannot hold folder bindings -- create a new "
+    "workspace, bind a folder to it in Settings > Workspaces, then use a "
+    "session in that workspace to access files outside the sandbox."
 )
 
 
@@ -431,7 +443,12 @@ def validate_path_multi(
         except ValueError:
             continue
     consulted = ", ".join(str(root.resolve()) for root in root_list)
+    # Ordering is load-bearing (round 1 review CRITICAL 2): the ultra-short
+    # POINTER comes first, before the path is even repeated, because it is
+    # the one piece of this message that MUST survive the transcript's
+    # 160-char truncation -- the path and consulted-roots list may not.
     raise ValueError(
-        f"Path '{user_path}' is outside every allowed root. "
-        f"{ROOT_DENIAL_RECOVERY_HINT} (Checked: {consulted})"
+        f"Outside every allowed root. {ROOT_DENIAL_RECOVERY_POINTER} "
+        f"Path: '{user_path}'. {ROOT_DENIAL_RECOVERY_HINT} "
+        f"(Checked: {consulted})"
     )
