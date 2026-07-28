@@ -6,6 +6,8 @@ import inspect
 from enum import Enum
 from typing import Any, Mapping
 
+from loguru import logger
+
 from ..runtime_policy.types import PolicyDeniedError
 from .watchlist_opml_service import WatchlistOpmlService
 from .watchlist_preview_service import WatchlistPreviewService
@@ -375,9 +377,32 @@ class WatchlistScopeService:
                     raise ValueError(
                         "Local watchlist run launch did not return a run identifier."
                     )
-                return await self._maybe_await(
-                    execute_run(self._run_id_from_item_id(run_id))
-                )
+                resolved_run_id = self._run_id_from_item_id(run_id)
+                try:
+                    return await self._maybe_await(execute_run(resolved_run_id))
+                except Exception as exc:
+                    # TASK-1090. `execute_run` records its own fetch failures,
+                    # but anything that escapes it -- a subscription deleted
+                    # between launch and execution, a service fault, the
+                    # namespaced-id `ValueError` of TASK-1100 -- used to leave
+                    # the row inserted a moment ago sitting at `queued`
+                    # forever with nothing recorded anywhere. The run is the
+                    # user's only durable evidence that a check was attempted
+                    # and failed, so it is written before the error is
+                    # re-raised for the screen to report.
+                    record_failure = getattr(service, "record_run_failure", None)
+                    if callable(record_failure):
+                        try:
+                            await self._maybe_await(
+                                record_failure(resolved_run_id, error=exc)
+                            )
+                        except Exception:
+                            logger.opt(exception=True).warning(
+                                "Watchlists: could not record the failure of run "
+                                f"{resolved_run_id}; the original error is "
+                                "re-raised below."
+                            )
+                    raise
         return launched
 
     async def list_runs(

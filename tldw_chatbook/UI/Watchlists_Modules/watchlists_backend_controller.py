@@ -296,8 +296,18 @@ class WatchlistsBackendController:
 
         total_sources = len(sources)
         active_sources = sum(1 for s in sources if s.get("active"))
+        # TASK-1090: `status` alone is a key no watchlists normalizer emits --
+        # they publish `status_summary`, whose error form carries a count
+        # (`error (3)`). This counter therefore read 0 however many sources
+        # were failing, so the "Sources in error" card on the Overview was a
+        # permanent zero. Same resolution and same fallback as
+        # `SourcesPane.source_status_text`.
         sources_in_error = sum(
-            1 for s in sources if str(s.get("status") or "").lower() == "error"
+            1
+            for s in sources
+            if str(s.get("status_summary") or s.get("status") or "")
+            .lower()
+            .startswith("error")
         )
         total_items = len(items)
         new_items = sum(1 for item in items if str(item.get("status") or "").lower() == "new")

@@ -9,6 +9,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
+from loguru import logger
+
 from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Utils.egress import (
     MAX_FETCH_BYTES_PAGE,
@@ -286,20 +288,71 @@ class LocalWatchlistsService:
                 log_text=result.get("log_text"),
             )
         except Exception as exc:
-            error_msg = str(exc)
-            db.record_check_error(source_id, error_msg)
-            return await self.record_run_result(
+            return await self.record_run_failure(
                 run_id,
-                status="failed",
-                stats={
-                    "items_found": 0,
-                    "items_ingested": 0,
-                    "error_msg": error_msg,
-                    "response_time_ms": int((time.time() - start_time) * 1000),
-                },
-                error_msg=error_msg,
-                log_text=f"Local watchlist execution failed: {error_msg}",
+                source_id=source_id,
+                error=exc,
+                elapsed_ms=int((time.time() - start_time) * 1000),
             )
+
+    async def record_run_failure(
+        self,
+        run_id: Any,
+        *,
+        source_id: Any = None,
+        error: BaseException | str,
+        elapsed_ms: int = 0,
+    ) -> dict[str, Any]:
+        """Mark a run failed and its source errored, durably.
+
+        TASK-1090. Extracted from `execute_run`'s own `except` branch so the
+        caller that *launched* the run can use it too. `execute_run` only
+        guarded the fetch itself: anything that went wrong around it -- the
+        namespaced-id `ValueError` of TASK-1100, a subscription deleted
+        between launch and execution -- left the row it had just inserted
+        sitting at `queued` forever, with no error on it and nothing written
+        to `subscriptions.last_error` either. The user had no way to find out
+        that a check had failed, or even that one had been attempted.
+
+        Args:
+            run_id: The run to mark failed.
+            source_id: Its source, so `last_error` is written too. Resolved
+                from the run when omitted.
+            error: The exception (or message) that stopped it.
+            elapsed_ms: How long it ran before failing.
+
+        Returns:
+            The recorded run.
+        """
+        error_msg = str(error)
+        db = self._db()
+        if source_id is None:
+            try:
+                current = await self.get_run(run_id)
+                source_id = current.get("source_id") or current.get("job_id")
+            except Exception:
+                # A run we cannot even read cannot name its source; the run
+                # record below is still worth writing. Warned, not debugged --
+                # this whole method exists because a swallowed failure here
+                # left no trace at all.
+                logger.opt(exception=True).warning(
+                    f"Watchlists: could not resolve the source of failed run "
+                    f"{run_id}; subscriptions.last_error will not be updated."
+                )
+        if source_id is not None:
+            db.record_check_error(int(source_id), error_msg)
+        return await self.record_run_result(
+            run_id,
+            status="failed",
+            stats={
+                "items_found": 0,
+                "items_ingested": 0,
+                "error_msg": error_msg,
+                "response_time_ms": elapsed_ms,
+            },
+            error_msg=error_msg,
+            log_text=f"Local watchlist execution failed: {error_msg}",
+        )
 
     async def list_runs(
         self,
