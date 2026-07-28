@@ -56,12 +56,6 @@ class LibraryRow:
     name: str
     is_unsaved: bool = False
     meta: str | None = None
-    is_active_profile: bool = False
-    """task-442 T3: this user profile is the active "my name" pointer.
-
-    Rendered as a marker prefix on the row label; never mutates ``name``
-    itself since callers (selection, save, delete) key off the real name.
-    """
 
 
 class PersonasLibraryPane(Vertical):
@@ -317,15 +311,10 @@ class PersonasLibraryPane(Vertical):
             classes = "personas-library-row console-action-subdued"
             if row.is_unsaved:
                 classes += " is-unsaved"
-            if row.is_active_profile:
-                classes += " is-active-profile"
-            # The marker prefixes the DISPLAYED label only -- row.name stays the
-            # real profile name selection/save/delete key off of (task-442 T3).
-            display_name = f"● {row.name}" if row.is_active_profile else row.name
             if row.meta:
                 item = ListItem(
                     Vertical(
-                        Static(display_name, markup=False),
+                        Static(row.name, markup=False),
                         Static(
                             row.meta,
                             markup=False,
@@ -343,7 +332,7 @@ class PersonasLibraryPane(Vertical):
             else:
                 items.append(
                     ListItem(
-                        Static(display_name, markup=False), id=dom_id, classes=classes
+                        Static(row.name, markup=False), id=dom_id, classes=classes
                     )
                 )
         await list_view.extend(items)

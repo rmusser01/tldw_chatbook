@@ -20,11 +20,6 @@ from textual.timer import Timer
 from textual.worker import Worker
 from textual.widgets import Button, Input, ListView, Static, TabbedContent, TextArea
 
-from ...Character_Chat.active_user_profile import (
-    clear_active_user_profile,
-    get_active_user_profile_pointer,
-    set_active_user_profile,
-)
 from ...Character_Chat.Character_Chat_Lib import (
     count_character_page,
     export_character_card_to_json,
@@ -935,11 +930,6 @@ class PersonasScreen(BaseAppScreen):
         self._show_center(None)
         await self.character_handler.refresh_character_list()
         self._sync_title_and_console_actions()
-        # Reflect a "my name" pointer persisted from a previous session
-        # immediately, before any selection happens (task-442 T3).
-        self.query_one(PersonasInspectorPane).set_active_profile_name(
-            get_active_user_profile_pointer()
-        )
         await self._apply_pending_restore()
 
     async def on_unmount(self) -> None:
@@ -1024,14 +1014,8 @@ class PersonasScreen(BaseAppScreen):
         """Map id/name records onto library rows, skipping id-less records.
 
         Character rows carry a ``YYYY-MM-DD`` last-modified meta line; personas
-        (id/name summaries) render without one. User-profile rows are also
-        marked ``is_active_profile`` against the live "my name" pointer
-        (task-442 T3) so the library marker never goes stale across
-        selection/save/delete re-renders.
+        (id/name summaries) render without one.
         """
-        active_profile_name = (
-            get_active_user_profile_pointer() if kind == "user_profile" else None
-        )
         rows: list[LibraryRow] = []
         for record in records:
             if record.get("id") is None:
@@ -1046,9 +1030,6 @@ class PersonasScreen(BaseAppScreen):
                     kind=kind,
                     name=name,
                     meta=meta,
-                    is_active_profile=(
-                        active_profile_name is not None and name == active_profile_name
-                    ),
                 )
             )
         return tuple(rows)
@@ -3635,41 +3616,6 @@ class PersonasScreen(BaseAppScreen):
             reason=None if allowed else self._console_action_block_reason(),
             provider_block_reason=self._provider_send_block_reason(),
         )
-
-    async def _sync_active_profile_indicators(self) -> None:
-        """Push the active ("my name") user-profile pointer into indicators.
-
-        Refreshes the inspector's "Chatting as: ..." summary line/button
-        label (always, cheap) and the library row marker (only while User
-        Profiles mode is showing rows, since that is the only render that
-        carries the marker) so the pointer and the visible UI never diverge
-        (task-442 T3). Called after every pointer write (Set/Clear button,
-        delete-active-clears-pointer) and once on mount to reflect a pointer
-        persisted from a previous session.
-        """
-        name = get_active_user_profile_pointer()
-        try:
-            inspector = self.query_one(PersonasInspectorPane)
-        except QueryError:
-            return
-        inspector.set_active_profile_name(name)
-        if self.state.active_mode == "user_profiles":
-            await self._render_profile_rows()
-
-    @on(Button.Pressed, "#personas-set-my-name")
-    async def _handle_set_my_name(self, event: Button.Pressed) -> None:
-        """Toggle the active-profile pointer for the selected user profile."""
-        event.stop()
-        if self.state.selected_entity_kind != "user_profile":
-            return
-        name = self.state.selected_entity_name
-        if not name:
-            return
-        if get_active_user_profile_pointer() == name:
-            clear_active_user_profile()
-        else:
-            set_active_user_profile(name)
-        await self._sync_active_profile_indicators()
 
     async def _selection_handoff_body(self) -> str | None:
         """Readable card summary for the selected item, or ``None`` when stale."""
@@ -6844,15 +6790,6 @@ class PersonasScreen(BaseAppScreen):
                 else:
                     self._notify(f"Delete failed: {exc}", "error")
                 return
-            # The deleted profile can no longer serve as the "my name"
-            # pointer; clear it and refresh indicators (task-442 T3).
-            if (
-                self.state.selected_entity_name
-                and get_active_user_profile_pointer()
-                == self.state.selected_entity_name
-            ):
-                clear_active_user_profile()
-                await self._sync_active_profile_indicators()
         await self._after_delete(kind)
 
     async def _after_delete(self, kind: str) -> None:
@@ -7190,30 +7127,10 @@ class PersonasScreen(BaseAppScreen):
         self._set_active_row_unsaved(False)
         saved_id = str(saved.get("id") or "")
         name = str(saved.get("name") or "Saved profile")
-        # task-442 T3 review: renaming the ACTIVE profile follows the pointer.
-        # The spec's dangling->None floor is acceptable, but this save path
-        # knows both names for free (selected_entity_name is still the OLD
-        # name until select_entity below), so keep "who I am" sticky.
-        old_name = str(self.state.selected_entity_name or "")
-        if (
-            old_name
-            and old_name != name
-            and get_active_user_profile_pointer() == old_name
-        ):
-            set_active_user_profile(name)
         self.state.select_entity(
             entity_kind="user_profile", entity_id=saved_id, entity_name=name
         )
         inspector = self.query_one(PersonasInspectorPane)
-        # Whole-branch review (+ rebase fix): the pointer write above must
-        # also refresh the pane's cached _active_profile_name (no reactive
-        # plumbing — a stale "Set as my name" label would INVERT the button's
-        # action on the next click). Push ONLY the cached name here, before
-        # show_selection computes the label; the row marker re-renders via
-        # this save path's own _render_profile_rows below — calling the full
-        # _sync_active_profile_indicators() would render the rows twice and
-        # trip the task-523 one-render-per-save gate test.
-        inspector.set_active_profile_name(get_active_user_profile_pointer())
         inspector.show_selection(name=name, kind="user_profile")
         inspector.set_unsaved(False)
         inspector.show_validation(())

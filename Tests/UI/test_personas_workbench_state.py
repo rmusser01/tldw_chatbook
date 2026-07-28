@@ -184,6 +184,31 @@ class TestWorkbenchSelectionRestore:
 class TestPreviewRestore:
     """AC#2: the preview conversation (greeting + turns) survives the round-trip."""
 
+    async def test_delayed_character_load_keeps_user_label_neutral(
+        self, mock_app_instance, stub_characters
+    ):
+        """An id/name-only selection uses ``User`` before and after its card arrives."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await screen._select_character("char-1", "Elara")
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+
+            pane.append_user("waiting for the card")
+            await pilot.pause()
+            assert pane.transcript_text() == "User: waiting for the card"
+
+            await screen.preview.handle_character_loaded(
+                character_id="char-1",
+                card_data={"name": "Elara", "first_message": "Greetings, traveller."},
+            )
+            pane.append_user("hi")
+            await pilot.pause()
+            assert pane.transcript_text() == (
+                "Elara: Greetings, traveller.\nUser: hi"
+            )
+
     async def test_restore_refreshes_provider_readout_without_character_load(
         self, mock_app_instance, stub_characters
     ):
@@ -238,6 +263,10 @@ class TestPreviewRestore:
             screen.preview.history.append(
                 {"role": "assistant", "content": "well met"}
             )
+            expected_transcript = (
+                "Elara: Greetings, traveller.\nUser: hi\nElara: well met"
+            )
+            assert pane.transcript_text() == expected_transcript
             # simulate a chosen alternate greeting (task-438)
             screen.preview._current_greeting_index = 1
 
@@ -256,10 +285,7 @@ class TestPreviewRestore:
             assert pane2.greeting_text == "Greetings, traveller."
             # the chosen greeting index survives the round-trip (task-438 review)
             assert screen2.preview._current_greeting_index == 1
-            text = pane2.transcript_text()
-            assert "Greetings, traveller." in text
-            assert "hi" in text
-            assert "well met" in text
+            assert pane2.transcript_text() == expected_transcript
             assert screen2.preview.history == saved["personas_preview"]["history"]
 
     async def test_late_character_loaded_worker_does_not_erase_restored_turns(

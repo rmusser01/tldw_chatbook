@@ -1,5 +1,7 @@
 """Mounted tests for the Personas library pane."""
 
+from dataclasses import fields
+
 import pytest
 from textual.app import App
 from textual.widgets import Button, Input, ListItem, ListView, Static
@@ -25,6 +27,17 @@ def _row_text(item: ListItem) -> str:
 class LibraryPaneApp(App):
     def compose(self):
         yield PersonasLibraryPane(id="personas-library-pane")
+
+
+async def test_library_row_has_only_selection_and_display_state():
+    """Library rows carry selection state, never the human user's identity."""
+    assert tuple(field.name for field in fields(LibraryRow)) == (
+        "item_id",
+        "kind",
+        "name",
+        "is_unsaved",
+        "meta",
+    )
 
 
 async def test_pane_renders_search_toolbar_and_empty_state():

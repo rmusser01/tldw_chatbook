@@ -12126,10 +12126,6 @@ class ChatScreen(BaseAppScreen):
         # Local import matches this module's existing convention of
         # deferring Character_Chat submodule imports (they pull in Pillow
         # and CharactersRAGDB) rather than importing them at module scope.
-        from ...Character_Chat.active_user_profile import (
-            resolve_active_user_profile_name_async,
-            resolve_runtime_backend_mode,
-        )
         from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 
         name = str(card.get("name") or _name_hint or "").strip() or "Character"
@@ -12138,32 +12134,15 @@ class ChatScreen(BaseAppScreen):
             for key in ("system_prompt", "personality", "description", "scenario")
         ]
         system_prompt = "\n".join(p for p in parts if p) or "Stay in character."
-        # task-442/task-551: {{user}} renders the active user profile's name,
-        # resolved against the app-authoritative runtime backend (local
-        # persona service, or the scope service's server profiles). No
-        # active profile keeps the historical "User" literal byte-exact and
-        # leaves the session's "General" label untouched.
-        active_user_name = await resolve_active_user_profile_name_async(
-            getattr(self.app_instance, "character_persona_scope_service", None),
-            mode=resolve_runtime_backend_mode(self.app_instance),
-            local_service=getattr(
-                self.app_instance, "local_character_persona_service", None
-            ),
-        )
         greeting = replace_placeholders(
-            str(card.get("first_message") or ""), name, active_user_name or "User"
+            str(card.get("first_message") or ""), name, "User"
         )
 
         store = self._ensure_console_chat_store()
-        settings_overrides: dict[str, Any] = {
-            "system_prompt": system_prompt,
-            "character_label": name,
-        }
-        if active_user_name:
-            settings_overrides["user_profile_label"] = active_user_name
         settings = replace(
             self._default_console_session_settings(),
-            **settings_overrides,
+            system_prompt=system_prompt,
+            character_label=name,
         )
         session = store.create_session(
             title=f"Chat with {name}",
