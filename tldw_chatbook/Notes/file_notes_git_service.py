@@ -757,6 +757,7 @@ class FileNotesGitService:
         self._status_timeout = status_timeout
         self._sealed = False
         self._status_cycle: asyncio.Task[SessionGitStatus] | None = None
+        self._status_cycle_binding: SessionBinding | None = None
         self._status_waiter: asyncio.Task[SessionGitStatus] | None = None
         self._pending_status: tuple[
             SessionBinding,
@@ -913,6 +914,28 @@ class FileNotesGitService:
             self._owner.clear_trust_if_matches(binding, repository)
         return valid
 
+    def retained_status(
+        self,
+        binding: SessionBinding,
+    ) -> asyncio.Task[SessionGitStatus] | None:
+        """Return matching active status work without requesting a rerun."""
+        cycle = self._status_cycle
+        waiter = self._status_waiter
+        if (
+            binding != self._owner.current_binding()
+            or cycle is None
+            or cycle.done()
+            or waiter is None
+            or waiter.done()
+        ):
+            return None
+        pending = self._pending_status
+        if self._status_cycle_binding == binding:
+            return waiter
+        if pending is not None and pending[0] == binding:
+            return waiter
+        return None
+
     def start_status(
         self,
         binding: SessionBinding,
@@ -1004,6 +1027,7 @@ class FileNotesGitService:
             self._status_dirty = False
             raise
         self._status_cycle = cycle
+        self._status_cycle_binding = binding
         self._status_waiter = waiter
         cycle.add_done_callback(self._status_cycle_completed)
         return waiter
@@ -1269,6 +1293,7 @@ class FileNotesGitService:
             )
         ):
             self._status_cycle = None
+            self._status_cycle_binding = None
             self._status_waiter = None
             self._action_cycle = None
             self._action_waiter = None
@@ -1324,6 +1349,7 @@ class FileNotesGitService:
                 results.append(error)
                 runner_confirmed = False
         self._status_cycle = None
+        self._status_cycle_binding = None
         self._status_waiter = None
         self._action_cycle = None
         self._action_waiter = None
@@ -1349,6 +1375,7 @@ class FileNotesGitService:
     ) -> None:
         if self._status_cycle is cycle:
             self._status_cycle = None
+            self._status_cycle_binding = None
             self._pending_status = None
             self._rerun_available = False
             self._status_dirty = False
@@ -1383,6 +1410,7 @@ class FileNotesGitService:
                 pending_repository,
                 pending_generation,
             ) = pending
+            self._status_cycle_binding = pending_binding
             admission = self._owner.admit_status(pending_binding)
             next_lease = admission.lease
             if next_lease is None:

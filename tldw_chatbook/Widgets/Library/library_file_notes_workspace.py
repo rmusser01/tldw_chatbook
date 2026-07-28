@@ -87,6 +87,11 @@ class _SessionGitService(Protocol):
         repository: RepositoryIdentity,
     ) -> bool: ...
 
+    def retained_status(
+        self,
+        binding: SessionBinding,
+    ) -> asyncio.Task[SessionGitStatus] | None: ...
+
     def start_status(
         self,
         binding: SessionBinding,
@@ -1090,6 +1095,13 @@ class LibraryFileNotesWorkspace(Vertical):
             )
             self._git_refresh_after_mutation = True
             return True
+        service = self._session_git_service()
+        retained_task = (
+            None if service is None else service.retained_status(binding)
+        )
+        if retained_task is not None:
+            self._git_status_task = retained_task
+            self._git_status_task_binding = binding
         task = self._git_status_task
         if (
             task is not None
@@ -1212,18 +1224,31 @@ class LibraryFileNotesWorkspace(Vertical):
                     self._git_status_task = None
                     self._git_status_task_binding = None
             return
-        if (
-            self._git_binding_is_current(binding)
-            and status == self._session_owner.snapshot(binding).git_status
-        ):
+        if not self._git_binding_is_current(binding):
+            return
+        snapshot = self._session_owner.snapshot(binding)
+        if self._git_status_task is task:
+            self._git_status_task = None
+            self._git_status_task_binding = None
+        if status == snapshot.git_status:
             self._git_panel_widget.render_status(status)
             if self._git_action_detail:
                 self._git_panel_widget.set_action_status(
                     self._git_action_detail
                 )
-            if self._git_status_task is task:
-                self._git_status_task = None
-                self._git_status_task_binding = None
+            return
+        if snapshot.git_status is not None:
+            self._git_panel_widget.render_status(snapshot.git_status)
+            if self._git_action_detail:
+                self._git_panel_widget.set_action_status(
+                    self._git_action_detail
+                )
+            return
+        if (
+            snapshot.trusted_repository is not None
+            and not self._rehydrate_git_presentation()
+        ):
+            self._start_git_refresh()
 
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
         self._save_state = state

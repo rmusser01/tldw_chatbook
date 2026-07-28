@@ -2793,6 +2793,32 @@ async def test_repository_identity_loss_never_retains_previous_rows(
 
 
 @pytest.mark.asyncio
+async def test_retained_status_is_read_only_and_exact_binding(
+    tmp_path: Path,
+) -> None:
+    _owner, binding, service, runner = _status_service(tmp_path)
+    assert isinstance(binding, SessionBinding)
+    task = service.start_status(
+        binding,
+        (_change(1, "modified", "note.md"),),
+    )
+    await runner.first_index_started.wait()
+
+    assert service.retained_status(binding) is task
+    assert (
+        service.retained_status(
+            SessionBinding(binding.root_key, binding.generation + 1)
+        )
+        is None
+    )
+
+    runner.release_first_index.set()
+    await task
+    await asyncio.sleep(0)
+    assert service.retained_status(binding) is None
+
+
+@pytest.mark.asyncio
 async def test_ten_status_triggers_coalesce_to_active_plus_latest_rerun(
     tmp_path: Path,
 ) -> None:

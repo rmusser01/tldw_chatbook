@@ -148,6 +148,8 @@ class _FakeGitService:
         self.discovery_result: DiscoveryResult | None = None
         self.status_release: asyncio.Event | None = None
         self.action_release: asyncio.Event | None = None
+        self._status_binding: SessionBinding | None = None
+        self._status_task: asyncio.Task[SessionGitStatus] | None = None
 
     async def discover(self, binding: SessionBinding) -> DiscoveryResult:
         self.discovery_calls.append(binding)
@@ -165,30 +167,47 @@ class _FakeGitService:
         self.revalidate_calls.append((binding, repository))
         return self.revalidate_result
 
+    def retained_status(
+        self,
+        binding: SessionBinding,
+    ) -> asyncio.Task[SessionGitStatus] | None:
+        """Expose active service work without starting or transferring it."""
+        task = self._status_task
+        if binding != self._status_binding or task is None or task.done():
+            return None
+        return task
+
     def start_status(
         self,
         binding: SessionBinding,
         changes: tuple[SequencedSessionChange, ...],
     ) -> asyncio.Task[SessionGitStatus]:
         self.status_calls.append(tuple(changes))
+        release = self.status_release
+        repository = self.repository
+        head = self.head
+        rows = self.rows
 
         async def finish() -> SessionGitStatus:
-            if self.status_release is not None:
-                await self.status_release.wait()
+            if release is not None:
+                await release.wait()
             generation = self.owner.next_status_generation(binding)
             assert generation is not None
             status = SessionGitStatus(
                 binding_generation=binding.generation,
                 status_generation=generation,
                 state="ready",
-                rows=self.rows,
-                repository=self.repository,
-                head=self.head,
+                rows=rows,
+                repository=repository,
+                head=head,
             )
-            assert self.owner.publish_status(binding, status)
+            self.owner.publish_status(binding, status)
             return status
 
-        return asyncio.create_task(finish())
+        task = asyncio.create_task(finish())
+        self._status_binding = binding
+        self._status_task = task
+        return task
 
     def start_stage(
         self,
@@ -295,12 +314,16 @@ class _PathspecRecordingRunner:
         return
 
 
-def _repository() -> RepositoryIdentity:
-    identity = FileSystemIdentity(1, 2)
+def _repository(
+    worktree_root: str = "/canonical/repository",
+    *,
+    identity: FileSystemIdentity | None = None,
+) -> RepositoryIdentity:
+    identity = identity or FileSystemIdentity(1, 2)
     return RepositoryIdentity(
-        worktree_root="/canonical/repository",
-        git_dir="/canonical/repository/.git",
-        git_common_dir="/canonical/repository/.git",
+        worktree_root=worktree_root,
+        git_dir=f"{worktree_root}/.git",
+        git_common_dir=f"{worktree_root}/.git",
         worktree_identity=identity,
         git_dir_identity=identity,
         git_common_dir_identity=identity,
@@ -390,6 +413,16 @@ def _workspace_fixture(
 def _text(widget: Static | Label) -> str:
     renderable = widget.renderable
     return getattr(renderable, "plain", str(renderable))
+
+
+def _assert_git_mutations_disabled(
+    workspace: LibraryFileNotesWorkspace,
+) -> None:
+    for selector in (
+        "#file-notes-git-stage-selected",
+        "#file-notes-git-stage-all",
+    ):
+        assert workspace.query_one(selector, Button).disabled
 
 
 async def _wait_until(
@@ -1102,6 +1135,162 @@ async def test_reopening_cached_status_keeps_controls_disabled_during_refresh(
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
+
+
+@pytest.mark.asyncio
+async def test_fresh_workspace_attaches_retained_status_before_cached_ready_state(
+    tmp_path: Path,
+) -> None:
+    root, owner, binding, replica, git_service, _first_workspace = (
+        _workspace_fixture(tmp_path)
+    )
+    changes = owner.snapshot(binding).changes
+    await git_service.start_status(binding, changes)
+    git_service.status_release = asyncio.Event()
+    retained_task = git_service.start_status(binding, changes)
+    assert git_service.retained_status(binding) is retained_task
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        session_owner=owner,
+        poll_interval=10,
+        autosave_delay=10,
+    )
+    try:
+        async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: workspace.initialized,
+                "fresh workspace scan did not finish",
+            )
+            workspace.query_one("#file-notes-session-changes", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: "Checking Session Git status"
+                in _text(
+                    workspace.query_one(
+                        "#file-notes-git-action-status",
+                        Static,
+                    )
+                ),
+                "fresh workspace rendered cached status during retained work",
+            )
+
+            _assert_git_mutations_disabled(workspace)
+            assert len(git_service.status_calls) == 2
+
+            assert git_service.status_release is not None
+            git_service.status_release.set()
+            await _wait_until(
+                pilot,
+                lambda: owner.snapshot(binding).git_status is not None
+                and owner.snapshot(binding).git_status.status_generation >= 2
+                and len(workspace._git_panel_widget.rows) == 2,
+                "fresh workspace did not render the retained status result",
+            )
+            assert len(git_service.status_calls) == 2
+    finally:
+        assert git_service.status_release is not None
+        git_service.status_release.set()
+        await asyncio.shield(retained_task)
+        await workspace.shutdown()
+        owner.shutdown()
+        replica.close()
+
+
+@pytest.mark.asyncio
+async def test_repository_retrust_consumes_rejected_status_before_fresh_refresh(
+    tmp_path: Path,
+) -> None:
+    _root, owner, binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    original_repository = git_service.repository
+    original_release = asyncio.Event()
+    git_service.status_release = original_release
+    replacement_repository = _repository(
+        "/canonical/replacement",
+        identity=FileSystemIdentity(3, 4),
+    )
+    replacement_release = asyncio.Event()
+
+    try:
+        async with _WorkspaceHarness(workspace).run_test(
+            size=(120, 40)
+        ) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: workspace.initialized,
+                "scan did not finish",
+            )
+            entry = workspace.query_one("#file-notes-session-changes", Button)
+            entry.press()
+            await _wait_until(
+                pilot,
+                lambda: len(git_service.status_calls) == 1,
+                "original status did not start",
+            )
+            rejected_task = git_service._status_task
+            assert rejected_task is not None
+
+            assert owner.clear_trust_if_matches(binding, original_repository)
+            git_service.repository = replacement_repository
+            original_release.set()
+            await asyncio.shield(rejected_task)
+            await pilot.pause()
+            assert owner.snapshot(binding).git_status is None
+
+            workspace.query_one("#file-notes-git-back", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: workspace._navigator_mode != "git",
+                "Back did not hide Session Git",
+            )
+            git_service.status_release = replacement_release
+            entry.press()
+            await _wait_until(
+                pilot,
+                lambda: isinstance(workspace.app.screen, SessionGitTrustDialog),
+                "replacement repository trust prompt did not open",
+            )
+            workspace.app.screen.query_one("#confirm-button", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: len(git_service.status_calls) == 2,
+                "replacement trust did not start a fresh status",
+            )
+
+            assert (
+                owner.snapshot(binding).trusted_repository
+                == replacement_repository
+            )
+            _assert_git_mutations_disabled(workspace)
+
+            replacement_release.set()
+            await _wait_until(
+                pilot,
+                lambda: owner.snapshot(binding).git_status is not None
+                and owner.snapshot(binding).git_status.repository
+                == replacement_repository
+                and "Status ready"
+                in _text(
+                    workspace.query_one(
+                        "#file-notes-git-action-status",
+                        Static,
+                    )
+                ),
+                "replacement repository status did not render",
+            )
+            assert len(git_service.status_calls) == 2
+    finally:
+        original_release.set()
+        replacement_release.set()
+        retained_task = git_service._status_task
+        if retained_task is not None and not retained_task.done():
+            await asyncio.shield(retained_task)
+        await workspace.shutdown()
+        owner.shutdown()
+        replica.close()
 
 
 @pytest.mark.asyncio
