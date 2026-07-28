@@ -403,11 +403,28 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "Speech recording",
         OWNER_LIBRARY_MEDIA,
     ),
+    # `_is_installed` requires EVERY package here to import, so anything listed
+    # that Watchlists can run without disables it for no reason. This list was
+    # ("markdown", "schedule", "feedparser", "beautifulsoup4", "cryptography")
+    # and is now just the one hard requirement (TASK-1221).
+    #
+    # Only `beautifulsoup4` belongs: monitoring_engine.py does a module-level
+    # `from bs4 import BeautifulSoup` with no fallback, so losing it breaks
+    # WatchlistCheckHandler outright. Everything else degrades or is unused:
+    #   - markdown/schedule/feedparser: no import site anywhere. Feeds are
+    #     parsed by defusedxml/ElementTree plus bs4, never feedparser; the other
+    #     two belonged to the retired briefing and scheduler modules.
+    #   - cryptography: security.py imports it in a try/except and falls back to
+    #     storing credentials in plaintext, warning at the point of use. That is
+    #     a security degradation to surface there, NOT an availability gate --
+    #     conflating the two is what produced this bug. Watchlists runs without
+    #     it today.
+    #   - defusedxml: falls back to stdlib xml.etree.
     "subscriptions": _feature(
         "subscriptions",
         "Subscriptions and scheduled feeds",
         AREA_WATCHLISTS,
-        ("markdown", "schedule", "feedparser", "beautifulsoup4", "cryptography"),
+        ("beautifulsoup4",),
         "Watchlists",
         "Subscriptions/watchlists",
         OWNER_WATCHLISTS,
