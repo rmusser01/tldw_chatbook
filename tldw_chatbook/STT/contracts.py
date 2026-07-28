@@ -14,6 +14,7 @@ import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 if TYPE_CHECKING:
@@ -91,10 +92,89 @@ class ExecutionDevice(str, Enum):
     METAL = "metal"
 
 
+class DeviceFailureOrigin(str, Enum):
+    """Stable origins used to decide whether a device retry is safe."""
+
+    EXECUTION_PROVIDER_INITIALIZATION = "execution_provider_initialization"
+    INFERENCE = "inference"
+    ENGINE_CRASH = "engine_crash"
+
+
 class TranscriptionWarningCode(str, Enum):
     """Stable non-fatal warning codes."""
 
     REQUESTED_LANGUAGE_NOT_ENFORCED = "requested_language_not_enforced"
+
+
+class TranscriptionFailureCode(str, Enum):
+    """Stable provider-neutral transcription failure codes."""
+
+    MODEL_NOT_INSTALLED = "model_not_installed"
+    ARTIFACT_CORRUPT = "artifact_corrupt"
+    ARTIFACT_INCOMPATIBLE = "artifact_incompatible"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    PROVIDER_REMOVED = "provider_removed"
+    UNSUPPORTED_LANGUAGE = "unsupported_language"
+    UNSUPPORTED_CAPABILITY = "unsupported_capability"
+    INSUFFICIENT_DISK_SPACE = "insufficient_disk_space"
+    INSUFFICIENT_MEMORY = "insufficient_memory"
+    INFERENCE_FAILED = "inference_failed"
+    ENGINE_CRASHED = "engine_crashed"
+    CANCELLED = "cancelled"
+
+
+TRANSCRIPTION_FAILURE_CONTRACT = MappingProxyType(
+    {
+        TranscriptionFailureCode.MODEL_NOT_INSTALLED: (
+            "The selected speech-to-text model is not installed.",
+            False,
+        ),
+        TranscriptionFailureCode.ARTIFACT_CORRUPT: (
+            "The installed speech-to-text model failed integrity verification.",
+            False,
+        ),
+        TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE: (
+            "The installed speech-to-text model is incompatible with this runtime.",
+            False,
+        ),
+        TranscriptionFailureCode.PROVIDER_UNAVAILABLE: (
+            "The selected speech-to-text provider is unavailable.",
+            True,
+        ),
+        TranscriptionFailureCode.PROVIDER_REMOVED: (
+            "The selected speech-to-text provider is no longer supported.",
+            False,
+        ),
+        TranscriptionFailureCode.UNSUPPORTED_LANGUAGE: (
+            "The selected speech-to-text model does not support the requested language.",
+            False,
+        ),
+        TranscriptionFailureCode.UNSUPPORTED_CAPABILITY: (
+            "The selected speech-to-text model does not support the requested capability.",
+            False,
+        ),
+        TranscriptionFailureCode.INSUFFICIENT_DISK_SPACE: (
+            "There is not enough disk space to prepare this transcription.",
+            False,
+        ),
+        TranscriptionFailureCode.INSUFFICIENT_MEMORY: (
+            "There is not enough memory to run this transcription.",
+            False,
+        ),
+        TranscriptionFailureCode.INFERENCE_FAILED: (
+            "Speech-to-text inference failed.",
+            False,
+        ),
+        TranscriptionFailureCode.ENGINE_CRASHED: (
+            "The speech-to-text engine stopped unexpectedly.",
+            True,
+        ),
+        TranscriptionFailureCode.CANCELLED: (
+            "The transcription was cancelled.",
+            True,
+        ),
+    }
+)
 
 
 def _require_string(
@@ -215,9 +295,7 @@ class BufferAudioSource:
         if not self.audio:
             raise ValueError("audio must not be empty")
         if len(self.audio) > MAX_BUFFER_AUDIO_BYTES:
-            raise ValueError(
-                f"audio must not exceed {MAX_BUFFER_AUDIO_BYTES} bytes"
-            )
+            raise ValueError(f"audio must not exceed {MAX_BUFFER_AUDIO_BYTES} bytes")
         if type(self.sample_rate) is not int:
             raise TypeError("sample_rate must be an int")
         if self.sample_rate <= 0:
@@ -288,14 +366,194 @@ class TranscriptionProgress:
                 raise ValueError("fraction must be between 0 and 1")
         if self.detail_code is not None:
             _require_string(self.detail_code, "detail_code")
-            if (
-                len(self.detail_code) > _MAX_DETAIL_CODE_LENGTH
-                or not _DETAIL_CODE_PATTERN.fullmatch(self.detail_code)
+            if len(
+                self.detail_code
+            ) > _MAX_DETAIL_CODE_LENGTH or not _DETAIL_CODE_PATTERN.fullmatch(
+                self.detail_code
             ):
                 raise ValueError(
                     "detail_code must be a stable lower-case code of at most "
                     f"{_MAX_DETAIL_CODE_LENGTH} characters"
                 )
+
+    def __repr__(self) -> str:
+        """Render progress without exposing attempt, batch, or job identities."""
+
+        return (
+            f"{type(self).__name__}(phase={self.phase.value!r}, "
+            f"fraction={self.fraction!r}, detail_code={self.detail_code!r})"
+        )
+
+    def __str__(self) -> str:
+        """Render a concise progress label from validated stable values only."""
+
+        rendered = self.phase.value
+        if self.fraction is not None:
+            rendered = f"{rendered}: {self.fraction:.0%}"
+        if self.detail_code is not None:
+            rendered = f"{rendered} ({self.detail_code})"
+        return rendered
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptionFailure:
+    """An immutable failure envelope with no caller-controlled explanation."""
+
+    code: TranscriptionFailureCode
+    attempt_id: str
+    batch_id: str | None
+    job_id: str | None
+    phase: TranscriptionPhase
+    provider_id: str
+    model_id: str
+    artifact_root: ArtifactLeaseKey | None
+    precision: str
+    requested_device: ExecutionDevice
+    effective_device: ExecutionDevice | None
+
+    def __post_init__(self) -> None:
+        _require_enum(self.code, TranscriptionFailureCode, "code")
+        _require_string(self.attempt_id, "attempt_id")
+        _require_optional_string(self.batch_id, "batch_id")
+        _require_optional_string(self.job_id, "job_id")
+        _require_enum(self.phase, TranscriptionPhase, "phase")
+        _require_string(self.provider_id, "provider_id")
+        _require_string(self.model_id, "model_id")
+        if self.artifact_root is not None and not _is_artifact_lease_key(
+            self.artifact_root
+        ):
+            raise TypeError("artifact_root must be an ArtifactLeaseKey")
+        _require_string(self.precision, "precision")
+        _require_enum(
+            self.requested_device,
+            ExecutionDevice,
+            "requested_device",
+        )
+        if self.effective_device is not None:
+            _require_enum(
+                self.effective_device,
+                ExecutionDevice,
+                "effective_device",
+            )
+
+    @property
+    def message(self) -> str:
+        """Return the fixed sanitized message for this failure code."""
+
+        return TRANSCRIPTION_FAILURE_CONTRACT[self.code][0]
+
+    @property
+    def retryable(self) -> bool:
+        """Return default same-configuration retryability."""
+
+        return TRANSCRIPTION_FAILURE_CONTRACT[self.code][1]
+
+    def __repr__(self) -> str:
+        """Render only stable classification fields, never identifiers."""
+
+        return (
+            f"{type(self).__name__}(code={self.code.value!r}, "
+            f"phase={self.phase.value!r})"
+        )
+
+    def __str__(self) -> str:
+        """Return the fixed sanitized message."""
+
+        return self.message
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceRetryPolicy:
+    """Represent no retry or one recycled same-provider/model CPU retry."""
+
+    retry_device: ExecutionDevice | None = None
+    max_retries: int = 0
+    requires_worker_recycling: bool = False
+    same_provider_model_only: bool = False
+
+    def __post_init__(self) -> None:
+        if self.retry_device is not None:
+            _require_enum(self.retry_device, ExecutionDevice, "retry_device")
+        if type(self.max_retries) is not int:
+            raise TypeError("max_retries must be an int")
+        _require_bool(
+            self.requires_worker_recycling,
+            "requires_worker_recycling",
+        )
+        _require_bool(
+            self.same_provider_model_only,
+            "same_provider_model_only",
+        )
+
+        no_retry = (
+            self.retry_device is None
+            and self.max_retries == 0
+            and not self.requires_worker_recycling
+            and not self.same_provider_model_only
+        )
+        cpu_retry = (
+            self.retry_device is ExecutionDevice.CPU
+            and self.max_retries == 1
+            and self.requires_worker_recycling
+            and self.same_provider_model_only
+        )
+        if not (no_retry or cpu_retry):
+            raise ValueError(
+                "device retry policy must allow no retry or exactly one "
+                "recycled same-provider/model CPU retry"
+            )
+
+    @classmethod
+    def no_retry(cls) -> DeviceRetryPolicy:
+        """Return the fail-closed policy."""
+
+        return cls()
+
+    @classmethod
+    def for_failure(
+        cls,
+        *,
+        requested_device: ExecutionDevice,
+        failed_device: ExecutionDevice,
+        origin: DeviceFailureOrigin,
+        retry_device: ExecutionDevice,
+        worker_will_recycle: bool,
+    ) -> DeviceRetryPolicy:
+        """Return the one safe device retry policy, otherwise fail closed."""
+
+        _require_enum(
+            requested_device,
+            ExecutionDevice,
+            "requested_device",
+        )
+        _require_enum(failed_device, ExecutionDevice, "failed_device")
+        _require_enum(origin, DeviceFailureOrigin, "origin")
+        _require_enum(retry_device, ExecutionDevice, "retry_device")
+        _require_bool(worker_will_recycle, "worker_will_recycle")
+
+        concrete_accelerators = frozenset(ExecutionDevice) - {
+            ExecutionDevice.AUTO,
+            ExecutionDevice.CPU,
+        }
+        requested_device_matches = requested_device in {
+            ExecutionDevice.AUTO,
+            failed_device,
+        }
+        safe_retry = (
+            origin is DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION
+            and failed_device in concrete_accelerators
+            and requested_device_matches
+            and retry_device is ExecutionDevice.CPU
+            and worker_will_recycle
+        )
+        if not safe_retry:
+            return cls.no_retry()
+        return cls(
+            retry_device=ExecutionDevice.CPU,
+            max_retries=1,
+            requires_worker_recycling=True,
+            same_provider_model_only=True,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -490,12 +748,9 @@ class PipelineCapabilities:
         if type(self.timestamps) is not frozenset:
             raise TypeError("timestamps must be a frozenset")
         if not all(
-            type(granularity) is TimestampGranularity
-            for granularity in self.timestamps
+            type(granularity) is TimestampGranularity for granularity in self.timestamps
         ):
-            raise TypeError(
-                "timestamps must contain only TimestampGranularity values"
-            )
+            raise TypeError("timestamps must contain only TimestampGranularity values")
         _require_bool(self.vad, "vad")
         _require_bool(self.diarization, "diarization")
         _require_bool(
@@ -553,9 +808,7 @@ class TranscriptionResult:
         if type(self.provenance) is not TranscriptionProvenance:
             raise TypeError("provenance must be a TranscriptionProvenance")
         if type(self.produced_capabilities) is not ProducedCapabilities:
-            raise TypeError(
-                "produced_capabilities must be a ProducedCapabilities"
-            )
+            raise TypeError("produced_capabilities must be a ProducedCapabilities")
         _require_finite_nonnegative(
             self.duration_seconds,
             "duration_seconds",
@@ -580,20 +833,20 @@ class TranscriptionResult:
             raise ValueError(
                 "segment presence must agree with produced timestamp granularity"
             )
-        if (
-            not self.produced_capabilities.diarization
-            and any(segment.speaker is not None for segment in self.segments)
+        if not self.produced_capabilities.diarization and any(
+            segment.speaker is not None for segment in self.segments
         ):
-            raise ValueError(
-                "speaker labels require produced diarization capability"
-            )
+            raise ValueError("speaker labels require produced diarization capability")
 
 
 __all__ = [
     "MAX_BUFFER_AUDIO_BYTES",
+    "TRANSCRIPTION_FAILURE_CONTRACT",
     "BufferAudioSource",
     "CancellationGranularity",
     "CancellationToken",
+    "DeviceFailureOrigin",
+    "DeviceRetryPolicy",
     "ExecutionDevice",
     "FileAudioSource",
     "InputKind",
@@ -603,6 +856,8 @@ __all__ = [
     "ProducedCapabilities",
     "ProgressSink",
     "TimestampGranularity",
+    "TranscriptionFailure",
+    "TranscriptionFailureCode",
     "TranscriptionPhase",
     "TranscriptionProgress",
     "TranscriptionProvenance",

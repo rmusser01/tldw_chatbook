@@ -4,15 +4,19 @@ import math
 from dataclasses import FrozenInstanceError
 from enum import Enum
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
 from tldw_chatbook.Model_Artifacts.leases import ArtifactLeaseKey
 from tldw_chatbook.STT import (
     MAX_BUFFER_AUDIO_BYTES,
+    TRANSCRIPTION_FAILURE_CONTRACT,
     BufferAudioSource,
     CancellationGranularity,
     CancellationToken,
+    DeviceFailureOrigin,
+    DeviceRetryPolicy,
     ExecutionDevice,
     FileAudioSource,
     InputKind,
@@ -22,6 +26,8 @@ from tldw_chatbook.STT import (
     ProducedCapabilities,
     ProgressSink,
     TimestampGranularity,
+    TranscriptionFailure,
+    TranscriptionFailureCode,
     TranscriptionPhase,
     TranscriptionProgress,
     TranscriptionProvenance,
@@ -50,9 +56,7 @@ def _provenance(**overrides: object) -> TranscriptionProvenance:
         "provider_id": "parakeet-onnx",
         "model_id": "parakeet-v2",
         "artifact_root": ArtifactLeaseKey("parakeet", "rev-2", "int8"),
-        "artifact_dependencies": (
-            ArtifactLeaseKey("silero-vad", "rev-1", "fp32"),
-        ),
+        "artifact_dependencies": (ArtifactLeaseKey("silero-vad", "rev-1", "fp32"),),
         "precision": "int8",
         "requested_device": ExecutionDevice.AUTO,
         "effective_device": ExecutionDevice.CPU,
@@ -117,7 +121,26 @@ def test_enums_have_exact_stable_string_values() -> None:
             "automatic",
             "automatic_only",
         ),
+        DeviceFailureOrigin: (
+            "execution_provider_initialization",
+            "inference",
+            "engine_crash",
+        ),
         ExecutionDevice: ("auto", "cpu", "cuda", "metal"),
+        TranscriptionFailureCode: (
+            "model_not_installed",
+            "artifact_corrupt",
+            "artifact_incompatible",
+            "provider_unavailable",
+            "provider_removed",
+            "unsupported_language",
+            "unsupported_capability",
+            "insufficient_disk_space",
+            "insufficient_memory",
+            "inference_failed",
+            "engine_crashed",
+            "cancelled",
+        ),
         TranscriptionWarningCode: ("requested_language_not_enforced",),
     }
 
@@ -604,9 +627,7 @@ def test_produced_capabilities_require_exact_timestamp_enum() -> None:
 
 def test_pipeline_capabilities_are_frozen_and_use_an_immutable_set() -> None:
     capabilities = PipelineCapabilities(
-        timestamps=frozenset(
-            {TimestampGranularity.SEGMENT, TimestampGranularity.WORD}
-        ),
+        timestamps=frozenset({TimestampGranularity.SEGMENT, TimestampGranularity.WORD}),
         vad=True,
         diarization=False,
         requires_disk_staging_for_buffer=True,
@@ -683,9 +704,7 @@ def test_result_rejects_timestamp_and_segment_contradictions() -> None:
         _result(
             text="",
             segments=(),
-            produced_capabilities=_produced(
-                timestamps=TimestampGranularity.SEGMENT
-            ),
+            produced_capabilities=_produced(timestamps=TimestampGranularity.SEGMENT),
         )
 
 
@@ -719,3 +738,346 @@ def test_result_rejects_wrong_contract_types(
 ) -> None:
     with pytest.raises(TypeError):
         _result(**{field_name: value})
+
+
+_FAILURE_CASES = (
+    (
+        TranscriptionFailureCode.MODEL_NOT_INSTALLED,
+        "The selected speech-to-text model is not installed.",
+        False,
+    ),
+    (
+        TranscriptionFailureCode.ARTIFACT_CORRUPT,
+        "The installed speech-to-text model failed integrity verification.",
+        False,
+    ),
+    (
+        TranscriptionFailureCode.ARTIFACT_INCOMPATIBLE,
+        "The installed speech-to-text model is incompatible with this runtime.",
+        False,
+    ),
+    (
+        TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
+        "The selected speech-to-text provider is unavailable.",
+        True,
+    ),
+    (
+        TranscriptionFailureCode.PROVIDER_REMOVED,
+        "The selected speech-to-text provider is no longer supported.",
+        False,
+    ),
+    (
+        TranscriptionFailureCode.UNSUPPORTED_LANGUAGE,
+        "The selected speech-to-text model does not support the requested language.",
+        False,
+    ),
+    (
+        TranscriptionFailureCode.UNSUPPORTED_CAPABILITY,
+        "The selected speech-to-text model does not support the requested capability.",
+        False,
+    ),
+    (
+        TranscriptionFailureCode.INSUFFICIENT_DISK_SPACE,
+        "There is not enough disk space to prepare this transcription.",
+        False,
+    ),
+    (
+        TranscriptionFailureCode.INSUFFICIENT_MEMORY,
+        "There is not enough memory to run this transcription.",
+        False,
+    ),
+    (
+        TranscriptionFailureCode.INFERENCE_FAILED,
+        "Speech-to-text inference failed.",
+        False,
+    ),
+    (
+        TranscriptionFailureCode.ENGINE_CRASHED,
+        "The speech-to-text engine stopped unexpectedly.",
+        True,
+    ),
+    (
+        TranscriptionFailureCode.CANCELLED,
+        "The transcription was cancelled.",
+        True,
+    ),
+)
+
+
+def _failure(**overrides: object) -> TranscriptionFailure:
+    values: dict[str, object] = {
+        "code": TranscriptionFailureCode.INFERENCE_FAILED,
+        "attempt_id": "attempt-TOKEN-SECRET",
+        "batch_id": "batch-TOKEN-SECRET",
+        "job_id": "job-TOKEN-SECRET",
+        "phase": TranscriptionPhase.TRANSCRIBING,
+        "provider_id": "provider-TOKEN-SECRET",
+        "model_id": "model-TOKEN-SECRET",
+        "artifact_root": ArtifactLeaseKey(
+            "artifact-TOKEN-SECRET",
+            "revision-TOKEN-SECRET",
+            "variant-TOKEN-SECRET",
+        ),
+        "precision": "precision-TOKEN-SECRET",
+        "requested_device": ExecutionDevice.AUTO,
+        "effective_device": ExecutionDevice.CUDA,
+    }
+    values.update(overrides)
+    return TranscriptionFailure(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(("code", "message", "retryable"), _FAILURE_CASES)
+def test_failure_contract_is_fixed_typed_and_sanitized(
+    code: TranscriptionFailureCode,
+    message: str,
+    retryable: bool,
+) -> None:
+    failure = _failure(code=code)
+
+    assert failure.code is code
+    assert type(failure.phase) is TranscriptionPhase
+    assert type(failure.requested_device) is ExecutionDevice
+    assert type(failure.effective_device) is ExecutionDevice
+    assert type(failure.artifact_root) is ArtifactLeaseKey
+    assert failure.attempt_id == "attempt-TOKEN-SECRET"
+    assert failure.batch_id == "batch-TOKEN-SECRET"
+    assert failure.job_id == "job-TOKEN-SECRET"
+    assert failure.provider_id == "provider-TOKEN-SECRET"
+    assert failure.model_id == "model-TOKEN-SECRET"
+    assert failure.precision == "precision-TOKEN-SECRET"
+    assert failure.message == message
+    assert failure.retryable is retryable
+    assert str(failure) == message
+    assert repr(failure) == (
+        f"TranscriptionFailure(code={code.value!r}, phase='transcribing')"
+    )
+    assert "TOKEN-SECRET" not in repr(failure)
+    assert not hasattr(failure, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        failure.provider_id = "other"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        _failure(code=code, exception_text="raw TOKEN-SECRET traceback")
+    with pytest.raises(TypeError):
+        _failure(code=code, message="raw TOKEN-SECRET traceback")
+
+
+def test_failure_contract_mapping_is_complete_and_immutable() -> None:
+    assert isinstance(TRANSCRIPTION_FAILURE_CONTRACT, MappingProxyType)
+    assert tuple(TRANSCRIPTION_FAILURE_CONTRACT) == tuple(TranscriptionFailureCode)
+    assert tuple(TRANSCRIPTION_FAILURE_CONTRACT.values()) == tuple(
+        (message, retryable) for _, message, retryable in _FAILURE_CASES
+    )
+    with pytest.raises(TypeError):
+        TRANSCRIPTION_FAILURE_CONTRACT[TranscriptionFailureCode.CANCELLED] = (
+            "unsafe",
+            False,
+        )  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("code", "inference_failed"),
+        ("attempt_id", ""),
+        ("batch_id", " "),
+        ("job_id", ""),
+        ("phase", "transcribing"),
+        ("provider_id", ""),
+        ("model_id", " "),
+        ("artifact_root", object()),
+        ("precision", ""),
+        ("requested_device", "auto"),
+        ("effective_device", "cuda"),
+    ],
+)
+def test_failure_rejects_untyped_or_empty_provenance_fields(
+    field_name: str,
+    value: object,
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        _failure(**{field_name: value})
+
+
+def test_failure_allows_absent_artifact_and_effective_device() -> None:
+    failure = _failure(artifact_root=None, effective_device=None)
+
+    assert failure.artifact_root is None
+    assert failure.effective_device is None
+
+
+def test_progress_repr_and_str_exclude_attempt_and_job_identity() -> None:
+    progress = TranscriptionProgress(
+        attempt_id="attempt-TOKEN-SECRET",
+        batch_id="batch-TOKEN-SECRET",
+        job_id="job-TOKEN-SECRET",
+        phase=TranscriptionPhase.TRANSCRIBING,
+        fraction=0.25,
+        detail_code="decode.segment_1-ready",
+    )
+
+    assert repr(progress) == (
+        "TranscriptionProgress(phase='transcribing', fraction=0.25, "
+        "detail_code='decode.segment_1-ready')"
+    )
+    assert str(progress) == "transcribing: 25% (decode.segment_1-ready)"
+    assert "TOKEN-SECRET" not in repr(progress)
+    assert "TOKEN-SECRET" not in str(progress)
+
+
+@pytest.mark.parametrize(
+    ("requested_device", "failed_device"),
+    [
+        (ExecutionDevice.CUDA, ExecutionDevice.CUDA),
+        (ExecutionDevice.METAL, ExecutionDevice.METAL),
+        (ExecutionDevice.AUTO, ExecutionDevice.CUDA),
+        (ExecutionDevice.AUTO, ExecutionDevice.METAL),
+    ],
+)
+def test_device_retry_policy_allows_one_recycled_same_provider_cpu_retry(
+    requested_device: ExecutionDevice,
+    failed_device: ExecutionDevice,
+) -> None:
+    policy = DeviceRetryPolicy.for_failure(
+        requested_device=requested_device,
+        failed_device=failed_device,
+        origin=DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION,
+        retry_device=ExecutionDevice.CPU,
+        worker_will_recycle=True,
+    )
+
+    assert policy.retry_device is ExecutionDevice.CPU
+    assert policy.max_retries == 1
+    assert policy.requires_worker_recycling
+    assert policy.same_provider_model_only
+
+
+@pytest.mark.parametrize(
+    (
+        "requested_device",
+        "failed_device",
+        "origin",
+        "retry_device",
+        "worker_will_recycle",
+    ),
+    [
+        (
+            ExecutionDevice.CPU,
+            ExecutionDevice.CPU,
+            DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION,
+            ExecutionDevice.CPU,
+            True,
+        ),
+        (
+            ExecutionDevice.AUTO,
+            ExecutionDevice.CPU,
+            DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION,
+            ExecutionDevice.CPU,
+            True,
+        ),
+        (
+            ExecutionDevice.AUTO,
+            ExecutionDevice.AUTO,
+            DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION,
+            ExecutionDevice.CPU,
+            True,
+        ),
+        (
+            ExecutionDevice.CUDA,
+            ExecutionDevice.AUTO,
+            DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION,
+            ExecutionDevice.CPU,
+            True,
+        ),
+        (
+            ExecutionDevice.CUDA,
+            ExecutionDevice.METAL,
+            DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION,
+            ExecutionDevice.CPU,
+            True,
+        ),
+        (
+            ExecutionDevice.CUDA,
+            ExecutionDevice.CUDA,
+            DeviceFailureOrigin.INFERENCE,
+            ExecutionDevice.CPU,
+            True,
+        ),
+        (
+            ExecutionDevice.METAL,
+            ExecutionDevice.METAL,
+            DeviceFailureOrigin.ENGINE_CRASH,
+            ExecutionDevice.CPU,
+            True,
+        ),
+        (
+            ExecutionDevice.CUDA,
+            ExecutionDevice.CUDA,
+            DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION,
+            ExecutionDevice.CUDA,
+            True,
+        ),
+        (
+            ExecutionDevice.METAL,
+            ExecutionDevice.METAL,
+            DeviceFailureOrigin.EXECUTION_PROVIDER_INITIALIZATION,
+            ExecutionDevice.CPU,
+            False,
+        ),
+    ],
+)
+def test_device_retry_policy_fails_closed_for_other_failures(
+    requested_device: ExecutionDevice,
+    failed_device: ExecutionDevice,
+    origin: DeviceFailureOrigin,
+    retry_device: ExecutionDevice,
+    worker_will_recycle: bool,
+) -> None:
+    policy = DeviceRetryPolicy.for_failure(
+        requested_device=requested_device,
+        failed_device=failed_device,
+        origin=origin,
+        retry_device=retry_device,
+        worker_will_recycle=worker_will_recycle,
+    )
+
+    assert policy == DeviceRetryPolicy.no_retry()
+    assert policy.retry_device is None
+    assert policy.max_retries == 0
+    assert not policy.requires_worker_recycling
+    assert not policy.same_provider_model_only
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {
+            "retry_device": ExecutionDevice.CUDA,
+            "max_retries": 1,
+            "requires_worker_recycling": True,
+            "same_provider_model_only": True,
+        },
+        {
+            "retry_device": ExecutionDevice.CPU,
+            "max_retries": 2,
+            "requires_worker_recycling": True,
+            "same_provider_model_only": True,
+        },
+        {
+            "retry_device": ExecutionDevice.CPU,
+            "max_retries": 1,
+            "requires_worker_recycling": False,
+            "same_provider_model_only": True,
+        },
+        {
+            "retry_device": ExecutionDevice.CPU,
+            "max_retries": 1,
+            "requires_worker_recycling": True,
+            "same_provider_model_only": False,
+        },
+    ],
+)
+def test_device_retry_policy_cannot_represent_unsafe_retry(
+    values: dict[str, object],
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        DeviceRetryPolicy(**values)  # type: ignore[arg-type]

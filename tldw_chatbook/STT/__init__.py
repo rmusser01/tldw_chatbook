@@ -2,9 +2,12 @@
 
 from .contracts import (
     MAX_BUFFER_AUDIO_BYTES,
+    TRANSCRIPTION_FAILURE_CONTRACT,
     BufferAudioSource,
     CancellationGranularity,
     CancellationToken,
+    DeviceFailureOrigin,
+    DeviceRetryPolicy,
     ExecutionDevice,
     FileAudioSource,
     InputKind,
@@ -14,6 +17,8 @@ from .contracts import (
     ProducedCapabilities,
     ProgressSink,
     TimestampGranularity,
+    TranscriptionFailure,
+    TranscriptionFailureCode,
     TranscriptionPhase,
     TranscriptionProgress,
     TranscriptionProvenance,
@@ -27,9 +32,12 @@ from .contracts import (
 
 __all__ = [
     "MAX_BUFFER_AUDIO_BYTES",
+    "TRANSCRIPTION_FAILURE_CONTRACT",
     "BufferAudioSource",
     "CancellationGranularity",
     "CancellationToken",
+    "DeviceFailureOrigin",
+    "DeviceRetryPolicy",
     "ExecutionDevice",
     "FileAudioSource",
     "InputKind",
@@ -39,6 +47,8 @@ __all__ = [
     "ProducedCapabilities",
     "ProgressSink",
     "TimestampGranularity",
+    "TranscriptionFailure",
+    "TranscriptionFailureCode",
     "TranscriptionPhase",
     "TranscriptionProgress",
     "TranscriptionProvenance",

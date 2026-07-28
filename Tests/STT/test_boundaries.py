@@ -42,9 +42,12 @@ _EXPANDED_FORBIDDEN_IMPORTS = (
 )
 _EXPECTED_EXPORTS = (
     "MAX_BUFFER_AUDIO_BYTES",
+    "TRANSCRIPTION_FAILURE_CONTRACT",
     "BufferAudioSource",
     "CancellationGranularity",
     "CancellationToken",
+    "DeviceFailureOrigin",
+    "DeviceRetryPolicy",
     "ExecutionDevice",
     "FileAudioSource",
     "InputKind",
@@ -54,6 +57,8 @@ _EXPECTED_EXPORTS = (
     "ProducedCapabilities",
     "ProgressSink",
     "TimestampGranularity",
+    "TranscriptionFailure",
+    "TranscriptionFailureCode",
     "TranscriptionPhase",
     "TranscriptionProgress",
     "TranscriptionProvenance",
@@ -76,7 +81,9 @@ def test_package_exports_only_deliberate_contract_values() -> None:
     assert all(getattr(stt, name) is not None for name in stt.__all__)
 
 
-def test_contract_import_boundary_covers_application_and_optional_dependencies() -> None:
+def test_contract_import_boundary_covers_application_and_optional_dependencies() -> (
+    None
+):
     required_prefixes = {
         "tldw_chatbook.config",
         "tldw_chatbook.DB",
