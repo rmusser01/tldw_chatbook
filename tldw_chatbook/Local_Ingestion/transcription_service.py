@@ -3929,10 +3929,10 @@ class TranscriptionService:
 
         self._bridge.config = value
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources held by the retained backend."""
 
-        return self._bridge.cleanup_legacy()
+        self._bridge.cleanup_legacy()
 
     def transcribe(
         self,
@@ -3950,7 +3950,28 @@ class TranscriptionService:
         batch_route_resolved: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Forward the unchanged public file-transcription call."""
+        """Transcribe an audio file through the retained backend.
+
+        Args:
+            audio_path: Path to the audio file.
+            provider: Optional retained provider identifier.
+            model: Optional provider model identifier.
+            language: Optional transcription language.
+            source_lang: Optional source language for transcription or translation.
+            target_lang: Optional translation target language.
+            vad_filter: Whether to enable voice activity detection.
+            diarize: Whether to enable speaker diarization.
+            progress_callback: Optional legacy progress callback.
+            batch_route_resolved: Whether batch routing was already resolved.
+            **kwargs: Provider-specific options forwarded unchanged.
+
+        Returns:
+            The retained backend's transcription dictionary.
+
+        Raises:
+            TranscriptionError: If the retained backend cannot transcribe the file.
+            ValueError: If a retained provider option is invalid.
+        """
 
         return self._bridge.transcribe_legacy(
             audio_path,

@@ -272,14 +272,20 @@ class LegacyTranscriptionBridge:
                     and effective_device is not request.request.device
                 ):
                     raise LegacyTranscriptionBridgeError()
+                legacy_language = (
+                    request.requested_language
+                    if request.requested_language != "auto"
+                    and request.effective_language == "auto"
+                    else request.effective_language
+                )
                 source = request.request.source
                 if type(source) is FileAudioSource:
                     result = backend.transcribe(
                         audio_path=str(source.path),
                         provider=self._legacy_provider_id,
                         model=request.model_id,
-                        language=request.effective_language,
-                        source_lang=request.effective_language,
+                        language=legacy_language,
+                        source_lang=legacy_language,
                         target_lang=(
                             "en"
                             if request.request.task is TranscriptionTask.TRANSLATE
@@ -298,7 +304,7 @@ class LegacyTranscriptionBridge:
                         sample_width=source.sample_width,
                         provider=self._legacy_provider_id,
                         model=request.model_id,
-                        language=request.effective_language,
+                        language=legacy_language,
                         vad_filter=request.request.vad,
                         diarize=request.request.diarization,
                         task=request.request.task.value,
@@ -512,8 +518,8 @@ class LegacyTranscriptionBridge:
     def transcribe_buffer_legacy(self, *args: object, **kwargs: object) -> object:
         return self._get_backend().transcribe_buffer(*args, **kwargs)
 
-    def cleanup_legacy(self) -> object:
-        return self._get_backend().cleanup()
+    def cleanup_legacy(self) -> None:
+        self._get_backend().cleanup()
 
     def get_available_providers_legacy(self) -> object:
         return self._get_backend().get_available_providers()

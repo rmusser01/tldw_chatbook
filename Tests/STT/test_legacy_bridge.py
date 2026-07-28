@@ -103,6 +103,7 @@ def _request(
     *,
     task: TranscriptionTask = TranscriptionTask.TRANSCRIBE,
     language: str = "fr",
+    effective_language: str | None = None,
     precision: str = "int8",
     device: ExecutionDevice = ExecutionDevice.CPU,
     timestamps: TimestampGranularity = TimestampGranularity.SEGMENT,
@@ -130,7 +131,7 @@ def _request(
         provider_id="retained-whisper",
         model_id="base",
         requested_language=language,
-        effective_language=language,
+        effective_language=effective_language or language,
         precision=precision,
     )
 
@@ -359,6 +360,37 @@ def test_bridge_converts_buffer_request_without_disk_staging() -> None:
             "task": "transcribe",
         },
     )
+
+
+def test_bridge_forwards_explicit_routing_assertion_to_legacy_file_backend() -> None:
+    backend = _Backend()
+    resolved = _request(
+        FileAudioSource(Path("/tmp/example.wav")),
+        language="fr",
+        effective_language="auto",
+    )
+
+    output = _bridge(backend).transcribe(resolved)
+
+    assert backend.calls[-1][2]["language"] == "fr"
+    assert backend.calls[-1][2]["source_lang"] == "fr"
+    assert output.effective_language == "auto"
+    assert output.detected_language is None
+
+
+def test_bridge_forwards_explicit_routing_assertion_to_legacy_buffer_backend() -> None:
+    backend = _Backend()
+    resolved = _request(
+        BufferAudioSource(b"\x00\x00", 16_000),
+        language="fr",
+        effective_language="auto",
+    )
+
+    output = _bridge(backend).transcribe(resolved)
+
+    assert backend.calls[-1][2]["language"] == "fr"
+    assert output.effective_language == "auto"
+    assert output.detected_language is None
 
 
 def test_bridge_forwards_translation_to_the_legacy_provider_explicitly() -> None:

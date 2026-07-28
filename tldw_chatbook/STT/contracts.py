@@ -599,7 +599,7 @@ class TranscriptionRequest:
     task: TranscriptionTask = TranscriptionTask.TRANSCRIBE
     precision: str | None = None
     device: ExecutionDevice = ExecutionDevice.AUTO
-    timestamps: TimestampGranularity = TimestampGranularity.SEGMENT
+    timestamps: TimestampGranularity = TimestampGranularity.NONE
     diarization: bool = False
     vad: bool = False
     privacy: PrivacyRequirements = field(default_factory=PrivacyRequirements)

@@ -896,6 +896,56 @@ def test_success_normalizes_provenance_warnings_and_progress_without_percentages
     assert all(event.detail_code is None for event in events)
 
 
+def test_default_request_executes_the_default_english_parakeet_route() -> None:
+    declarations = build_builtin_declarations(POLICY)
+    model = next(
+        model
+        for model in declarations.models
+        if model.provider_id == POLICY.parakeet_provider_id
+        and model.model_id == POLICY.parakeet_v2_model_id
+    )
+    provider = next(
+        provider
+        for provider in declarations.providers
+        if provider.provider_id == POLICY.parakeet_provider_id
+    )
+    adapter = _Adapter(
+        provider,
+        (model,),
+        output=lambda request: _output(
+            text="hello",
+            segments=(),
+            effective_language=request.effective_language,
+            produced_capabilities=ProducedCapabilities(
+                timestamps=TimestampGranularity.NONE,
+                punctuation=True,
+                capitalization=True,
+                vad=False,
+                diarization=False,
+            ),
+        ),
+    )
+    coordinator = TranscriptionCoordinator(
+        build_builtin_registry(POLICY, adapters=(adapter,)),
+        TranscriptionRouter(POLICY),
+        PipelineCapabilities(),
+    )
+
+    result = coordinator.transcribe(
+        TranscriptionRequest(
+            attempt_id="attempt-default",
+            source=BufferAudioSource(b"\x00\x00", 16_000),
+        )
+    )
+
+    assert adapter.probe_calls == [POLICY.parakeet_v2_model_id]
+    assert result.provenance.provider_id == POLICY.parakeet_provider_id
+    assert result.provenance.model_id == POLICY.parakeet_v2_model_id
+    assert result.provenance.requested_language == "en"
+    assert result.provenance.effective_language == "en"
+    assert result.produced_capabilities.timestamps is TimestampGranularity.NONE
+
+
 def test_adapter_progress_is_wrapped_and_cannot_break_coordinator_ordering() -> None:
     events: list[TranscriptionProgress] = []
     raw_sink = events.append
@@ -1272,6 +1322,46 @@ def test_faster_whisper_auto_preserves_trustworthy_detected_language() -> None:
     assert result.provenance.requested_language == "auto"
     assert result.provenance.effective_language == "auto"
     assert result.provenance.detected_language == "ja"
+
+
+def test_faster_whisper_rejects_detected_language_outside_declared_set() -> None:
+    declarations = build_builtin_declarations(POLICY)
+    model = next(
+        model
+        for model in declarations.models
+        if model.provider_id == POLICY.faster_whisper_provider_id
+    )
+    provider = next(
+        provider
+        for provider in declarations.providers
+        if provider.provider_id == POLICY.faster_whisper_provider_id
+    )
+    adapter = _Adapter(
+        provider,
+        (model,),
+        output=_output(
+            effective_language="auto",
+            detected_language="zz",
+        ),
+    )
+    registry = build_builtin_registry(POLICY, adapters=(adapter,))
+    coordinator = TranscriptionCoordinator(
+        registry,
+        TranscriptionRouter(POLICY),
+        PipelineCapabilities(),
+    )
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        coordinator.transcribe(
+            TranscriptionRequest(
+                attempt_id="attempt-undeclared-detection",
+                source=BufferAudioSource(b"\x00\x00", 16_000),
+                language="auto",
+                timestamps=TimestampGranularity.SEGMENT,
+            )
+        )
+
+    _assert_failure(caught, TranscriptionFailureCode.INFERENCE_FAILED)
 
 
 def test_faster_whisper_rejects_auto_as_a_detected_language() -> None:

@@ -696,6 +696,11 @@ class TranscriptionCoordinator:
             raise ValueError("detected language must identify a concrete language")
         if (
             output.detected_language is not None
+            and output.detected_language not in model.capabilities.languages
+        ):
+            raise ValueError("detected language was not declared by the model")
+        if (
+            output.detected_language is not None
             and resolved.requested_language != "auto"
         ):
             raise ValueError("detected language was not requested")

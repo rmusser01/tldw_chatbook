@@ -263,6 +263,15 @@ def test_buffer_audio_source_payload_is_excluded_from_representations() -> None:
     assert marker not in repr(request)
 
 
+def test_request_defaults_to_no_timestamps_for_default_parakeet_route() -> None:
+    request = TranscriptionRequest(
+        attempt_id="attempt-default",
+        source=BufferAudioSource(b"\x00\x00", 16_000),
+    )
+
+    assert request.timestamps is TimestampGranularity.NONE
+
+
 @pytest.mark.parametrize(
     ("field_name", "value"),
     [

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from typing import get_type_hints
 from unittest.mock import patch
 
 import pytest
@@ -128,8 +129,8 @@ class _Bridge:
     def transcribe_buffer_legacy(self, *args: object, **kwargs: object) -> object:
         return self._record("transcribe_buffer", *args, **kwargs)
 
-    def cleanup_legacy(self) -> object:
-        return self._record("cleanup")
+    def cleanup_legacy(self) -> None:
+        self._record("cleanup")
 
     def get_available_providers_legacy(self) -> object:
         return self._record("get_available_providers")
@@ -238,7 +239,6 @@ def test_facade_preserves_buffer_arguments_and_provider_specific_kwargs(
 @pytest.mark.parametrize(
     ("method_name", "arguments", "keywords", "bridge_method"),
     [
-        ("cleanup", (), {}, "cleanup"),
         ("get_available_providers", (), {}, "get_available_providers"),
         ("list_available_models", ("faster-whisper",), {}, "list_available_models"),
         ("get_device_info", (), {}, "get_device_info"),
@@ -271,6 +271,26 @@ def test_facade_explicitly_forwards_each_public_helper(
 
     assert result is bridge.result
     assert bridge.calls[0] == (bridge_method, arguments, keywords)
+
+
+def test_facade_cleanup_has_truthful_none_return_contract(
+    facade: tuple[TranscriptionService, _Bridge],
+) -> None:
+    service, bridge = facade
+
+    service.cleanup()
+
+    assert get_type_hints(TranscriptionService.cleanup)["return"] is type(None)
+    assert bridge.calls == [("cleanup", (), {})]
+
+
+def test_facade_transcribe_documents_its_public_contract() -> None:
+    docstring = inspect.getdoc(TranscriptionService.transcribe)
+
+    assert docstring is not None
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+    assert "Raises:" in docstring
 
 
 def test_facade_preserves_backend_config_without_forwarding_private_attributes(
