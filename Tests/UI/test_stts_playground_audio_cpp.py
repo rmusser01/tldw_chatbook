@@ -1989,6 +1989,9 @@ async def test_exact_profile_preset_survives_catalog_and_voice_loading_without_g
         assert app.query_one("#tts-provider-select", Select).value == "audio_cpp"
         assert app.query_one("#tts-model-select", Select).value == "profile/model"
         assert app.query_one("#tts-voice-select", Select).value == "profile/voice"
+        assert app.query_one("#tts-profile-preview-status", Static).has_class(
+            "profile-preview-available"
+        )
         assert widget._profile_preset is preset
         assert app.generation_events == []
 
@@ -2165,6 +2168,9 @@ async def test_unavailable_profile_preset_disables_generation_and_points_to_edit
         status = str(app.query_one("#tts-provider-status", Static).render())
         assert "unavailable" in status.lower()
         assert "Edit" in status
+        assert app.query_one("#tts-profile-preview-status", Static).has_class(
+            "profile-preview-unavailable"
+        )
         assert app.generation_events == []
 
 
@@ -2183,6 +2189,9 @@ async def test_unverified_profile_preset_requires_warned_explicit_exact_attempt(
 
         assert app.generation_events == []
         assert app.query_one("#tts-generate-btn", Button).disabled is False
+        assert app.query_one("#tts-profile-preview-status", Static).has_class(
+            "profile-preview-unverified"
+        )
         widget._generate_tts()
 
         assert len(app.generation_events) == 1

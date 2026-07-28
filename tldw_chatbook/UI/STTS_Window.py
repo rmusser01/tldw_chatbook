@@ -202,8 +202,19 @@ class TTSPlaygroundWidget(Widget):
         max-height: 4;
         padding: 0 1;
         margin-bottom: 1;
-        color: $warning;
         background: $boost;
+    }
+
+    #tts-profile-preview-status.profile-preview-available {
+        color: $success;
+    }
+
+    #tts-profile-preview-status.profile-preview-unverified {
+        color: $warning;
+    }
+
+    #tts-profile-preview-status.profile-preview-unavailable {
+        color: $error;
     }
     
     .audio-player {
@@ -1655,6 +1666,11 @@ class TTSPlaygroundWidget(Widget):
             )
         else:
             copy = "Profile preview — exact saved selection."
+        for state in ("available", "unverified", "unavailable"):
+            banner.set_class(
+                availability == state,
+                f"profile-preview-{state}",
+            )
         banner.update(Text(copy))
         banner.remove_class("hidden")
 
