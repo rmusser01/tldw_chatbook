@@ -333,7 +333,11 @@ async def test_service_unavailable_states_disable_false_console_handoffs(
         button = screen.query_one(button_selector, Button)
 
         assert expected_copy in _visible_text(screen)
-        assert button.disabled is True
+        if setup == "library-error":
+            assert button.disabled is False
+            assert button.has_class("library-source-action-blocked")
+        else:
+            assert button.disabled is True
         assert "unavailable" in str(button.tooltip).lower()
 
 

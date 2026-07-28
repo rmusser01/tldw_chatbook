@@ -1,12 +1,16 @@
+import time
+from collections.abc import Callable
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, Static
 
+from Tests.UI.test_screen_navigation import _build_test_app
+import tldw_chatbook.app as app_module
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
-from tldw_chatbook.UI.Screens.study_screen import StudyScreen
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Screens.study_scope_models import (
     StudyScopeContext,
     StudyScopeType,
@@ -148,13 +152,39 @@ class DashboardQuizScopeService:
         }
 
 
-class StudyDashboardTestApp(App[None]):
-    def __init__(self, app_instance):
-        super().__init__()
-        self._screen = StudyScreen(app_instance=app_instance)
+@pytest.fixture(autouse=True)
+def _disable_full_app_splash(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_get_cli_setting = app_module.get_cli_setting
 
-    async def on_mount(self) -> None:
-        await self.push_screen(self._screen)
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+
+
+def _build_full_study_app(app_instance):
+    """Build the full production app with deterministic Study collaborators."""
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = "study"
+    app.study_scope_service = app_instance.study_scope_service
+    app.study_quiz_scope_service = app_instance.study_quiz_scope_service
+    app.notify = app_instance.notify
+    if hasattr(app_instance, "open_chat_with_handoff"):
+        app.open_chat_with_handoff = app_instance.open_chat_with_handoff
+    source = str(getattr(app_instance, "current_runtime_backend", "local"))
+    runtime_state = RuntimeSourceState(
+        active_source=source,
+        server_configured=source == "server",
+    )
+    app.runtime_policy.state = runtime_state
+    app._publish_runtime_policy_projection(runtime_state)
+    scope_context = getattr(app_instance, "scope_context", None)
+    if scope_context is not None:
+        app.pending_handoffs.stage(HandoffChannel.STUDY_SCOPE, scope_context)
+    return app
 
 
 def _build_app_instance() -> SimpleNamespace:
@@ -172,9 +202,53 @@ def _text(widget: Static) -> str:
     return str(widget.render())
 
 
+async def _wait_until(
+    pilot,
+    predicate: Callable[[], bool],
+    *,
+    failure: str,
+    timeout: float = 5.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(failure)
+
+
+def _quiz_list_call_count(service: DashboardQuizScopeService) -> int:
+    return sum(call[0] == "list_quizzes" for call in service.calls)
+
+
+async def _wait_for_quiz_refresh(
+    app,
+    pilot,
+    service: DashboardQuizScopeService,
+    *,
+    calls_before: int,
+) -> None:
+    study_window = app.screen.query_one(StudyWindow)
+
+    def refresh_finished() -> bool:
+        refresh_called = _quiz_list_call_count(service) > calls_before
+        active_window_worker = any(
+            worker.node is study_window and not worker.is_finished
+            for worker in app.workers
+        )
+        return refresh_called and not active_window_worker
+
+    await _wait_until(
+        pilot,
+        refresh_finished,
+        failure="Study quiz refresh worker did not complete",
+    )
+
+
 @pytest.mark.asyncio
 async def test_study_section_bar_explains_compact_labels():
-    app = StudyDashboardTestApp(_build_app_instance())
+    app = _build_full_study_app(_build_app_instance())
 
     async with app.run_test() as pilot:
         await pilot.pause(0.3)
@@ -198,7 +272,7 @@ async def test_study_section_bar_explains_compact_labels():
 
 @pytest.mark.asyncio
 async def test_study_dashboard_surfaces_due_and_recent_items():
-    app = StudyDashboardTestApp(_build_app_instance())
+    app = _build_full_study_app(_build_app_instance())
 
     async with app.run_test() as pilot:
         await pilot.pause(0.3)
@@ -221,7 +295,7 @@ async def test_study_dashboard_surfaces_due_and_recent_items():
 
 @pytest.mark.asyncio
 async def test_study_dashboard_resume_action_returns_to_last_session():
-    app = StudyDashboardTestApp(_build_app_instance())
+    app = _build_full_study_app(_build_app_instance())
 
     async with app.run_test() as pilot:
         await pilot.pause(0.3)
@@ -235,7 +309,7 @@ async def test_study_dashboard_resume_action_returns_to_last_session():
         assert resume_button.disabled is False
         assert "Resume the most recent study session" in str(resume_button.tooltip)
 
-        await pilot.click("#study-resume-last")
+        resume_button.press()
         await pilot.pause(0.2)
 
         assert getattr(app.screen, "current_section", None) == "quizzes"
@@ -243,12 +317,19 @@ async def test_study_dashboard_resume_action_returns_to_last_session():
 
 @pytest.mark.asyncio
 async def test_study_quizzes_section_offers_shell_level_start_flow():
-    app = StudyDashboardTestApp(_build_app_instance())
+    app_instance = _build_app_instance()
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.3)
-        await pilot.click("#view-quizzes-btn")
-        await pilot.pause(0.4)
+        refresh_calls = _quiz_list_call_count(app_instance.study_quiz_scope_service)
+        app.screen.query_one("#view-quizzes-btn", Button).press()
+        await _wait_for_quiz_refresh(
+            app,
+            pilot,
+            app_instance.study_quiz_scope_service,
+            calls_before=refresh_calls,
+        )
 
         quiz_session = app.screen.query_one("#quiz-session")
         quiz_start = app.screen.query_one("#quiz-start", Button)
@@ -260,12 +341,15 @@ async def test_study_quizzes_section_offers_shell_level_start_flow():
         assert quiz_start.disabled is False
         assert "Start the selected quiz" in str(quiz_start.tooltip)
 
-        await pilot.click("#quiz-start")
-        await pilot.pause(0.3)
+        quiz_start.press()
+        quiz_status = app.screen.query_one("#quiz-session-status", Static)
+        await _wait_until(
+            pilot,
+            lambda: "Question 1 of 1." in _text(quiz_status),
+            failure="Study quiz attempt did not expose its first question",
+        )
 
         study_window = app.screen.query_one(StudyWindow)
-        quiz_status = app.screen.query_one("#quiz-session-status", Static)
-
         assert study_window.current_view == "quizzes"
         assert "Question 1 of 1." in _text(quiz_status)
 
@@ -275,12 +359,18 @@ async def test_study_quizzes_start_action_explains_no_quiz_recovery():
     app_instance = _build_app_instance()
     app_instance.study_quiz_scope_service.quizzes = []
     app_instance.study_quiz_scope_service.questions = []
-    app = StudyDashboardTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.3)
-        await pilot.click("#view-quizzes-btn")
-        await pilot.pause(0.4)
+        refresh_calls = _quiz_list_call_count(app_instance.study_quiz_scope_service)
+        app.screen.query_one("#view-quizzes-btn", Button).press()
+        await _wait_for_quiz_refresh(
+            app,
+            pilot,
+            app_instance.study_quiz_scope_service,
+            calls_before=refresh_calls,
+        )
 
         quiz_start = app.screen.query_one("#quiz-start", Button)
         review_in_chat = app.screen.query_one("#quiz-open-in-chat", Button)
@@ -299,20 +389,30 @@ async def test_study_quizzes_start_action_explains_no_quiz_recovery():
 async def test_study_quizzes_review_in_chat_stages_selected_quiz_context():
     app_instance = _build_app_instance()
     app_instance.open_chat_with_handoff = Mock()
-    app = StudyDashboardTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.3)
-        await pilot.click("#view-quizzes-btn")
-        await pilot.pause(0.4)
+        refresh_calls = _quiz_list_call_count(app_instance.study_quiz_scope_service)
+        app.screen.query_one("#view-quizzes-btn", Button).press()
+        await _wait_for_quiz_refresh(
+            app,
+            pilot,
+            app_instance.study_quiz_scope_service,
+            calls_before=refresh_calls,
+        )
 
         review_in_chat = app.screen.query_one("#quiz-open-in-chat", Button)
 
         assert review_in_chat.disabled is False
         assert "Review the selected quiz in Chat" in str(review_in_chat.tooltip)
 
-        await pilot.click("#quiz-open-in-chat")
-        await pilot.pause(0.2)
+        review_in_chat.press()
+        await _wait_until(
+            pilot,
+            lambda: app_instance.open_chat_with_handoff.call_count == 1,
+            failure="Study quiz review handoff was not dispatched",
+        )
 
         app_instance.open_chat_with_handoff.assert_called_once()
         payload = app_instance.open_chat_with_handoff.call_args.args[0]
@@ -333,21 +433,31 @@ async def test_study_quizzes_review_in_chat_stages_selected_quiz_context():
 async def test_study_quizzes_review_in_chat_preserves_workspace_scope_metadata():
     app_instance = _build_app_instance()
     app_instance.current_runtime_backend = "server"
-    app_instance.pending_study_scope_context = StudyScopeContext(
+    app_instance.scope_context = StudyScopeContext(
         scope_type=StudyScopeType.WORKSPACE,
         workspace_id="workspace-1",
         workspace_name="Research Workspace",
     )
     app_instance.open_chat_with_handoff = Mock()
-    app = StudyDashboardTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.3)
-        await pilot.click("#view-quizzes-btn")
-        await pilot.pause(0.4)
+        refresh_calls = _quiz_list_call_count(app_instance.study_quiz_scope_service)
+        app.screen.query_one("#view-quizzes-btn", Button).press()
+        await _wait_for_quiz_refresh(
+            app,
+            pilot,
+            app_instance.study_quiz_scope_service,
+            calls_before=refresh_calls,
+        )
 
-        await pilot.click("#quiz-open-in-chat")
-        await pilot.pause(0.2)
+        app.screen.query_one("#quiz-open-in-chat", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: app_instance.open_chat_with_handoff.call_count == 1,
+            failure="Workspace quiz review handoff was not dispatched",
+        )
 
         payload = app_instance.open_chat_with_handoff.call_args.args[0]
 

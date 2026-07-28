@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-28 14:27'
-updated_date: '2026-07-28 14:53'
+updated_date: '2026-07-28 16:09'
 labels:
   - architecture
   - lifecycle
@@ -36,6 +36,7 @@ Prevent TldwCli startup from replacing live service graphs or attaching long-liv
 - [ ] #5 The clean installed-wheel production-app probe completes the fresh ChaChaNotes migration and proves the same composition contract outside the checkout; the exact runtime SQL migration is present in both sdist and wheel and enforced by the release checker.
 - [ ] #6 Affected tests, the full repository suite, static checks, formatting, and diff hygiene pass, and the separate remaining legacy-provider inventory is documented without claiming global closure.
 - [ ] #7 The two verified current-dev collection blockers are reconciled with the surviving worker and chat-shell APIs, without restoring retired StreamDone or TabState state and without adding a test application.
+- [ ] #8 Current-dev tests use the surviving public runtime-config and trusted-directory contracts, production-app interaction tests wait for rendered controls, and the reviewed diagnostic inventory matches current source and persistent-sink topology.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,7 +49,7 @@ Reason: This task changes application service construction, runtime provider own
 1. Add narrow AST, full production TldwCli, and installed-wheel regression contracts; verify they fail on the observed duplicate/provider/Sync defects.
 2. Add red artifact and release-checker coverage for the exact ChaChaNotes v26-to-v27 runtime SQL migration, then explicitly include and enforce that file in the sdist and wheel.
 3. Remove only the later duplicate Writing and Chat calls, bind Writing to server_context_provider, and inject sync_scope_service into Chat and Media initial composition.
-4. Reconcile the two current-dev stale tests that prevent full-suite collection against retired StreamDone and TabState APIs, without restoring either retired API or adding a test application.
+4. Reconcile verified current-dev test and sentinel drift against the surviving worker, chat-shell, runtime-config, trusted-directory, rendered-widget, and persistent-diagnostic contracts, without restoring retired APIs, weakening production guards, or adding a test application.
 5. Run focused provider/Sync/citation/packaging tests, all ProductionApp and Packaging tests, the full repository suite, compile/Ruff/diff checks, and record the remaining executable legacy-provider inventory.
 6. Self-review the bounded diff, record verification evidence, complete acceptance criteria and implementation notes, then mark the task Done only after every Definition of Done item passes.
 7. Rebase onto current dev, open the PR, verify and address every review thread/check, rebase again, and merge after the required evidence remains green.

@@ -1,97 +1,66 @@
-"""Mounted tests for the TagFilterPicker modal (P3a Task 3)."""
+"""Direct function tests for the TagFilterPicker modal."""
+
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
-from textual.app import App, ComposeResult
-from textual.widgets import Input, ListView
 
 from tldw_chatbook.Widgets.Persona_Widgets.tag_filter_picker import TagFilterPicker
 
-pytestmark = pytest.mark.asyncio
+
+class _Listing:
+    def __init__(self) -> None:
+        self.rows = []
+        self.index = None
+
+    def clear(self) -> None:
+        self.rows.clear()
+
+    def append(self, row) -> None:
+        self.rows.append(row)
 
 
-class _PickerHost(App):
-    def __init__(self, tags, current):
-        super().__init__()
-        self._tags = tags
-        self._current = current
-        self.result = "unset"
-
-    def compose(self) -> ComposeResult:
-        yield from ()
-
-    def on_mount(self) -> None:
-        # push_screen_wait requires an active worker (NoActiveWorker otherwise);
-        # mirrors the pattern used by the sibling ConversationAttachPicker test
-        # (Tests/UI/test_conversation_attach_picker.py).
-        self.run_worker(self._drive)
-
-    async def _drive(self) -> None:
-        self.result = await self.push_screen_wait(
-            TagFilterPicker(self._tags, self._current)
-        )
+def _picker(tags: list[str], current: str | None = None):
+    picker = TagFilterPicker(tags, current)
+    listing = _Listing()
+    picker.query_one = Mock(return_value=listing)
+    picker.dismiss = Mock()
+    return picker, listing
 
 
-def _select(listing: ListView, index: int) -> None:
-    """Highlight ``index`` then select it, mirroring an Enter keypress."""
+@pytest.mark.parametrize(
+    ("index", "expected"),
+    [(0, None), (1, "hero"), (2, "hero mage")],
+)
+def test_selected_row_returns_stored_value(index, expected):
+    picker, listing = _picker(["hero", "hero mage"])
+    picker._populate(picker._tags)
     listing.index = index
-    listing.action_select_cursor()
+    event = SimpleNamespace(stop=Mock())
+
+    picker._selected(event)
+
+    event.stop.assert_called_once_with()
+    picker.dismiss.assert_called_once_with(expected)
 
 
-async def test_all_row_clears_filter():
-    app = _PickerHost(["hero", "villain"], current="villain")
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        listing = app.screen.query_one("#tag-filter-list", ListView)
-        _select(listing, 0)  # "All (clear filter)"
-        await pilot.pause()
-    assert app.result is None
+def test_search_narrows_rows_and_preserves_exact_tag_mapping():
+    picker, listing = _picker(["alpha", "beta", "gamma"])
+    event = SimpleNamespace(value="beta", stop=Mock())
+
+    picker._filter(event)
+
+    event.stop.assert_called_once_with()
+    assert len(listing.rows) == 2
+    assert picker._row_tags == [None, "beta"]
 
 
-async def test_tag_row_returns_exact_tag_despite_ambiguous_prefix():
-    # "hero" is a text-prefix of "hero mage" - the recovered value must come
-    # from the stored row-index -> tag mapping, not from re-parsing/matching
-    # the rendered label, or picking one could resolve to the other.
-    tags = ["hero", "hero mage"]
+def test_escape_cancels_distinct_from_clear_filter():
+    picker, _listing = _picker(["hero"])
+    event = SimpleNamespace(key="escape", stop=Mock())
 
-    app = _PickerHost(tags, current=None)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        listing = app.screen.query_one("#tag-filter-list", ListView)
-        _select(listing, 1)  # row 0 = All, row 1 = "hero"
-        await pilot.pause()
-    assert app.result == "hero"
+    picker.on_key(event)
 
-    app2 = _PickerHost(tags, current=None)
-    async with app2.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        listing = app2.screen.query_one("#tag-filter-list", ListView)
-        _select(listing, 2)  # row 2 = "hero mage"
-        await pilot.pause()
-    assert app2.result == "hero mage"
-
-
-async def test_escape_cancels_distinct_from_clear_filter():
-    app = _PickerHost(["hero"], current=None)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        await pilot.press("escape")
-        await pilot.pause()
-    assert app.result is TagFilterPicker.CANCEL
-    assert app.result is not None  # cancel must never be mistaken for clear-filter
-
-
-async def test_search_narrows_rows_then_selects_correct_tag():
-    tags = ["alpha", "beta", "gamma"]
-    app = _PickerHost(tags, current=None)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        screen = app.screen
-        screen.query_one("#tag-filter-search", Input).value = "beta"
-        await pilot.pause()
-        listing = screen.query_one("#tag-filter-list", ListView)
-        # "All" + the single matching "beta" row - proves the filter rebuilt
-        # the row set (unfiltered would be 4 rows: All + alpha/beta/gamma).
-        assert len(listing) == 2
-        _select(listing, 1)
-        await pilot.pause()
-    assert app.result == "beta"
+    event.stop.assert_called_once_with()
+    picker.dismiss.assert_called_once_with(TagFilterPicker.CANCEL)
+    assert TagFilterPicker.CANCEL is not None

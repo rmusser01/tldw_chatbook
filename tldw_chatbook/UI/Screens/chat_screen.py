@@ -218,6 +218,7 @@ from ...Chat.local_server_discovery import (
     discover_local_servers,
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...Chat.console_message_actions import (
     ConsoleActionResult,
@@ -10162,7 +10163,8 @@ class ChatScreen(BaseAppScreen):
             self._provider_readiness_app_config(),
         )
         if provider_readiness.reason == "Missing API key":
-            return f"Provider setup needed: {provider} missing API key"
+            display_name = provider_display_name(provider_config_key(provider))
+            return f"Provider setup needed: {display_name} missing API key"
         return f"Provider setup needed: {settings_readiness.detail}"
 
     @staticmethod
@@ -10255,17 +10257,18 @@ class ChatScreen(BaseAppScreen):
             (settings.provider if settings is not None else None) or provider,
             self._provider_readiness_app_config(),
         )
+        display_name = provider_display_name(provider_config_key(provider))
         if provider_readiness.reason == "Missing API key":
             return (
                 CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
                 "settings",
-                f"Configure {provider} API and API key in Settings",
+                f"Configure {display_name} API and API key in Settings",
             )
         if settings_readiness.label == "Endpoint not saved":
             return (
                 "Configure endpoint",
                 "settings",
-                f"Save the {provider} endpoint in Settings",
+                f"Save the {display_name} endpoint in Settings",
             )
         return ("Review settings", "console", "Review this Console session's settings")
 

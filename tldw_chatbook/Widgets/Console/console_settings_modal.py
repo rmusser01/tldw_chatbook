@@ -52,6 +52,7 @@ MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
 MODEL_DISCOVER_BUTTON_LABEL = "Discover models"
 MODEL_DISCOVER_BUTTON_WIDTH = 19
+_NO_CONFIGURED_MODELS_VALUE = "__no_configured_models__"
 MODEL_DISCOVER_MISSING_URL_COPY = "Enter a base URL to discover models."
 MODEL_DISCOVER_INVALID_URL_COPY = (
     "Enter a valid http(s) endpoint URL to discover models."
@@ -253,11 +254,26 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
+        provider_values = {value for _, value in provider_options}
+        provider_value = (
+            self._settings.provider
+            if self._settings.provider in provider_values
+            else Select.NULL
+        )
         selected_model = self._model_for_provider(self._settings.provider)
         base_url = self._base_url_for_provider(self._settings.provider)
         uses_base_url = self._provider_uses_base_url(self._settings.provider)
         model_options = self._model_select_options(
             self._settings.provider, selected_model
+        )
+        model_select_options = model_options or [
+            ("No configured models", _NO_CONFIGURED_MODELS_VALUE)
+        ]
+        model_option_values = {value for _, value in model_options}
+        model_select_value = (
+            selected_model
+            if selected_model in model_option_values
+            else Select.NULL
         )
         has_model_options = bool(model_options)
         use_model_select = self._should_use_model_select(
@@ -310,17 +326,17 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield self._modal_label("Provider")
                         yield Select(
                             provider_options,
-                            value=self._settings.provider,
-                            allow_blank=False,
+                            value=provider_value,
+                            allow_blank=True,
                             id="console-settings-provider",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Model")
                         model_select = Select(
-                            model_options or [("No configured models", "")],
-                            value=selected_model or "",
-                            allow_blank=False,
+                            model_select_options,
+                            value=model_select_value,
+                            allow_blank=True,
                             id="console-settings-model-select",
                             disabled=not use_model_select,
                             classes="console-settings-control",
@@ -822,7 +838,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _provider_changed(self, event: Select.Changed) -> None:
         self._store_current_model_for_provider(self._active_provider)
         self._store_current_base_url_for_provider(self._active_provider)
-        provider = str(event.value or "")
+        provider = self._select_value_text(event.value)
         model = self._model_for_provider(provider)
         base_url = self._base_url_for_provider(provider)
         self._active_provider = provider
@@ -853,7 +869,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _model_discover_pressed(self, event: Button.Pressed) -> None:
         """Probe the current base-URL draft for its served model list."""
         event.stop()
-        provider = str(self.query_one("#console-settings-provider", Select).value or "")
+        provider = self._select_value_text(
+            self.query_one("#console-settings-provider", Select).value
+        )
         if not self._provider_supports_model_discovery(provider):
             return
         base_url = self._current_base_url_value(provider) or ""
@@ -976,7 +994,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             section.remove_class("console-settings-primary-section")
 
     def _build_draft(self) -> ConsoleSessionSettings:
-        provider = str(self.query_one("#console-settings-provider", Select).value or "")
+        provider = self._select_value_text(
+            self.query_one("#console-settings-provider", Select).value
+        )
         return ConsoleSessionSettings(
             provider=provider,
             model=self._current_model_value(),
@@ -1043,8 +1063,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             return
 
         fallback = current_model or ""
-        model_select.set_options([("No configured models", "")])
-        model_select.value = ""
+        model_select.set_options(
+            [("No configured models", _NO_CONFIGURED_MODELS_VALUE)]
+        )
+        model_select.value = Select.NULL
         model_select.disabled = True
         model_select.display = False
         model_input.value = fallback
@@ -1066,8 +1088,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 model_input.focus()
                 self._sync_readiness_display()
                 return
-            provider = str(
-                self.query_one("#console-settings-provider", Select).value or ""
+            provider = self._select_value_text(
+                self.query_one("#console-settings-provider", Select).value
             )
             current_model = normalize_console_model_value(model_input.value)
             self._sync_model_controls(provider, current_model)
@@ -1078,7 +1100,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 model_custom.focus()
             return
 
-        model_input.value = normalize_console_model_value(model_select.value) or ""
+        model_input.value = (
+            normalize_console_model_value(
+                self._select_value_text(model_select.value)
+            )
+            or ""
+        )
         model_select.display = False
         model_select.disabled = True
         model_input.display = True
@@ -1117,9 +1144,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                     self._settings.provider,
                 )
             )
-        return options or [
-            (provider_display_name(self._settings.provider), self._settings.provider)
-        ]
+        return options
 
     def _model_select_options(
         self, provider: str, current_model: str | None
@@ -1369,8 +1394,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
         if model_select.display and not model_select.disabled:
-            return normalize_console_model_value(model_select.value)
+            return normalize_console_model_value(
+                self._select_value_text(model_select.value)
+            )
         return normalize_console_model_value(model_input.value)
+
+    @staticmethod
+    def _select_value_text(value: object) -> str:
+        """Normalize Textual's blank-select sentinel without stringifying it."""
+        return "" if value is Select.NULL or value is None else str(value)
 
     def _context_label(self) -> str:
         label = self._context_estimate.label.strip() or "unknown"

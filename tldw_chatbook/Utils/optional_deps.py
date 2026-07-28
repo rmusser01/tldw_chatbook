@@ -590,6 +590,36 @@ def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bo
         return False
 
 
+def _check_dependency_installed(
+    module_name: str, feature_name: Optional[str] = None
+) -> bool:
+    """Record whether a dependency is installed without importing it.
+
+    This probe is reserved for native runtimes whose import can initialize
+    hardware or abort the interpreter. Actual feature use must still import the
+    dependency through :func:`require_dependency`.
+
+    Args:
+        module_name: Top-level module name to locate.
+        feature_name: Optional registry key; defaults to ``module_name``.
+
+    Returns:
+        True when Python can resolve the module without importing it.
+    """
+    dependency_key = feature_name or module_name
+    try:
+        available = importlib.util.find_spec(module_name) is not None
+    except Exception as exc:
+        logger.debug(
+            f"Module-spec probe failed for {module_name}; "
+            f"feature '{dependency_key}' will be disabled. Reason: {exc}"
+        )
+        available = False
+
+    DEPENDENCIES_AVAILABLE[dependency_key] = available
+    return available
+
+
 # SVG rendering (cairosvg) — checked lazily, cached after the first call.
 _svg_rendering_available: Optional[bool] = None
 
@@ -932,17 +962,20 @@ def check_audio_processing_deps() -> bool:
     # Check transcription deps
     faster_whisper_available = check_dependency("faster_whisper")
 
-    # Check lightning-whisper-mlx (macOS only)
+    # Probe native MLX backends without importing them. Importing these modules
+    # can initialize Metal and abort a headless process before Python can catch
+    # an exception; the feature-specific runtime loader performs the real import.
     lightning_whisper_available = False
     if sys.platform == "darwin":
-        lightning_whisper_available = check_dependency("lightning_whisper_mlx")
+        lightning_whisper_available = _check_dependency_installed(
+            "lightning_whisper_mlx"
+        )
     else:
         DEPENDENCIES_AVAILABLE["lightning_whisper_mlx"] = False
 
-    # Check parakeet-mlx (macOS only)
     parakeet_mlx_available = False
     if sys.platform == "darwin":
-        parakeet_mlx_available = check_dependency("parakeet_mlx")
+        parakeet_mlx_available = _check_dependency_installed("parakeet_mlx")
     else:
         DEPENDENCIES_AVAILABLE["parakeet_mlx"] = False
 

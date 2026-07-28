@@ -182,7 +182,7 @@ def test_reading_legacy_blanks_does_not_mutate_input_or_write_disk(
         "save_settings_to_cli_config",
         "save_setting_to_cli_config",
         "delete_settings_from_cli_config",
-        "atomic_write_text",
+        "atomic_private_write_text",
     ):
         monkeypatch.setattr(
             config_module,

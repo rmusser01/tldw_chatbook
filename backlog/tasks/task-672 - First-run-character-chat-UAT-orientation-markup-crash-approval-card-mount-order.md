@@ -1,6 +1,25 @@
-# task-635 - First-run character-chat UAT: orientation markup crash + approval-card mount order
+---
+id: TASK-672
+title: >-
+  First-run character-chat UAT orientation markup crash and approval-card
+  mount order
+status: Done
+assignee: []
+created_date: '2026-07-25 16:13'
+updated_date: '2026-07-25 21:54'
+labels:
+  - testing
+  - ui
+  - bug
+dependencies: []
+priority: high
+---
 
-## Description (the why)
+# task-672 - First-run character-chat UAT: orientation markup crash + approval-card mount order
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
 
 A headless UAT of the first-time user journey (boot → import a SillyTavern
 character card → Start Chat → send a message) was needed to prove the
@@ -18,7 +37,11 @@ The UAT surfaced two crash-class bugs that hit first-time users specifically:
    composed children attached, raising `NoMatches` on Console mount — a latent
    crash on any approval-card mount.
 
-## Acceptance Criteria (the what)
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+
+<!-- AC:BEGIN -->
 
 - [x] A first-time user can import a SillyTavern PNG character card, start a
   chat, send a message, and see the reply, with the conversation persisted —
@@ -32,7 +55,11 @@ The UAT surfaced two crash-class bugs that hit first-time users specifically:
   timing.
 - [x] Previously failing `test_chat_approvals_and_resume.py` tests pass.
 
-## Implementation Plan (the how)
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
 
 ADR required: no
 ADR path: N/A
@@ -52,7 +79,11 @@ cross-module contract changes; the user-facing copy is deliberately unchanged.
 4. Add focused markup regression tests; confirm the two red
    approval-and-resume tests go green.
 
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
 
 - **Markup crash fix** (`tldw_chatbook/UI/Chat_Window_Enhanced.py`): the
   orientation text is the only markup-rendering consumer of
@@ -112,3 +143,5 @@ cross-module contract changes; the user-facing copy is deliberately unchanged.
   module no longer exists). What survives on the rebased branch: the
   `ChatApprovalCard` mount-order fix (live Console code), the first-run
   character-chat UAT, and the stacked task-109 character-card import fixes.
+
+<!-- SECTION:NOTES:END -->

@@ -411,8 +411,11 @@ async def test_never_run_bench_renders_unpreflighted_state(evals_app, never_run_
         assert "Blocked" not in text
         assert "Unavailable" not in text
 
-        # No recovery callout is warranted for "we haven't checked yet".
-        assert not screen.query(".ds-recovery-callout")
+        # No target-readiness recovery callout is warranted for "we haven't
+        # checked yet". The separate primary-action callout remains visible
+        # because Run is deliberately disabled until execution is wired.
+        assert not screen.query("#evals-inspector-target-callout-0")
+        assert screen.query_one("#evals-primary-action-reason")
 
 
 @pytest.mark.asyncio
@@ -744,7 +747,7 @@ async def test_bench_with_duplicate_target_id_composes_without_raising(
             assert row.region.height > 0
 
         inspector_pane = screen.query_one("#evals-inspector-pane")
-        readiness_rows = inspector_pane.query(".ds-status-badge")
+        readiness_rows = inspector_pane.query(".evals-status-unchecked")
         assert len(readiness_rows) == 2, "both duplicate-id readiness rows should compose"
         for row in readiness_rows:
             assert row.region.width > 0

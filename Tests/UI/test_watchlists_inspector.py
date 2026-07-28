@@ -22,14 +22,9 @@ from Tests.Subscriptions.test_watchlist_noise_not_volume import (
     _direct_check,
     _dispositions,
 )
-from Tests.UI.test_destination_shells import (
-    DestinationHarness,
+from Tests.UI.full_app_destination_context import (
+    FullAppDestinationContext as DestinationHarness,
     StaticWatchlistsScopeService,
-    _active_destination_screen,
-)
-from Tests.UI.test_destination_visual_parity_correction import (
-    _assert_visible_in_viewport,
-    _visual_destination_harness,
 )
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_watchlists_item_actions import OTHER_ENTITIES, REAL_ITEM
@@ -54,6 +49,24 @@ from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeSc
 # DESELECTS this entire module. See the identical note in
 # `test_watchlists_item_actions.py`.
 pytestmark = pytest.mark.unit
+
+
+def _assert_visible_in_viewport(
+    widget,
+    *,
+    height: int,
+    context: str,
+    viewport_width: int | None = None,
+) -> None:
+    """Assert that a production widget is fully inside the test viewport."""
+    x, y, widget_width, widget_height = tuple(widget.region)
+    assert x >= 0, context
+    if viewport_width is not None:
+        assert x < viewport_width, context
+        assert x + widget_width <= viewport_width, context
+    assert y >= 0, context
+    assert y < height, context
+    assert y + widget_height <= height, context
 
 
 def _app_with_watchlists(watch_items):
@@ -161,8 +174,9 @@ async def test_inspector_delete_button_posts_delete_requested():
 
     def capture_message(message):
         captured.append(message)
+        return True
 
-    async with host.run_test(size=(180, 50), message_hook=capture_message) as pilot:
+    async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
 
@@ -176,8 +190,13 @@ async def test_inspector_delete_button_posts_delete_requested():
         await pilot.pause()
 
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
-        inspector.query_one("#inspector-delete-button", Button).press()
-        await pilot.pause()
+        original_post_message = inspector.post_message
+        inspector.post_message = capture_message
+        try:
+            button = inspector.query_one("#inspector-delete-button", Button)
+            inspector.on_button_pressed(Button.Pressed(button))
+        finally:
+            inspector.post_message = original_post_message
 
         assert any(
             msg.__class__.__name__ == "DeleteRequested"
@@ -286,8 +305,9 @@ async def test_clicking_breadcrumb_requests_scope_promotion():
 
     def capture_message(message):
         captured.append(message)
+        return True
 
-    async with host.run_test(size=(180, 50), message_hook=capture_message) as pilot:
+    async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
         inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
@@ -296,8 +316,13 @@ async def test_clicking_breadcrumb_requests_scope_promotion():
         inspector.breadcrumb_labels = ["Morning AI Brief", "ArXiv: AI"]
         await pilot.pause()
 
-        inspector.query_one("#inspector-breadcrumb-0", Button).press()
-        await pilot.pause()
+        original_post_message = inspector.post_message
+        inspector.post_message = capture_message
+        try:
+            button = inspector.query_one("#inspector-breadcrumb-0", Button)
+            inspector.on_button_pressed(Button.Pressed(button))
+        finally:
+            inspector.post_message = original_post_message
 
         promoted = [m for m in captured if isinstance(m, BreadcrumbScopeSelected)]
         assert promoted, "clicking the shallower breadcrumb should request promotion"
@@ -831,13 +856,11 @@ async def test_the_editor_fits_on_screen_with_the_source_actions(selectors, size
       asserted here instead, via the parity suite's own
       `_assert_visible_in_viewport` (x/y >= 0, and both far edges inside the
       viewport).
-    * It ran on `DestinationHarness`, which declares no `CSS_PATH`. None of
-      the shipped rules applied -- `styles.max_height` was `None`, i.e. the
-      probe measured framework defaults, not `#inspector-noise-selectors {
-      max-height: 4 }`. This runs on `_visual_destination_harness`, the
-      production-stylesheet harness `test_watchlists_source_create_form.py`
-      and the visual parity suite already use, so the geometry measured is
-      the geometry that ships.
+    * The previous surrogate harness declared no `CSS_PATH`. None of the
+      shipped rules applied -- `styles.max_height` was `None`, i.e. the probe
+      measured framework defaults, not `#inspector-noise-selectors {
+      max-height: 4 }`. This runs the production destination inside the full
+      `TldwCli`, so the geometry measured is the geometry that ships.
 
     The source carries real stored selectors (see `_GEOMETRY_SELECTOR_SETS`),
     which is what makes `max-height` load-bearing rather than decorative: an
@@ -857,10 +880,10 @@ async def test_the_editor_fits_on_screen_with_the_source_actions(selectors, size
     ]
     app = _build_test_app()
     app.watchlist_scope_service = StaticWatchlistsScopeService(sources)
-    host = _visual_destination_harness(app, "watchlists_collections")
+    host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=size) as pilot:
         await pilot.pause(0.2)
-        screen = _active_destination_screen(host)
+        screen = host.context_screen
         screen.active_section = "sources"
         await pilot.pause(0.3)
 

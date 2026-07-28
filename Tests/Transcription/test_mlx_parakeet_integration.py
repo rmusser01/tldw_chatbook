@@ -346,8 +346,10 @@ class TestMLXParakeetIntegration:
         assert "precision" in result
         assert result["precision"] == precision
 
-    def test_empty_audio(self, transcription_service, mock_model_download):
-        """Test handling of empty audio files."""
+    def test_empty_audio_returns_zero_length_addressable_segment(
+        self, transcription_service, mock_model_download
+    ):
+        """Empty Parakeet results retain one addressable zero-length span."""
         # Create empty WAV file
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
             with wave.open(tmp_file.name, "wb") as wav_file:
@@ -381,7 +383,16 @@ class TestMLXParakeetIntegration:
             # Should handle gracefully
             assert "text" in result
             assert result["text"] == ""
-            assert len(result["segments"]) == 0
+            assert result["segments"] == [
+                {
+                    "start": 0.0,
+                    "end": 0.0,
+                    "text": "",
+                    "Time_Start": 0.0,
+                    "Time_End": 0.0,
+                    "Text": "",
+                }
+            ]
         finally:
             os.unlink(empty_file)
 

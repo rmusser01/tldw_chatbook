@@ -2406,9 +2406,9 @@ class _LegacyTranscriptionBackend:
             logger.error("[PARAKEET] parakeet-mlx is not installed or not available")
             raise TranscriptionError("parakeet-mlx is not installed")
 
-        if sf is None and not SOUNDFILE_AVAILABLE and not os.path.exists(audio_path):
+        if not os.path.exists(audio_path):
             raise TranscriptionError(
-                f"Parakeet MLX transcription failed: Audio file not found: {audio_path}"
+                "Parakeet MLX transcription failed: Audio file not found"
             )
 
         # Use configured settings or provided parameters

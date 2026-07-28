@@ -261,6 +261,41 @@ def test_embeddings_lib_graceful_failure(monkeypatch):
     assert "pip install" in str(exc_info.value)
 
 
+def test_audio_dependency_inventory_does_not_import_native_mlx_backends(monkeypatch):
+    """Eager inventory must not initialize native MLX runtimes."""
+    from tldw_chatbook.Utils import optional_deps
+
+    checked_dependencies: list[str] = []
+
+    def fake_check_dependency(
+        module_name: str, feature_name: str | None = None
+    ) -> bool:
+        checked_dependencies.append(module_name)
+        return True
+
+    probed_dependencies: list[str] = []
+
+    def fake_find_spec(module_name: str):
+        probed_dependencies.append(module_name)
+        return object() if module_name == "parakeet_mlx" else None
+
+    dependency_registry = dict(optional_deps.DEPENDENCIES_AVAILABLE)
+    monkeypatch.setattr(optional_deps.sys, "platform", "darwin")
+    monkeypatch.setattr(optional_deps, "check_dependency", fake_check_dependency)
+    monkeypatch.setattr(optional_deps.importlib.util, "find_spec", fake_find_spec)
+    monkeypatch.setattr(
+        optional_deps, "DEPENDENCIES_AVAILABLE", dependency_registry
+    )
+
+    assert optional_deps.check_audio_processing_deps() is True
+
+    assert "parakeet_mlx" not in checked_dependencies
+    assert "lightning_whisper_mlx" not in checked_dependencies
+    assert probed_dependencies == ["lightning_whisper_mlx", "parakeet_mlx"]
+    assert dependency_registry["parakeet_mlx"] is True
+    assert dependency_registry["lightning_whisper_mlx"] is False
+
+
 def test_pdf_processing_deps():
     """Test PDF processing dependency checking."""
     from tldw_chatbook.Utils.optional_deps import (

@@ -10,6 +10,7 @@ sections either, so the provider was unusable from configuration entirely.
 import pytest
 
 from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+from tldw_chatbook.config import RuntimeConfigSnapshot
 
 
 @pytest.fixture
@@ -32,16 +33,23 @@ def captured_call(monkeypatch):
     return seen
 
 
-def _settings_with(api_settings_block):
-    return {"api_settings": {"local-llm": api_settings_block}}
+def _set_runtime_config(monkeypatch, api_settings_block):
+    snapshot = RuntimeConfigSnapshot(
+        generation=0,
+        values={"api_settings": {"local-llm": api_settings_block}},
+    )
+    monkeypatch.setattr(
+        local_calls,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+    )
 
 
 def test_resolves_api_url_from_api_settings(monkeypatch, captured_call):
     """The documented location must work."""
-    monkeypatch.setattr(
-        local_calls,
-        "settings",
-        _settings_with({"api_url": "http://127.0.0.1:9099/v1/chat/completions"}),
+    _set_runtime_config(
+        monkeypatch,
+        {"api_url": "http://127.0.0.1:9099/v1/chat/completions"},
     )
     local_calls.chat_with_local_llm(
         input_data=[{"role": "user", "content": "hi"}],
@@ -53,10 +61,9 @@ def test_resolves_api_url_from_api_settings(monkeypatch, captured_call):
 
 def test_legacy_api_ip_key_still_accepted(monkeypatch, captured_call):
     """`api_ip` is what the code historically read; don't break anyone on it."""
-    monkeypatch.setattr(
-        local_calls,
-        "settings",
-        _settings_with({"api_ip": "http://127.0.0.1:9099/v1/chat/completions"}),
+    _set_runtime_config(
+        monkeypatch,
+        {"api_ip": "http://127.0.0.1:9099/v1/chat/completions"},
     )
     local_calls.chat_with_local_llm(
         input_data=[{"role": "user", "content": "hi"}],
@@ -67,15 +74,12 @@ def test_legacy_api_ip_key_still_accepted(monkeypatch, captured_call):
 
 
 def test_documented_key_wins_over_legacy(monkeypatch, captured_call):
-    monkeypatch.setattr(
-        local_calls,
-        "settings",
-        _settings_with(
-            {
-                "api_url": "http://documented:9099/v1/chat/completions",
-                "api_ip": "http://legacy:9099/v1/chat/completions",
-            }
-        ),
+    _set_runtime_config(
+        monkeypatch,
+        {
+            "api_url": "http://documented:9099/v1/chat/completions",
+            "api_ip": "http://legacy:9099/v1/chat/completions",
+        },
     )
     local_calls.chat_with_local_llm(
         input_data=[{"role": "user", "content": "hi"}],
@@ -85,7 +89,7 @@ def test_documented_key_wins_over_legacy(monkeypatch, captured_call):
 
 def test_missing_url_still_raises_a_clear_configuration_error(monkeypatch):
     """A genuinely absent URL must stay a config error, not an opaque 502."""
-    monkeypatch.setattr(local_calls, "settings", _settings_with({}))
+    _set_runtime_config(monkeypatch, {})
     with pytest.raises(Exception) as excinfo:
         local_calls.chat_with_local_llm(
             input_data=[{"role": "user", "content": "hi"}],

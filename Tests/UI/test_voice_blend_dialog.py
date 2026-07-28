@@ -1,133 +1,140 @@
-"""Test voice blend dialog functionality"""
+"""Direct function tests for voice-blend dialog behavior."""
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.app import App
-from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog, VoiceBlendEntry
+
+from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 
 
-class VoiceBlendDialogApp(App):
-    """Test app for voice blend dialog"""
-
-    def compose(self):
-        yield VoiceBlendDialog()
-
-
-async def _type_into_widget(pilot, widget, text: str, *, clear: bool = False) -> None:
-    """Focus a text input widget and enter text using the current Pilot API."""
-    widget.focus()
-    await pilot.pause()
-
-    if clear and hasattr(widget, "clear"):
-        widget.clear()
-        await pilot.pause()
-
-    await pilot.press(*text)
-    await pilot.pause()
+def _voice_entry(index: int, voice: str, weight: str):
+    fields = {
+        f"#voice-select-{index}": SimpleNamespace(value=voice),
+        f"#weight-input-{index}": SimpleNamespace(value=weight),
+    }
+    return SimpleNamespace(
+        index=index,
+        query_one=Mock(side_effect=lambda selector, *_args: fields[selector]),
+    )
 
 
-@pytest.mark.asyncio
-async def test_voice_blend_dialog_create():
-    """Test creating a new voice blend"""
-    app = VoiceBlendDialogApp()
-    async with app.run_test():
-        # Get the dialog
-        dialog = app.query_one(VoiceBlendDialog)
-        captured = {}
-
-        # Fill in the form
-        name_input = dialog.query_one("#blend-name-input")
-        name_input.value = "My Test Blend"
-
-        desc_input = dialog.query_one("#blend-description-input")
-        desc_input.value = "A test voice blend"
-
-        # Set voice and weight
-        voice_select = dialog.query_one("#voice-select-0")
-        voice_select.value = "af_bella"
-
-        weight_input = dialog.query_one("#weight-input-0")
-        weight_input.value = "1.0"
-
-        dialog.dismiss = lambda result: captured.setdefault("result", result)
-        dialog.save_blend()
-
-        assert captured["result"]["name"] == "My Test Blend"
-        assert captured["result"]["description"] == "A test voice blend"
-        assert captured["result"]["voices"] == [("af_bella", 1.0)]
+def _dialog_like(*, name="", description="", entries=()):
+    fields = {
+        "#blend-name-input": SimpleNamespace(value=name),
+        "#blend-description-input": SimpleNamespace(value=description),
+    }
+    return SimpleNamespace(
+        query_one=Mock(side_effect=lambda selector, *_args: fields[selector]),
+        voice_entries=list(entries),
+        app=SimpleNamespace(notify=Mock()),
+        dismiss=Mock(),
+    )
 
 
-@pytest.mark.asyncio
-async def test_voice_blend_dialog_multiple_voices():
-    """Test creating a blend with multiple voices"""
-    app = VoiceBlendDialogApp()
-    async with app.run_test() as pilot:
-        dialog = app.query_one(VoiceBlendDialog)
+def test_voice_blend_dialog_create_normalizes_result():
+    dialog = _dialog_like(
+        name="My Test Blend",
+        description="A test voice blend",
+        entries=(_voice_entry(0, "af_bella", "1.0"),),
+    )
 
-        # Add another voice
-        await dialog.add_voice_entry()
-        await pilot.pause()
+    VoiceBlendDialog.save_blend(dialog)
 
-        # Should now have 2 voice entries
-        entries = dialog.query(VoiceBlendEntry)
-        assert len(entries) == 2
-
-        # Set second voice
-        voice_select_1 = dialog.query_one("#voice-select-1")
-        voice_select_1.value = "am_michael"
-
-        weight_input_1 = dialog.query_one("#weight-input-1")
-        await _type_into_widget(pilot, weight_input_1, "0.5", clear=True)
+    dialog.dismiss.assert_called_once_with(
+        {
+            "name": "My Test Blend",
+            "description": "A test voice blend",
+            "voices": [("af_bella", 1.0)],
+            "metadata": {"created_by": "TUI", "normalized": True},
+        }
+    )
 
 
-@pytest.mark.asyncio
-async def test_voice_blend_dialog_remove_voice():
-    """Test removing a voice entry"""
-    app = VoiceBlendDialogApp()
-    async with app.run_test() as pilot:
-        dialog = app.query_one(VoiceBlendDialog)
+def test_voice_blend_dialog_normalizes_multiple_voice_weights():
+    dialog = _dialog_like(
+        name="Pair",
+        entries=(
+            _voice_entry(0, "af_bella", "1.5"),
+            _voice_entry(1, "am_michael", "0.5"),
+        ),
+    )
 
-        # Add two more voices
-        await dialog.add_voice_entry()
-        await dialog.add_voice_entry()
-        await pilot.pause()
+    VoiceBlendDialog.save_blend(dialog)
 
-        # Should have 3 entries
-        entries = dialog.query(VoiceBlendEntry)
-        assert len(entries) == 3
+    result = dialog.dismiss.call_args.args[0]
+    assert result["voices"] == [("af_bella", 0.75), ("am_michael", 0.25)]
 
-        # Remove the middle one
-        await dialog.on_voice_blend_entry_removed(VoiceBlendEntry.Removed(entries[1]))
-        await pilot.pause()
 
-        # Should have 2 entries now
-        entries = dialog.query(VoiceBlendEntry)
-        assert len(entries) == 2
+@pytest.mark.parametrize(
+    ("name", "weight", "message"),
+    [
+        ("", "1.0", "Blend name is required"),
+        ("Blend", "invalid", "Invalid weight value"),
+        ("Blend", "0", "All weights must be positive"),
+    ],
+)
+def test_voice_blend_dialog_validation(name, weight, message):
+    dialog = _dialog_like(
+        name=name,
+        entries=(_voice_entry(0, "af_bella", weight),),
+    )
+
+    VoiceBlendDialog.save_blend(dialog)
+
+    dialog.dismiss.assert_not_called()
+    dialog.app.notify.assert_called_once_with(message, severity="error")
 
 
 @pytest.mark.asyncio
-async def test_voice_blend_dialog_cancel():
-    """Test canceling the dialog"""
-    app = VoiceBlendDialogApp()
-    async with app.run_test() as pilot:
-        dialog = app.query_one(VoiceBlendDialog)
+async def test_add_voice_entry_tracks_and_mounts_real_entry():
+    voice_list = SimpleNamespace(mount=AsyncMock())
+    dialog = SimpleNamespace(
+        voice_entries=[],
+        next_index=0,
+        query_one=Mock(return_value=voice_list),
+    )
 
-        # Click cancel
-        cancel_btn = dialog.query_one("#cancel-btn")
-        await pilot.click(cancel_btn)
+    await VoiceBlendDialog.add_voice_entry(dialog, "am_michael", 0.5)
 
-        # Dialog should be dismissed with None result
+    assert len(dialog.voice_entries) == 1
+    assert dialog.voice_entries[0].initial_voice == "am_michael"
+    assert dialog.voice_entries[0].initial_weight == 0.5
+    assert dialog.next_index == 1
+    voice_list.mount.assert_awaited_once_with(dialog.voice_entries[0])
 
 
 @pytest.mark.asyncio
-async def test_voice_blend_dialog_validation():
-    """Test validation of blend name"""
-    app = VoiceBlendDialogApp()
-    async with app.run_test() as pilot:
-        dialog = app.query_one(VoiceBlendDialog)
+async def test_remove_voice_entry_keeps_at_least_one():
+    first = SimpleNamespace(remove=AsyncMock())
+    second = SimpleNamespace(remove=AsyncMock())
+    dialog = SimpleNamespace(voice_entries=[first, second])
 
-        # Try to save without a name
-        save_btn = dialog.query_one("#save-btn")
-        await pilot.click(save_btn)
+    await VoiceBlendDialog.on_voice_blend_entry_removed(
+        dialog,
+        SimpleNamespace(entry=first),
+    )
+    await VoiceBlendDialog.on_voice_blend_entry_removed(
+        dialog,
+        SimpleNamespace(entry=second),
+    )
 
-        # Should show error notification
-        # (In actual app, we'd check for the notification)
+    assert dialog.voice_entries == [second]
+    first.remove.assert_awaited_once_with()
+    second.remove.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancel_button_dismisses_without_result():
+    dialog = SimpleNamespace(
+        add_voice_entry=AsyncMock(),
+        save_blend=Mock(),
+        dismiss=Mock(),
+    )
+
+    await VoiceBlendDialog.on_button_pressed(
+        dialog,
+        SimpleNamespace(button=SimpleNamespace(id="cancel-btn")),
+    )
+
+    dialog.dismiss.assert_called_once_with(None)

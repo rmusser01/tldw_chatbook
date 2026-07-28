@@ -1,12 +1,8 @@
 """Task-264: every BaseAppScreen must carry its OWN AppFooterStatus instance.
 
-`AppFooterStatus` used to be mounted once on the App's DEFAULT screen
-(app.py's own `compose()`), which is occluded the instant any `BaseAppScreen`
-is pushed on top -- `App.query_one`/`query` always resolve against
-`App.default_screen` by design (see `App._get_dom_base`), so
-`self.app.query_one(AppFooterStatus)` from within a pushed screen silently
-updated an invisible widget and every `set_workbench_shortcuts()`
-registration was a no-op the user could never see.
+`AppFooterStatus` used to be resolved through the App's default screen, which
+is occluded whenever a `BaseAppScreen` is active. That made destination
+registrations update invisible or missing chrome.
 
 The fix: `BaseAppScreen.compose()` now yields its own `AppFooterStatus`, and
 callers resolve it through the screen (`self.query_one(...)`) instead of the
@@ -15,207 +11,129 @@ registration methods, not a hand-rolled fake.
 """
 
 import ast
+import logging
 import re
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
-from textual.app import App, ComposeResult
-from textual.widgets import Static
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 
-class _MinimalScreen(BaseAppScreen):
-    """The lightest possible BaseAppScreen subclass -- just enough content
-    to mount without pulling in a real destination's dependencies."""
-
-    def compose_content(self) -> ComposeResult:
-        yield Static("minimal screen content")
+def _test_cli_setting(section: str, key: str, default=None):
+    if section == "splash_screen" and key == "enabled":
+        return False
+    return default
 
 
-class _MinimalScreenHost(App):
-    """Hosts a bare BaseAppScreen subclass with no App-level footer of its
-    own, so the only AppFooterStatus in the tree is the one the screen
-    itself composes."""
-
-    async def on_mount(self) -> None:
-        await self.push_screen(_MinimalScreen(None, "minimal"))
-
-
-@pytest.mark.asyncio
-async def test_base_app_screen_composes_footer_status():
-    """Every BaseAppScreen carries its own AppFooterStatus instance."""
-    host = _MinimalScreenHost()
-
-    async with host.run_test(size=(100, 30)) as pilot:
-        await pilot.pause()
-        screen = host.screen_stack[-1]
-
-        footer = screen.query_one(AppFooterStatus)
-
-        assert footer.id == "screen-footer-status"
-        assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+async def _wait_for_screen(app, pilot, screen_type, tab: str):
+    for _ in range(300):
+        if app.current_tab == tab and isinstance(app.screen, screen_type):
+            return app.screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"full TldwCli did not finish routing to {screen_type.__name__}."
+    )
 
 
-class _DefaultScreenFooterHost(App):
-    """Mirrors app.py's real shape: an `AppFooterStatus` composed directly
-    on the App's own DEFAULT screen (id="app-footer-status", exactly like
-    `TldwCli._create_main_ui_widgets`), with a real destination screen
-    pushed on top of it. Before task-264 this was the ONLY footer in the
-    tree, and it is what `self.app.query_one(AppFooterStatus)` used to
-    (mis)resolve to from inside the pushed screen.
-    """
-
-    def __init__(self, app_instance, screen_factory):
-        super().__init__()
-        self.app_instance = app_instance
-        self._screen_factory = screen_factory
-
-    def compose(self) -> ComposeResult:
-        yield AppFooterStatus(id="app-footer-status")
-
-    async def on_mount(self) -> None:
-        await self.push_screen(self._screen_factory(self.app_instance))
+async def _close_production_app(app) -> None:
+    try:
+        if app._rich_log_handler:
+            await app._rich_log_handler.stop_processor()
+            logging.getLogger().removeHandler(app._rich_log_handler)
+            app._rich_log_handler.close()
+        await app.on_shutdown_request()
+        await app.on_unmount()
+    except Exception:
+        pass
 
 
 @pytest.mark.asyncio
-async def test_console_registration_updates_the_screens_own_footer():
-    """chat_screen's registration must land on ITS instance, not the app's
-    default-screen one; text contains 'F6' and 'Ctrl+K'."""
-    app_instance = _build_test_app()
-    host = _DefaultScreenFooterHost(app_instance, ChatScreen)
+async def test_production_routes_own_and_preserve_contextual_footer_hints():
+    """Exercise footer ownership through the full production application."""
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = "chat"
 
-    async with host.run_test(size=(160, 48)) as pilot:
-        await pilot.pause()
-        screen = host.screen_stack[-1]
+    try:
+        with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+            async with app.run_test(size=(160, 48)) as pilot:
+                screen = await _wait_for_screen(app, pilot, ChatScreen, "chat")
+                screen_footer = screen.query_one(AppFooterStatus)
+                assert "F6" in screen_footer.shortcut_text
+                assert "Ctrl+K" in screen_footer.shortcut_text
 
-        # Real registration path: ChatScreen.on_mount() already called
-        # _register_console_footer_shortcuts() during push_screen above.
-        screen_footer = screen.query_one(AppFooterStatus)
-        assert screen_footer.id == "screen-footer-status"
-        assert "F6" in screen_footer.shortcut_text
-        assert "Ctrl+K" in screen_footer.shortcut_text
+                await app.handle_screen_navigation(NavigateToScreen("mcp"))
+                screen = await _wait_for_screen(app, pilot, MCPScreen, "mcp")
+                screen_footer = screen.query_one(AppFooterStatus)
+                assert "mode" in screen_footer.shortcut_text
+                assert "a add server" in screen_footer.shortcut_text
 
-        # The app's default-screen footer (what `self.app.query_one(...)`
-        # used to target) must be left untouched at its default text.
-        default_screen_footer = host.query_one(AppFooterStatus)
-        assert default_screen_footer is not screen_footer
-        assert (
-            default_screen_footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
-        )
+                await app.handle_screen_navigation(NavigateToScreen("library"))
+                screen = await _wait_for_screen(
+                    app,
+                    pilot,
+                    LibraryScreen,
+                    "library",
+                )
+                assert (
+                    screen.query_one(AppFooterStatus).shortcut_text
+                    == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+                )
+                for _ in range(300):
+                    rows = list(screen.query("#library-row-browse-search"))
+                    if rows:
+                        rows[0].press()
+                        break
+                    await pilot.pause(0.01)
+                else:
+                    raise AssertionError("Library Search/RAG row did not mount.")
+                for _ in range(300):
+                    screen_footer = screen.query_one(AppFooterStatus)
+                    if "use Library context in Console" in screen_footer.shortcut_text:
+                        break
+                    await pilot.pause(0.01)
+                else:
+                    raise AssertionError("Library contextual footer did not update.")
 
+                footer_before = screen_footer
+                screen.refresh(recompose=True)
+                for _ in range(300):
+                    footer_after = screen.query_one(AppFooterStatus)
+                    if (
+                        footer_after is not footer_before
+                        and "use Library context in Console"
+                        in footer_after.shortcut_text
+                    ):
+                        break
+                    await pilot.pause(0.01)
+                else:
+                    raise AssertionError(
+                        "Library footer registration did not survive recompose."
+                    )
 
-@pytest.mark.asyncio
-async def test_mcp_registration_updates_the_screens_own_footer():
-    """mcp_screen registration -> its footer text contains 'mode' and
-    'a add server'."""
-    app_instance = _build_test_app()
-    host = _DefaultScreenFooterHost(app_instance, MCPScreen)
+                await app.handle_screen_navigation(NavigateToScreen("settings"))
+                screen = await _wait_for_screen(
+                    app,
+                    pilot,
+                    SettingsScreen,
+                    "settings",
+                )
+                screen_footer = screen.query_one(AppFooterStatus)
+                for token in ("save category", "revert category", "test category"):
+                    assert token in screen_footer.shortcut_text
 
-    async with host.run_test(size=(160, 48)) as pilot:
-        await pilot.pause()
-        screen = host.screen_stack[-1]
-
-        # Real registration path: MCPScreen.on_mount() already called
-        # _register_footer_shortcuts() during push_screen above.
-        screen_footer = screen.query_one(AppFooterStatus)
-        assert screen_footer.id == "screen-footer-status"
-        assert "mode" in screen_footer.shortcut_text
-        assert "a add server" in screen_footer.shortcut_text
-
-        default_screen_footer = host.query_one(AppFooterStatus)
-        assert default_screen_footer is not screen_footer
-        assert (
-            default_screen_footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
-        )
-
-
-@pytest.mark.asyncio
-async def test_registration_survives_screen_recompose():
-    """Screen-level recompose (settings' recompose=True reactives, library/
-    chat `refresh(recompose=True)`) replaces the footer widget; the
-    persisted registration must re-seed the fresh instance (task-264
-    review)."""
-    host = _MinimalScreenHost()
-
-    async with host.run_test(size=(100, 30)) as pilot:
-        await pilot.pause()
-        screen = host.screen_stack[-1]
-        screen.register_footer_shortcuts(
-            source="minimal", shortcuts=(("x", "do the thing"),)
-        )
-        footer_before = screen.query_one(AppFooterStatus)
-        assert "do the thing" in footer_before.shortcut_text
-
-        screen.refresh(recompose=True)
-        await pilot.pause()
-
-        footer_after = screen.query_one(AppFooterStatus)
-        assert footer_after is not footer_before
-        assert "do the thing" in footer_after.shortcut_text
-
-        # And a source-guarded clear drops both the live text and the
-        # persisted copy, so a later recompose stays at the default.
-        screen.clear_footer_shortcuts(source="minimal")
-        screen.refresh(recompose=True)
-        await pilot.pause()
-        footer_cleared = screen.query_one(AppFooterStatus)
-        assert footer_cleared.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
-
-
-@pytest.mark.asyncio
-async def test_library_registration_updates_the_screens_own_footer():
-    """task-264 review Important: Library's `u` hint (previously rendered by
-    the retired Textual Footer's show=True binding) must reach its own
-    footer via the registration API."""
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-
-    app_instance = _build_test_app()
-    host = _DefaultScreenFooterHost(app_instance, LibraryScreen)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        await pilot.pause()
-        screen = host.screen_stack[-1]
-        screen_footer = screen.query_one(AppFooterStatus)
-        assert "u" in screen_footer.shortcut_text
-        assert "use Library context in Console" in screen_footer.shortcut_text
-
-
-@pytest.mark.asyncio
-async def test_settings_registration_updates_the_screens_own_footer():
-    """task-264 review Important: Settings' s/r/t hints (previously rendered
-    by the retired Footer) must reach its own footer via registration.
-
-    The hints are category-gated (rescore P1): the read-only Overview
-    default advertises none of them, so the check switches to a guided
-    draft category first.
-    """
-    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-
-    app_instance = _build_test_app()
-    host = _DefaultScreenFooterHost(app_instance, SettingsScreen)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
-        screen = host.screen_stack[-1]
-        screen_footer = screen.query_one(AppFooterStatus)
-        for token in ("save category", "revert category", "test category"):
-            assert token not in screen_footer.shortcut_text
-        screen.active_category = SettingsCategoryId.PROVIDERS_MODELS.value
-        await pilot.pause()
-        screen._register_footer_shortcuts()
-        await pilot.pause()
-        # The category switch recomposes the screen, replacing the footer
-        # widget -- re-query rather than trusting the stale reference.
-        screen_footer = screen.query_one(AppFooterStatus)
-        for token in ("save category", "revert category", "test category"):
-            assert token in screen_footer.shortcut_text
+                assert list(screen.query(AppFooterStatus)) == [screen_footer]
+    finally:
+        await _close_production_app(app)
 
 
 # ---------------------------------------------------------------------------

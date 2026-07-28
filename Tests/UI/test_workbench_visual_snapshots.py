@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, OptionList
 
-from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
 if TYPE_CHECKING:
@@ -69,7 +69,11 @@ async def _open_console(app, pilot: "Pilot") -> None:
         ),
         context="Console screen",
     )
-    await _wait_for_selector(app.screen, pilot, "#console-shell")
+    await _wait_until(
+        pilot,
+        lambda: bool(app.screen.query("#console-shell")),
+        context="Console shell",
+    )
 
 
 def _assert_svg_healthy(svg: str) -> None:
@@ -85,7 +89,8 @@ def _assert_console_density_evidence(svg: str) -> None:
     normalized_svg = unescape(svg).replace("\xa0", " ")
     assert normalized_svg.count("Provider:") == 1
     assert normalized_svg.count("Model:") == 1
-    assert "Assistant:" in normalized_svg or "Persona:" in normalized_svg
+    assert normalized_svg.count("Character:") == 1
+    assert normalized_svg.count("You:") == 1
     assert "RAG:" in normalized_svg
     assert "Sources:" in normalized_svg
     assert "Tools:" in normalized_svg
@@ -242,9 +247,14 @@ async def test_console_workbench_focus_state_snapshot() -> None:
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 42)) as pilot:
             await _open_console(app, pilot)
+            # Let the first 0.2-second Console state-sync replace the initial
+            # control bar before choosing a focus target. Focusing the
+            # pre-sync instance tests a widget that production immediately
+            # retires and correctly sends focus back to the composer.
+            await pilot.pause(0.5)
             settings_action = app.screen.query_one("#console-control-settings", Button)
             settings_action.focus()
-            await pilot.pause()
+            await pilot.pause(0.05)
 
             assert app.focused is settings_action
             assert settings_action.region.width > 0

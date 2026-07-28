@@ -17,12 +17,10 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Select
 
-from Tests.UI.test_destination_shells import (
+from Tests.UI.full_app_destination_context import (
     StaticWatchlistsScopeService,
-    _active_destination_screen,
-)
-from Tests.UI.test_destination_visual_parity_correction import (
-    _visual_destination_harness,
+    active_destination_screen as _active_destination_screen,
+    full_app_destination_context as _visual_destination_harness,
 )
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane

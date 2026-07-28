@@ -2,8 +2,6 @@
 
 from types import SimpleNamespace
 
-import pytest
-
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
 
@@ -238,47 +236,49 @@ def test_console_transcript_sync_timer_updates_responsiveness_monitor():
     assert stopped == [True]
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="task-1469: dormant while pytest-asyncio strict mode skipped its "
-    "unmarked coroutine from the repo root (task-1457 activated it); the "
-    "hand-built ChatScreen skeleton stubs 12 delegation stages but "
-    "_sync_native_console_chat_ui now has ~25 — needs a rewrite at the "
-    "worker-recording seam, not more stubs",
-)
-async def test_console_sync_records_worker_lifecycle():
+async def test_console_sync_records_worker_lifecycle(monkeypatch):
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook import app as app_module
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
+    real_get_cli_setting = app_module.get_cli_setting
+
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(
+        app_module,
+        "get_cli_setting",
+        get_cli_setting_without_splash,
+    )
+    app = _build_test_app()
     monitor = UIResponsivenessMonitor(enabled=True)
-    screen = ChatScreen.__new__(ChatScreen)
-    screen.app_instance = SimpleNamespace(ui_responsiveness_monitor=monitor)
-    screen._console_sync_in_progress = False
-    screen._console_sync_requested = False
-    screen._last_console_rail_state = None
-    screen.run_worker = lambda *_args, **_kwargs: None
+    app.ui_responsiveness_monitor = monitor
 
-    def assert_worker_active():
-        assert monitor.snapshot().active_workers == 1
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, ChatScreen)
+        screen._stop_console_transcript_sync_timer()
+        observed_active_worker = False
+        real_sync_core_state = screen._sync_console_chat_core_state
 
-    async def async_noop():
-        return None
+        def observe_sync_core_state():
+            nonlocal observed_active_worker
+            observed_active_worker = monitor.snapshot().active_workers == 1
+            return real_sync_core_state()
 
-    screen._sync_console_chat_core_state = assert_worker_active
-    screen._sync_console_session_draft = lambda: None
-    screen._refresh_active_dictionaries_summary_if_scope_changed = async_noop
-    screen._sync_console_control_bar = lambda _rail_state: None
-    screen._sync_console_settings_summary = lambda: None
-    screen._sync_console_mode_bar = lambda: None
-    screen._sync_console_native_session_tabs = async_noop
-    screen._sync_console_workspace_context = lambda: None
-    screen._sync_native_console_transcript_to_legacy_surface = async_noop
-    screen._sync_console_rail_visibility = lambda _state: None
-    screen._current_console_rail_state = lambda: object()
-    screen._dispatch_console_rail_preference_prune = lambda: None
+        monkeypatch.setattr(
+            screen,
+            "_sync_console_chat_core_state",
+            observe_sync_core_state,
+        )
+        await screen._sync_native_console_chat_ui()
 
-    await ChatScreen._sync_native_console_chat_ui(screen)
-
-    assert monitor.snapshot().active_workers == 0
+        assert observed_active_worker
+        assert monitor.snapshot().active_workers == 0
 
 
 async def test_console_session_surface_records_tab_mount_churn():

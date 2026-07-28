@@ -43,7 +43,7 @@ from textual.app import App, ComposeResult, ScreenStackError
 from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
-from textual.worker import Worker, WorkerState
+from textual.worker import Worker, WorkerCancelled, WorkerState
 from textual.binding import Binding
 from textual.message import Message
 from textual.timer import Timer
@@ -8108,9 +8108,13 @@ class TldwCli(
                 scheduler_loop.stop()
             if scheduler_worker is not None:
                 try:
-                    await scheduler_worker.wait(timeout=5)
                     if not scheduler_worker.is_finished:
                         scheduler_worker.cancel()
+                    await scheduler_worker.wait()
+                except WorkerCancelled:
+                    # Cancellation is the expected public Textual shutdown
+                    # contract for a loop that may be sleeping between polls.
+                    pass
                 except Exception as e:
                     self.loguru_logger.error(f"Error stopping scheduler worker: {e}")
 

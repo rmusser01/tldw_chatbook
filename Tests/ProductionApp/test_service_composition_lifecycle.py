@@ -4,6 +4,7 @@ from collections import Counter
 import ast
 import logging
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -195,5 +196,33 @@ async def test_production_app_composes_one_stable_dependency_graph(
         assert calls == EXPECTED_WIRING_CALLS
         _assert_service_identities(app, identities)
         _assert_service_graph(app)
+    finally:
+        await _close_production_app(app)
+
+
+@pytest.mark.asyncio
+async def test_production_app_scheduler_worker_settles_without_contract_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unmount must join the real Textual worker through its public API."""
+    _disable_splash(monkeypatch)
+    app = TldwCli()
+    app.app_config["_first_run"] = False
+    logger = MagicMock()
+    app.loguru_logger = logger
+
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            scheduler_worker = app.scheduler_worker
+            assert not scheduler_worker.is_finished
+
+        scheduler_errors = [
+            call
+            for call in logger.error.call_args_list
+            if "Error stopping scheduler worker" in str(call)
+        ]
+        assert scheduler_errors == []
+        assert scheduler_worker.is_finished
     finally:
         await _close_production_app(app)

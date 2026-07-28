@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -38,8 +39,13 @@ def _text(path: Path) -> str:
 
 
 def _css_block(text: str, selector: str) -> str:
-    start = text.index(selector)
-    block_start = text.index("{", start)
+    match = re.search(
+        rf"(?m)^{re.escape(selector)}(?:\s*,[^{{]*)?\s*\{{",
+        text,
+    )
+    if match is None:
+        raise ValueError(f"CSS selector not found: {selector}")
+    block_start = match.end() - 1
     block_end = text.index("}", block_start)
     return text[block_start:block_end]
 

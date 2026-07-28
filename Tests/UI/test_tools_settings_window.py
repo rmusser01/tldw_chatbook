@@ -1,34 +1,29 @@
 import ast
-import shutil
 import sqlite3
-import tempfile
 from contextlib import asynccontextmanager, closing
-from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 import toml
 
-from textual.widgets import Button, Checkbox, Input, Select, TextArea, Label, Static
-from textual.app import App
-# The legacy AppTest-based suite (16 tests that permanently skipped —
-# textual.app.AppTest was removed around Textual 4.x) was deleted in
-# task-1464; the live tests below drive real App harnesses via run_test().
+from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
+from Tests.UI.test_screen_navigation import _build_test_app
+import tldw_chatbook.app as app_module
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.Tools_Settings_Window import ToolsSettingsWindow
 from tldw_chatbook.UI.Outputs_Panel import OutputsPanel
 from tldw_chatbook.UI.Sharing_Panel import SharingPanel
+from tldw_chatbook.UI.Screens.tools_settings_screen import ToolsSettingsScreen
 # Import DEFAULT_CONFIG_PATH to be monkeypatched, and the function that uses it
 import tldw_chatbook.config
 
 # Import test utilities
 import sys
-from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
-from db_test_utilities import TestDatabaseSchema, DatabasePopulator
-from test_utilities import TestDataFactory
+from db_test_utilities import TestDatabaseSchema
 
 
 # Helper to create a dummy config file for testing
@@ -38,23 +33,33 @@ def create_dummy_config(config_path: Path, content: dict):
         toml.dump(content, f)
 
 
-class _ToolsSettingsHostApp(App):
-    """Minimal real App that hosts a ToolsSettingsWindow as its own app_instance."""
+def _build_full_tools_app(
+    *,
+    runtime_backend: str = "local",
+    sharing_scope_service=None,
+    outputs_scope_service=None,
+):
+    """Build the production application with deterministic panel collaborators."""
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app.notify = MagicMock()
+    state = RuntimeSourceState(
+        active_source=runtime_backend,
+        server_configured=runtime_backend == "server",
+    )
+    app.runtime_policy.state = state
+    app._publish_runtime_policy_projection(state)
+    app.server_sharing_scope_service = sharing_scope_service
+    app.server_outputs_scope_service = outputs_scope_service
+    return app
 
-    def __init__(self):
-        super().__init__()
-        self.notify = MagicMock()
-        self.push_screen = MagicMock()
-        self.unified_mcp_service = None
-        self.current_runtime_backend = "local"
-        self.server_sharing_scope_service = None
-        self.server_outputs_scope_service = None
 
-    def get_authoritative_runtime_source(self):
-        return self.current_runtime_backend
-
-    def compose(self):
-        yield ToolsSettingsWindow(app_instance=self)
+@asynccontextmanager
+async def _mounted_tools_window(app):
+    async with app.run_test() as pilot:
+        app.push_screen(ToolsSettingsScreen(app))
+        await pilot.pause()
+        yield app.screen.query_one(ToolsSettingsWindow), pilot
 
 
 @asynccontextmanager
@@ -74,16 +79,14 @@ async def mount_settings_window(config_dict: dict, temp_config_path: Path, monke
         monkeypatch: pytest monkeypatch fixture for patching DEFAULT_CONFIG_PATH and environment.
 
     Yields:
-        Tuple of (ToolsSettingsWindow, pilot) where pilot is the AppTest pilot for driving the widget.
+        Tuple of the production ToolsSettingsWindow and full-app pilot.
     """
     create_dummy_config(temp_config_path, config_dict)
     monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(temp_config_path))
 
-    app = _ToolsSettingsHostApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        window = app.query_one(ToolsSettingsWindow)
+    app = _build_full_tools_app()
+    async with _mounted_tools_window(app) as (window, pilot):
         yield window, pilot
 
 
@@ -114,30 +117,174 @@ def mock_config_path(monkeypatch, temp_config_path: Path):
     # it keeps reading/writing the global sandbox file, never `temp_config_path`.
     # Re-pointing the env var here is what actually redirects those calls.
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(temp_config_path))
+    real_get_cli_setting = app_module.get_cli_setting
+
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
 
 
 @pytest.fixture
 def mock_app_instance():
-    """Fixture to create a mock TldwCli app instance."""
-    app = MagicMock(spec=App)
-    # Mock the notify method, which is used by ToolsSettingsWindow
-    app.notify = MagicMock()
-    return app
+    """Provide the full production application used by mounted window tests."""
+    return _build_full_tools_app()
+
+
+@pytest_asyncio.fixture
+async def settings_window(mock_app_instance, temp_config_path: Path) -> ToolsSettingsWindow:
+    """
+    Fixture to create ToolsSettingsWindow, mount it within a test app,
+    and ensure it uses the temporary config path.
+    """
+    # The mock_config_path fixture (autouse=True) ensures that DEFAULT_CONFIG_PATH
+    # is already patched when load_cli_config_and_ensure_existence is called within ToolsSettingsWindow.
+
+    # Create a fresh config for each test that uses this fixture,
+    # or rely on the one from mock_config_path if that's intended as a common base.
+    # For clarity, let's give it a distinct initial state for window creation.
+    initial_window_config = {"window_init": "true"}
+    create_dummy_config(temp_config_path, initial_window_config)
+
+    async with _mounted_tools_window(mock_app_instance) as (window, _pilot):
+        yield window
 
 
 
 
+@pytest.mark.asyncio
+async def test_load_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path):
+    """Test if configuration values are loaded and displayed correctly."""
+    expected_config_content = {"general": {"model": "gpt-4"}, "api_keys": {"openai": "sk-..."}}
+    create_dummy_config(temp_config_path, expected_config_content)
+
+    # Force reload within the window or re-initialize to pick up new config
+    # The settings_window is already initialized. We need to trigger its internal load.
+    # The simplest way is to simulate a "Reload" click if available and makes sense,
+    # or directly call a method if one exists, or update the TextArea.text
+    # For now, let's assume the compose correctly loads it due to the patched DEFAULT_CONFIG_PATH
+    # If compose has already run, we might need to trigger an update.
+    # Let's update the text area directly after ensuring the config file is written.
+
+    # The window's compose method calls load_cli_config_and_ensure_existence().
+    # The autouse fixture mock_config_path should ensure this used temp_config_path.
+    # The settings_window fixture also writes initial_window_config.
+    # So, for this test, we write *again* to temp_config_path and then make the window reload.
+
+    config_text_area = settings_window.query_one("#config-text-area", TextArea)
+
+    # To ensure it loads the *expected_config_content* and not initial_window_config:
+    reloaded_config = tldw_chatbook.config.load_cli_config_and_ensure_existence(force_reload=True)
+    config_text_area.text = toml.dumps(reloaded_config)  # Manually set text after explicit load
+
+    assert config_text_area.text.strip() != ""
+    loaded_text_area_config = toml.loads(config_text_area.text)
+    assert loaded_text_area_config["general"]["model"] == "gpt-4"
+    assert loaded_text_area_config["api_keys"] == {"openai": "sk-..."}
 
 
+@pytest.mark.asyncio
+async def test_save_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance):
+    """Test if configuration values can be saved correctly."""
+    config_text_area = settings_window.query_one("#config-text-area", TextArea)
+    save_button = settings_window.query_one("#save-config-button", Button)
+
+    new_config_dict = {"user": {"name": "test_user", "theme": "blue"}}
+    config_text_area.text = toml.dumps(new_config_dict)
+
+    # Simulate button press by calling the handler
+    await settings_window.on_button_pressed(Button.Pressed(save_button))
+
+    mock_app_instance.notify.assert_called_with(
+        "Configuration saved successfully!",
+        severity="successful",
+    )
+
+    with open(temp_config_path, "r") as f:
+        saved_content_on_disk = toml.load(f)
+
+    assert saved_content_on_disk == new_config_dict
 
 
+@pytest.mark.asyncio
+async def test_reload_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance):
+    """Test if configuration values can be reloaded correctly."""
+    # 1. Setup initial config on disk
+    original_disk_config = {"settings": {"feature_x": True, "version": 1}}
+    create_dummy_config(temp_config_path, original_disk_config)
+
+    # 2. Ensure window's TextArea reflects this initial config
+    # (Simulate a reload or assume it's loaded it - let's simulate reload for clarity)
+    config_text_area = settings_window.query_one("#config-text-area", TextArea)
+    reload_button = settings_window.query_one("#reload-config-button", Button)
+
+    # Press reload to make sure it's showing original_disk_config
+    await settings_window.on_button_pressed(Button.Pressed(reload_button))
+    mock_app_instance.notify.assert_called_with("Configuration reloaded.")
+    assert toml.loads(config_text_area.text)["settings"] == original_disk_config[
+        "settings"
+    ]
+
+    # 3. Modify the TextArea to simulate user changes (these are not saved yet)
+    user_modified_text_dict = {"settings": {"feature_x": False, "version": 2}}
+    config_text_area.text = toml.dumps(user_modified_text_dict)
+    assert toml.loads(config_text_area.text) == user_modified_text_dict  # Verify change in TextArea
+
+    # 4. Simulate reload button press again
+    await settings_window.on_button_pressed(Button.Pressed(reload_button))
+    mock_app_instance.notify.assert_called_with("Configuration reloaded.")  # Called again
+
+    # 5. Verify TextArea content is reverted to original_disk_config (ignoring user_modified_text_dict)
+    assert toml.loads(config_text_area.text)["settings"] == original_disk_config[
+        "settings"
+    ]
 
 
+@pytest.mark.asyncio
+async def test_save_invalid_toml_format(settings_window: ToolsSettingsWindow, mock_app_instance):
+    """Test saving invalid TOML data reports an error."""
+    config_text_area = settings_window.query_one("#config-text-area", TextArea)
+    save_button = settings_window.query_one("#save-config-button", Button)
 
+    invalid_toml_text = "this is not valid toml { text = blah"
+    config_text_area.text = invalid_toml_text
 
+    await settings_window.on_button_pressed(Button.Pressed(save_button))
+
+    message = mock_app_instance.notify.call_args.args[0]
+    assert message.startswith("Error: Invalid TOML format:")
+    assert mock_app_instance.notify.call_args.kwargs == {"severity": "error"}
 
 
 # Test for save I/O error (conceptual - requires mocking 'open')
+@pytest.mark.skip(reason="Complex to mock built-in open reliably for this specific write operation only")
+@pytest.mark.asyncio
+async def test_save_io_error(settings_window: ToolsSettingsWindow, mock_app_instance, monkeypatch):
+    """Test saving config when an IOError occurs."""
+    config_text_area = settings_window.query_one("#config-text-area", TextArea)
+
+    config_text_area.text = toml.dumps({"good": "data"})
+
+    # Mock 'open' within the tldw_chatbook.UI.Tools_Settings_Window context or globally
+    # to raise IOError only for the specific write operation.
+    # This is tricky because 'open' is a builtin and patching it requires care.
+
+    # For example, using a more specific patch target if 'open' is imported like 'from io import open':
+    # with monkeypatch.context() as m:
+    # m.setattr("tldw_chatbook.UI.Tools_Settings_Window.open", MagicMock(side_effect=IOError("Disk full")))
+    # await settings_window.on_button_pressed(Button.Pressed(save_button))
+
+    # Or if it uses the global 'open':
+    # with patch('builtins.open', MagicMock(side_effect=IOError("Cannot write"))):
+    # await settings_window.on_button_pressed(Button.Pressed(save_button))
+
+    # This test is skipped because such mocking is highly dependent on exact 'open' usage
+    # and can be fragile. A more robust way might involve filesystem-level mocks if available.
+
+    # mock_app_instance.notify.assert_called_with("Error: Could not write to configuration file.", severity="error")
+    pass
 
 
 # ===========================================
@@ -166,10 +313,8 @@ async def test_save_raw_toml_config_writes_effective_path_not_default_decoy(
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile_path))
     monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", decoy_path)
 
-    app = _ToolsSettingsHostApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        window = app.query_one(ToolsSettingsWindow)
+    app = _build_full_tools_app()
+    async with _mounted_tools_window(app) as (window, _pilot):
 
         config_text_area = window.query_one("#config-text-area", TextArea)
         new_config_dict = {"user": {"name": "profile_user"}}
@@ -245,10 +390,8 @@ async def test_save_raw_toml_config_roundtrips_with_no_profile_override(
     create_dummy_config(config_path, {"initial": "value"})
     monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", config_path)
 
-    app = _ToolsSettingsHostApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        window = app.query_one(ToolsSettingsWindow)
+    app = _build_full_tools_app()
+    async with _mounted_tools_window(app) as (window, _pilot):
 
         config_text_area = window.query_one("#config-text-area", TextArea)
         new_config_dict = {"user": {"name": "default_user"}}
@@ -269,7 +412,7 @@ def test_db_dir(tmp_path):
     """Create a directory with test databases."""
     db_dir = tmp_path / "databases"
     db_dir.mkdir()
-    
+
     # Create test databases with sample data
     databases = {
         'ChaChaNotes.db': TestDatabaseSchema.CONVERSATIONS_SCHEMA + TestDatabaseSchema.MESSAGES_SCHEMA,
@@ -361,6 +504,91 @@ def mock_database_path_lookup(test_db_dir, monkeypatch):
 
 
 
+@pytest.mark.asyncio
+async def test_database_tools_composition(settings_window: ToolsSettingsWindow):
+    """The production window exposes every current database action contract."""
+    nav_button = settings_window.query_one("#ts-nav-db-tools", Button)
+    assert nav_button.label.plain == "Database Tools"
+
+    content_area = settings_window.query_one("#ts-view-db-tools")
+    assert content_area is not None
+    for db_name in (
+        "chachanotes",
+        "media",
+        "prompts",
+        "evals",
+        "rag",
+        "subscriptions",
+    ):
+        assert content_area.query_one(f"#db-vacuum-{db_name}", Button)
+        assert content_area.query_one(f"#db-backup-{db_name}", Button)
+        assert content_area.query_one(f"#db-last-backup-{db_name}", Static)
+        assert content_area.query_one(f"#db-restore-{db_name}", Button)
+        assert content_area.query_one(f"#db-check-{db_name}", Button)
+
+    assert content_area.query_one("#db-vacuum-all", Button)
+    assert content_area.query_one("#db-backup-all", Button)
+    assert content_area.query_one("#db-check-integrity", Button)
+    widget_ids = [node.id for node in content_area.walk_children() if node.id]
+    assert len(widget_ids) == len(set(widget_ids))
+
+
+@pytest.mark.asyncio
+async def test_create_chatbook_button(settings_window: ToolsSettingsWindow, mock_app_instance):
+    """Test that chatbook creation button exists and works."""
+    # Find the create chatbook button
+    create_button = settings_window.query_one("#db-create-chatbook", Button)
+    assert create_button is not None
+    assert "Create Chatbook" in create_button.label.plain
+
+    # Mock the chatbook creation window
+    with (
+        patch("tldw_chatbook.UI.ChatbookCreationWindow.ChatbookCreationWindow"),
+        patch.object(
+            mock_app_instance,
+            "push_screen",
+            new=AsyncMock(return_value=None),
+        ) as mock_push_screen,
+    ):
+        await settings_window.on_button_pressed(Button.Pressed(create_button))
+
+        # Should push the chatbook creation screen
+        mock_push_screen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_import_chatbook_button(settings_window: ToolsSettingsWindow, mock_app_instance):
+    """Test that chatbook import button exists and works."""
+    # Find the import chatbook button
+    import_button = settings_window.query_one("#db-import-chatbook", Button)
+    assert import_button is not None
+    assert "Import Chatbook" in import_button.label.plain
+
+    # Mock file picker for import
+    with patch.object(
+        mock_app_instance,
+        "push_screen",
+        new=AsyncMock(return_value=None),
+    ) as mock_push_screen:
+        await settings_window.on_button_pressed(Button.Pressed(import_button))
+
+        # Should push the file picker
+        mock_push_screen.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_database_error_handling(settings_window: ToolsSettingsWindow, mock_app_instance, mock_database_path_lookup):
+    """Test error handling for database operations."""
+    # Mock a database operation to fail
+    with patch("sqlite3.connect", side_effect=sqlite3.Error("Database is locked")):
+        # Try to vacuum a database
+        vacuum_button = settings_window.query_one("#db-vacuum-chachanotes", Button)
+        await settings_window.on_button_pressed(Button.Pressed(vacuum_button))
+
+        # Should show error notification
+        mock_app_instance.notify.assert_called()
+        calls = mock_app_instance.notify.call_args_list
+        assert any("error" in str(call).lower() for call in calls)
 
 
 @pytest.mark.asyncio
@@ -371,23 +599,8 @@ async def test_tools_settings_window_no_longer_exposes_unified_mcp_view():
     still compose and its other nav destinations must still work; only the
     "Unified MCP" entry point is gone.
     """
-    class ToolsSettingsHostApp(App):
-        def __init__(self):
-            super().__init__()
-            self.notify = MagicMock()
-            self.unified_mcp_service = None
-            self.current_runtime_backend = "local"
-
-        def get_authoritative_runtime_source(self):
-            return self.current_runtime_backend
-
-        def compose(self):
-            yield ToolsSettingsWindow(app_instance=self)
-
-    app = ToolsSettingsHostApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        window = app.query_one(ToolsSettingsWindow)
+    app = _build_full_tools_app()
+    async with _mounted_tools_window(app) as (window, _pilot):
 
         assert not window.query("#ts-nav-unified-mcp")
         assert not window.query("#ts-view-unified-mcp")
@@ -478,24 +691,11 @@ def test_unified_mcp_panel_modules_have_zero_importers_repo_wide():
 
 @pytest.mark.asyncio
 async def test_tools_settings_window_exposes_sharing_view():
-    class ToolsSettingsHostApp(App):
-        def __init__(self):
-            super().__init__()
-            self.notify = MagicMock()
-            self.unified_mcp_service = None
-            self.current_runtime_backend = "server"
-            self.server_sharing_scope_service = MagicMock()
-
-        def get_authoritative_runtime_source(self):
-            return self.current_runtime_backend
-
-        def compose(self):
-            yield ToolsSettingsWindow(app_instance=self)
-
-    app = ToolsSettingsHostApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        window = app.query_one(ToolsSettingsWindow)
+    app = _build_full_tools_app(
+        runtime_backend="server",
+        sharing_scope_service=MagicMock(),
+    )
+    async with _mounted_tools_window(app) as (window, _pilot):
         nav_button = window.query_one("#ts-nav-sharing", Button)
 
         assert nav_button.label.plain == "Sharing"
@@ -509,25 +709,12 @@ async def test_tools_settings_window_exposes_sharing_view():
 
 @pytest.mark.asyncio
 async def test_tools_settings_window_exposes_outputs_view():
-    class ToolsSettingsHostApp(App):
-        def __init__(self):
-            super().__init__()
-            self.notify = MagicMock()
-            self.unified_mcp_service = None
-            self.current_runtime_backend = "server"
-            self.server_outputs_scope_service = MagicMock()
-            self.server_sharing_scope_service = MagicMock()
-
-        def get_authoritative_runtime_source(self):
-            return self.current_runtime_backend
-
-        def compose(self):
-            yield ToolsSettingsWindow(app_instance=self)
-
-    app = ToolsSettingsHostApp()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        window = app.query_one(ToolsSettingsWindow)
+    app = _build_full_tools_app(
+        runtime_backend="server",
+        sharing_scope_service=MagicMock(),
+        outputs_scope_service=MagicMock(),
+    )
+    async with _mounted_tools_window(app) as (window, _pilot):
         nav_button = window.query_one("#ts-nav-outputs", Button)
 
         assert nav_button.label.plain == "Outputs"
@@ -539,41 +726,16 @@ async def test_tools_settings_window_exposes_outputs_view():
         assert window.query_one("#outputs-panel", OutputsPanel) is not None
 
 
-class SharingPanelHostApp(App):
-    def __init__(self, *, runtime_backend: str, scope_service: MagicMock):
-        super().__init__()
-        self.notify = MagicMock()
-        self.current_runtime_backend = runtime_backend
-        self.server_sharing_scope_service = scope_service
-
-    def get_authoritative_runtime_source(self):
-        return self.current_runtime_backend
-
-    def compose(self):
-        yield SharingPanel(self, id="sharing-panel")
-
-
-class OutputsPanelHostApp(App):
-    def __init__(self, *, runtime_backend: str, scope_service: MagicMock):
-        super().__init__()
-        self.notify = MagicMock()
-        self.current_runtime_backend = runtime_backend
-        self.server_outputs_scope_service = scope_service
-
-    def get_authoritative_runtime_source(self):
-        return self.current_runtime_backend
-
-    def compose(self):
-        yield OutputsPanel(self, id="outputs-panel")
-
-
 @pytest.mark.asyncio
 async def test_sharing_panel_rejects_local_mode_with_explicit_guidance():
     scope_service = MagicMock()
-    app = SharingPanelHostApp(runtime_backend="local", scope_service=scope_service)
+    app = _build_full_tools_app(
+        runtime_backend="local",
+        sharing_scope_service=scope_service,
+    )
 
-    async with app.run_test() as pilot:
-        panel = pilot.app.query_one(SharingPanel)
+    async with _mounted_tools_window(app) as (window, pilot):
+        panel = window.query_one(SharingPanel)
         await panel.refresh_for_mode()
         await pilot.pause(0.05)
 
@@ -590,10 +752,13 @@ async def test_sharing_panel_routes_server_workspace_share_and_token_operations(
     scope_service.create_share_token = AsyncMock(return_value={"id": "server:share_token:5", "raw_token": "raw-token"})
     scope_service.list_share_tokens = AsyncMock(return_value={"tokens": [{"id": "server:share_token:5"}], "total": 1})
     scope_service.list_shared_with_me = AsyncMock(return_value={"items": [{"id": "server:share:9"}], "total": 1})
-    app = SharingPanelHostApp(runtime_backend="server", scope_service=scope_service)
+    app = _build_full_tools_app(
+        runtime_backend="server",
+        sharing_scope_service=scope_service,
+    )
 
-    async with app.run_test() as pilot:
-        panel = pilot.app.query_one(SharingPanel)
+    async with _mounted_tools_window(app) as (window, pilot):
+        panel = window.query_one(SharingPanel)
         await panel.refresh_for_mode()
         await pilot.pause(0.05)
 
@@ -645,10 +810,13 @@ async def test_sharing_panel_routes_server_workspace_share_and_token_operations(
 @pytest.mark.asyncio
 async def test_outputs_panel_rejects_local_mode_with_explicit_guidance():
     scope_service = MagicMock()
-    app = OutputsPanelHostApp(runtime_backend="local", scope_service=scope_service)
+    app = _build_full_tools_app(
+        runtime_backend="local",
+        outputs_scope_service=scope_service,
+    )
 
-    async with app.run_test() as pilot:
-        panel = pilot.app.query_one(OutputsPanel)
+    async with _mounted_tools_window(app) as (window, pilot):
+        panel = window.query_one(OutputsPanel)
         await panel.refresh_for_mode()
         await pilot.pause(0.05)
 
@@ -679,10 +847,13 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
     scope_service.delete_output = AsyncMock(
         return_value={"entity_kind": "output_delete", "success": True, "output_id": 11}
     )
-    app = OutputsPanelHostApp(runtime_backend="server", scope_service=scope_service)
+    app = _build_full_tools_app(
+        runtime_backend="server",
+        outputs_scope_service=scope_service,
+    )
 
-    async with app.run_test() as pilot:
-        panel = pilot.app.query_one(OutputsPanel)
+    async with _mounted_tools_window(app) as (window, pilot):
+        panel = window.query_one(OutputsPanel)
         await panel.refresh_for_mode()
         await pilot.pause(0.05)
 
@@ -1095,7 +1266,10 @@ def test_rag_indexing_db_path_matches_ingestion_module_resolution():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("db_name", _ALL_MAINTENANCE_DB_NAMES)
+@pytest.mark.parametrize(
+    "db_name",
+    [name for name in _ALL_MAINTENANCE_DB_NAMES if name != "evals"],
+)
 async def test_backup_then_restore_round_trips_at_the_real_resolved_path(
     db_name, monkeypatch, temp_config_path
 ):
@@ -1152,6 +1326,54 @@ async def test_backup_then_restore_round_trips_at_the_real_resolved_path(
         with closing(sqlite3.connect(str(db_path))) as restored_conn:
             value = restored_conn.execute("SELECT value FROM marker").fetchone()[0]
         assert value == "original"
+
+
+@pytest.mark.asyncio
+async def test_restore_refuses_live_evals_database_without_partial_replacement(
+    monkeypatch, temp_config_path
+):
+    """The production app keeps the evaluations database open.
+
+    A live restore must fail closed and leave the current file untouched;
+    replacing a database while an application-owned connection is active
+    would make the in-memory and on-disk state diverge.
+    """
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        _pilot,
+    ):
+        db_path = window._get_database_path("evals", {})
+        assert db_path is not None
+
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.execute("CREATE TABLE marker (value TEXT)")
+            conn.execute("INSERT INTO marker VALUES ('live')")
+            conn.commit()
+
+        backup_worker = window._backup_single_worker("evals")
+        await backup_worker.wait()
+        backup_dir = tldw_chatbook.config.get_user_data_dir() / "backups" / "evals"
+        backup_path = sorted(backup_dir.glob("evals_backup_*.db"))[-1]
+
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            conn.execute("UPDATE marker SET value = 'current'")
+            conn.commit()
+
+        window.app_instance.notify.reset_mock()
+        restore_worker = window._restore_single_worker("evals", backup_path)
+        await restore_worker.wait()
+
+        assert not _notify_calls_with_severity(
+            window.app_instance.notify,
+            "success",
+        )
+        errors = _notify_calls_with_severity(window.app_instance.notify, "error")
+        assert len(errors) == 1
+        assert "live restore is unavailable" in errors[0].args[0]
+        with closing(sqlite3.connect(str(db_path))) as conn:
+            value = conn.execute("SELECT value FROM marker").fetchone()[0]
+        assert value == "current"
 
 
 @pytest.mark.asyncio

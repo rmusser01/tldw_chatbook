@@ -17,7 +17,7 @@ from PIL import Image
 #
 # Local Imports
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.config import CONFIG_TOML_CONTENT
+from tldw_chatbook.config import CONFIG_TOML_CONTENT, RuntimeConfigSnapshot
 import tldw_chatbook.Chat.Chat_Functions as chat_functions_module
 import tldw_chatbook.LLM_Calls.LLM_API_Calls as llm_api_calls_module
 from tldw_chatbook.Chat.Chat_Functions import (
@@ -196,13 +196,20 @@ def test_chat_with_llama_posts_to_v1_chat_completions_regardless_of_suffix(
 
     captured = {}
     response_data = {"choices": [{"message": {"content": "ok"}}]}
-    # chat_with_llama reads the MODULE-LEVEL ``settings`` dict
-    # (``settings.get("api_settings", {})``), not ``load_settings()`` — patch it
-    # the way Tests/LLM_Management/test_mlx_lm.py does.
     monkeypatch.setattr(
         LLM_API_Calls_Local,
-        "settings",
-        {"api_settings": {"llama_cpp": {"api_url": configured_url, "model": "test-model"}}},
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshot(
+            generation=0,
+            values={
+                "api_settings": {
+                    "llama_cpp": {
+                        "api_url": configured_url,
+                        "model": "test-model",
+                    }
+                }
+            },
+        ),
     )
     monkeypatch.setattr(
         LLM_API_Calls_Local.requests,
@@ -530,15 +537,18 @@ class TestProviderRequestPayloads:
         captured = {}
         monkeypatch.setattr(
             llm_api_calls_module,
-            "settings",
-            {
-                "api_settings": {
-                    "deepseek": {
-                        "api_key": DUMMY_OPENAI_API_KEY,
-                        "api_base_url": "https://api.deepseek.test",
+            "get_runtime_config_snapshot",
+            lambda: RuntimeConfigSnapshot(
+                generation=0,
+                values={
+                    "api_settings": {
+                        "deepseek": {
+                            "api_key": DUMMY_OPENAI_API_KEY,
+                            "api_base_url": "https://api.deepseek.test",
+                        }
                     }
-                }
-            },
+                },
+            ),
         )
         monkeypatch.setattr(
             llm_api_calls_module.requests,

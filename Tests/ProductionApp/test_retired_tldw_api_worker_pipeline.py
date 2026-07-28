@@ -98,9 +98,13 @@ async def _wait_for_library_screen(
 async def _wait_for_selector(screen: LibraryScreen, pilot, selector: str):
     for _ in range(400):
         try:
-            return screen.query_one(selector)
+            widget = screen.query_one(selector)
         except NoMatches:
-            await pilot.pause(0.01)
+            pass
+        else:
+            if widget.region.width > 0 and widget.region.height > 0:
+                return widget
+        await pilot.pause(0.01)
     raise AssertionError(f"production LibraryScreen did not render {selector}")
 
 

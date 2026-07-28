@@ -1,11 +1,14 @@
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, Input, ListView, Select, Static, TextArea
 
+from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.test_study_dashboard import DashboardQuizScopeService
+import tldw_chatbook.app as app_module
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeState, StudyScopeType
-from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Study_Window import StudyWindow
 
 
@@ -415,13 +418,41 @@ class FlakyEndReviewStudyScopeService(FakeStudyScopeService):
         return {"id": review_session_id, "status": "completed"}
 
 
-class StudyTestApp(App):
-    def __init__(self, app_instance):
-        super().__init__()
-        self._screen = StudyScreen(app_instance=app_instance)
+@pytest.fixture(autouse=True)
+def _disable_full_app_splash(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_get_cli_setting = app_module.get_cli_setting
 
-    async def on_mount(self) -> None:
-        await self.push_screen(self._screen)
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+
+
+def _build_full_study_app(app_instance):
+    """Build the full production app with deterministic Study collaborators."""
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = "study"
+    app.study_scope_service = app_instance.study_scope_service
+    app.study_quiz_scope_service = getattr(
+        app_instance,
+        "study_quiz_scope_service",
+        DashboardQuizScopeService(),
+    )
+    app.notify = app_instance.notify
+    source = str(getattr(app_instance, "current_runtime_backend", "local"))
+    runtime_state = RuntimeSourceState(
+        active_source=source,
+        server_configured=source == "server",
+    )
+    app.runtime_policy.state = runtime_state
+    app._publish_runtime_policy_projection(runtime_state)
+    scope_context = getattr(app_instance, "scope_context", None)
+    if scope_context is not None:
+        app.pending_handoffs.stage(HandoffChannel.STUDY_SCOPE, scope_context)
+    return app
 
 
 def _text(widget) -> str:
@@ -453,12 +484,13 @@ async def test_study_screen_passes_app_instance_to_study_window():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
         window = app.screen.query_one(StudyWindow)
-        assert window.app_instance is app_instance
+        assert window.app_instance is app
+        assert app.study_scope_service is app_instance.study_scope_service
 
 
 @pytest.mark.asyncio
@@ -471,7 +503,7 @@ async def test_flashcards_view_loads_scope_backed_decks_without_default_fallback
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -499,7 +531,7 @@ async def test_flashcards_view_creates_deck_and_card_through_scope_service():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -558,7 +590,7 @@ async def test_flashcards_view_exposes_delete_and_move_controls():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -590,7 +622,7 @@ async def test_server_mode_keeps_delete_deck_visible_but_disabled():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -620,7 +652,7 @@ async def test_flashcards_lifecycle_controls_noop_handlers_do_not_raise():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -645,7 +677,7 @@ async def test_flashcards_lifecycle_controls_disable_without_selected_card_or_ta
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -679,7 +711,7 @@ async def test_delete_selected_card_uses_selected_card_version_and_refreshes_lis
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -719,7 +751,7 @@ async def test_move_selected_card_refreshes_current_deck_and_exits_review_when_n
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -773,7 +805,7 @@ async def test_delete_selected_card_preserves_unrelated_active_review_state():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -816,7 +848,7 @@ async def test_move_selected_card_preserves_unrelated_active_review_state():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -867,7 +899,7 @@ async def test_lifecycle_actions_reconcile_live_deck_after_deck_change_before_re
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -914,7 +946,7 @@ async def test_local_delete_deck_uses_selected_deck_version_and_resets_review_st
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -952,7 +984,7 @@ async def test_flashcards_review_flow_uses_scope_service_and_ends_server_session
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1001,7 +1033,7 @@ async def test_flashcards_view_shows_explicit_empty_state_when_no_decks_exist():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1029,7 +1061,7 @@ async def test_workspace_flashcards_scope_uses_workspace_filtered_decks_and_serv
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1086,7 +1118,7 @@ async def test_workspace_flashcards_local_mode_fail_closed_ui_state():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1142,7 +1174,7 @@ async def test_scope_transition_resets_review_state_and_clears_flashcards_panel(
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1214,7 +1246,7 @@ async def test_backend_flip_keeps_server_review_session_teardown_before_workspac
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1258,7 +1290,7 @@ async def test_failed_end_review_session_is_retried_after_review_panel_reset():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1303,7 +1335,7 @@ async def test_start_review_blocks_when_pending_session_teardown_keeps_failing()
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)

@@ -2811,7 +2811,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-chachanotes",
+                        id="db-last-backup-chachanotes",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -2855,7 +2855,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-media",
+                        id="db-last-backup-media",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -2892,7 +2892,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-prompts",
+                        id="db-last-backup-prompts",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -2926,7 +2926,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-evals",
+                        id="db-last-backup-evals",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -2965,7 +2965,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-rag",
+                        id="db-last-backup-rag",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -3006,7 +3006,7 @@ class ToolsSettingsWindow(Container):
                     ),
                     Static(
                         "Last Backup: Loading...",
-                        id="db-backup-subscriptions",
+                        id="db-last-backup-subscriptions",
                         classes="db-status",
                     ),
                     classes="db-status-container",
@@ -6719,7 +6719,7 @@ Thank you for using tldw-chatbook! 🎉
 
     async def _restore_single_database(self, db_name: str) -> None:
         """Restore a single database from backup."""
-        from ..Widgets.file_picker_dialog import FilePickerDialog
+        from ..Widgets.enhanced_file_picker import EnhancedFileOpen
 
         try:
             # Show file picker to select backup
@@ -6731,11 +6731,12 @@ Thank you for using tldw-chatbook! 🎉
             )
 
             file_path = await self.app_instance.push_screen(
-                FilePickerDialog(
+                EnhancedFileOpen(
+                    location=backup_dir,
                     title=f"Select {db_name} Database Backup",
-                    start_path=str(backup_dir),
-                    file_filter="*.db",
-                    allow_create_new=False,
+                    filters=["*.db"],
+                    must_exist=True,
+                    context=f"database_restore_{db_name}",
                 ),
                 wait_for_dismiss=True,
             )
@@ -7073,7 +7074,7 @@ Thank you for using tldw-chatbook! 🎉
     def _update_last_backup_status(self, db_name: str, timestamp: str) -> None:
         """Update the last backup status display for a database."""
         try:
-            widget_id = f"db-backup-{db_name}"
+            widget_id = f"db-last-backup-{db_name}"
             widget = self.query_one(f"#{widget_id}", Static)
             formatted_time = datetime.strptime(timestamp, "%Y%m%d_%H%M%S").strftime(
                 "%Y-%m-%d %H:%M"
@@ -7159,7 +7160,7 @@ Thank you for using tldw-chatbook! 🎉
 
     async def _import_chatbook(self) -> None:
         """Import a chatbook."""
-        from ..Widgets.file_picker_dialog import FilePickerDialog
+        from ..Widgets.enhanced_file_picker import EnhancedFileOpen
         from ..Chatbooks.chatbook_importer import ChatbookImporter
 
         try:
@@ -7167,11 +7168,12 @@ Thank you for using tldw-chatbook! 🎉
             chatbooks_dir = get_private_chatbooks_dir()
 
             file_path = await self.app_instance.push_screen(
-                FilePickerDialog(
+                EnhancedFileOpen(
+                    location=chatbooks_dir,
                     title="Select Chatbook to Import",
-                    start_path=str(chatbooks_dir),
-                    file_filter="*.zip",
-                    allow_create_new=False,
+                    filters=["*.zip"],
+                    must_exist=True,
+                    context="chatbook_import",
                 ),
                 wait_for_dismiss=True,
             )

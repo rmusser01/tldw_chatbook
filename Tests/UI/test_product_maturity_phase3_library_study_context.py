@@ -2,25 +2,32 @@
 
 from __future__ import annotations
 
+import logging
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from rich.text import Text
 from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import (
-    DestinationHarness,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
     StaticLibraryNotesScopeService,
-    _active_destination_screen,
     _build_test_app,
     _visible_text,
     _wait_for_selector,
 )
-from Tests.UI.test_study_dashboard import StudyDashboardTestApp, _build_app_instance
+from Tests.UI.test_study_dashboard import (
+    DashboardQuizScopeService,
+    DashboardStudyScopeService,
+    _build_app_instance,
+)
+import tldw_chatbook.app as app_module
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Screens.study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
@@ -53,11 +60,57 @@ def _static_text(widget: Static) -> str:
     return str(widget.render())
 
 
+async def _close_production_app(app: TldwCli) -> None:
+    """Release production-app resources even when an assertion fails."""
+    try:
+        if app._rich_log_handler:
+            await app._rich_log_handler.stop_processor()
+            logging.getLogger().removeHandler(app._rich_log_handler)
+            app._rich_log_handler.close()
+        await app.on_shutdown_request()
+        await app.on_unmount()
+    except Exception:
+        pass
+
+
+@asynccontextmanager
+async def _run_library_app(app: TldwCli):
+    """Run the full application directly on its production Library route."""
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = "library"
+    real_get_cli_setting = app_module.get_cli_setting
+
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    try:
+        with patch(
+            "tldw_chatbook.app.get_cli_setting",
+            side_effect=get_cli_setting_without_splash,
+        ):
+            async with app.run_test(size=(180, 50)) as pilot:
+                for _ in range(300):
+                    if app.current_tab == "library" and isinstance(
+                        app.screen, LibraryScreen
+                    ):
+                        break
+                    await pilot.pause(0.01)
+                else:
+                    raise AssertionError(
+                        "full TldwCli did not finish routing to Library."
+                    )
+                yield app.screen, pilot
+    finally:
+        await _close_production_app(app)
+
+
 async def _wait_for_library_shell_ready(screen, pilot, *, timeout: float = 2.0) -> None:
     """Wait for the Library rail shell (not the retired mode-chip strip).
 
     Mirrors ``Tests/UI/test_library_shell.py::_wait_for_library_shell`` for
-    suites that use the generic ``DestinationHarness``.
+    suites that run the full production application.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -112,10 +165,8 @@ async def test_library_flashcards_entry_passes_source_snapshot_context_to_study(
     app = _build_test_app()
     _seed_library_sources(app)
     app.open_study_screen = Mock()
-    host = DestinationHarness(app, "library")
 
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
+    async with _run_library_app(app) as (screen, pilot):
         await _wait_for_library_shell_ready(screen, pilot)
         screen.open_flashcards()
         await pilot.pause(0.1)
@@ -149,10 +200,8 @@ async def test_library_empty_state_preserves_plain_study_section_routing() -> No
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     app.open_study_screen = Mock()
-    host = DestinationHarness(app, "library")
 
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
+    async with _run_library_app(app) as (screen, pilot):
         await _wait_for_library_shell_ready(screen, pilot)
         screen.open_quizzes()
         await pilot.pause(0.1)
@@ -205,10 +254,8 @@ async def test_library_study_related_modes_explain_handoff_context_and_wip(
 
     app = _build_test_app()
     _seed_library_sources(app)
-    host = DestinationHarness(app, "library")
 
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
+    async with _run_library_app(app) as (screen, pilot):
         await _wait_for_library_shell_ready(screen, pilot)
 
         screen.query_one(f"#library-row-{row_id}", Button).press()
@@ -246,10 +293,8 @@ async def test_library_quizzes_mode_empty_state_explains_global_recovery_without
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     app.open_study_screen = Mock()
-    host = DestinationHarness(app, "library")
 
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
+    async with _run_library_app(app) as (screen, pilot):
         await _wait_for_library_shell_ready(screen, pilot)
 
         screen.query_one("#library-row-create-quizzes", Button).press()
@@ -287,10 +332,8 @@ async def test_library_study_handoff_uses_counts_when_titles_are_unavailable() -
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     app.open_study_screen = Mock()
-    host = DestinationHarness(app, "library")
 
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
+    async with _run_library_app(app) as (screen, pilot):
         await _wait_for_library_shell_ready(screen, pilot)
 
         screen.query_one("#library-row-create-study", Button).press()
@@ -328,10 +371,8 @@ async def test_library_flashcards_handoff_supports_keyboard_activation_with_sour
     app = _build_test_app()
     _seed_library_sources(app)
     app.open_study_screen = Mock()
-    host = DestinationHarness(app, "library")
 
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
+    async with _run_library_app(app) as (screen, pilot):
         await _wait_for_library_shell_ready(screen, pilot)
 
         row_button = screen.query_one("#library-row-create-flashcards", Button)
@@ -359,26 +400,68 @@ async def test_library_flashcards_handoff_supports_keyboard_activation_with_sour
 async def test_study_displays_library_material_context_without_changing_service_scope() -> (
     None
 ):
-    app_instance = _build_app_instance()
-    app_instance.pending_study_scope_context = StudyScopeContext(
+    app = TldwCli()
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = "home"
+    study_service = DashboardStudyScopeService()
+    quiz_service = DashboardQuizScopeService()
+    app.study_scope_service = study_service
+    app.study_quiz_scope_service = quiz_service
+    scope_context = StudyScopeContext(
         scope_type=StudyScopeType.GLOBAL,
         material_source=MATERIAL_SOURCE_LIBRARY,
         material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
         material_summary="Notes: 1\n  1. Research Note\n\nMedia: 1\n  1. Transcript A",
         material_titles=("Research Note", "Transcript A"),
     )
-    app = StudyDashboardTestApp(app_instance)
+    real_get_cli_setting = app_module.get_cli_setting
 
-    async with app.run_test() as pilot:
-        await pilot.pause(0.3)
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
 
-        scope_summary = app.screen.query_one("#study-scope-summary", Static)
+    try:
+        with patch(
+            "tldw_chatbook.app.get_cli_setting",
+            side_effect=get_cli_setting_without_splash,
+        ):
+            async with app.run_test() as pilot:
+                for _ in range(300):
+                    if app.current_tab == "home":
+                        break
+                    await pilot.pause(0.01)
+                else:
+                    raise AssertionError("full TldwCli did not reach Home.")
 
-        assert "Global study" in _static_text(scope_summary)
-        assert "Local Library Sources" in _static_text(scope_summary)
-        assert "Research Note" in _static_text(scope_summary)
-        assert "Transcript A" in _static_text(scope_summary)
-        assert app.screen.study_materials == ["Research Note", "Transcript A"]
+                app.open_study_screen(scope_context)
+                for _ in range(300):
+                    if (
+                        app.current_tab == "study"
+                        and isinstance(app.screen, StudyScreen)
+                        and "Local Library Sources"
+                        in _static_text(
+                            app.screen.query_one("#study-scope-summary", Static)
+                        )
+                    ):
+                        break
+                    await pilot.pause(0.01)
+                else:
+                    raise AssertionError(
+                        "full TldwCli did not consume the Library study handoff."
+                    )
+
+                scope_summary = app.screen.query_one("#study-scope-summary", Static)
+                assert "Global study" in _static_text(scope_summary)
+                assert "Local Library Sources" in _static_text(scope_summary)
+                assert "Research Note" in _static_text(scope_summary)
+                assert "Transcript A" in _static_text(scope_summary)
+                assert app.screen.study_materials == [
+                    "Research Note",
+                    "Transcript A",
+                ]
+    finally:
+        await _close_production_app(app)
 
     assert (
         "get_due_flashcards",
@@ -386,7 +469,7 @@ async def test_study_displays_library_material_context_without_changing_service_
         "global",
         None,
         25,
-    ) in app_instance.study_scope_service.calls
+    ) in study_service.calls
     assert (
         "list_decks",
         "local",
@@ -394,7 +477,7 @@ async def test_study_displays_library_material_context_without_changing_service_
         None,
         3,
         0,
-    ) in app_instance.study_scope_service.calls
+    ) in study_service.calls
     assert (
         "list_quizzes",
         "local",
@@ -403,7 +486,7 @@ async def test_study_displays_library_material_context_without_changing_service_
         None,
         3,
         0,
-    ) in app_instance.study_quiz_scope_service.calls
+    ) in quiz_service.calls
 
 
 def test_study_restored_material_context_is_sanitized_and_escaped_for_markup() -> None:

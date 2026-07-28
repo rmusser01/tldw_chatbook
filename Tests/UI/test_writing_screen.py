@@ -1,9 +1,11 @@
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
-from textual.app import App, ComposeResult
 from textual.widgets import ListView, Static, TextArea, Tree
 
+from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Writing_Interop.server_writing_service import (
     REASON_DIRECT_MANUSCRIPT_SCENE,
     REASON_SCENE_REPARENT,
@@ -473,6 +475,27 @@ def _writing_window(scope=None):
     return WritingWindow(app)
 
 
+@asynccontextmanager
+async def _mounted_production_writing_window(scope=None):
+    """Mount the production Writing screen inside the full production app."""
+    app = _build_test_app()
+    app.writing_scope_service = scope or FakeWritingScopeService()
+    screen = WritingScreen(app)
+    def setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return default
+
+    with patch(
+        "tldw_chatbook.app.get_cli_setting",
+        side_effect=setting_without_splash,
+    ):
+        async with app.run_test() as pilot:
+            await app.push_screen(screen)
+            await pilot.pause()
+            yield app, screen.query_one(WritingWindow), pilot
+
+
 def test_writing_window_defaults_to_local_source():
     window = _writing_window()
 
@@ -510,10 +533,8 @@ async def test_missing_server_configuration_shows_unavailable_state_without_loca
 @pytest.mark.asyncio
 async def test_mounted_server_unavailable_state_updates_visible_status():
     scope = FakeWritingScopeService(server_available=False)
-    window = _writing_window(scope)
-    app = WritingWindowHarness(window)
 
-    async with app.run_test():
+    async with _mounted_production_writing_window(scope) as (app, window, _pilot):
         await window.load_projects("local")
         await window.switch_source("server")
 
@@ -1000,22 +1021,11 @@ async def test_controller_reorder_move_and_search_are_source_specific():
     assert ("search_project", "server", "local-project", "Opening", 5) in scope.calls
 
 
-class WritingWindowHarness(App):
-    def __init__(self, window):
-        super().__init__()
-        self.window = window
-
-    def compose(self) -> ComposeResult:
-        yield self.window
-
-
 @pytest.mark.asyncio
 async def test_mounted_project_list_renders_and_selects_project():
     scope = FakeWritingScopeService()
-    window = _writing_window(scope)
-    app = WritingWindowHarness(window)
 
-    async with app.run_test():
+    async with _mounted_production_writing_window(scope) as (app, window, _pilot):
         await window.load_projects("local")
         project_list = app.query_one("#writing-project-list", ListView)
 
@@ -1032,10 +1042,7 @@ async def test_mounted_project_list_renders_and_selects_project():
 
 @pytest.mark.asyncio
 async def test_mounted_outline_tree_renders_and_selects_nodes():
-    window = _writing_window()
-    app = WritingWindowHarness(window)
-
-    async with app.run_test():
+    async with _mounted_production_writing_window() as (app, window, _pilot):
         await window.load_project_structure("local-project")
         tree = app.query_one("#writing-outline-tree", Tree)
 

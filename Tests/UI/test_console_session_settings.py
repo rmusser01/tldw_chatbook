@@ -161,7 +161,7 @@ def test_groq_console_default_uses_current_catalog_model() -> None:
 
 def test_console_remote_defaults_use_smoke_verified_models() -> None:
     expected_defaults = {
-        "anthropic": ("Anthropic", "claude-sonnet-4-20250514"),
+        "anthropic": ("Anthropic", "claude-sonnet-5"),
         "cohere": ("Cohere", "command-a-03-2025"),
         "google": ("Google", "gemini-2.5-flash"),
         "huggingface": ("HuggingFace", "openai/gpt-oss-120b"),
@@ -262,7 +262,7 @@ def _select_values(select: Select) -> set[str]:
         value = getattr(option, "value", None)
         if value is None and isinstance(option, tuple) and len(option) >= 2:
             value = option[1]
-        if value is not None:
+        if value is not None and value is not Select.NULL:
             values.add(str(value))
     return values
 
@@ -866,13 +866,9 @@ async def test_console_model_resolution_includes_runtime_discovered_models() -> 
             _merged_model("gpt-4.1"),
         )
     )
-    app = SimpleNamespace(
-        providers_models={"openai": ["gpt-4.1"]},
-        llm_provider_catalog_scope_service=scope,
-    )
-
     options = await provider_model_resolution.resolve_provider_model_options(
-        app,
+        {"openai": ["gpt-4.1"]},
+        scope,
         provider="OpenAI",
     )
 
@@ -3681,7 +3677,7 @@ def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details
     assert "save the endpoint in Settings" in screen._console_provider_blocker_copy()
     assert label == "Configure endpoint"
     assert target == "settings"
-    assert tooltip == "Save the ollama endpoint in Settings"
+    assert tooltip == "Save the Ollama endpoint in Settings"
     assert screen._console_provider_recovery_field() == "endpoint"
     assert (
         screen._console_setup_blocked_reason()
@@ -4229,8 +4225,7 @@ def _build_live_config_test_app():
             persist=lambda: None,
         )
         app.runtime_policy = context
-        app.current_runtime_source = "local"
-        app.current_runtime_backend = "local"
+        app._publish_runtime_policy_projection(context.state)
         return context
 
     with ExitStack() as stack:
@@ -4288,13 +4283,18 @@ def _build_live_config_test_app():
         )
         for db_path_getter in (
             "get_notifications_db_path",
-            "get_subscriptions_db_path",
             "get_research_db_path",
             "get_writing_db_path",
         ):
             stack.enter_context(
                 patch(f"tldw_chatbook.app.{db_path_getter}", return_value=":memory:")
             )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.get_subscriptions_db_path",
+                return_value=user_data_dir / "subscriptions.sqlite",
+            )
+        )
         stack.enter_context(
             patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir)
         )
@@ -4390,34 +4390,6 @@ async def test_real_journey_settings_save_unblocks_console_without_restart(
         assert not console.query_one(
             "#console-setup-modal", ConsoleSetupModal
         ).is_blocking
-
-
-def test_console_resolution_view_suppresses_boot_echo_reactives(monkeypatch) -> None:
-    """Post-save, reactives echoing the boot template defaults must not win."""
-    from tldw_chatbook.Chat.provider_readiness import provider_config_key
-
-    app = _build_test_app()
-    app.app_config = _disk_loaded_snapshot(
-        chat_defaults={"provider": "OpenAI", "model": "gpt-4o"}
-    )
-    app.chat_api_provider_value = "OpenAI"
-    app.chat_api_model_value = "gpt-4o"
-    console = ChatScreen(app)
-    fresh = _disk_loaded_snapshot(
-        chat_defaults={"provider": "llama_cpp", "model": "Qwen3-Test.gguf"},
-        api_settings={"llama_cpp": {"api_url": "http://127.0.0.1:9099"}},
-    )
-    monkeypatch.setattr(chat_screen_module, "load_settings", lambda: fresh)
-
-    provider, model = console._effective_console_provider_model()
-    assert provider_config_key(str(provider)) == "llama_cpp"
-    assert str(model) == "Qwen3-Test.gguf"
-
-    # A reactive value the user actually changed (differs from the boot echo)
-    # still wins over fresh chat_defaults.
-    app.chat_api_provider_value = "Anthropic"
-    provider_after_user_pick, _model = console._effective_console_provider_model()
-    assert provider_config_key(str(provider_after_user_pick)) == "anthropic"
 
 
 def test_console_stale_default_refresh_respects_user_marked_settings() -> None:

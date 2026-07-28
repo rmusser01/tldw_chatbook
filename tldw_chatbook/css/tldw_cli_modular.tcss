@@ -8921,14 +8921,14 @@ Collapsible {
     margin-bottom: 1;
 }
 
-Collapsible > .collapsible--header {
+Collapsible > CollapsibleTitle {
     background: $primary-background-darken-1;
     color: $text;
     padding: 0 1;
     height: 3;
 }
 
-Collapsible.-active > .collapsible--header {
+Collapsible.-active > CollapsibleTitle {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;

@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import (
-    DestinationHarness,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
     StaticLibraryNotesScopeService,
@@ -18,10 +19,14 @@ from Tests.UI.test_destination_shells import (
     _wait_for_library_snapshot,
 )
 from Tests.UI.test_study_dashboard import (
+    DashboardQuizScopeService,
     DashboardStudyScopeService,
-    StudyDashboardTestApp,
-    _build_app_instance,
 )
+import tldw_chatbook.app as app_module
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Screens.study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
     MATERIAL_TITLE_LIBRARY_SOURCES,
@@ -119,6 +124,102 @@ def _static_text(widget: Static) -> str:
     return str(widget.render())
 
 
+async def _close_production_app(app: TldwCli) -> None:
+    """Release full-app resources even when an assertion fails."""
+    try:
+        if app._rich_log_handler:
+            await app._rich_log_handler.stop_processor()
+            logging.getLogger().removeHandler(app._rich_log_handler)
+            app._rich_log_handler.close()
+        await app.on_shutdown_request()
+        await app.on_unmount()
+    except Exception:
+        pass
+
+
+def _splash_disabled_setting(real_get_cli_setting):
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    return get_cli_setting_without_splash
+
+
+def _set_runtime_backend(app: TldwCli, source: str) -> None:
+    state = RuntimeSourceState(
+        active_source=source,
+        server_configured=source == "server",
+    )
+    app.runtime_policy.state = state
+    app._publish_runtime_policy_projection(state)
+
+
+@asynccontextmanager
+async def _run_library_app(app: TldwCli):
+    """Run the full production application on its Library route."""
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = "library"
+    real_get_cli_setting = app_module.get_cli_setting
+    try:
+        with patch(
+            "tldw_chatbook.app.get_cli_setting",
+            side_effect=_splash_disabled_setting(real_get_cli_setting),
+        ):
+            async with app.run_test(size=(180, 50)) as pilot:
+                for _ in range(300):
+                    if app.current_tab == "library" and isinstance(
+                        app.screen, LibraryScreen
+                    ):
+                        break
+                    await pilot.pause(0.01)
+                else:
+                    raise AssertionError(
+                        "full TldwCli did not finish routing to Library."
+                    )
+                yield app.screen, pilot
+    finally:
+        await _close_production_app(app)
+
+
+@asynccontextmanager
+async def _run_study_app(app: TldwCli, scope_context: StudyScopeContext):
+    """Run a Library scope handoff through the full production application."""
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = "home"
+    real_get_cli_setting = app_module.get_cli_setting
+    try:
+        with patch(
+            "tldw_chatbook.app.get_cli_setting",
+            side_effect=_splash_disabled_setting(real_get_cli_setting),
+        ):
+            async with app.run_test() as pilot:
+                for _ in range(300):
+                    if app.current_tab == "home":
+                        break
+                    await pilot.pause(0.01)
+                else:
+                    raise AssertionError("full TldwCli did not reach Home.")
+
+                app.open_study_screen(scope_context)
+                for _ in range(300):
+                    if (
+                        app.current_tab == "study"
+                        and isinstance(app.screen, StudyScreen)
+                        and app.screen.scope_state.source_items
+                        == scope_context.source_items
+                    ):
+                        break
+                    await pilot.pause(0.01)
+                else:
+                    raise AssertionError(
+                        "full TldwCli did not consume the Study scope handoff."
+                    )
+                yield app.screen, pilot
+    finally:
+        await _close_production_app(app)
+
+
 @pytest.mark.asyncio
 async def test_library_source_context_carries_study_pack_source_items() -> None:
     app = _build_test_app()
@@ -132,10 +233,8 @@ async def test_library_source_context_carries_study_pack_source_items() -> None:
         [{"title": "Planning Chat", "id": "chat-1"}]
     )
     app.open_study_screen = Mock()
-    host = DestinationHarness(app, "library")
 
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = host.screen_stack[-1]
+    async with _run_library_app(app) as (screen, pilot):
         await _wait_for_library_snapshot(screen, pilot)
         # The retired hub rendered #library-open-study globally; the rail +
         # canvas shell only mounts it inside the create-study mode canvas, so
@@ -161,12 +260,13 @@ async def test_library_source_context_carries_study_pack_source_items() -> None:
 @pytest.mark.asyncio
 async def test_server_study_dashboard_launches_source_selected_study_pack_job() -> None:
     service = RecordingSourceStudyService()
-    app_instance = _build_app_instance()
-    app_instance.study_scope_service = service
-    app_instance.current_runtime_backend = "server"
-    app_instance.runtime_backend = "server"
-    app_instance.notify = Mock()
-    app_instance.pending_study_scope_context = StudyScopeContext(
+    app = _build_test_app()
+    app.study_scope_service = service
+    app.study_quiz_scope_service = DashboardQuizScopeService()
+    _set_runtime_backend(app, "server")
+    notifications = Mock(wraps=app.notify)
+    app.notify = notifications
+    scope_context = StudyScopeContext(
         material_source=MATERIAL_SOURCE_LIBRARY,
         material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
         material_summary="Local Library source snapshot staged for Study.",
@@ -180,19 +280,17 @@ async def test_server_study_dashboard_launches_source_selected_study_pack_job() 
             ),
         ),
     )
-    app = StudyDashboardTestApp(app_instance)
 
-    async with app.run_test() as pilot:
-        await pilot.pause(0.3)
-        generate_button = app.screen.query_one("#study-generate-source-pack", Button)
+    async with _run_study_app(app, scope_context) as (screen, pilot):
+        generate_button = screen.query_one("#study-generate-source-pack", Button)
 
         assert generate_button.disabled is False
         assert "selected Library sources" in str(generate_button.tooltip)
 
-        await pilot.click("#study-generate-source-pack")
+        generate_button.press()
         await _wait_for_source_generation_call(service, pilot)
 
-        status = app.screen.query_one("#study-source-generation-status", Static)
+        status = screen.query_one("#study-source-generation-status", Static)
 
         assert "queued" in _static_text(status).lower()
         assert "42" in _static_text(status)
@@ -217,7 +315,7 @@ async def test_server_study_dashboard_launches_source_selected_study_pack_job() 
             },
         ],
     ) in service.calls
-    app_instance.notify.assert_called_with(
+    notifications.assert_called_with(
         "Study pack generation queued.", severity="information"
     )
 
@@ -241,12 +339,13 @@ async def test_server_study_dashboard_observes_completed_source_pack_for_reuse()
             },
         }
     ]
-    app_instance = _build_app_instance()
-    app_instance.study_scope_service = service
-    app_instance.current_runtime_backend = "server"
-    app_instance.runtime_backend = "server"
-    app_instance.notify = Mock()
-    app_instance.pending_study_scope_context = StudyScopeContext(
+    app = _build_test_app()
+    app.study_scope_service = service
+    app.study_quiz_scope_service = DashboardQuizScopeService()
+    _set_runtime_backend(app, "server")
+    notifications = Mock(wraps=app.notify)
+    app.notify = notifications
+    scope_context = StudyScopeContext(
         material_source=MATERIAL_SOURCE_LIBRARY,
         material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
         material_titles=("Research Note",),
@@ -256,16 +355,14 @@ async def test_server_study_dashboard_observes_completed_source_pack_for_reuse()
             ),
         ),
     )
-    app = StudyDashboardTestApp(app_instance)
 
-    async with app.run_test() as pilot:
-        await pilot.pause(0.3)
-        await pilot.click("#study-generate-source-pack")
+    async with _run_study_app(app, scope_context) as (screen, pilot):
+        screen.query_one("#study-generate-source-pack", Button).press()
         await _wait_for_service_call(service, pilot, "get_study_pack_job_status")
 
-        status = app.screen.query_one("#study-source-generation-status", Static)
-        recent_decks = app.screen.query_one("#study-recent-decks", Static)
-        resume_button = app.screen.query_one("#study-resume-last", Button)
+        status = screen.query_one("#study-source-generation-status", Static)
+        recent_decks = screen.query_one("#study-recent-decks", Static)
+        resume_button = screen.query_one("#study-resume-last", Button)
 
         assert "ready" in _static_text(status).lower()
         assert "Research Note Study Pack" in _static_text(status)
@@ -274,13 +371,13 @@ async def test_server_study_dashboard_observes_completed_source_pack_for_reuse()
         assert resume_button.disabled is False
         assert "flashcards" in str(resume_button.label).lower()
 
-        await pilot.click("#study-resume-last")
+        resume_button.press()
         await pilot.pause(0.2)
 
-        assert app.screen.current_section == "flashcards"
+        assert screen.current_section == "flashcards"
 
     assert ("get_study_pack_job_status", "server", 42) in service.calls
-    app_instance.notify.assert_any_call("Study pack ready.", severity="information")
+    notifications.assert_any_call("Study pack ready.", severity="information")
 
 
 @pytest.mark.asyncio
@@ -294,12 +391,13 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
             "error": "<b>Embedding service unavailable</b> javascript: onerror=retry",
         }
     ]
-    app_instance = _build_app_instance()
-    app_instance.study_scope_service = service
-    app_instance.current_runtime_backend = "server"
-    app_instance.runtime_backend = "server"
-    app_instance.notify = Mock()
-    app_instance.pending_study_scope_context = StudyScopeContext(
+    app = _build_test_app()
+    app.study_scope_service = service
+    app.study_quiz_scope_service = DashboardQuizScopeService()
+    _set_runtime_backend(app, "server")
+    notifications = Mock(wraps=app.notify)
+    app.notify = notifications
+    scope_context = StudyScopeContext(
         material_source=MATERIAL_SOURCE_LIBRARY,
         material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
         material_titles=("Research Note",),
@@ -309,15 +407,13 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
             ),
         ),
     )
-    app = StudyDashboardTestApp(app_instance)
 
-    async with app.run_test() as pilot:
-        await pilot.pause(0.3)
-        await pilot.click("#study-generate-source-pack")
+    async with _run_study_app(app, scope_context) as (screen, pilot):
+        screen.query_one("#study-generate-source-pack", Button).press()
         await _wait_for_service_call(service, pilot, "get_study_pack_job_status")
 
-        status = app.screen.query_one("#study-source-generation-status", Static)
-        generate_button = app.screen.query_one("#study-generate-source-pack", Button)
+        status = screen.query_one("#study-source-generation-status", Static)
+        generate_button = screen.query_one("#study-generate-source-pack", Button)
 
         assert "failed" in _static_text(status).lower()
         assert "Embedding service unavailable" in _static_text(status)
@@ -329,7 +425,7 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
 
     error_notifications = [
         call.args[0]
-        for call in app_instance.notify.call_args_list
+        for call in notifications.call_args_list
         if call.kwargs.get("severity") == "error"
     ]
     assert any(
@@ -345,9 +441,11 @@ async def test_local_study_dashboard_explains_source_generation_server_requireme
     None
 ):
     service = RecordingSourceStudyService()
-    app_instance = _build_app_instance()
-    app_instance.study_scope_service = service
-    app_instance.pending_study_scope_context = StudyScopeContext(
+    app = _build_test_app()
+    app.study_scope_service = service
+    app.study_quiz_scope_service = DashboardQuizScopeService()
+    _set_runtime_backend(app, "local")
+    scope_context = StudyScopeContext(
         material_source=MATERIAL_SOURCE_LIBRARY,
         material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
         material_summary="Local Library source snapshot staged for Study.",
@@ -358,12 +456,10 @@ async def test_local_study_dashboard_explains_source_generation_server_requireme
             ),
         ),
     )
-    app = StudyDashboardTestApp(app_instance)
 
-    async with app.run_test() as pilot:
-        await pilot.pause(0.3)
-        generate_button = app.screen.query_one("#study-generate-source-pack", Button)
-        status = app.screen.query_one("#study-source-generation-status", Static)
+    async with _run_study_app(app, scope_context) as (screen, _pilot):
+        generate_button = screen.query_one("#study-generate-source-pack", Button)
+        status = screen.query_one("#study-source-generation-status", Static)
 
         assert generate_button.disabled is True
         assert "server mode" in str(generate_button.tooltip).lower()

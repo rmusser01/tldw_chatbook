@@ -52,7 +52,7 @@ Reason: The change defines application service construction, runtime provider ow
 - Test: `Tests/ProductionApp/test_reactive_ownership_maturity.py`
 - Test: `Tests/Packaging/test_installed_distribution.py`
 
-- [ ] **Step 1: Create the narrow AST and full-production-app test**
+- [x] **Step 1: Create the narrow AST and full-production-app test**
 
 Create `Tests/ProductionApp/test_service_composition_lifecycle.py` with the
 following complete contract:
@@ -232,7 +232,7 @@ async def test_production_app_composes_one_stable_dependency_graph(
 The member-by-member `is` assertions are intentional: value equality is not
 evidence that the composition root retained the same service objects.
 
-- [ ] **Step 2: Verify the source sentinel fails for the duplicate calls**
+- [x] **Step 2: Verify the source sentinel fails for the duplicate calls**
 
 Run:
 
@@ -243,7 +243,7 @@ Run:
 Expected: FAIL; the actual `Counter` reports two calls for each guarded helper
 while the expected counter reports one.
 
-- [ ] **Step 3: Verify the full production app exposes the current defects**
+- [x] **Step 3: Verify the full production app exposes the current defects**
 
 Run:
 
@@ -256,7 +256,7 @@ observed production defect: duplicate helper count, Writing provider mismatch,
 or absent Chat/Media Sync binding. A collection/setup failure is not an
 acceptable red result.
 
-- [ ] **Step 4: Extend the existing installed-wheel probe**
+- [x] **Step 4: Extend the existing installed-wheel probe**
 
 In the `INSTALLED_PROBE` raw string, add `Counter` to the child imports and,
 after importing `TldwCli` but before `app = get_app()`, install wrappers that
@@ -366,7 +366,7 @@ assert_service_graph(app)
 Keep every existing installed-root, resource, entry-point, loaded-module,
 immutability, and Home-to-Chat assertion unchanged.
 
-- [ ] **Step 5: Verify the installed-wheel probe fails for the production defect**
+- [x] **Step 5: Verify the installed-wheel probe fails for the production defect**
 
 Run:
 
@@ -389,7 +389,7 @@ installed-runtime prerequisite before the application wiring change.
 - Modify: `Packaging/check_manifest.py`
 - Modify: `Packaging/PACKAGING_CHECKLIST.md`
 
-- [ ] **Step 1: Add the exact migration to artifact expectations**
+- [x] **Step 1: Add the exact migration to artifact expectations**
 
 Define this test constant:
 
@@ -403,7 +403,7 @@ CITATION_MIGRATION_PATH = (
 Add `CITATION_MIGRATION_PATH` to both `required_sdist` and `required_wheel` in
 `test_built_artifacts_match_distribution_contract`.
 
-- [ ] **Step 2: Add a release-checker removal regression**
+- [x] **Step 2: Add a release-checker removal regression**
 
 Add a focused test that copies the built distributions, rewrites the wheel
 without `CITATION_MIGRATION_PATH`, runs `Packaging/check_manifest.py`, and
@@ -411,7 +411,7 @@ asserts return code `1` plus the exact missing path in output. Use the same
 standard-library archive rewrite pattern as
 `test_release_checker_rejects_missing_runtime_data`.
 
-- [ ] **Step 3: Verify the artifact expectation is RED**
+- [x] **Step 3: Verify the artifact expectation is RED**
 
 Run:
 
@@ -422,7 +422,7 @@ Run:
 Expected: FAIL because the exact migration is absent from both freshly built
 artifacts.
 
-- [ ] **Step 4: Declare the exact runtime file**
+- [x] **Step 4: Declare the exact runtime file**
 
 Add this exact root-manifest entry:
 
@@ -441,13 +441,13 @@ Add this exact setuptools package-data owner:
 Do not enable `include-package-data` and do not package every SQL or migration
 file.
 
-- [ ] **Step 5: Verify the fresh artifacts now contain the migration**
+- [x] **Step 5: Verify the fresh artifacts now contain the migration**
 
 Run the Step 3 command again.
 
 Expected: PASS.
 
-- [ ] **Step 6: Verify the release checker is still RED**
+- [x] **Step 6: Verify the release checker is still RED**
 
 Run:
 
@@ -457,13 +457,13 @@ Run:
 
 Expected: FAIL because the checker does not yet require the removed file.
 
-- [ ] **Step 7: Enforce the migration in the reusable checker**
+- [x] **Step 7: Enforce the migration in the reusable checker**
 
 Add the exact migration path to `REQUIRED_SDIST_PATHS` and
 `REQUIRED_WHEEL_PATHS` in `Packaging/check_manifest.py`. Update
 `Packaging/PACKAGING_CHECKLIST.md` to name the packaged runtime migration.
 
-- [ ] **Step 8: Verify the packaging contracts**
+- [x] **Step 8: Verify the packaging contracts**
 
 Run:
 
@@ -477,7 +477,7 @@ Run:
 
 Expected: `3 passed`.
 
-- [ ] **Step 9: Re-run installed RED without a migration failure**
+- [x] **Step 9: Re-run installed RED without a migration failure**
 
 Run:
 
@@ -498,7 +498,7 @@ migration completes and no missing migration path appears in child output.
 - Test: `Tests/ProductionApp/test_service_composition_lifecycle.py`
 - Test: `Tests/Packaging/test_installed_distribution.py`
 
-- [ ] **Step 1: Bind Media to the existing Sync scope**
+- [x] **Step 1: Bind Media to the existing Sync scope**
 
 Keep Media's local and server service construction before the Library,
 workspace, prompt/Chatbook, and watchlist/notification helpers. Move only the
@@ -519,7 +519,7 @@ Do not call or move `_wire_server_context_provider()`. Do not remove or alter
 the Sync reassignment loop inside
 `_wire_watchlists_and_notifications_services()`.
 
-- [ ] **Step 2: Remove only the later duplicate calls**
+- [x] **Step 2: Remove only the later duplicate calls**
 
 Keep the first `_wire_writing_services()` call after watchlist/notification
 composition and the first `_wire_chat_conversation_services()` call after
@@ -538,7 +538,7 @@ self._wire_chat_conversation_services()  # delete
 
 Do not add idempotence flags, retry branches, or a new mega-wiring helper.
 
-- [ ] **Step 3: Bind Chat to the existing Sync scope**
+- [x] **Step 3: Bind Chat to the existing Sync scope**
 
 Change the `ChatConversationScopeService` construction to:
 
@@ -554,7 +554,7 @@ self.chat_conversation_scope_service = ChatConversationScopeService(
 Leave citation repository/migration construction and
 `_wire_citation_artifact_ownership()` ordering unchanged.
 
-- [ ] **Step 4: Bind Writing to the long-lived provider**
+- [x] **Step 4: Bind Writing to the long-lived provider**
 
 Replace the compatibility constructor and unreachable `ValueError` fallback
 with:
@@ -572,7 +572,7 @@ Keep the existing guarded local Writing construction and
 `WritingScopeService` composition unchanged. Do not modify or remove
 `ServerWritingService.from_config(...)`.
 
-- [ ] **Step 5: Run the new source and real-app contracts**
+- [x] **Step 5: Run the new source and real-app contracts**
 
 Run:
 
@@ -582,7 +582,7 @@ Run:
 
 Expected: `2 passed`.
 
-- [ ] **Step 6: Run the installed-wheel contract**
+- [x] **Step 6: Run the installed-wheel contract**
 
 Run:
 
@@ -593,7 +593,7 @@ Run:
 Expected: PASS, with the child still loading only from the pip target and the
 wheel target hash remaining unchanged.
 
-- [ ] **Step 7: Commit the implementation and regression tests**
+- [x] **Step 7: Commit the implementation and regression tests**
 
 ```bash
 git add \
@@ -617,7 +617,7 @@ git commit -m "fix: stabilize application service composition"
 - Test: `Tests/Packaging/test_installed_distribution.py`
 - Test: `Packaging/check_manifest.py`
 
-- [ ] **Step 1: Prove the no-surrogate policy still covers the new module**
+- [x] **Step 1: Prove the no-surrogate policy still covers the new module**
 
 Run:
 
@@ -630,7 +630,7 @@ Run:
 
 Expected: `3 passed`; no allowlist or guard change.
 
-- [ ] **Step 2: Verify long-lived runtime-provider behavior**
+- [x] **Step 2: Verify long-lived runtime-provider behavior**
 
 Run:
 
@@ -647,7 +647,7 @@ Expected: `4 passed`. The private provider-rewiring test is retained as an
 existing focused behavior; it is not evidence that the entire application
 graph is reentrant.
 
-- [ ] **Step 3: Verify direct Chat, Media, and citation contracts**
+- [x] **Step 3: Verify direct Chat, Media, and citation contracts**
 
 Run:
 
@@ -663,7 +663,7 @@ Expected: all selected tests PASS. These are direct service/factory tests, not
 application substitutes; the production citation ownership evidence remains
 in the new full-app test.
 
-- [ ] **Step 4: Run all ProductionApp and Packaging tests**
+- [x] **Step 4: Run all ProductionApp and Packaging tests**
 
 Run:
 
@@ -674,7 +674,28 @@ Run:
 Expected: all tests PASS. Preserve the exact count and duration in the plan's
 implementation evidence.
 
-- [ ] **Step 5: Run the repository test suite for regression safety**
+- [x] **Step 5: Reconcile verified current-dev test and sentinel drift**
+
+The rebased full-suite runs exposed contracts already stale on clean
+`origin/dev`. Reconcile only the verified failures:
+
+- remove references to retired `StreamDone`, `TabState`, and root-owned
+  streaming behavior without restoring them or adding a test application;
+- patch provider tests through `get_runtime_config_snapshot()` rather than
+  deleted module-level `settings`;
+- create fixture-owned trusted directories before constructing services or
+  retargeting the real config loader;
+- wait for dynamic Textual controls to have a positive rendered region before
+  clicking them in the real production app;
+- review the semantic diagnostic-call delta and persistent sink topology from
+  the last inventory update, verify the metadata-only sink boundary, then
+  regenerate the checked inventory.
+
+Each failure must first reproduce on a detached worktree at current
+`origin/dev`. Do not weaken production path validation, restore retired worker
+state, or retain an obsolete app-shaped streaming suite.
+
+- [ ] **Step 6: Run the repository test suite for regression safety**
 
 Run:
 
@@ -686,7 +707,7 @@ Expected: all tests PASS. This is general regression evidence required by the
 repository Definition of Done; it does not replace the focused full-app and
 installed-wheel architecture evidence above.
 
-- [ ] **Step 6: Record the executable legacy-provider inventory**
+- [x] **Step 7: Record the executable legacy-provider inventory**
 
 Run:
 
@@ -720,7 +741,7 @@ Expected after the repair: `32` executable calls and no
 inventory only; do not claim that the remaining services share Writing's
 provider or shutdown semantics.
 
-- [ ] **Step 7: Run compile and scoped Ruff checks**
+- [ ] **Step 8: Run compile and scoped Ruff checks**
 
 Run:
 
@@ -742,7 +763,7 @@ git diff --check
 
 Expected: every command exits `0`.
 
-- [ ] **Step 8: Self-review the complete diff**
+- [ ] **Step 9: Self-review the complete diff**
 
 Run:
 

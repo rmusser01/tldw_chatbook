@@ -984,7 +984,7 @@ class TestFasterWhisperIntegration:
 class TestFasterWhisperPerformance:
     """Performance benchmarking tests for faster-whisper."""
 
-    @pytest.mark.benchmark
+    @pytest.mark.performance
     @pytest.mark.slow
     def test_transcription_speed(self, real_transcription_service, test_audio_file):
         """Benchmark transcription speed with different configurations."""
@@ -1039,7 +1039,7 @@ class TestFasterWhisperPerformance:
             "Transcription took too long"
         )
 
-    @pytest.mark.benchmark
+    @pytest.mark.performance
     @pytest.mark.slow
     def test_model_loading_time(self, real_transcription_service):
         """Test model loading time for different models."""

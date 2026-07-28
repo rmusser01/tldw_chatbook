@@ -280,6 +280,29 @@ def format_duration_ms(duration_ms: int) -> str:
     return f"{minutes}m {seconds}s"
 
 
+def audit_entry_detail_payload(entry: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one execution-log entry into its metadata-only display schema."""
+
+    server_key = str(entry.get("server_key") or "")
+    tool_name = str(entry.get("tool_name") or "")
+    return {
+        "ts": entry.get("ts"),
+        "tool": f"{server_key}::{tool_name}",
+        "initiator": entry.get("initiator"),
+        "decision": entry.get("decision"),
+        "ok": entry.get("ok"),
+        "status": entry.get("status"),
+        "duration": format_duration_ms(int(entry.get("duration_ms") or 0)),
+        "error_category": entry.get("error_category"),
+        "exception_type": entry.get("exception_type"),
+        "status_code": entry.get("status_code"),
+        "argument_names": entry.get("argument_names") or [],
+        "unknown_argument_count": int(entry.get("unknown_argument_count") or 0),
+        "result_type": entry.get("result_type"),
+        "result_size": int(entry.get("result_size") or 0),
+    }
+
+
 def _finding_text(finding: Mapping[str, Any], *keys: str) -> str:
     """Defensive raw-dict read for one finding field (T8, MCP Hub
     Phase 5) -- mirrors `hub_tool_catalog.server_tools_from_inventory()`'s
@@ -1268,24 +1291,7 @@ class MCPInspector(Vertical):
             self._current_audit_entry = entry
             server_key = str(entry.get("server_key") or "")
             tool_name = str(entry.get("tool_name") or "")
-            detail_payload = {
-                "ts": entry.get("ts"),
-                "tool": f"{server_key}::{tool_name}",
-                "initiator": entry.get("initiator"),
-                "decision": entry.get("decision"),
-                "ok": entry.get("ok"),
-                "status": entry.get("status"),
-                "duration": format_duration_ms(int(entry.get("duration_ms") or 0)),
-                "error_category": entry.get("error_category"),
-                "exception_type": entry.get("exception_type"),
-                "status_code": entry.get("status_code"),
-                "argument_names": entry.get("argument_names") or [],
-                "unknown_argument_count": int(
-                    entry.get("unknown_argument_count") or 0
-                ),
-                "result_type": entry.get("result_type"),
-                "result_size": int(entry.get("result_size") or 0),
-            }
+            detail_payload = audit_entry_detail_payload(entry)
             detail_text = json.dumps(detail_payload, indent=2, default=str)
             widgets: list[Any] = [
                 Static(

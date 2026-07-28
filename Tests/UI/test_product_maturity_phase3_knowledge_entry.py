@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -15,10 +17,14 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
-from Tests.UI.test_study_dashboard import (
-    _build_app_instance as _build_study_app_instance,
+from tldw_chatbook.Constants import TAB_STUDY
+import tldw_chatbook.app as app_module
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+    PendingHandoffStore,
 )
-from Tests.UI.test_study_dashboard import StudyDashboardTestApp
+from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +43,31 @@ TASK_10_1 = Path(
 
 def _text(path: Path) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable only the production splash setting."""
+    real_get_cli_setting = app_module.get_cli_setting
+
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+
+
+async def _close_production_app(app: TldwCli) -> None:
+    """Release production-app resources even when the assertion fails."""
+    try:
+        if app._rich_log_handler:
+            await app._rich_log_handler.stop_processor()
+            logging.getLogger().removeHandler(app._rich_log_handler)
+            app._rich_log_handler.close()
+        await app.on_shutdown_request()
+        await app.on_unmount()
+    except Exception:
+        pass
 
 
 @pytest.mark.asyncio
@@ -120,49 +151,76 @@ async def test_library_study_entry_buttons_preserve_requested_section() -> None:
 
 
 @pytest.mark.asyncio
-async def test_study_screen_consumes_pending_initial_section() -> None:
-    app_instance = _build_study_app_instance()
-    app_instance.pending_study_initial_section = "quizzes"
-    app = StudyDashboardTestApp(app_instance)
+async def test_study_screen_consumes_pending_initial_section(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _disable_splash(monkeypatch)
+    app = TldwCli()
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = "home"
 
-    async with app.run_test() as pilot:
-        for _ in range(150):
-            if getattr(app.screen, "current_section", None) == "quizzes":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(
-                "current_section never became 'quizzes' (was "
-                f"{getattr(app.screen, 'current_section', None)!r})."
+    try:
+        async with app.run_test() as pilot:
+            for _ in range(150):
+                if app.current_tab == "home":
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError(
+                    f"initial route never became 'home' (was {app.current_tab!r})."
+                )
+
+            app.open_study_screen(initial_section="quizzes")
+            for _ in range(150):
+                if (
+                    app.current_tab == TAB_STUDY
+                    and isinstance(app.screen, StudyScreen)
+                    and app.screen.current_section == "quizzes"
+                ):
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError(
+                    "current_section never became 'quizzes' (was "
+                    f"{getattr(app.screen, 'current_section', None)!r})."
+                )
+
+            assert app.screen.current_section == "quizzes"
+            assert not app.pending_handoffs.has_pending(
+                HandoffChannel.STUDY_INITIAL_SECTION
             )
-
-        assert app.screen.current_section == "quizzes"
-        assert getattr(app_instance, "pending_study_initial_section", None) is None
+    finally:
+        await _close_production_app(app)
 
 
 def test_tldwcli_open_study_screen_accepts_initial_section() -> None:
-    from tldw_chatbook.Constants import TAB_STUDY
-    from tldw_chatbook.app import TldwCli
-
     app = object.__new__(TldwCli)
-    app.pending_study_scope_context = None
-    app.pending_study_initial_section = None
+    app.pending_handoffs = PendingHandoffStore()
+    app.notify = Mock()
     app.post_message = Mock()
 
     TldwCli.open_study_screen(app, initial_section="flashcards")
 
-    assert app.pending_study_initial_section == "flashcards"
+    claim = app.pending_handoffs.claim(HandoffChannel.STUDY_INITIAL_SECTION)
+    assert claim is not None
+    assert claim.value == "flashcards"
     assert app.post_message.call_args.args[0].screen_name == TAB_STUDY
 
 
 def test_pending_study_initial_section_overrides_restored_section() -> None:
-    from tldw_chatbook.UI.Screens.study_screen import StudyScreen
+    store = PendingHandoffStore()
+    store.stage(HandoffChannel.STUDY_INITIAL_SECTION, "quizzes")
+    applied_sections: list[str] = []
+    screen = SimpleNamespace(
+        app_instance=SimpleNamespace(pending_handoffs=store),
+        current_section="flashcards",
+    )
+    screen._apply_section_layout = lambda: applied_sections.append(
+        screen.current_section
+    )
 
-    app_instance = _build_study_app_instance()
-    app_instance.pending_study_initial_section = "quizzes"
-    screen = StudyScreen(app_instance=app_instance)
-
-    screen.restore_state({"study_section": "flashcards"})
-    screen._apply_pending_initial_section()
+    StudyScreen._apply_pending_section_handoff(screen)
 
     assert screen.current_section == "quizzes"
+    assert applied_sections == ["quizzes"]
+    assert not store.has_pending(HandoffChannel.STUDY_INITIAL_SECTION)

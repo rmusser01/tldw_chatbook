@@ -591,7 +591,7 @@ class TestMLXWhisperIntegration:
 class TestMLXWhisperPerformance:
     """Performance benchmarking tests for MLX Whisper."""
 
-    @pytest.mark.benchmark
+    @pytest.mark.performance
     @pytest.mark.slow
     def test_transcription_speed(self, real_transcription_service, test_audio_file):
         """Benchmark transcription speed with different configurations."""

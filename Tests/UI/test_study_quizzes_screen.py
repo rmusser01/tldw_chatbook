@@ -1,14 +1,17 @@
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 from textual.widgets import Button, Input, ListView, Select, Static, TextArea
 
+from Tests.UI.test_screen_navigation import _build_test_app
+from Tests.UI.test_study_dashboard import DashboardStudyScopeService
+import tldw_chatbook.app as app_module
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Screens.study_scope_models import (
     StudyScopeContext,
     StudyScopeType,
 )
-from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Study_Window import StudyWindow
 
 
@@ -573,13 +576,41 @@ class WorkspaceFilteredQuizScopeService(FakeQuizScopeService):
         }
 
 
-class StudyTestApp(App):
-    def __init__(self, app_instance):
-        super().__init__()
-        self._screen = StudyScreen(app_instance=app_instance)
+@pytest.fixture(autouse=True)
+def _disable_full_app_splash(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_get_cli_setting = app_module.get_cli_setting
 
-    async def on_mount(self) -> None:
-        await self.push_screen(self._screen)
+    def get_cli_setting_without_splash(section, key=None, default=None):
+        if section == "splash_screen" and key == "enabled":
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+
+
+def _build_full_study_app(app_instance):
+    """Build the full production app with deterministic Study collaborators."""
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+    app._initial_tab_value = "study"
+    app.study_scope_service = getattr(
+        app_instance,
+        "study_scope_service",
+        DashboardStudyScopeService(),
+    )
+    app.study_quiz_scope_service = app_instance.study_quiz_scope_service
+    app.notify = app_instance.notify
+    source = str(getattr(app_instance, "current_runtime_backend", "local"))
+    runtime_state = RuntimeSourceState(
+        active_source=source,
+        server_configured=source == "server",
+    )
+    app.runtime_policy.state = runtime_state
+    app._publish_runtime_policy_projection(runtime_state)
+    scope_context = getattr(app_instance, "scope_context", None)
+    if scope_context is not None:
+        app.pending_handoffs.stage(HandoffChannel.STUDY_SCOPE, scope_context)
+    return app
 
 
 def _text(widget) -> str:
@@ -591,7 +622,7 @@ def _is_blank(value) -> bool:
 
 
 async def _wait_for_quiz_status(
-    app: App, pilot, expected_substring: str, attempts: int = 20
+    app: object, pilot, expected_substring: str, attempts: int = 20
 ) -> None:
     """Wait for the quiz attempt status to contain the expected text."""
     needle = expected_substring.lower()
@@ -613,7 +644,7 @@ async def test_quizzes_view_loads_scope_backed_quizzes():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -634,7 +665,7 @@ async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history()
     app_instance = SimpleNamespace(
         study_scope_service=None,
         study_quiz_scope_service=scope,
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="ws-1",
             workspace_name="Research",
@@ -644,7 +675,7 @@ async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history()
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -701,7 +732,7 @@ async def test_quizzes_view_creates_workspace_quiz_with_active_scope():
     app_instance = SimpleNamespace(
         study_scope_service=None,
         study_quiz_scope_service=scope,
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="ws-1",
             workspace_name="Research",
@@ -711,7 +742,7 @@ async def test_quizzes_view_creates_workspace_quiz_with_active_scope():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -749,7 +780,7 @@ async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavai
     app_instance = SimpleNamespace(
         study_scope_service=None,
         study_quiz_scope_service=scope,
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="ws-1",
             workspace_name="Research",
@@ -759,7 +790,7 @@ async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavai
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -814,7 +845,7 @@ async def test_backend_flip_resets_quiz_question_attempt_and_answer_state_throug
     app_instance = SimpleNamespace(
         study_scope_service=None,
         study_quiz_scope_service=scope,
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="ws-1",
             workspace_name="Research",
@@ -824,7 +855,7 @@ async def test_backend_flip_resets_quiz_question_attempt_and_answer_state_throug
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -886,7 +917,7 @@ async def test_quizzes_view_creates_quiz_and_question_through_scope_service():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -942,7 +973,7 @@ async def test_quizzes_attempt_flow_submits_answer_and_shows_summary():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -989,7 +1020,7 @@ async def test_active_attempt_disables_quiz_mutations_and_blocks_second_start():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1068,7 +1099,7 @@ async def test_active_attempt_blocks_create_and_delete_quiz_without_refreshing_s
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1108,7 +1139,7 @@ async def test_active_attempt_blocks_loading_attempt_history_directly():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1141,7 +1172,7 @@ async def test_quizzes_view_shows_explicit_empty_state_when_no_quizzes_exist():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1165,7 +1196,7 @@ async def test_workspace_quizzes_empty_state_explains_workspace_recovery_path():
     app_instance = SimpleNamespace(
         study_scope_service=None,
         study_quiz_scope_service=scope,
-        pending_study_scope_context=StudyScopeContext(
+        scope_context=StudyScopeContext(
             scope_type=StudyScopeType.WORKSPACE,
             workspace_id="ws-1",
             workspace_name="Research",
@@ -1175,7 +1206,7 @@ async def test_workspace_quizzes_empty_state_explains_workspace_recovery_path():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1203,7 +1234,7 @@ async def test_quizzes_view_deletes_selected_quiz_and_resets_selection():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1235,7 +1266,7 @@ async def test_quizzes_view_deletes_selected_question_and_refreshes_question_lis
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -1272,7 +1303,7 @@ async def test_quizzes_view_loads_attempt_history_into_summary_panel():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = StudyTestApp(app_instance)
+    app = _build_full_study_app(app_instance)
 
     async with app.run_test() as pilot:
         await pilot.pause(0.2)

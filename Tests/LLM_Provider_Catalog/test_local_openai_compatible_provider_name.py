@@ -53,7 +53,7 @@ def test_custom_openai_passes_string_provider_name():
 def test_local_llm_passes_string_provider_name():
     captured, result = _run_handler_capturing_kwargs(
         local_calls.chat_with_local_llm,
-        {"local-llm": {"api_ip": "http://127.0.0.1:9/v1"}},
+        {"api_settings": {"local-llm": {"api_ip": "http://127.0.0.1:9/v1"}}},
     )
     assert isinstance(captured["provider_name"], str)
     assert captured["provider_name"] == "Local-LLM"

@@ -13,6 +13,7 @@ from textual.widgets import Static
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 
@@ -143,7 +144,7 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
             # mounting the legacy ChatHandoffCard.
             await _wait_until(
                 pilot,
-                lambda: app.pending_chat_handoff is None,
+                lambda: not app.pending_handoffs.has_pending(HandoffChannel.CHAT),
                 context="handoff consumed into Console staged context",
             )
             await _wait_until(

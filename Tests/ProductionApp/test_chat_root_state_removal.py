@@ -291,10 +291,16 @@ async def test_visible_console_stop_cancels_native_run_without_root_worker_state
 
             stop_button = chat.query_one("#console-stop-generation", Button)
             await _wait_until(
-                lambda: stop_button.display,
-                "native Console Stop control did not become visible",
+                lambda: (
+                    stop_button.display
+                    and stop_button.region.width > 0
+                    and stop_button.region.height > 0
+                ),
+                "native Console Stop control did not reach a clickable layout region",
             )
-            await pilot.click("#console-stop-generation")
+            assert await pilot.click("#console-stop-generation"), (
+                "visible Console Stop was obscured at its click target"
+            )
             await _wait_until(
                 gateway.cancelled.is_set,
                 "visible Console Stop did not cancel the provider stream",

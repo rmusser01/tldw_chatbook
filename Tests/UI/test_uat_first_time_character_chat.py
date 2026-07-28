@@ -26,7 +26,6 @@ The only mock is the provider network call itself (``chat_api_call``); all
 UI, DB, import, handoff, and send-path code runs for real.
 """
 
-import asyncio
 import base64
 import json
 import os
@@ -35,7 +34,9 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 from Tests.Character_Chat.test_character_card_lenient_import import (
@@ -267,14 +268,28 @@ async def test_first_time_user_character_chat_journey(
         # persists must appear AFTER this point.
         before_conversation_ids = set(db.get_all_conversation_ids())
 
+        # Observe the production store's public staging boundary while still
+        # forwarding the exact value into the real single-slot store. The
+        # store intentionally exposes no peek API, and the Console may claim
+        # a handoff before the next Pilot tick.
+        staged_chat_handoffs = []
+        real_stage = app.pending_handoffs.stage
+
+        def record_chat_handoff(channel, value):
+            if channel is HandoffChannel.CHAT:
+                detached = ChatHandoffPayload.from_dict(value)
+                assert detached is not None
+                staged_chat_handoffs.append(detached)
+            return real_stage(channel, value)
+
+        monkeypatch.setattr(app.pending_handoffs, "stage", record_chat_handoff)
         await pilot.click("#personas-start-chat")
 
-        # Capture the staged handoff payload before the Console consumes it
-        # (consumption clears app.pending_chat_handoff; the local reference
-        # stays valid for field assertions).
+        # Capture the payload at the public staging boundary; consumption
+        # claims and acknowledges the store slot asynchronously.
         handoff = await _wait_for(
             pilot,
-            lambda: getattr(app, "pending_chat_handoff", None),
+            lambda: staged_chat_handoffs[0] if staged_chat_handoffs else None,
             timeout=5.0,
         )
         handoff_metadata = handoff.metadata or {}
@@ -313,7 +328,10 @@ async def test_first_time_user_character_chat_journey(
         except TimeoutError:
             print("\n=== DEBUG: console state after handoff ===")
             print("chat_screen:", type(chat_screen).__name__)
-            print("pending_chat_handoff:", getattr(app, "pending_chat_handoff", None))
+            print(
+                "chat_handoff_pending:",
+                app.pending_handoffs.has_pending(HandoffChannel.CHAT),
+            )
             print("composers:", list(chat_screen.query("#console-native-composer")))
             print("Inputs:", [w.id for w in chat_screen.query("Input")])
             print("Statics sample:", [
@@ -322,10 +340,19 @@ async def test_first_time_user_character_chat_journey(
             raise
 
         # The Start-Chat handoff must have seeded a character-bound session
-        # (greeting) and cleared the pending handoff. Consumption runs off a
+        # (greeting) and acknowledged the store slot. Consumption runs off a
         # mount timer, so allow a short grace period after mount.
         def handoff_consumed():
-            return getattr(app, "pending_chat_handoff", None) is None
+            store = chat_screen._ensure_console_chat_store()
+            return (
+                not app.pending_handoffs.has_pending(HandoffChannel.CHAT)
+                and not chat_screen._handoff_consumption_in_progress
+                and any(
+                    str(getattr(session, "character_id", ""))
+                    == str(handoff_metadata["selected_record_id"])
+                    for session in store.sessions()
+                )
+            )
 
         try:
             await _wait_for(pilot, handoff_consumed, timeout=5.0)
