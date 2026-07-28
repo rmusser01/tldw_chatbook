@@ -2458,6 +2458,12 @@ class ChatScreen(BaseAppScreen):
             "idle", "starting", "recording", "transcribing"
         ] = "idle"
         self._console_dictation_timer: Any | None = None
+        #: 1 s ticker driving the chip's elapsed-time display while
+        #: `recording`. Started in `_start_console_dictation`; stopped on
+        #: every exit path (`_notify_console_dictation_error`,
+        #: `_request_console_dictation_stop`, `on_unmount`) -- distinct from
+        #: `_console_dictation_timer`, the 60 s wall-clock cutoff above.
+        self._console_dictation_elapsed_timer: Any | None = None
         self._console_dictation_origin_session_id: str | None = None
         #: Newest in-flight recognizer text. Chip-only by contract -- a partial
         #: is superseded by the next one or by its segment's final, and must
@@ -4422,9 +4428,23 @@ class ChatScreen(BaseAppScreen):
         if timer is not None:
             timer.stop()
 
+    def _cancel_console_dictation_elapsed_timer(self) -> None:
+        """Stop the chip's 1 s elapsed-time ticker if one is running."""
+        timer = self._console_dictation_elapsed_timer
+        self._console_dictation_elapsed_timer = None
+        if timer is not None:
+            timer.stop()
+
+    def _tick_console_dictation_elapsed(self) -> None:
+        """Advance the voice chip's elapsed-time display by one second."""
+        composer = self._console_composer_or_none()
+        if composer is not None:
+            composer.tick_voice_elapsed()
+
     def _notify_console_dictation_error(self, exc: Exception) -> None:
         """Return dictation to idle and show its actionable failure."""
         self._cancel_console_dictation_timer()
+        self._cancel_console_dictation_elapsed_timer()
         self._console_dictation_origin_session_id = None
         self._console_dictation_session = None
         self._console_dictation_partial = ""
@@ -4471,10 +4491,16 @@ class ChatScreen(BaseAppScreen):
             # already `idle` and would leave a ghost in the chip.
             if self._console_dictation_state == "recording":
                 self._console_dictation_partial = event.text
+                composer = self._console_composer_or_none()
+                if composer is not None:
+                    composer.set_voice_partial(event.text)
             return
         if isinstance(event, VoiceFinal):
             # The segment is committed; the partial that previewed it is spent.
             self._console_dictation_partial = ""
+            composer = self._console_composer_or_none()
+            if composer is not None:
+                composer.set_voice_partial("")
             return
         if isinstance(event, VoiceFailed):
             # Only ever a mid-capture failure: the session forwards a
@@ -4535,6 +4561,9 @@ class ChatScreen(BaseAppScreen):
         self._console_dictation_timer = self.set_timer(
             CONSOLE_DICTATION_MAX_SECONDS,
             self._handle_console_dictation_limit,
+        )
+        self._console_dictation_elapsed_timer = self.set_interval(
+            1.0, self._tick_console_dictation_elapsed
         )
 
     @staticmethod
@@ -4638,6 +4667,7 @@ class ChatScreen(BaseAppScreen):
         # in the field by the time it first ticks.
         session = self._console_dictation_session
         self._cancel_console_dictation_timer()
+        self._cancel_console_dictation_elapsed_timer()
         self._set_console_dictation_state("transcribing")
         self.run_worker(
             self._stop_console_dictation(session),
@@ -11140,6 +11170,7 @@ class ChatScreen(BaseAppScreen):
         """Release Console-native resources owned by this screen."""
         self._stop_console_transcript_sync_timer()
         self._cancel_console_dictation_timer()
+        self._cancel_console_dictation_elapsed_timer()
         dictation_session = self._console_dictation_session
         self._console_dictation_session = None
         self._console_dictation_origin_session_id = None

@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from textual.widgets import Static
 
 from Tests.UI.test_console_dictation import (
     _mounted_console,
@@ -451,3 +452,245 @@ async def test_one_failure_draining_during_the_stop_worker_shows_one_toast(monke
         # This worker did own the capture, so it did finish it -- it just has
         # nothing left to say about it.
         assert service.stop_calls == 1
+
+
+# --- Task 14: live partials and the elapsed counter in the chip ------------
+
+
+@pytest.mark.asyncio
+async def test_a_live_partial_renders_in_the_chip_and_leaves_the_draft_empty(
+    monkeypatch,
+):
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello world")
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        service.emit_partial("dictated wo")
+        await pilot.pause()
+
+        chip = composer.query_one("#console-voice-status", Static)
+        assert "dictated wo" in str(chip.renderable)
+        assert composer.draft_text() == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_bracketed_whisper_tokens_render_literally_not_as_markup(monkeypatch):
+    """`[silence]`/`[BLANK_AUDIO]` are routine Whisper output, not Rich markup."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello world")
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        service.emit_partial("[silence] [BLANK_AUDIO]")
+        await pilot.pause()
+
+        chip = composer.query_one("#console-voice-status", Static)
+        assert "[silence]" in str(chip.renderable)
+        assert "[BLANK_AUDIO]" in str(chip.renderable)
+        assert composer.draft_text() == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_a_partial_arriving_outside_recording_never_reaches_the_chip(
+    monkeypatch,
+):
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello world")
+
+        # Capture and stop normally so the state returns to idle and the
+        # chip collapses; the session survives a success (only failures drop
+        # it), so a partial can still drain from it afterwards.
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        chip = composer.query_one("#console-voice-status", Static)
+        assert str(chip.renderable) == ""
+
+        service.emit_partial("ghost text")
+        await pilot.pause()
+
+        assert "ghost text" not in str(chip.renderable)
+        assert str(chip.renderable) == ""
+        assert console._console_dictation_partial == ""
+
+
+@pytest.mark.asyncio
+async def test_elapsed_counter_ticks_once_per_second_and_stops_on_normal_stop(
+    monkeypatch,
+):
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        scheduled: dict = {}
+        elapsed_timer = Mock(name="elapsed_timer")
+        other_timer = Mock(name="other_timer")
+
+        def capture_interval(delay, callback):
+            # The screen also runs a 0.2s Console UI-sync interval on the
+            # same `set_interval` method; give it its own Mock so its
+            # `.stop()` can never be mistaken for the dictation elapsed
+            # ticker's -- a single shared Mock here would let an unrelated
+            # `.stop()` call make the assertion below pass vacuously.
+            if delay == 1.0:
+                scheduled.update(delay=delay, callback=callback)
+                return elapsed_timer
+            return other_timer
+
+        monkeypatch.setattr(console, "set_interval", capture_interval)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        assert scheduled["delay"] == 1.0
+        chip = composer.query_one("#console-voice-status", Static)
+        assert "0:00" in str(chip.renderable)
+
+        scheduled["callback"]()
+        assert "0:01" in str(chip.renderable)
+        scheduled["callback"]()
+        assert "0:02" in str(chip.renderable)
+
+        # A transcript must actually land, or `stop_and_transcribe()` raises
+        # "No audio was captured" and this exercises the failure path's own
+        # cancel instead of the normal-stop path's -- see
+        # `test_elapsed_timer_stops_on_a_mid_capture_failure` for that one.
+        service.emit_final("dictated words")
+
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert elapsed_timer.stop.called
+        assert console._console_dictation_elapsed_timer is None
+
+
+@pytest.mark.asyncio
+async def test_elapsed_timer_stops_on_a_mid_capture_failure(monkeypatch):
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    app.notify = Mock()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        elapsed_timer = Mock(name="elapsed_timer")
+        other_timer = Mock(name="other_timer")
+
+        def capture_interval(delay, callback):
+            # Distinct Mocks per delay -- see the sibling normal-stop test for
+            # why a single shared Mock would make `.stop.called` vacuous.
+            return elapsed_timer if delay == 1.0 else other_timer
+
+        monkeypatch.setattr(console, "set_interval", capture_interval)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        service.emit_error("Microphone was disconnected")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert elapsed_timer.stop.called
+        assert console._console_dictation_elapsed_timer is None
+
+
+@pytest.mark.asyncio
+async def test_a_redundant_recording_resync_does_not_reset_the_chip(monkeypatch):
+    """`sync_dictation_state("recording")` also fires from the unrelated 0.2s
+    Console UI-sync tick whenever it happens to run mid-capture. That call
+    must not stomp the live partial/elapsed display back to "0:00" -- only a
+    genuine "starting" -> "recording" transition may reset them.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        service.emit_partial("dictated wo")
+        await pilot.pause()
+        composer.tick_voice_elapsed()
+        composer.tick_voice_elapsed()
+
+        chip = composer.query_one("#console-voice-status", Static)
+        assert "0:02" in str(chip.renderable)
+        assert "dictated wo" in str(chip.renderable)
+
+        # Simulate the redundant resync a 0.2s UI-sync tick would make.
+        composer.sync_dictation_state("recording")
+
+        assert "0:02" in str(chip.renderable)
+        assert "dictated wo" in str(chip.renderable)
+
+
+@pytest.mark.asyncio
+async def test_elapsed_timer_stops_when_the_screen_unmounts_mid_capture(monkeypatch):
+    """A timer that outlives the screen it was scheduled on is a defect."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        elapsed_timer = Mock(name="elapsed_timer")
+        other_timer = Mock(name="other_timer")
+
+        def capture_interval(delay, callback):
+            return elapsed_timer if delay == 1.0 else other_timer
+
+        monkeypatch.setattr(console, "set_interval", capture_interval)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        # Pop the only pushed screen so `on_unmount` runs exactly once here,
+        # rather than a second time when `host.run_test()` itself tears down.
+        await host.pop_screen()
+        await pilot.pause()
+
+        assert elapsed_timer.stop.called
+        assert console._console_dictation_elapsed_timer is None

@@ -134,6 +134,14 @@ class ConsoleComposerBar(Horizontal):
         self._setup_blocked_reason = ""
         self._can_save_chatbook = False
         self._dictation_state: _DictationState = "idle"
+        #: Chip-only display state for the active capture. Reset on every
+        #: fresh entry into "recording" (`sync_dictation_state`) and updated
+        #: live by `set_voice_partial()` / `tick_voice_elapsed()`; preserved
+        #: across a redundant `sync_dictation_state("recording")` call (the
+        #: 0.2s Console UI-sync tick calls this unconditionally) so that tick
+        #: cannot stomp the chip back to "0:00" mid-capture.
+        self._voice_partial: str = ""
+        self._voice_elapsed_seconds: int = 0
         self._pending_attachment_label: str | None = None
         self._suppress_next_draft_click = False
         self._draft_selection_all = False
@@ -464,6 +472,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             state: Current one-shot dictation lifecycle state.
         """
+        entering_recording = state == "recording" and self._dictation_state != "recording"
         self._dictation_state = state
         try:
             button = self.query_one("#console-dictation", Button)
@@ -491,13 +500,59 @@ class ConsoleComposerBar(Horizontal):
         # own vocabulary (STATE_* from console_voice_input), so map the
         # button's states explicitly rather than passing the string through.
         if state == "idle":
+            self._voice_partial = ""
+            self._voice_elapsed_seconds = 0
             self.set_voice_status(STATE_IDLE)
         elif state == "starting":
+            self._voice_partial = ""
+            self._voice_elapsed_seconds = 0
             self.set_voice_status(STATE_PREPARING, message="◌ Preparing microphone…")
         elif state == "recording":
-            self.set_voice_status(STATE_LISTENING, elapsed_seconds=0)
+            if entering_recording:
+                self._voice_partial = ""
+                self._voice_elapsed_seconds = 0
+            self.set_voice_status(
+                STATE_LISTENING,
+                partial=self._voice_partial,
+                elapsed_seconds=self._voice_elapsed_seconds,
+            )
         elif state == "transcribing":
             self.set_voice_status(STATE_FINISHING, message="◌ Transcribing…")
+
+    def set_voice_partial(self, text: str) -> None:
+        """Render live recognizer text into the chip while recording.
+
+        Args:
+            text: In-flight partial transcript from the recognizer. Ignored
+                (a no-op) outside the `recording` lifecycle state, so a
+                partial that drains after the capture already ended cannot
+                resurrect the chip.
+        """
+        if self._dictation_state != "recording":
+            return
+        self._voice_partial = text
+        self.set_voice_status(
+            STATE_LISTENING,
+            partial=self._voice_partial,
+            elapsed_seconds=self._voice_elapsed_seconds,
+        )
+
+    def tick_voice_elapsed(self) -> None:
+        """Advance the chip's elapsed-time counter by one second.
+
+        A no-op outside `recording` so a stray tick that fires just after the
+        capture ends (the owning timer is stopped on every exit path, but a
+        tick already queued for this frame can still land) cannot repaint a
+        chip that has already collapsed.
+        """
+        if self._dictation_state != "recording":
+            return
+        self._voice_elapsed_seconds += 1
+        self.set_voice_status(
+            STATE_LISTENING,
+            partial=self._voice_partial,
+            elapsed_seconds=self._voice_elapsed_seconds,
+        )
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
