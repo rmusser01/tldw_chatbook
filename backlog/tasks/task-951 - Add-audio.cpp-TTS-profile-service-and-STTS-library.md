@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-27 17:15'
-updated_date: '2026-07-28 14:22'
+updated_date: '2026-07-28 14:36'
 labels:
   - tts
   - profiles
@@ -75,6 +75,8 @@ Verification after the final rebase: the focused Task 951 gate passed 1132 tests
 External-server UAT against user-started audio.cpp at 127.0.0.1:8080 with supertonic-3 verified first-run configuration, one-model readiness, complete-WAV generation and playback, save/search/refresh, M1-to-M2 edit at revision 2, duplicate, exact M2 preview with a second complete WAV, protected deletion, and persistence plus exact preview rehydration across a real app restart. The first WAV was 603056-byte mono PCM16 44.1 kHz audio lasting 6.837 seconds; the second was 383038 bytes lasting 4.342 seconds. The profile database remained mode 0600 and stored no submitted text or endpoint/credential data.
 
 ADR check: ADR-023 and ADR-028 remain applicable and current; no new ADR was required. The branch is rebased on origin/dev 3f297856d. No deviation expanded scope: character assignment, roleplay routing, portability/import/export, managed audio.cpp process behavior, and legacy-profile execution remain excluded.
+
+PR #1055 review follow-up: bounded profile search through the shared input validator before queuing repository work; centralized the first-release audio.cpp WAV and speed policy across domain validation, service admission, and Playground availability; completed the exact-preset projection docstring; retained the approved frozen TTSProfileDraft validation authority instead of adding a duplicative Pydantic UI schema. Both new regression tests were observed red then green. The four directly affected test modules passed 360 tests; task-scoped Ruff, format, mypy, compileall, and diff checks passed.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done

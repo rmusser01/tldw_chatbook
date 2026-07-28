@@ -27,6 +27,8 @@ from tldw_chatbook.TTS.profile_errors import (
     ProfileValidationError,
 )
 from tldw_chatbook.TTS.profile_types import (
+    AUDIO_CPP_PROFILE_RESPONSE_FORMAT,
+    AUDIO_CPP_PROFILE_SPEED,
     ProfileStoreResult,
     TTSGenerationProfile,
     TTSProfileDraft,
@@ -41,8 +43,6 @@ ProfileAvailabilityState: TypeAlias = Literal[
 ProfileRecoveryAction: TypeAlias = Literal["none", "refresh", "edit"]
 
 _PROFILE_PROVIDER_ID = "audio_cpp"
-_PROFILE_RESPONSE_FORMAT = "wav"
-_PROFILE_SPEED = 1.0
 _PROFILE_PAGE_LIMIT = 50
 _TTS_GENERATION_PROFILE_TYPE: type[TTSGenerationProfile] = TTSGenerationProfile
 _TTS_NATIVE_CAPABILITY_SNAPSHOT_TYPE: type[TTSNativeCapabilitySnapshot] = (
@@ -193,9 +193,9 @@ def _selection_is_profile_safe(
         type(provider_id) is str
         and provider_id == _PROFILE_PROVIDER_ID
         and type(response_format) is str
-        and response_format == _PROFILE_RESPONSE_FORMAT
+        and response_format == AUDIO_CPP_PROFILE_RESPONSE_FORMAT
         and type(speed) is float
-        and speed == _PROFILE_SPEED
+        and speed == AUDIO_CPP_PROFILE_SPEED
         and _mapping_is_empty(options)
     )
 

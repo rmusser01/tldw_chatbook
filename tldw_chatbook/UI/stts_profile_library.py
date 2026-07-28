@@ -40,9 +40,11 @@ from tldw_chatbook.TTS import (
     TTSProfileDraft,
     TTSProfilePageSnapshot,
 )
+from tldw_chatbook.Utils.input_validation import validate_text_input
 
 PROFILE_PAGE_SIZE = 50
 PROFILE_SEARCH_DEBOUNCE_SECONDS = 0.25
+PROFILE_SEARCH_MAX_CHARACTERS = 128
 PROFILE_STORE_UNAVAILABLE_COPY = (
     "Profile storage unavailable. Ordinary speech tools remain available. "
     "Choose Refresh to retry."
@@ -91,6 +93,7 @@ _PROFILE_STALE_COPY = (
 _PROFILE_VALIDATION_COPY = (
     "Review the profile name, model, and voice. Exact values were not saved."
 )
+_PROFILE_SEARCH_VALIDATION_COPY = "Search must be 128 characters or fewer."
 _PROFILE_NAME_REQUIRED_COPY = "Enter a profile name. The result was not saved."
 _PROFILE_UNAVAILABLE_COPY = (
     "The exact profile selection is unavailable. Refresh current capabilities "
@@ -1508,7 +1511,15 @@ class STTSProfileLibrary(Widget):
     def _submit_search(self) -> None:
         self._search_timer = None
         value = self.query_one("#stts-profile-search", Input).value
-        self._queue_page_request(value.strip() or None, 0)
+        normalized = value.strip()
+        if normalized and not validate_text_input(
+            normalized,
+            max_length=PROFILE_SEARCH_MAX_CHARACTERS,
+            allow_html=True,
+        ):
+            self._set_status(_PROFILE_SEARCH_VALIDATION_COPY)
+            return
+        self._queue_page_request(normalized or None, 0)
 
     @on(Button.Pressed, "#stts-profile-previous-btn")
     def _handle_previous(self, event: Button.Pressed) -> None:

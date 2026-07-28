@@ -14,6 +14,7 @@ import pytest
 
 import tldw_chatbook.TTS as tts_package
 import tldw_chatbook.TTS.profile_errors as profile_errors
+import tldw_chatbook.TTS.profile_types as profile_types_module
 from tldw_chatbook.TTS.profile_errors import (
     ProfileRepositoryError,
     ProfileValidationError,
@@ -512,6 +513,23 @@ def test_audio_cpp_profile_contract_accepts_only_exact_first_release_selection()
 
     assert draft.response_format == "wav"
     assert draft.speed == 1.0
+
+
+def test_audio_cpp_profile_policy_exposes_shared_format_and_speed_values() -> None:
+    assert profile_types_module.AUDIO_CPP_PROFILE_RESPONSE_FORMAT == "wav"
+    assert profile_types_module.AUDIO_CPP_PROFILE_SPEED == 1.0
+
+    draft = _draft(
+        provider_id="audio_cpp",
+        response_format=profile_types_module.AUDIO_CPP_PROFILE_RESPONSE_FORMAT,
+        speed=profile_types_module.AUDIO_CPP_PROFILE_SPEED,
+        options={},
+    )
+
+    assert (
+        draft.response_format == profile_types_module.AUDIO_CPP_PROFILE_RESPONSE_FORMAT
+    )
+    assert draft.speed == profile_types_module.AUDIO_CPP_PROFILE_SPEED
 
 
 def test_generation_profile_validates_identity_timestamps_and_normalized_name() -> None:

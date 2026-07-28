@@ -16,7 +16,6 @@ from uuid import UUID
 
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 
-
 # JSON boundaries deliberately admit only exact built-in scalar types. Caller
 # arrays are mutable lists; validated arrays are immutable tuples.
 JsonScalar: TypeAlias = str | int | float | bool | None
@@ -57,6 +56,9 @@ _PROVIDER_ID_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
 _RESPONSE_FORMAT_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,31}\Z")
 _UNSAFE_NAME_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _T = TypeVar("_T")
+
+AUDIO_CPP_PROFILE_RESPONSE_FORMAT = "wav"
+AUDIO_CPP_PROFILE_SPEED = 1.0
 
 
 class ProfileRepositoryState(StrEnum):
@@ -249,7 +251,9 @@ def _validate_audio_cpp(
     options: FrozenJsonOptions,
 ) -> None:
     if provider_id == "audio_cpp" and (
-        response_format != "wav" or speed != 1.0 or bool(options)
+        response_format != AUDIO_CPP_PROFILE_RESPONSE_FORMAT
+        or speed != AUDIO_CPP_PROFILE_SPEED
+        or bool(options)
     ):
         raise ProfileValidationError("audio_cpp")
 

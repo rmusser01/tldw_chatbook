@@ -15,6 +15,10 @@ from tldw_chatbook.TTS.profile_service import (
     ProfileAvailabilityState,
     TTSPlaygroundSelectionPreset,
 )
+from tldw_chatbook.TTS.profile_types import (
+    AUDIO_CPP_PROFILE_RESPONSE_FORMAT,
+    AUDIO_CPP_PROFILE_SPEED,
+)
 
 AUDIO_CPP_PROVIDER_ID = "audio_cpp"
 SERVER_DEFAULT_VOICE_LABEL = "Server default"
@@ -219,7 +223,16 @@ def controls_from_profile_preset(
     preset: TTSPlaygroundSelectionPreset,
     discovered_voices: tuple[str, ...] | None,
 ) -> PlaygroundControls:
-    """Project one exact profile selection without catalog substitution."""
+    """Project one exact profile selection without catalog substitution.
+
+    Args:
+        catalog: Current provider catalog, or ``None`` when it is unverified.
+        preset: Exact persisted profile selection to project.
+        discovered_voices: Authoritative voices, or ``None`` when unverified.
+
+    Returns:
+        Controls that preserve every exact profile value without fallback.
+    """
 
     model_options = (
         tuple(
@@ -269,8 +282,8 @@ def profile_availability_from_catalog(
         return "unavailable"
     if (
         preset.provider_id != AUDIO_CPP_PROVIDER_ID
-        or preset.response_format != "wav"
-        or preset.speed != 1.0
+        or preset.response_format != AUDIO_CPP_PROFILE_RESPONSE_FORMAT
+        or preset.speed != AUDIO_CPP_PROFILE_SPEED
         or bool(preset.options)
     ):
         return "unavailable"

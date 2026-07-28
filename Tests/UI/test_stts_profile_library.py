@@ -849,6 +849,40 @@ async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> No
 
 
 @pytest.mark.asyncio
+async def test_search_validates_shared_text_bound_before_queueing_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        profile_library_module,
+        "PROFILE_SEARCH_DEBOUNCE_SECONDS",
+        0.01,
+        raising=False,
+    )
+    service = _PipelineProfileService()
+    app = _STTSHost(service)
+    initial_page = _page(_profile(0), generation=5)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        await _open_stts_view(app, pilot, "profiles")
+        await _wait_until(pilot, lambda: len(service.list_futures) == 1)
+        service.list_futures[0].set_result(initial_page)
+        await _wait_until(pilot, lambda: len(service.availability_futures) == 1)
+        service.availability_futures[0].set_result(_availability(initial_page))
+        await pilot.pause()
+
+        search = app.query_one("#stts-profile-search", Input)
+        search.value = "x" * 129
+        await pilot.pause(0.03)
+
+        assert service.list_calls == [(None, 0)]
+        assert "128 characters or fewer" in _status_copy(app)
+
+        search.value = "x" * 128
+        await _wait_until(pilot, lambda: len(service.list_futures) == 2)
+        assert service.list_calls[-1] == ("x" * 128, 0)
+
+
+@pytest.mark.asyncio
 async def test_search_debounces_before_one_active_and_one_latest_page_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
