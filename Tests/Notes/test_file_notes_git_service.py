@@ -13,8 +13,6 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     coalesce_session_changes,
     compute_stage_closure,
     compute_unstage_closure,
-    index_entry_has_unsupported_semantics,
-    index_entry_signature,
     ownership_signature_matches,
     parse_porcelain_v2_z,
     stage_group_is_closed,
@@ -717,6 +715,82 @@ def test_newer_body_edit_preserves_move_topology_and_unstage_eligibility() -> No
     assert row.unstage_eligible
 
 
+def test_shared_effective_path_disables_every_sibling_group_and_action() -> None:
+    groups = coalesce_session_changes(
+        (
+            _change(1, "moved", "a.md", "b.md"),
+            _change(2, "modified", "a.md"),
+        )
+    )
+    records = (
+        PorcelainRecord("untracked", "a.md"),
+        PorcelainRecord("ordinary", "b.md", "M", "."),
+    )
+    post_entry = _entry("b.md", object_id=OID_B)
+    ownership = {
+        groups[0].group_id: _ownership(
+            groups[0],
+            {"b.md": post_entry},
+        )
+    }
+
+    rows = classify_session_rows(
+        groups,
+        records,
+        {"b.md": post_entry},
+        ownership,
+    )
+
+    assert [group.endpoints for group in groups] == [
+        ("a.md", "b.md"),
+        ("a.md",),
+    ]
+    assert [row.state for row in rows] == [
+        "ambiguous_lineage",
+        "ambiguous_lineage",
+    ]
+    assert all(
+        row.disabled_reason
+        == "Ambiguous session lineage: effective path belongs to multiple groups"
+        for row in rows
+    )
+    assert all(not row.stage_eligible for row in rows)
+    assert all(not row.unstage_eligible for row in rows)
+    assert stage_pathspecs(groups[0], records, groups=groups) == ()
+    assert stage_pathspecs(groups[1], records, groups=groups) == ()
+    selected_or_bulk_pathspecs = tuple(
+        pathspec
+        for row in rows
+        if row.stage_eligible
+        for pathspec in stage_pathspecs(
+            row.group,
+            records,
+            groups=groups,
+        )
+    )
+    assert selected_or_bulk_pathspecs == ()
+
+
+def test_inactive_historical_endpoint_without_effective_path_is_not_ambiguous() -> None:
+    groups = coalesce_session_changes(
+        (
+            _change(1, "moved", "a.md", "b.md"),
+            _change(2, "modified", "a.md"),
+        )
+    )
+    records = (PorcelainRecord("untracked", "b.md"),)
+
+    rows = classify_session_rows(groups, records, {}, {})
+
+    assert [row.state for row in rows] == ["unstaged", "clean"]
+    assert rows[0].stage_eligible
+    assert not rows[1].stage_eligible
+    assert stage_pathspecs(groups[0], records, groups=groups) == (
+        os.fsencode("b.md"),
+    )
+    assert stage_pathspecs(groups[1], records, groups=groups) == ()
+
+
 def test_tracked_ancestor_and_descendant_paths_expand_stage_closure() -> None:
     entries = {
         "ancestor": _entry("ancestor"),
@@ -855,7 +929,7 @@ def test_transient_move_endpoints_are_omitted_from_stage_pathspecs() -> None:
     assert stage_pathspecs(
         group,
         records,
-        {"old.md": _entry("old.md")},
+        groups=(group,),
     ) == (
         os.fsencode("old.md"),
         os.fsencode("final [1].md"),
@@ -876,7 +950,7 @@ def test_clean_tracked_endpoints_are_omitted_from_stage_pathspecs() -> None:
     assert stage_pathspecs(
         group,
         (PorcelainRecord("untracked", "changed.md"),),
-        {"clean.md": _entry("clean.md")},
+        groups=(group,),
     ) == (os.fsencode("changed.md"),)
 
 
@@ -901,8 +975,6 @@ def test_nondefault_semantics_and_intent_to_add_are_blocked(
     entry: IndexEntry,
     expected_reason: str,
 ) -> None:
-    assert index_entry_has_unsupported_semantics(entry)
-
     (row,) = classify_session_rows(
         (_single_group(),),
         (),
@@ -914,59 +986,6 @@ def test_nondefault_semantics_and_intent_to_add_are_blocked(
     assert expected_reason in row.disabled_reason
     assert not row.stage_eligible
     assert not row.unstage_eligible
-
-
-def test_index_signature_is_exact_for_mode_object_stage_and_flags() -> None:
-    base = _entry(
-        "note.md",
-        mode="100755",
-        object_id=OID_C,
-        stage=2,
-        flags=("skip-worktree", "assume-unchanged"),
-    )
-
-    assert index_entry_signature(base) == (
-        "100755",
-        OID_C,
-        2,
-        ("assume-unchanged", "skip-worktree"),
-    )
-    assert index_entry_signature(
-        _entry(
-            "note.md",
-            mode="100644",
-            object_id=OID_C,
-            stage=2,
-            flags=("skip-worktree", "assume-unchanged"),
-        )
-    ) != index_entry_signature(base)
-    assert index_entry_signature(
-        _entry(
-            "note.md",
-            mode="100755",
-            object_id=OID_A,
-            stage=2,
-            flags=("skip-worktree", "assume-unchanged"),
-        )
-    ) != index_entry_signature(base)
-    assert index_entry_signature(
-        _entry(
-            "note.md",
-            mode="100755",
-            object_id=OID_C,
-            stage=1,
-            flags=("skip-worktree", "assume-unchanged"),
-        )
-    ) != index_entry_signature(base)
-    assert index_entry_signature(
-        _entry(
-            "note.md",
-            mode="100755",
-            object_id=OID_C,
-            stage=2,
-            flags=("skip-worktree",),
-        )
-    ) != index_entry_signature(base)
 
 
 def test_ownership_signature_matches_repository_head_topology_and_entries() -> None:

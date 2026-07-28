@@ -273,41 +273,17 @@ def unstage_group_is_closed(
 def stage_pathspecs(
     group: SessionChangeGroup,
     status_records: Sequence[PorcelainRecord],
-    index_entries: Mapping[str, IndexEntry],
+    *,
+    groups: Sequence[SessionChangeGroup],
 ) -> tuple[bytes, ...]:
     """Encode only effective endpoints, omitting absent transient lineage."""
-    changed_paths: set[str] = set()
-    for record in status_records:
-        if record.kind != "untracked" and record.worktree_status == ".":
-            continue
-        if record.path is not None:
-            changed_paths.add(record.path)
-        if record.original_path is not None:
-            changed_paths.add(record.original_path)
+    if group.group_id in _ambiguous_group_ids(groups, status_records):
+        return ()
+    changed_paths = _effective_mutation_paths(group, status_records)
     return tuple(
         os.fsencode(path)
         for path in group.endpoints
         if path in changed_paths
-    )
-
-
-def index_entry_has_unsupported_semantics(entry: IndexEntry) -> bool:
-    """Return whether an entry carries semantics this slice will not alter."""
-    return bool(entry.semantic_flags) or (
-        bool(entry.object_id)
-        and set(entry.object_id) == {"0"}
-    )
-
-
-def index_entry_signature(
-    entry: IndexEntry,
-) -> tuple[str, str, int, tuple[str, ...]]:
-    """Return the exact mode/object/stage/semantic signature."""
-    return (
-        entry.mode,
-        entry.object_id,
-        entry.stage,
-        entry.semantic_flags,
     )
 
 
@@ -342,6 +318,7 @@ def classify_session_rows(
     global_records = tuple(
         record for record in status_records if record.path is None
     )
+    ambiguous_groups = _ambiguous_group_ids(groups, status_records)
     rows: list[SessionGitRow] = []
     for group in groups:
         records = global_records + tuple(
@@ -361,6 +338,7 @@ def classify_session_rows(
                 entries,
                 index_entries,
                 ownership.get(group.group_id),
+                group.group_id in ambiguous_groups,
             )
         )
     return tuple(rows)
@@ -512,7 +490,16 @@ def _classify_group(
     entries: Sequence[IndexEntry],
     all_index_entries: Mapping[str, IndexEntry],
     owned: StagingOwnership | None,
+    ambiguous_lineage: bool,
 ) -> SessionGitRow:
+    if ambiguous_lineage:
+        return SessionGitRow(
+            group,
+            "ambiguous_lineage",
+            disabled_reason=(
+                "Ambiguous session lineage: effective path belongs to multiple groups"
+            ),
+        )
     error = next((record for record in records if record.kind == "error"), None)
     if error is not None:
         return SessionGitRow(
@@ -641,6 +628,42 @@ def _staged_record_paths(record: PorcelainRecord) -> tuple[str, ...]:
         path
         for path in (record.path, record.original_path)
         if path is not None
+    )
+
+
+def _effective_mutation_paths(
+    group: SessionChangeGroup,
+    status_records: Sequence[PorcelainRecord],
+) -> frozenset[str]:
+    paths: set[str] = set()
+    for record in status_records:
+        if (
+            not _record_touches_group(record, group)
+            or (
+                record.kind != "untracked"
+                and record.worktree_status == "."
+            )
+        ):
+            continue
+        for path in (record.path, record.original_path):
+            if path in group.endpoints:
+                paths.add(path)
+    return frozenset(paths)
+
+
+def _ambiguous_group_ids(
+    groups: Sequence[SessionChangeGroup],
+    status_records: Sequence[PorcelainRecord],
+) -> frozenset[int]:
+    path_groups: dict[str, set[int]] = {}
+    for group in groups:
+        for path in _effective_mutation_paths(group, status_records):
+            path_groups.setdefault(path, set()).add(group.group_id)
+    return frozenset(
+        group_id
+        for group_ids in path_groups.values()
+        if len(group_ids) > 1
+        for group_id in group_ids
     )
 
 

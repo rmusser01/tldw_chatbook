@@ -31,6 +31,7 @@ SessionGitRowState = Literal[
     "unsupported",
     "nested_repository",
     "unsafe_closure",
+    "ambiguous_lineage",
     "unavailable",
     "error",
 ]
