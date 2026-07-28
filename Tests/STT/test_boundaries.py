@@ -73,6 +73,8 @@ _EXPECTED_EXPORTS = (
     "TranscriptionCoordinatorError",
     "TranscriptionFailureDecision",
     "device_retry_policy_for_failure",
+    "LegacyTranscriptionBridge",
+    "LegacyTranscriptionBridgeError",
     "AdapterRegistrationError",
     "CapabilitySet",
     "CatalogDeclarationError",
@@ -170,6 +172,7 @@ def test_contracts_import_without_runtime_or_legacy_dependencies() -> None:
             attempted_imports.clear()
             import tldw_chatbook.STT.contracts
             import tldw_chatbook.STT.coordinator
+            import tldw_chatbook.STT.legacy_bridge
             import tldw_chatbook.STT.registry
             import tldw_chatbook.STT.routing
         finally:

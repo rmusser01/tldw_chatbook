@@ -37,6 +37,10 @@ from .coordinator import (
     TranscriptionFailureDecision,
     device_retry_policy_for_failure,
 )
+from .legacy_bridge import (
+    LegacyTranscriptionBridge,
+    LegacyTranscriptionBridgeError,
+)
 from .registry import (
     AdapterRegistrationError,
     CapabilitySet,
@@ -94,6 +98,8 @@ __all__ = [
     "TranscriptionCoordinatorError",
     "TranscriptionFailureDecision",
     "device_retry_policy_for_failure",
+    "LegacyTranscriptionBridge",
+    "LegacyTranscriptionBridgeError",
     "AdapterRegistrationError",
     "CapabilitySet",
     "CatalogDeclarationError",

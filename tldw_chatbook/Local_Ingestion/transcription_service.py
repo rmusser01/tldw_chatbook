@@ -38,6 +38,7 @@ except ImportError:
 
 # Local imports
 from ..config import get_cli_setting
+from ..STT.legacy_bridge import LegacyTranscriptionBridge
 from ..Utils.path_validation import validate_path_simple
 from .parakeet_v2_installer import (
     PARAKEET_V2_REPOSITORY,
@@ -292,7 +293,7 @@ def _handle_progress_callback_error(e: Exception) -> None:
     logger.warning(f"Progress callback error (ignored): {e}")
 
 
-class TranscriptionService:
+class _LegacyTranscriptionBackend:
     """Unified service for audio transcription with multiple backend support."""
 
     def __init__(self):
@@ -3904,6 +3905,141 @@ class TranscriptionService:
                 f"Streaming transcription not supported for provider: {provider}"
             )
             return None
+
+
+class TranscriptionService:
+    """Explicit compatibility facade over the retained transcription backend."""
+
+    def __init__(self):
+        """Initialize the retained backend bridge without changing defaults."""
+
+        self._bridge = LegacyTranscriptionBridge(_LegacyTranscriptionBackend)
+        # Preserve construction-time configuration and availability probing.
+        _ = self._bridge.config
+
+    @property
+    def config(self) -> Dict[str, Any]:
+        """Return the retained mutable transcription configuration."""
+
+        return self._bridge.config
+
+    def cleanup(self):
+        """Clean up resources held by the retained backend."""
+
+        return self._bridge.cleanup_legacy()
+
+    def transcribe(
+        self,
+        audio_path: str,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
+        vad_filter: bool = False,
+        diarize: bool = False,
+        progress_callback: Optional[
+            Callable[[float, str, Optional[Dict]], None]
+        ] = None,
+        batch_route_resolved: bool = False,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Forward the unchanged public file-transcription call."""
+
+        return self._bridge.transcribe_legacy(
+            audio_path,
+            provider,
+            model,
+            language,
+            source_lang,
+            target_lang,
+            vad_filter,
+            diarize,
+            progress_callback,
+            batch_route_resolved,
+            **kwargs,
+        )
+
+    def transcribe_buffer(
+        self,
+        audio_data: bytes,
+        sample_rate: int,
+        channels: int = 1,
+        sample_width: int = 2,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Forward the unchanged public buffer-transcription call."""
+
+        return self._bridge.transcribe_buffer_legacy(
+            audio_data,
+            sample_rate,
+            channels,
+            sample_width,
+            provider,
+            model,
+            language,
+            **kwargs,
+        )
+
+    def get_available_providers(self) -> List[str]:
+        """Return providers reported by the retained backend."""
+
+        return self._bridge.get_available_providers_legacy()
+
+    def list_available_models(
+        self, provider: Optional[str] = None
+    ) -> Dict[str, List[str]]:
+        """Return models reported by the retained backend."""
+
+        return self._bridge.list_available_models_legacy(provider)
+
+    def get_device_info(self) -> Dict[str, Any]:
+        """Return retained backend device information."""
+
+        return self._bridge.get_device_info_legacy()
+
+    def is_diarization_available(self) -> bool:
+        """Return retained backend diarization availability."""
+
+        return self._bridge.is_diarization_available_legacy()
+
+    def get_diarization_requirements(self) -> Dict[str, bool]:
+        """Return retained backend diarization requirements."""
+
+        return self._bridge.get_diarization_requirements_legacy()
+
+    def format_segments_with_timestamps(
+        self,
+        segments: List[Dict[str, Any]],
+        include_timestamps: bool = True,
+        include_speakers: bool = True,
+    ) -> str:
+        """Format segments through the retained backend."""
+
+        return self._bridge.format_segments_with_timestamps_legacy(
+            segments,
+            include_timestamps,
+            include_speakers,
+        )
+
+    def create_streaming_transcriber(
+        self,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        source_lang: Optional[str] = None,
+        **kwargs,
+    ):
+        """Create a retained-provider streaming transcriber when supported."""
+
+        return self._bridge.create_streaming_transcriber_legacy(
+            provider,
+            model,
+            source_lang,
+            **kwargs,
+        )
 
 
 class ParakeetMLXStreamingTranscriber:
