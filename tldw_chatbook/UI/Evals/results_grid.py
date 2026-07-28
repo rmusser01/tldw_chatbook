@@ -510,7 +510,20 @@ class ResultsGrid(NotifyMixin, Vertical):
         # side of this module. A Static with markup enabled runs its
         # `.update(str)` argument through the identical `Text.from_markup`
         # path.
-        yield Static("", id="evals-grid-meta", markup=False)
+        # TASK-1076: the meta line ("<bench> * raw * K 20 * 4 cells *
+        # 0 failed") is a first-contact wall of undefined jargon --
+        # "raw"/"K 20"/"cells" -- with nothing on the screen defining any
+        # of them. A tooltip (Static has no `tooltip=` constructor kwarg,
+        # unlike Button -- set post-construction) rather than a second
+        # visible line: the header must not grow to carry a definition
+        # every return visit already knows.
+        grid_meta = Static("", id="evals-grid-meta", markup=False)
+        grid_meta.tooltip = (
+            "raw/chat: this bench's prompt mode. K: how many top-token "
+            "probabilities were requested per call. cells: snippet x "
+            "target measurements captured in this run."
+        )
+        yield grid_meta
         yield Static("", id="evals-grid-state", markup=False)
 
         # TASK-1036: named, visible without a cell click, and consistent

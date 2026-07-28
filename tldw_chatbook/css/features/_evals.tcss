@@ -96,6 +96,18 @@
     padding: 0 1;
 }
 
+/* TASK-1076: the fully-first-run "Start here" callout above the sample
+   bench button -- bold and full-text-primary against the muted
+   .evals-rail-empty-copy used everywhere else in this rail, so the
+   recommended first step reads as visually distinct, not just differently
+   worded. Never a colour-only cue (the "Start here" text itself carries
+   the meaning). */
+.evals-rail-first-run-hint {
+    color: $ds-text-primary;
+    text-style: bold;
+    padding: 0 1;
+}
+
 /* Task 6 (empty states, sample bench, export). "No providers configured"
    replaces the BENCHES SECTION BODY only (see library_rail.py's
    _no_providers_message) -- deliberately not the whole rail: Datasets and

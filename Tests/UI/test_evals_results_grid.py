@@ -627,6 +627,23 @@ async def test_selecting_a_run_group_mounts_the_results_grid_with_the_right_shap
 
 
 @pytest.mark.asyncio
+async def test_grid_meta_defines_its_own_jargon_via_tooltip(evals_app, mixed_run_group):
+    """TASK-1076: the meta line ("<bench> * raw * K 20 * N cells * N
+    failed") is a first-contact wall of undefined jargon for a new reader,
+    with nothing else on the screen defining "raw", "K", or "cells". A
+    tooltip keeps that definition reachable without permanently widening
+    the header for every return visit."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, mixed_run_group["group_id"])
+        meta = grid.query_one("#evals-grid-meta")
+        tooltip = str(meta.tooltip)
+        assert "raw" in tooltip
+        assert "K:" in tooltip
+        assert "cells:" in tooltip
+
+
+@pytest.mark.asyncio
 async def test_grid_and_its_selectors_are_genuinely_visible_within_the_detail_pane(
     evals_app, mixed_run_group
 ):
