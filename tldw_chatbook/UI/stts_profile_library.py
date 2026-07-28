@@ -73,8 +73,7 @@ _STORE_UNAVAILABLE_CODES = frozenset(
 )
 _PROFILE_LOADING_COPY = "Loading voice profiles…"
 _PROFILE_EMPTY_COPY = (
-    "No voice profiles match. Change the search or save a successful native "
-    "audio.cpp result."
+    "No voice profiles match. Change the search or choose Refresh to check again."
 )
 _PROFILE_LOAD_FAILED_COPY = (
     "Voice profiles could not be loaded. Choose Refresh to retry; ordinary "
@@ -99,7 +98,6 @@ _PROFILE_UNVERIFIED_COPY = (
     "The exact profile selection could not be verified. Refresh and retry "
     "without changing persisted values."
 )
-_PROFILE_ACTION_WORKING_COPY = "Checking the exact profile version…"
 
 
 class _ProfileService(Protocol):
@@ -905,7 +903,13 @@ class STTSProfileLibrary(Widget):
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - publish bounded failure only
-                if self._rendered_page_is_current(request, page):
+                if (
+                    self._rendered_page_is_current(
+                        request,
+                        page,
+                    )
+                    and self._availability_status_can_publish()
+                ):
                     self._set_status(_PROFILE_AVAILABILITY_FAILED_COPY)
                 return
             if self._availability_can_publish(request, page, availability):
@@ -967,7 +971,8 @@ class STTSProfileLibrary(Widget):
         if not self._rendered_page_is_current(request, page):
             return False
         if type(snapshot) is not TTSProfileAvailabilitySnapshot:
-            self._set_status(_PROFILE_AVAILABILITY_FAILED_COPY)
+            if self._availability_status_can_publish():
+                self._set_status(_PROFILE_AVAILABILITY_FAILED_COPY)
             return False
         typed_snapshot = cast(TTSProfileAvailabilitySnapshot, snapshot)
         if typed_snapshot.repository_generation != page.repository_generation:
@@ -992,6 +997,12 @@ class STTSProfileLibrary(Widget):
         if incoming_catalog is None:
             return False
         return incoming_catalog >= current_catalog
+
+    def _availability_status_can_publish(self) -> bool:
+        return self._selected_profile is None or self.query_one(
+            "#stts-profile-status-copy",
+            Static,
+        ).has_class("selected-detail")
 
     def _publish_unavailable(self) -> None:
         self._clear_rows()
@@ -1079,7 +1090,8 @@ class STTSProfileLibrary(Widget):
         self._availability_configuration_revision = snapshot.configuration_revision
         self._availability_catalog_revision = snapshot.catalog_revision
         if self._selected_profile is not None:
-            self._show_selected_detail()
+            if self._availability_status_can_publish():
+                self._show_selected_detail()
             return
         self._set_status(
             f"{len(page.profiles)} voice profiles loaded. "
@@ -1107,6 +1119,8 @@ class STTSProfileLibrary(Widget):
         status.remove_class("selected-detail")
         status.update(Text(copy))
         identifiers = self.query_one("#stts-profile-identifiers", TextArea)
+        if identifiers.has_focus:
+            self.query_one("#stts-profile-table", DataTable).focus()
         identifiers.display = False
         identifiers.load_text("")
 
@@ -1220,7 +1234,6 @@ class STTSProfileLibrary(Widget):
         service: _ProfileService,
         loaded: LoadedTTSProfile,
     ) -> int | None:
-        self._set_status(_PROFILE_ACTION_WORKING_COPY)
         try:
             count = await service.assignment_count(loaded)
         except asyncio.CancelledError:

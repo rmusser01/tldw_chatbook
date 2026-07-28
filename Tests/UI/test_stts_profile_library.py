@@ -302,6 +302,23 @@ class _ActionProfileService:
             raise self.delete_error
 
 
+class _PendingAvailabilityActionProfileService(_ActionProfileService):
+    def __init__(self, profile: TTSGenerationProfile) -> None:
+        super().__init__(profile)
+        self.availability_future: (
+            asyncio.Future[TTSProfileAvailabilitySnapshot] | None
+        ) = None
+
+    async def observe_availability(
+        self,
+        page: TTSProfilePageSnapshot,
+    ) -> TTSProfileAvailabilitySnapshot:
+        self.availability_calls.append(page)
+        if self.availability_future is None:
+            self.availability_future = asyncio.get_running_loop().create_future()
+        return await self.availability_future
+
+
 class _ActionHost(_STTSHost):
     def __init__(self, service: object | None) -> None:
         super().__init__(service)
@@ -551,6 +568,23 @@ async def test_store_unavailable_recovery_wraps_without_becoming_a_tab_stop_at_8
         assert "Choose Refresh" in "\n".join(_visible_content_rows(status))
 
 
+@pytest.mark.asyncio
+async def test_empty_profile_page_offers_only_current_library_recovery() -> None:
+    service = _ControlledProfileService()
+    app = _STTSHost(service)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.click("#view-profiles-btn")
+        await _wait_until(pilot, lambda: bool(service.availability_calls))
+
+        status = _status_copy(app)
+        assert status == (
+            "No voice profiles match. Change the search or choose Refresh "
+            "to check again."
+        )
+        assert "save" not in status.casefold()
+
+
 @pytest.mark.parametrize(
     "store_code",
     ["unavailable", "closed", "terminal", "restoring"],
@@ -639,6 +673,15 @@ async def test_repository_page_renders_before_availability_and_selection_arms_ac
             assert not app.query_one(selector, Button).disabled
 
         assert table.row_count <= 50
+        service.availability_future.set_result(
+            _availability(service.page, state="unavailable")
+        )
+        await _wait_until(
+            pilot,
+            lambda: _table_cell(table, 0, 3) == "Unavailable",
+        )
+        assert _status_copy(app).startswith("Unavailable — Refresh, then Edit.")
+        assert app.query_one("#stts-profile-status-copy").has_class("selected-detail")
 
 
 @pytest.mark.asyncio
@@ -740,7 +783,8 @@ async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> No
         identifier_control = app.query_one("#stts-profile-identifiers")
         assert status.region.contains_region(identifier_control.region)
 
-        app.query_one("#stts-profile-table", DataTable).focus()
+        table = app.query_one("#stts-profile-table", DataTable)
+        table.focus()
         for _ in range(8):
             await pilot.press("tab")
             if app.focused is not None and app.focused.id == "stts-profile-identifiers":
@@ -766,8 +810,14 @@ async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> No
         await pilot.pause()
         assert not identifiers.display
         assert identifiers.scroll_x == 0
-        assert app.focused is not identifiers
+        assert app.focused is table
         assert "Choose Refresh" in "\n".join(_visible_content_rows(status))
+
+        refresh = app.query_one("#stts-profile-refresh-btn", Button)
+        refresh.focus()
+        library._set_status(profile_library_module.PROFILE_ACTION_FAILED_COPY)
+        await pilot.pause()
+        assert app.focused is refresh
 
         for selector in (
             "#stts-profile-preview-btn",
@@ -1463,6 +1513,177 @@ async def test_switching_stts_view_dismisses_owned_profile_modal_and_worker(
 
         assert app.screen is not modal
         assert all(worker.is_finished for worker in action_workers)
+
+
+@pytest.mark.parametrize(
+    ("action_name", "modal_type", "expected_mode", "cancel_result"),
+    [
+        (
+            "edit_selected_profile",
+            profile_library_module.TTSProfileEditorModal,
+            "edit",
+            None,
+        ),
+        (
+            "duplicate_selected_profile",
+            profile_library_module.TTSProfileEditorModal,
+            "duplicate",
+            None,
+        ),
+        (
+            "delete_selected_profile",
+            profile_library_module.TTSProfileDeleteModal,
+            None,
+            False,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_cancelled_profile_action_preserves_exact_current_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    action_name: str,
+    modal_type: type[object],
+    expected_mode: str | None,
+    cancel_result: object,
+) -> None:
+    profile = replace(
+        _profile(0),
+        model_id="cancel/exact-model",
+        voice_id="cancel/exact-voice",
+    )
+    service = _ActionProfileService(profile, availability_state="unavailable")
+    service.assignment_total = 0
+    app = _ActionHost(service)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        library, selected = await _select_action_profile(app, pilot)
+        status_before = _status_copy(app)
+        identifiers_before = _identifier_copy(app)
+
+        async def _cancel(screen: object) -> object:
+            assert isinstance(screen, modal_type)
+            if isinstance(screen, profile_library_module.TTSProfileEditorModal):
+                assert screen.loaded is selected
+                assert screen.mode == expected_mode
+            else:
+                assert screen.display_name == selected.profile.display_name
+                assert screen.assignment_count == 0
+            return cancel_result
+
+        monkeypatch.setattr(app, "push_screen_wait", _cancel)
+        action = getattr(library, action_name)
+        result = await action()
+
+        assert result is cancel_result
+        assert service.assignment_count_calls == [selected]
+        assert service.update_calls == []
+        assert service.duplicate_calls == []
+        assert service.delete_calls == []
+        assert status_before.startswith("Unavailable — Refresh, then Edit.")
+        assert _status_copy(app) == status_before
+        assert identifiers_before == (
+            "audio_cpp / cancel/exact-model / cancel/exact-voice"
+        )
+        assert _identifier_copy(app) == identifiers_before
+        assert app.query_one("#stts-profile-identifiers").display
+
+
+@pytest.mark.asyncio
+async def test_edit_cancel_preserves_pending_availability_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _PendingAvailabilityActionProfileService(
+        replace(
+            _profile(0),
+            model_id="pending/original-model",
+            voice_id="pending/original-voice",
+        )
+    )
+    app = _ActionHost(service)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        library, selected = await _select_action_profile(app, pilot)
+        assert service.availability_future is not None
+
+        async def _cancel_after_availability_failure(screen: object) -> None:
+            assert isinstance(
+                screen,
+                profile_library_module.TTSProfileEditorModal,
+            )
+            assert screen.loaded is selected
+            service.availability_future.set_exception(
+                RuntimeError("must remain bounded")
+            )
+            await _wait_until(
+                pilot,
+                lambda: (
+                    _status_copy(app)
+                    == (
+                        "Profiles are loaded, but availability is unverified. "
+                        "Choose Refresh to retry; exact persisted values were not "
+                        "changed."
+                    )
+                ),
+            )
+
+        monkeypatch.setattr(
+            app,
+            "push_screen_wait",
+            _cancel_after_availability_failure,
+        )
+        assert await library.edit_selected_profile() is None
+
+        assert _status_copy(app) == (
+            "Profiles are loaded, but availability is unverified. Choose Refresh "
+            "to retry; exact persisted values were not changed."
+        )
+        assert _identifier_copy(app) == ""
+        assert not app.query_one("#stts-profile-identifiers").display
+        assert service.update_calls == []
+
+
+@pytest.mark.parametrize("availability_outcome", ["success", "failure"])
+@pytest.mark.asyncio
+async def test_late_availability_does_not_replace_newer_action_failure(
+    availability_outcome: str,
+) -> None:
+    service = _PendingAvailabilityActionProfileService(_profile(0))
+    service.assignment_total = -1
+    app = _ActionHost(service)
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        library, _selected = await _select_action_profile(app, pilot)
+        assert service.availability_future is not None
+
+        assert await library.edit_selected_profile() is None
+        assert _status_copy(app) == profile_library_module.PROFILE_ACTION_FAILED_COPY
+        assert not app.query_one("#stts-profile-status-copy").has_class(
+            "selected-detail"
+        )
+
+        if availability_outcome == "success":
+            service.availability_future.set_result(
+                _availability(service.page, state="unavailable")
+            )
+        else:
+            service.availability_future.set_exception(
+                RuntimeError("must remain bounded")
+            )
+        await _wait_until(pilot, lambda: library._active_page_task is None)
+
+        assert _status_copy(app) == profile_library_module.PROFILE_ACTION_FAILED_COPY
+        assert _identifier_copy(app) == ""
+        assert not app.query_one("#stts-profile-identifiers").display
+        assert service.update_calls == []
+        if availability_outcome == "success":
+            assert (
+                _table_cell(
+                    app.query_one("#stts-profile-table", DataTable),
+                    0,
+                    3,
+                )
+                == "Unavailable"
+            )
 
 
 @pytest.mark.parametrize("generation_edit", [False, True])
