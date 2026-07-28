@@ -153,6 +153,30 @@ alternative is a task that reaches an implementer, consumes a full cycle, and cl
 
 ---
 
+## Search the board for the defect before investigating it
+
+**TASK-1022 / TASK-1210, 2026-07-28.** A runtime import trace established that
+scheduled watchlist checks never ran: the feature flag had no `else` branch, the
+old scheduler had no construction path, and the flag shipped false. That was
+filed as TASK-1210 and fixed.
+
+TASK-1022 already said all of it — filed a day earlier, from a plain reading of
+the code, with the same four load-bearing facts and the same conclusion. The
+investigation was duplicated because nobody grepped `backlog/tasks/` first.
+
+**What to do.** Before investigating a defect, grep the board for its subject —
+here, `grep -il "watchlist.*schedul" backlog/tasks/` would have surfaced it in
+one command. Do it even when the finding feels new, and *especially* when it
+feels like a discovery: a confident diagnosis is exactly the state in which you
+skip the check.
+
+Closing the duplicate is not enough on its own. Say in the surviving task which
+one was first and what it already knew, so the board records that the second
+investigation was avoidable rather than quietly implying two independent
+confirmations.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`

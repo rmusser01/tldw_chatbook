@@ -3,7 +3,7 @@ id: TASK-1180
 title: >-
   Table panes outside Watchlists select on activation, so a click moves the
   cursor but selects nothing
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-28 14:00'
 labels:

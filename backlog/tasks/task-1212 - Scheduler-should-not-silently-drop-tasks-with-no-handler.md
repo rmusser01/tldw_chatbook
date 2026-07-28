@@ -1,7 +1,7 @@
 ---
 id: TASK-1212
 title: Scheduler should not silently drop tasks whose type has no registered handler
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-27 23:05'
 labels:

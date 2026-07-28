@@ -1,7 +1,7 @@
 ---
 id: TASK-1221
 title: Watchlists is gated on three packages nothing imports
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-28 00:35'
 labels:
