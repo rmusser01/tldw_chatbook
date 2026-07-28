@@ -83,6 +83,8 @@ class ConsoleComposerBar(Horizontal):
     MIN_DRAFT_ROWS = 1
     MAX_DRAFT_ROWS = 4
     COMPOSER_CHROME_ROWS = 4
+    VOICE_CHIP_MIN_WIDTH = 24
+    VOICE_CHIP_MAX_WIDTH = 42
     FALLBACK_DRAFT_WIDTH = 80
     PASTE_TOKEN_STYLE = "bold cyan"
     PASTE_CONFIRM_STYLE = "bold black on yellow"
@@ -1972,6 +1974,64 @@ class ConsoleComposerBar(Horizontal):
                 "Attach files or context through the active Console session."
             )
 
+    def set_voice_status(
+        self,
+        state: str,
+        *,
+        partial: str = "",
+        elapsed_seconds: int = 0,
+        message: str = "",
+    ) -> None:
+        """Render the dictation state into the inline voice chip.
+
+        Args:
+            state: One of the `STATE_*` constants from `console_voice_input`.
+            partial: In-flight recognizer text. Truncated from the left so the
+                newest words stay visible, and dropped entirely on narrow
+                terminals so the 1fr draft never collapses.
+            elapsed_seconds: Recording duration, rendered as m:ss.
+            message: Status or failure text for non-listening states.
+        """
+        try:
+            chip = self.query_one("#console-voice-status", Static)
+        except NoMatches:
+            return
+
+        if state in ("idle", "unavailable"):
+            chip.styles.display = "none"
+            chip.styles.width = 0
+            chip.styles.min_width = 0
+            chip.update("")
+            return
+
+        # `size` is (0, 0) before the first layout; fall back to the ceiling
+        # rather than computing a zero width and rendering an invisible chip.
+        total_width = self.size.width or self.VOICE_CHIP_MAX_WIDTH * 2
+        available = max(0, total_width - self.VOICE_CHIP_MIN_WIDTH)
+        width = min(self.VOICE_CHIP_MAX_WIDTH, available)
+
+        if state == "listening":
+            head = f"● {elapsed_seconds // 60}:{elapsed_seconds % 60:02d}"
+            room = width - len(head) - 3
+            if partial and room > 8:
+                tail = partial[-room:]
+                body = f"{head}  {tail}"
+            else:
+                # Below the floor the counter alone still proves the mic is live.
+                body = head
+                width = min(width, len(head) + 2)
+        else:
+            body = message or state
+            width = min(width, len(body) + 2)
+
+        chip.styles.display = "block"
+        chip.styles.width = max(width, 1)
+        chip.styles.min_width = 0
+        chip.styles.height = 1
+        chip.styles.min_height = 1
+        chip.set_class(state == "error", "console-voice-status-error")
+        chip.update(escape(body))
+
     def compose(self) -> ComposeResult:
         expanded = Horizontal(
             id="console-composer-expanded",
@@ -2006,6 +2066,17 @@ class ConsoleComposerBar(Horizontal):
             recovery.styles.height = 0
             recovery.styles.min_height = 0
             yield recovery
+            voice_status = Static(
+                "",
+                id="console-voice-status",
+                classes="console-voice-status",
+            )
+            voice_status.styles.display = "none"
+            voice_status.styles.width = 0
+            voice_status.styles.min_width = 0
+            voice_status.styles.height = 0
+            voice_status.styles.min_height = 0
+            yield voice_status
             attachment_indicator = Static(
                 "",
                 id="console-attachment-indicator",
@@ -2093,6 +2164,11 @@ class ConsoleComposerBar(Horizontal):
                     id="console-dictation",
                     classes="destination-action-button console-dictation-button",
                     tooltip="Record one English utterance with local Parakeet v2.",
+                )
+                yield self._bounded_button(
+                    "🎤 Mic",
+                    width=8,
+                    id="console-voice-toggle",
                 )
                 yield self._bounded_button(
                     "Attach",
