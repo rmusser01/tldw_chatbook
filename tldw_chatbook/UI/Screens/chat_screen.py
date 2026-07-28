@@ -1,12 +1,14 @@
 """Chat screen implementation with comprehensive state management."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 import asyncio
 import inspect
 import os
 from pathlib import Path
 import re
+import threading
 import time
 from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
 import uuid
@@ -21,6 +23,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.color import Color
 from textual.events import Click, DescendantFocus, Key, MouseUp, Paste, Resize
+from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -158,6 +161,19 @@ from ...Chat.console_provider_gateway import (
     normalize_llamacpp_base_url,
 )
 from ...Chat.console_provider_endpoints import first_configured_endpoint
+
+# Import-safe at module scope: `console_voice_input` reaches the optional
+# speech stack only through `importlib.util.find_spec` and a function-body
+# import inside `default_service_factory`, so nothing here drags
+# `tldw_chatbook.Audio` (and with it faster-whisper and NeMo) into app start.
+from ...Chat.console_voice_input import (
+    STATE_LISTENING,
+    ConsoleVoiceInputController,
+    VoiceFailed,
+    VoiceFinal,
+    VoicePartial,
+    default_service_factory,
+)
 from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
@@ -497,6 +513,192 @@ CONSOLE_FOCUS_TARGETS_BY_PANE = {
     "console-right-rail": ("console-inspector-rail-collapse", "console-right-rail"),
     "console-native-composer": ("console-native-composer",),
 }
+
+
+class ConsoleDictationEvent(Message):
+    """Carry a `console_voice_input` event onto the Console screen's thread.
+
+    The controller emits from whichever thread the recognizer happens to be on.
+    `post_message` is the only thread-safe route to the UI here: never
+    `call_from_thread`, which blocks its caller, and the caller is the audio
+    path.
+    """
+
+    def __init__(self, session: Any, event: Any) -> None:
+        """Wrap one controller event.
+
+        Args:
+            session: The session that emitted it, so the screen can drop
+                events from a session it has already discarded.
+            event: The `VoicePartial` / `VoiceFinal` / `VoiceFailed` /
+                `VoiceStateChanged` / `VoiceProviderOverridden` instance.
+        """
+        super().__init__()
+        self.session = session
+        self.event = event
+
+
+class ConsoleStreamingDictationSession:
+    """Drive `ConsoleVoiceInputController` through the one-shot session port.
+
+    The Console screen owns dictation as three blocking calls -- `start()`,
+    `stop_and_transcribe()` and `discard()` -- each already run off the UI
+    thread by `asyncio.to_thread`, with the visible button transitions applied
+    around them. Keeping that port intact is what lets the streaming backend
+    replace the one-shot recorder without changing a single observable
+    transition:
+
+    ============================  ==================  =========================
+    Controller state              Button state        Applied by
+    ============================  ==================  =========================
+    ``preparing``                 ``starting``        before ``start()`` runs
+    ``listening``                 ``recording``       when ``start()`` returns
+    ``finishing``                 ``transcribing``    before ``stop_and_transcribe()``
+    ``idle``                      ``idle``            when it returns
+    ============================  ==================  =========================
+
+    `spawn` is therefore inline: this object is *already* on a worker thread,
+    and the controller's blocking halves must complete before the call it
+    stands behind returns.
+
+    Live events still flow the moment they happen -- partials and per-segment
+    finals go straight to `on_event` -- but the finals are accumulated here so
+    `stop_and_transcribe()` returns one transcript at the instant the
+    controller reaches `idle`. That preserves the shipping insertion contract:
+    the draft is written once, at the caret, and never mid-capture.
+    """
+
+    def __init__(
+        self,
+        *,
+        on_event: Callable[[Any, Any], None],
+        service_factory: Callable[..., Any] = default_service_factory,
+    ) -> None:
+        """Build a session over a fresh controller.
+
+        Args:
+            on_event: Called with `(session, event)` for every controller
+                event, from whatever thread emitted it.
+            service_factory: Builds the dictation service; injected by tests.
+        """
+        self._on_event = on_event
+        self._lock = threading.Lock()
+        self._segments: list[str] = []
+        self._failure = ""
+        self._in_blocking_call = False
+        self._controller = ConsoleVoiceInputController(
+            emit=self._handle_event,
+            spawn=lambda thunk: thunk(),
+            service_factory=service_factory,
+        )
+
+    def _handle_event(self, event: Any) -> None:
+        """Record what the screen cannot see, then forward. Never raises.
+
+        A raise here would land in the recognizer's callback -- or, for a
+        `VoiceFailed`, inside the controller's own `_fail()`, whose raising-emit
+        handling exists precisely so a plumbing error cannot bury the real
+        cause. Neither is a place to propagate from.
+
+        Args:
+            event: The controller event being emitted.
+        """
+        try:
+            forward = True
+            if isinstance(event, VoiceFinal):
+                text = event.text.strip()
+                if text:
+                    with self._lock:
+                        self._segments.append(text)
+            elif isinstance(event, VoiceFailed):
+                with self._lock:
+                    self._failure = (f"{event.reason} {event.remedy}").strip()
+                    # A blocking call is in flight, so it is about to raise
+                    # this failure and the screen's existing error path will
+                    # report it. Forwarding it as well would notify the user
+                    # about one failure twice. What does need forwarding is
+                    # the other kind: the recognizer dying mid-capture, with
+                    # nothing blocked on it to carry the news.
+                    forward = not self._in_blocking_call
+            if forward:
+                self._on_event(self, event)
+        except Exception:  # noqa: BLE001 - the audio path must never see this
+            logger.opt(exception=True).warning(
+                "Console dictation event could not be delivered"
+            )
+
+    def _take_failure(self) -> str:
+        with self._lock:
+            failure, self._failure = self._failure, ""
+        return failure
+
+    @contextmanager
+    def _blocking_call(self) -> Iterator[None]:
+        """Mark the window in which a failure will be raised, not forwarded."""
+        with self._lock:
+            self._in_blocking_call = True
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._in_blocking_call = False
+
+    def start(self, *, on_buffer_limit: Callable[[], None] | None = None) -> None:
+        """Open the microphone, blocking until it is live or has failed.
+
+        Args:
+            on_buffer_limit: Accepted for the session port the screen drives.
+                Unused: the streaming backend transcribes continuously and
+                keeps no unbounded PCM buffer to overrun. The screen's
+                wall-clock timer is unaffected and still bounds a capture.
+
+        Raises:
+            RuntimeError: The controller refused or could not start capture.
+        """
+        with self._lock:
+            self._segments.clear()
+            self._failure = ""
+        with self._blocking_call():
+            self._controller.start()
+        failure = self._take_failure()
+        if failure:
+            raise RuntimeError(failure)
+        if self._controller.state != STATE_LISTENING:
+            # `start()` was ignored -- the controller was abandoned, or a
+            # previous capture never returned it to idle.
+            raise RuntimeError("Microphone dictation could not be started.")
+
+    def stop_and_transcribe(self) -> str:
+        """Close the microphone and return every segment finalized so far.
+
+        Blocks until the controller reaches `idle`, so the screen inserts
+        exactly once, with the whole transcript, at that moment.
+
+        Returns:
+            The accumulated segments, space-joined.
+
+        Raises:
+            RuntimeError: The controller failed while finishing.
+        """
+        with self._blocking_call():
+            self._controller.stop()
+        failure = self._take_failure()
+        if failure:
+            raise RuntimeError(failure)
+        with self._lock:
+            return " ".join(self._segments)
+
+    def discard(self) -> None:
+        """Release the microphone without the blocking join.
+
+        Terminal teardown only (unmount, or a failure the screen has already
+        surfaced): `abandon()` is one-way for this instance, and the screen
+        drops the session on both of those paths.
+        """
+        self._controller.abandon()
+        with self._lock:
+            self._segments.clear()
+            self._failure = ""
 
 
 @dataclass(frozen=True)
@@ -2230,6 +2432,10 @@ class ChatScreen(BaseAppScreen):
         ] = "idle"
         self._console_dictation_timer: Any | None = None
         self._console_dictation_origin_session_id: str | None = None
+        #: Newest in-flight recognizer text. Chip-only by contract -- a partial
+        #: is superseded by the next one or by its segment's final, and must
+        #: never reach the draft.
+        self._console_dictation_partial = ""
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_command_registry: ConsoleCommandRegistry = (
@@ -4194,8 +4400,59 @@ class ChatScreen(BaseAppScreen):
         self._cancel_console_dictation_timer()
         self._console_dictation_origin_session_id = None
         self._console_dictation_session = None
+        self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
         self.app_instance.notify(f"Dictation failed: {exc}", severity="error")
+
+    def _emit_console_dictation_event(self, session: Any, event: Any) -> None:
+        """Hand a controller event to the UI thread. Safe from any thread.
+
+        Args:
+            session: The dictation session that emitted the event.
+            event: The `console_voice_input` event instance.
+        """
+        try:
+            self.post_message(ConsoleDictationEvent(session, event))
+        except Exception:  # noqa: BLE001 - the audio path must never see this
+            logger.opt(exception=True).debug(
+                "Console dictation event could not be posted"
+            )
+
+    @on(ConsoleDictationEvent)
+    def _handle_console_dictation_event(self, message: ConsoleDictationEvent) -> None:
+        """Apply the streaming events the blocking session port cannot express.
+
+        Button state stays owned by `_start_console_dictation` /
+        `_stop_console_dictation`, which bracket the blocking calls: they are
+        the only places that can order an `idle` transition *after* the
+        transcript has been inserted. What only the event stream can deliver
+        is a partial (chip-only) and a failure that arrives mid-capture, with
+        no blocking call in flight to raise it.
+
+        Args:
+            message: The posted controller event.
+        """
+        if message.session is not self._console_dictation_session:
+            # A session the screen has already discarded; its events are stale.
+            return
+        event = message.event
+        if isinstance(event, VoicePartial):
+            self._console_dictation_partial = event.text
+            return
+        if isinstance(event, VoiceFinal):
+            # The segment is committed; the partial that previewed it is spent.
+            self._console_dictation_partial = ""
+            return
+        if isinstance(event, VoiceFailed):
+            # Only ever a mid-capture failure: the session forwards a
+            # `VoiceFailed` exactly when no blocking call is in flight to
+            # raise it, so this cannot double-report a start/stop failure.
+            # Handling it here -- ahead of the `VoiceStateChanged(idle)` the
+            # controller emits next, which this method deliberately ignores --
+            # is what cancels the wall timer and clears the origin session
+            # before anything else can run.
+            reason = f"{event.reason} {event.remedy}".strip()
+            self._notify_console_dictation_error(RuntimeError(reason))
 
     def _on_console_dictation_buffer_limit(self) -> None:
         """Marshal a recorder-thread memory-limit signal onto the UI thread."""
@@ -4214,19 +4471,23 @@ class ChatScreen(BaseAppScreen):
         )
         self._request_console_dictation_stop()
 
-    @staticmethod
-    def _create_console_dictation_session() -> Any:
-        """Load the optional local STT stack only when the Mic action is used."""
-        from tldw_chatbook.Audio.console_dictation import ConsoleDictationSession
+    def _create_console_dictation_session(self) -> Any:
+        """Build a streaming dictation session bound to this screen.
 
-        return ConsoleDictationSession()
+        Constructing the controller costs nothing: the optional speech stack is
+        only imported when `start()` actually reaches the service factory.
+        """
+        return ConsoleStreamingDictationSession(
+            on_event=self._emit_console_dictation_event,
+        )
 
     async def _start_console_dictation(self) -> None:
-        session = (
-            self._console_dictation_session or self._create_console_dictation_session()
-        )
-        self._console_dictation_session = session
         try:
+            session = (
+                self._console_dictation_session
+                or self._create_console_dictation_session()
+            )
+            self._console_dictation_session = session
             await asyncio.to_thread(
                 session.start,
                 on_buffer_limit=self._on_console_dictation_buffer_limit,
@@ -4314,6 +4575,7 @@ class ChatScreen(BaseAppScreen):
             transcript=transcript,
         )
         self._console_dictation_origin_session_id = None
+        self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
 
     def _request_console_dictation_stop(self) -> None:
@@ -4325,6 +4587,7 @@ class ChatScreen(BaseAppScreen):
             self._stop_console_dictation(),
             exclusive=True,
             group="console-dictation-stop",
+            exit_on_error=False,
         )
 
     def _request_console_dictation_start(self) -> None:
@@ -4332,11 +4595,13 @@ class ChatScreen(BaseAppScreen):
             return
         store = self._ensure_console_chat_store()
         self._console_dictation_origin_session_id = store.active_session_id
+        self._console_dictation_partial = ""
         self._set_console_dictation_state("starting")
         self.run_worker(
             self._start_console_dictation(),
             exclusive=True,
             group="console-dictation-start",
+            exit_on_error=False,
         )
 
     def _capture_console_draft_switch_snapshot(self) -> None:
@@ -10822,6 +11087,7 @@ class ChatScreen(BaseAppScreen):
         dictation_session = self._console_dictation_session
         self._console_dictation_session = None
         self._console_dictation_origin_session_id = None
+        self._console_dictation_partial = ""
         self._console_dictation_state = "idle"
         if dictation_session is not None:
             await asyncio.to_thread(dictation_session.discard)
