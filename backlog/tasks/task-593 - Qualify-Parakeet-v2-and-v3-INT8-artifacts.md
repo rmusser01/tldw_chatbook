@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:02'
-updated_date: '2026-07-27 23:41'
+updated_date: '2026-07-28 00:06'
 labels:
   - stt
   - evaluation
@@ -15,6 +15,7 @@ references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:
   - Docs/superpowers/specs/2026-07-27-simple-stt-model-comparison-design.md
+  - Docs/superpowers/plans/2026-07-27-simple-stt-model-comparison.md
 priority: high
 ---
 
@@ -36,5 +37,5 @@ Run a small, indicative macOS comparison of Parakeet v2/v3 INT8 against their F3
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-The previous qualification-framework plan is superseded. Implement only the approved one-script comparison in Docs/superpowers/specs/2026-07-27-simple-stt-model-comparison-design.md; detailed minimal plan pending written-spec review.
+ADR required: no. ADR path: N/A. Reason: this one-shot diagnostic does not change routing, storage, artifacts, or runtime contracts. Delete the abandoned qualification framework, implement the approved one-script comparison test-first, acquire the small local case set and pinned model snapshots, run the indicative macOS comparison, record the JSON report and interpretation, then complete TASK-593 hygiene. Detailed plan: Docs/superpowers/plans/2026-07-27-simple-stt-model-comparison.md
 <!-- SECTION:PLAN:END -->
