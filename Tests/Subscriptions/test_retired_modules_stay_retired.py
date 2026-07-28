@@ -32,6 +32,11 @@ RETIRED_MODULES = [
     "tldw_chatbook.UI.Subscription_Modules.subscription_backend_controller",
     "tldw_chatbook.Event_Handlers.subscription_events",
     "tldw_chatbook.Event_Handlers.subscription_ingest_worker",
+    # TASK-1220: lost its only caller when subscription_ingest_worker went, and
+    # was reachable afterwards only through the package's eager re-export --
+    # present in sys.modules at startup, called by nothing.
+    "tldw_chatbook.Subscriptions.content_processor",
+    "tldw_chatbook.Internal_Prompts.subscriptions_prompts",
 ]
 
 RETIRED_SYMBOLS = [
@@ -59,6 +64,23 @@ def test_retired_symbol_is_not_reachable_from_the_package(symbol: str) -> None:
     import tldw_chatbook.Subscriptions as subscriptions
 
     assert not hasattr(subscriptions, symbol)
+
+
+def test_settings_no_longer_offers_inert_subscription_prompts() -> None:
+    """TASK-1220: Settings listed five prompts that could not affect anything.
+
+    `Settings > Internal Prompts` groups specs by subsystem and badges them as
+    customizable. The `subscriptions` group described `ContentProcessor`, whose
+    only caller was retired in TASK-1211 -- so a user could carefully edit the
+    feed-analysis prompt and change nothing. A false affordance is worse than an
+    absent one.
+    """
+    from tldw_chatbook.Internal_Prompts.catalog import CATALOG
+
+    subscription_specs = [key for key in CATALOG if key.startswith("subscriptions.")]
+    assert not subscription_specs, (
+        f"Settings still offers inert subscription prompts: {subscription_specs}"
+    )
 
 
 def test_live_monitoring_seam_is_untouched() -> None:

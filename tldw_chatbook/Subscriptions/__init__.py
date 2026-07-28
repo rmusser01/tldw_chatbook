@@ -1,12 +1,15 @@
 # __init__.py
 # Subscriptions module - Content subscription and monitoring system
 #
-# This module provides comprehensive subscription management including:
+# This module provides subscription management including:
 # - RSS/Atom feed monitoring
 # - URL change detection
-# - Automated content ingestion
-# - LLM analysis integration
 # - Security features (XXE/SSRF protection)
+#
+# LLM analysis of fetched items was removed in TASK-1220 along with
+# ContentProcessor: its only caller went with the retired ingest pipeline in
+# TASK-1211, leaving it unreachable while Settings still advertised its five
+# prompts as customizable.
 #
 # Scheduling (ADR-019, TASK-1211):
 # Watchlist checks run on the unified scheduler
@@ -46,12 +49,6 @@ try:  # noqa: SIM105
         CredentialEncryptor,
         InputValidator,
     )
-    from .content_processor import (  # noqa: F401
-        ContentProcessor,
-        KeywordExtractor,
-        ContentSummarizer,
-    )
-
     _CORE_AVAILABLE = True
 except ImportError:
     _CORE_AVAILABLE = False
@@ -70,10 +67,6 @@ __all__ = (
             "SSRFProtector",
             "CredentialEncryptor",
             "InputValidator",
-            # Content Processing
-            "ContentProcessor",
-            "KeywordExtractor",
-            "ContentSummarizer",
         ]
         if _CORE_AVAILABLE
         else []
