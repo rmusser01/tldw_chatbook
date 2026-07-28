@@ -764,6 +764,7 @@ class FileNotesGitService:
             tuple[SequencedSessionChange, ...],
             RepositoryIdentity,
             int,
+            int,
         ] | None = None
         self._rerun_available = False
         self._status_dirty = False
@@ -975,12 +976,20 @@ class FileNotesGitService:
                     "File Notes Git status cannot be coalesced",
                 )
             if self._rerun_available:
+                invalidation_generation = (
+                    admission.invalidation_generation
+                )
+                if invalidation_generation is None:
+                    raise RuntimeError(
+                        "Active status admission omitted its generation"
+                    )
                 self._status_request_generation += 1
                 self._pending_status = (
                     binding,
                     tuple(changes),
                     repository,
                     self._status_request_generation,
+                    invalidation_generation,
                 )
             else:
                 self._status_request_generation += 1
@@ -1388,6 +1397,7 @@ class FileNotesGitService:
         lease: GitStatusLease,
         request_generation: int,
     ) -> SessionGitStatus:
+        invalidation_generation = lease.invalidation_generation
         try:
             result = await self._query_status(
                 binding,
@@ -1402,6 +1412,7 @@ class FileNotesGitService:
                     binding,
                     result,
                     request_generation,
+                    invalidation_generation,
                 )
 
             (
@@ -1409,6 +1420,7 @@ class FileNotesGitService:
                 pending_changes,
                 pending_repository,
                 pending_generation,
+                pending_invalidation_generation,
             ) = pending
             self._status_cycle_binding = pending_binding
             admission = self._owner.admit_status(pending_binding)
@@ -1431,9 +1443,11 @@ class FileNotesGitService:
                     pending_binding,
                     stale,
                     pending_generation,
+                    pending_invalidation_generation,
                 )
 
             lease = next_lease
+            invalidation_generation = pending_invalidation_generation
             self._rerun_available = False
             result = await self._query_status(
                 pending_binding,
@@ -1459,6 +1473,7 @@ class FileNotesGitService:
                 pending_binding,
                 result,
                 pending_generation,
+                invalidation_generation,
             )
         finally:
             lease.release()
@@ -1480,13 +1495,18 @@ class FileNotesGitService:
         binding: SessionBinding,
         status: SessionGitStatus,
         request_generation: int,
+        invalidation_generation: int,
     ) -> SessionGitStatus:
         if (
             not self._sealed
             and request_generation == self._status_request_generation
             and binding == self._owner.current_binding()
         ):
-            self._owner.publish_status(binding, status)
+            self._owner.publish_status(
+                binding,
+                status,
+                invalidation_generation=invalidation_generation,
+            )
         return status
 
     async def _query_status(

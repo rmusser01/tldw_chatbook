@@ -2819,6 +2819,90 @@ async def test_retained_status_is_read_only_and_exact_binding(
 
 
 @pytest.mark.asyncio
+async def test_hidden_change_invalidates_admitted_status_until_reopen(
+    tmp_path: Path,
+) -> None:
+    owner, binding, service, runner = _status_service(tmp_path)
+    assert isinstance(binding, SessionBinding)
+    root = tmp_path / "notes"
+    first_path = "one.md"
+    second_path = "two.md"
+    (root / first_path).write_text("one\n", encoding="utf-8")
+    assert owner.record_change(binding, SessionChange("created", first_path))
+
+    first = service.start_status(binding, owner.snapshot(binding).changes)
+    await asyncio.wait_for(runner.first_index_started.wait(), timeout=1)
+
+    (root / second_path).write_text("two\n", encoding="utf-8")
+    assert owner.record_change(binding, SessionChange("created", second_path))
+    assert owner.clear_status(binding)
+    assert runner.query_count == 1
+
+    runner.release_first_index.set()
+    result = await asyncio.wait_for(first, timeout=1)
+
+    assert result.state == "ready"
+    assert tuple(row.group.current_path for row in result.rows) == (first_path,)
+    assert owner.snapshot(binding).git_status is None
+    assert runner.query_count == 1
+
+    refreshed = service.start_status(
+        binding,
+        owner.snapshot(binding).changes,
+    )
+    refreshed_result = await asyncio.wait_for(refreshed, timeout=1)
+
+    assert runner.query_count == 2
+    assert tuple(
+        row.group.current_path for row in refreshed_result.rows
+    ) == (first_path, second_path)
+    assert owner.snapshot(binding).git_status == refreshed_result
+
+
+@pytest.mark.asyncio
+async def test_hidden_change_invalidates_earlier_coalesced_status_request(
+    tmp_path: Path,
+) -> None:
+    owner, binding, service, runner = _status_service(tmp_path)
+    assert isinstance(binding, SessionBinding)
+    root = tmp_path / "notes"
+    paths = ("one.md", "two.md", "three.md")
+    for path in paths:
+        (root / path).write_text(path, encoding="utf-8")
+
+    assert owner.record_change(binding, SessionChange("created", paths[0]))
+    first = service.start_status(binding, owner.snapshot(binding).changes)
+    await asyncio.wait_for(runner.first_index_started.wait(), timeout=1)
+
+    assert owner.record_change(binding, SessionChange("created", paths[1]))
+    assert owner.clear_status(binding)
+    assert (
+        service.start_status(binding, owner.snapshot(binding).changes) is first
+    )
+    assert owner.record_change(binding, SessionChange("created", paths[2]))
+    assert owner.clear_status(binding)
+
+    runner.release_first_index.set()
+    result = await asyncio.wait_for(first, timeout=1)
+
+    assert runner.query_count == 2
+    assert tuple(row.group.current_path for row in result.rows) == paths[:2]
+    assert owner.snapshot(binding).git_status is None
+
+    refreshed = service.start_status(
+        binding,
+        owner.snapshot(binding).changes,
+    )
+    refreshed_result = await asyncio.wait_for(refreshed, timeout=1)
+
+    assert runner.query_count == 3
+    assert tuple(
+        row.group.current_path for row in refreshed_result.rows
+    ) == paths
+    assert owner.snapshot(binding).git_status == refreshed_result
+
+
+@pytest.mark.asyncio
 async def test_ten_status_triggers_coalesce_to_active_plus_latest_rerun(
     tmp_path: Path,
 ) -> None:

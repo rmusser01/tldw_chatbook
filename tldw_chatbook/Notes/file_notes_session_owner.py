@@ -347,6 +347,7 @@ class GitStatusLease:
 
     _owner: FileNotesSessionOwner = field(repr=False, compare=False)
     _token: object = field(repr=False, compare=False)
+    invalidation_generation: int
 
     def release(self) -> None:
         """Release this status admission once."""
@@ -359,10 +360,25 @@ class GitStatusAdmission:
 
     lease: GitStatusLease | None = None
     reason: GitStatusAdmissionReason | None = None
+    invalidation_generation: int | None = None
 
     def __post_init__(self) -> None:
         if (self.lease is None) == (self.reason is None):
             raise ValueError("Status admission requires exactly one outcome")
+        if self.lease is not None:
+            if (
+                self.invalidation_generation
+                != self.lease.invalidation_generation
+            ):
+                raise ValueError(
+                    "Successful status admission requires its generation"
+                )
+        elif (self.reason == "status_active") != (
+            self.invalidation_generation is not None
+        ):
+            raise ValueError(
+                "Only active-status refusal carries a generation"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -672,6 +688,8 @@ class FileNotesSessionOwner:
         self,
         binding: SessionBinding,
         status: SessionGitStatus,
+        *,
+        invalidation_generation: int | None = None,
     ) -> bool:
         """Publish a newer status only for the current root generation."""
         with self._lock:
@@ -682,6 +700,10 @@ class FileNotesSessionOwner:
                 or self._trusted_repository is None
                 or status.repository != self._trusted_repository
                 or status.status_generation <= self._status_generation
+                or (
+                    invalidation_generation is not None
+                    and invalidation_generation != self._status_generation
+                )
             ):
                 return False
             self._status_generation = status.status_generation
@@ -831,11 +853,21 @@ class FileNotesSessionOwner:
             if self._mutation_token is not None:
                 return GitStatusAdmission(reason="mutation_active")
             if self._status_token is not None:
-                return GitStatusAdmission(reason="status_active")
+                return GitStatusAdmission(
+                    reason="status_active",
+                    invalidation_generation=self._status_generation,
+                )
             token = object()
             self._status_token = token
+            generation = self._status_generation
+            lease = GitStatusLease(
+                self,
+                token,
+                generation,
+            )
             return GitStatusAdmission(
-                lease=GitStatusLease(self, token),
+                lease=lease,
+                invalidation_generation=generation,
             )
 
     def attach_git_service(self, service: FileNotesGitServiceLifecycle) -> None:

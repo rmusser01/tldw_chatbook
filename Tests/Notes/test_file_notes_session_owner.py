@@ -182,6 +182,36 @@ def test_status_publication_rejects_older_generation_under_same_binding(
     assert owner.snapshot(binding).git_status == newer
 
 
+def test_status_publication_rejects_invalidation_after_admission(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, _ownership, _group = _git_owner_state()
+    assert owner.publish_trust(binding, repository)
+    lease = owner.try_acquire_status(binding)
+    assert lease is not None
+    admitted_generation = lease.invalidation_generation
+    lease.release()
+
+    assert owner.clear_status(binding)
+    status_generation = owner.next_status_generation(binding)
+    assert status_generation is not None
+    late_status = SessionGitStatus(
+        binding_generation=binding.generation,
+        status_generation=status_generation,
+        state="ready",
+        repository=repository,
+    )
+
+    assert not owner.publish_status(
+        binding,
+        late_status,
+        invalidation_generation=admitted_generation,
+    )
+    assert owner.snapshot(binding).git_status is None
+
+
 def test_checked_git_clear_methods_and_public_mappings_are_immutable(
     tmp_path: Path,
 ) -> None:
