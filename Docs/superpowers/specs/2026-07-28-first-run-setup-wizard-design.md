@@ -41,18 +41,24 @@ summary at the end.
 
 ### Entry rules
 
-- **Auto-shown once, ever:** on the launch where the config file was created
-  (in-memory `_first_run`), after startup completes normally — the initial screen
-  (Home, per the existing first-run route) renders first, then the wizard is pushed
-  **on top** of it. Both startup paths (splash-enabled and splash-disabled) converge
-  on the same single post-startup call. We do not insert into the startup critical
-  path.
+- **Auto-shown once, ever:** offered when **no wizard state keys exist AND no
+  provider is configured** (hermes-style guard via the existing readiness checks) —
+  not keyed to the in-memory `_first_run` flag alone, because a first launch that
+  dies before the wizard appears would otherwise leave that user permanently
+  unoffered (config exists, `_first_run` false, no keys → misread as upgrader).
+  Shown after startup completes normally: the initial screen renders first, then
+  the wizard is pushed **on top** of it. Both startup paths (splash-enabled and
+  splash-disabled) converge on the same single post-startup call. We do not insert
+  into the startup critical path.
 - **Persisted state** (because `_first_run` never touches disk):
   `first_run.setup_started` written when the wizard first shows;
   `first_run.setup_completed` written on Finish or explicit Skip. Started-but-not-
   completed on a later launch produces only a resume *toast* ("finish setup any time
   from Settings") — never a forced re-push. No "wizard jail."
-- **Upgraders:** existing config + no wizard keys → never auto-offered.
+- **Upgraders:** existing config with any configured provider → never
+  auto-offered. A lived-in config with *no* provider configured gets the offer
+  once (its readiness state says the app was never set up); skipping writes
+  `setup_completed` and it never returns.
 - **Re-entry:** "Run setup wizard" in Settings and a command-palette entry, both
   pushing the same screen. Re-run and first-run are one code path; steps prefill
   from current config.
@@ -108,8 +114,11 @@ Every step has Back / Next / Skip. Nothing blocks. Esc raises a confirm dialog
    "You'll be asked for this password each time chatbook starts."
 8. **Summary** — itemized ✓/✗ matrix per area naming the exact missing piece
    ("✗ RAG — embeddings deps not installed"), **read back from the persisted
-   config, not in-memory step data**; config file location; how to re-run; exits:
-   **Start chatting** (→ Chat) or **Explore on my own** (→ Home).
+   config, not in-memory step data**; config file location; how to re-run. Exits
+   differ by mode: first-run offers **Start chatting** (→ Chat) or **Explore on
+   my own** (→ Home); a re-run launched from Settings offers **Done** (return to
+   the launch point) with **Go to Chat** as the secondary action — a re-run must
+   not yank the user away from where they were.
 
 ### Interplay with existing onboarding
 
@@ -178,11 +187,16 @@ Esc → confirmation dialog is an override in our wizard, using the existing
   wrote anything).
 - **Serialized writes:** all commits flow through **one exclusive worker**; Next
   awaits the commit, so ordering is inherent and a step you've left is definitely
-  on disk. No interleaved read-modify-write of the TOML.
+  on disk. No interleaved read-modify-write of the TOML. This includes the
+  ProtectKeys step: `enable_config_encryption()` rewrites the whole config file,
+  so it runs inside the same worker, never alongside a queued step commit.
 - **Write targets:** only sections/keys the Settings adapters already own —
   `api_settings.<provider>` for credentials, `[chat_defaults]` for provider/model,
   and the existing embeddings/tools/notes/appearance sections. The plan pins exact
   key names by reading each Settings adapter; the wizard invents no parallel keys.
+  The single exception is the `[first_run]` wizard-state section
+  (`setup_started` / `setup_completed`), which the wizard owns — the invariant
+  test's oracle allowlists it explicitly.
 - **Wizard state keys:** `first_run.setup_started` / `first_run.setup_completed`,
   persisted off-thread like `console.onboarding.first_send_completed`.
 - **Encryption:** once enabled (step 7), the config writers auto-encrypt sensitive
@@ -266,6 +280,10 @@ written/stamped (new user-facing screen).
 - Pin exact config key names per step by reading each Settings adapter.
 - If Settings adapters don't export their owned-key constants, extract them so the
   invariant test has a real oracle.
+- RAG step install copy: the install command differs by install method (pip vs
+  uv-managed venv — a documented papercut in this repo), so show the generic
+  extras syntax (`tldw_chatbook[embeddings_rag]`) rather than guessing the user's
+  package manager.
 
 ## 8. Hermes affordances deliberately ported
 
