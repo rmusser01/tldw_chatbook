@@ -836,57 +836,26 @@ WatchlistSourcePickerDialog {
     width: 12;
 }
 
-/* TASK-1105. Clicking any Watchlists table row other than the first left the
- * selection on row 0, so `Preview`, `Check now` and `Delete` all acted on the
- * wrong source.
+/* TASK-1105 lived here. Clicking any Watchlists table row other than the
+ * first left the selection on row 0, so `Preview`, `Check now` and `Delete`
+ * all acted on the wrong source. The cause is the app-wide keyboard-focus
+ * fallback `*:focus { outline: solid $ds-focus-accent; }` (core/_reset.tcss):
+ * Textual paints an `outline` OVER a widget's outermost rendered lines, and
+ * the overwritten segments lose the `{"row", "column"}` metadata that
+ * `DataTable._on_click` needs, so the bottom row of a FOCUSED table is
+ * unclickable. The Sources table is three rows tall here (header + two rows),
+ * which left row 0 as the only reachable data row.
  *
- * The cause is the app-wide keyboard-focus fallback in core/_reset.tcss:
- *
- *     *:focus { outline: solid $ds-focus-accent; }
- *
- * Textual paints an `outline` OVER the widget's outermost rendered lines
- * rather than around them (that is the whole point of `outline` vs `border`:
- * it costs no geometry). For a `DataTable` those overwritten segments lose
- * the `{"row", "column"}` Rich style metadata, and `DataTable._on_click`
- * resolves the clicked row from exactly that metadata:
- *
- *     meta = event.style.meta
- *     if "row" not in meta or "column" not in meta:
- *         return
- *
- * so the bottom-most visible row of a FOCUSED table cannot be clicked at all.
- * The first click is what gives the table focus (`MouseDown` sets it), and
- * the `Click` that follows is already evaluated against the outlined render,
- * so a single click is enough to hit this. Measured in-harness: with the
- * outline, clicking the last row of a 6-row table left the cursor on row 0;
- * without it the cursor landed on row 5.
- *
- * The Sources table is three rows tall in the workbench (header + two rows),
- * which made the bottom row the ONLY data row a user could aim at besides
- * row 0 -- hence "clicking any row selects the first one".
- *
- * Focus stays visible without repainting content: Textual's own
- * `DataTable:focus { background-tint: $foreground 5%; }` tints the whole
- * table, and the rule below gives the cursor cell the sanctioned readable
- * `$ds-focus-bg`/`$ds-focus-fg` pair (the same contract
- * `#file-list-pane .option-list--option-highlighted` uses) so the focused row
- * is unmistakable. Neither costs a cell of the table's own render.
- *
- * Scoped to `.watchlists-region` -- every centre/rail region on this screen
- * carries it, so Overview, Sources, Runs, Items, Rules and Notifications are
- * all covered, including tables Phase D has yet to add. The same defect
- * exists for every other `DataTable` in the app; fixing those is out of scope
- * for this task and is called out in its notes.
+ * It was fixed with `.watchlists-region DataTable:focus { outline: none; }`
+ * plus a `$ds-focus-bg`/`$ds-focus-fg` cursor recolour, scoped to this
+ * screen, and its notes called out that every other table in the app still
+ * had it. TASK-1160 promoted exactly those two rules to a bare
+ * `DataTable:focus` type selector in components/_lists.tcss, which every
+ * region here inherits unchanged, and removed this local copy so there is one
+ * mechanism rather than two.
+ * Tests/UI/test_watchlists_source_row_click_selects.py still guards the
+ * Watchlists behaviour end to end.
  */
-.watchlists-region DataTable:focus {
-    outline: none;
-}
-
-.watchlists-region DataTable:focus > .datatable--cursor {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-}
 
 /* TASK-1020. The Overview region's and the Inspector's third state: the
  * overview worker has been started and has not answered yet. Muted like

@@ -300,39 +300,22 @@
     min-height: 0;
 }
 
-/* TASK-1034: the global `*:focus { outline: solid $ds-focus-accent; }`
-   fallback (core/_reset.tcss) draws its outline INSIDE the widget's own
-   box -- it paints over the widget's own rendered rows rather than adding
-   to them, unlike `border`, which sits outside (see that rule's own
-   comment). A `DataTable`'s FIRST rendered row is its column header, so a
-   focused results grid lost its header -- and the "[warned]" canary
-   marker riding inside it (see the module docstring in results_grid.py)
-   -- entirely, replaced by the outline's box-drawing top edge. This
-   reproduced the exact UAT symptom: "boxed, no header" was this table
-   WITH keyboard focus; "unboxed, with header" was the same table blurred
-   (confirmed with a real compositor render in both states -- see
+/* TASK-1034 lived here: the global `*:focus { outline: solid
+   $ds-focus-accent; }` fallback (core/_reset.tcss) paints its outline OVER
+   the widget's outermost rendered lines, and a `DataTable`'s first line is
+   its column header -- so a focused results grid lost its header, and the
+   "[warned]" canary marker riding inside it, entirely. That was fixed here
+   with an id-scoped `outline: none` plus a header recolour.
+
+   TASK-1160 found the same rule silently eating clicks on the bottom row
+   of every focused table in the app and moved BOTH halves of that fix --
+   the suppressed outline and the header recolour -- to a bare
+   `DataTable:focus` type selector in components/_lists.tcss, which this
+   table now inherits unchanged. The id-scoped rules were removed rather
+   than left in place, so there is one mechanism, not two.
    Tests/UI/test_evals_results_grid.py::
-   test_focused_results_grid_keeps_its_header_and_the_warned_marker).
-
-   `DataTable`'s own built-in cursor highlight (`.datatable--cursor`,
-   restyled unconditionally by components/_lists.tcss) does NOT
-   distinguish focused from blurred -- confirmed identical bold-underline
-   styling either way -- so the outline was ALSO this table's only cue
-   that it currently holds keyboard focus. Dropping it outright would
-   trade the header-loss defect for an invisible-focus one (see
-   core/_reset.tcss's own "non-obscuring keyboard focus" contract).
-   Recolouring the header itself on focus keeps a real, visible cue
-   without ever overlaying or removing a content row -- the header text,
-   including any "[warned]" suffix, is drawn, never erased. */
-#evals-grid-table:focus {
-    outline: none;
-}
-
-#evals-grid-table:focus > .datatable--header {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
-}
+   test_focused_results_grid_keeps_its_header_and_the_warned_marker still
+   guards the header against a real compositor render. */
 
 /* Focused-cell detail can run to many lines (a full top-K plus a probe
    table) -- scrolled at this level per the I4 convention above, mirroring
