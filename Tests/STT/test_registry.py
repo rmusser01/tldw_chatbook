@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, fields, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import get_type_hints
 
 import pytest
 
@@ -13,6 +13,7 @@ from tldw_chatbook.STT.contracts import (
     InputKind,
     LanguageInputMode,
     ProducedCapabilities,
+    ResolvedTranscriptionRequest,
     TimestampGranularity,
     TranscriptionRequest,
     TranscriptionSegment,
@@ -32,10 +33,8 @@ from tldw_chatbook.STT.registry import (
     ProviderTranscriptionOutput,
     RuntimeCapabilityError,
     RuntimeObservation,
+    TranscriptionAdapter,
 )
-
-if TYPE_CHECKING:
-    from tldw_chatbook.STT.routing import ResolvedTranscriptionRequest
 
 
 def _capabilities(**overrides: object) -> CapabilitySet:
@@ -691,3 +690,11 @@ def test_protocol_request_example_remains_a_contract_value() -> None:
     )
 
     assert request.provider_id == "default"
+
+
+def test_adapter_transcribe_annotation_resolves_at_runtime() -> None:
+    hints = get_type_hints(TranscriptionAdapter.transcribe)
+
+    assert ResolvedTranscriptionRequest.__module__ == "tldw_chatbook.STT.contracts"
+    assert hints["request"] is ResolvedTranscriptionRequest
+    assert hints["return"] is ProviderTranscriptionOutput

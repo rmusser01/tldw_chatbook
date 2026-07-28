@@ -6,7 +6,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Mapping, Protocol, cast, runtime_checkable
+from typing import Mapping, Protocol, cast, runtime_checkable
 
 from .contracts import (
     CancellationGranularity,
@@ -14,16 +14,13 @@ from .contracts import (
     InputKind,
     LanguageInputMode,
     ProducedCapabilities,
+    ResolvedTranscriptionRequest,
     TimestampGranularity,
     TranscriptionSegment,
     TranscriptionTask,
     TranscriptionTimings,
     TranscriptionWarningCode,
 )
-
-if TYPE_CHECKING:
-    from .routing import ResolvedTranscriptionRequest
-
 
 _LANGUAGE_PATTERN = re.compile(r"(?:auto|[a-z]{2,3}(?:-[a-z0-9]{1,8})*)")
 _DETAIL_CODE_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*")

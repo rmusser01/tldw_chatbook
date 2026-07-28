@@ -16,6 +16,7 @@ from .contracts import (
     PrivacyRequirements,
     ProducedCapabilities,
     ProgressSink,
+    ResolvedTranscriptionRequest,
     TimestampGranularity,
     TranscriptionFailure,
     TranscriptionFailureCode,
@@ -46,7 +47,6 @@ from .registry import (
     TranscriptionAdapter,
 )
 from .routing import (
-    ResolvedTranscriptionRequest,
     RoutingPolicy,
     RoutingResolutionError,
     TranscriptionRouter,

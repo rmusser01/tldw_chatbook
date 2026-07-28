@@ -12,6 +12,7 @@ from tldw_chatbook.STT.contracts import (
     ExecutionDevice,
     InputKind,
     LanguageInputMode,
+    ResolvedTranscriptionRequest,
     TimestampGranularity,
     TranscriptionFailureCode,
     TranscriptionRequest,
@@ -27,7 +28,6 @@ from tldw_chatbook.STT.registry import (
     ProviderRegistry,
 )
 from tldw_chatbook.STT.routing import (
-    ResolvedTranscriptionRequest,
     RoutingPolicy,
     RoutingResolutionError,
     TranscriptionRouter,
@@ -37,13 +37,13 @@ from tldw_chatbook.STT.routing import (
 
 
 VALIDATED_V3_LANGUAGES = frozenset({"es", "fr"})
-EXPECTED_FASTER_WHISPER_LANGUAGES = frozenset(
+EXPECTED_FASTER_WHISPER_BASE_LANGUAGES = frozenset(
     """
     af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi
     fo fr gl gu ha haw he hi hr ht hu hy id is it ja jw ka kk km kn ko la lb
     ln lo lt lv mg mi mk ml mn mr ms mt my ne nl nn no oc pa pl ps pt ro ru
     sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt uk ur uz vi
-    yi yo zh yue
+    yi yo zh
     """.split()
 )
 
@@ -218,6 +218,26 @@ def test_exact_compatible_provider_and_model_are_preserved() -> None:
     assert (resolved.requested_language, resolved.effective_language) == ("ja", "ja")
     assert resolved.precision == "float32"
     assert resolved.warning_codes == ()
+
+
+def test_exact_faster_whisper_base_rejects_cpu_float16_pair() -> None:
+    policy = _policy()
+
+    with pytest.raises(RoutingResolutionError) as caught:
+        TranscriptionRouter(policy).resolve(
+            _request(
+                provider_id=policy.faster_whisper_provider_id,
+                model_id=policy.faster_whisper_model_id,
+                language="en",
+                precision="float16",
+                device=ExecutionDevice.CPU,
+            ),
+            _registry(policy),
+        )
+
+    assert caught.value.code is TranscriptionFailureCode.UNSUPPORTED_CAPABILITY
+    assert caught.value.provider_id == policy.faster_whisper_provider_id
+    assert caught.value.model_id == policy.faster_whisper_model_id
 
 
 def test_exact_parakeet_v3_preserves_requested_language_as_routing_assertion() -> None:
@@ -567,7 +587,7 @@ def test_builtin_metadata_matches_the_authoritative_capability_matrix() -> None:
             model_id="base",
             display_name="faster-whisper base",
             capabilities=CapabilitySet(
-                languages=EXPECTED_FASTER_WHISPER_LANGUAGES,
+                languages=EXPECTED_FASTER_WHISPER_BASE_LANGUAGES,
                 automatic_language=True,
                 tasks=frozenset(
                     {TranscriptionTask.TRANSCRIBE, TranscriptionTask.TRANSLATE}
@@ -591,7 +611,10 @@ def test_builtin_metadata_matches_the_authoritative_capability_matrix() -> None:
                 execution_devices=frozenset(
                     {ExecutionDevice.CPU, ExecutionDevice.CUDA}
                 ),
-                precisions=frozenset({"int8", "float16", "float32"}),
+                # The current independent device/precision sets cannot safely
+                # express CUDA-only float16, so base advertises the pairs that
+                # are valid across its declared CPU/CUDA devices.
+                precisions=frozenset({"int8", "float32"}),
             ),
             default_precision="int8",
             semantic_default_eligible=True,
@@ -609,7 +632,7 @@ def test_faster_whisper_uses_finite_broad_explicit_language_support() -> None:
     )
 
     assert model is not None
-    assert model.capabilities.languages == EXPECTED_FASTER_WHISPER_LANGUAGES
+    assert model.capabilities.languages == EXPECTED_FASTER_WHISPER_BASE_LANGUAGES
     assert model.capabilities.language_input_mode is LanguageInputMode.AUTOMATIC
     assert model.capabilities.automatic_language
 
@@ -634,6 +657,21 @@ def test_faster_whisper_uses_finite_broad_explicit_language_support() -> None:
             registry,
         )
     assert caught.value.code is TranscriptionFailureCode.UNSUPPORTED_LANGUAGE
+
+
+def test_semantic_default_yue_fails_closed_for_faster_whisper_base() -> None:
+    policy = _policy()
+
+    with pytest.raises(RoutingResolutionError) as caught:
+        TranscriptionRouter(policy).resolve(
+            _request(language="yue"),
+            _registry(policy),
+        )
+
+    assert caught.value.code is TranscriptionFailureCode.UNSUPPORTED_LANGUAGE
+    assert caught.value.provider_id == policy.faster_whisper_provider_id
+    assert caught.value.model_id == policy.faster_whisper_model_id
+    assert not hasattr(caught.value, "effective_language")
 
 
 @pytest.mark.parametrize(

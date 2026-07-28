@@ -645,6 +645,52 @@ class TranscriptionRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolvedTranscriptionRequest:
+    """A request resolved to one exact provider/model without executing it."""
+
+    request: TranscriptionRequest
+    provider_id: str
+    model_id: str
+    requested_language: str
+    effective_language: str
+    precision: str
+    warning_codes: tuple[TranscriptionWarningCode, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.request) is not TranscriptionRequest:
+            raise TypeError("request must be a TranscriptionRequest")
+        for field_name, value in (
+            ("provider_id", self.provider_id),
+            ("model_id", self.model_id),
+            ("precision", self.precision),
+        ):
+            if type(value) is not str:
+                raise TypeError(f"{field_name} must be a string")
+            if not value or value != value.strip():
+                raise ValueError(
+                    f"{field_name} must be a non-empty string without "
+                    "surrounding whitespace"
+                )
+        for field_name, value in (
+            ("requested_language", self.requested_language),
+            ("effective_language", self.effective_language),
+        ):
+            if type(value) is not str:
+                raise TypeError(f"{field_name} must be a string")
+            if value != "auto" and not _LANGUAGE_PATTERN.fullmatch(value):
+                raise ValueError(
+                    f"{field_name} must be 'auto' or a canonical lower-case "
+                    "language tag"
+                )
+        if type(self.warning_codes) is not tuple or not all(
+            type(warning) is TranscriptionWarningCode for warning in self.warning_codes
+        ):
+            raise TypeError(
+                "warning_codes must be a tuple of TranscriptionWarningCode values"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class TranscriptionSegment:
     """One timestamped transcript segment."""
 
@@ -872,6 +918,7 @@ __all__ = [
     "PrivacyRequirements",
     "ProducedCapabilities",
     "ProgressSink",
+    "ResolvedTranscriptionRequest",
     "TimestampGranularity",
     "TranscriptionFailure",
     "TranscriptionFailureCode",
