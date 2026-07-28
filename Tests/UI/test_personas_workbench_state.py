@@ -410,18 +410,19 @@ class TestNonCharacterModeRestoreGate:
             # Blank center, same as any fresh Characters-mode mount.
             assert screen2.query_one("#ccp-character-card-view").display is False
 
-    async def test_pre_rename_personas_mode_blob_restores_to_default(
+    async def test_saved_personas_mode_falls_back_to_characters(
         self, mock_app_instance, stub_characters
     ):
-        """task-442 T2: a pre-rename saved blob with ``active_mode": "personas"``
-        was ALREADY discarded by this same gate (only "characters" restores) -
-        the mode-id rename ("personas" -> "user_profiles") needs no compat shim
-        here, because old and new mode ids are equally non-"characters"."""
+        """Only Characters mode is restored; saved Personas still falls back.
+
+        The terminology correction deliberately adds no migration or
+        persistence-format rewrite for this existing restore floor.
+        """
         mock_app_instance.character_persona_scope_service = None
         saved = {
             "personas_workbench": {
                 "active_mode": "personas",
-                "selected_entity_kind": "persona_profile",
+                "selected_entity_kind": "persona",
                 "selected_entity_id": "persona-1",
                 "selected_entity_name": "Some Persona",
             },

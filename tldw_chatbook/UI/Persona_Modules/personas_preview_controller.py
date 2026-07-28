@@ -415,7 +415,7 @@ class PersonasPreviewController:
                     )
                     or {}
                 )
-        elif screen.state.active_mode == "user_profiles":
+        elif screen.state.active_mode == "personas":
             record = screen._profile_record(screen.state.selected_entity_id) or {}
         parts = [
             str(record.get(key) or "").strip()

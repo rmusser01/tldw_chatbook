@@ -1490,7 +1490,7 @@ class TestDictionaryNewDuplicate:
             screen = await _mounted(pilot)
             dup = screen.query_one("#personas-library-duplicate", Button)
             assert dup.display is True  # characters mode (task-443)
-            await pilot.click("#personas-mode-user_profiles")
+            await pilot.click("#personas-mode-personas")
             await pilot.pause()
             assert dup.display is False
             await pilot.click("#personas-mode-dictionaries")

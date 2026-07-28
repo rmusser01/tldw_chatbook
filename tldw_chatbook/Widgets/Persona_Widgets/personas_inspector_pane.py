@@ -24,8 +24,8 @@ _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 # set_console_actions_enabled/_apply_action_state's disabled+tooltip logic
 # below. Before a kind is known (no selection) every action still renders,
 # matching the pre-selection "select an item" baseline.
-_CONSOLE_ACTION_APPLICABLE_KINDS = {"character", "user_profile"}
-_EXPORT_JSON_APPLICABLE_KINDS = {"character", "user_profile"}
+_CONSOLE_ACTION_APPLICABLE_KINDS = {"character", "persona"}
+_EXPORT_JSON_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_PNG_APPLICABLE_KINDS = {"character"}
 
 
@@ -169,7 +169,7 @@ class PersonasInspectorPane(Vertical):
 
         Args:
             name: The selected item's display name.
-            kind: The selection kind (``character``/``user_profile``/
+            kind: The selection kind (``character``/``persona``/
                 ``dictionary``/``lore``) -- drives which actions render
                 (task-443 kind-aware visibility).
         """

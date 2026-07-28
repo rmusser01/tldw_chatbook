@@ -94,9 +94,9 @@ async def test_sort_and_tag_buttons_post_intents():
 
 async def test_tag_button_hidden_for_personas_visible_for_characters():
     app = _Host()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         pane = app.query_one(PersonasLibraryPane)
-        pane.set_mode("user_profiles")
+        pane.set_mode("personas")
         assert app.query_one("#personas-library-tag", Button).display is False
         assert app.query_one("#personas-library-sort", Button).display is True
         pane.set_mode("characters")
@@ -118,7 +118,7 @@ async def test_sort_page_hidden_for_lore():
 
 async def test_set_sort_label_and_set_tag_label():
     app = _Host()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         pane = app.query_one(PersonasLibraryPane)
         pane.set_sort_label("Sort: Recent")
         pane.set_tag_label("Tag: villain")

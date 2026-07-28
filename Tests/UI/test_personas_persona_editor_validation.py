@@ -11,16 +11,16 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Static
 
-from tldw_chatbook.Widgets.Persona_Widgets.user_profile_editor_widget import (
-    UserProfileEditorWidget,
+from tldw_chatbook.Widgets.Persona_Widgets.persona_profile_editor_widget import (
+    PersonaProfileEditorWidget,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
-    UserProfileSaveRequested,
+    PersonaProfileSaveRequested,
 )
 
 pytestmark = pytest.mark.asyncio
 
-_DEBOUNCE = UserProfileEditorWidget._VALIDATION_DEBOUNCE_SECONDS
+_DEBOUNCE = PersonaProfileEditorWidget._VALIDATION_DEBOUNCE_SECONDS
 
 
 class _Host(App):
@@ -29,10 +29,10 @@ class _Host(App):
         self.saves = []
 
     def compose(self) -> ComposeResult:
-        yield UserProfileEditorWidget()
+        yield PersonaProfileEditorWidget()
 
-    def on_user_profile_save_requested(
-        self, message: UserProfileSaveRequested
+    def on_persona_profile_save_requested(
+        self, message: PersonaProfileSaveRequested
     ) -> None:
         self.saves.append(message.data)
 
@@ -45,7 +45,7 @@ async def _settle(pilot):
 async def test_blank_name_marks_field_and_blocks_save():
     app = _Host()
     async with app.run_test() as pilot:
-        ed = app.query_one(UserProfileEditorWidget)
+        ed = app.query_one(PersonaProfileEditorWidget)
         ed.load_persona({"name": "A"})
         await pilot.pause()
 
@@ -74,7 +74,7 @@ async def test_blank_name_marks_field_and_blocks_save():
 async def test_validate_returns_typed_findings():
     app = _Host()
     async with app.run_test() as pilot:
-        ed = app.query_one(UserProfileEditorWidget)
+        ed = app.query_one(PersonaProfileEditorWidget)
         ed.load_persona({"name": ""})
         await pilot.pause()
         findings = ed.validate()
@@ -87,7 +87,7 @@ async def test_footer_still_shows_name_required_substring():
     '<field_id>: <message>' rendering."""
     app = _Host()
     async with app.run_test() as pilot:
-        ed = app.query_one(UserProfileEditorWidget)
+        ed = app.query_one(PersonaProfileEditorWidget)
         ed.new_persona()
         await pilot.pause()
         await pilot.click("#personas-editor-save")
@@ -99,8 +99,8 @@ async def test_footer_still_shows_name_required_substring():
 
 async def test_validated_field_ids_covers_name():
     app = _Host()
-    async with app.run_test() as pilot:
-        ed = app.query_one(UserProfileEditorWidget)
+    async with app.run_test():
+        ed = app.query_one(PersonaProfileEditorWidget)
         assert "personas-editor-name" in ed._validated_field_ids()
 
 
@@ -114,7 +114,7 @@ async def test_reopen_clears_stale_invalid_mark_from_prior_session():
     happened to match what was already displayed)."""
     app = _Host()
     async with app.run_test() as pilot:
-        ed = app.query_one(UserProfileEditorWidget)
+        ed = app.query_one(PersonaProfileEditorWidget)
         ed.load_persona({"name": "A"})
         await pilot.pause()
 
@@ -138,7 +138,7 @@ async def test_blank_new_form_does_not_mark_name_invalid_before_interaction():
     new_persona's programmatic population must not surface an error)."""
     app = _Host()
     async with app.run_test() as pilot:
-        ed = app.query_one(UserProfileEditorWidget)
+        ed = app.query_one(PersonaProfileEditorWidget)
         ed.new_persona()
         await pilot.pause()
         await _settle(pilot)  # let any load-triggered debounce fire

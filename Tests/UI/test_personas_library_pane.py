@@ -254,16 +254,16 @@ async def test_set_mode_toggles_import_button_and_empty_copy():
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasLibraryPane)
         import_button = pilot.app.query_one("#personas-library-import", Button)
-        pane.set_mode("user_profiles")
+        pane.set_mode("personas")
         assert import_button.display is False
         pane.set_mode("characters")
         assert import_button.display is True
-        pane.set_mode("user_profiles")
-        await pane.update_rows((), total=0, noun="user profiles")
+        pane.set_mode("personas")
+        await pane.update_rows((), total=0, noun="personas")
         await pilot.pause()
         empty = pilot.app.query_one("#personas-library-empty", Static)
         copy = str(empty.renderable)
-        assert "No user profiles yet" in copy
+        assert "No personas yet" in copy
         assert "Import" not in copy
 
 

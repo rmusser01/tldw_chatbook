@@ -229,7 +229,7 @@ class PersonasLibraryPane(Vertical):
             "dictionaries",
             "lore",
         )
-        sort_visible = mode in ("characters", "user_profiles")
+        sort_visible = mode in ("characters", "personas")
         self.query_one("#personas-library-sort", Button).display = sort_visible
         self.query_one("#personas-library-tag", Button).display = mode == "characters"
         if not sort_visible:

@@ -36,8 +36,8 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
-from tldw_chatbook.Widgets.Persona_Widgets.user_profile_editor_widget import (
-    UserProfileEditorWidget,
+from tldw_chatbook.Widgets.Persona_Widgets.persona_profile_editor_widget import (
+    PersonaProfileEditorWidget,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     EditorContentChanged,
@@ -71,7 +71,7 @@ class _PersonaHost(App):
         self.dirty = 0
 
     def compose(self) -> ComposeResult:
-        yield UserProfileEditorWidget()
+        yield PersonaProfileEditorWidget()
 
     def on_editor_content_changed(self, message: EditorContentChanged) -> None:
         self.dirty += 1
@@ -103,7 +103,7 @@ async def test_character_mark_saved_rearms_dirty():
 async def test_persona_mark_saved_rearms_dirty():
     app = _PersonaHost()
     async with app.run_test() as pilot:
-        ed = app.query_one(UserProfileEditorWidget)
+        ed = app.query_one(PersonaProfileEditorWidget)
         ed.load_persona({"id": "p1", "name": "B", "version": 1})
         await pilot.pause()
         ed.query_one("#personas-editor-name", Input).value = "B2"  # first edit
@@ -284,7 +284,7 @@ def real_persona_scope_service(tmp_path):
 
 async def _enter_personas_mode(pilot):
     screen = await _mounted(pilot)
-    await pilot.click("#personas-mode-user_profiles")
+    await pilot.click("#personas-mode-personas")
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()
@@ -370,14 +370,14 @@ class TestPersonaSaveInPlace:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _enter_personas_mode(pilot)
-            await pilot.click("#personas-library-row-user_profile-p-1")
+            await pilot.click("#personas-library-row-persona-p-1")
             await pilot.pause()
 
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
-                EditUserProfileRequested,
+                EditPersonaProfileRequested,
             )
 
-            screen.post_message(EditUserProfileRequested("p-1"))
+            screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
             assert screen._edit_mode == "edit"
 
