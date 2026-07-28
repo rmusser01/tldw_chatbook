@@ -70,6 +70,53 @@ def test_bench_config_rejects_duplicate_target_ids():
         )
 
 
+# ---------------------------------------------------------------------------
+# task-1132 follow-up (Qodo review, finding 2): target_ids element-type
+# validation. This is a SEPARATE, pre-existing gap from the uniqueness check
+# above -- `strict` never gated anything but uniqueness, and no element-type
+# check existed on read or write before or after task-1132. It matters now
+# because `load_bench`'s read-leniency means a corrupted stored `target_ids`
+# entry (an int, a nested list, an empty string) would otherwise load
+# without complaint and only fail much later, deep inside
+# `db.get_model(target_id)`, as an opaque sqlite parameter-binding error.
+# ---------------------------------------------------------------------------
+
+
+def test_bench_config_rejects_a_non_string_target_id():
+    """A malformed element (an int here, standing in for corrupted stored
+    data) must be rejected at construction with a message naming both the
+    offending value and its type, not surface later as an opaque sqlite
+    parameter-binding error out of db.get_model."""
+    with pytest.raises(ValueError, match=r"target_ids.*123.*int"):
+        BenchConfig(
+            name="b", prompt_mode="raw", top_k=20, dataset_id="d",
+            target_ids=("t1", 123),
+        )
+
+
+def test_bench_config_rejects_a_non_string_target_id_even_when_lenient():
+    """The element-type check is NOT gated by `strict`, unlike the
+    uniqueness check above -- `storage.load_bench` always constructs with
+    `strict=False`, so a check that only ran when `strict` is True would
+    never protect the read path this validation exists for."""
+    with pytest.raises(ValueError, match=r"target_ids.*123.*int"):
+        BenchConfig(
+            name="b", prompt_mode="raw", top_k=20, dataset_id="d",
+            target_ids=("t1", 123), strict=False,
+        )
+
+
+def test_bench_config_rejects_target_ids_that_is_not_a_list_or_tuple():
+    """Covers the other half of the malformed-data surface: target_ids
+    itself has the wrong shape entirely (e.g. a bare string, which Python
+    would otherwise happily iterate character-by-character)."""
+    with pytest.raises(ValueError, match="target_ids must be a list or tuple"):
+        BenchConfig(
+            name="b", prompt_mode="raw", top_k=20, dataset_id="d",
+            target_ids="t1",  # type: ignore[arg-type]
+        )
+
+
 def test_cell_capture_computes_truncated_mass():
     cap = CellCapture(
         prompt_mode="raw",
