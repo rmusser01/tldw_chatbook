@@ -240,6 +240,13 @@ class ConsoleVoiceInputController:
         self._state_lock = threading.Lock()
         self._override_announced = False
         self.save_audio_requested = False
+        # One-way latch: once `abandon()` has run, an in-flight `_begin()`
+        # (still building/starting a service on another thread, a cold model
+        # load can take tens of seconds) must release what it built instead
+        # of transitioning to `listening`. Never reset -- `abandon()` is a
+        # teardown path (unmount, app quit); the controller is not expected
+        # to `start()` again afterward.
+        self._abandoned = False
 
     @property
     def state(self) -> str:
@@ -255,8 +262,13 @@ class ConsoleVoiceInputController:
         self._emit(VoiceStateChanged(state))
 
     def _fail(self, reason: str, remedy: str = "") -> None:
+        # Mutate first so a throwing `emit` cannot leave the machine wedged,
+        # but keep VoiceFailed ahead of VoiceStateChanged(idle): the UI clears
+        # its pending-send on the failure and fires it on the idle transition,
+        # so reversing these would send the message on a failed dictation.
+        self._state = STATE_IDLE
         self._emit(VoiceFailed(reason=reason, remedy=remedy))
-        self._set_state(STATE_IDLE)
+        self._emit(VoiceStateChanged(STATE_IDLE))
 
     def start(self) -> None:
         """Begin capture. Rejected unless currently idle."""
@@ -267,14 +279,19 @@ class ConsoleVoiceInputController:
             self._state = STATE_PREPARING
         self._emit(VoiceStateChanged(STATE_PREPARING))
 
-        availability = probe()
-        if not availability.ok:
-            self._fail(availability.reason, availability.remedy)
-            return
+        try:
+            availability = probe()
+            if not availability.ok:
+                self._fail(availability.reason, availability.remedy)
+                return
 
-        effective = resolve()
-        if effective is None:
-            self._fail(PROVIDER_REASON, PROVIDER_REMEDY)
+            effective = resolve()
+            if effective is None:
+                self._fail(PROVIDER_REASON, PROVIDER_REMEDY)
+                return
+        except Exception as exc:  # noqa: BLE001 - a probe/resolve crash must not wedge preparing
+            logger.opt(exception=True).warning("Console dictation availability check failed")
+            self._fail(str(exc))
             return
 
         if effective.was_overridden and not self._override_announced:
@@ -291,13 +308,13 @@ class ConsoleVoiceInputController:
     def _begin(self, effective: EffectiveConfig) -> None:
         """Blocking half of start(); always runs via `spawn`."""
         try:
-            self._service = self._service_factory(
+            service = self._service_factory(
                 transcription_provider=effective.provider,
                 transcription_model=effective.model,
                 language=effective.language,
                 enable_commands=False,  # V2 owns voice commands, not V1
             )
-            started = self._service.start_dictation(
+            started = service.start_dictation(
                 on_partial_transcript=lambda text: self._emit(VoicePartial(text)),
                 on_final_transcript=lambda text: self._emit(VoiceFinal(text)),
                 on_state_change=lambda _state: None,  # our state machine is authoritative
@@ -306,8 +323,22 @@ class ConsoleVoiceInputController:
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the user verbatim
             logger.opt(exception=True).warning("Console dictation failed to start")
-            self._service = None
             self._fail(str(exc))
+            return
+
+        # Claim the freshly built service unless `abandon()` won the race
+        # while the factory/`start_dictation()` call (a cold model load can
+        # take tens of seconds) was still in flight. That check happened
+        # against no service to release, so it's on us to release this one.
+        with self._state_lock:
+            if self._abandoned:
+                claimed = False
+            else:
+                self._service = service
+                claimed = True
+
+        if not claimed:
+            self._release(service)
             return
 
         if not started:
@@ -342,13 +373,26 @@ class ConsoleVoiceInputController:
     def abandon(self) -> None:
         """Release the microphone without waiting on the 2s join.
 
-        For teardown paths (unmount, app quit) where blocking would show up as
-        a hang. Best effort by design.
+        For teardown paths (unmount, app quit) where blocking would show up
+        as a hang. Best effort by design. Safe to call from any state,
+        including mid-`preparing`: sets a one-way latch that `_begin()`
+        checks after it finishes building/starting a service, so a service
+        that only comes into existence after this call still gets released
+        instead of handed off to `listening`.
         """
-        service, self._service = self._service, None
-        self._state = STATE_IDLE
-        if service is None:
-            return
+        with self._state_lock:
+            self._abandoned = True
+            service, self._service = self._service, None
+            self._state = STATE_IDLE
+        if service is not None:
+            self._release(service)
+
+    def _release(self, service: Any) -> None:
+        """Best-effort microphone release used by `abandon()`. Never raises.
+
+        Args:
+            service: The dictation service instance to release.
+        """
         try:
             audio = getattr(service, "_audio_service", None)
             if audio is not None and hasattr(audio, "stop_recording"):

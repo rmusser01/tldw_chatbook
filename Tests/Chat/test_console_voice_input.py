@@ -290,6 +290,24 @@ class FakeDictationService:
         self._callbacks["on_error"](error)
 
 
+class FakeAudioService:
+    """Stands in for LazyLiveDictationService._audio_service.
+
+    `abandon()` reaches for this private attribute on purpose: it is the
+    teardown path that releases the microphone without going through
+    `stop_dictation()`'s 2s thread join.
+    """
+
+    def __init__(self, raise_on_stop: Exception | None = None):
+        self.stop_called = False
+        self._raise_on_stop = raise_on_stop
+
+    def stop_recording(self):
+        self.stop_called = True
+        if self._raise_on_stop is not None:
+            raise self._raise_on_stop
+
+
 def _controller(monkeypatch, service=None, spawn=None):
     """Build a controller with a fake service.
 
@@ -443,3 +461,149 @@ def test_provider_override_is_announced_once(monkeypatch):
     overrides = [e for e in events if isinstance(e, cvi.VoiceProviderOverridden)]
     assert len(overrides) == 1
     assert overrides[0].effective == "faster-whisper"
+
+
+# -- Fix round 1: wedge-proofing (probe/resolve crash, throwing emit, --------
+# -- abandon()/`_begin()` race) ----------------------------------------------
+
+
+def test_start_returns_to_idle_when_probe_raises(monkeypatch):
+    """A probe()/resolve() crash -- e.g. a corrupt config -- must not wedge
+    the state machine in `preparing` forever: every later start() would
+    no-op (state != idle) and every stop() would no-op (state != listening).
+    """
+    controller, events, _ = _controller(monkeypatch)
+
+    def boom():
+        raise RuntimeError("config read blew up")
+
+    monkeypatch.setattr(cvi, "probe", boom)
+
+    controller.start()
+
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert "config read blew up" in failures[0].reason
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_fail_leaves_state_idle_even_if_emit_raises(monkeypatch):
+    """A throwing `emit` (plausible: a Textual `post_message` racing widget
+    teardown) must not leave the internal state wedged, even though the
+    `VoiceFailed` event itself is lost when that emit throws.
+
+    Only `VoiceFailed` raises here, not every event: the earlier
+    `VoiceStateChanged(preparing)` emit in `start()` must go through
+    normally, so this isolates `_fail()`'s own mutate-before-notify ordering
+    rather than the (out of scope) question of a globally-raising `emit`.
+    """
+    monkeypatch.setattr(cvi, "capture_available", lambda: False)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+
+    def emit_raising_on_failure(event):
+        if isinstance(event, cvi.VoiceFailed):
+            raise RuntimeError("widget torn down")
+
+    controller = cvi.ConsoleVoiceInputController(
+        emit=emit_raising_on_failure,
+        spawn=lambda thunk: thunk(),
+        service_factory=lambda **kwargs: FakeDictationService(**kwargs),
+    )
+
+    with pytest.raises(RuntimeError):
+        controller.start()
+
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_fail_emits_voicefailed_before_voicestatechanged_idle(monkeypatch):
+    """Event order is load-bearing: a later task defers a pending "send"
+    until it observes `VoiceStateChanged(idle)`, and clears that pending
+    flag on `VoiceFailed`. Reversing the order would send the user's message
+    on a failed dictation.
+    """
+    service = FakeDictationService()
+    service.start_error = RuntimeError("no input device")
+    controller, events, _ = _controller(monkeypatch, service)
+
+    controller.start()
+
+    failed_index = next(i for i, e in enumerate(events) if isinstance(e, cvi.VoiceFailed))
+    idle_index = next(
+        i
+        for i, e in enumerate(events)
+        if isinstance(e, cvi.VoiceStateChanged) and e.state == cvi.STATE_IDLE
+    )
+    assert failed_index < idle_index
+
+
+def test_abandon_while_idle_is_a_no_op(monkeypatch):
+    controller, events, _ = _controller(monkeypatch)
+
+    controller.abandon()  # must not raise
+
+    assert controller.state == cvi.STATE_IDLE
+    assert events == []
+
+
+def test_abandon_while_listening_releases_without_stop_dictation(monkeypatch):
+    """The 2s thread join inside stop_dictation() is exactly what abandon()
+    exists to avoid at teardown."""
+    service = FakeDictationService()
+    audio = FakeAudioService()
+    service._audio_service = audio
+    controller, events, _ = _controller(monkeypatch, service)
+    controller.start()
+    assert controller.state == cvi.STATE_LISTENING
+
+    controller.abandon()
+
+    assert controller.state == cvi.STATE_IDLE
+    assert service.stopped is False
+    assert audio.stop_called is True
+    assert controller.is_active is False
+
+
+def test_abandon_mid_preparing_releases_service_built_after_abandon(monkeypatch):
+    """Guards the race: user quits while the model is still loading.
+
+    `abandon()` runs before the deferred `_begin()` thunk (the captured
+    `spawn` call) has executed, so `controller._service` is still None at
+    that point -- a naive `abandon()` sees nothing to release. The in-flight
+    `_begin()` must still notice, after it finishes building/starting the
+    service, that the controller was abandoned meanwhile, and release the
+    microphone instead of transitioning to `listening`.
+    """
+    pending = []
+    audio = FakeAudioService()
+    service = FakeDictationService()
+    service._audio_service = audio
+    controller, events, _ = _controller(monkeypatch, service=service, spawn=pending.append)
+
+    controller.start()
+    assert controller.state == cvi.STATE_PREPARING
+    assert len(pending) == 1
+
+    controller.abandon()
+    assert controller.state == cvi.STATE_IDLE
+
+    # Simulate the factory/start_dictation() call finishing after abandon().
+    pending[0]()
+
+    assert controller.state == cvi.STATE_IDLE
+    assert controller.is_active is False
+    assert audio.stop_called is True
+
+
+def test_abandon_swallows_a_raising_release(monkeypatch):
+    """Teardown must never raise, even if the audio backend's own
+    stop_recording() raises."""
+    service = FakeDictationService()
+    service._audio_service = FakeAudioService(raise_on_stop=RuntimeError("device gone"))
+    controller, events, _ = _controller(monkeypatch, service)
+    controller.start()
+    assert controller.state == cvi.STATE_LISTENING
+
+    controller.abandon()  # must not raise
+
+    assert controller.state == cvi.STATE_IDLE
