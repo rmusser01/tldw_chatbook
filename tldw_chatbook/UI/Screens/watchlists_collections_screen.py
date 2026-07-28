@@ -2305,6 +2305,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     #: than raising, so a screen that only watched for exceptions reported
     #: success over a feed that had just 404'd (TASK-1090).
     _FAILED_RUN_STATUSES = frozenset({"failed", "error", "errored"})
+    #: Statuses meaning the run is over. `check_now` on the server backend
+    #: delegates to `launch_run`, which returns `queued`/`running` while the
+    #: fetch is still in flight — so "complete" may only be claimed for these.
+    _TERMINAL_RUN_STATUSES = frozenset({"completed", "complete", "succeeded", "success"})
 
     @classmethod
     def _check_failure_message(cls, result: Any) -> str | None:
@@ -2372,13 +2376,45 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 if callable(notify):
                     notify(f"Check failed: {failure}", severity="error", timeout=10)
             elif callable(notify):
-                notify("Check complete.", severity="information")
+                # Only claim completion for a terminal status. `check_now` on
+                # the server backend delegates to `launch_run`, which triggers
+                # execution asynchronously and returns `queued`/`running` — so
+                # a fixed "Check complete." would tell the user the fetch had
+                # finished while it was still in flight (Qodo #4 on PR #1047).
+                status = str((result or {}).get("status") or "").lower()
+                if status in self._TERMINAL_RUN_STATUSES:
+                    notify("Check complete.", severity="information")
+                else:
+                    notify("Check started.", severity="information")
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
         # Reload the source list so the Status and Last scraped columns carry
         # the outcome after the toast has gone (AC#2). Same reload
         # `_delete_source` performs for the same reason.
-        self.run_worker(self._load_sources(), exclusive=True, group="wc_sources")
+        # Preserve the user's selection across the reload. Rebuilding the
+        # table emits a row-0 highlight, which `SourcesPane` treats as a real
+        # selection — so without this the reload silently retargets Preview /
+        # Check now / Delete at the first source (Qodo #3 on PR #1047, and
+        # the defect filed as task-1161).
+        self.run_worker(
+            self._load_sources_preserving_selection(), exclusive=True, group="wc_sources"
+        )
+
+    async def _load_sources_preserving_selection(self) -> None:
+        """Reload the source list without discarding the current selection."""
+        keep = self.selected_source
+        await self._load_sources()
+        if keep is None or not self.is_mounted:
+            return
+        keep_id = keep.get("id")
+        if keep_id is None:
+            return
+        try:
+            pane = self.query_one("#watchlists-sources-pane", SourcesPane)
+        except Exception:
+            return
+        if any(str(s.get("id")) == str(keep_id) for s in (pane.sources or [])):
+            pane.select_source_by_id(str(keep_id))
 
     @on(ImportOpmlRequested)
     def handle_import_opml_requested(self, event: ImportOpmlRequested) -> None:
@@ -2921,7 +2957,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if callable(notify):
                 notify("Item ignored.", severity="information")
         except Exception:
-            logger.opt(exception=True).warning("Failed to delete item.")
+            logger.opt(exception=True).warning("Failed to ignore item.")
             if callable(notify):
                 notify("Failed to ignore item.", severity="error")
         self.run_worker(self._load_items(), exclusive=True)

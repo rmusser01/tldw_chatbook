@@ -30,7 +30,7 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 
 
-class _Notified:
+class Notified:
     """Capture what the app told the user, since the toast itself is transient."""
 
     def __init__(self) -> None:
@@ -73,7 +73,7 @@ async def test_a_failed_fetch_is_reported_as_a_failure_and_leaves_a_trace():
     """
     app = _build_test_app()
     source_id = _seed_source(app)
-    notified = _Notified()
+    notified = Notified()
     app.notify = notified
 
     async def dead_host(subscription):
@@ -124,7 +124,7 @@ async def test_the_sources_status_column_shows_the_failure_after_the_toast_has_g
     """
     app = _build_test_app()
     source_id = _seed_source(app)
-    app.notify = _Notified()
+    app.notify = Notified()
 
     async def dead_host(subscription):
         raise ConnectionError("connection refused")
@@ -165,7 +165,7 @@ async def test_an_unexpected_exception_in_the_fetch_path_logs_above_debug():
     """AC#3: the level that hid TASK-1100 for three UAT runs."""
     app = _build_test_app()
     _seed_source(app)
-    app.notify = _Notified()
+    app.notify = Notified()
 
     records: list[tuple[str, str]] = []
     sink_id = logger.add(
