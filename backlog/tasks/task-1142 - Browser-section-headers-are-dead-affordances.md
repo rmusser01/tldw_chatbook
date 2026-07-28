@@ -135,4 +135,63 @@ pre-existing failure (`test_console_workspace_context_syncs_active_
 conversation_marker`, a `TypeError` on `_sync_console_workspace_context`'s
 signature, reproduced identically on the unmodified base commit via `git
 stash`).
+
+### Round 2 (Qodo review, PR #1050)
+
+`_empty_copy_line_count` (round 1's fix) called `wrap_console_conversation_
+title` -- which intentionally hard-caps at two lines and ellipsizes,
+correct for a row title but wrong for an empty-copy `Static`, which Rich
+wraps with no cap at all. Any empty-copy string legitimately needing 3+
+lines (narrower rail, longer copy, future localization) would silently
+undercount again and re-open the exact header-clipping bug round 1 fixed.
+Round 1's own width probe (100-220 columns) found no divergence only
+because the current empty-copy strings ("No starred conversations." etc.)
+never exceed two lines above the rail's minimum width -- it never
+exercised the cap itself.
+
+Fix: added `wrap_console_plain_text_uncapped` -- the same greedy
+word-wrap rule `wrap_console_conversation_title` uses per line
+(word-boundary wrap; a spaceless token longer than one line hard-breaks at
+the budget), with the two-line cap and ellipsis removed. `_empty_copy_
+line_count` now uses it; row-title paths (`wrap_console_conversation_
+title` itself, `_marker_prefixed_name_lines`, `_conversation_browser_rows_
+height`) are untouched -- their cap is by design.
+
+New test `test_empty_copy_estimator_handles_three_plus_line_wrap` forces a
+3+-line wrap through the real render seam: a deliberately long empty-copy
+string is injected into an otherwise `build_console_conversation_browser_
+state`-built (production builder) state and fed through `tray.sync_state()`
+-- the same state-injection pattern every other test in this file uses,
+not a synthetic unit test of the estimator function in isolation. Asserts
+the estimator's `#console-workspace-conversations` height matches the sum
+of every real, settled child region height (rows + headers + empty-copy
+widgets' own rendered heights), and that "Chats" (the section rendered
+after the 3+-line "Starred" empty copy) is still hittable at its rendered
+screen coordinates via the round-1 coordinate-honest pattern.
+
+Revert-checked as required: temporarily reverted `_empty_copy_line_count`
+to call the capped `wrap_console_conversation_title` and reran just this
+test -- it fails (`assert 8 == 18`: the capped estimator undercounts the
+injected text's true line count, so the container is 10 rows short of what
+its own real children need). Restored the uncapped fix; the same test
+passes.
+
+Modified files (round 2):
+- `tldw_chatbook/Widgets/Console/console_workspace_context.py` -- added
+  `wrap_console_plain_text_uncapped`; `_empty_copy_line_count` now calls it
+  instead of the capped row-title helper.
+- `Tests/UI/test_console_workspace_context_rail.py` -- new
+  `test_empty_copy_estimator_handles_three_plus_line_wrap`.
+
+Round-2 verification: `Tests/UI/test_console_workspace_context_rail.py` +
+`Tests/Workspaces/test_console_conversation_browser_state.py` in one run --
+117 passed, the same single pre-existing failure
+(`test_console_workspace_context_syncs_active_conversation_marker`).
+
+Related follow-ups already filed by the time this round landed:
+task-1190 (the legacy single-section conversation list shares this same
+flat-empty-copy-height assumption in `_legacy_conversation_list_height`,
+not touched here -- only the grouped browser path this task's ACs cover)
+and task-1191 (retiring `_fit_height_to_content`'s multi-pass settle race
+noted as unfixed in round 1).
 <!-- SECTION:NOTES:END -->
