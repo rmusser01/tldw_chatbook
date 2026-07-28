@@ -1,5 +1,8 @@
 """Focused screen wiring tests for screen-navigation mode."""
 
+import asyncio
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,6 +50,7 @@ from tldw_chatbook.Media import (
     ServerMediaReadingService,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+from tldw_chatbook.Notes.file_notes_session_owner import SessionChange
 from tldw_chatbook.Notes.server_notes_workspace_service import (
     ServerNotesWorkspaceService,
 )
@@ -937,6 +941,491 @@ def _build_test_app(configured_default: str | None = None) -> TldwCli:
                                                                         / "scheduled_tasks.sqlite",
                                                                     ):
                                                                         return TldwCli()
+
+
+def test_file_notes_owner_is_injected_into_fresh_library_workspaces(
+    monkeypatch,
+    tmp_path,
+):
+    """Fresh production Library screens share only the app-scoped owner."""
+    from tldw_chatbook.Notes.file_notes_session_owner import (
+        FileSystemIdentity,
+        HeadIdentity,
+        IndexBaseline,
+        IndexEntry,
+        RepositoryIdentity,
+        SessionChangeGroup,
+        SessionGitRow,
+        SessionGitStatus,
+        StagingOwnership,
+    )
+    from tldw_chatbook.UI.Screens import library_screen as library_module
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    constructed = []
+
+    class WorkspaceProbe:
+        def __init__(self, *, session_owner):
+            self.session_owner = session_owner
+            self.editor = object()
+            self.replica = object()
+            self.service = object()
+            constructed.append(self)
+
+    monkeypatch.setattr(
+        library_module,
+        "LibraryFileNotesWorkspace",
+        WorkspaceProbe,
+    )
+    app = _build_test_app()
+    first_screen = app._create_navigation_screen("library", LibraryScreen)
+    first = first_screen._library_file_notes_workspace_factory()
+
+    binding = app.file_notes_session_owner.select_root(tmp_path / "notes")
+    assert app.file_notes_session_owner.record_change(
+        binding,
+        SessionChange("modified", "note.md"),
+    )
+    filesystem_identity = FileSystemIdentity(device=1, inode=2)
+    repository = RepositoryIdentity(
+        worktree_root="/repo",
+        git_dir="/repo/.git",
+        git_common_dir="/repo/.git",
+        worktree_identity=filesystem_identity,
+        git_dir_identity=filesystem_identity,
+        git_common_dir_identity=filesystem_identity,
+    )
+    group = SessionChangeGroup(
+        group_id=1,
+        endpoints=("note.md",),
+        source_path="note.md",
+        destination_path=None,
+        current_path="note.md",
+        latest_action="modified",
+        latest_sequence=1,
+    )
+    staged_entry = IndexEntry("note.md", "100644", "a" * 40)
+    ownership = StagingOwnership(
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", "b" * 40),
+        approved_endpoint_topology=("note.md",),
+        approved_move_edges=(),
+        approved_current_path="note.md",
+        original_baselines={"note.md": IndexBaseline(None)},
+        post_stage_entries={"note.md": staged_entry},
+    )
+    status_generation = app.file_notes_session_owner.next_status_generation(binding)
+    assert status_generation is not None
+    status = SessionGitStatus(
+        binding_generation=binding.generation,
+        status_generation=status_generation,
+        state="ready",
+        rows=(SessionGitRow(group, "owned", unstage_eligible=True),),
+        repository=repository,
+        head=ownership.head,
+    )
+    assert app.file_notes_session_owner.publish_trust(binding, repository)
+    assert app.file_notes_session_owner.publish_status(binding, status)
+    assert app.file_notes_session_owner.publish_ownership(binding, {1: ownership})
+
+    second_screen = app._create_navigation_screen("library", LibraryScreen)
+    second = second_screen._library_file_notes_workspace_factory()
+
+    assert constructed == [first, second]
+    assert first.session_owner is app.file_notes_session_owner
+    assert second.session_owner is app.file_notes_session_owner
+    assert first is not second
+    assert first.editor is not second.editor
+    assert first.replica is not second.replica
+    assert first.service is not second.service
+    assert [
+        change.change.relative_path
+        for change in second.session_owner.snapshot(binding).changes
+    ] == ["note.md"]
+    retained = second.session_owner.snapshot(binding)
+    assert retained.trusted_repository == repository
+    assert retained.git_status == status
+    assert retained.staging_ownership == {1: ownership}
+    assert retained.git_status.rows[0].unstage_eligible
+
+    replacement = app.file_notes_session_owner.select_root(tmp_path / "replacement")
+    cleared = app.file_notes_session_owner.snapshot(replacement)
+    assert cleared.changes == ()
+    assert cleared.trusted_repository is None
+    assert cleared.git_status is None
+    assert not cleared.staging_ownership
+    replacement_app = _build_test_app()
+    assert replacement_app.file_notes_session_owner is not app.file_notes_session_owner
+    assert replacement_app.file_notes_session_owner.current_binding() is None
+
+
+@pytest.mark.asyncio
+async def test_file_notes_new_app_owner_classifies_prior_stage_as_external_without_unstage(
+    tmp_path,
+):
+    """A replacement app observes prior-process staging without inheriting authority."""
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("Git is not installed")
+    repository = tmp_path / "repository"
+    repository.mkdir()
+
+    def run_git(*arguments: str) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            [git, *arguments],
+            cwd=repository,
+            check=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    run_git("init", "--initial-branch=main")
+    run_git("config", "--local", "user.name", "Chatbook Test")
+    run_git("config", "--local", "user.email", "chatbook@example.invalid")
+    note = repository / "note.md"
+    note.write_text("initial\n", encoding="utf-8")
+    run_git("add", "--", "note.md")
+    run_git("commit", "-m", "initial")
+    note.write_text("edited\n", encoding="utf-8")
+
+    prior_app = _build_test_app()
+    replacement_app = _build_test_app()
+    prior_owner = prior_app.file_notes_session_owner
+    replacement_owner = replacement_app.file_notes_session_owner
+    prior_service = prior_owner.attached_git_service()
+    replacement_service = replacement_owner.attached_git_service()
+    assert prior_service is not None
+    assert replacement_service is not None
+    try:
+        prior_binding = prior_owner.select_root(repository)
+        assert prior_owner.record_change(
+            prior_binding,
+            SessionChange("modified", "note.md"),
+        )
+        discovery = await prior_service.discover(prior_binding)
+        assert discovery.repository is not None
+        assert prior_owner.publish_trust(prior_binding, discovery.repository)
+        result = await prior_service.start_stage(prior_binding, (1,))
+        assert result.state == "success"
+        assert prior_owner.snapshot(prior_binding).staging_ownership
+        assert run_git("diff", "--cached", "--name-only").stdout == b"note.md\n"
+
+        replacement_binding = replacement_owner.select_root(repository)
+        assert replacement_owner.record_change(
+            replacement_binding,
+            SessionChange("modified", "note.md"),
+        )
+        replacement_discovery = await replacement_service.discover(
+            replacement_binding
+        )
+        assert replacement_discovery.repository is not None
+        assert replacement_owner.publish_trust(
+            replacement_binding,
+            replacement_discovery.repository,
+        )
+        status = await replacement_service.start_status(
+            replacement_binding,
+            replacement_owner.snapshot(replacement_binding).changes,
+        )
+
+        assert status.state == "ready"
+        assert len(status.rows) == 1
+        assert status.rows[0].state == "external_staged"
+        assert not status.rows[0].unstage_eligible
+        assert not replacement_owner.snapshot(
+            replacement_binding
+        ).staging_ownership
+    finally:
+        await prior_owner.shutdown_async()
+        await replacement_owner.shutdown_async()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_navigation_transition_blocks_mutation_until_switch_finishes(
+    monkeypatch,
+    tmp_path,
+):
+    """Transition admission immediately after flush closes the Stage race."""
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+    switched = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            return True
+
+        def acquire_navigation_transition(self):
+            lease = owner.try_acquire_transition(binding, "screen")
+            return False if lease is None else lease.release
+
+    async def fake_switch_screen(screen):
+        admission = owner.admit_mutation(binding)
+        assert admission.lease is None
+        assert admission.reason == "transition_active"
+        switched.append(screen)
+
+    outgoing = FakeOutgoingScreen()
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+
+    assert len(switched) == 1
+    after_switch = owner.try_acquire_mutation(binding)
+    assert after_switch is not None
+    after_switch.release()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_mutation_admitted_during_flush_vetoes_navigation(
+    monkeypatch,
+    tmp_path,
+):
+    """A Stage lease won during flush leaves the current screen mounted."""
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+    flush_started = asyncio.Event()
+    finish_flush = asyncio.Event()
+    switched = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            flush_started.set()
+            await finish_flush.wait()
+            return not owner.mutation_active(binding)
+
+        def acquire_navigation_transition(self):
+            raise AssertionError("a vetoed flush must not attempt transition admission")
+
+    outgoing = FakeOutgoingScreen()
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda _target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(
+        app,
+        "switch_screen",
+        lambda screen: switched.append(screen),
+    )
+
+    navigation = asyncio.create_task(
+        app.handle_screen_navigation(NavigateToScreen("chat"))
+    )
+    await flush_started.wait()
+    mutation = owner.try_acquire_mutation(binding)
+    assert mutation is not None
+    finish_flush.set()
+    await navigation
+
+    assert switched == []
+    assert app.screen is outgoing
+    mutation.release()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_source_transition_blocks_mutation_through_recompose(
+    monkeypatch,
+    tmp_path,
+):
+    """The Files-to-Database switch holds exact source admission to completion."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+
+    class WorkspaceProbe:
+        async def flush_pending_work(self):
+            return not owner.mutation_active(binding)
+
+        def acquire_transition(self, kind):
+            lease = owner.try_acquire_transition(binding, kind)
+            return False if lease is None else lease.release
+
+    class EventProbe:
+        def stop(self):
+            return None
+
+    workspace = WorkspaceProbe()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    screen._library_file_notes_workspace = workspace
+    screen._library_notes_source = "files"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    recompose_calls = []
+
+    async def recompose():
+        admission = owner.admit_mutation(binding)
+        assert admission.lease is None
+        assert admission.reason == "transition_active"
+        recompose_calls.append(True)
+
+    monkeypatch.setattr(screen, "recompose", recompose)
+
+    await screen._show_library_database_notes(EventProbe())
+
+    assert screen._library_notes_source == "database"
+    assert recompose_calls == [True]
+    after_recompose = owner.try_acquire_mutation(binding)
+    assert after_recompose is not None
+    after_recompose.release()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_collections_source_transition_blocks_mutation_through_recompose(
+    monkeypatch,
+    tmp_path,
+):
+    """Files-to-Collections keeps source admission through actual recompose."""
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_ROW_BROWSE_COLLECTIONS,
+        LIBRARY_ROW_BROWSE_NOTES,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+    sync_returned = asyncio.Event()
+    recompose_started = asyncio.Event()
+    finish_recompose = asyncio.Event()
+
+    class WorkspaceProbe:
+        async def flush_pending_work(self):
+            return not owner.mutation_active(binding)
+
+        def acquire_transition(self, kind):
+            lease = owner.try_acquire_transition(binding, kind)
+            return False if lease is None else lease.release
+
+    workspace = WorkspaceProbe()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    screen._library_file_notes_workspace = workspace
+    screen._library_notes_source = "files"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    screen._library_collections_loaded = False
+
+    async def refresh_collections_snapshot():
+        screen._library_collections_loaded = True
+        sync_returned.set()
+
+    async def flush_note():
+        return None
+
+    async def flush_editor():
+        return True
+
+    async def recompose():
+        recompose_started.set()
+        admission = owner.admit_mutation(binding)
+        assert admission.lease is None
+        assert admission.reason == "transition_active"
+        await finish_recompose.wait()
+
+    monkeypatch.setattr(
+        screen,
+        "_refresh_library_collections_snapshot",
+        refresh_collections_snapshot,
+    )
+    monkeypatch.setattr(screen, "refresh", lambda *, recompose: None)
+    monkeypatch.setattr(screen, "_flush_library_note_save", flush_note)
+    monkeypatch.setattr(screen, "_flush_library_prompt_save", flush_editor)
+    monkeypatch.setattr(screen, "_flush_library_skill_save", flush_editor)
+    monkeypatch.setattr(screen, "recompose", recompose)
+
+    source_switch = asyncio.create_task(
+        screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
+    )
+    await sync_returned.wait()
+    await asyncio.sleep(0)
+
+    assert recompose_started.is_set()
+    assert not source_switch.done()
+    admission = owner.admit_mutation(binding)
+    assert admission.lease is None
+    assert admission.reason == "transition_active"
+
+    finish_recompose.set()
+    await source_switch
+    after_recompose = owner.try_acquire_mutation(binding)
+    assert after_recompose is not None
+    after_recompose.release()
+
+
+@pytest.mark.asyncio
+async def test_file_notes_mutation_admitted_during_source_flush_vetoes_switch(
+    monkeypatch,
+    tmp_path,
+):
+    """Stage winning during source flush preserves the mounted Files source."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+    flush_started = asyncio.Event()
+    finish_flush = asyncio.Event()
+
+    class WorkspaceProbe:
+        async def flush_pending_work(self):
+            flush_started.set()
+            await finish_flush.wait()
+            return not owner.mutation_active(binding)
+
+        def acquire_transition(self, kind):
+            raise AssertionError("a vetoed flush must not admit a source transition")
+
+    class EventProbe:
+        def stop(self):
+            return None
+
+    workspace = WorkspaceProbe()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    screen._library_file_notes_workspace = workspace
+    screen._library_notes_source = "files"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    recompose = AsyncMock()
+    monkeypatch.setattr(screen, "recompose", recompose)
+
+    source_switch = asyncio.create_task(
+        screen._show_library_database_notes(EventProbe())
+    )
+    await flush_started.wait()
+    mutation = owner.try_acquire_mutation(binding)
+    assert mutation is not None
+    finish_flush.set()
+    await source_switch
+
+    assert screen._library_notes_source == "files"
+    recompose.assert_not_awaited()
+    mutation.release()
 
 
 def test_app_uses_screen_navigation_and_wires_media_services():
