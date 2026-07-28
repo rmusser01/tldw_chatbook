@@ -217,6 +217,7 @@ VALID_COLUMNS = {
         "is_trash",
         "trash_date",
         "transcription_model",
+        "transcription_provenance_json",
         "vector_processing",
         "vector_id",
         "book_cover",

@@ -39,7 +39,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta  # Use timezone-aware UTC
 from math import ceil
 from pathlib import Path
-from typing import Callable, List, Tuple, Dict, Any, Optional, Union
+from typing import Callable, List, Tuple, Dict, Any, Mapping, Optional, Union
 
 #
 # Third-Party Libraries (Ensure these are installed if used)
@@ -49,6 +49,7 @@ from loguru import logger
 #
 # Local Imports
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..STT.persistence import dump_transcription_provenance_document
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
@@ -221,7 +222,7 @@ class MediaDatabase:
     Requires client_id on initialization. Includes schema versioning.
     """
 
-    _CURRENT_SCHEMA_VERSION = 4  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 5  # Define the version this code supports
     # task-261: idle window within which the per-call `SELECT 1` liveness
     # ping is skipped for a recently-used thread-local connection (see
     # `_get_thread_connection`).
@@ -249,13 +250,18 @@ class MediaDatabase:
             "function": "_apply_migration_v3_to_v4",
             "description": "Add local read-it-later store",
         },
-        # Future migrations: just add new entries here
-        # 4: {
-        #     'to_version': 5,
-        #     'function': '_apply_migration_v4_to_v5',
-        #     'description': 'Description of v5 changes'
-        # },
+        4: {
+            "to_version": 5,
+            "function": "_apply_migration_v4_to_v5",
+            "description": "Add persisted STT provenance",
+        },
     }
+
+    _TRANSCRIPTION_PROVENANCE_MIGRATION_SQL = """
+        ALTER TABLE Media
+        ADD COLUMN transcription_provenance_json TEXT DEFAULT NULL;
+        UPDATE schema_version SET version = 5;
+    """
 
     # <<< Schema Definition (Version 1) >>>
 
@@ -1377,6 +1383,22 @@ class MediaDatabase:
             )
             raise DatabaseError(f"Unexpected error during migration v3->v4: {e}") from e
 
+    def _apply_migration_v4_to_v5(self, conn: sqlite3.Connection):
+        """Add the nullable versioned STT provenance document."""
+
+        try:
+            with self.transaction():
+                self._execute_transactional_script(
+                    conn,
+                    self._TRANSCRIPTION_PROVENANCE_MIGRATION_SQL,
+                )
+        except sqlite3.Error as error:
+            raise DatabaseError(f"Migration v4->v5 failed: {error}") from error
+        except Exception as error:
+            raise DatabaseError(
+                f"Unexpected error during migration v4->v5: {error}"
+            ) from error
+
     def _initialize_schema(self):
         """Checks schema version and applies initial schema or migrations."""
         conn = self.get_connection()
@@ -1868,6 +1890,7 @@ class MediaDatabase:
             "m.author",
             "m.ingestion_date",
             "m.transcription_model",
+            "m.transcription_provenance_json",
             "m.is_trash",
             "m.trash_date",
             "m.chunking_status",
@@ -3464,6 +3487,7 @@ class MediaDatabase:
         prompt: Optional[str] = None,
         analysis_content: Optional[str] = None,
         transcription_model: Optional[str] = None,
+        transcription_provenance: Optional[Mapping[str, Any]] = None,
         author: Optional[str] = None,
         ingestion_date: Optional[str] = None,
         overwrite: bool = False,
@@ -3488,6 +3512,7 @@ class MediaDatabase:
             prompt=prompt,
             analysis_content=analysis_content,
             transcription_model=transcription_model,
+            transcription_provenance=transcription_provenance,
             author=author,
             ingestion_date=ingestion_date,
             overwrite=overwrite,
@@ -3509,6 +3534,7 @@ class MediaDatabase:
         prompt: Optional[str] = None,
         analysis_content: Optional[str] = None,
         transcription_model: Optional[str] = None,
+        transcription_provenance: Optional[Mapping[str, Any]] = None,
         author: Optional[str] = None,
         ingestion_date: Optional[str] = None,
         overwrite: bool = False,
@@ -3525,6 +3551,11 @@ class MediaDatabase:
         if content is None:
             raise InputError("Content cannot be None.")
 
+        transcription_provenance_json = (
+            dump_transcription_provenance_document(transcription_provenance)
+            if transcription_provenance is not None
+            else None
+        )
         title = title or "Untitled"
         media_type = media_type or "unknown"
         keywords_norm = [k.strip().lower() for k in keywords or [] if k and k.strip()]
@@ -3561,6 +3592,7 @@ class MediaDatabase:
                 "author": author,
                 "ingestion_date": ingestion_date,
                 "transcription_model": transcription_model,
+                "transcription_provenance_json": transcription_provenance_json,
                 "content_hash": content_hash,
                 "is_trash": 0,
                 "trash_date": None,
@@ -3652,14 +3684,18 @@ class MediaDatabase:
 
                 # Find existing record by URL or content_hash
                 cur.execute(
-                    "SELECT id, uuid, version, url, content_hash, title, type, author FROM Media WHERE url = ? AND deleted = 0 LIMIT 1",
+                    "SELECT id, uuid, version, url, content_hash, title, type, author, "
+                    "transcription_model, transcription_provenance_json "
+                    "FROM Media WHERE url = ? AND deleted = 0 LIMIT 1",
                     (url,),
                 )
                 row = cur.fetchone()
 
                 if not row:
                     cur.execute(
-                        "SELECT id, uuid, version, url, content_hash, title, type, author FROM Media WHERE content_hash = ? AND deleted = 0 LIMIT 1",
+                        "SELECT id, uuid, version, url, content_hash, title, type, author, "
+                        "transcription_model, transcription_provenance_json "
+                        "FROM Media WHERE content_hash = ? AND deleted = 0 LIMIT 1",
                         (content_hash,),
                     )
                     row = cur.fetchone()
@@ -3691,13 +3727,25 @@ class MediaDatabase:
                                 logging.info(
                                     f"Metadata changed for media ID {media_id}: title, author, or type differs"
                                 )
+                            transcription_changed = (
+                                transcription_model is not None
+                                and row["transcription_model"] != transcription_model
+                            ) or (
+                                transcription_provenance is not None
+                                and row["transcription_provenance_json"]
+                                != transcription_provenance_json
+                            )
 
                             # Update keywords first
                             self.update_keywords_for_media(media_id, keywords_norm)
                             _persist_chunks(conn, media_id)
 
                             # If metadata changed or chunks were provided, update the Media record
-                            if metadata_changed or chunks is not None:
+                            if (
+                                metadata_changed
+                                or transcription_changed
+                                or chunks is not None
+                            ):
                                 logging.info(
                                     f"Updating media metadata/chunks for ID {media_id}."
                                 )
@@ -3716,6 +3764,16 @@ class MediaDatabase:
                                         ["title = ?", "type = ?", "author = ?"]
                                     )
                                     update_params.extend([title, media_type, author])
+
+                                if transcription_model is not None:
+                                    update_fields.append("transcription_model = ?")
+                                    update_params.append(transcription_model)
+
+                                if transcription_provenance is not None:
+                                    update_fields.append(
+                                        "transcription_provenance_json = ?"
+                                    )
+                                    update_params.append(transcription_provenance_json)
 
                                 if chunks is not None:
                                     update_fields.append("chunking_status = ?")
@@ -3744,6 +3802,14 @@ class MediaDatabase:
                                             "type": media_type,
                                             "author": author,
                                         }
+                                    )
+                                if transcription_model is not None:
+                                    sync_payload["transcription_model"] = (
+                                        transcription_model
+                                    )
+                                if transcription_provenance is not None:
+                                    sync_payload["transcription_provenance_json"] = (
+                                        transcription_provenance_json
                                     )
                                 if chunks is not None:
                                     sync_payload["chunking_status"] = final_chunk_status
@@ -3824,6 +3890,7 @@ class MediaDatabase:
                             """UPDATE Media
                                SET url=:url, title=:title, type=:type, content=:content, author=:author,
                                    ingestion_date=:ingestion_date, transcription_model=:transcription_model,
+                                   transcription_provenance_json=:transcription_provenance_json,
                                    content_hash=:content_hash, is_trash=:is_trash, trash_date=:trash_date,
                                    chunking_status=:chunking_status, vector_processing=:vector_processing,
                                    last_modified=:last_modified, version=:version, client_id=:client_id, deleted=:deleted
@@ -3965,11 +4032,13 @@ class MediaDatabase:
 
                     cur.execute(
                         """INSERT INTO Media (url, title, type, content, author, ingestion_date,
-                                              transcription_model, content_hash, is_trash, trash_date,
+                                              transcription_model, transcription_provenance_json,
+                                              content_hash, is_trash, trash_date,
                                               chunking_status, vector_processing, uuid, last_modified,
                                               version, client_id, deleted)
                            VALUES (:url, :title, :type, :content, :author, :ingestion_date,
-                                   :transcription_model, :content_hash, :is_trash, :trash_date,
+                                   :transcription_model, :transcription_provenance_json,
+                                   :content_hash, :is_trash, :trash_date,
                                    :chunking_status, :vector_processing, :uuid, :last_modified,
                                    :version, :client_id, :deleted)""",
                         payload,

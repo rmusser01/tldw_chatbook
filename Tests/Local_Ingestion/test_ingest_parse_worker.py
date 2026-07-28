@@ -45,6 +45,37 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _stt_provenance_document() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "attempt_id": "attempt-1",
+        "batch_id": None,
+        "job_id": None,
+        "retry_of_attempt_id": None,
+        "retry_of_job_id": None,
+        "provider_id": "parakeet-onnx",
+        "model_id": "parakeet-v2",
+        "artifact_root": None,
+        "artifact_dependencies": [],
+        "precision": "int8",
+        "requested_device": "auto",
+        "effective_device": "cpu",
+        "requested_language": "en",
+        "effective_language": "en",
+        "detected_language": None,
+        "task": "transcribe",
+        "produced_capabilities": {
+            "timestamps": "none",
+            "punctuation": True,
+            "capitalization": True,
+            "vad": False,
+            "diarization": False,
+        },
+        "warnings": [],
+        "failed_attempt": None,
+    }
+
+
 def test_process_document_auto_falls_back_when_docling_import_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -256,6 +287,32 @@ def test_persist_url_payload_writes_article_row_no_filesystem() -> None:
     assert row is not None
     assert row["url"] == "https://example.com/post"
     assert row["type"] == "article"
+
+
+def test_persist_threads_optional_stt_model_and_provenance_into_media() -> None:
+    document = _stt_provenance_document()
+    payload = {
+        "file_type": "audio",
+        "media_type": "audio",
+        "title": "Transcribed audio",
+        "content": "hello",
+        "keywords": [],
+        "url": "local://audio/test",
+        "analysis_content": "",
+        "author": "Unknown",
+        "chunks": None,
+        "chunk_options": None,
+        "file_path": "/tmp/test.wav",
+        "transcription_model": "parakeet-v2",
+        "transcription_provenance": document,
+    }
+    db = MediaDatabase(":memory:", client_id="stt-persist")
+
+    media_id, _, _ = persist_parsed_media(payload, db)
+
+    row = db.get_media_by_id(media_id)
+    assert row["transcription_model"] == "parakeet-v2"
+    assert json.loads(row["transcription_provenance_json"]) == document
 
 
 def test_persist_db_failure_is_wrapped_as_file_ingestion_error(tmp_path: Path) -> None:

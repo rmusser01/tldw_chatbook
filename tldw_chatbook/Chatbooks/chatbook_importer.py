@@ -1143,6 +1143,9 @@ class ChatbookImporter:
                             transcription_model=media_data.get("metadata", {}).get(
                                 "transcription_model"
                             ),
+                            transcription_provenance=media_data.get("metadata", {}).get(
+                                "transcription_provenance"
+                            ),
                             author=media_data.get("author"),
                             ingestion_date=media_data.get("metadata", {}).get(
                                 "ingestion_date"
