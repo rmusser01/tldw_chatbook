@@ -6014,12 +6014,20 @@ class TldwCli(
         as its own worker instead of awaiting it inline on the App's single
         message-processing task -- see that method's docstring for why.
         Workers are otherwise independent, and running two attempts
-        concurrently would let them race on shared state (``self.
-        current_tab``, ``switch_screen``'s screen stack) in a way the old
-        single-queue dispatch never allowed. This lock preserves that old
-        FIFO ordering: `asyncio.Lock` serves waiters in arrival order, so
-        attempts still complete strictly one at a time, in the order their
-        ``NavigateToScreen`` messages were dispatched -- the only change is
+        concurrently would let them race on shared state in a way the old
+        single-queue dispatch never allowed: ``self.current_tab``,
+        ``switch_screen``'s screen stack, and -- inside
+        ``_complete_screen_navigation``, itself called from within the
+        guarded region -- ``self.screen_state_store.save()`` (snapshotting
+        the OUTGOING screen) and ``.restore()`` (rehydrating the INCOMING
+        one); two attempts interleaving there could save/restore the wrong
+        screen's state or clobber a snapshot the other attempt just wrote.
+        This lock preserves the old FIFO ordering: `asyncio.Lock` serves
+        waiters in arrival order, so attempts still complete strictly one
+        at a time, in the order their ``NavigateToScreen`` messages were
+        dispatched -- confirmed by
+        ``test_overlapping_navigate_requests_complete_in_fifo_order``,
+        which reliably reorders without this lock -- the only change is
         that an attempt waiting on a confirm-navigation dialog no longer
         blocks the App from routing input to that very dialog while it
         waits its turn.
