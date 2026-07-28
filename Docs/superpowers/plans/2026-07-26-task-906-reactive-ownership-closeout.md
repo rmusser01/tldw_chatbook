@@ -174,20 +174,21 @@ git diff --cached --exit-code -- tldw_chatbook Tests Packaging pyproject.toml MA
 python -m compileall -q tldw_chatbook Tests/ProductionApp Tests/State Tests/Provider Tests/Library/test_server_ingest_request.py Tests/test_application_state_ownership.py Tests/Packaging/test_installed_distribution.py
 python -m ruff check tldw_chatbook/app.py tldw_chatbook/UI/LLM_Management_Window.py tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/provider_model_resolution.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/UI/Screens/personas_screen.py tldw_chatbook/UI/Screens/library_screen.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/search_screen.py tldw_chatbook/UI/Screens/mcp_screen.py tldw_chatbook/UI/Screens/evals_screen.py tldw_chatbook/Utils/log_widget_manager.py tldw_chatbook/Event_Handlers Tests/ProductionApp Tests/State Tests/Provider Tests/Library/test_server_ingest_request.py Tests/test_application_state_ownership.py Tests/Packaging/test_installed_distribution.py
 python -m ruff check --ignore F841 tldw_chatbook/UI/Screens/settings_screen.py
-python -c 'import json, subprocess, sys; p = subprocess.run([sys.executable, "-m", "ruff", "check", "--select", "F841", "--output-format", "json", "tldw_chatbook/UI/Screens/settings_screen.py"], capture_output=True, text=True); findings = json.loads(p.stdout); assert len(findings) == 2 and all(item["code"] == "F841" and "`config_path`" in item["message"] for item in findings), findings'
-python -m ruff format --check tldw_chatbook/UI/LLM_Management_Window.py tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/personas_screen.py tldw_chatbook/UI/Screens/library_screen.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/search_screen.py tldw_chatbook/UI/Screens/mcp_screen.py tldw_chatbook/UI/Screens/evals_screen.py tldw_chatbook/Utils/log_widget_manager.py tldw_chatbook/Event_Handlers/LLM_Management_Events tldw_chatbook/Event_Handlers/sidebar_events.py tldw_chatbook/Event_Handlers/worker_events.py tldw_chatbook/Event_Handlers/worker_handlers/chat_worker_handler.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py Tests/ProductionApp Tests/State Tests/Provider Tests/Library/test_server_ingest_request.py Tests/test_application_state_ownership.py
+python -c 'import json, subprocess, sys; p = subprocess.run([sys.executable, "-m", "ruff", "check", "--select", "F841", "--output-format", "json", "tldw_chatbook/UI/Screens/settings_screen.py"], capture_output=True, text=True); findings = json.loads(p.stdout); assert findings == [], findings'
+python -m ruff format --check tldw_chatbook/UI/LLM_Management_Window.py tldw_chatbook/UI/MediaWindow_v2.py tldw_chatbook/UI/Navigation/pending_handoff_store.py tldw_chatbook/UI/Screens/media_screen.py tldw_chatbook/UI/Screens/search_screen.py tldw_chatbook/UI/Screens/mcp_screen.py tldw_chatbook/Utils/log_widget_manager.py tldw_chatbook/Event_Handlers/LLM_Management_Events tldw_chatbook/Event_Handlers/worker_events.py tldw_chatbook/Event_Handlers/media_events.py tldw_chatbook/Event_Handlers/collections_tag_events.py tldw_chatbook/Event_Handlers/worker_handlers/misc_worker_handler.py tldw_chatbook/Event_Handlers/ingest_events.py Tests/ProductionApp Tests/State Tests/Provider Tests/Library/test_server_ingest_request.py Tests/test_application_state_ownership.py
 git diff --check
 ```
 
-If the final change set has deleted an optional path, derive the exact
-surviving changed-file list and omit that path. Do not broaden to a known
-failing full-tree baseline and do not restore dead code.
-The pre-task format exceptions are `app.py`, `chat_screen.py`,
-`provider_model_resolution.py`, `settings_screen.py`,
-`Chat_Events/chat_events.py`, `conv_char_events.py`, and
+The latest-`dev` reconciliation removed
+`Event_Handlers/sidebar_events.py` and
+`worker_handlers/chat_worker_handler.py`, so the format gate omits those dead
+paths rather than restoring them. The pre-task format exceptions are
+`app.py`, `chat_screen.py`, `provider_model_resolution.py`,
+`settings_screen.py`, `personas_screen.py`, `library_screen.py`,
+`evals_screen.py`, `Chat_Events/chat_events.py`, `conv_char_events.py`, and
 `Tests/Packaging/test_installed_distribution.py`; do not mass-format them.
-The JSON assertion ensures `settings_screen.py` has no F841 finding beyond its
-exact two pre-task unused `config_path` locals.
+The JSON assertion records the stronger latest-`dev` baseline:
+`settings_screen.py` has zero F841 findings.
 
 - [ ] Run the authorized integrated suite:
 
