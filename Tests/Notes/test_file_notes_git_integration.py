@@ -3,17 +3,24 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Notes.file_notes_git_service import FileNotesGitService
+from tldw_chatbook.Notes.file_notes_git_service import (
+    AsyncGitProcessRunner,
+    FileNotesGitService,
+    GitCommandResult,
+)
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
     HeadIdentity,
+    IndexBaseline,
     SequencedSessionChange,
     SessionChange,
+    StagingOwnership,
 )
 
 
@@ -28,16 +35,46 @@ class _Repository:
         self,
         *arguments: str,
         cwd: Path | None = None,
+        check: bool = True,
     ) -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(
             [self.git, *arguments],
             cwd=cwd or self.path,
             env=self.environment,
-            check=True,
+            check=check,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+
+
+class _RecordingRunner:
+    """Delegate to the real runner while retaining the exact command trace."""
+
+    def __init__(self) -> None:
+        self.delegate = AsyncGitProcessRunner()
+        self.calls: list[tuple[str | bytes, ...]] = []
+
+    async def run(
+        self,
+        argv: Sequence[str | bytes],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        self.calls.append(tuple(argv))
+        return await self.delegate.run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+        )
+
+    def shutdown(self) -> Awaitable[bool]:
+        return self.delegate.shutdown()
 
 
 def _disposable_repository(
@@ -123,7 +160,7 @@ async def test_discover_supports_repo_equal_to_or_above_notes_root(
     assert result.head.kind == "attached"
     assert result.head.branch == "refs/heads/main"
     assert owner.snapshot(binding).trusted_repository is None
-    service.shutdown()
+    await service.shutdown()
 
 
 @pytest.mark.asyncio
@@ -152,7 +189,7 @@ async def test_discover_linked_worktree_has_distinct_git_and_common_dirs(
     assert result.head == HeadIdentity.detached(
         repository.run("rev-parse", "HEAD").stdout.decode("ascii").strip()
     )
-    service.shutdown()
+    await service.shutdown()
 
 
 @pytest.mark.asyncio
@@ -170,7 +207,7 @@ async def test_discover_reports_explicit_unborn_head(tmp_path: Path) -> None:
 
     assert result.state == "ready"
     assert result.head == HeadIdentity.unborn("refs/heads/main")
-    service.shutdown()
+    await service.shutdown()
 
 
 @pytest.mark.asyncio
@@ -197,7 +234,7 @@ async def test_discover_non_repository_is_unavailable(tmp_path: Path) -> None:
 
     assert result.state == "not_repository"
     assert result.repository is None
-    service.shutdown()
+    await service.shutdown()
 
 
 @pytest.mark.asyncio
@@ -220,7 +257,7 @@ async def test_revalidate_rejects_replaced_git_directory_identity(
     original_git_dir.rename(replaced_git_dir)
     original_git_dir.mkdir()
 
-    assert not service.revalidate_repository(
+    assert not await service.revalidate_repository(
         binding,
         discovery.repository,
     )
@@ -228,7 +265,130 @@ async def test_revalidate_rejects_replaced_git_directory_identity(
     assert snapshot.trusted_repository is None
     assert snapshot.git_status is None
     assert not snapshot.staging_ownership
-    service.shutdown()
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_status_rejects_linked_worktree_gitdir_rebinding(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    linked = tmp_path / "linked"
+    replacement = tmp_path / "replacement"
+    repository.run("worktree", "add", "--detach", str(linked), "HEAD")
+    repository.run("worktree", "add", "--detach", str(replacement), "HEAD")
+    (linked / "tracked.md").write_text("linked change\n", encoding="utf-8")
+    runner = _RecordingRunner()
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(linked)
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert discovery.head is not None
+    assert owner.publish_trust(binding, discovery.repository)
+    assert owner.publish_ownership(
+        binding,
+        {
+            1: StagingOwnership(
+                repository=discovery.repository,
+                head=discovery.head,
+                approved_endpoint_topology=("tracked.md",),
+                approved_move_edges=(),
+                approved_current_path="tracked.md",
+                original_baselines={
+                    "tracked.md": IndexBaseline(entry=None),
+                },
+                post_stage_entries={"tracked.md": None},
+            )
+        },
+    )
+
+    replacement_git_file = replacement / ".git"
+    replacement_git_dir = Path(
+        replacement_git_file.read_text(encoding="utf-8")
+        .removeprefix("gitdir: ")
+        .strip()
+    )
+    (linked / ".git").write_text(
+        f"gitdir: {replacement_git_dir}\n",
+        encoding="utf-8",
+    )
+    (replacement_git_dir / "gitdir").write_text(
+        f"{linked / '.git'}\n",
+        encoding="utf-8",
+    )
+    trusted_git_dir = Path(discovery.repository.git_dir)
+    assert trusted_git_dir.is_dir()
+    call_boundary = len(runner.calls)
+
+    status = await service.start_status(
+        binding,
+        (_change(1, "modified", "tracked.md"),),
+    )
+
+    assert status.state == "stale"
+    assert status.message is not None
+    assert "identity changed" in status.message.lower()
+    snapshot = owner.snapshot(binding)
+    assert snapshot.trusted_repository is None
+    assert snapshot.git_status is None
+    assert not snapshot.staging_ownership
+    status_calls = runner.calls[call_boundary:]
+    assert status_calls
+    assert all(
+        len(call) > 1 and os.fsdecode(call[1]) == "rev-parse"
+        for call in status_calls
+    )
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_status_classifies_real_merge_conflict_locally(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    repository.run("checkout", "-b", "conflict-side")
+    (repository.path / "tracked.md").write_text(
+        "side change\n",
+        encoding="utf-8",
+    )
+    repository.run("add", "--", "tracked.md")
+    repository.run("commit", "-m", "side change")
+    repository.run("checkout", "main")
+    (repository.path / "tracked.md").write_text(
+        "main change\n",
+        encoding="utf-8",
+    )
+    repository.run("add", "--", "tracked.md")
+    repository.run("commit", "-m", "main change")
+    merge = repository.run("merge", "conflict-side", check=False)
+    assert merge.returncode != 0
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    service = FileNotesGitService(
+        owner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+
+    status = await service.start_status(
+        binding,
+        (_change(1, "modified", "tracked.md"),),
+    )
+
+    assert status.state == "ready"
+    assert len(status.rows) == 1
+    assert status.rows[0].state == "conflict"
+    assert status.rows[0].disabled_reason == "Git conflict"
+    await service.shutdown()
 
 
 def _change(
@@ -299,7 +459,7 @@ async def test_status_maps_repo_above_notes_and_supports_weird_filenames(
         and "outside" not in row.group.current_path
         for row in status.rows
     )
-    service.shutdown()
+    await service.shutdown()
 
 
 @pytest.mark.asyncio
@@ -333,7 +493,7 @@ async def test_status_reports_matching_ignored_session_path(
     assert status.state == "ready"
     assert len(status.rows) == 1
     assert status.rows[0].state == "ignored"
-    service.shutdown()
+    await service.shutdown()
 
 
 @pytest.mark.asyncio
@@ -362,7 +522,7 @@ async def test_status_fails_closed_for_active_sparse_checkout(
     assert status.state == "unavailable"
     assert status.message is not None
     assert "sparse" in status.message.lower()
-    service.shutdown()
+    await service.shutdown()
 
 
 @pytest.mark.asyncio
@@ -403,4 +563,4 @@ async def test_status_blocks_endpoint_beneath_nested_worktree(
     assert status.state == "ready"
     assert len(status.rows) == 1
     assert status.rows[0].state == "nested_repository"
-    service.shutdown()
+    await service.shutdown()

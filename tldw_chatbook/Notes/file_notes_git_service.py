@@ -6,10 +6,10 @@ import asyncio
 import os
 import shutil
 import stat
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Awaitable, Collection, Generator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Any, Generic, Literal, Protocol, TypeVar
 
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
@@ -40,6 +40,7 @@ PorcelainKind = Literal[
     "error",
 ]
 GitArg = str | bytes
+_SettlementValue = TypeVar("_SettlementValue")
 DiscoveryState = Literal[
     "ready",
     "not_repository",
@@ -138,8 +139,30 @@ class GitProcessRunner(Protocol):
     ) -> GitCommandResult:
         """Run one command without accepting a shell option."""
 
-    def shutdown(self) -> None:
-        """Seal admission and finitely settle owned children."""
+    def shutdown(self) -> Awaitable[bool] | None:
+        """Seal admission and return retained finite child settlement."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ImmediateSettlement(Generic[_SettlementValue]):
+    """Reusable awaitable for shutdown paths with no asynchronous work."""
+
+    value: _SettlementValue
+
+    def __await__(self) -> Generator[None, None, _SettlementValue]:
+        if False:
+            yield None
+        return self.value
+
+
+@dataclass(frozen=True, slots=True)
+class _RetainedSettlement(Generic[_SettlementValue]):
+    """Cancellation-safe reusable view of an internally retained task."""
+
+    task: asyncio.Task[_SettlementValue]
+
+    def __await__(self) -> Generator[Any, None, _SettlementValue]:
+        return asyncio.shield(self.task).__await__()
 
 
 def build_git_environment(
@@ -246,6 +269,11 @@ class AsyncGitProcessRunner:
         self._stderr_limit = stderr_limit
         self._processes: set[asyncio.subprocess.Process] = set()
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._run_tasks: set[asyncio.Task[object]] = set()
+        self._shutdown_event: asyncio.Event | None = None
+        self._shutdown_settlement: Awaitable[bool] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._termination_uncertain = False
 
     async def run(
         self,
@@ -259,26 +287,43 @@ class AsyncGitProcessRunner:
         """Execute one direct child and preserve all standard streams as bytes."""
         if self._sealed:
             return GitCommandResult(127, b"", b"Git runner is shut down")
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=cwd,
-            env=dict(environment),
-            stdin=(
-                asyncio.subprocess.PIPE
-                if stdin is not None
-                else asyncio.subprocess.DEVNULL
-            ),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        self._processes.add(process)
-        communication = asyncio.create_task(process.communicate(stdin))
+        loop = asyncio.get_running_loop()
+        if self._loop is None:
+            self._loop = loop
+            self._shutdown_event = asyncio.Event()
+        elif self._loop is not loop:
+            raise RuntimeError("Git runner cannot span multiple event loops")
+        assert self._shutdown_event is not None
+        run_task = asyncio.current_task()
+        assert run_task is not None
+        self._run_tasks.add(run_task)
+        process: asyncio.subprocess.Process | None = None
+        communication: asyncio.Task[tuple[bytes, bytes]] | None = None
+        shutdown_waiter: asyncio.Task[bool] | None = None
         try:
-            done, _ = await asyncio.wait(
-                {communication},
-                timeout=timeout,
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=cwd,
+                env=dict(environment),
+                stdin=(
+                    asyncio.subprocess.PIPE
+                    if stdin is not None
+                    else asyncio.subprocess.DEVNULL
+                ),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if done:
+            self._processes.add(process)
+            communication = asyncio.create_task(process.communicate(stdin))
+            shutdown_waiter = asyncio.create_task(
+                self._shutdown_event.wait()
+            )
+            done, _ = await asyncio.wait(
+                {communication, shutdown_waiter},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if communication in done:
                 stdout, stderr = communication.result()
                 return GitCommandResult(
                     process.returncode,
@@ -286,20 +331,31 @@ class AsyncGitProcessRunner:
                     self._bounded_stderr(stderr),
                 )
 
-            process.terminate()
+            shutdown_requested = shutdown_waiter in done
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
             terminated = await self._bounded_process_wait(
                 process,
                 self._terminate_timeout,
             )
             if not terminated:
-                process.kill()
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
                 terminated = await self._bounded_process_wait(
                     process,
                     self._kill_timeout,
                 )
 
             stdout = b""
-            stderr = b"Git command timed out"
+            stderr = (
+                b"Git command stopped during shutdown"
+                if shutdown_requested
+                else b"Git command timed out"
+            )
             if terminated:
                 try:
                     stdout, stderr = await asyncio.wait_for(
@@ -308,37 +364,58 @@ class AsyncGitProcessRunner:
                     )
                 except TimeoutError:
                     terminated = False
+            if not terminated:
+                self._termination_uncertain = True
             return GitCommandResult(
                 process.returncode,
                 stdout,
                 self._bounded_stderr(stderr),
-                timed_out=True,
+                timed_out=not shutdown_requested,
                 termination_uncertain=not terminated,
             )
         finally:
-            self._processes.discard(process)
-            if not communication.done():
+            if process is not None:
+                self._processes.discard(process)
+            if shutdown_waiter is not None and not shutdown_waiter.done():
+                shutdown_waiter.cancel()
+                await asyncio.gather(
+                    shutdown_waiter,
+                    return_exceptions=True,
+                )
+            if communication is not None and not communication.done():
                 communication.cancel()
                 await asyncio.gather(
                     communication,
                     return_exceptions=True,
                 )
+            self._run_tasks.discard(run_task)
 
-    def shutdown(self) -> None:
-        """Seal admissions and begin finite cleanup of every owned child."""
+    def shutdown(self) -> Awaitable[bool]:
+        """Seal admissions and return retained finite cleanup settlement."""
+        if self._shutdown_settlement is not None:
+            return self._shutdown_settlement
         self._sealed = True
-        for process in tuple(self._processes):
-            if process.returncode is not None:
-                continue
-            process.terminate()
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                process.kill()
-                continue
-            task = loop.create_task(self._settle_shutdown_process(process))
-            self._cleanup_tasks.add(task)
-            task.add_done_callback(self._cleanup_tasks.discard)
+        if not self._run_tasks:
+            self._shutdown_settlement = _ImmediateSettlement(True)
+            return self._shutdown_settlement
+        assert self._loop is not None
+        assert self._shutdown_event is not None
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError as error:
+            raise RuntimeError(
+                "Active Git shutdown must be initiated from its event loop"
+            ) from error
+        if running_loop is not self._loop:
+            raise RuntimeError(
+                "Active Git shutdown must be initiated from its event loop"
+            )
+        self._shutdown_event.set()
+        settlement = _RetainedSettlement(
+            running_loop.create_task(self._settle_shutdown())
+        )
+        self._shutdown_settlement = settlement
+        return settlement
 
     async def _bounded_process_wait(
         self,
@@ -351,18 +428,34 @@ class AsyncGitProcessRunner:
             return False
         return True
 
-    async def _settle_shutdown_process(
-        self,
-        process: asyncio.subprocess.Process,
-    ) -> None:
-        if await self._bounded_process_wait(
-            process,
-            self._terminate_timeout,
-        ):
-            return
-        if process.returncode is None:
-            process.kill()
-        await self._bounded_process_wait(process, self._kill_timeout)
+    async def _settle_shutdown(self) -> bool:
+        current = asyncio.current_task()
+        run_tasks = tuple(
+            task
+            for task in self._run_tasks
+            if task is not current
+        )
+        if run_tasks:
+            await asyncio.gather(
+                *(asyncio.shield(task) for task in run_tasks),
+                return_exceptions=True,
+            )
+        cleanup_tasks = tuple(
+            task
+            for task in self._cleanup_tasks
+            if task is not current
+        )
+        if cleanup_tasks:
+            await asyncio.gather(
+                *(asyncio.shield(task) for task in cleanup_tasks),
+                return_exceptions=True,
+            )
+        self._cleanup_tasks.clear()
+        return (
+            not self._termination_uncertain
+            and not self._processes
+            and not self._run_tasks
+        )
 
     def _bounded_stderr(self, stderr: bytes) -> bytes:
         return sanitize_git_stderr(
@@ -407,6 +500,7 @@ class FileNotesGitService:
         ] | None = None
         self._rerun_available = False
         self._status_request_generation = 0
+        self._shutdown_settlement: Awaitable[None] | None = None
 
     async def discover(
         self,
@@ -455,27 +549,12 @@ class FileNotesGitService:
                 message="Selected File Notes root is not in a Git worktree",
             )
 
-        path_commands = (
-            ("rev-parse", "--path-format=absolute", "--show-toplevel"),
-            ("rev-parse", "--absolute-git-dir"),
-            ("rev-parse", "--path-format=absolute", "--git-common-dir"),
-        )
-        resolved_paths: list[Path] = []
-        for arguments in path_commands:
-            result = await self._run_discovery(root, arguments)
-            if result is None or result.returncode != 0:
-                return DiscoveryResult(
-                    "unsupported",
-                    message="Installed Git lacks required discovery features",
-                )
-            resolved = _canonical_directory_from_git(result.stdout)
-            if resolved is None:
-                return DiscoveryResult(
-                    "unsupported",
-                    message="Git returned an unsafe repository path",
-                )
-            resolved_paths.append(resolved)
-
+        resolved_paths = await self._read_repository_paths(root)
+        if resolved_paths is None:
+            return DiscoveryResult(
+                "unsupported",
+                message="Git returned an unsupported repository mapping",
+            )
         worktree_root, git_dir, git_common_dir = resolved_paths
         try:
             root.relative_to(worktree_root)
@@ -505,17 +584,33 @@ class FileNotesGitService:
             head=head,
         )
 
-    def revalidate_repository(
+    async def revalidate_repository(
         self,
         binding: SessionBinding,
         repository: RepositoryIdentity,
     ) -> bool:
-        """Revalidate canonical paths and identities, revoking stale trust."""
-        valid = (
+        """Rediscover repository mapping, then restat its trusted identities."""
+        valid = False
+        root = self._safe_root(binding)
+        if (
             not self._sealed
+            and root is not None
+            and self._git_executable is not None
             and binding == self._owner.current_binding()
-            and self._repository_identity_matches(binding, repository)
-        )
+        ):
+            resolved_paths = await self._read_repository_paths(root)
+            valid = (
+                not self._sealed
+                and binding == self._owner.current_binding()
+                and resolved_paths is not None
+                and tuple(str(path) for path in resolved_paths)
+                == (
+                    repository.worktree_root,
+                    repository.git_dir,
+                    repository.git_common_dir,
+                )
+                and self._repository_identity_matches(binding, repository)
+            )
         if not valid:
             self._owner.clear_trust_if_matches(binding, repository)
         return valid
@@ -610,16 +705,87 @@ class FileNotesGitService:
         cycle.add_done_callback(self._status_cycle_completed)
         return waiter
 
-    def shutdown(self) -> None:
-        """Synchronously seal admission and begin bounded child cleanup."""
-        if self._sealed:
-            return
+    def shutdown(self) -> Awaitable[None]:
+        """Seal admission and return retained finite service settlement."""
+        if self._shutdown_settlement is not None:
+            return self._shutdown_settlement
         self._sealed = True
         binding = self._owner.current_binding()
+        self._pending_status = None
+        self._rerun_available = False
         if binding is not None:
             self._owner.clear_ownership(binding)
             self._owner.clear_status(binding)
-        self._runner.shutdown()
+        runner_settlement = self._runner.shutdown()
+        cycle = self._status_cycle
+        waiter = self._status_waiter
+        if (
+            (cycle is None or cycle.done())
+            and (waiter is None or waiter.done())
+            and (
+                runner_settlement is None
+                or isinstance(runner_settlement, _ImmediateSettlement)
+            )
+        ):
+            self._status_cycle = None
+            self._status_waiter = None
+            self._shutdown_settlement = _ImmediateSettlement(None)
+            return self._shutdown_settlement
+        settlement = _RetainedSettlement(
+            asyncio.get_running_loop().create_task(
+                self._settle_shutdown(
+                    binding,
+                    cycle,
+                    waiter,
+                    runner_settlement,
+                )
+            )
+        )
+        self._shutdown_settlement = settlement
+        return settlement
+
+    async def _settle_shutdown(
+        self,
+        binding: SessionBinding | None,
+        cycle: asyncio.Task[SessionGitStatus] | None,
+        waiter: asyncio.Task[SessionGitStatus] | None,
+        runner_settlement: Awaitable[bool] | None,
+    ) -> None:
+        """Join every retained task and preserve fail-closed shutdown state."""
+        owned_tasks = tuple(
+            task
+            for task in (cycle, waiter)
+            if task is not None and not task.done()
+        )
+        results: list[object] = []
+        if owned_tasks:
+            results.extend(
+                await asyncio.gather(
+                    *(asyncio.shield(task) for task in owned_tasks),
+                    return_exceptions=True,
+                )
+            )
+        runner_confirmed = True
+        if runner_settlement is not None:
+            try:
+                runner_confirmed = bool(
+                    await asyncio.shield(runner_settlement)
+                    if isinstance(runner_settlement, asyncio.Future)
+                    else await runner_settlement
+                )
+            except BaseException as error:
+                results.append(error)
+                runner_confirmed = False
+        self._status_cycle = None
+        self._status_waiter = None
+        self._pending_status = None
+        self._rerun_available = False
+        if binding is not None and (
+            not runner_confirmed
+            or any(isinstance(result, BaseException) for result in results)
+        ):
+            self._owner.clear_ownership(binding)
+            self._owner.clear_status(binding)
 
     async def _shield_status_cycle(
         self,
@@ -730,7 +896,7 @@ class FileNotesGitService:
     ) -> SessionGitStatus:
         if (
             self._owner.snapshot(binding).trusted_repository != repository
-            or not self.revalidate_repository(binding, repository)
+            or not await self.revalidate_repository(binding, repository)
         ):
             return self._local_status(
                 binding,
@@ -828,10 +994,10 @@ class FileNotesGitService:
                         for path in group.endpoints
                     ),
                     *(
-                        index_path
-                        for index_path in index_entries
+                        index_entry.path
+                        for index_entry in index_entries
                         if any(
-                            _paths_overlap(index_path, endpoint)
+                            _paths_overlap(index_entry.path, endpoint)
                             for group in repository_groups
                             for endpoint in group.endpoints
                         )
@@ -1078,6 +1244,27 @@ class FileNotesGitService:
             return None
         return result
 
+    async def _read_repository_paths(
+        self,
+        root: Path,
+    ) -> tuple[Path, Path, Path] | None:
+        """Read the canonical worktree, Git-dir, and common-dir mapping."""
+        path_commands = (
+            ("rev-parse", "--path-format=absolute", "--show-toplevel"),
+            ("rev-parse", "--absolute-git-dir"),
+            ("rev-parse", "--path-format=absolute", "--git-common-dir"),
+        )
+        resolved_paths: list[Path] = []
+        for arguments in path_commands:
+            result = await self._run_discovery(root, arguments)
+            if result is None or result.returncode != 0:
+                return None
+            resolved = _canonical_directory_from_git(result.stdout)
+            if resolved is None:
+                return None
+            resolved_paths.append(resolved)
+        return resolved_paths[0], resolved_paths[1], resolved_paths[2]
+
     async def _read_head(self, root: Path) -> HeadIdentity | None:
         symbolic = await self._run_discovery(
             root,
@@ -1320,13 +1507,14 @@ class PorcelainRecord:
         object.__setattr__(self, "object_ids", tuple(self.object_ids))
 
 
-def parse_index_entries_z(payload: bytes) -> dict[str, IndexEntry]:
+def parse_index_entries_z(payload: bytes) -> tuple[IndexEntry, ...]:
     """Parse `ls-files --stage -v -z` without losing filename bytes."""
     if not payload:
-        return {}
+        return ()
     if not payload.endswith(b"\0"):
         raise GitIndexParseError("Git index payload is not NUL terminated")
-    entries: dict[str, IndexEntry] = {}
+    entries: list[IndexEntry] = []
+    identities: set[tuple[str, int]] = set()
     for raw_entry in payload[:-1].split(b"\0"):
         if not raw_entry:
             raise GitIndexParseError("Git index payload contains an empty entry")
@@ -1372,22 +1560,29 @@ def parse_index_entries_z(payload: bytes) -> dict[str, IndexEntry]:
             or any(component in {"", ".", ".."} for component in path.split("/"))
         ):
             raise GitIndexParseError("Git index path is unsafe")
-        if path in entries:
-            raise GitIndexParseError("Git index contains a duplicate path")
+        stage = int(raw_stage)
+        identity = path, stage
+        if identity in identities:
+            raise GitIndexParseError(
+                "Git index contains a duplicate path and stage"
+            )
+        identities.add(identity)
         tag = raw_tag.decode("ascii")
         flags: list[str] = []
         if tag.upper() == "S":
             flags.append("skip-worktree")
         if tag.islower():
             flags.append("assume-unchanged")
-        entries[path] = IndexEntry(
-            path=path,
-            mode=raw_mode.decode("ascii"),
-            object_id=raw_object_id.decode("ascii").lower(),
-            stage=int(raw_stage),
-            semantic_flags=tuple(flags),
+        entries.append(
+            IndexEntry(
+                path=path,
+                mode=raw_mode.decode("ascii"),
+                object_id=raw_object_id.decode("ascii").lower(),
+                stage=stage,
+                semantic_flags=tuple(flags),
+            )
         )
-    return entries
+    return tuple(entries)
 
 
 @dataclass(slots=True)
@@ -1641,10 +1836,19 @@ def ownership_signature_matches(
 def classify_session_rows(
     groups: Sequence[SessionChangeGroup],
     status_records: Sequence[PorcelainRecord],
-    index_entries: Mapping[str, IndexEntry],
+    index_entries: Mapping[str, IndexEntry] | Sequence[IndexEntry],
     ownership: Mapping[int, StagingOwnership],
 ) -> tuple[SessionGitRow, ...]:
     """Apply the frozen row/action policy to every coalesced session group."""
+    flattened_entries = (
+        tuple(index_entries.values())
+        if isinstance(index_entries, Mapping)
+        else tuple(index_entries)
+    )
+    entries_by_path: dict[str, IndexEntry] = {}
+    for entry in flattened_entries:
+        if entry.path not in entries_by_path or entry.stage == 0:
+            entries_by_path[entry.path] = entry
     global_records = tuple(
         record for record in status_records if record.path is None
     )
@@ -1658,15 +1862,15 @@ def classify_session_rows(
         )
         entries = tuple(
             entry
-            for path, entry in index_entries.items()
-            if path in group.endpoints
+            for entry in flattened_entries
+            if entry.path in group.endpoints
         )
         rows.append(
             _classify_group(
                 group,
                 records,
                 entries,
-                index_entries,
+                entries_by_path,
                 ownership.get(group.group_id),
                 group.group_id in ambiguous_groups,
             )

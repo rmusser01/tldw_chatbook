@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Condition, Lock, RLock
@@ -305,8 +306,8 @@ class FileNotesSessionSnapshot:
 class FileNotesGitServiceLifecycle(Protocol):
     """Narrow lifecycle boundary for an owner-attached Git service."""
 
-    def shutdown(self) -> None:
-        """Stop accepting work and settle retained service work."""
+    def shutdown(self) -> Awaitable[object] | None:
+        """Stop accepting work and return retained service settlement."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -406,6 +407,7 @@ class FileNotesSessionOwner:
         "_changes",
         "_generation",
         "_git_service",
+        "_git_shutdown_settlement",
         "_git_status",
         "_lock",
         "_mutation_token",
@@ -445,6 +447,7 @@ class FileNotesSessionOwner:
         self._shutdown_error: BaseException | None = None
         self._shutdown_state: Literal["open", "closing", "closed", "failed"] = "open"
         self._git_service: FileNotesGitServiceLifecycle | None = None
+        self._git_shutdown_settlement: Awaitable[object] | None = None
 
     def select_root(self, root: str | Path) -> SessionBinding:
         """Select one canonical root, resetting state only when it changes.
@@ -789,7 +792,9 @@ class FileNotesSessionOwner:
                 service = self._git_service
         try:
             if service is not None:
-                service.shutdown()
+                settlement = service.shutdown()
+                with self._lock:
+                    self._git_shutdown_settlement = settlement
         except BaseException as error:
             with self._shutdown_condition:
                 self._shutdown_error = error
@@ -800,6 +805,17 @@ class FileNotesSessionOwner:
             self._git_service = None
             self._shutdown_state = "closed"
             self._shutdown_condition.notify_all()
+
+    async def settle_git_shutdown(self) -> None:
+        """Await the retained attached-service settlement, if any."""
+        with self._lock:
+            settlement = self._git_shutdown_settlement
+        if settlement is None:
+            return
+        if isinstance(settlement, asyncio.Future):
+            await asyncio.shield(settlement)
+            return
+        await settlement
 
     def _release_transition(self, token: object) -> None:
         with self._lock:

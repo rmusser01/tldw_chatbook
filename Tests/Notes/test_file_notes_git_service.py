@@ -1283,6 +1283,7 @@ class _StubbornProcess:
         self.terminate_calls = 0
         self.kill_calls = 0
         self.wait_calls = 0
+        self.communicate_started = asyncio.Event()
         self._never = asyncio.Event()
 
     async def communicate(
@@ -1290,6 +1291,7 @@ class _StubbornProcess:
         stdin: bytes | None,
     ) -> tuple[bytes, bytes]:
         del stdin
+        self.communicate_started.set()
         await self._never.wait()
         return b"", b""
 
@@ -1342,6 +1344,62 @@ async def test_runner_timeout_terminates_then_kills_with_two_bounded_waits(
     assert result.termination_uncertain
 
 
+@pytest.mark.asyncio
+async def test_runner_shutdown_returns_retained_finite_settlement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _StubbornProcess()
+
+    async def fake_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _StubbornProcess:
+        del argv, kwargs
+        return child
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "status"),
+            cwd="/repo",
+            environment={},
+            timeout=None,
+        )
+    )
+    await child.communicate_started.wait()
+
+    settlement = runner.shutdown()
+
+    try:
+        assert inspect.isawaitable(settlement)
+        assert runner.shutdown() is settlement
+        cancelled_waiter = asyncio.ensure_future(settlement)
+        cancelled_waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled_waiter
+        await asyncio.wait_for(settlement, timeout=1)
+        assert command.done()
+        result = await command
+        assert result.termination_uncertain
+        assert child.terminate_calls == 1
+        assert child.kill_calls == 1
+        assert child.wait_calls == 2
+        assert not runner._processes
+        assert not runner._cleanup_tasks
+    finally:
+        child._never.set()
+        command.cancel()
+        await asyncio.gather(command, return_exceptions=True)
+
+
 def test_index_command_is_complete_nul_safe_and_has_explicit_boundary() -> None:
     argv = build_index_argv("/private/bin/git")
 
@@ -1362,19 +1420,44 @@ def test_parse_index_entries_preserves_stage_and_semantic_flags() -> None:
 
     entries = parse_index_entries_z(payload)
 
-    assert entries["normal.md"] == _entry("normal.md")
-    assert entries["sparse.md"] == _entry(
-        "sparse.md",
-        mode="100755",
-        object_id=OID_B,
-        flags=("skip-worktree",),
+    assert entries == (
+        _entry("normal.md"),
+        _entry(
+            "sparse.md",
+            mode="100755",
+            object_id=OID_B,
+            flags=("skip-worktree",),
+        ),
+        _entry(
+            "assumed.md",
+            object_id=OID_C,
+            stage=2,
+            flags=("assume-unchanged",),
+        ),
     )
-    assert entries["assumed.md"] == _entry(
-        "assumed.md",
-        object_id=OID_C,
-        stage=2,
-        flags=("assume-unchanged",),
+
+
+def test_unmerged_index_stages_are_preserved_and_classified_as_conflict() -> None:
+    payload = b"".join(
+        b"H 100644 "
+        + object_id.encode("ascii")
+        + f" {stage}\tconflict.md\0".encode()
+        for stage, object_id in (
+            (1, OID_A),
+            (2, OID_B),
+            (3, OID_C),
+        )
     )
+    group = coalesce_session_changes(
+        (_change(1, "modified", "conflict.md"),)
+    )[0]
+
+    entries = parse_index_entries_z(payload)
+    (row,) = classify_session_rows((group,), (), entries, {})
+
+    assert tuple(entry.stage for entry in entries) == (1, 2, 3)
+    assert row.state == "conflict"
+    assert row.disabled_reason == "Git conflict"
 
 
 @pytest.mark.parametrize(
@@ -1439,7 +1522,7 @@ class _DelayedStatusRunner:
         stdin: bytes | None = None,
         timeout: float | None = None,
     ) -> GitCommandResult:
-        del cwd, environment, stdin, timeout
+        del environment, stdin, timeout
         command = tuple(argv)
         self.calls.append(command)
         text = tuple(os.fsdecode(argument) for argument in command)
@@ -1447,6 +1530,18 @@ class _DelayedStatusRunner:
             return GitCommandResult(1, b"", b"")
         if "symbolic-ref" in text:
             return GitCommandResult(0, b"refs/heads/main\n", b"")
+        if "--show-toplevel" in text:
+            return GitCommandResult(
+                0,
+                os.fsencode(cwd) + b"\n",
+                b"",
+            )
+        if "--absolute-git-dir" in text or "--git-common-dir" in text:
+            return GitCommandResult(
+                0,
+                os.fsencode(Path(cwd) / ".git") + b"\n",
+                b"",
+            )
         if "rev-parse" in text:
             return GitCommandResult(0, OID_A.encode("ascii") + b"\n", b"")
         if "ls-files" in text:
@@ -1646,6 +1741,36 @@ def test_production_builder_attaches_exactly_one_git_service() -> None:
 
 
 @pytest.mark.asyncio
+async def test_owner_exposes_retained_git_shutdown_settlement() -> None:
+    release = asyncio.Event()
+
+    class AttachedService:
+        def __init__(self) -> None:
+            self.shutdown_calls = 0
+            self.settlement: asyncio.Task[bool] | None = None
+
+        def shutdown(self) -> asyncio.Task[bool]:
+            self.shutdown_calls += 1
+            if self.settlement is None:
+                self.settlement = asyncio.create_task(release.wait())
+            return self.settlement
+
+    service = AttachedService()
+    owner = FileNotesSessionOwner()
+    owner.attach_git_service(service)
+
+    owner.shutdown()
+    settlement = asyncio.create_task(owner.settle_git_shutdown())
+    await asyncio.sleep(0)
+
+    assert service.shutdown_calls == 1
+    assert not settlement.done()
+    release.set()
+    await asyncio.wait_for(settlement, timeout=1)
+    await owner.settle_git_shutdown()
+
+
+@pytest.mark.asyncio
 async def test_status_task_creation_failure_releases_admitted_lease(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1688,17 +1813,23 @@ async def test_shutdown_seals_status_and_prevents_late_publication(
     )
     await runner.first_index_started.wait()
 
-    service.shutdown()
-    service.shutdown()
+    settlement = service.shutdown()
+    assert service.shutdown() is settlement
 
     with pytest.raises(GitStatusAdmissionError) as error:
         service.start_status(
             binding,  # type: ignore[arg-type]
             (_change(2, "modified", "note.md"),),
-        )
+    )
     assert error.value.reason == "shutdown"
-    await asyncio.wait_for(waiter, timeout=1)
-    await asyncio.sleep(0)
+    assert inspect.isawaitable(settlement)
+    cancelled_waiter = asyncio.ensure_future(settlement)
+    cancelled_waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled_waiter
+    await asyncio.wait_for(settlement, timeout=1)
+    assert waiter.done()
+    await waiter
     snapshot = owner.snapshot(binding)  # type: ignore[arg-type]
     assert snapshot.git_status is None
     assert not snapshot.staging_ownership
