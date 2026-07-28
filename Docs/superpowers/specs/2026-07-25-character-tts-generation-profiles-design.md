@@ -5,6 +5,8 @@
 **Related design:** [audio.cpp TTS Adapter Registry](2026-07-23-audio-cpp-tts-adapter-registry-design.md)
 **Existing ADR:** [ADR-023 — TTS Adapter Registry and audio.cpp Runtime Boundary](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 **Profile ADR:** [ADR-028 — Character TTS Generation Profile Ownership](../../../backlog/decisions/028-character-tts-generation-profile-ownership.md)
+**Slice 3A design:** [Character Identity and Persona/User Profile Separation](2026-07-28-tts-character-identity-persona-separation-design.md)
+**Slice 3A ADR:** [ADR-037 — Roleplay Assistant Identity and Persona/User Profile Separation](../../../backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md)
 **Slice 1 status:** implemented and live-UAT validated; TASK-710 remains In Progress because the repository-wide DoD suite is not green and no external server was available for a post-rebase live rerun
 **Slice 2A status:** implemented by TASK-763 and merged in PR #977; the versioned profile domain, repository lifecycle, backup/restore, and app-owned lazy repository are available for Slice 2B
 
@@ -1315,19 +1317,27 @@ This slice independently fixes the first-time-user UAT failure.
 Together, Slices 2A and 2B deliver reusable local profiles before character
 assignment.
 
-### Slice 3A — Character identity, authorship, and assignment
+### Slice 3A — Character identity, authorship, and Persona boundary
 
-- Persist durable local-database and stable server-profile/principal authority
-  provenance, including safe legacy-local backfill and fail-closed server
-  identity acquisition.
-- Add canonical `CharacterRef` assignment behavior and app-issued immutable
-  Console speech snapshots.
-- Add character-editor assignment controls.
+Deliver four separately planned and reviewed increments:
 
-### Slice 3B — Roleplay resolution and speech runtime
+1. Separate Persona assistant profiles from account/human User Profiles and
+   remove Persona-as-user runtime projection without deleting existing records.
+2. Persist durable local-database and stable server-profile/principal authority
+   provenance, including safe legacy-local backfill and fail-closed server
+   assignment identity.
+3. Add app-issued immutable Console speech snapshots while retaining global
+   synthesis selection.
+4. Add canonical `CharacterRef` assignment-service mutations fenced by the
+   caller-held repository generation.
 
-- Add trusted persisted and in-memory authorship resolution through the
-  admission coordinator.
+No increment adds hidden or feature-gated assignment widgets.
+
+### Slice 3B — Character assignment UI and roleplay speech runtime
+
+- Add visible character-editor assignment, repair, and detach controls.
+- Resolve assigned profiles from the trusted persisted/in-memory identity and
+  snapshot authorship already established by Slice 3A.3.
 - Apply assigned profiles to character-authored Console roleplay messages.
 - Add fail-closed recovery and the explicit one-message global override.
 - Preserve assignments through soft delete/restore; add permanent-delete
