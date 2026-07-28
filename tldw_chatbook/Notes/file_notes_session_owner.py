@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Condition, Lock, RLock
@@ -723,6 +723,32 @@ class FileNotesSessionOwner:
             ):
                 return False
             self._staging_ownership = dict(ownership)
+            self._clear_git_status_locked()
+            return True
+
+    def publish_unstage_result(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+        expected: Mapping[int, StagingOwnership],
+        group_ids: Collection[int],
+    ) -> bool:
+        """Atomically remove checked ownership and make prior status stale."""
+        selected = tuple(dict.fromkeys(group_ids))
+        with self._lock:
+            if (
+                self._shutdown
+                or binding != self._binding
+                or repository != self._trusted_repository
+                or any(
+                    self._staging_ownership.get(group_id)
+                    != expected.get(group_id)
+                    for group_id in selected
+                )
+            ):
+                return False
+            for group_id in selected:
+                self._staging_ownership.pop(group_id, None)
             self._clear_git_status_locked()
             return True
 

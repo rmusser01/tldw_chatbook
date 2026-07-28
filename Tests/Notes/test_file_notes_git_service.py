@@ -25,6 +25,8 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     build_file_notes_session_owner,
     build_stage_argv,
     build_status_argv,
+    build_unstage_argv,
+    build_update_index_payload,
     classify_session_rows,
     coalesce_session_changes,
     compute_stage_closure,
@@ -1955,6 +1957,209 @@ def test_stage_command_is_one_exact_fail_fast_literal_path_operation() -> None:
         b"notes/-leading.md",
         b"notes/[literal]*.md",
     )
+
+
+def test_unstage_api_has_exact_synchronous_admission_signature() -> None:
+    signature = inspect.signature(FileNotesGitService.start_unstage)
+
+    assert tuple(signature.parameters) == ("self", "binding", "group_ids")
+    assert signature.return_annotation == "asyncio.Task[GitActionResult]"
+
+
+def test_unstage_command_is_one_exact_no_worktree_index_operation() -> None:
+    argv = build_unstage_argv("/private/bin/git")
+
+    assert argv == (
+        "/private/bin/git",
+        "update-index",
+        "-z",
+        "--index-info",
+    )
+    assert not {"checkout", "restore", "reset", "read-tree"}.intersection(argv)
+
+
+def test_unstage_payload_removes_owned_conflicts_before_exact_baselines() -> None:
+    group = SessionChangeGroup(
+        group_id=1,
+        endpoints=("created.md", "tree", "tree/owned.md", "tracked.md"),
+        source_path="tree",
+        destination_path="tree/owned.md",
+        current_path="tree/owned.md",
+        latest_action="moved",
+        latest_sequence=1,
+        move_edges=(("tree", "tree/owned.md"),),
+    )
+    tracked_baseline = _entry("tracked.md", object_id=OID_A)
+    tree_baseline = _entry("tree", object_id=OID_B)
+    owned_child = _entry("tree/owned.md", object_id=OID_C)
+    ownership = StagingOwnership(
+        repository=_repository(),
+        head=HeadIdentity.attached("refs/heads/main", OID_A),
+        approved_endpoint_topology=group.endpoints,
+        approved_move_edges=group.move_edges,
+        approved_current_path=group.current_path,
+        original_baselines={
+            "tracked.md": IndexBaseline(tracked_baseline),
+            "created.md": IndexBaseline(None),
+            "tree": IndexBaseline(tree_baseline),
+        },
+        post_stage_entries={
+            "tracked.md": _entry("tracked.md", object_id=OID_C),
+            "created.md": _entry("created.md", object_id=OID_C),
+            "tree": None,
+            "tree/owned.md": owned_child,
+        },
+    )
+
+    payload = build_update_index_payload(
+        ownership,
+        {
+            "tracked.md": ownership.post_stage_entries["tracked.md"],
+            "created.md": ownership.post_stage_entries["created.md"],
+            "tree/owned.md": owned_child,
+        },
+    )
+
+    assert payload == (
+        b"0 " + ZERO_OID.encode() + b"\ttree/owned.md\0"
+        b"0 " + ZERO_OID.encode() + b"\tcreated.md\0"
+        b"100644 " + OID_A.encode() + b" 0\ttracked.md\0"
+        b"100644 " + OID_B.encode() + b" 0\ttree\0"
+    )
+
+
+def test_unstage_payload_uses_one_exact_repository_object_id_width() -> None:
+    group = _single_group("wide.md")
+    wide_oid = "d" * 64
+    wide_baseline = _entry("wide.md", object_id=wide_oid)
+    ownership = StagingOwnership(
+        repository=_repository(),
+        head=HeadIdentity.attached("refs/heads/main", wide_oid),
+        approved_endpoint_topology=group.endpoints,
+        approved_move_edges=group.move_edges,
+        approved_current_path=group.current_path,
+        original_baselines={"wide.md": IndexBaseline(wide_baseline)},
+        post_stage_entries={
+            "wide.md": _entry("wide.md", object_id="e" * 64),
+        },
+    )
+
+    payload = build_update_index_payload(
+        ownership,
+        {"wide.md": ownership.post_stage_entries["wide.md"]},
+    )
+
+    assert payload == b"100644 " + wide_oid.encode() + b" 0\twide.md\0"
+
+    mixed_width = StagingOwnership(
+        repository=ownership.repository,
+        head=ownership.head,
+        approved_endpoint_topology=ownership.approved_endpoint_topology,
+        approved_move_edges=ownership.approved_move_edges,
+        approved_current_path=ownership.approved_current_path,
+        original_baselines={
+            "wide.md": IndexBaseline(_entry("wide.md", object_id=OID_A)),
+        },
+        post_stage_entries=ownership.post_stage_entries,
+    )
+    with pytest.raises(ValueError, match="object ID width"):
+        build_update_index_payload(
+            mixed_width,
+            {"wide.md": ownership.post_stage_entries["wide.md"]},
+        )
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ("../escape.md", "/absolute.md", "empty//component.md", ".git/config"),
+)
+def test_unstage_index_path_mapper_rejects_unsafe_components(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    repository_root = tmp_path / "repository"
+    repository_root.mkdir()
+    notes_root = repository_root / "notes"
+    notes_root.mkdir()
+    repository = _repository_at(repository_root)
+    service = FileNotesGitService(FileNotesSessionOwner(), git_executable="git")
+
+    mapped, row = service._map_group_for_unstage(
+        notes_root,
+        repository,
+        _single_group(relative_path),
+    )
+
+    assert mapped is None
+    assert row is not None
+    assert row.state == "unsupported"
+
+
+def test_unstage_index_path_mapper_rejects_nested_git_and_symlink_boundaries(
+    tmp_path: Path,
+) -> None:
+    repository_root = tmp_path / "repository"
+    repository_root.mkdir()
+    notes_root = repository_root / "notes"
+    notes_root.mkdir()
+    nested = notes_root / "nested"
+    nested.mkdir()
+    (nested / ".git").mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (notes_root / "linked").symlink_to(outside, target_is_directory=True)
+    repository = _repository_at(repository_root)
+    service = FileNotesGitService(FileNotesSessionOwner(), git_executable="git")
+
+    nested_mapping, nested_row = service._map_group_for_unstage(
+        notes_root,
+        repository,
+        _single_group("nested/note.md"),
+    )
+    linked_mapping, linked_row = service._map_group_for_unstage(
+        notes_root,
+        repository,
+        _single_group("linked/note.md"),
+    )
+
+    assert nested_mapping is None
+    assert nested_row is not None
+    assert nested_row.state == "nested_repository"
+    assert linked_mapping is None
+    assert linked_row is not None
+    assert linked_row.state == "unsupported"
+
+
+def test_unstage_index_path_mapper_preserves_bytes_and_root_containment(
+    tmp_path: Path,
+) -> None:
+    repository_root = tmp_path / "repository"
+    repository_root.mkdir()
+    notes_root = repository_root / "notes"
+    notes_root.mkdir()
+    outside_root = tmp_path / "outside"
+    outside_root.mkdir()
+    repository = _repository_at(repository_root)
+    service = FileNotesGitService(FileNotesSessionOwner(), git_executable="git")
+    byte_path = os.fsdecode(b"raw-\xff.md")
+
+    mapped, row = service._map_group_for_unstage(
+        notes_root,
+        repository,
+        _single_group(byte_path),
+    )
+    outside_mapping, outside_row = service._map_group_for_unstage(
+        outside_root,
+        repository,
+        _single_group("note.md"),
+    )
+
+    assert row is None
+    assert mapped is not None
+    assert os.fsencode(mapped.endpoints[0]) == b"notes/raw-\xff.md"
+    assert outside_mapping is None
+    assert outside_row is not None
+    assert outside_row.state == "unsupported"
 
 
 def test_parse_index_entries_preserves_stage_and_semantic_flags() -> None:

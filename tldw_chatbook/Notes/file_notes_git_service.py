@@ -110,10 +110,11 @@ class DiscoveryResult:
 class GitActionResult:
     """Checked result of one retained Git index action."""
 
-    action: Literal["stage"]
+    action: Literal["stage", "unstage"]
     state: GitActionState
     requested_group_ids: tuple[int, ...]
     staged_group_ids: tuple[int, ...] = ()
+    unstaged_group_ids: tuple[int, ...] = ()
     clean_group_ids: tuple[int, ...] = ()
     blocked_group_ids: tuple[int, ...] = ()
     message: str | None = None
@@ -128,6 +129,7 @@ class _StageInspection:
     groups: tuple[SessionChangeGroup, ...]
     repository_groups: Mapping[int, SessionChangeGroup]
     rows: Mapping[int, SessionGitRow]
+    index_sequence: tuple[IndexEntry, ...]
     index_entries: Mapping[str, IndexEntry]
     status_records: tuple[PorcelainRecord, ...]
 
@@ -324,6 +326,156 @@ def build_stage_argv(
         "--all",
         "--",
         *repository_paths,
+    )
+
+
+def build_unstage_argv(git_executable: str) -> tuple[GitArg, ...]:
+    """Build one exact index-only saved-baseline Unstage command."""
+    return (
+        git_executable,
+        "update-index",
+        "-z",
+        "--index-info",
+    )
+
+
+def build_update_index_payload(
+    ownership: StagingOwnership,
+    current_index_entries: Mapping[str, IndexEntry],
+) -> bytes:
+    """Build exact conflict removals followed by saved baseline records."""
+    conflict_records, baseline_records = _update_index_records(
+        ownership,
+        current_index_entries,
+    )
+    return b"".join((*conflict_records, *baseline_records))
+
+
+def _update_index_records(
+    ownership: StagingOwnership,
+    current_index_entries: Mapping[str, IndexEntry],
+) -> tuple[tuple[bytes, ...], tuple[bytes, ...]]:
+    object_id_lengths = {
+        len(entry.object_id)
+        for entry in (
+            *(
+                baseline.entry
+                for baseline in ownership.original_baselines.values()
+                if baseline.entry is not None
+            ),
+            *(
+                entry
+                for entry in ownership.post_stage_entries.values()
+                if entry is not None
+            ),
+        )
+    }
+    if len(object_id_lengths) != 1 or not object_id_lengths.issubset({40, 64}):
+        raise ValueError("Unstage ownership has an invalid object ID width")
+    zero_oid = b"0" * object_id_lengths.pop()
+
+    conflict_paths = sorted(
+        path
+        for path in compute_unstage_closure(
+            ownership.original_baselines,
+            current_index_entries,
+        )
+        if path not in ownership.original_baselines
+    )
+    conflict_records = tuple(
+        b"0 " + zero_oid + b"\t" + _index_info_path_bytes(path) + b"\0"
+        for path in conflict_paths
+    )
+    baseline_records: list[bytes] = []
+    for path, baseline in sorted(ownership.original_baselines.items()):
+        raw_path = _index_info_path_bytes(path)
+        entry = baseline.entry
+        if entry is None:
+            baseline_records.append(
+                b"0 " + zero_oid + b"\t" + raw_path + b"\0"
+            )
+            continue
+        if (
+            entry.path != path
+            or entry.stage != 0
+            or entry.semantic_flags
+            or len(entry.mode) != 6
+            or any(character not in "01234567" for character in entry.mode)
+            or len(entry.object_id) != len(zero_oid)
+            or any(
+                character not in "0123456789abcdefABCDEF"
+                for character in entry.object_id
+            )
+        ):
+            raise ValueError("Unstage baseline is not an exact stage-0 entry")
+        baseline_records.append(
+            entry.mode.encode("ascii")
+            + b" "
+            + entry.object_id.lower().encode("ascii")
+            + b" 0\t"
+            + raw_path
+            + b"\0"
+        )
+    return conflict_records, tuple(baseline_records)
+
+
+def _index_info_path_bytes(path: str) -> bytes:
+    if (
+        not path
+        or path.startswith("/")
+        or "\0" in path
+        or any(component in {"", ".", ".."} for component in path.split("/"))
+    ):
+        raise ValueError("Unstage path is unsafe")
+    return os.fsencode(path)
+
+
+def _build_combined_update_index_payload(
+    ownership: Sequence[StagingOwnership],
+    current_index_entries: Mapping[str, IndexEntry],
+) -> bytes:
+    conflict_records: list[bytes] = []
+    baseline_records: list[bytes] = []
+    seen_conflicts: set[bytes] = set()
+    seen_baselines: set[str] = set()
+    for item in ownership:
+        conflicts, baselines = _update_index_records(item, current_index_entries)
+        for record in conflicts:
+            if record not in seen_conflicts:
+                seen_conflicts.add(record)
+                conflict_records.append(record)
+        for path in item.original_baselines:
+            if path in seen_baselines:
+                raise ValueError("Unstage groups overlap in the Git index")
+            seen_baselines.add(path)
+        baseline_records.extend(baselines)
+    return b"".join((*sorted(conflict_records), *sorted(baseline_records)))
+
+
+def _baseline_matches_index(
+    ownership: StagingOwnership,
+    current_index_entries: Mapping[str, IndexEntry],
+) -> bool:
+    if any(
+        current_index_entries.get(path) != baseline.entry
+        for path, baseline in ownership.original_baselines.items()
+    ):
+        return False
+    inserted_baseline_paths = tuple(
+        path
+        for path, baseline in ownership.original_baselines.items()
+        if baseline.entry is not None
+    )
+    return all(
+        current_index_entries.get(path) is None
+        for path in ownership.post_stage_entries
+        if (
+            path not in ownership.original_baselines
+            and any(
+                _paths_overlap(path, baseline_path)
+                for baseline_path in inserted_baseline_paths
+            )
+        )
     )
 
 
@@ -911,6 +1063,97 @@ class FileNotesGitService:
         self._action_waiter = waiter
         cycle.add_done_callback(self._action_cycle_completed)
         return waiter
+
+    def start_unstage(
+        self,
+        binding: SessionBinding,
+        group_ids: Collection[int],
+    ) -> asyncio.Task[GitActionResult]:
+        """Synchronously admit and retain one exact Unstage operation."""
+        requested = tuple(dict.fromkeys(group_ids))
+        if self._sealed:
+            raise GitMutationAdmissionError(
+                "shutdown",
+                "File Notes Git service is shut down",
+            )
+        snapshot = self._owner.snapshot(binding)
+        if binding != self._owner.current_binding():
+            raise GitMutationAdmissionError(
+                "stale_binding",
+                "File Notes root binding is stale",
+            )
+        repository = snapshot.trusted_repository
+        if repository is None:
+            raise GitMutationAdmissionError(
+                "untrusted",
+                "Repository trust is required before unstaging",
+            )
+        admission = self._owner.admit_mutation(binding)
+        lease = admission.lease
+        if lease is None:
+            reason = admission.reason or "mutation_active"
+            raise GitMutationAdmissionError(
+                reason,
+                "File Notes Git mutation admission was refused",
+            )
+        status_cycle = self._status_cycle
+        cycle: asyncio.Task[GitActionResult] | None = None
+        try:
+            cycle = self._create_action_task(
+                self._run_unstage_cycle(
+                    binding,
+                    requested,
+                    repository,
+                    lease,
+                    status_cycle,
+                )
+            )
+            waiter = self._create_action_task(
+                self._shield_action_cycle(cycle)
+            )
+        except BaseException:
+            if cycle is not None:
+                cycle.cancel()
+            lease.release()
+            raise
+        self._action_cycle = cycle
+        self._action_waiter = waiter
+        cycle.add_done_callback(self._action_cycle_completed)
+        return waiter
+
+    async def _run_unstage_cycle(
+        self,
+        binding: SessionBinding,
+        requested: tuple[int, ...],
+        repository: RepositoryIdentity,
+        lease: GitMutationLease,
+        status_cycle: asyncio.Task[SessionGitStatus] | None,
+    ) -> GitActionResult:
+        try:
+            if status_cycle is not None and not status_cycle.done():
+                await asyncio.shield(status_cycle)
+            if self._sealed:
+                return GitActionResult(
+                    "unstage",
+                    "uncertain",
+                    requested,
+                    message="File Notes Git service shut down during Unstage",
+                )
+            inspection = await self._inspect_unstage(binding, repository)
+            if isinstance(inspection, GitActionResult):
+                return replace(
+                    inspection,
+                    action="unstage",
+                    requested_group_ids=requested,
+                    blocked_group_ids=(
+                        requested
+                        if inspection.state == "blocked"
+                        else inspection.blocked_group_ids
+                    ),
+                )
+            return await self._apply_unstage(binding, requested, inspection)
+        finally:
+            lease.release()
 
     async def _run_stage_cycle(
         self,
@@ -1528,8 +1771,107 @@ class FileNotesGitService:
             groups=groups,
             repository_groups=repository_groups,
             rows=rows,
+            index_sequence=index_sequence,
             index_entries=index_entries,
             status_records=status_records,
+        )
+
+    async def _inspect_unstage(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+    ) -> _StageInspection | GitActionResult:
+        """Read exact Unstage facts without imposing Stage worktree types."""
+        failure = lambda state, message: GitActionResult(  # noqa: E731
+            "unstage",
+            state,
+            (),
+            message=message,
+        )
+        snapshot = self._owner.snapshot(binding)
+        if (
+            snapshot.trusted_repository != repository
+            or not await self.revalidate_repository(binding, repository)
+        ):
+            return failure("stale", "Repository identity changed; trust was cleared")
+        root = self._safe_root(binding)
+        if root is None:
+            self._owner.clear_trust_if_matches(binding, repository)
+            return failure("stale", "Selected File Notes root is no longer safe")
+        sparse = await self._sparse_checkout_state(repository)
+        if sparse is None:
+            return failure("error", "Unable to verify sparse-checkout state")
+        if sparse:
+            return failure(
+                "blocked",
+                "Sparse checkout or sparse index is unsupported",
+            )
+
+        groups = coalesce_session_changes(snapshot.changes)
+        repository_groups: dict[int, SessionChangeGroup] = {}
+        invalid_rows: dict[int, SessionGitRow] = {}
+        for group in groups:
+            mapped, invalid = self._map_group_for_unstage(
+                root,
+                repository,
+                group,
+            )
+            if invalid is not None:
+                invalid_rows[group.group_id] = invalid
+            else:
+                assert mapped is not None
+                repository_groups[group.group_id] = mapped
+
+        raw = await self._read_raw_git_inspection(
+            root,
+            repository,
+            tuple(repository_groups.values()),
+        )
+        if isinstance(raw, _RawGitInspectionFailure):
+            if raw.revoke_ownership:
+                self._owner.clear_ownership(binding)
+            return failure(
+                (
+                    "uncertain"
+                    if raw.state in {"stale", "unavailable", "uncertain"}
+                    else "error"
+                ),
+                raw.message,
+            )
+        index_entries = _stage_zero_index(raw.index_entries)
+        ownership_by_id: dict[int, StagingOwnership] = {}
+        groups_by_id = {group.group_id: group for group in groups}
+        for group_id, owned in snapshot.staging_ownership.items():
+            original_group = groups_by_id.get(group_id)
+            repository_group = repository_groups.get(group_id)
+            if original_group is None or repository_group is None:
+                continue
+            mapped = _map_ownership_topology(
+                owned,
+                original_group,
+                repository_group,
+            )
+            if mapped is not None:
+                ownership_by_id[group_id] = mapped
+        rows = {
+            row.group_id: row
+            for row in classify_session_rows(
+                tuple(repository_groups.values()),
+                raw.status_records,
+                raw.index_entries,
+                ownership_by_id,
+            )
+        }
+        rows.update(invalid_rows)
+        return _StageInspection(
+            repository=repository,
+            head=raw.head,
+            groups=groups,
+            repository_groups=repository_groups,
+            rows=rows,
+            index_sequence=raw.index_entries,
+            index_entries=index_entries,
+            status_records=raw.status_records,
         )
 
     async def _apply_stage(
@@ -1867,6 +2209,288 @@ class FileNotesGitService:
                 str(error).encode("utf-8", "replace"),
             )
 
+    async def _apply_unstage(
+        self,
+        binding: SessionBinding,
+        requested: tuple[int, ...],
+        inspection: _StageInspection,
+    ) -> GitActionResult:
+        """Restore only exact saved baselines for valid selected ownership."""
+        snapshot = self._owner.snapshot(binding)
+        groups_by_id = {group.group_id: group for group in inspection.groups}
+        valid: list[int] = []
+        blocked: list[int] = []
+        revoked: list[int] = []
+        selected_ownership: dict[int, StagingOwnership] = {}
+        mapped_ownership: dict[int, StagingOwnership] = {}
+
+        for group_id in requested:
+            owned = snapshot.staging_ownership.get(group_id)
+            group = groups_by_id.get(group_id)
+            repository_group = inspection.repository_groups.get(group_id)
+            row = inspection.rows.get(group_id)
+            if (
+                owned is None
+                or group is None
+                or repository_group is None
+                or row is None
+            ):
+                blocked.append(group_id)
+                continue
+            mapped = _map_ownership_topology(
+                owned,
+                group,
+                repository_group,
+            )
+            if (
+                mapped is None
+                or owned.topology_signature != group.topology_signature
+            ):
+                blocked.append(group_id)
+                continue
+            if any(
+                entry.stage != 0
+                and entry.path in repository_group.endpoints
+                for entry in inspection.index_sequence
+            ):
+                blocked.append(group_id)
+                revoked.append(group_id)
+                continue
+            if not ownership_signature_matches(
+                mapped,
+                repository=inspection.repository,
+                head=inspection.head,
+                topology=repository_group.topology_signature,
+                current_index_entries=inspection.index_entries,
+            ):
+                blocked.append(group_id)
+                revoked.append(group_id)
+                continue
+            if (
+                not row.unstage_eligible
+                or not unstage_group_is_closed(
+                    repository_group,
+                    mapped.original_baselines,
+                    inspection.index_entries,
+                    mapped,
+                )
+            ):
+                blocked.append(group_id)
+                continue
+            valid.append(group_id)
+            selected_ownership[group_id] = owned
+            mapped_ownership[group_id] = mapped
+
+        if revoked and not self._owner.publish_unstage_result(
+            binding,
+            inspection.repository,
+            {
+                group_id: snapshot.staging_ownership[group_id]
+                for group_id in revoked
+            },
+            revoked,
+        ):
+            return GitActionResult(
+                "unstage",
+                "uncertain",
+                requested,
+                blocked_group_ids=requested,
+                message="Unstage ownership changed during preflight",
+            )
+        if not valid:
+            return GitActionResult(
+                "unstage",
+                "blocked",
+                requested,
+                blocked_group_ids=tuple(blocked),
+                message="No requested session group is eligible for Unstage",
+            )
+        if not await self.revalidate_repository(binding, inspection.repository):
+            self._owner.clear_ownership(binding)
+            return GitActionResult(
+                "unstage",
+                "stale",
+                requested,
+                blocked_group_ids=tuple(valid + blocked),
+                message="Repository identity changed before Unstage",
+            )
+
+        try:
+            payload = _build_combined_update_index_payload(
+                tuple(mapped_ownership[group_id] for group_id in valid),
+                inspection.index_entries,
+            )
+        except ValueError as error:
+            self._owner.publish_unstage_result(
+                binding,
+                inspection.repository,
+                selected_ownership,
+                valid,
+            )
+            return GitActionResult(
+                "unstage",
+                "blocked",
+                requested,
+                blocked_group_ids=tuple(valid + blocked),
+                message=str(error),
+            )
+        result = await self._run_unstage_command(
+            inspection.repository,
+            build_unstage_argv(self._git_executable_or_raise()),
+            payload,
+        )
+        postflight = await self._read_unstage_postflight(
+            binding,
+            inspection.repository,
+        )
+        if isinstance(postflight, GitActionResult):
+            if self._owner.snapshot(binding).trusted_repository == inspection.repository:
+                self._owner.publish_unstage_result(
+                    binding,
+                    inspection.repository,
+                    selected_ownership,
+                    valid,
+                )
+            self._owner.clear_status(binding)
+            return replace(
+                postflight,
+                requested_group_ids=requested,
+                blocked_group_ids=tuple(valid + blocked),
+            )
+        post_head, post_index = postflight
+        latest_groups = {
+            group.group_id: group
+            for group in coalesce_session_changes(
+                self._owner.snapshot(binding).changes
+            )
+        }
+        verified = (
+            _command_succeeded(result)
+            and post_head == inspection.head
+            and all(
+                latest_groups.get(group_id) is not None
+                and latest_groups[group_id].topology_signature
+                == groups_by_id[group_id].topology_signature
+                and _baseline_matches_index(
+                    mapped_ownership[group_id],
+                    post_index,
+                )
+                for group_id in valid
+            )
+        )
+        if not verified:
+            if not self._owner.publish_unstage_result(
+                binding,
+                inspection.repository,
+                selected_ownership,
+                valid,
+            ):
+                self._owner.clear_ownership(binding)
+            return GitActionResult(
+                "unstage",
+                (
+                    "uncertain"
+                    if result.termination_uncertain or _command_succeeded(result)
+                    else "error"
+                ),
+                requested,
+                blocked_group_ids=tuple(valid + blocked),
+                message=(
+                    "Unstage postflight did not verify the saved baseline"
+                    if _command_succeeded(result)
+                    else _command_failure_message(result, "Git Unstage failed")
+                ),
+            )
+        if not self._owner.publish_unstage_result(
+            binding,
+            inspection.repository,
+            selected_ownership,
+            valid,
+        ):
+            return GitActionResult(
+                "unstage",
+                "uncertain",
+                requested,
+                blocked_group_ids=tuple(valid + blocked),
+                message="Unstage result no longer matches the selected session",
+            )
+        return GitActionResult(
+            "unstage",
+            "success",
+            requested,
+            unstaged_group_ids=tuple(valid),
+            blocked_group_ids=tuple(blocked),
+        )
+
+    async def _read_unstage_postflight(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+    ) -> tuple[HeadIdentity, Mapping[str, IndexEntry]] | GitActionResult:
+        if not await self.revalidate_repository(binding, repository):
+            return GitActionResult(
+                "unstage",
+                "uncertain",
+                (),
+                message="Repository identity changed after Unstage",
+            )
+        root = self._safe_root(binding)
+        if root is None:
+            return GitActionResult(
+                "unstage",
+                "uncertain",
+                (),
+                message="Selected File Notes root changed after Unstage",
+            )
+        head = await self._read_head(root)
+        if isinstance(head, _HeadReadFailure):
+            return GitActionResult(
+                "unstage",
+                "uncertain",
+                (),
+                message=head.message,
+            )
+        index_result = await self._run_unstage_command(
+            repository,
+            build_index_argv(self._git_executable_or_raise()),
+            None,
+        )
+        if not _command_succeeded(index_result):
+            return GitActionResult(
+                "unstage",
+                "uncertain",
+                (),
+                message=_command_failure_message(
+                    index_result,
+                    "Git post-Unstage index read failed",
+                ),
+            )
+        try:
+            entries = parse_index_entries_z(index_result.stdout)
+        except GitIndexParseError as error:
+            return GitActionResult("unstage", "uncertain", (), message=str(error))
+        return head, _stage_zero_index(entries)
+
+    async def _run_unstage_command(
+        self,
+        repository: RepositoryIdentity,
+        argv: Sequence[GitArg],
+        stdin: bytes | None,
+    ) -> GitCommandResult:
+        try:
+            return await self._runner.run(
+                argv,
+                cwd=repository.worktree_root,
+                environment=build_git_environment(self._environment),
+                stdin=stdin,
+            )
+        except OSError as error:
+            return GitCommandResult(
+                127,
+                b"",
+                str(error).encode("utf-8", "replace"),
+            )
+
     async def _sparse_checkout_state(
         self,
         repository: RepositoryIdentity,
@@ -1951,6 +2575,99 @@ class FileNotesGitService:
                     disabled_reason=problem,
                 )
             assert mapped is not None
+            mapping[endpoint] = mapped
+        return (
+            replace(
+                group,
+                endpoints=tuple(mapping[path] for path in group.endpoints),
+                source_path=mapping[group.source_path],
+                destination_path=(
+                    None
+                    if group.destination_path is None
+                    else mapping[group.destination_path]
+                ),
+                current_path=mapping[group.current_path],
+                move_edges=tuple(
+                    (mapping[source], mapping[destination])
+                    for source, destination in group.move_edges
+                ),
+            ),
+            None,
+        )
+
+    def _map_group_for_unstage(
+        self,
+        notes_root: Path,
+        repository: RepositoryIdentity,
+        group: SessionChangeGroup,
+    ) -> tuple[SessionChangeGroup | None, SessionGitRow | None]:
+        """Map safe endpoint text without rejecting owned replacements."""
+        worktree_root = Path(repository.worktree_root)
+        try:
+            root_prefix = notes_root.relative_to(worktree_root)
+        except ValueError:
+            return None, SessionGitRow(
+                group,
+                "unsupported",
+                disabled_reason="Unsafe File Notes path",
+            )
+        mapping: dict[str, str] = {}
+        for endpoint in group.endpoints:
+            components = endpoint.split("/")
+            if (
+                not endpoint
+                or endpoint.startswith("/")
+                or "\0" in endpoint
+                or ".git" in components
+                or any(component in {"", ".", ".."} for component in components)
+            ):
+                return None, SessionGitRow(
+                    group,
+                    "unsupported",
+                    disabled_reason="Unsafe File Notes path",
+                )
+            for depth in range(1, len(components) + 1):
+                boundary = notes_root.joinpath(*components[:depth])
+                try:
+                    boundary_stat = boundary.stat(follow_symlinks=False)
+                except (FileNotFoundError, NotADirectoryError):
+                    continue
+                except OSError:
+                    return None, SessionGitRow(
+                        group,
+                        "unsupported",
+                        disabled_reason="Unsafe File Notes path",
+                    )
+                if stat.S_ISLNK(boundary_stat.st_mode):
+                    return None, SessionGitRow(
+                        group,
+                        "unsupported",
+                        disabled_reason="Unsafe File Notes path",
+                    )
+                if stat.S_ISDIR(boundary_stat.st_mode):
+                    try:
+                        (boundary / ".git").stat(follow_symlinks=False)
+                    except FileNotFoundError:
+                        pass
+                    except OSError:
+                        return None, SessionGitRow(
+                            group,
+                            "unsupported",
+                            disabled_reason="Unsafe nested repository boundary",
+                        )
+                    else:
+                        return None, SessionGitRow(
+                            group,
+                            "nested_repository",
+                            disabled_reason="Nested repository unsupported",
+                        )
+            mapped = root_prefix.joinpath(*components).as_posix()
+            if not mapped or mapped == ".":
+                return None, SessionGitRow(
+                    group,
+                    "unsupported",
+                    disabled_reason="Unsafe File Notes path",
+                )
             mapping[endpoint] = mapped
         return (
             replace(
