@@ -1,6 +1,8 @@
 # audio_service.py
 # Description: Audio processing and format conversion service for TTS
 #
+from __future__ import annotations
+
 # Imports
 import io
 import os

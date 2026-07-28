@@ -31,6 +31,62 @@ def _require_identifier(name: str, value: str) -> None:
         raise ValueError(f"{name} must not be empty")
 
 
+def _require_exact_identifier(
+    name: str,
+    value: object,
+    *,
+    nullable: bool = False,
+) -> None:
+    if value is None and nullable:
+        return
+    if type(value) is not str or not value:
+        raise ValueError(f"{name} must not be empty")
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeError:
+        raise ValueError(f"{name} is invalid") from None
+
+
+@dataclass(frozen=True, slots=True)
+class TTSRequestedSelectionSnapshot:
+    """Immutable text-free provenance for one exact admitted native request."""
+
+    provider_id: str
+    model_id: str
+    voice_id: str | None
+    response_format: str
+    speed: float
+    options: Mapping[str, Any]
+    configuration_revision: int
+
+    def __post_init__(self) -> None:
+        _require_exact_identifier("provider_id", self.provider_id)
+        if self.provider_id != "audio_cpp":
+            raise ValueError("Requested selection requires exact audio_cpp provider")
+        _require_exact_identifier("model_id", self.model_id)
+        _require_exact_identifier("voice_id", self.voice_id, nullable=True)
+        _require_exact_identifier("response_format", self.response_format)
+        if self.response_format != "wav":
+            raise ValueError("Requested selection requires WAV format")
+        if type(self.speed) is not float or self.speed != 1.0:
+            raise ValueError("Requested selection requires speed 1.0")
+        if not isinstance(self.options, Mapping):
+            raise TypeError("options must be a mapping")
+        try:
+            next(iter(self.options))
+        except StopIteration:
+            pass
+        except Exception:
+            raise TypeError("options must be an empty mapping") from None
+        else:
+            raise ValueError("Requested selection options must be empty")
+        if type(self.configuration_revision) is not int:
+            raise TypeError("configuration_revision must be an integer")
+        if self.configuration_revision < 0:
+            raise ValueError("configuration_revision must be nonnegative")
+        object.__setattr__(self, "options", MappingProxyType({}))
+
+
 @dataclass(frozen=True, slots=True)
 class STTSPlaygroundRequest:
     """Immutable snapshot of one Playground generation request."""
@@ -67,6 +123,7 @@ class STTSGeneratedAudio:
     audio_format: str
     content_type: str
     metadata: Mapping[str, AudioMetadataValue] = field(default_factory=dict)
+    requested_selection: TTSRequestedSelectionSnapshot | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -83,8 +140,20 @@ class STTSGeneratedAudio:
             "metadata",
             MappingProxyType(deepcopy(dict(self.metadata))),
         )
+        if (
+            self.requested_selection is not None
+            and type(self.requested_selection) is not TTSRequestedSelectionSnapshot
+        ):
+            raise TypeError(
+                "requested_selection must be a requested selection snapshot"
+            )
 
     @property
     def file_suffix(self) -> str:
         """Return the suffix implied by the actual response format."""
         return f".{self.audio_format.removeprefix('.')}"
+
+    @property
+    def profile_save_eligible(self) -> bool:
+        """Return whether exact native request provenance can seed a profile."""
+        return type(self.requested_selection) is TTSRequestedSelectionSnapshot

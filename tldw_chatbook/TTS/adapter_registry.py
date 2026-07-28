@@ -20,6 +20,8 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderSpec,
     TTSProviderUnavailableError,
     TTSRegistryClosedError,
+    TTSStructuredVoiceAdapter,
+    TTSVoiceDiscoveryResult,
     UnknownTTSProviderError,
 )
 
@@ -242,6 +244,24 @@ class TTSAdapterRegistry:
         lease = await self.acquire(provider_id)
         try:
             return await lease.adapter.get_voices(model_id, refresh=refresh)
+        finally:
+            await lease.release()
+
+    async def observe_voices(
+        self,
+        provider_id: str,
+        model_id: str,
+        refresh: bool = False,
+    ) -> TTSVoiceDiscoveryResult:
+        """Return one structured native voice observation under a registry lease."""
+        lease = await self.acquire(provider_id)
+        try:
+            adapter = lease.adapter
+            if not isinstance(adapter, TTSStructuredVoiceAdapter):
+                raise TypeError(
+                    "TTS provider does not expose structured voice discovery"
+                )
+            return await adapter.observe_voices(model_id, refresh=refresh)
         finally:
             await lease.release()
 

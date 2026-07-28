@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import ast
+import asyncio
 import builtins
 import gc
 import threading
@@ -13,10 +13,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-import tldw_chatbook.TTS as tts_package
 import tldw_chatbook.app as app_module
+import tldw_chatbook.TTS as tts_package
 from Tests.TTS.adapter_fakes import FakeAdapterFactory, provider_spec
 from Tests.UI.test_screen_navigation import _build_test_app
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
@@ -38,8 +39,6 @@ from tldw_chatbook.TTS.TTS_Generation import (
     get_tts_service,
     reset_tts_service_binding,
 )
-from tldw_chatbook.app import TldwCli
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -557,6 +556,206 @@ def test_only_application_constructs_profile_repository() -> None:
             constructor_calls.append(path)
 
     assert constructor_calls == [REPO_ROOT / "tldw_chatbook/app.py"]
+
+
+def test_app_construction_defers_profile_service() -> None:
+    constructor = _method_node(
+        REPO_ROOT / "tldw_chatbook/app.py",
+        "TldwCli",
+        "__init__",
+    )
+    deferred_assignments = [
+        node
+        for node in ast.walk(constructor)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Attribute)
+        and isinstance(node.target.value, ast.Name)
+        and node.target.value.id == "self"
+        and node.target.attr == "_tts_profile_service"
+    ]
+    profile_service_calls = [
+        node
+        for node in ast.walk(constructor)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "TTSProfileService"
+    ]
+
+    assert len(deferred_assignments) == 1
+    assert ast.unparse(deferred_assignments[0].annotation) == (
+        "TTSProfileService | None"
+    )
+    assert isinstance(deferred_assignments[0].value, ast.Constant)
+    assert deferred_assignments[0].value.value is None
+    assert profile_service_calls == []
+
+
+@pytest.mark.asyncio
+async def test_profile_service_concurrent_first_use_joins_one_open_and_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    open_started = asyncio.Event()
+    allow_open = asyncio.Event()
+
+    class BlockingRepository:
+        state = ProfileRepositoryState.CLOSED
+        open_calls = 0
+
+        async def open(self) -> None:
+            self.open_calls += 1
+            open_started.set()
+            await allow_open.wait()
+            self.state = ProfileRepositoryState.OPEN
+
+    repository = BlockingRepository()
+    tts_service = object()
+    profile_service = object()
+    constructions: list[tuple[object, object]] = []
+
+    def build_profile_service(
+        repository_dependency: object,
+        tts_dependency: object,
+    ) -> object:
+        assert repository.state is ProfileRepositoryState.OPEN
+        constructions.append((repository_dependency, tts_dependency))
+        return profile_service
+
+    monkeypatch.setattr(
+        app_module,
+        "TTSProfileService",
+        build_profile_service,
+        raising=False,
+    )
+    owner: Any = SimpleNamespace(
+        _tts_profile_repository=repository,
+        _tts_profile_repository_open_task=None,
+        _tts_profile_repository_close_task=None,
+        tts_service=tts_service,
+        loguru_logger=Mock(),
+    )
+
+    async def ensure_repository() -> object | None:
+        return await TldwCli._ensure_tts_profile_repository(owner)
+
+    owner._ensure_tts_profile_repository = ensure_repository
+
+    first = asyncio.create_task(TldwCli._ensure_tts_profile_service(owner))
+    second = asyncio.create_task(TldwCli._ensure_tts_profile_service(owner))
+    await open_started.wait()
+    first.cancel("one profile-service waiter stopped")
+
+    with pytest.raises(
+        asyncio.CancelledError,
+        match="one profile-service waiter stopped",
+    ):
+        await first
+    assert second.done() is False
+    assert constructions == []
+
+    allow_open.set()
+
+    assert await second is profile_service
+    assert await TldwCli._ensure_tts_profile_service(owner) is profile_service
+    assert repository.open_calls == 1
+    assert constructions == [(repository, tts_service)]
+    assert owner._tts_profile_service is profile_service
+
+
+@pytest.mark.asyncio
+async def test_profile_service_store_open_failure_leaves_ordinary_tts_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tts_service = FakeOwnedService()
+
+    async def unavailable_repository() -> None:
+        return None
+
+    constructor = Mock(
+        side_effect=AssertionError(
+            "profile service must not be constructed without its repository"
+        )
+    )
+    monkeypatch.setattr(
+        app_module,
+        "TTSProfileService",
+        constructor,
+        raising=False,
+    )
+    owner: Any = SimpleNamespace(
+        _ensure_tts_profile_repository=unavailable_repository,
+        tts_service=tts_service,
+        _tts_binding_active=True,
+    )
+
+    result = await TldwCli._ensure_tts_profile_service(owner)
+
+    assert result is None
+    assert getattr(owner, "_tts_profile_service", None) is None
+    assert owner.tts_service is tts_service
+    assert owner._tts_binding_active is True
+    assert tts_service.close_calls == 0
+    assert tts_service.wait_closed_calls == 0
+    constructor.assert_not_called()
+
+
+def test_profile_service_owns_only_existing_app_dependencies() -> None:
+    class FocusedRepository:
+        generation = 1
+
+        async def list_profiles(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("not used")
+
+        async def create_profile(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("not used")
+
+        async def update_profile(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("not used")
+
+        async def delete_profile(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("not used")
+
+        async def assignment_count(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("not used")
+
+    class FocusedTTSService:
+        def configuration_revision(self, provider_id: str) -> int:
+            raise AssertionError(provider_id)
+
+        async def get_native_capability_snapshot(
+            self,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            raise AssertionError("not used")
+
+        async def require_current_configuration_revision(
+            self,
+            *args: Any,
+            **kwargs: Any,
+        ) -> None:
+            raise AssertionError("not used")
+
+    repository = FocusedRepository()
+    tts_service = FocusedTTSService()
+
+    profile_service = tts_package.TTSProfileService(repository, tts_service)
+
+    assert vars(profile_service) == {
+        "_repository": repository,
+        "_tts_service": tts_service,
+    }
+    for resource_name in (
+        "_close_task",
+        "_adapter",
+        "_registry",
+        "_executor",
+        "_connection",
+        "close",
+        "shutdown",
+        "wait_closed",
+    ):
+        assert not hasattr(profile_service, resource_name)
+    assert not hasattr(TldwCli, "_close_tts_profile_service")
 
 
 def test_app_constructs_one_tts_service(

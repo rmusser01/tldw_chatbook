@@ -39,9 +39,12 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSAudioBookGenerateEvent,
 )
 from tldw_chatbook.TTS import (
+    ProfileAvailabilityState,
     STTSGeneratedAudio,
     STTSPlaygroundRequest,
+    TTSPlaygroundSelectionPreset,
     TTSPreferencesSnapshot,
+    TTSProfileService,
     get_tts_service,
 )
 from tldw_chatbook.TTS.adapter_types import (
@@ -49,6 +52,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSProviderReconfiguringError,
     TTSRegistryClosedError,
+    TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.legacy_catalogs import (
@@ -63,12 +67,23 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     LOADING_SELECT_VALUE,
     PlaygroundControls,
     SERVER_DEFAULT_VOICE_ID,
+    SERVER_DEFAULT_VOICE_LABEL,
     UNAVAILABLE_SELECT_VALUE,
     SelectSentinel,
     SelectValue,
     controls_from_catalog,
+    controls_from_profile_preset,
+    profile_availability_from_catalog,
     provider_options,
     voice_id_for_request,
+)
+from tldw_chatbook.UI.stts_profile_library import (
+    PROFILE_ACTION_FAILED_COPY,
+    PROFILE_STORE_UNAVAILABLE_COPY,
+    ProfilePreviewRequested,
+    STTSProfileLibrary,
+    TTSProfileNameModal,
+    profile_action_error_copy,
 )
 from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
@@ -92,6 +107,11 @@ import json
 #######################################################################################################################
 #
 # Classes:
+
+_PROFILE_RESULT_STALE_COPY = (
+    "TTS settings changed after this audio was generated. Generate a new "
+    "result before saving it as a profile."
+)
 
 
 class TTSPlaygroundWidget(Widget):
@@ -119,6 +139,25 @@ class TTSPlaygroundWidget(Widget):
     .form-row {
         height: 3;
         margin-bottom: 1;
+    }
+
+    Select.profile-exact-select {
+        height: 3;
+        min-height: 3;
+        max-height: 3;
+    }
+
+    Select.profile-exact-select > SelectCurrent {
+        height: 3;
+        min-height: 3;
+        max-height: 3;
+    }
+
+    Select.profile-exact-select > SelectCurrent > Static#label {
+        height: 1;
+        max-height: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     
     #kokoro-language-row {
@@ -158,9 +197,34 @@ class TTSPlaygroundWidget(Widget):
         margin: 1 0;
         text-style: italic;
     }
+
+    #tts-profile-preview-status {
+        width: 100%;
+        height: auto;
+        max-height: 4;
+        padding: 0 1;
+        margin-bottom: 1;
+        background: $boost;
+    }
+
+    #tts-profile-preview-status.profile-preview-available {
+        color: $success;
+    }
+
+    #tts-profile-preview-status.profile-preview-loading {
+        color: $text-muted;
+    }
+
+    #tts-profile-preview-status.profile-preview-unverified {
+        color: $warning;
+    }
+
+    #tts-profile-preview-status.profile-preview-unavailable {
+        color: $error;
+    }
     
     .audio-player {
-        height: 10;
+        height: 11;
         border: solid $primary;
         padding: 1;
         margin-top: 1;
@@ -233,8 +297,18 @@ class TTSPlaygroundWidget(Widget):
     }
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        profile_preset: TTSPlaygroundSelectionPreset | None = None,
+    ) -> None:
         super().__init__()
+        self._profile_preset = profile_preset
+        self._profile_effective_availability: ProfileAvailabilityState | None = (
+            profile_preset.availability if profile_preset is not None else None
+        )
+        self._profile_preview_loading = profile_preset is not None
+        self._profile_configuration_revision: int | None = None
+        self._profile_voice_validation_token: CatalogRequestToken | None = None
         self.current_audio_file = None
         self.current_audio_artifact: STTSGeneratedAudio | None = None
         self.reference_audio_path = None
@@ -261,6 +335,9 @@ class TTSPlaygroundWidget(Widget):
         self._applied_voice_id: SelectValue | None = None
         self._applied_format: str | None = None
         self._generation_operation_id: str | None = None
+        self._profile_save_suppressed = False
+        self._profile_controls_applied = profile_preset is None
+        self._active_profile_name_modal: TTSProfileNameModal | None = None
         self.example_texts = [
             "Welcome to the Text-to-Speech playground! This is where you can experiment with different voices, providers, and settings to create natural-sounding speech.",
             "The quick brown fox jumps over the lazy dog. This pangram contains all letters of the alphabet.",
@@ -273,6 +350,11 @@ class TTSPlaygroundWidget(Widget):
         """Compose the TTS Playground UI"""
         with ScrollableContainer(classes="tts-playground-container"):
             yield Label("🎤 TTS Playground", classes="section-title")
+            yield Static(
+                "",
+                id="tts-profile-preview-status",
+                classes="hidden",
+            )
 
             # Text input area
             with Vertical(classes="text-input-container"):
@@ -616,6 +698,12 @@ class TTSPlaygroundWidget(Widget):
                     yield Button("⏸️ Pause", id="pause-audio-btn", disabled=True)
                     yield Button("⏹️ Stop", id="stop-audio-btn", disabled=True)
                     yield Button("💾 Export", id="audio-export-btn", disabled=True)
+                yield Button(
+                    "Save result as profile",
+                    id="audio-save-profile-btn",
+                    classes="hidden",
+                    disabled=True,
+                )
 
             # Generation status and progress
             with Container(
@@ -645,10 +733,19 @@ class TTSPlaygroundWidget(Widget):
     def on_mount(self) -> None:
         """Load provider descriptors and only the selected provider catalog."""
         self._rehydrate_handler_state()
+        if self._profile_preset is not None:
+            self._prime_profile_preset_controls()
+            self.query_one("#tts-text-input", TextArea).focus()
+        else:
+            self._sync_profile_preview_status()
         self._load_provider_catalog(initialize=True)
 
     async def on_unmount(self) -> None:
         """Clean up resources when widget is unmounted"""
+        modal = self._active_profile_name_modal
+        if modal is not None:
+            self._dismiss_profile_name_modal(modal)
+        self._active_profile_name_modal = None
         try:
             self.app.workers.cancel_group(self, "stts-catalog-discovery")
             self.app.workers.cancel_group(self, "stts-voice-discovery")
@@ -691,6 +788,10 @@ class TTSPlaygroundWidget(Widget):
     ) -> None:
         """Reserve request identity before starting exclusive catalog work."""
         target = provider_id or self._selected_provider_id
+        preset = self._profile_preset
+        if preset is not None and target == preset.provider_id:
+            self._profile_preview_loading = True
+            self._sync_profile_preview_status()
         request_generation = (
             self._reserve_catalog_request(target) if isinstance(target, str) else None
         )
@@ -722,6 +823,7 @@ class TTSPlaygroundWidget(Widget):
     ) -> None:
         """Load descriptors and one selected provider catalog."""
         token: CatalogRequestToken | None = None
+        profile_voice_token: CatalogRequestToken | None = None
         try:
             if self._tts_service is None:
                 self._tts_service = await get_tts_service()
@@ -731,6 +833,7 @@ class TTSPlaygroundWidget(Widget):
                 descriptors = service.provider_descriptors()
                 options = provider_options(descriptors)
                 if not options:
+                    self._profile_preview_loading = False
                     self._set_provider_status("No TTS providers are registered")
                     return
                 self._provider_ids = frozenset(value for _label, value in options)
@@ -745,11 +848,16 @@ class TTSPlaygroundWidget(Widget):
                     "default_provider",
                     options[0][1],
                 )
-                selected = (
-                    configured_default
-                    if configured_default in self._provider_ids
-                    else options[0][1]
+                preset_provider = (
+                    self._profile_preset.provider_id
+                    if self._profile_preset is not None
+                    else None
                 )
+                selected = options[0][1]
+                if configured_default in self._provider_ids:
+                    selected = configured_default
+                if preset_provider in self._provider_ids:
+                    selected = preset_provider
                 self._selected_provider_id = selected
                 self._applying_catalog_controls = True
                 try:
@@ -765,6 +873,8 @@ class TTSPlaygroundWidget(Widget):
             if provider_id is None or provider_id not in getattr(
                 self, "_provider_ids", ()
             ):
+                self._profile_preview_loading = False
+                self._sync_profile_preview_status()
                 return
 
             configuration_revision = service.configuration_revision(provider_id)
@@ -775,6 +885,9 @@ class TTSPlaygroundWidget(Widget):
                 configuration_revision=configuration_revision,
                 request_generation=request_generation,
             )
+            preset = self._profile_preset
+            if preset is not None and preset.provider_id == provider_id:
+                self._profile_configuration_revision = configuration_revision
             self._set_provider_status("Loading selected provider models…")
             catalog = await service.get_catalog(provider_id, refresh=refresh)
             if not self._catalog_token_is_current(token):
@@ -788,6 +901,7 @@ class TTSPlaygroundWidget(Widget):
                 )
                 return
 
+            self._profile_preview_loading = False
             previous_catalog = self._catalogs.get(provider_id)
             if (
                 previous_catalog is not None
@@ -801,7 +915,46 @@ class TTSPlaygroundWidget(Widget):
             self._catalogs[provider_id] = catalog
             self._catalog_configuration_revisions[provider_id] = configuration_revision
             self._stale_providers.discard(provider_id)
+            preset = self._profile_preset
+            if preset is not None and preset.provider_id == provider_id:
+                self._profile_effective_availability = (
+                    profile_availability_from_catalog(preset, catalog)
+                )
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and preset.voice_id is not None
+                and self._profile_effective_availability != "unavailable"
+            ):
+                profile_voice_token = self._reserve_voice_request_token(
+                    provider_id,
+                    preset.model_id,
+                    catalog.revision,
+                )
+                self._profile_voice_validation_token = profile_voice_token
             self._apply_catalog(provider_id, catalog)
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and catalog.health.state == "closed"
+            ):
+                self._stale_providers.add(provider_id)
+                self._catalog_generation_allowed = False
+                if self._profile_effective_availability != "unavailable":
+                    self._set_provider_status("The TTS service is unavailable")
+                self._sync_generate_enabled()
+                if profile_voice_token is not None:
+                    self._clear_profile_voice_validation(profile_voice_token)
+                return
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and (
+                    self._profile_effective_availability == "unavailable"
+                    or preset.voice_id is None
+                )
+            ):
+                return
 
             model_id = self._current_select_value("#tts-model-select")
             if isinstance(model_id, str):
@@ -810,19 +963,38 @@ class TTSPlaygroundWidget(Widget):
                     model_id,
                     catalog.revision,
                     refresh=refresh,
+                    request_token=profile_voice_token,
                 )
+            elif profile_voice_token is not None:
+                self._clear_profile_voice_validation(profile_voice_token)
         except asyncio.CancelledError:
+            if profile_voice_token is not None:
+                self._clear_profile_voice_validation(profile_voice_token)
             raise
         except Exception as error:
+            if profile_voice_token is not None:
+                self._clear_profile_voice_validation(profile_voice_token)
             target = provider_id or self._selected_provider_id
             if token is not None and not self._catalog_token_is_current(token):
                 if self._catalog_request_is_latest(token):
                     self._mark_stale_catalog_result(token)
                 return
             if target is not None:
+                exact_attempt_allowed = (
+                    self._tts_service is not None
+                    and not isinstance(
+                        error,
+                        TTSRegistryClosedError,
+                    )
+                    and not (
+                        isinstance(error, TTSOperationError)
+                        and error.code in {"configuration_invalid", "not_configured"}
+                    )
+                )
                 self._catalog_failure(
                     target,
                     self._catalog_error_copy(error, target),
+                    exact_attempt_allowed=exact_attempt_allowed,
                 )
 
     def _load_provider_voices(
@@ -832,16 +1004,53 @@ class TTSPlaygroundWidget(Widget):
         catalog_revision: int,
         *,
         refresh: bool = False,
+        request_token: CatalogRequestToken | None = None,
     ) -> None:
         """Reserve request identity before starting exclusive voice work."""
-        request_key = (provider_id, model_id)
-        request_generation = self._voice_request_generations.get(request_key, 0) + 1
-        self._voice_request_generations[request_key] = request_generation
+        token = request_token or self._reserve_voice_request_token(
+            provider_id,
+            model_id,
+            catalog_revision,
+        )
+        preset = self._profile_preset
+        if (
+            preset is not None
+            and preset.provider_id == provider_id
+            and preset.model_id == model_id
+            and preset.voice_id is not None
+        ):
+            self._profile_voice_validation_token = token
+            self._sync_profile_preview_status()
+            self._sync_generate_enabled()
         self._load_provider_voices_worker(
             provider_id,
             model_id,
             catalog_revision,
             refresh=refresh,
+            request_token=token,
+        )
+
+    def _reserve_voice_request_token(
+        self,
+        provider_id: str,
+        model_id: str,
+        catalog_revision: int,
+    ) -> CatalogRequestToken:
+        """Reserve one voice request and capture its catalog authority."""
+        request_key = (provider_id, model_id)
+        request_generation = self._voice_request_generations.get(request_key, 0) + 1
+        self._voice_request_generations[request_key] = request_generation
+        configuration_revision = self._catalog_configuration_revisions.get(provider_id)
+        if configuration_revision is None:
+            service = self._tts_service
+            if service is None:
+                raise TTSRegistryClosedError("The TTS service is unavailable")
+            configuration_revision = service.configuration_revision(provider_id)
+        return CatalogRequestToken(
+            provider_id=provider_id,
+            configuration_revision=configuration_revision,
+            catalog_revision=catalog_revision,
+            model_id=model_id,
             request_generation=request_generation,
         )
 
@@ -857,35 +1066,85 @@ class TTSPlaygroundWidget(Widget):
         catalog_revision: int,
         *,
         refresh: bool = False,
-        request_generation: int,
+        request_token: CatalogRequestToken,
     ) -> None:
         """Load voices for only the selected provider model."""
-        service = self._tts_service
-        if service is None:
-            return
-        token = CatalogRequestToken(
-            provider_id=provider_id,
-            configuration_revision=service.configuration_revision(provider_id),
-            catalog_revision=catalog_revision,
-            model_id=model_id,
-            request_generation=request_generation,
-        )
         try:
-            voices = await service.get_voices(
-                provider_id,
-                model_id,
-                refresh=refresh,
-            )
+            service = self._tts_service
+            if service is None:
+                self._clear_profile_voice_validation(request_token)
+                return
+            observation: TTSVoiceDiscoveryResult | None = None
+            preset = self._profile_preset
+            observe_voices = getattr(service, "observe_voices", None)
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and provider_id == AUDIO_CPP_PROVIDER_ID
+                and callable(observe_voices)
+            ):
+                observation = await observe_voices(
+                    provider_id,
+                    model_id,
+                    refresh=refresh,
+                )
+                if (
+                    type(observation) is not TTSVoiceDiscoveryResult
+                    or observation.provider_id != provider_id
+                    or observation.model_id != model_id
+                    or observation.catalog_revision != catalog_revision
+                ):
+                    raise ValueError(
+                        "The selected provider returned incompatible voice metadata"
+                    )
+                voices = observation.voices if observation.state == "complete" else ()
+            else:
+                voices = await service.get_voices(
+                    provider_id,
+                    model_id,
+                    refresh=refresh,
+                )
         except asyncio.CancelledError:
+            self._clear_profile_voice_validation(request_token)
             raise
         except Exception as error:
-            if not self._voice_token_is_current(token):
+            self._clear_profile_voice_validation(request_token)
+            if not self._voice_token_is_current(request_token):
                 return
             if isinstance(
                 error,
                 (TTSProviderReconfiguringError, TTSRegistryClosedError),
             ):
                 if provider_id == self._selected_provider_id:
+                    preset = self._profile_preset
+                    if preset is not None and preset.provider_id == provider_id:
+                        if self._profile_effective_availability != "unavailable":
+                            self._profile_effective_availability = "unverified"
+                        if (
+                            isinstance(error, TTSProviderReconfiguringError)
+                            and self._profile_effective_availability != "unavailable"
+                        ):
+                            self._stale_providers.add(provider_id)
+                            self._catalog_generation_allowed = True
+                            self._set_provider_status(
+                                "Profile availability is unverified. Generate makes "
+                                "one exact attempt without fallback and shows a warning."
+                            )
+                            self._sync_generate_enabled()
+                            return
+                        self._stale_providers.add(provider_id)
+                        self._catalog_generation_allowed = False
+                        if self._profile_effective_availability == "unavailable":
+                            self._set_provider_status(
+                                "The exact profile selection is unavailable. Return "
+                                "to Voice profiles and choose Edit."
+                            )
+                        else:
+                            self._set_provider_status(
+                                self._catalog_error_copy(error, provider_id)
+                            )
+                        self._sync_generate_enabled()
+                        return
                     self._stale_providers.add(provider_id)
                     self._catalog_generation_allowed = False
                     self._set_provider_status(
@@ -903,19 +1162,68 @@ class TTSPlaygroundWidget(Widget):
                 SERVER_DEFAULT_VOICE_ID
             )
             catalog = self._catalogs.get(provider_id)
+            preset = self._profile_preset
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and self._profile_effective_availability != "unavailable"
+            ):
+                self._profile_effective_availability = "unverified"
             if catalog is not None:
                 self._apply_catalog(provider_id, catalog)
-            self._set_provider_status(
-                "Voices are unavailable; the provider default remains available"
-            )
+            if preset is not None and preset.provider_id == provider_id:
+                if self._profile_effective_availability != "unavailable":
+                    self._set_provider_status(
+                        "Exact profile voice discovery is unverified; "
+                        "the exact selection remains selected without fallback."
+                    )
+            else:
+                self._set_provider_status(
+                    "Voices are unavailable; the provider default remains available"
+                )
             return
 
-        if not self._voice_token_is_current(token):
+        if not self._voice_token_is_current(request_token):
+            self._clear_profile_voice_validation(request_token)
             return
         self._discovered_voices[(provider_id, model_id)] = tuple(voices)
         catalog = self._catalogs.get(provider_id)
+        preset = self._profile_preset
+        if preset is not None and preset.provider_id == provider_id:
+            if observation is not None:
+                if observation.state == "unverified":
+                    if self._profile_effective_availability != "unavailable":
+                        self._profile_effective_availability = "unverified"
+                elif observation.state == "model_missing":
+                    self._profile_effective_availability = "unavailable"
+                elif (
+                    preset.voice_id is not None
+                    and preset.voice_id not in observation.voices
+                ):
+                    self._profile_effective_availability = "unavailable"
+                elif catalog is not None:
+                    self._profile_effective_availability = (
+                        profile_availability_from_catalog(preset, catalog)
+                    )
+            elif catalog is not None:
+                self._profile_effective_availability = (
+                    profile_availability_from_catalog(preset, catalog)
+                )
         if catalog is not None:
             self._apply_catalog(provider_id, catalog)
+        self._clear_profile_voice_validation(request_token)
+
+    def _clear_profile_voice_validation(
+        self,
+        request_token: CatalogRequestToken,
+    ) -> None:
+        """Clear only the pending exact-profile observation owned by a token."""
+        if self._profile_voice_validation_token != request_token:
+            return
+        self._profile_voice_validation_token = None
+        if self.is_mounted:
+            self._sync_profile_preview_status()
+            self._sync_generate_enabled()
 
     def _voice_token_is_current(self, token: CatalogRequestToken) -> bool:
         """Return whether a voice result still targets the displayed model."""
@@ -965,11 +1273,69 @@ class TTSPlaygroundWidget(Widget):
     def _mark_stale_catalog_result(self, token: CatalogRequestToken) -> None:
         if token.provider_id != self._selected_provider_id:
             return
+        self._profile_preview_loading = False
         self._stale_providers.add(token.provider_id)
         self._catalog_generation_allowed = False
+        preset = self._profile_preset
+        if preset is not None and preset.provider_id == token.provider_id:
+            if preset.availability != "unavailable":
+                self._profile_effective_availability = "unverified"
+            self._project_profile_preset_controls(
+                token.provider_id,
+                generation_allowed=False,
+            )
         display_name = self._provider_display_name(token.provider_id)
         self._set_provider_status(f"{display_name} settings changed; refresh models")
         self._sync_generate_enabled()
+
+    def _project_profile_preset_controls(
+        self,
+        provider_id: str,
+        *,
+        generation_allowed: bool,
+    ) -> bool:
+        """Project exact preset controls even when no catalog was acquired."""
+        preset = self._profile_preset
+        if preset is None or preset.provider_id != provider_id:
+            return False
+        controls = controls_from_profile_preset(
+            self._catalogs.get(provider_id),
+            preset=preset,
+            discovered_voices=self._discovered_voices.get(
+                (provider_id, preset.model_id)
+            ),
+        )
+        self._apply_controls(replace(controls, generation_allowed=generation_allowed))
+        return True
+
+    def _prime_profile_preset_controls(self) -> None:
+        """Show one exact preset disabled before service discovery completes."""
+        preset = self._profile_preset
+        if preset is None:
+            return
+        provider_id = preset.provider_id
+        display_name = (
+            "audio.cpp" if provider_id == AUDIO_CPP_PROVIDER_ID else provider_id
+        )
+        self._selected_provider_id = provider_id
+        self._provider_ids = frozenset((provider_id,))
+        self._provider_display_names = {provider_id: display_name}
+        provider_select = self.query_one("#tts-provider-select", Select)
+        provider_select.set_options(
+            self._safe_select_options(((display_name, provider_id),))
+        )
+        self._applying_catalog_controls = True
+        try:
+            provider_select.value = provider_id
+        finally:
+            self._applying_catalog_controls = False
+        provider_select.disabled = True
+        self.query_one("#tts-refresh-catalog-btn", Button).disabled = True
+        self._show_provider_specific_controls(provider_id)
+        self._project_profile_preset_controls(
+            provider_id,
+            generation_allowed=False,
+        )
 
     def _apply_catalog(
         self,
@@ -979,48 +1345,65 @@ class TTSPlaygroundWidget(Widget):
         if provider_id != self._selected_provider_id:
             return
         snapshot = self._control_snapshot_for(provider_id)
-        selected_model = snapshot.get("model_id")
-        if selected_model is None:
-            if provider_id == AUDIO_CPP_PROVIDER_ID:
-                configured_model = get_cli_setting(
+        preset = self._profile_preset
+        if preset is not None and preset.provider_id != provider_id:
+            preset = None
+        if preset is not None:
+            selected_model: object = preset.model_id
+            selected_voice: object = preset.voice_id
+            selected_format: object = preset.response_format
+            speed = preset.speed
+        else:
+            selected_model = snapshot.get("model_id")
+            if selected_model is None:
+                if provider_id == AUDIO_CPP_PROVIDER_ID:
+                    configured_model = get_cli_setting(
+                        "app_tts",
+                        "default_model",
+                        None,
+                    )
+                    selected_model = (
+                        configured_model
+                        if isinstance(configured_model, str) and configured_model
+                        else None
+                    )
+                else:
+                    selected_model = LEGACY_DEFAULT_MODELS.get(provider_id)
+            selected_voice = snapshot.get("voice_id")
+            if selected_voice is None:
+                if provider_id == AUDIO_CPP_PROVIDER_ID:
+                    configured_voice = get_cli_setting(
+                        "app_tts",
+                        "default_voice",
+                        None,
+                    )
+                    selected_voice = (
+                        configured_voice
+                        if isinstance(configured_voice, str) and configured_voice
+                        else None
+                    )
+                else:
+                    selected_voice = LEGACY_DEFAULT_VOICES.get(provider_id)
+            selected_format = snapshot.get("response_format")
+            if selected_format is None:
+                selected_format = get_cli_setting(
                     "app_tts",
-                    "default_model",
+                    "default_format",
                     None,
                 )
-                selected_model = (
-                    configured_model
-                    if isinstance(configured_model, str) and configured_model
-                    else None
-                )
-            else:
-                selected_model = LEGACY_DEFAULT_MODELS.get(provider_id)
-        selected_voice = snapshot.get("voice_id")
-        if selected_voice is None:
-            if provider_id == AUDIO_CPP_PROVIDER_ID:
-                configured_voice = get_cli_setting(
-                    "app_tts",
-                    "default_voice",
-                    None,
-                )
-                selected_voice = (
-                    configured_voice
-                    if isinstance(configured_voice, str) and configured_voice
-                    else None
-                )
-            else:
-                selected_voice = LEGACY_DEFAULT_VOICES.get(provider_id)
+            speed = self._snapshot_speed(snapshot)
         pending_voice = self._pending_voice_selections.get(provider_id)
-        if pending_voice is not None:
+        if pending_voice is not None and preset is None:
             selected_voice = pending_voice
-        selected_format = snapshot.get("response_format")
-        if selected_format is None:
-            selected_format = get_cli_setting("app_tts", "default_format", None)
-        speed = self._snapshot_speed(snapshot)
 
         voice_choices: tuple[tuple[str, SelectValue], ...] | None = None
         discovered_voices: tuple[str, ...] | None
         if provider_id == AUDIO_CPP_PROVIDER_ID:
-            model_for_voices = self._catalog_model_id(catalog, selected_model)
+            model_for_voices = (
+                preset.model_id
+                if preset is not None
+                else self._catalog_model_id(catalog, selected_model)
+            )
             discovered_voices = (
                 self._discovered_voices.get((provider_id, model_for_voices))
                 if model_for_voices is not None
@@ -1029,6 +1412,7 @@ class TTSPlaygroundWidget(Widget):
             voice_discovery_pending = discovered_voices is None
             if (
                 voice_discovery_pending
+                and preset is None
                 and isinstance(selected_voice, str)
                 and selected_voice
             ):
@@ -1041,24 +1425,39 @@ class TTSPlaygroundWidget(Widget):
             discovered_voices = tuple(value for _label, value in voice_choices)
             voice_discovery_pending = False
 
-        controls = controls_from_catalog(
-            catalog,
-            selected_model_id=selected_model,
-            selected_voice_id=selected_voice,
-            discovered_voices=discovered_voices,
-            selected_format=selected_format,
-            speed=speed,
-        )
+        if preset is not None:
+            controls = controls_from_profile_preset(
+                catalog,
+                preset=preset,
+                discovered_voices=discovered_voices,
+            )
+        else:
+            controls = controls_from_catalog(
+                catalog,
+                selected_model_id=(
+                    selected_model if isinstance(selected_model, str) else None
+                ),
+                selected_voice_id=(
+                    selected_voice
+                    if isinstance(selected_voice, (str, SelectSentinel))
+                    else None
+                ),
+                discovered_voices=discovered_voices,
+                selected_format=(
+                    selected_format if isinstance(selected_format, str) else None
+                ),
+                speed=speed,
+            )
         if voice_choices is not None:
             controls = replace(controls, voice_options=voice_choices)
-        if voice_discovery_pending and pending_voice is not None:
+        if preset is None and voice_discovery_pending and pending_voice is not None:
             model_changed = (
                 selected_model is not None
                 and selected_model != controls.selected_model_id
             )
             controls = replace(controls, selection_changed=model_changed)
         self._apply_controls(controls)
-        if voice_discovery_pending and pending_voice is not None:
+        if preset is None and voice_discovery_pending and pending_voice is not None:
             self._provider_control_snapshots.setdefault(provider_id, {})["voice_id"] = (
                 pending_voice
             )
@@ -1115,16 +1514,57 @@ class TTSPlaygroundWidget(Widget):
             format_select.tooltip = None
             speed_input.tooltip = None
 
-        catalog = self._catalogs[controls.provider_id]
+        catalog = self._catalogs.get(controls.provider_id)
         self._displayed_provider_id = controls.provider_id
-        self._catalog_generation_allowed = (
-            controls.generation_allowed
-            and controls.provider_id not in self._stale_providers
-            and self._catalog_configuration_revisions.get(controls.provider_id)
-            == self._tts_service.configuration_revision(controls.provider_id)
-        )
-        self._set_provider_status(self._catalog_health_copy(catalog))
+        preset = self._profile_preset
+        if preset is not None and preset.provider_id != controls.provider_id:
+            preset = None
+        if preset is not None:
+            model_select.add_class("profile-exact-select")
+            voice_select.add_class("profile-exact-select")
+            model_select.tooltip = Text(preset.model_id)
+            voice_select.tooltip = Text(
+                preset.voice_id
+                if preset.voice_id is not None
+                else SERVER_DEFAULT_VOICE_LABEL
+            )
+            availability = self._profile_effective_availability
+            self._catalog_generation_allowed = bool(
+                controls.generation_allowed and availability != "unavailable"
+            )
+            if availability == "unavailable":
+                self._set_provider_status(
+                    "The exact profile selection is unavailable. Return to Voice "
+                    "profiles and choose Edit."
+                )
+            elif availability == "unverified":
+                self._set_provider_status(
+                    "Profile availability is unverified. Generate makes one exact "
+                    "attempt without fallback and shows a warning."
+                )
+            else:
+                self._set_provider_status(
+                    "Profile preview loaded with its exact persisted selection."
+                )
+        else:
+            model_select.remove_class("profile-exact-select")
+            voice_select.remove_class("profile-exact-select")
+            model_select.tooltip = None
+            voice_select.tooltip = None
+            service = self._tts_service
+            self._catalog_generation_allowed = (
+                controls.generation_allowed
+                and service is not None
+                and catalog is not None
+                and controls.provider_id not in self._stale_providers
+                and self._catalog_configuration_revisions.get(controls.provider_id)
+                == service.configuration_revision(controls.provider_id)
+            )
+            if catalog is not None:
+                self._set_provider_status(self._catalog_health_copy(catalog))
         self._remember_current_controls(controls.provider_id)
+        if preset is not None:
+            self._profile_controls_applied = True
         self._sync_generate_enabled()
         if controls.selection_changed:
             self.app.notify(
@@ -1329,9 +1769,36 @@ class TTSPlaygroundWidget(Widget):
             return f"{display_name} is not configured; open STTS Settings"
         return f"{display_name} is unavailable; check STTS Settings"
 
-    def _catalog_failure(self, provider_id: str, copy: str) -> None:
+    def _catalog_failure(
+        self,
+        provider_id: str,
+        copy: str,
+        *,
+        exact_attempt_allowed: bool = False,
+    ) -> None:
         logger.warning("TTS catalog discovery failed for {}", provider_id)
         if provider_id != self._selected_provider_id:
+            return
+        self._profile_preview_loading = False
+        preset = self._profile_preset
+        if preset is not None and preset.provider_id == provider_id:
+            if preset.availability != "unavailable":
+                self._profile_effective_availability = "unverified"
+            generation_allowed = bool(
+                exact_attempt_allowed
+                and self._profile_effective_availability != "unavailable"
+            )
+            self._stale_providers.add(provider_id)
+            self._project_profile_preset_controls(
+                provider_id,
+                generation_allowed=generation_allowed,
+            )
+            if (
+                not generation_allowed
+                and self._profile_effective_availability != "unavailable"
+            ):
+                self._set_provider_status(copy)
+            self._sync_generate_enabled()
             return
         self._stale_providers.add(provider_id)
         self._catalog_generation_allowed = False
@@ -1340,24 +1807,121 @@ class TTSPlaygroundWidget(Widget):
 
     def _set_provider_status(self, copy: str) -> None:
         self.query_one("#tts-provider-status", Static).update(Text(copy))
+        self._sync_profile_preview_status()
+
+    def _sync_profile_preview_status(self) -> None:
+        banner = self.query_one("#tts-profile-preview-status", Static)
+        preset = self._profile_preset
+        availability = self._profile_effective_availability
+        if preset is None or availability is None:
+            banner.add_class("hidden")
+            banner.update("")
+            return
+        style_state = availability
+        if availability == "unavailable":
+            copy = (
+                "Profile preview unavailable — return to Voice profiles and "
+                "choose Edit."
+            )
+        elif (
+            self._profile_preview_loading
+            or self._profile_voice_validation_token is not None
+        ):
+            copy = "Profile preview loading — checking the exact saved selection."
+            style_state = "loading"
+        elif (
+            blocked := self._profile_preview_blocked_presentation(preset)
+        ) is not None:
+            copy, style_state = blocked
+        elif availability == "unverified":
+            copy = (
+                "Profile preview unverified — Generate makes one exact attempt "
+                "without fallback."
+            )
+        else:
+            copy = "Profile preview — exact saved selection."
+        for state in ("loading", "available", "unverified", "unavailable"):
+            banner.set_class(
+                style_state == state,
+                f"profile-preview-{state}",
+            )
+        banner.update(Text(copy))
+        banner.remove_class("hidden")
+
+    def _profile_preview_blocked_presentation(
+        self,
+        preset: TTSPlaygroundSelectionPreset,
+    ) -> tuple[str, ProfileAvailabilityState] | None:
+        """Return bounded recovery copy when the exact preset cannot generate."""
+        service = self._tts_service
+        if service is None:
+            return (
+                "Profile preview blocked — the TTS service is unavailable.",
+                "unavailable",
+            )
+        catalog = self._catalogs.get(preset.provider_id)
+        if catalog is not None and catalog.health.state == "closed":
+            return (
+                "Profile preview blocked — the TTS service is unavailable.",
+                "unavailable",
+            )
+        try:
+            current_revision = service.configuration_revision(preset.provider_id)
+        except (KeyError, TTSRegistryClosedError):
+            return (
+                "Profile preview blocked — the TTS service is unavailable.",
+                "unavailable",
+            )
+        expected_revision = self._profile_configuration_revision
+        if expected_revision is None:
+            return (
+                "Profile preview blocked — refresh or retry from Voice profiles.",
+                "unverified",
+            )
+        if current_revision != expected_revision:
+            return (
+                "Profile preview blocked — TTS settings changed; refresh models.",
+                "unverified",
+            )
+        if not self._catalog_generation_allowed:
+            return (
+                "Profile preview blocked — refresh or retry from Voice profiles.",
+                "unverified",
+            )
+        return None
 
     def _sync_generate_enabled(self) -> None:
         text_present = bool(self.query_one("#tts-text-input", TextArea).text.strip())
         provider_id = self._selected_provider_id
         revision_matches = False
-        if (
-            provider_id is not None
-            and self._tts_service is not None
-            and provider_id in self._catalog_configuration_revisions
-        ):
-            revision_matches = self._catalog_configuration_revisions[
-                provider_id
-            ] == self._tts_service.configuration_revision(provider_id)
+        service = self._tts_service
+        if provider_id is not None and service is not None:
+            preset = self._profile_preset
+            expected_revision = (
+                self._profile_configuration_revision
+                if preset is not None and preset.provider_id == provider_id
+                else self._catalog_configuration_revisions.get(provider_id)
+            )
+            try:
+                revision_matches = (
+                    expected_revision is not None
+                    and expected_revision == service.configuration_revision(provider_id)
+                )
+            except (KeyError, TTSRegistryClosedError):
+                revision_matches = False
         self.query_one("#tts-generate-btn", Button).disabled = not (
             text_present
             and self._catalog_generation_allowed
             and revision_matches
+            and (
+                provider_id not in self._stale_providers
+                or (
+                    self._profile_preset is not None
+                    and self._profile_preset.provider_id == provider_id
+                )
+            )
             and self._generation_operation_id is None
+            and self._profile_voice_validation_token is None
             and not getattr(self.app, "_is_generating", False)
         )
 
@@ -1378,6 +1942,36 @@ class TTSPlaygroundWidget(Widget):
                     return "TTS generation is already in progress"
             except Exception:
                 return "The TTS service is unavailable"
+
+        preset = self._profile_preset
+        if preset is not None:
+            if self._profile_voice_validation_token is not None:
+                return (
+                    "The exact profile voice is still being checked; "
+                    "wait before generating"
+                )
+            if self._profile_effective_availability == "unavailable":
+                return (
+                    "The exact profile selection is unavailable; return to Voice "
+                    "profiles and choose Edit"
+                )
+            if provider_id != preset.provider_id or model_id != preset.model_id:
+                return "The exact profile selection changed; choose Preview again"
+            service = self._tts_service
+            if service is None:
+                return "The TTS service is unavailable"
+            try:
+                current_revision = service.configuration_revision(preset.provider_id)
+            except (KeyError, TTSRegistryClosedError):
+                return "The TTS service is unavailable"
+            if (
+                self._profile_configuration_revision is None
+                or current_revision != self._profile_configuration_revision
+            ):
+                return "TTS provider settings changed; refresh models"
+            if not self._catalog_generation_allowed:
+                return "The exact profile selection is not ready; retry from Voice profiles"
+            return None
 
         if (
             not isinstance(provider_id, str)
@@ -1442,19 +2036,52 @@ class TTSPlaygroundWidget(Widget):
             for key, value in self._discovered_voices.items()
             if key[0] != provider_id
         }
+        pending_voice_token = self._profile_voice_validation_token
+        if (
+            pending_voice_token is not None
+            and pending_voice_token.provider_id == provider_id
+        ):
+            self._profile_voice_validation_token = None
         if provider_id != self._selected_provider_id:
             return
         self.app.workers.cancel_group(self, "stts-catalog-discovery")
         self.app.workers.cancel_group(self, "stts-voice-discovery")
+        self._profile_preview_loading = False
         self._catalog_generation_allowed = False
         display_name = self._provider_display_name(provider_id)
         self._set_provider_status(f"{display_name} settings changed; refresh models")
         self._sync_generate_enabled()
 
+    def _end_profile_preset(self, *, before_controls: bool = False) -> bool:
+        """Detach exact profile semantics after a user selection edit."""
+        if self._profile_preset is None:
+            return False
+        if not before_controls and not self._profile_controls_applied:
+            return False
+        self._profile_preset = None
+        self._profile_effective_availability = None
+        self._profile_preview_loading = False
+        self._profile_configuration_revision = None
+        self._profile_voice_validation_token = None
+        self._profile_controls_applied = True
+        self._sync_profile_preview_status()
+        self._sync_generate_enabled()
+        return True
+
+    def _reproject_current_catalog(self) -> None:
+        provider_id = self._selected_provider_id
+        if provider_id is None:
+            return
+        catalog = self._catalogs.get(provider_id)
+        if catalog is not None:
+            self._apply_catalog(provider_id, catalog)
+
     @on(Select.Changed)
     def on_tts_provider_select_changed(self, event: Select.Changed) -> None:
         """Handle canonical provider/model/voice/format selections."""
         if self._applying_catalog_controls:
+            return
+        if event.value != event.select.value:
             return
         if event.select.id == "tts-provider-select":
             if not isinstance(event.value, str) or event.value not in getattr(
@@ -1463,6 +2090,7 @@ class TTSPlaygroundWidget(Widget):
                 return
             if event.value == self._selected_provider_id:
                 return
+            self._end_profile_preset(before_controls=True)
             if self._selected_provider_id is not None:
                 self._remember_current_controls(self._selected_provider_id)
             self._selected_provider_id = event.value
@@ -1477,6 +2105,7 @@ class TTSPlaygroundWidget(Widget):
                 return
             if event.value == self._applied_model_id:
                 return
+            self._end_profile_preset()
             self._remember_current_controls(provider_id)
             catalog = self._catalogs.get(provider_id)
             if catalog is not None:
@@ -1498,6 +2127,7 @@ class TTSPlaygroundWidget(Widget):
                 and event.value == self._applied_format
             ):
                 return
+            preset_ended = self._end_profile_preset()
             if event.select.id == "tts-voice-select":
                 self._applied_voice_id = (
                     event.value
@@ -1510,16 +2140,45 @@ class TTSPlaygroundWidget(Widget):
                 )
             if self._selected_provider_id is not None:
                 self._remember_current_controls(self._selected_provider_id)
-            self._sync_generate_enabled()
+            if preset_ended:
+                self._reproject_current_catalog()
+            else:
+                self._sync_generate_enabled()
+            return
+        if event.select.has_focus and self._end_profile_preset():
+            self._reproject_current_catalog()
 
     @on(Input.Changed)
     def on_tts_speed_changed(self, event: Input.Changed) -> None:
+        if self._applying_catalog_controls:
+            return
+        if event.value != event.input.value:
+            return
+        if self._selected_provider_id is not None:
+            if event.input.id == "tts-speed-input":
+                self._remember_current_controls(self._selected_provider_id)
+                preset = self._profile_preset
+                try:
+                    unchanged = (
+                        preset is not None and float(event.value) == preset.speed
+                    )
+                except ValueError:
+                    unchanged = False
+                if unchanged:
+                    return
+            elif not event.input.has_focus:
+                return
+            if self._end_profile_preset():
+                self._reproject_current_catalog()
+
+    @on(Switch.Changed)
+    def on_tts_option_switch_changed(self, event: Switch.Changed) -> None:
         if (
             not self._applying_catalog_controls
-            and event.input.id == "tts-speed-input"
-            and self._selected_provider_id is not None
+            and event.switch.has_focus
+            and self._end_profile_preset()
         ):
-            self._remember_current_controls(self._selected_provider_id)
+            self._reproject_current_catalog()
 
     @on(TextArea.Changed)
     def on_tts_text_changed(self, _event: TextArea.Changed) -> None:
@@ -1573,6 +2232,16 @@ class TTSPlaygroundWidget(Widget):
         elif event.button.id == "audio-export-btn":
             self._export_audio()
             event.stop()
+        elif event.button.id == "audio-save-profile-btn":
+            event.button.disabled = True
+            self.run_worker(
+                self._save_current_result_as_profile(),
+                name="save_tts_result_as_profile",
+                group="save_tts_result_as_profile",
+                exclusive=True,
+                exit_on_error=False,
+            )
+            event.stop()
         elif event.button.id == "reference-audio-btn":
             self._select_reference_audio()
             event.stop()
@@ -1611,12 +2280,25 @@ class TTSPlaygroundWidget(Widget):
         provider = self._get_select_key(provider_select) or provider_select.value
         voice = self._get_select_key(voice_select) or voice_select.value
         model = self._get_select_key(model_select) or model_select.value
+        preset = self._profile_preset
+        if preset is not None:
+            provider = preset.provider_id
+            model = preset.model_id
+            voice = (
+                SERVER_DEFAULT_VOICE_ID if preset.voice_id is None else preset.voice_id
+            )
 
         readiness_error = self._generation_readiness_error(provider, model)
         if readiness_error is not None:
             self._sync_generate_enabled()
             self.app.notify(readiness_error, severity="warning")
             return
+        if preset is not None and self._profile_effective_availability == "unverified":
+            self.app.notify(
+                "Profile availability is unverified; attempting the exact "
+                "selection once without fallback.",
+                severity="warning",
+            )
 
         # Validate voice selection
         if not self._is_valid_voice(voice):
@@ -1625,6 +2307,9 @@ class TTSPlaygroundWidget(Widget):
         speed = float(self.query_one("#tts-speed-input", Input).value or "1.0")
         format_select = self.query_one("#tts-format-select", Select)
         format = format_select.value
+        if preset is not None:
+            speed = preset.speed
+            format = preset.response_format
 
         # Ensure format has a valid value
         if not format or format == Select.BLANK or str(format) == "Select.BLANK":
@@ -1813,6 +2498,8 @@ class TTSPlaygroundWidget(Widget):
             options=extra_params,
         )
         self._generation_operation_id = request.operation_id
+        self._profile_save_suppressed = True
+        self._sync_save_profile_action()
         self.app.post_message(STTSPlaygroundGenerateEvent(request))
 
     def _generation_complete(
@@ -1832,6 +2519,8 @@ class TTSPlaygroundWidget(Widget):
         if artifact is not None:
             self._store_delivered_artifact(artifact, announce=True)
         else:
+            self._profile_save_suppressed = True
+            self._sync_save_profile_action()
             log = self.query_one("#tts-generation-log", RichLog)
             log.write("[bold red]✗ TTS generation failed![/bold red]")
 
@@ -1843,6 +2532,7 @@ class TTSPlaygroundWidget(Widget):
     ) -> None:
         self.current_audio_artifact = artifact
         self.current_audio_file = artifact.path
+        self._profile_save_suppressed = False
         if announce:
             self.query_one("#tts-generation-log", RichLog).write(
                 "[bold green]✓ TTS generation complete![/bold green]"
@@ -1851,9 +2541,97 @@ class TTSPlaygroundWidget(Widget):
         self.query_one("#pause-audio-btn", Button).disabled = True
         self.query_one("#stop-audio-btn", Button).disabled = True
         self.query_one("#audio-export-btn", Button).disabled = False
+        self._sync_save_profile_action()
         self.query_one("#audio-player-status", Static).update(
             f"{artifact.audio_format.upper()} audio ready to play"
         )
+
+    def _sync_save_profile_action(self) -> None:
+        """Expose save only for an idle artifact with native provenance."""
+        button = self.query_one("#audio-save-profile-btn", Button)
+        artifact = self.current_audio_artifact
+        eligible = bool(
+            artifact is not None
+            and artifact.profile_save_eligible
+            and self._generation_operation_id is None
+            and not self._profile_save_suppressed
+        )
+        button.set_class(not eligible, "hidden")
+        button.disabled = not eligible
+
+    @staticmethod
+    def _dismiss_profile_name_modal(modal: TTSProfileNameModal) -> None:
+        if modal.is_mounted and modal.is_current:
+            modal.dismiss(None)
+
+    async def _save_current_result_as_profile(self) -> None:
+        """Save a captured eligible artifact without rereading selectors."""
+        artifact = self.current_audio_artifact
+        if (
+            artifact is None
+            or not artifact.profile_save_eligible
+            or self._generation_operation_id is not None
+            or self._profile_save_suppressed
+        ):
+            self._sync_save_profile_action()
+            return
+
+        modal = TTSProfileNameModal()
+        active = self._active_profile_name_modal
+        if active is not None:
+            self._dismiss_profile_name_modal(active)
+        self._active_profile_name_modal = modal
+        try:
+            display_name = await self.app.push_screen_wait(modal)
+        except asyncio.CancelledError:
+            self._dismiss_profile_name_modal(modal)
+            if self.is_mounted:
+                self._sync_save_profile_action()
+            raise
+        except Exception:  # noqa: BLE001 - isolate modal lifecycle failure
+            self._dismiss_profile_name_modal(modal)
+            if self.is_mounted:
+                self.query_one("#audio-player-status", Static).update(
+                    PROFILE_ACTION_FAILED_COPY
+                )
+                self._sync_save_profile_action()
+            return
+        finally:
+            if self._active_profile_name_modal is modal:
+                self._active_profile_name_modal = None
+        if not isinstance(display_name, str) or not display_name.strip():
+            self._sync_save_profile_action()
+            return
+
+        ensure_service = getattr(self.app, "_ensure_tts_profile_service", None)
+        if not callable(ensure_service):
+            self.query_one("#audio-player-status", Static).update(
+                PROFILE_STORE_UNAVAILABLE_COPY
+            )
+            self._sync_save_profile_action()
+            return
+        try:
+            service = await ensure_service()
+            if service is None:
+                self.query_one("#audio-player-status", Static).update(
+                    PROFILE_STORE_UNAVAILABLE_COPY
+                )
+                return
+            await service.create_from_artifact(display_name, artifact)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - map to bounded UI copy
+            copy = (
+                _PROFILE_RESULT_STALE_COPY
+                if getattr(error, "code", None) == "stale_configuration"
+                else profile_action_error_copy(error)
+            )
+            self.query_one("#audio-player-status", Static).update(copy)
+            return
+        finally:
+            if self.is_mounted:
+                self._sync_save_profile_action()
+        self.query_one("#audio-player-status", Static).update("Voice profile saved.")
 
     def _rehydrate_handler_state(self) -> None:
         handler = getattr(self.app, "_stts_handler", None)
@@ -1877,11 +2655,13 @@ class TTSPlaygroundWidget(Widget):
             str,
         ):
             self._generation_operation_id = active_operation_id
+            self._profile_save_suppressed = True
             self.query_one("#generation-status-container").remove_class("hidden")
             self.query_one("#generation-status-text", Static).update(
                 "Generation in progress…"
             )
             self.query_one("#tts-generate-btn", Button).disabled = True
+            self._sync_save_profile_action()
 
     def _current_generated_audio_path(self) -> Path | None:
         """Return the delivered artifact path, with legacy path fallback."""
@@ -5731,6 +6511,7 @@ class STTSWindow(Container):
         """Initialize the S/TT/S window."""
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self._pending_playground_preset: TTSPlaygroundSelectionPreset | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the S/TT/S window: content only.
@@ -5819,7 +6600,11 @@ class STTSWindow(Container):
 
         # Add new content based on view
         if new_view == "playground":
-            content_container.mount(TTSPlaygroundWidget())
+            preset = self._pending_playground_preset
+            self._pending_playground_preset = None
+            content_container.mount(TTSPlaygroundWidget(preset))
+        elif new_view == "profiles":
+            content_container.mount(STTSProfileLibrary(self._load_profile_service))
         elif new_view == "settings":
             content_container.mount(TTSSettingsWidget())
         elif new_view == "audiobook":
@@ -5833,11 +6618,24 @@ class STTSWindow(Container):
         # NoMatches on the first view change. The screen watches
         # `current_view` and applies `is-active` itself.
 
+    @on(ProfilePreviewRequested)
+    def on_profile_preview_requested(
+        self,
+        message: ProfilePreviewRequested,
+    ) -> None:
+        """Hand one exact preset to the next Playground mount."""
+        if type(message.preset) is not TTSPlaygroundSelectionPreset:
+            return
+        self._pending_playground_preset = message.preset
+        self.current_view = "playground"
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle sidebar button presses and delegate to content widgets"""
         # Handle sidebar buttons
         if event.button.id == "view-playground-btn":
             self.current_view = "playground"
+        elif event.button.id == "view-profiles-btn":
+            self.current_view = "profiles"
         elif event.button.id == "view-settings-btn":
             self.current_view = "settings"
         elif event.button.id == "view-audiobook-btn":
@@ -5862,6 +6660,23 @@ class STTSWindow(Container):
                         active_widget.on_button_pressed(event)
             except Exception as e:
                 logger.debug(f"Could not delegate button event: {e}")
+
+    async def _load_profile_service(self) -> TTSProfileService | None:
+        """Resolve the app-owned profile service without affecting speech."""
+        ensure_service = getattr(
+            self.app_instance,
+            "_ensure_tts_profile_service",
+            None,
+        )
+        if not callable(ensure_service):
+            return None
+        try:
+            return await ensure_service()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("TTS profile storage is unavailable")
+            return None
 
 
 #

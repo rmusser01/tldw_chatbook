@@ -227,6 +227,12 @@ def _validate_expected_revision(value: object) -> int:
     return cast(int, value)
 
 
+def _validate_expected_generation(value: object) -> int:
+    if type(value) is not int or value < 0:
+        raise _repository_error("operation_failed")
+    return cast(int, value)
+
+
 def _validate_character_ref(value: object) -> CharacterRef:
     if type(value) is not _CHARACTER_REF_TYPE:
         raise _repository_error("operation_failed")
@@ -1196,6 +1202,8 @@ class TTSProfileRepository:
         self,
         draft: TTSProfileDraft,
         profile_id: UUID | None = None,
+        *,
+        expected_generation: int | None = None,
     ) -> ProfileStoreResult[TTSGenerationProfile]:
         """Create one immutable profile at revision 1.
 
@@ -1203,6 +1211,8 @@ class TTSProfileRepository:
             draft: Exact validated profile draft.
             profile_id: Optional exact caller-selected UUID. When omitted, the
                 repository generates a UUID4 on its serialized worker.
+            expected_generation: Optional exact lifecycle generation when the
+                create is derived from caller-held repository state.
 
         Returns:
             The active generation and exact persisted profile.
@@ -1216,12 +1226,18 @@ class TTSProfileRepository:
 
         validated_draft = _validate_draft(draft)
         validated_profile_id = _validate_optional_profile_id(profile_id)
+        validated_generation = (
+            None
+            if expected_generation is None
+            else _validate_expected_generation(expected_generation)
+        )
         return await self._submit_operation(
             lambda connection: self._worker_create_profile(
                 connection,
                 validated_draft,
                 validated_profile_id,
-            )
+            ),
+            expected_generation=validated_generation,
         )
 
     async def get_profile(
@@ -1298,6 +1314,8 @@ class TTSProfileRepository:
         profile_id: UUID,
         expected_revision: int,
         draft: TTSProfileDraft,
+        *,
+        expected_generation: int,
     ) -> ProfileStoreResult[TTSGenerationProfile]:
         """Replace one profile only at the exact editor revision.
 
@@ -1305,6 +1323,8 @@ class TTSProfileRepository:
             profile_id: Exact profile UUID.
             expected_revision: Exact positive revision loaded by the editor.
             draft: Exact replacement profile draft.
+            expected_generation: Exact nonnegative lifecycle generation loaded
+                by the editor.
 
         Returns:
             The active generation and immutable updated profile.
@@ -1319,23 +1339,29 @@ class TTSProfileRepository:
         validated_profile_id = _validate_exact_profile_id(profile_id)
         validated_revision = _validate_expected_revision(expected_revision)
         validated_draft = _validate_draft(draft)
+        validated_generation = _validate_expected_generation(expected_generation)
         return await self._submit_operation(
             lambda connection: self._worker_update_profile(
                 connection,
                 validated_profile_id,
                 validated_revision,
                 validated_draft,
-            )
+            ),
+            expected_generation=validated_generation,
         )
 
     async def delete_profile(
         self,
         profile_id: UUID,
+        *,
+        expected_generation: int,
     ) -> ProfileStoreResult[None]:
         """Delete exactly one unreferenced profile by UUID.
 
         Args:
             profile_id: Exact profile UUID.
+            expected_generation: Exact nonnegative lifecycle generation loaded
+                with the profile.
 
         Returns:
             The active generation paired with ``None``.
@@ -1348,11 +1374,13 @@ class TTSProfileRepository:
         """
 
         validated_profile_id = _validate_exact_profile_id(profile_id)
+        validated_generation = _validate_expected_generation(expected_generation)
         return await self._submit_operation(
             lambda connection: self._worker_delete_profile(
                 connection,
                 validated_profile_id,
-            )
+            ),
+            expected_generation=validated_generation,
         )
 
     async def assignment_count(
@@ -2964,16 +2992,23 @@ class TTSProfileRepository:
     async def _submit_operation(
         self,
         operation: Callable[[sqlite3.Connection], _T],
+        *,
+        expected_generation: int | None = None,
     ) -> ProfileStoreResult[_T]:
         """Submit and publish one normal generation-bound operation."""
 
         self._bind_or_check_loop()
-        admission = self._admit_operation(operation)
+        admission = self._admit_operation(
+            operation,
+            expected_generation=expected_generation,
+        )
         return await self._publish_operation(admission)
 
     def _admit_operation(
         self,
         operation: Callable[[sqlite3.Connection], _T],
+        *,
+        expected_generation: int | None = None,
     ) -> _OperationAdmission[_T]:
         """Synchronously capture state/generation and register a worker future."""
 
@@ -2988,6 +3023,8 @@ class TTSProfileRepository:
             if state_error is not None:
                 raise _repository_error(state_error)
             generation = self._generation
+            if expected_generation is not None and expected_generation != generation:
+                raise _repository_error("stale")
             executor = self._executor
             if executor is None or self._executor_shutdown:
                 raise _repository_error("invalid_state")

@@ -205,6 +205,7 @@ from tldw_chatbook.Utils.Emoji_Handling import (
 )
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
+from tldw_chatbook.TTS import TTSProfileService
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
@@ -3413,6 +3414,7 @@ class TldwCli(
         self._tts_profile_repository = TTSProfileRepository(get_tts_profiles_db_path())
         self._tts_profile_repository_open_task: asyncio.Task[bool] | None = None
         self._tts_profile_repository_close_task: asyncio.Task[None] | None = None
+        self._tts_profile_service: TTSProfileService | None = None
         self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(
             self.app_config
         )
@@ -6466,6 +6468,19 @@ class TldwCli(
         ):
             return None
         return repository
+
+    async def _ensure_tts_profile_service(self) -> TTSProfileService | None:
+        """Return one profile service over the existing app-owned dependencies."""
+
+        repository = await self._ensure_tts_profile_repository()
+        if repository is None:
+            return None
+
+        profile_service = getattr(self, "_tts_profile_service", None)
+        if profile_service is None:
+            profile_service = TTSProfileService(repository, self.tts_service)
+            self._tts_profile_service = profile_service
+        return profile_service
 
     async def _close_tts_profile_repository(self) -> None:
         """Definitively close the app-owned profile repository once."""

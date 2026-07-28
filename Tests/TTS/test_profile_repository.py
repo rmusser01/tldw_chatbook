@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import multiprocessing
 import sqlite3
 import threading
@@ -78,6 +79,10 @@ class _CharacterRefSubclass(CharacterRef):
 
 class _UUIDSubclass(UUID):
     """An inexact public-boundary UUID."""
+
+
+class _IntSubclass(int):
+    """An inexact public-boundary integer."""
 
 
 class _FalseyCallable:
@@ -587,6 +592,11 @@ def _spawn_assignment_delete_race(
         try:
             await repository.open()
             opened = True
+            loaded = (
+                await repository.get_profile(UUID(profile_id))
+                if operation == "delete"
+                else None
+            )
             connection.send(("ready", operation))
             if not release.wait(10.0):
                 raise TimeoutError("parent did not release assignment race")
@@ -601,7 +611,11 @@ def _spawn_assignment_delete_race(
                         UUID(profile_id),
                     )
                 else:
-                    result = await repository.delete_profile(UUID(profile_id))
+                    assert loaded is not None
+                    result = await repository.delete_profile(
+                        UUID(profile_id),
+                        expected_generation=loaded.generation,
+                    )
             except ProfileRepositoryError as error:
                 return (
                     operation,
@@ -776,6 +790,25 @@ def test_private_clock_and_uuid_seams_remain_constructor_pure(
     assert not database_path.parent.exists()
 
 
+def test_profile_mutation_generation_parameters_are_keyword_only() -> None:
+    create_generation = inspect.signature(
+        profile_repository.TTSProfileRepository.create_profile
+    ).parameters["expected_generation"]
+    update_generation = inspect.signature(
+        profile_repository.TTSProfileRepository.update_profile
+    ).parameters["expected_generation"]
+    delete_generation = inspect.signature(
+        profile_repository.TTSProfileRepository.delete_profile
+    ).parameters["expected_generation"]
+
+    assert create_generation.kind is inspect.Parameter.KEYWORD_ONLY
+    assert create_generation.default is None
+    assert update_generation.kind is inspect.Parameter.KEYWORD_ONLY
+    assert update_generation.default is inspect.Parameter.empty
+    assert delete_generation.kind is inspect.Parameter.KEYWORD_ONLY
+    assert delete_generation.default is inspect.Parameter.empty
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("method_name", "args", "kwargs", "secret"),
@@ -808,12 +841,42 @@ def test_private_clock_and_uuid_seams_remain_constructor_pure(
         ("list_profiles", (), {"limit": 101}, ""),
         ("list_profiles", (), {"offset": True}, ""),
         ("list_profiles", (), {"offset": -1}, ""),
-        ("update_profile", ("secret-update-id", 1, _draft()), {}, "secret-update-id"),
-        ("update_profile", (GENERATED_ID, True, _draft()), {}, ""),
-        ("update_profile", (GENERATED_ID, 0, _draft()), {}, ""),
-        ("update_profile", (GENERATED_ID, 1.0, _draft()), {}, ""),
-        ("update_profile", (GENERATED_ID, 1, object()), {}, ""),
-        ("delete_profile", ("secret-delete-id",), {}, "secret-delete-id"),
+        (
+            "update_profile",
+            ("secret-update-id", 1, _draft()),
+            {"expected_generation": 0},
+            "secret-update-id",
+        ),
+        (
+            "update_profile",
+            (GENERATED_ID, True, _draft()),
+            {"expected_generation": 0},
+            "",
+        ),
+        (
+            "update_profile",
+            (GENERATED_ID, 0, _draft()),
+            {"expected_generation": 0},
+            "",
+        ),
+        (
+            "update_profile",
+            (GENERATED_ID, 1.0, _draft()),
+            {"expected_generation": 0},
+            "",
+        ),
+        (
+            "update_profile",
+            (GENERATED_ID, 1, object()),
+            {"expected_generation": 0},
+            "",
+        ),
+        (
+            "delete_profile",
+            ("secret-delete-id",),
+            {"expected_generation": 0},
+            "secret-delete-id",
+        ),
         ("assignment_count", ("secret-count-id",), {}, "secret-count-id"),
         (
             "assignment_count",
@@ -896,6 +959,186 @@ async def test_invalid_public_inputs_fail_before_worker_submission(
     _assert_safe_error(caught.value, "operation_failed", secret)
     assert submitted is False
     assert not tmp_path.joinpath("must-not-exist").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "args"),
+    [
+        ("create_profile", (_draft(),)),
+        ("update_profile", (GENERATED_ID, 1, _draft())),
+        ("delete_profile", (GENERATED_ID,)),
+    ],
+)
+@pytest.mark.parametrize(
+    "expected_generation",
+    [True, -1, 1.0, _IntSubclass(1), object()],
+)
+async def test_profile_mutations_reject_inexact_or_negative_expected_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    args: tuple[object, ...],
+    expected_generation: object,
+) -> None:
+    repository = profile_repository.TTSProfileRepository(
+        tmp_path / "must-not-exist" / "profiles.sqlite3"
+    )
+    submitted = False
+
+    async def forbidden_submission(
+        _operation: Callable[[sqlite3.Connection], object],
+        *,
+        expected_generation: int | None = None,
+    ) -> ProfileStoreResult[object]:
+        del expected_generation
+        nonlocal submitted
+        submitted = True
+        raise AssertionError("invalid generation reached worker submission")
+
+    monkeypatch.setattr(repository, "_submit_operation", forbidden_submission)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await getattr(repository, method_name)(
+            *args,
+            expected_generation=expected_generation,
+        )
+
+    _assert_safe_error(caught.value, "operation_failed")
+    assert submitted is False
+    assert not tmp_path.joinpath("must-not-exist").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "args"),
+    [
+        ("update_profile", (GENERATED_ID, 1, _draft())),
+        ("delete_profile", (GENERATED_ID,)),
+    ],
+)
+async def test_loaded_profile_mutations_reject_missing_expected_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    args: tuple[object, ...],
+) -> None:
+    repository = profile_repository.TTSProfileRepository(
+        tmp_path / "must-not-exist" / "profiles.sqlite3"
+    )
+    submitted = False
+
+    async def forbidden_submission(
+        _operation: Callable[[sqlite3.Connection], object],
+        *,
+        expected_generation: int | None = None,
+    ) -> ProfileStoreResult[object]:
+        del expected_generation
+        nonlocal submitted
+        submitted = True
+        raise AssertionError("missing generation reached worker submission")
+
+    monkeypatch.setattr(repository, "_submit_operation", forbidden_submission)
+
+    with pytest.raises(ProfileRepositoryError) as caught:
+        await getattr(repository, method_name)(
+            *args,
+            expected_generation=None,
+        )
+
+    _assert_safe_error(caught.value, "operation_failed")
+    assert submitted is False
+    assert not tmp_path.joinpath("must-not-exist").exists()
+
+
+@pytest.mark.asyncio
+async def test_create_accepts_current_expected_generation(
+    tmp_path: Path,
+) -> None:
+    async with _opened_repository(
+        tmp_path / "current-create-generation.sqlite3"
+    ) as repository:
+        current = await repository.create_profile(
+            _draft("Current"),
+            profile_id=CALLER_ID,
+        )
+
+        duplicate = await repository.create_profile(
+            _draft("Duplicate"),
+            expected_generation=current.generation,
+        )
+
+        assert duplicate.generation == current.generation
+        assert duplicate.value.profile_id == GENERATED_ID
+        assert duplicate.value.revision == 1
+        page = await repository.list_profiles()
+        assert page.generation == current.generation
+        assert page.value.total == 2
+        assert {profile.profile_id for profile in page.value.profiles} == {
+            current.value.profile_id,
+            duplicate.value.profile_id,
+        }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "update", "delete"])
+async def test_zero_expected_generation_is_valid_but_stale_before_enqueue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    profile_id = UUID("fda00000-0000-4000-8000-00000000000d")
+
+    async with _opened_repository(
+        tmp_path / f"zero-generation-{operation}.sqlite3"
+    ) as repository:
+        created = await repository.create_profile(
+            _draft("Original"),
+            profile_id=profile_id,
+        )
+        executor = repository._executor
+        assert executor is not None
+        real_submit = executor.submit
+        submitted = False
+
+        def forbid_worker_submission(
+            function: Callable[..., object],
+            /,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            nonlocal submitted
+            if function == repository._worker_operation:
+                submitted = True
+                raise AssertionError("stale generation reached worker submission")
+            return real_submit(function, *args, **kwargs)
+
+        monkeypatch.setattr(executor, "submit", forbid_worker_submission)
+
+        with pytest.raises(ProfileRepositoryError) as caught:
+            if operation == "create":
+                await repository.create_profile(
+                    _draft("Duplicate"),
+                    expected_generation=0,
+                )
+            elif operation == "update":
+                await repository.update_profile(
+                    profile_id,
+                    created.value.revision,
+                    _draft("Updated"),
+                    expected_generation=0,
+                )
+            else:
+                await repository.delete_profile(
+                    profile_id,
+                    expected_generation=0,
+                )
+
+        _assert_safe_error(caught.value, "stale")
+        assert submitted is False
+        monkeypatch.setattr(executor, "submit", real_submit)
+        persisted = await repository.get_profile(profile_id)
+        assert persisted == created
 
 
 @pytest.mark.asyncio
@@ -1073,12 +1316,11 @@ async def test_update_snapshots_draft_before_queued_worker_runs(
     async with _opened_repository(
         tmp_path / "queued-update-draft.sqlite3"
     ) as repository:
-        original = (
-            await repository.create_profile(
-                _draft("Before Update"),
-                profile_id=profile_id,
-            )
-        ).value
+        original_result = await repository.create_profile(
+            _draft("Before Update"),
+            profile_id=profile_id,
+        )
+        original = original_result.value
 
         def block_worker(_connection: sqlite3.Connection) -> None:
             worker_entered.set()
@@ -1095,6 +1337,7 @@ async def test_update_snapshots_draft_before_queued_worker_runs(
                 profile_id,
                 original.revision,
                 draft,
+                expected_generation=original_result.generation,
             )
         )
         await asyncio.sleep(0)
@@ -1524,13 +1767,14 @@ async def test_unrelated_expected_extended_code_without_owned_row_evidence_fails
 
     async with _opened_repository(database_path) as repository:
         original: TTSGenerationProfile | None = None
+        loaded_generation: int | None = None
         if operation == "update":
-            original = (
-                await repository.create_profile(
-                    _draft("Original Evidence Target"),
-                    profile_id=profile_id,
-                )
-            ).value
+            loaded = await repository.create_profile(
+                _draft("Original Evidence Target"),
+                profile_id=profile_id,
+            )
+            original = loaded.value
+            loaded_generation = loaded.generation
 
         await asyncio.to_thread(
             _install_unrelated_uniqueness_trigger,
@@ -1556,7 +1800,13 @@ async def test_unrelated_expected_extended_code_without_owned_row_evidence_fails
             if operation == "create":
                 await repository.create_profile(draft, profile_id=profile_id)
             else:
-                await repository.update_profile(profile_id, 1, draft)
+                assert loaded_generation is not None
+                await repository.update_profile(
+                    profile_id,
+                    1,
+                    draft,
+                    expected_generation=loaded_generation,
+                )
 
         _assert_safe_error(
             failed.value,
@@ -1582,10 +1832,12 @@ async def test_unrelated_expected_extended_code_without_owned_row_evidence_fails
                 profile_id=profile_id,
             )
         else:
+            assert loaded_generation is not None
             recovered = await repository.update_profile(
                 profile_id,
                 1,
                 draft,
+                expected_generation=loaded_generation,
             )
         assert recovered.value.normalized_name == draft.normalized_name
 
@@ -1622,11 +1874,13 @@ async def test_integrity_extended_code_without_owned_evidence_fails_closed(
         setattr(error, "sqlite_errorcode", sqlite_errorcode)
 
     async with _opened_repository(database_path) as repository:
+        loaded_generation: int | None = None
         if operation != "create":
-            await repository.create_profile(
+            loaded = await repository.create_profile(
                 _draft("Existing"),
                 profile_id=profile_id,
             )
+            loaded_generation = loaded.generation
 
         def fail_encode(_profile: TTSGenerationProfile) -> dict[str, object]:
             raise error
@@ -1650,13 +1904,19 @@ async def test_integrity_extended_code_without_owned_evidence_fails_closed(
                         profile_id=profile_id,
                     )
                 elif operation == "update":
+                    assert loaded_generation is not None
                     await repository.update_profile(
                         profile_id,
                         1,
                         _draft("Injected Update"),
+                        expected_generation=loaded_generation,
                     )
                 else:
-                    await repository.delete_profile(profile_id)
+                    assert loaded_generation is not None
+                    await repository.delete_profile(
+                        profile_id,
+                        expected_generation=loaded_generation,
+                    )
 
         _assert_safe_error(
             caught.value,
@@ -1891,11 +2151,15 @@ async def test_update_uses_optimistic_revision_and_preserves_winner_exactly(
         database_path,
         clock=cast(Callable[[], datetime], clock),
     ) as repository:
-        created = (
-            await repository.create_profile(_draft("Shared"), profile_id=profile_id)
-        ).value
-        editor_a = (await repository.get_profile(profile_id)).value
-        editor_b = (await repository.get_profile(profile_id)).value
+        created_result = await repository.create_profile(
+            _draft("Shared"),
+            profile_id=profile_id,
+        )
+        created = created_result.value
+        editor_a_result = await repository.get_profile(profile_id)
+        editor_a = editor_a_result.value
+        editor_b_result = await repository.get_profile(profile_id)
+        editor_b = editor_b_result.value
         winner_draft = _draft(
             "Shared Updated",
             model_id="winner-model",
@@ -1915,6 +2179,7 @@ async def test_update_uses_optimistic_revision_and_preserves_winner_exactly(
                 profile_id,
                 editor_a.revision,
                 winner_draft,
+                expected_generation=editor_a_result.generation,
             )
         ).value
         with pytest.raises(ProfileRepositoryError) as stale:
@@ -1922,6 +2187,7 @@ async def test_update_uses_optimistic_revision_and_preserves_winner_exactly(
                 profile_id,
                 editor_b.revision,
                 loser_draft,
+                expected_generation=editor_b_result.generation,
             )
         _assert_safe_error(stale.value, "conflict")
 
@@ -1952,17 +2218,17 @@ async def test_update_allows_display_spelling_change_with_same_normalized_key(
         tmp_path / "profiles.sqlite3",
         clock=cast(Callable[[], datetime], clock),
     ) as repository:
-        original = (
-            await repository.create_profile(
-                _draft("Straße"),
-                profile_id=profile_id,
-            )
-        ).value
+        original_result = await repository.create_profile(
+            _draft("Straße"),
+            profile_id=profile_id,
+        )
+        original = original_result.value
         updated = (
             await repository.update_profile(
                 profile_id,
                 original.revision,
                 _draft("STRASSE"),
+                expected_generation=original_result.generation,
             )
         ).value
 
@@ -1985,18 +2251,23 @@ async def test_update_missing_or_name_collision_rolls_back_without_partial_chang
         database_path,
         clock=cast(Callable[[], datetime], clock),
     ) as repository:
-        first = (
-            await repository.create_profile(_draft("First"), profile_id=first_id)
-        ).value
-        second = (
-            await repository.create_profile(_draft("Second"), profile_id=second_id)
-        ).value
+        first_result = await repository.create_profile(
+            _draft("First"),
+            profile_id=first_id,
+        )
+        first = first_result.value
+        second_result = await repository.create_profile(
+            _draft("Second"),
+            profile_id=second_id,
+        )
+        second = second_result.value
 
         with pytest.raises(ProfileRepositoryError) as missing:
             await repository.update_profile(
                 missing_id,
                 1,
                 _draft("Missing"),
+                expected_generation=first_result.generation,
             )
         _assert_safe_error(missing.value, "missing")
 
@@ -2005,6 +2276,7 @@ async def test_update_missing_or_name_collision_rolls_back_without_partial_chang
                 second_id,
                 second.revision,
                 _draft("Ｆｉｒｓｔ"),
+                expected_generation=second_result.generation,
             )
         _assert_safe_error(collision.value, "conflict")
 
@@ -2015,6 +2287,7 @@ async def test_update_missing_or_name_collision_rolls_back_without_partial_chang
                 second_id,
                 second.revision,
                 _draft("Third"),
+                expected_generation=second_result.generation,
             )
         ).value
         assert recovered.revision == 2
@@ -2029,12 +2302,18 @@ async def test_delete_removes_exactly_one_profile_and_missing_is_safe(
     other_id = UUID("91000000-0000-4000-8000-000000000009")
 
     async with _opened_repository(tmp_path / "profiles.sqlite3") as repository:
-        await repository.create_profile(_draft("Delete"), profile_id=profile_id)
+        loaded = await repository.create_profile(
+            _draft("Delete"),
+            profile_id=profile_id,
+        )
         other = (
             await repository.create_profile(_draft("Keep"), profile_id=other_id)
         ).value
 
-        deleted = await repository.delete_profile(profile_id)
+        deleted = await repository.delete_profile(
+            profile_id,
+            expected_generation=loaded.generation,
+        )
 
         assert deleted == ProfileStoreResult(generation=1, value=None)
         with pytest.raises(ProfileRepositoryError) as missing:
@@ -2043,7 +2322,10 @@ async def test_delete_removes_exactly_one_profile_and_missing_is_safe(
         assert (await repository.get_profile(other_id)).value == other
 
         with pytest.raises(ProfileRepositoryError) as missing_delete:
-            await repository.delete_profile(profile_id)
+            await repository.delete_profile(
+                profile_id,
+                expected_generation=loaded.generation,
+            )
         _assert_safe_error(missing_delete.value, "missing")
 
 
@@ -2056,12 +2338,11 @@ async def test_delete_rejects_corrupt_target_without_discarding_it(
     corrupt_secret = "secret-delete-corrupt-options"
 
     async with _opened_repository(database_path) as repository:
-        original = (
-            await repository.create_profile(
-                _draft("Corrupt Delete"),
-                profile_id=profile_id,
-            )
-        ).value
+        original_result = await repository.create_profile(
+            _draft("Corrupt Delete"),
+            profile_id=profile_id,
+        )
+        original = original_result.value
         await asyncio.to_thread(
             _external_execute,
             database_path,
@@ -2074,7 +2355,10 @@ async def test_delete_rejects_corrupt_target_without_discarding_it(
         )
 
         with pytest.raises(ProfileRepositoryError) as corrupt:
-            await repository.delete_profile(profile_id)
+            await repository.delete_profile(
+                profile_id,
+                expected_generation=original_result.generation,
+            )
         _assert_safe_error(
             corrupt.value,
             "corrupt_data",
@@ -2111,12 +2395,11 @@ async def test_foreign_key_restricted_delete_trigger_maps_to_conflict_for_assign
     )
 
     async with _opened_repository(database_path) as repository:
-        profile = (
-            await repository.create_profile(
-                _draft("Assigned"),
-                profile_id=profile_id,
-            )
-        ).value
+        profile_result = await repository.create_profile(
+            _draft("Assigned"),
+            profile_id=profile_id,
+        )
+        profile = profile_result.value
         encoded = encode_assignment(
             assignment,
             created_at=CREATED_AT,
@@ -2147,7 +2430,10 @@ async def test_foreign_key_restricted_delete_trigger_maps_to_conflict_for_assign
         )
 
         with pytest.raises(ProfileRepositoryError) as conflict:
-            await repository.delete_profile(profile_id)
+            await repository.delete_profile(
+                profile_id,
+                expected_generation=profile_result.generation,
+            )
 
         _assert_safe_error(conflict.value, "conflict")
         assert (await repository.get_profile(profile_id)).value == profile
@@ -2164,12 +2450,11 @@ async def test_delete_captures_assignment_conflict_before_post_rollback_removal(
     profile_id = UUID("92100000-0000-4000-8000-000000000009")
 
     async with _opened_repository(database_path) as repository:
-        profile = (
-            await repository.create_profile(
-                _draft("Barrier Assigned"),
-                profile_id=profile_id,
-            )
-        ).value
+        profile_result = await repository.create_profile(
+            _draft("Barrier Assigned"),
+            profile_id=profile_id,
+        )
+        profile = profile_result.value
         await asyncio.to_thread(
             _external_insert_assignment,
             database_path,
@@ -2177,7 +2462,12 @@ async def test_delete_captures_assignment_conflict_before_post_rollback_removal(
             f"remove-{attempt}",
         )
         rolled_back, resume = _pause_next_rollback(monkeypatch, repository)
-        deletion = asyncio.create_task(repository.delete_profile(profile_id))
+        deletion = asyncio.create_task(
+            repository.delete_profile(
+                profile_id,
+                expected_generation=profile_result.generation,
+            )
+        )
         try:
             assert await asyncio.to_thread(rolled_back.wait, 10.0)
             await asyncio.to_thread(
@@ -2208,12 +2498,11 @@ async def test_delete_captures_missing_assignment_before_post_rollback_addition(
     secret = f"secret-addition-trigger-{attempt}"
 
     async with _opened_repository(database_path) as repository:
-        profile = (
-            await repository.create_profile(
-                _draft("Barrier Unassigned"),
-                profile_id=profile_id,
-            )
-        ).value
+        profile_result = await repository.create_profile(
+            _draft("Barrier Unassigned"),
+            profile_id=profile_id,
+        )
+        profile = profile_result.value
         await asyncio.to_thread(
             _external_execute,
             database_path,
@@ -2226,7 +2515,12 @@ async def test_delete_captures_missing_assignment_before_post_rollback_addition(
             """,
         )
         rolled_back, resume = _pause_next_rollback(monkeypatch, repository)
-        deletion = asyncio.create_task(repository.delete_profile(profile_id))
+        deletion = asyncio.create_task(
+            repository.delete_profile(
+                profile_id,
+                expected_generation=profile_result.generation,
+            )
+        )
         try:
             assert await asyncio.to_thread(rolled_back.wait, 10.0)
             await asyncio.to_thread(
@@ -2258,12 +2552,11 @@ async def test_unrelated_foreign_key_no_action_delete_maps_to_operation_failed(
     profile_id = UUID("92500000-0000-4000-8000-000000000009")
 
     async with _opened_repository(database_path) as repository:
-        profile = (
-            await repository.create_profile(
-                _draft("No Action Assigned"),
-                profile_id=profile_id,
-            )
-        ).value
+        profile_result = await repository.create_profile(
+            _draft("No Action Assigned"),
+            profile_id=profile_id,
+        )
+        profile = profile_result.value
         await asyncio.to_thread(
             _install_no_action_delete_probe,
             database_path,
@@ -2277,7 +2570,10 @@ async def test_unrelated_foreign_key_no_action_delete_maps_to_operation_failed(
         )
 
         with pytest.raises(ProfileRepositoryError) as failed:
-            await repository.delete_profile(profile_id)
+            await repository.delete_profile(
+                profile_id,
+                expected_generation=profile_result.generation,
+            )
 
         _assert_safe_error(failed.value, "operation_failed")
         assert (await repository.get_profile(profile_id)).value == profile
@@ -2287,7 +2583,12 @@ async def test_unrelated_foreign_key_no_action_delete_maps_to_operation_failed(
             database_path,
             "DROP TABLE delete_constraint_probe",
         )
-        assert (await repository.delete_profile(profile_id)).value is None
+        assert (
+            await repository.delete_profile(
+                profile_id,
+                expected_generation=profile_result.generation,
+            )
+        ).value is None
 
 
 @pytest.mark.asyncio
@@ -2299,12 +2600,11 @@ async def test_unrelated_delete_trigger_maps_to_operation_failed_without_assignm
     secret = "secret-unrelated-delete-trigger-message"
 
     async with _opened_repository(database_path) as repository:
-        profile = (
-            await repository.create_profile(
-                _draft("Unrelated Trigger"),
-                profile_id=profile_id,
-            )
-        ).value
+        profile_result = await repository.create_profile(
+            _draft("Unrelated Trigger"),
+            profile_id=profile_id,
+        )
+        profile = profile_result.value
         await asyncio.to_thread(
             _external_execute,
             database_path,
@@ -2324,7 +2624,10 @@ async def test_unrelated_delete_trigger_maps_to_operation_failed_without_assignm
         )
 
         with pytest.raises(ProfileRepositoryError) as failed:
-            await repository.delete_profile(profile_id)
+            await repository.delete_profile(
+                profile_id,
+                expected_generation=profile_result.generation,
+            )
 
         _assert_safe_error(
             failed.value,
@@ -2339,7 +2642,12 @@ async def test_unrelated_delete_trigger_maps_to_operation_failed_without_assignm
             database_path,
             "DROP TRIGGER force_profile_delete_constraint",
         )
-        assert (await repository.delete_profile(profile_id)).value is None
+        assert (
+            await repository.delete_profile(
+                profile_id,
+                expected_generation=profile_result.generation,
+            )
+        ).value is None
 
 
 @pytest.mark.asyncio
@@ -2351,12 +2659,11 @@ async def test_delete_trigger_post_check_failure_maps_safely_to_operation_failed
     secret = "secret-delete-post-check-trigger"
 
     async with _opened_repository(database_path) as repository:
-        profile = (
-            await repository.create_profile(
-                _draft("Post Check Failure"),
-                profile_id=profile_id,
-            )
-        ).value
+        profile_result = await repository.create_profile(
+            _draft("Post Check Failure"),
+            profile_id=profile_id,
+        )
+        profile = profile_result.value
         await asyncio.to_thread(
             _external_execute,
             database_path,
@@ -2375,7 +2682,10 @@ async def test_delete_trigger_post_check_failure_maps_safely_to_operation_failed
         )
 
         with pytest.raises(ProfileRepositoryError) as failed:
-            await repository.delete_profile(profile_id)
+            await repository.delete_profile(
+                profile_id,
+                expected_generation=profile_result.generation,
+            )
 
         _assert_safe_error(
             failed.value,
@@ -2401,15 +2711,16 @@ async def test_expected_integrity_from_commit_never_classifies_as_conflict(
     profile_id = UUID("a0000000-0000-4000-8000-00000000000a")
     secret = f"secret-{operation}-commit-integrity-{sqlite_errorcode}"
     original: TTSGenerationProfile | None = None
+    loaded_generation: int | None = None
 
     async with _opened_repository(database_path) as repository:
         if operation != "create":
-            original = (
-                await repository.create_profile(
-                    _draft("Commit Original"),
-                    profile_id=profile_id,
-                )
-            ).value
+            loaded = await repository.create_profile(
+                _draft("Commit Original"),
+                profile_id=profile_id,
+            )
+            original = loaded.value
+            loaded_generation = loaded.generation
 
         classifications = _record_integrity_classification(monkeypatch)
         attempted = _fail_next_commit(
@@ -2425,13 +2736,19 @@ async def test_expected_integrity_from_commit_never_classifies_as_conflict(
                     profile_id=profile_id,
                 )
             elif operation == "update":
+                assert loaded_generation is not None
                 await repository.update_profile(
                     profile_id,
                     1,
                     _draft("Commit Updated"),
+                    expected_generation=loaded_generation,
                 )
             else:
-                await repository.delete_profile(profile_id)
+                assert loaded_generation is not None
+                await repository.delete_profile(
+                    profile_id,
+                    expected_generation=loaded_generation,
+                )
 
         _assert_safe_error(
             failed.value,
@@ -2451,17 +2768,25 @@ async def test_expected_integrity_from_commit_never_classifies_as_conflict(
             assert recovered.value.profile_id == profile_id
         elif operation == "update":
             assert original is not None
+            assert loaded_generation is not None
             assert (await repository.get_profile(profile_id)).value == original
             recovered = await repository.update_profile(
                 profile_id,
                 original.revision,
                 _draft("Commit Recovered"),
+                expected_generation=loaded_generation,
             )
             assert recovered.value.revision == original.revision + 1
         else:
             assert original is not None
+            assert loaded_generation is not None
             assert (await repository.get_profile(profile_id)).value == original
-            assert (await repository.delete_profile(profile_id)).value is None
+            assert (
+                await repository.delete_profile(
+                    profile_id,
+                    expected_generation=loaded_generation,
+                )
+            ).value is None
 
 
 @pytest.mark.asyncio
@@ -2479,15 +2804,16 @@ async def test_expected_integrity_from_round_trip_never_classifies_as_conflict(
     profile_id = UUID("a1000000-0000-4000-8000-00000000000a")
     secret = f"secret-{operation}-round-trip-integrity-{sqlite_errorcode}"
     original: TTSGenerationProfile | None = None
+    loaded_generation: int | None = None
 
     async with _opened_repository(database_path) as repository:
         if operation == "update":
-            original = (
-                await repository.create_profile(
-                    _draft("Round Trip Original"),
-                    profile_id=profile_id,
-                )
-            ).value
+            loaded = await repository.create_profile(
+                _draft("Round Trip Original"),
+                profile_id=profile_id,
+            )
+            original = loaded.value
+            loaded_generation = loaded.generation
 
         classifications = _record_integrity_classification(monkeypatch)
         attempted = _fail_next_round_trip(
@@ -2503,10 +2829,12 @@ async def test_expected_integrity_from_round_trip_never_classifies_as_conflict(
                     profile_id=profile_id,
                 )
             else:
+                assert loaded_generation is not None
                 await repository.update_profile(
                     profile_id,
                     1,
                     _draft("Round Trip Updated"),
+                    expected_generation=loaded_generation,
                 )
 
         _assert_safe_error(
@@ -2527,11 +2855,13 @@ async def test_expected_integrity_from_round_trip_never_classifies_as_conflict(
             assert recovered.value.profile_id == profile_id
         else:
             assert original is not None
+            assert loaded_generation is not None
             assert (await repository.get_profile(profile_id)).value == original
             recovered = await repository.update_profile(
                 profile_id,
                 original.revision,
                 _draft("Round Trip Recovered"),
+                expected_generation=loaded_generation,
             )
             assert recovered.value.revision == original.revision + 1
 
@@ -2708,12 +3038,11 @@ async def test_update_failure_before_commit_rolls_back_and_repository_recovers(
         database_path,
         clock=cast(Callable[[], datetime], clock),
     ) as repository:
-        original = (
-            await repository.create_profile(
-                _draft("Original"),
-                profile_id=profile_id,
-            )
-        ).value
+        original_result = await repository.create_profile(
+            _draft("Original"),
+            profile_id=profile_id,
+        )
+        original = original_result.value
         attempted = _fail_next_commit(
             monkeypatch,
             repository,
@@ -2725,6 +3054,7 @@ async def test_update_failure_before_commit_rolls_back_and_repository_recovers(
                 profile_id,
                 original.revision,
                 _draft("Must Roll Back", model_id="rolled-back-model"),
+                expected_generation=original_result.generation,
             )
         _assert_safe_error(
             failed.value,
@@ -2740,6 +3070,7 @@ async def test_update_failure_before_commit_rolls_back_and_repository_recovers(
                 profile_id,
                 original.revision,
                 _draft("Recovered", model_id="recovered-model"),
+                expected_generation=original_result.generation,
             )
         ).value
         assert recovered.revision == 2
@@ -2757,12 +3088,11 @@ async def test_delete_failure_before_commit_rolls_back_and_repository_recovers(
     secret = "secret-delete-commit-failure"
 
     async with _opened_repository(database_path) as repository:
-        original = (
-            await repository.create_profile(
-                _draft("Survivor"),
-                profile_id=profile_id,
-            )
-        ).value
+        original_result = await repository.create_profile(
+            _draft("Survivor"),
+            profile_id=profile_id,
+        )
+        original = original_result.value
         attempted = _fail_next_commit(
             monkeypatch,
             repository,
@@ -2770,7 +3100,10 @@ async def test_delete_failure_before_commit_rolls_back_and_repository_recovers(
         )
 
         with pytest.raises(ProfileRepositoryError) as failed:
-            await repository.delete_profile(profile_id)
+            await repository.delete_profile(
+                profile_id,
+                expected_generation=original_result.generation,
+            )
         _assert_safe_error(
             failed.value,
             "operation_failed",
@@ -2780,7 +3113,12 @@ async def test_delete_failure_before_commit_rolls_back_and_repository_recovers(
         assert attempted.is_set()
         assert (await repository.get_profile(profile_id)).value == original
 
-        assert (await repository.delete_profile(profile_id)).value is None
+        assert (
+            await repository.delete_profile(
+                profile_id,
+                expected_generation=original_result.generation,
+            )
+        ).value is None
         with pytest.raises(ProfileRepositoryError) as missing:
             await repository.get_profile(profile_id)
         _assert_safe_error(missing.value, "missing")
@@ -3340,12 +3678,11 @@ async def test_joined_read_returns_immutable_exact_revision_snapshot(
         tmp_path / "joined.sqlite3",
         clock=cast(Callable[[], datetime], clock),
     ) as repository:
-        created = (
-            await repository.create_profile(
-                _draft("Joined Original"),
-                profile_id=profile_id,
-            )
-        ).value
+        created_result = await repository.create_profile(
+            _draft("Joined Original"),
+            profile_id=profile_id,
+        )
+        created = created_result.value
         await repository.set_assignment(character_ref, profile_id)
 
         joined = await repository.get_assigned_profile(character_ref)
@@ -3362,6 +3699,7 @@ async def test_joined_read_returns_immutable_exact_revision_snapshot(
                 profile_id,
                 created.revision,
                 _draft("Joined Updated", model_id="new-model"),
+                expected_generation=joined.generation,
             )
         ).value
         current = (await repository.get_assigned_profile(character_ref)).value
@@ -3384,16 +3722,18 @@ async def test_delete_profile_is_blocked_by_repository_assignment(
     character_ref = CharacterRef("local", "delete-protection", "character-6")
 
     async with _opened_repository(tmp_path / "protected-delete.sqlite3") as repository:
-        profile = (
-            await repository.create_profile(
-                _draft("Protected"),
-                profile_id=profile_id,
-            )
-        ).value
+        profile_result = await repository.create_profile(
+            _draft("Protected"),
+            profile_id=profile_id,
+        )
+        profile = profile_result.value
         await repository.set_assignment(character_ref, profile_id)
 
         with pytest.raises(ProfileRepositoryError) as conflict:
-            await repository.delete_profile(profile_id)
+            await repository.delete_profile(
+                profile_id,
+                expected_generation=profile_result.generation,
+            )
 
         _assert_safe_error(conflict.value, "conflict")
         assert (await repository.get_profile(profile_id)).value == profile
@@ -3857,20 +4197,23 @@ async def test_crud_sql_runs_only_on_repository_worker(
         database_path,
         clock=cast(Callable[[], datetime], clock),
     ) as repository:
-        created = (
-            await repository.create_profile(
-                _draft("Worker"),
-                profile_id=GENERATED_ID,
-            )
-        ).value
-        await repository.get_profile(created.profile_id)
+        created_result = await repository.create_profile(
+            _draft("Worker"),
+            profile_id=GENERATED_ID,
+        )
+        created = created_result.value
+        loaded = await repository.get_profile(created.profile_id)
         await repository.list_profiles(search="work", limit=1, offset=0)
         await repository.update_profile(
             created.profile_id,
             created.revision,
             _draft("Worker Updated"),
+            expected_generation=loaded.generation,
         )
-        await repository.delete_profile(created.profile_id)
+        await repository.delete_profile(
+            created.profile_id,
+            expected_generation=loaded.generation,
+        )
 
     assert traced_threads
     assert len(set(traced_threads)) == 1
