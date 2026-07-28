@@ -9,7 +9,9 @@ testable without a running app.
 from __future__ import annotations
 
 import importlib.util
+import threading
 from dataclasses import dataclass
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -160,3 +162,196 @@ def resolve() -> EffectiveConfig | None:
         configured_provider=configured,
         was_overridden=bool(configured) and provider != configured,
     )
+
+
+STATE_UNAVAILABLE = "unavailable"
+STATE_IDLE = "idle"
+STATE_PREPARING = "preparing"
+STATE_LISTENING = "listening"
+STATE_FINISHING = "finishing"
+STATE_ERROR = "error"
+
+
+@dataclass(frozen=True)
+class VoicePartial:
+    """In-flight recognizer text; superseded by the next partial or final."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class VoiceFinal:
+    """A segment the recognizer finalized on the silence threshold."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class VoiceStateChanged:
+    state: str
+
+
+@dataclass(frozen=True)
+class VoiceFailed:
+    reason: str
+    remedy: str = ""
+
+
+@dataclass(frozen=True)
+class VoiceProviderOverridden:
+    configured: str
+    effective: str
+
+
+def default_service_factory(**kwargs: Any) -> Any:
+    """Build a LazyLiveDictationService, importing it as late as possible.
+
+    The import lives in the function body on purpose: `tldw_chatbook.Audio`
+    (the package) chains to `transcription_service`, which imports
+    faster-whisper and NeMo at module scope. Importing the submodule directly,
+    at call time, keeps that cost off app start entirely.
+    """
+    from ..Audio.dictation_service_lazy import LazyLiveDictationService
+
+    return LazyLiveDictationService(**kwargs)
+
+
+class ConsoleVoiceInputController:
+    """Own the dictation lifecycle without touching the UI.
+
+    Threading policy lives in the caller: `spawn` runs a thunk off the UI
+    thread (a Textual worker in the app, a direct call in tests), because both
+    `start_dictation()` (cold model load) and `stop_dictation()` (a 2s thread
+    join) block.
+    """
+
+    def __init__(
+        self,
+        *,
+        emit: Callable[[Any], None],
+        spawn: Callable[[Callable[[], None]], None],
+        service_factory: Callable[..., Any] = default_service_factory,
+    ) -> None:
+        self._emit = emit
+        self._spawn = spawn
+        self._service_factory = service_factory
+        self._service: Any | None = None
+        self._state = STATE_IDLE
+        self._state_lock = threading.Lock()
+        self._override_announced = False
+        self.save_audio_requested = False
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @property
+    def is_active(self) -> bool:
+        """True while a microphone is or is about to be live."""
+        return self._state in (STATE_PREPARING, STATE_LISTENING, STATE_FINISHING)
+
+    def _set_state(self, state: str) -> None:
+        self._state = state
+        self._emit(VoiceStateChanged(state))
+
+    def _fail(self, reason: str, remedy: str = "") -> None:
+        self._emit(VoiceFailed(reason=reason, remedy=remedy))
+        self._set_state(STATE_IDLE)
+
+    def start(self) -> None:
+        """Begin capture. Rejected unless currently idle."""
+        with self._state_lock:
+            if self._state != STATE_IDLE:
+                logger.debug("Console dictation start ignored in state {}", self._state)
+                return
+            self._state = STATE_PREPARING
+        self._emit(VoiceStateChanged(STATE_PREPARING))
+
+        availability = probe()
+        if not availability.ok:
+            self._fail(availability.reason, availability.remedy)
+            return
+
+        effective = resolve()
+        if effective is None:
+            self._fail(PROVIDER_REASON, PROVIDER_REMEDY)
+            return
+
+        if effective.was_overridden and not self._override_announced:
+            self._override_announced = True
+            self._emit(
+                VoiceProviderOverridden(
+                    configured=effective.configured_provider,
+                    effective=effective.provider,
+                )
+            )
+
+        self._spawn(lambda: self._begin(effective))
+
+    def _begin(self, effective: EffectiveConfig) -> None:
+        """Blocking half of start(); always runs via `spawn`."""
+        try:
+            self._service = self._service_factory(
+                transcription_provider=effective.provider,
+                transcription_model=effective.model,
+                language=effective.language,
+                enable_commands=False,  # V2 owns voice commands, not V1
+            )
+            started = self._service.start_dictation(
+                on_partial_transcript=lambda text: self._emit(VoicePartial(text)),
+                on_final_transcript=lambda text: self._emit(VoiceFinal(text)),
+                on_state_change=lambda _state: None,  # our state machine is authoritative
+                on_error=lambda error: self._fail(str(error)),
+                save_audio=self.save_audio_requested,
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user verbatim
+            logger.opt(exception=True).warning("Console dictation failed to start")
+            self._service = None
+            self._fail(str(exc))
+            return
+
+        if not started:
+            self._service = None
+            self._fail("Could not start the microphone.")
+            return
+
+        self._set_state(STATE_LISTENING)
+
+    def stop(self) -> None:
+        """End capture and commit. No-op unless currently listening."""
+        with self._state_lock:
+            if self._state != STATE_LISTENING:
+                logger.debug("Console dictation stop ignored in state {}", self._state)
+                return
+            self._state = STATE_FINISHING
+        self._emit(VoiceStateChanged(STATE_FINISHING))
+        self._spawn(self._finish)
+
+    def _finish(self) -> None:
+        """Blocking half of stop(); always runs via `spawn`."""
+        service, self._service = self._service, None
+        try:
+            if service is not None:
+                service.stop_dictation()
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=True).warning("Console dictation failed to stop")
+            self._fail(str(exc))
+            return
+        self._set_state(STATE_IDLE)
+
+    def abandon(self) -> None:
+        """Release the microphone without waiting on the 2s join.
+
+        For teardown paths (unmount, app quit) where blocking would show up as
+        a hang. Best effort by design.
+        """
+        service, self._service = self._service, None
+        self._state = STATE_IDLE
+        if service is None:
+            return
+        try:
+            audio = getattr(service, "_audio_service", None)
+            if audio is not None and hasattr(audio, "stop_recording"):
+                audio.stop_recording()
+        except Exception:  # noqa: BLE001 - teardown must never raise
+            logger.opt(exception=True).debug("Console dictation abandon failed")

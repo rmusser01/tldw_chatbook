@@ -252,3 +252,194 @@ def test_resolve_returns_none_when_nothing_installed(monkeypatch):
     _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
 
     assert cvi.resolve() is None
+
+
+import threading
+
+
+class FakeDictationService:
+    """Stands in for LazyLiveDictationService, recording how it was built."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.started = False
+        self.stopped = False
+        self.start_result = True
+        self.start_error: Exception | None = None
+        self._callbacks: dict[str, object] = {}
+
+    def start_dictation(self, **callbacks):
+        if self.start_error is not None:
+            raise self.start_error
+        self._callbacks = callbacks
+        self.started = True
+        return self.start_result
+
+    def stop_dictation(self):
+        self.stopped = True
+        return None
+
+    # -- test drivers -------------------------------------------------
+    def emit_partial(self, text):
+        self._callbacks["on_partial_transcript"](text)
+
+    def emit_final(self, text):
+        self._callbacks["on_final_transcript"](text)
+
+    def emit_error(self, error):
+        self._callbacks["on_error"](error)
+
+
+def _controller(monkeypatch, service=None, spawn=None):
+    """Build a controller with a fake service.
+
+    `spawn` defaults to running the thunk inline, which is what makes the
+    state machine testable without an event loop. Pass a deferring spawn to
+    freeze the controller mid-`preparing`.
+    """
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    service = service or FakeDictationService()
+
+    def _service_factory(**kwargs):
+        # Same identity every call (so the test's `service` reference stays
+        # valid across `start()`), but record the kwargs the controller
+        # actually built it with -- a bare `lambda **kwargs: service` would
+        # silently drop them and `service.kwargs` would stay `{}` forever.
+        service.kwargs = kwargs
+        return service
+
+    events = []
+    controller = cvi.ConsoleVoiceInputController(
+        emit=events.append,
+        spawn=spawn or (lambda thunk: thunk()),
+        service_factory=_service_factory,
+    )
+    return controller, events, service
+
+
+def test_start_transitions_preparing_then_listening(monkeypatch):
+    controller, events, _ = _controller(monkeypatch)
+
+    controller.start()
+
+    states = [e.state for e in events if isinstance(e, cvi.VoiceStateChanged)]
+    assert states == [cvi.STATE_PREPARING, cvi.STATE_LISTENING]
+    assert controller.is_active is True
+
+
+def test_second_start_while_listening_is_a_no_op(monkeypatch):
+    """Rejected by our own state, not left to the service's lock."""
+    controller, events, _ = _controller(monkeypatch)
+    controller.start()
+    assert controller.state == cvi.STATE_LISTENING
+    events.clear()
+
+    controller.start()
+
+    assert events == []
+
+
+def test_start_while_still_preparing_is_a_no_op(monkeypatch):
+    """The preparing window is real once `spawn` is a worker, so cover it.
+
+    A deferring spawn captures the thunk instead of running it, which is the
+    only way to observe the controller mid-`preparing`. With the inline spawn
+    used elsewhere, `start()` has already reached `listening` on return.
+    """
+    pending = []
+    controller, events, _ = _controller(monkeypatch, spawn=pending.append)
+
+    controller.start()
+    assert controller.state == cvi.STATE_PREPARING
+    events.clear()
+
+    controller.start()
+
+    assert events == []
+    assert len(pending) == 1  # the second start never queued more work
+
+
+def test_stop_returns_to_idle(monkeypatch):
+    controller, events, service = _controller(monkeypatch)
+    controller.start()
+    events.clear()
+
+    controller.stop()
+
+    states = [e.state for e in events if isinstance(e, cvi.VoiceStateChanged)]
+    assert states == [cvi.STATE_FINISHING, cvi.STATE_IDLE]
+    assert service.stopped is True
+    assert controller.is_active is False
+
+
+def test_stop_from_idle_is_a_no_op(monkeypatch):
+    controller, events, _ = _controller(monkeypatch)
+
+    controller.stop()
+
+    assert events == []
+
+
+def test_failed_start_returns_to_idle_not_stuck_on_preparing(monkeypatch):
+    service = FakeDictationService()
+    service.start_error = RuntimeError("no input device")
+    controller, events, _ = _controller(monkeypatch, service)
+
+    controller.start()
+
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert "no input device" in failures[0].reason
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_service_built_with_commands_and_audio_saving_off(monkeypatch):
+    """V2 behaviour must not leak into V1, and no audio is retained."""
+    controller, _, service = _controller(monkeypatch)
+
+    controller.start()
+
+    assert service.kwargs["enable_commands"] is False
+    assert controller.save_audio_requested is False
+
+
+def test_transcript_callbacks_survive_a_foreign_thread(monkeypatch):
+    """Callbacks arrive on the service's worker thread; nothing may block."""
+    controller, events, service = _controller(monkeypatch)
+    controller.start()
+    events.clear()
+
+    thread = threading.Thread(target=lambda: service.emit_final("hello there"))
+    thread.start()
+    thread.join(timeout=5)
+
+    finals = [e for e in events if isinstance(e, cvi.VoiceFinal)]
+    assert [e.text for e in finals] == ["hello there"]
+
+
+def test_unavailable_start_emits_remedy(monkeypatch):
+    controller, events, _ = _controller(monkeypatch)
+    monkeypatch.setattr(cvi, "capture_available", lambda: False)
+
+    controller.start()
+
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert "speech_recording" in failures[0].remedy
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_provider_override_is_announced_once(monkeypatch):
+    controller, events, _ = _controller(monkeypatch)
+    _stub_settings(monkeypatch, {"transcription.default_provider": "parakeet-mlx"})
+
+    controller.start()
+    controller.stop()
+    controller.start()
+
+    overrides = [e for e in events if isinstance(e, cvi.VoiceProviderOverridden)]
+    assert len(overrides) == 1
+    assert overrides[0].effective == "faster-whisper"
