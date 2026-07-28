@@ -1,7 +1,7 @@
 ---
 id: TASK-1260
 title: Path-validation property tests fail under machine load, producing false regression signals
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-28 10:55'
 labels:
@@ -46,9 +46,32 @@ rather than a one-line patch to this file.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A Hypothesis settings profile is registered in Tests/conftest.py and applied to the suite, rather than each property file setting its own deadline
-- [ ] #2 The profile disables or substantially raises the per-example deadline, so a loaded machine cannot fail a property that holds
-- [ ] #3 Property tests that do real filesystem or database work are identified, and the profile covers them
-- [ ] #4 test_safe_paths_always_validate passes when its suite runs concurrently with at least two other large suites under load
-- [ ] #5 The reason the deadline is relaxed is recorded next to the profile, so it is not "tightened back up" later as an apparent improvement
+- [x] #1 A Hypothesis settings profile is registered in Tests/conftest.py and applied to the suite, rather than each property file setting its own deadline
+- [x] #2 The profile disables or substantially raises the per-example deadline, so a loaded machine cannot fail a property that holds
+- [x] #3 Property tests that do real filesystem or database work are identified, and the profile covers them
+- [x] #4 test_safe_paths_always_validate passes when its suite runs concurrently with at least two other large suites under load
+- [x] #5 The reason the deadline is relaxed is recorded next to the profile, so it is not "tightened back up" later as an apparent improvement
 <!-- AC:END -->
+
+## Implementation Notes
+
+A `tldw` Hypothesis profile is registered and loaded in `Tests/conftest.py` with `deadline=None` and
+`HealthCheck.too_slow` suppressed. Registering it once in the root conftest covers every property
+file rather than patching the one that happened to fail; the other property suites (DB, path,
+validation) carry the same exposure.
+
+**The deadline is disabled rather than raised.** A larger number only moves the threshold a loaded
+machine will eventually cross, and the failure it produces is indistinguishable from a real
+regression. A deadline that fails a property which *holds* is measuring the machine, not the code.
+Timing belongs in benchmarks, not correctness properties. The comment beside the profile says this
+explicitly, per AC#5, so it is not "tightened back up" later as an apparent improvement.
+
+**Mutation-checked twice.** A throwaway property sleeping 250ms per example fails with
+`DeadlineExceeded` when the profile is not loaded and passes when it is -- confirming the diagnosed
+mechanism directly rather than by inference. And setting `deadline=200` in the profile fails
+`test_per_example_deadline_is_disabled`, so the permanent guard is not vacuous.
+
+`Tests/test_hypothesis_profile.py` asserts the deadline is disabled, `too_slow` is suppressed, and
+the profile is the one this repo registered.
+
+Modified: `Tests/conftest.py`. Added: `Tests/test_hypothesis_profile.py`.

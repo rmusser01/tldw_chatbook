@@ -344,6 +344,40 @@ not a per-file patch — other property files carry the same exposure.
 
 ---
 
+## A filter with no admitted callers is an off switch
+
+**TASK-1240, 2026-07-28.** The persistent app log wrote zero bytes. The handler
+was attached, the path resolved, the directory existed, the level was INFO.
+
+`PersistentDiagnosticFilter` admits a record only if it carries a marker set
+exclusively by `log_persistent_metadata()`. That function has **zero production
+call sites**. Every ordinary `logger.info(...)` is rejected, so the sink is
+correctly enforcing a boundary that nothing was ever migrated to cross.
+
+The privacy work that introduced it is sound and has its own ADR. The gap is
+between decision and implementation: ADR-029 requires logs be metadata-only
+*with respect to user and model content*, and the design's stated goal was to
+"keep persistent diagnostics **useful** without retaining private payload
+values". Admitting nothing satisfies the letter of the exclusion list and defeats
+the goal.
+
+**What to do.** When a sink produces nothing, check the **admission predicate
+before the plumbing**. Handler attached, path correct and level correct are all
+consistent with a filter that rejects everything. Then ask the question that
+distinguishes the two failures: *how many callers does the admitted path have?*
+Zero is the tell.
+
+And when the answer implicates a deliberate security boundary, record the gap
+and hand the decision to that work's owner. Loosening a privacy filter to make
+your own diagnostics visible is not a fix you get to make alone.
+
+This is the fourth instance of one shape in a single session: a closed import
+cycle, a flag gating the only executor, a prompt surface with no consumer, and
+now a log sink with no admitted caller. Each was built, wired, and given nothing
+to carry — and each read as live to a grep.
+
+---
+
 ## Related
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects
