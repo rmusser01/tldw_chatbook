@@ -423,6 +423,8 @@ class TranscriptionRouter:
             if not capabilities.automatic_language:
                 self._fail_unsupported_language(model)
             return
+        if capabilities.language_input_mode is LanguageInputMode.AUTOMATIC_ONLY:
+            self._fail_unsupported_language(model)
         if not self._supports_explicit_language(capabilities, requested_language):
             self._fail_unsupported_language(model)
 

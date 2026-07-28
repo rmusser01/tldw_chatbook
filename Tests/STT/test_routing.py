@@ -335,9 +335,13 @@ def test_exact_model_defers_timestamp_and_input_pipeline_compatibility() -> None
     assert resolved.model_id == policy.parakeet_v2_model_id
 
 
-def test_automatic_only_exact_model_rejects_explicit_language_without_dropping_it() -> (
-    None
-):
+@pytest.mark.parametrize(
+    "declared_languages",
+    [frozenset(), frozenset({"en"})],
+)
+def test_automatic_only_exact_model_rejects_explicit_language_without_dropping_it(
+    declared_languages: frozenset[str],
+) -> None:
     policy = _policy()
     provider = ProviderMetadata(
         provider_id="transcribe-cpp",
@@ -349,7 +353,7 @@ def test_automatic_only_exact_model_rejects_explicit_language_without_dropping_i
         model_id="qwen3-asr-0.6b-q8_0",
         display_name="Qwen3-ASR 0.6B Q8_0",
         capabilities=CapabilitySet(
-            languages=frozenset(),
+            languages=declared_languages,
             automatic_language=True,
             tasks=frozenset({TranscriptionTask.TRANSCRIBE}),
             inputs=frozenset({InputKind.FILE, InputKind.BUFFER}),
