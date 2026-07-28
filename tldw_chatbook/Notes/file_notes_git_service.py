@@ -539,9 +539,34 @@ class FileNotesGitService:
                 message="Git repository discovery failed",
             )
         if inside.returncode != 0:
+            diagnostic = sanitize_git_stderr(inside.stderr)
+            normalized_diagnostic = diagnostic.lower()
+            safety_markers = (
+                "dubious ownership",
+                "safe.directory",
+                "permission denied",
+                "operation not permitted",
+                "access is denied",
+            )
+            if (
+                "not a git repository" in normalized_diagnostic
+                and not any(
+                    marker in normalized_diagnostic
+                    for marker in safety_markers
+                )
+            ):
+                return DiscoveryResult(
+                    "not_repository",
+                    message=(
+                        "Selected File Notes root is not in a Git worktree"
+                    ),
+                )
+            message = "Git refused repository discovery"
+            if diagnostic:
+                message = f"{message}: {diagnostic}"
             return DiscoveryResult(
-                "not_repository",
-                message="Selected File Notes root is not in a Git worktree",
+                "unsafe_root",
+                message=message,
             )
         if inside.stdout != b"true\n":
             return DiscoveryResult(

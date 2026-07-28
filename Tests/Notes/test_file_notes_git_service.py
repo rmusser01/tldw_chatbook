@@ -10,6 +10,7 @@ import pytest
 
 from tldw_chatbook.Notes.file_notes_git_service import (
     AsyncGitProcessRunner,
+    DiscoveryResult,
     FileNotesGitService,
     GitCommandResult,
     GitIndexParseError,
@@ -1215,6 +1216,132 @@ def test_git_stderr_is_bounded_and_control_sanitized() -> None:
     assert "\t" not in diagnostic
     assert "\x00" not in diagnostic
     assert "\x1b" not in diagnostic
+
+
+class _DiscoveryFailureRunner:
+    def __init__(self, result: GitCommandResult) -> None:
+        self.result = result
+        self.calls: list[tuple[str | bytes, ...]] = []
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        del cwd, environment, stdin, timeout
+        self.calls.append(tuple(argv))
+        return self.result
+
+    def shutdown(self) -> None:
+        return None
+
+
+async def _discover_with_failure(
+    tmp_path: Path,
+    result: GitCommandResult,
+) -> tuple[DiscoveryResult, _DiscoveryFailureRunner]:
+    root = tmp_path / "notes"
+    root.mkdir()
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    runner = _DiscoveryFailureRunner(result)
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="/private/bin/git",
+        environment={"PATH": "/private/bin"},
+    )
+
+    discovery = await service.discover(binding)
+    await service.shutdown()
+    return discovery, runner
+
+
+@pytest.mark.asyncio
+async def test_discover_preserves_genuine_not_repository_result(
+    tmp_path: Path,
+) -> None:
+    discovery, runner = await _discover_with_failure(
+        tmp_path,
+        GitCommandResult(
+            128,
+            b"",
+            b"fatal: not a git repository (or any parent): .git\n",
+        ),
+    )
+
+    assert discovery.state == "not_repository"
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stderr", "expected_fragments"),
+    [
+        (
+            (
+                b"fatal: detected dubious ownership in repository at '/notes'\n"
+                b"git config --global --add safe.directory /notes\n"
+            ),
+            ("dubious ownership", "safe.directory"),
+        ),
+        (
+            b"fatal: could not open '.git/HEAD': Permission denied\n",
+            ("permission denied",),
+        ),
+    ],
+)
+async def test_discover_surfaces_repository_safety_refusal(
+    tmp_path: Path,
+    stderr: bytes,
+    expected_fragments: tuple[str, ...],
+) -> None:
+    discovery, runner = await _discover_with_failure(
+        tmp_path,
+        GitCommandResult(128, b"", stderr),
+    )
+
+    assert discovery.state == "unsafe_root"
+    assert discovery.message is not None
+    message = discovery.message.lower()
+    assert all(fragment in message for fragment in expected_fragments)
+    assert "\n" not in message
+    assert len(runner.calls) == 1
+    assert all(
+        "config" not in tuple(os.fsdecode(argument) for argument in call)
+        for call in runner.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_discover_bounds_and_sanitizes_hostile_failure_stderr(
+    tmp_path: Path,
+) -> None:
+    discovery, _runner = await _discover_with_failure(
+        tmp_path,
+        GitCommandResult(
+            128,
+            b"",
+            (
+                b"fatal: detected dubious ownership\x00\x1b\n"
+                + (b"x" * 10_000)
+            ),
+        ),
+    )
+
+    assert discovery.state == "unsafe_root"
+    assert discovery.message is not None
+    message = discovery.message
+    assert len(message.encode("utf-8", "surrogateescape")) <= 4200
+    assert "\n" not in message
+    assert "\r" not in message
+    assert "\t" not in message
+    assert "\x00" not in message
+    assert "\x1b" not in message
 
 
 class _CompletedProcess:
