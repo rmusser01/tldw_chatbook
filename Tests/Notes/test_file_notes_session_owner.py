@@ -54,6 +54,40 @@ def test_same_root_keeps_session_and_different_root_resets_it(
     assert owner.record_change(first, SessionChange("modified", "late.md")) is False
 
 
+def test_root_selection_accepts_valid_shell_metacharacters(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes;pipe|and&&tick`dollar$(x)${y}"
+    root.mkdir()
+    expected_root_key = str(root.resolve())
+
+    direct_owner = FileNotesSessionOwner()
+    assert direct_owner.select_root(root).root_key == expected_root_key
+
+    conditional_owner = FileNotesSessionOwner()
+    conditional = conditional_owner.try_select_root(
+        root,
+        expected_binding=None,
+    )
+    assert conditional is not None
+    assert conditional.root_key == expected_root_key
+
+    stable_owner = FileNotesSessionOwner()
+    stable = stable_owner.acquire_stable_root(root)
+    assert stable is not None
+    assert stable.binding is not None
+    assert stable.binding.root_key == expected_root_key
+    stable.release()
+
+    reserved_owner = FileNotesSessionOwner()
+    reservation = reserved_owner.try_reserve_root(
+        root,
+        expected_binding=None,
+    )
+    assert reservation is not None
+    reservation.release()
+
+
 def _git_owner_state():
     filesystem_identity = FileSystemIdentity(device=1, inode=2)
     repository = RepositoryIdentity(
@@ -195,6 +229,70 @@ def test_status_publication_rejects_invalidation_after_admission(
     lease.release()
 
     assert owner.clear_status(binding)
+    status_generation = owner.next_status_generation(binding)
+    assert status_generation is not None
+    late_status = SessionGitStatus(
+        binding_generation=binding.generation,
+        status_generation=status_generation,
+        state="ready",
+        repository=repository,
+    )
+
+    assert not owner.publish_status(
+        binding,
+        late_status,
+        invalidation_generation=admitted_generation,
+    )
+    assert owner.snapshot(binding).git_status is None
+
+
+def test_record_change_atomically_invalidates_status_and_preserves_ownership(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, ownership, _group = _git_owner_state()
+    status_generation = owner.next_status_generation(binding)
+    assert status_generation is not None
+    status = SessionGitStatus(
+        binding_generation=binding.generation,
+        status_generation=status_generation,
+        state="ready",
+        repository=repository,
+    )
+    assert owner.publish_trust(binding, repository)
+    assert owner.publish_status(binding, status)
+    assert owner.publish_ownership(binding, {1: ownership})
+
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "note.md"),
+    )
+
+    snapshot = owner.snapshot(binding)
+    assert tuple(item.change.relative_path for item in snapshot.changes) == (
+        "note.md",
+    )
+    assert snapshot.git_status is None
+    assert dict(snapshot.staging_ownership) == {1: ownership}
+
+
+def test_record_change_rejects_status_admitted_before_the_change(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, _ownership, _group = _git_owner_state()
+    assert owner.publish_trust(binding, repository)
+    lease = owner.try_acquire_status(binding)
+    assert lease is not None
+    admitted_generation = lease.invalidation_generation
+    lease.release()
+
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "note.md"),
+    )
     status_generation = owner.next_status_generation(binding)
     assert status_generation is not None
     late_status = SessionGitStatus(

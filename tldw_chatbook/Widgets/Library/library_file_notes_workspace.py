@@ -1011,7 +1011,6 @@ class LibraryFileNotesWorkspace(Vertical):
         self._git_observed_changes = changes
         if prior is None or prior == changes or binding is None:
             return
-        self._session_owner.clear_status(binding)
         self._git_panel_widget.mark_stale()
         if self._navigator_mode == "git":
             self._schedule_git_refresh()
@@ -1940,7 +1939,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._navigator_mode != "git":
             self._navigator_mode_before_git = (
                 "search"
-                if self.query_one("#file-notes-search", Input).value.strip()
+                if self._navigator_mode == "search"
                 else "files"
             )
         self._navigator_mode = "git"

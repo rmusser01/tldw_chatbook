@@ -616,6 +616,7 @@ class FileNotesSessionOwner:
                 )
             )
             self._next_sequence += 1
+            self._clear_git_status_locked()
             return True
 
     def snapshot(self, binding: SessionBinding) -> FileNotesSessionSnapshot:

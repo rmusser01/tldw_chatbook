@@ -84,6 +84,7 @@ _DYNAMIC_CONFIG_ENVIRONMENT_PREFIXES = (
     "GIT_CONFIG_KEY_",
     "GIT_CONFIG_VALUE_",
 )
+DEFAULT_GIT_STDERR_LIMIT_BYTES = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,7 +255,19 @@ def build_git_environment(
     for_status: bool = False,
     stable_locale: bool = False,
 ) -> dict[str, str]:
-    """Return ordinary process context without Git redirection/injection."""
+    """Build a sanitized environment for a direct Git child process.
+
+    Args:
+        ambient: Source environment. Defaults to the current process
+            environment.
+        for_status: Whether to disable optional Git index locks for a
+            read-only status command.
+        stable_locale: Whether to force the stable ``C`` locale.
+
+    Returns:
+        A copied environment without Git redirection or dynamic-config
+        variables and with interactive prompting disabled.
+    """
     source = os.environ if ambient is None else ambient
     environment = {
         key: value
@@ -480,7 +493,11 @@ def _baseline_matches_index(
     )
 
 
-def sanitize_git_stderr(payload: bytes, *, limit: int = 4096) -> str:
+def sanitize_git_stderr(
+    payload: bytes,
+    *,
+    limit: int = DEFAULT_GIT_STDERR_LIMIT_BYTES,
+) -> str:
     """Bound diagnostics and make terminal control bytes visible."""
     if limit <= 0:
         return ""
@@ -514,7 +531,7 @@ class AsyncGitProcessRunner:
         *,
         terminate_timeout: float = 0.25,
         kill_timeout: float = 0.25,
-        stderr_limit: int = 4096,
+        stderr_limit: int = DEFAULT_GIT_STDERR_LIMIT_BYTES,
     ) -> None:
         self._sealed = False
         self._terminate_timeout = terminate_timeout
@@ -546,9 +563,34 @@ class AsyncGitProcessRunner:
         elif self._loop is not loop:
             raise RuntimeError("Git runner cannot span multiple event loops")
         assert self._shutdown_event is not None
-        run_task = asyncio.current_task()
-        assert run_task is not None
+        run_task = loop.create_task(
+            self._run_owned_command(
+                argv,
+                cwd=cwd,
+                environment=environment,
+                stdin=stdin,
+                timeout=timeout,
+            )
+        )
         self._run_tasks.add(run_task)
+        run_task.add_done_callback(self._run_task_completed)
+        try:
+            return await asyncio.shield(run_task)
+        except asyncio.CancelledError:
+            run_task.cancel()
+            raise
+
+    async def _run_owned_command(
+        self,
+        argv: Sequence[GitArg],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None,
+        timeout: float | None,
+    ) -> GitCommandResult:
+        """Run one child in a runner-owned task immune to caller cancellation."""
+        assert self._shutdown_event is not None
         process: asyncio.subprocess.Process | None = None
         communication: asyncio.Task[tuple[bytes, bytes]] | None = None
         shutdown_waiter: asyncio.Task[bool] | None = None
@@ -590,27 +632,7 @@ class AsyncGitProcessRunner:
                 )
 
             shutdown_requested = shutdown_waiter in done
-            try:
-                process.terminate()
-            except ProcessLookupError:
-                pass
-            except OSError:
-                self._termination_uncertain = True
-            terminated = await self._bounded_process_wait(
-                process,
-                self._terminate_timeout,
-            )
-            if not terminated:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-                except OSError:
-                    self._termination_uncertain = True
-                terminated = await self._bounded_process_wait(
-                    process,
-                    self._kill_timeout,
-                )
+            terminated = await self._stop_process(process)
 
             stdout = b""
             stderr = (
@@ -636,6 +658,21 @@ class AsyncGitProcessRunner:
                 timed_out=not shutdown_requested,
                 termination_uncertain=not terminated,
             )
+        except asyncio.CancelledError:
+            if process is not None:
+                terminated = await self._stop_process(process)
+                if terminated and communication is not None:
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(communication),
+                            timeout=self._kill_timeout,
+                        )
+                    except TimeoutError:
+                        terminated = False
+                if not terminated:
+                    self._termination_uncertain = True
+                retain_process = not terminated
+            raise
         finally:
             if process is not None and not retain_process:
                 self._processes.discard(process)
@@ -651,14 +688,22 @@ class AsyncGitProcessRunner:
                     communication,
                     return_exceptions=True,
                 )
-            self._run_tasks.discard(run_task)
+
+    def _run_task_completed(
+        self,
+        task: asyncio.Task[GitCommandResult],
+    ) -> None:
+        """Release one owned task and retrieve any otherwise-orphaned error."""
+        self._run_tasks.discard(task)
+        if not task.cancelled():
+            task.exception()
 
     def shutdown(self) -> Awaitable[bool]:
         """Seal admissions and return retained finite cleanup settlement."""
         if self._shutdown_settlement is not None:
             return self._shutdown_settlement
         running_loop: asyncio.AbstractEventLoop | None = None
-        if self._run_tasks:
+        if self._run_tasks or self._processes:
             assert self._loop is not None
             assert self._shutdown_event is not None
             try:
@@ -672,17 +717,21 @@ class AsyncGitProcessRunner:
                     "Active Git shutdown must be initiated from its event loop"
                 )
         self._sealed = True
-        if not self._run_tasks:
+        if not self._run_tasks and not self._processes:
             self._shutdown_settlement = _ImmediateSettlement(
                 not self._termination_uncertain
-                and not self._processes
             )
             return self._shutdown_settlement
         assert running_loop is not None
         assert self._shutdown_event is not None
         self._shutdown_event.set()
+        drain_retained_processes = not self._run_tasks
         settlement = _RetainedSettlement(
-            running_loop.create_task(self._settle_shutdown())
+            running_loop.create_task(
+                self._settle_shutdown(
+                    drain_retained_processes=drain_retained_processes,
+                )
+            )
         )
         self._shutdown_settlement = settlement
         return settlement
@@ -698,7 +747,39 @@ class AsyncGitProcessRunner:
             return False
         return True
 
-    async def _settle_shutdown(self) -> bool:
+    async def _stop_process(
+        self,
+        process: asyncio.subprocess.Process,
+    ) -> bool:
+        """Request bounded termination and then force-stop one child."""
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        except OSError:
+            self._termination_uncertain = True
+        terminated = await self._bounded_process_wait(
+            process,
+            self._terminate_timeout,
+        )
+        if terminated:
+            return True
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        except OSError:
+            self._termination_uncertain = True
+        return await self._bounded_process_wait(
+            process,
+            self._kill_timeout,
+        )
+
+    async def _settle_shutdown(
+        self,
+        *,
+        drain_retained_processes: bool,
+    ) -> bool:
         current = asyncio.current_task()
         run_tasks = tuple(
             task
@@ -709,10 +790,17 @@ class AsyncGitProcessRunner:
         if run_tasks:
             run_results = tuple(
                 await asyncio.gather(
-                *(asyncio.shield(task) for task in run_tasks),
-                return_exceptions=True,
+                    *(asyncio.shield(task) for task in run_tasks),
+                    return_exceptions=True,
+                )
             )
-            )
+        if drain_retained_processes:
+            for process in tuple(self._processes):
+                terminated = await self._stop_process(process)
+                if terminated:
+                    self._processes.discard(process)
+                else:
+                    self._termination_uncertain = True
         return (
             not self._termination_uncertain
             and not self._processes

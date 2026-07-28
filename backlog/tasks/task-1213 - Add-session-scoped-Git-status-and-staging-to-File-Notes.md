@@ -69,7 +69,9 @@ Implemented process-scoped File Notes Session Git status with exact Stage, Stage
 
 Retained Library navigation preserves session rows, process trust, and valid ownership across fresh screens. The application-owned Git service completes child execution and postflight across unmount, with bounded shutdown even when no Library screen is mounted. ADR-035 conforms to ADR-033; ADR-029 disk authority and independent SQLite replica authority remain unchanged.
 
-Fresh focused verification passed: 242 Notes tests, 76 UI/workspace tests, 7 navigation tests, and 7 lifecycle tests. Compileall, targeted Ruff, and git diff checks passed.
+PR review hardening makes cancellable discovery and revalidation children runner-owned through bounded cleanup, drains retained children at shutdown, and atomically invalidates published status with each newly recorded session change while preserving Stage ownership. Session Git restores its prior navigator from closed UI state, and filesystem-valid shell metacharacters remain supported because no path crosses a shell boundary.
+
+Fresh focused verification passed: 247 Notes tests, 76 UI/workspace tests, 7 navigation tests, and 7 lifecycle tests. Compileall, targeted Ruff, and git diff checks passed.
 
 Isolated disposable-repository mounted UAT passed 10/10: edit, create, move, and delete; coalesced session-only rows; exact CLI cached and worktree diffs; byte-for-byte Stage, Stage update, and Unstage baseline restoration; unrelated staged and unstaged state unchanged; fresh-screen continuity; restart external classification; and no commit, push, remote, branch, or full-status controls. No Git action wrote the worktree, SQLite replica, or File Notes session history.
 <!-- SECTION:NOTES:END -->

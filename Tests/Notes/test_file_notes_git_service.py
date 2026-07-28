@@ -1682,6 +1682,39 @@ class _StubbornProcess:
         self.kill_calls += 1
 
 
+class _KillableProcess(_StubbornProcess):
+    def __init__(self) -> None:
+        super().__init__()
+        self._stopped = asyncio.Event()
+
+    async def communicate(
+        self,
+        stdin: bytes | None,
+    ) -> tuple[bytes, bytes]:
+        del stdin
+        self.communicate_started.set()
+        await self._stopped.wait()
+        return b"", b""
+
+    async def wait(self) -> int:
+        self.wait_calls += 1
+        await self._stopped.wait()
+        return self.returncode or 0
+
+    def kill(self) -> None:
+        super().kill()
+        self.returncode = -9
+        self._stopped.set()
+
+
+class _StopsOnSecondKillProcess(_KillableProcess):
+    def kill(self) -> None:
+        self.kill_calls += 1
+        if self.kill_calls == 2:
+            self.returncode = -9
+            self._stopped.set()
+
+
 class _SignalFailureProcess(_StubbornProcess):
     def __init__(
         self,
@@ -1794,6 +1827,97 @@ async def test_runner_shutdown_returns_retained_finite_settlement(
         child._never.set()
         command.cancel()
         await asyncio.gather(command, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_runner_caller_cancellation_performs_bounded_child_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _KillableProcess()
+
+    async def fake_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _KillableProcess:
+        del argv, kwargs
+        return child
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.1,
+    )
+    command = asyncio.create_task(
+        runner.run(
+            ("git", "status"),
+            cwd="/repo",
+            environment={},
+            timeout=None,
+        )
+    )
+    await asyncio.wait_for(child.communicate_started.wait(), timeout=1)
+
+    command.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await command
+
+    async def wait_until_runner_settles() -> None:
+        while runner._run_tasks:
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_until_runner_settles(), timeout=1)
+    assert child.terminate_calls == 1
+    assert child.kill_calls == 1
+    assert child.wait_calls == 2
+    assert child not in runner._processes
+    assert not runner._run_tasks
+    assert await runner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_runner_shutdown_retries_retained_process_without_run_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = _StopsOnSecondKillProcess()
+
+    async def fake_create_subprocess_exec(
+        *argv: str | bytes,
+        **kwargs: object,
+    ) -> _StopsOnSecondKillProcess:
+        del argv, kwargs
+        return child
+
+    monkeypatch.setattr(
+        asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    runner = AsyncGitProcessRunner(
+        terminate_timeout=0.001,
+        kill_timeout=0.001,
+    )
+
+    result = await runner.run(
+        ("git", "status"),
+        cwd="/repo",
+        environment={},
+        timeout=0.001,
+    )
+    await asyncio.sleep(0)
+
+    assert result.termination_uncertain
+    assert child in runner._processes
+    assert not runner._run_tasks
+
+    assert not await asyncio.wait_for(runner.shutdown(), timeout=1)
+    assert child.terminate_calls == 2
+    assert child.kill_calls == 2
+    assert child.wait_calls == 4
+    assert child not in runner._processes
 
 
 @pytest.mark.asyncio
@@ -2835,7 +2959,6 @@ async def test_hidden_change_invalidates_admitted_status_until_reopen(
 
     (root / second_path).write_text("two\n", encoding="utf-8")
     assert owner.record_change(binding, SessionChange("created", second_path))
-    assert owner.clear_status(binding)
     assert runner.query_count == 1
 
     runner.release_first_index.set()
@@ -2875,12 +2998,10 @@ async def test_hidden_change_invalidates_earlier_coalesced_status_request(
     await asyncio.wait_for(runner.first_index_started.wait(), timeout=1)
 
     assert owner.record_change(binding, SessionChange("created", paths[1]))
-    assert owner.clear_status(binding)
     assert (
         service.start_status(binding, owner.snapshot(binding).changes) is first
     )
     assert owner.record_change(binding, SessionChange("created", paths[2]))
-    assert owner.clear_status(binding)
 
     runner.release_first_index.set()
     result = await asyncio.wait_for(first, timeout=1)
