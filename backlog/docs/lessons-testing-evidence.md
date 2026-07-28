@@ -270,6 +270,47 @@ conclusion about `subscription_events` from the other direction months earlier
 (`handle_add_subscription` has zero dispatchers). A prior investigation's notes
 are cheaper than re-deriving the graph.
 
+## A missing extra fakes a code regression — check the env before blaming the code
+
+**The trap.** The mirror image of the entry above. There, everything was installed
+and the suite went blind. Here, an optional extra is *absent* and a test fails with a
+message describing a defect that does not exist. The failure text names production
+behaviour, so it reads as a regression, and you go fix code that was never broken.
+
+**What happened.** 2026-07-28, task-1261. `test_nltk_download_false_is_not_logged_as_success`
+was failing on dev with "no WARNING/ERROR mentioning punkt was logged". That is
+precisely what a deleted `logger.warning` looks like. It was filed as one — *"the
+warning was lost in a refactor"* — with `git log -L` even producing a plausible
+culprit commit that had genuinely rewritten that function, and an orphaned
+over-indented comment left behind as the apparent fingerprint.
+
+All of it was wrong. `nltk` is an optional extra, and it was not installed. The test
+sets `NLTK_AVAILABLE = True` to simulate presence, but `_ensure_nltk()` still runs a
+real `import nltk`, so it returned early and never reached the warning. Installing
+`nltk` turned the test green with no code change at all. The confirming probe written
+to "verify" the diagnosis had been run in the same interpreter, so it hit the same
+early return and agreed — a second wrong answer from the same cause reads as
+corroboration.
+
+**What to do.** When a test asserts that a log/branch/side effect is missing, check
+whether the code path can even be *reached* in your environment before concluding the
+behaviour was removed. One command settles it:
+
+```bash
+python -c "import importlib.util as u; print(u.find_spec('nltk') is not None)"
+```
+
+And a test that forces an availability flag must also stub the import that flag
+stands for — otherwise it silently depends on which extras you installed:
+
+```python
+monkeypatch.setattr(Chunk_Lib, "NLTK_AVAILABLE", True)   # not sufficient alone
+monkeypatch.setitem(sys.modules, "nltk", fake_nltk)      # _ensure_nltk() still imports
+```
+
+Corollary: a probe re-run in the same broken environment is not independent evidence.
+Vary the thing you suspect — here, install the package — and see if the symptom moves.
+
 ---
 
 ## A property test with no deadline override is load-sensitive

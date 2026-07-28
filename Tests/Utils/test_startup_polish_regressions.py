@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 import importlib
 import sys
+import types
 from types import SimpleNamespace
 
 import pytest
@@ -242,6 +243,24 @@ def test_nltk_download_false_is_not_logged_as_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tldw_chatbook.Chunking import Chunk_Lib
+
+    # `nltk` is an OPTIONAL extra (chunker/websearch). Forcing NLTK_AVAILABLE
+    # below is not enough on its own: `_ensure_nltk()` still does a real
+    # `import nltk`, so without the package it returns early and never reaches
+    # the warning under test -- which surfaces as "no WARNING was logged" and
+    # reads exactly like the production warning having been deleted. It cost a
+    # wrong root-cause once (task-1261); stub the module so this test asserts
+    # our logic, not which extras happen to be installed.
+    #
+    # The stub only has to satisfy the import: `_probe_sent_tokenize` is
+    # stubbed to False below, so this tokenizer is never actually called.
+    fake_nltk = types.ModuleType("nltk")
+    fake_tokenize = types.ModuleType("nltk.tokenize")
+    fake_tokenize.sent_tokenize = lambda text, **kwargs: [text]
+    fake_nltk.tokenize = fake_tokenize
+    fake_nltk.download = lambda *args, **kwargs: False
+    monkeypatch.setitem(sys.modules, "nltk", fake_nltk)
+    monkeypatch.setitem(sys.modules, "nltk.tokenize", fake_tokenize)
 
     messages: list[tuple[str, str]] = []
     sink_id = logger.add(
