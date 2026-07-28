@@ -283,6 +283,40 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         yield table
 
     @staticmethod
+    def source_status_text(source: dict[str, Any]) -> str:
+        """What the Status column says about this source.
+
+        TASK-1090. This read `source.get("status")` alone -- a key **no**
+        watchlists normalizer emits. `normalize_local_subscription_row`
+        publishes `status_summary` (`active`, `inactive`, `error`,
+        `error (3)`), and the server normalizer the same. So the Status column
+        rendered `-` for every source in every state, including one whose last
+        check had just failed: `subscriptions.last_error` was written and the
+        screen showed nothing.
+
+        The bare `status` key is kept as a fallback because it is the shape
+        this pane's own tests and any hand-built row use.
+
+        Args:
+            source: A source row as published to `sources`.
+
+        Returns:
+            The status text, or `-` when the backend reported none.
+        """
+        return str(source.get("status_summary") or source.get("status") or "-")
+
+    @staticmethod
+    def source_last_scraped_text(source: dict[str, Any]) -> str:
+        """What the Last scraped column says. Same defect as `status` above:
+        the normalizers publish `last_checked_or_scraped_at`, so this column
+        read `-` even immediately after a successful check."""
+        return str(
+            source.get("last_checked_or_scraped_at")
+            or source.get("last_scraped")
+            or "-"
+        )
+
+    @staticmethod
     def _source_row_cells(source: dict[str, Any], highlighted: bool) -> tuple[Text, ...]:
         """One row's cell values, styled if `highlighted` (task-876).
 
@@ -294,10 +328,36 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         return (
             Text(str(source.get("name") or source.get("title") or "Untitled"), style=style),
             Text(str(source.get("source_type") or "-"), style=style),
-            Text(str(source.get("status") or "-"), style=style),
-            Text(str(source.get("last_scraped") or "-"), style=style),
+            Text(SourcesPane.source_status_text(source), style=style),
+            Text(SourcesPane.source_last_scraped_text(source), style=style),
             Text("Yes" if source.get("active") else "No", style=style),
         )
+
+    @staticmethod
+    def _matches_status_filter(source: dict[str, Any], status_filter: str) -> bool:
+        """Whether a source matches the Status filter's chosen value.
+
+        TASK-1090. Compared `source.get("status")` to the option value with
+        `==`, which could never be true for a real source: the normalizers
+        publish `status_summary`, and its error form carries a count
+        (`error (3)`). Filtering to `Error` -- the whole point of the filter
+        for someone whose feeds have started failing -- returned nothing.
+
+        Args:
+            source: A source row as published to `sources`.
+            status_filter: One of the `_STATUS_OPTIONS` values.
+
+        Returns:
+            True when the source's status belongs to that filter bucket.
+        """
+        status = SourcesPane.source_status_text(source).lower()
+        if status_filter == "error":
+            return status.startswith("error")
+        if status_filter == "ok":
+            # `active` is what a healthy local source reports; `ok` is the
+            # hand-built shape used by this pane's own tests.
+            return status in ("ok", "active")
+        return status == status_filter
 
     def _filtered_sources(self) -> list[dict[str, Any]]:
         query = self.search_query.strip().lower()
@@ -310,7 +370,9 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         for source in self.sources:
             if type_filter != "all" and str(source.get("source_type") or "").lower() != type_filter:
                 continue
-            if status_filter != "all" and str(source.get("status") or "").lower() != status_filter:
+            if status_filter != "all" and not self._matches_status_filter(
+                source, status_filter
+            ):
                 continue
             if active_filter == "active" and not source.get("active"):
                 continue

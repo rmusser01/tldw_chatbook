@@ -10,6 +10,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static
 
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .table_selection import highlight_is_user_driven
 
 
 class ItemSelected(Message):
@@ -114,6 +115,31 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
     def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
         event.stop()
         self.select_item_by_id(str(event.cell_key.row_key.value))
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Select on cursor movement, which is what a mouse click produces.
+
+        TASK-1105, matching `SourcesPane`. `RowSelected`/`CellSelected` fire on
+        *activation* -- Enter, or a second click on an already-current cell --
+        so a single click on any row but the current one moved the cursor and
+        selected nothing.
+
+        See `highlight_is_user_driven` for why focus is the gate.
+        """
+        event.stop()
+        if not highlight_is_user_driven(event):
+            return
+        if event.row_key is not None and event.row_key.value is not None:
+            self.select_item_by_id(str(event.row_key.value))
+
+    def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        """Same, for a table whose cursor is cell-shaped rather than row-shaped."""
+        event.stop()
+        if not highlight_is_user_driven(event):
+            return
+        row_key = getattr(event.cell_key, "row_key", None)
+        if row_key is not None and row_key.value is not None:
+            self.select_item_by_id(str(row_key.value))
 
     def select_item_by_id(self, item_id: str) -> None:
         """Select the item with the given id and notify listeners."""
