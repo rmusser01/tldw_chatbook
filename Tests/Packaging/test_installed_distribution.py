@@ -43,8 +43,10 @@ from pathlib import Path
 import ast
 import asyncio
 import json
+import math
 import os
 import sys
+import time
 import tomllib
 
 expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
@@ -57,6 +59,26 @@ retired_reactives = frozenset(json.loads(os.environ["RETIRED_REACTIVES"]))
 assert expected_reactives == {"current_tab", "splash_screen_active"}
 assert len(retired_reactives) == 59
 assert expected_reactives.isdisjoint(retired_reactives)
+default_screen_wait_seconds = 30.0
+screen_wait_seconds_env = "TLDW_TEST_SCREEN_WAIT_SECONDS"
+
+
+def get_screen_wait_seconds():
+    raw_value = os.environ.get(
+        screen_wait_seconds_env,
+        str(default_screen_wait_seconds),
+    )
+    try:
+        seconds = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{screen_wait_seconds_env} must be a positive finite number"
+        ) from exc
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError(
+            f"{screen_wait_seconds_env} must be a positive finite number"
+        )
+    return seconds
 
 
 def is_under(path, root):
@@ -75,6 +97,7 @@ for entry in sys.path:
 
 import tldw_chatbook
 from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
+from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.Evals.config_loader import EvalConfigLoader
 from tldw_chatbook.RAG_Search.pipeline_loader import PipelineLoader
 from tldw_chatbook.app import TldwCli, get_app
@@ -371,7 +394,8 @@ assert all(not hasattr(app, name) for name in retired_reactives)
 
 
 async def wait_for(pilot, predicate, failure):
-    for _ in range(600):
+    deadline = time.monotonic() + get_screen_wait_seconds()
+    while time.monotonic() < deadline:
         if predicate():
             return
         await pilot.pause(0.01)
@@ -384,17 +408,17 @@ async def exercise_production_app():
             pilot,
             lambda: (
                 type(app.screen) is HomeScreen
-                and app.current_tab == "home"
+                and app.current_tab == TAB_HOME
                 and app.screen.is_mounted
             ),
             "installed production app did not mount registered Home",
         )
-        app.post_message(NavigateToScreen("chat"))
+        app.post_message(NavigateToScreen(TAB_CHAT))
         await wait_for(
             pilot,
             lambda: (
                 type(app.screen) is ChatScreen
-                and app.current_tab == "chat"
+                and app.current_tab == TAB_CHAT
                 and app.screen.is_mounted
             ),
             "installed production app did not navigate to registered Chat",

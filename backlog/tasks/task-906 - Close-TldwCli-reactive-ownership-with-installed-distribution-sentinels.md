@@ -73,6 +73,12 @@ inventory into one test-only contract module shared by the source,
 production-app, and packaging sentinels, eliminating same-length list drift
 without making the installed child import test code.
 
+The detailed PR review also replaced the fixed six-second polling loops with
+monotonic 30-second deadlines and a validated
+`TLDW_TEST_SCREEN_WAIT_SECONDS` override, replaced installed `"home"`/`"chat"`
+tab literals with `TAB_HOME`/`TAB_CHAT`, and added intent docstrings to the
+cited public tests.
+
 Added a production maturity suite that uses only the normal `TldwCli` and its
 registered screens. It exercises LLM, Chat, Personas, Library, Media, Search,
 the Ingest-to-Library alias, MCP, Evals, and Settings twice through fresh
@@ -89,11 +95,11 @@ installed-hash invariants remain enforced.
 
 Verification on the rebased tree:
 
-- `pytest Tests/ProductionApp/test_reactive_ownership_maturity.py Tests/test_application_state_ownership.py -q`: 57 passed, 2 warnings in 281.97s.
-- `pytest Tests/Packaging/test_installed_distribution.py -q`: 6 passed in 21.83s.
+- `pytest Tests/ProductionApp/test_reactive_ownership_maturity.py Tests/test_application_state_ownership.py -q`: 58 passed, 2 warnings in 306.14s.
+- `pytest Tests/Packaging/test_installed_distribution.py -q`: 6 passed in 19.01s.
 - Authorized integrated suite (`Tests/ProductionApp`, the approved State,
   Provider and Library direct-function tests, source ownership, and installed
-  distribution): 196 passed, 5 warnings in 567.81s.
+  distribution): 197 passed, 5 warnings in 573.57s.
 - `compileall`, scoped Ruff lint, the exact zero-F841 Settings assertion, the
   37-file Ruff format gate, `git diff --check`, and the committed-source
   cleanliness checks passed.

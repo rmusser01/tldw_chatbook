@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import ast
+import math
+import os
 from pathlib import Path
+import time
 from typing import Any
 
 import pytest
@@ -88,6 +91,8 @@ CONTENT_SNAPSHOT_KEYS = frozenset(
         "user_prompt",
     }
 )
+DEFAULT_SCREEN_WAIT_SECONDS = 30.0
+SCREEN_WAIT_SECONDS_ENV = "TLDW_TEST_SCREEN_WAIT_SECONDS"
 
 
 def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
@@ -104,8 +109,26 @@ def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:
     return app
 
 
+def _screen_wait_seconds() -> float:
+    """Return the validated real-app readiness deadline for this test run."""
+    raw_value = os.environ.get(
+        SCREEN_WAIT_SECONDS_ENV,
+        str(DEFAULT_SCREEN_WAIT_SECONDS),
+    )
+    try:
+        seconds = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{SCREEN_WAIT_SECONDS_ENV} must be a positive finite number"
+        ) from exc
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError(f"{SCREEN_WAIT_SECONDS_ENV} must be a positive finite number")
+    return seconds
+
+
 async def _wait_until(pilot: Any, predicate, failure: str) -> None:
-    for _ in range(600):
+    deadline = time.monotonic() + _screen_wait_seconds()
+    while time.monotonic() < deadline:
         if predicate():
             return
         await pilot.pause(0.01)
@@ -391,6 +414,22 @@ def test_snapshot_guard_accepts_only_reviewed_builtin_containers() -> None:
     assert _snapshot_violations({"api_key": "private key"}) == [
         "$.api_key: secret-bearing value"
     ]
+
+
+def test_screen_wait_seconds_validates_the_ci_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Accept positive finite wait overrides and reject invalid values."""
+    monkeypatch.delenv("TLDW_TEST_SCREEN_WAIT_SECONDS", raising=False)
+    assert _screen_wait_seconds() == DEFAULT_SCREEN_WAIT_SECONDS
+
+    monkeypatch.setenv("TLDW_TEST_SCREEN_WAIT_SECONDS", "12.5")
+    assert _screen_wait_seconds() == 12.5
+
+    for invalid in ("0", "-1", "nan", "inf", "not-a-number"):
+        monkeypatch.setenv("TLDW_TEST_SCREEN_WAIT_SECONDS", invalid)
+        with pytest.raises(ValueError, match="TLDW_TEST_SCREEN_WAIT_SECONDS"):
+            _screen_wait_seconds()
 
 
 @pytest.mark.asyncio

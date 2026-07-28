@@ -828,6 +828,7 @@ mapping["retired_state"]
 
 
 def test_class_body_reactive_guard_detects_assignments_and_annotations() -> None:
+    """Recognize direct, annotated, and qualified reactive assignments."""
     tree = ast.parse(
         """class TldwCli:
     direct = reactive(0)
@@ -899,6 +900,7 @@ destination.ingest_active_view
 def test_root_app_target_guard_detects_only_root_retired_names_in_one_walk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Reject root access without misclassifying destination-owned keywords."""
     path = PROJECT_ROOT / "synthetic-root-app-target-guard.py"
     tree = ast.parse(
         """screen.app.retired_one
@@ -927,6 +929,7 @@ destination.retired_one
 def test_local_tldw_root_classes_include_transitive_in_module_mixins(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Include local transitive mixins while excluding qualified bases."""
     tree = ast.parse(
         """class RootStateMixin:
     inherited = reactive(0)

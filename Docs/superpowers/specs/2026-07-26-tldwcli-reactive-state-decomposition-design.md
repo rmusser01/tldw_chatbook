@@ -826,13 +826,16 @@ implementation evidence. TASK-906 completes slice 9 on latest `dev` commit
   root mixins, all 59 retired names, and their root watchers;
 - the normal production `TldwCli` exercises every reviewed route twice with
   fresh registered screens and payload-safe memory-only snapshots;
+- real-app readiness uses a monotonic 30-second deadline with a validated
+  `TLDW_TEST_SCREEN_WAIT_SECONDS` override, and installed navigation compares
+  canonical `TAB_HOME`/`TAB_CHAT` values rather than duplicated literals;
 - the installed-wheel probe runs outside both the checkout and copied build
   input, audits every loaded package module, preserves installed hashes, and
   exercises the registered Home and Chat screens;
-- the focused ownership/production-app gate passed 57 tests with 2 warnings
-  in 281.97 seconds, the installed-distribution gate passed 6 tests in 21.83
-  seconds, and the authorized integrated gate passed 196 tests with 5
-  warnings in 567.81 seconds;
+- the focused ownership/production-app gate passed 58 tests with 2 warnings
+  in 306.14 seconds, the installed-distribution gate passed 6 tests in 19.01
+  seconds, and the authorized integrated gate passed 197 tests with 5
+  warnings in 573.57 seconds;
 - compileall, scoped Ruff lint, the zero-F841 Settings baseline, the 37-file
   format gate, and `git diff --check` passed.
 
