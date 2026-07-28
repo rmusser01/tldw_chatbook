@@ -7172,18 +7172,23 @@ async def test_console_native_tab_title_has_stable_visible_label_region():
             "Active Console tab: Planning session with a long descriptive name. "
             "Click again to rename."
         )
-        # TASK-375: middle-truncated with a single-cell ellipsis (visible mark),
-        # preserving the distinguishing words at both ends.
-        assert str(tab.label) == "Planning…tive name"
+        # Fleet-UX expert review F7 (task-1234): END-truncated with a
+        # single-cell ellipsis, replacing TASK-375's middle-truncation
+        # (live UAT: the middle mark landed mid-word and read as garbled).
+        assert str(tab.label) == "Planning session w…"
         assert tab.region.width >= 18
         assert "Planning" in _visible_text(console)
         assert "…" in _visible_text(console)
 
 
-def test_console_tab_label_middle_truncates_with_visible_ellipsis():
-    """TASK-375: long tab titles middle-truncate with a single-cell ellipsis,
-    always showing the truncation mark and keeping distinguishing words at both
-    ends (so two titles sharing a first word are not the same fragment)."""
+def test_console_tab_label_end_truncates_with_visible_ellipsis():
+    """Fleet-UX expert review F7 (task-1234): long tab titles END-truncate
+    with a single-cell ellipsis, replacing TASK-375's middle-truncation --
+    live UAT found the mark landing mid-word ("What is t…ate an."), judged
+    a worse defect than losing TASK-375 AC#2's shared-prefix disambiguation.
+    That trade-off is asserted explicitly below (not silently dropped): two
+    titles sharing a long common PREFIX can render an identical tab label
+    again; the full title is always one hover away in the tab tooltip."""
     from tldw_chatbook.Widgets.Console.console_session_surface import (
         CONSOLE_SESSION_TAB_DISPLAY_CHARS,
         ConsoleSessionSurface,
@@ -7195,15 +7200,22 @@ def test_console_tab_label_middle_truncates_with_visible_ellipsis():
     assert short == "Chat 1"  # short titles are untouched
 
     a = display("Long conversation about embeddings and vector stores in local RAG")
-    b = display("Long conversation about Terraform state migration and remote backends")
+    b = display("Terraform state migration help across every remote backend")
     for label in (a, b):
         assert "…" in label
         assert "..." not in label
         assert len(label) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS
-        assert label.startswith("Long")  # head preserved
-    # The distinguishing END survives, so the two aren't the same fragment.
-    assert a.endswith("RAG")
+    assert a.startswith("Long conversation")
+    assert b.startswith("Terraform state")
+    # Titles that diverge early enough stay distinguishable.
     assert a != b
+
+    # Documented trade-off: a long SHARED prefix now collides (TASK-375's
+    # AC#2 disambiguation is no longer guaranteed for this case).
+    collides_with_a = display(
+        "Long conversation about Terraform state migration and remote backends"
+    )
+    assert collides_with_a == a == "Long conversation…"
 
 
 @pytest.mark.asyncio

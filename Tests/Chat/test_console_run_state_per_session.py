@@ -136,7 +136,10 @@ def test_send_refusal_is_per_session_and_capped(controller_with_two_sessions, mo
         "A run is already running in this tab."
     )
     refusal = controller.send_refusal_copy(session_b)
-    assert refusal is not None and "1 agents already running" in refusal
+    # Fleet-UX expert review F7 (task-1234): number agreement -- singular
+    # "agent" when exactly one session is busy.
+    assert refusal is not None and "1 agent already running" in refusal
+    assert "1 agents already running" not in refusal
     assert "Wait for one to finish or interrupt it." in refusal
 
 

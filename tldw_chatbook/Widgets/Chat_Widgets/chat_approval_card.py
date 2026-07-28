@@ -75,6 +75,33 @@ _REASON_SUFFIXES: dict[str, str] = {
     "risk_floored": " (high risk)",
 }
 
+#: Fleet-UX expert review F5/F7 (task-1234, item g): "(high risk)" on a
+#: plain read (e.g. `read_file`) reads as alarmist with no explanation --
+#: this is the row header's tooltip, a why-affordance for the badge alone.
+#: `config_changed` isn't included: its badge already names the concrete
+#: fact ("definition changed") and needs no further explanation.
+_REASON_TOOLTIPS: dict[str, str] = {
+    "risk_floored": (
+        "Reads can exfiltrate file contents; built-in file tools always "
+        "ask before running."
+    ),
+}
+
+
+def _row_header_tooltip(entry: Mapping[str, Any]) -> str:
+    """Return the row header's why-affordance tooltip, or ``""`` for none.
+
+    Args:
+        entry: One collapsed pending-call entry (see
+            ``_collapse_pending_calls``).
+
+    Returns:
+        The tooltip text for ``entry``'s reason code, or ``""`` when that
+        code carries no explanation (e.g. no reason at all, or
+        ``config_changed``, whose badge is already self-explanatory).
+    """
+    return _REASON_TOOLTIPS.get(str(entry.get("reason", "") or ""), "")
+
 #: TASK-1231/F3 AC2: appended (in addition to any `_REASON_SUFFIXES` badge)
 #: when the row's `path_precheck_failed` flag is set -- a file tool
 #: (read_file/list_directory/write_file) whose path argument will be
@@ -280,6 +307,16 @@ class ChatApprovalCard(Container):
         grouped = _collapse_pending_calls(calls)
         self._batch_generation += 1
         generation = self._batch_generation
+        # Fleet-UX expert review F5 (task-1234): a single-decision card
+        # still forced a two-step Select-then-Submit commit. Both fast
+        # decisions ("approve_once"/"deny") are legal for EVERY row this
+        # card ever renders -- MCP rows get the full `_DECISION_OPTIONS`
+        # set unconditionally, and the one narrowed case in production
+        # (built-in tools, `options=("approve_once", "approve_session",
+        # "deny")` -- see `ConsoleChatController`'s review-hook docstring)
+        # deliberately keeps both -- so no legality check is needed here,
+        # unlike the bulk Approve-all/Deny-all buttons' `legal_values` dance.
+        single_row = len(grouped) == 1
         names: list[str] = []
         selects: list[Select] = []
         legal_values: list[list[str]] = []
@@ -301,19 +338,53 @@ class ChatApprovalCard(Container):
             )
             selects.append(select)
             legal_values.append(row_values)
+            header_static = Static(
+                _format_row_header(entry),
+                markup=False,
+                classes="approval-row-header",
+            )
+            header_tooltip = _row_header_tooltip(entry)
+            if header_tooltip:
+                header_static.tooltip = header_tooltip
+            row_children: list[Any] = [
+                header_static,
+                Static(
+                    _summarize_arguments(entry.get("arguments")),
+                    markup=False,
+                    classes="approval-row-args",
+                ),
+                select,
+            ]
+            if single_row:
+                row_children.append(
+                    Button(
+                        "Approve once",
+                        id=f"approval-fast-approve-{generation}-{index}",
+                        variant="success",
+                        compact=True,
+                        classes="approval-row-fast-approve",
+                        tooltip=(
+                            "Approve once and resume immediately "
+                            "(skips Select + Submit)."
+                        ),
+                    )
+                )
+                row_children.append(
+                    Button(
+                        "Deny",
+                        id=f"approval-fast-deny-{generation}-{index}",
+                        variant="error",
+                        compact=True,
+                        classes="approval-row-fast-deny",
+                        tooltip=(
+                            "Deny and resume immediately "
+                            "(skips Select + Submit)."
+                        ),
+                    )
+                )
             rows.append(
                 Horizontal(
-                    Static(
-                        _format_row_header(entry),
-                        markup=False,
-                        classes="approval-row-header",
-                    ),
-                    Static(
-                        _summarize_arguments(entry.get("arguments")),
-                        markup=False,
-                        classes="approval-row-args",
-                    ),
-                    select,
+                    *row_children,
                     id=f"approval-row-{generation}-{index}",
                     classes="approval-row",
                 )
@@ -329,7 +400,7 @@ class ChatApprovalCard(Container):
             rows_container.mount(*rows)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        button_id = event.button.id
+        button_id = event.button.id or ""
         if button_id == "approval-approve-all":
             event.stop()
             self._set_all_batch_decisions(("approve_once", "approve_session"))
@@ -339,6 +410,12 @@ class ChatApprovalCard(Container):
         elif button_id == "approval-submit":
             event.stop()
             self._submit_batch_decisions()
+        elif button_id.startswith("approval-fast-approve-"):
+            event.stop()
+            self._submit_fast_decision("approve_once")
+        elif button_id.startswith("approval-fast-deny-"):
+            event.stop()
+            self._submit_fast_decision("deny")
 
     def _set_all_batch_decisions(self, candidates: tuple[str, ...]) -> None:
         """Bulk-set every row to the first of ``candidates`` that row legally offers.
@@ -401,4 +478,30 @@ class ChatApprovalCard(Container):
         }
         self.post_message(
             self.ApprovalDecided(decisions, round_id=self._batch_round_id)
+        )
+
+    def _submit_fast_decision(self, decision: str) -> None:
+        """Single-row fast path (task-1234/F5): resolve without touching Selects.
+
+        Only ever reachable when ``set_batch`` rendered exactly one row
+        (the fast buttons are gated on ``single_row`` there), so
+        ``self._batch_names[0]`` is unambiguous. Posts the SAME
+        ``ApprovalDecided`` message, through the SAME ``round_id``, as
+        ``_submit_batch_decisions`` -- no new resolution seam;
+        ``ConsoleChatController.resolve_pending_approval`` cannot tell
+        this apart from a normal Select+Submit round trip.
+
+        Args:
+            decision: The verdict to submit. Only ever ``"approve_once"``
+                or ``"deny"`` (the two call sites in ``on_button_pressed``)
+                -- a fast click can never grant ``"approve_session"``/
+                ``"always_allow"``; those stay reachable only through the
+                row's own Select + Submit.
+        """
+        if not self._batch_names:
+            return
+        self.post_message(
+            self.ApprovalDecided(
+                {self._batch_names[0]: decision}, round_id=self._batch_round_id
+            )
         )

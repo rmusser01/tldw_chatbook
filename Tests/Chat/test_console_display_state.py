@@ -82,6 +82,29 @@ def test_console_control_state_tools_chip_without_mcp_seam_counts_builtin_only()
     assert state.tools_active is True
 
 
+def test_console_control_state_tools_chip_shows_neutral_placeholder_at_zero():
+    """Fleet-UX expert review F7 (task-1234): a zero effective tool count
+    (the default -- the built-in count hook is never actually populated by
+    production code, see `ChatScreen._console_tool_count`) must not read
+    "Tools: 0 ready" -- live UAT read that as "no tools available" even
+    though calculator/get_current_datetime are always registered builtins.
+    `tools_active` (dim/emphasis) is UNCHANGED by this -- still False at
+    zero, exactly as before."""
+    state = ConsoleControlState.from_values()
+    assert state.tools_label == "Tools: not loaded"
+    assert "0 ready" not in state.tools_label
+    assert state.tools_active is False
+
+    # Explicit zero (not just the default) reads identically.
+    explicit_zero = ConsoleControlState.from_values(tool_count=0, mcp_tool_count=None)
+    assert explicit_zero.tools_label == "Tools: not loaded"
+
+    # A real mcp_tool_count of 0 (seam wired, catalog genuinely empty) is
+    # NOT "no MCP seam" (that's `None`) -- still an honest zero, same copy.
+    wired_but_empty = ConsoleControlState.from_values(tool_count=0, mcp_tool_count=0)
+    assert wired_but_empty.tools_label == "Tools: not loaded"
+
+
 def test_console_staged_context_state_preserves_live_work_payload_provenance():
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",

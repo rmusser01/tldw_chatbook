@@ -8963,7 +8963,17 @@ class ChatScreen(BaseAppScreen):
     def _console_mode_summary(control_state: ConsoleControlState) -> str:
         def readiness_count(label: str) -> str:
             value = label.partition(":")[2].strip()
-            return value.split(maxsplit=1)[0] if value else "0"
+            if not value:
+                return "0"
+            first_token = value.split(maxsplit=1)[0]
+            # Fleet-UX expert review F7 (task-1234): `tools_label` can now
+            # read "Tools: not loaded" (ConsoleControlState.from_values, a
+            # neutral placeholder at a zero count) instead of always
+            # "Tools: N ready" -- naively taking the first word rendered
+            # this compact summary as the nonsensical "Tools not". Any
+            # non-numeric first token falls back to the same neutral dash
+            # rather than a truncated word fragment.
+            return first_token if first_token.isdigit() else "—"
 
         # The mode summary names the AI side: in a roleplay session that is the
         # character, which is what the user is actually tracking.

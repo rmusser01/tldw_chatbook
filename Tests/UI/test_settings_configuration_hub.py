@@ -2874,6 +2874,69 @@ async def test_settings_long_detail_and_inspector_panes_are_scrollable_container
 
 
 @pytest.mark.asyncio
+async def test_settings_console_behavior_focus_auto_scrolls_to_field_guide():
+    """Fleet-UX expert review F6 (task-1234): focusing "Max parallel" must
+    scroll the Scope Inspector so the Focused field guide's first row
+    (Purpose) is actually PAINTED, not merely present somewhere below the
+    fold -- live UAT found only "Purpose:" visible with the rest of the
+    guide (Consequences/Saved as/Applies) clipped by the pane's own scroll
+    fold. Mirrors task-1140's compositor-honest viewport-intersection
+    check (`App.get_widget_at`) rather than a raw `region.y` bound: a
+    widget below a scrollable ancestor's fold still reports a region, just
+    one that ancestor never paints.
+
+    A full-size terminal is used for reliable category-rail navigation
+    (a very short terminal breaks `_open_settings_category`'s click
+    target); the pane's OWN viewport height is constrained afterward to
+    deterministically force the below-the-fold condition regardless of
+    terminal size.
+    """
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+
+        pane = screen.query_one("#settings-impact-pane", VerticalScroll)
+        pane.styles.height = 6
+        await pilot.pause()
+        # Reset to a known baseline: opening the category already scrolls
+        # the pane once (any focus inside a guided category re-triggers
+        # the fix, not just the target field) -- force it back to the top
+        # so the assertion below proves FOCUSING THE FIELD is what moves
+        # it, not residual state from opening the category.
+        pane.scroll_to(y=0, animate=False, force=True)
+        await pilot.pause()
+        assert pane.scroll_y == 0
+
+        field = screen.query_one("#settings-console-max-parallel-runs", Input)
+        field.focus()
+        # Two hops: one for the DescendantFocus handler's own refresh, one
+        # for the scroll's `call_after_refresh` (mirrors the two-hop
+        # `_preserve_library_rail_scroll` pattern this fix is modeled on).
+        await pilot.pause()
+        await pilot.pause()
+
+        guide_row = screen.query_one("#settings-console-behavior-field-guide-0")
+        assert pane.max_scroll_y > 0, "test setup: the pane must need scrolling"
+        assert pane.scroll_y > 0, "focusing the field must have scrolled the pane"
+
+        region = guide_row.region
+        try:
+            hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
+        except Exception as exc:  # textual.errors.NoWidget
+            pytest.fail(
+                f"nothing is painted at the field guide's own region {region!r}: {exc}"
+            )
+        assert hit_widget is guide_row, (
+            f"the compositor paints {hit_widget!r} at {region!r}, not the "
+            "Focused field guide's first row -- focusing the field did not "
+            "scroll the Scope Inspector to reveal it"
+        )
+
+
+@pytest.mark.asyncio
 async def test_settings_inspector_uses_category_specific_guidance():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")

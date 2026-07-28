@@ -790,6 +790,26 @@ _RAG_GROUP_BY_COLLAPSIBLE_ID: dict[str, str] = {
     "settings-library-rag-reranking-group": "reranking",
 }
 
+# Fleet-UX expert review F6 (task-1234): every guided category's "Focused
+# field guide" rows share the SAME symptom task-1140 already fixed once for
+# the fleet line -- the content updates in place (`_refresh_*_field_
+# guidance`, no recompose) but focus never moves the Scope Inspector's
+# scroll position, so the guide can sit below the pane's fold with only a
+# thin scrollbar sliver hinting at it (worst case: only "Purpose:" visible,
+# Consequences/Saved-as/Validation all clipped). Maps each guided category
+# to its guide block's FIRST row id -- every id below already exists (see
+# `_render_impact_pane`'s per-category "Focused field guide" loops) and is
+# rendered unconditionally (the fallback rows use the same ids when no
+# specific field is focused), so scrolling to it is meaningful even when
+# `_active_settings_field_id` resolves to the generic fallback.
+_FIELD_GUIDE_FIRST_ROW_ID: dict[SettingsCategoryId, str] = {
+    SettingsCategoryId.APPEARANCE: "settings-appearance-field-guide-0",
+    SettingsCategoryId.STORAGE: "settings-storage-field-guide-0",
+    SettingsCategoryId.LIBRARY_RAG: "settings-library-rag-field-guide-0",
+    SettingsCategoryId.CONSOLE_BEHAVIOR: "settings-console-behavior-field-guide-0",
+    SettingsCategoryId.PROVIDERS_MODELS: "settings-provider-field-guide-0",
+}
+
 # One concise, fixed-length (5-row) entry per group (Task 3, 541 AC3).
 # Fixed-length matters: `_refresh_rag_field_guidance` updates existing rows
 # in place by index (`_set_static_text`, no recompose) the same way
@@ -11512,6 +11532,7 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in appearance_field_ids else None
             )
             self._refresh_appearance_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.STORAGE:
             storage_field_ids = {
@@ -11528,6 +11549,7 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in storage_field_ids else None
             )
             self._refresh_storage_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.LIBRARY_RAG:
             # Task 3 (541 v2 UX AC3): membership uses the shared
@@ -11538,6 +11560,7 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in _RAG_FIELD_GROUP_BY_ID else None
             )
             self._refresh_rag_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             # task-5: only the "Max parallel agent runs" field has dedicated
@@ -11548,6 +11571,7 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in console_behavior_field_ids else None
             )
             self._refresh_console_behavior_field_guidance()
+            self._scroll_impact_pane_to_field_guide(active_category)
             return
         if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
             self._active_settings_field_id = None
@@ -11579,6 +11603,46 @@ class SettingsScreen(BaseAppScreen):
             widget_id if widget_id in provider_field_ids else None
         )
         self._refresh_provider_field_guidance()
+        self._scroll_impact_pane_to_field_guide(active_category)
+
+    def _scroll_impact_pane_to_field_guide(self, category: SettingsCategoryId) -> None:
+        """Scroll the Scope Inspector so the Focused field guide is visible.
+
+        Fleet-UX expert review F6 (task-1234): focusing a guided field
+        already refreshes the guide row TEXT in place (the ``_refresh_*_
+        field_guidance`` methods above, no recompose) but never moved the
+        pane's own scroll position, so the guide block could sit below
+        ``#settings-impact-pane``'s fold with only a thin scrollbar sliver
+        hinting at it -- reported live as "focusing Max parallel shows only
+        Purpose:". Same disease task-1140 fixed for the fleet line, in a
+        second location.
+
+        ``call_after_refresh`` + ``force=True`` mirrors the pattern proven
+        in ``library_screen.LibraryScreen._preserve_library_rail_scroll``:
+        an unforced ``scroll_to_widget`` clamps to 0 when a container's
+        scroll bounds haven't been (re)computed yet -- relevant here
+        because a CATEGORY switch recomposes ``#settings-impact-pane``
+        from scratch (``_render_impact_pane``), and focus can land on the
+        new category's first field before that layout has settled.
+
+        Args:
+            category: The Settings category whose "Focused field guide"
+                block (if any -- see ``_FIELD_GUIDE_FIRST_ROW_ID``) should
+                be scrolled into view.
+        """
+        row_id = _FIELD_GUIDE_FIRST_ROW_ID.get(category)
+        if row_id is None:
+            return
+
+        def _scroll() -> None:
+            try:
+                pane = self.query_one("#settings-impact-pane")
+                row = self.query_one(f"#{row_id}")
+            except Exception:
+                return
+            pane.scroll_to_widget(row, animate=False, force=True)
+
+        self.call_after_refresh(_scroll)
 
     @on(Collapsible.Toggled)
     def handle_settings_library_rag_collapsible_toggled(

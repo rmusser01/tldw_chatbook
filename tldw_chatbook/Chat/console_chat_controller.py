@@ -1342,8 +1342,13 @@ class ConsoleChatController:
         limit = CONSOLE_CAP_REFUSAL_TITLE_LIMIT
         titles = [live_sessions[sid].title for sid in busy_ids[:limit]]
         suffix = f" and {len(busy_ids) - limit} more" if len(busy_ids) > limit else ""
+        busy_count = len(busy_ids)
+        # Fleet-UX expert review F7 (task-1234): number agreement -- "1
+        # agents already running" read as a grammar bug on the very first
+        # cap refusal a solo user could ever see (max_parallel_runs=1).
+        agent_noun = "agent" if busy_count == 1 else "agents"
         return (
-            f"{len(busy_ids)} agents already running "
+            f"{busy_count} {agent_noun} already running "
             f"({', '.join(titles)}{suffix}). "
             "Wait for one to finish or interrupt it."
         )

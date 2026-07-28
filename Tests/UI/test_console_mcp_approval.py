@@ -234,6 +234,49 @@ async def test_set_batch_renders_one_row_per_unique_name_with_tooltips():
 
 
 @pytest.mark.asyncio
+async def test_risk_floored_row_header_carries_a_why_affordance_tooltip():
+    """Fleet-UX expert review F5/F7 (task-1234, item g): "(high risk)" on a
+    plain read reads as alarmist with no explanation -- the row header
+    Static now carries a tooltip naming why. `config_changed` rows (no
+    risk badge) get no tooltip at all; this is scoped to `risk_floored`."""
+    app = _CardHarnessApp()
+    calls = [
+        {
+            "llm_name": "read_file",
+            "server_key": "builtin",
+            "tool_name": "read_file",
+            "server_label": "Built-in",
+            "arguments": {"path": "notes.txt"},
+            "reason": "risk_floored",
+        },
+        {
+            "llm_name": "mcp__srv_b__write",
+            "server_key": "local:srv_b",
+            "tool_name": "write",
+            "server_label": "Srv B",
+            "arguments": {"path": "/tmp/x"},
+            "reason": "config_changed",
+        },
+    ]
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row"))
+        risk_header = rows[0].query_one(".approval-row-header", Static)
+        changed_header = rows[1].query_one(".approval-row-header", Static)
+
+        assert "(high risk)" in _text(risk_header)
+        assert risk_header.tooltip == (
+            "Reads can exfiltrate file contents; built-in file tools "
+            "always ask before running."
+        )
+        assert "(definition changed)" in _text(changed_header)
+        assert not changed_header.tooltip
+
+
+@pytest.mark.asyncio
 async def test_set_batch_row_with_options_key_narrows_the_select_and_stays_valid_default():
     """Task-5: a row's ``options`` key narrows its ``Select`` choices.
 
@@ -540,6 +583,100 @@ async def test_set_batch_remount_does_not_duplicate_rows():
         rows = list(app.query(".approval-row"))
         assert len(rows) == 1
         assert card._batch_names == ["mcp__srv_a__search"]
+
+
+# ---------------------------------------------------------------------------
+# Single-row fast-approval path (Fleet-UX expert review F5, task-1234)
+# ---------------------------------------------------------------------------
+
+
+def _single_call() -> list[dict]:
+    """One unique pending call -- exercises the single-row fast-path gate."""
+    return [
+        {
+            "llm_name": "mcp__srv_a__search",
+            "server_key": "local:srv_a",
+            "tool_name": "search",
+            "server_label": "Srv A",
+            "arguments": {"query": "hello"},
+            "reason": "ask",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_single_row_batch_renders_fast_approve_and_deny_buttons():
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0)
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row"))
+        assert len(rows) == 1
+
+        fast_approve = app.query_one(".approval-row-fast-approve", Button)
+        fast_deny = app.query_one(".approval-row-fast-deny", Button)
+        assert str(fast_approve.label) == "Approve once"
+        assert str(fast_deny.label) == "Deny"
+        assert fast_approve.tooltip
+        assert fast_deny.tooltip
+
+        # The Select+Submit path stays fully available alongside the fast
+        # buttons -- this is an addition, not a replacement (e.g. "Approve
+        # for session" is still only reachable through the row's Select).
+        assert list(app.query(Select))
+        assert app.query_one("#approval-submit", Button)
+
+
+@pytest.mark.asyncio
+async def test_multi_row_batch_omits_fast_buttons():
+    """Multi-row cards keep the Select+Submit-only flow -- the fast path
+    is gated on exactly one row (`ChatApprovalCard.set_batch`'s
+    `single_row`)."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=45.0)
+        await pilot.pause()
+
+        assert len(list(app.query(".approval-row"))) == 2
+        assert not list(app.query(".approval-row-fast-approve"))
+        assert not list(app.query(".approval-row-fast-deny"))
+
+
+@pytest.mark.asyncio
+async def test_fast_approve_button_submits_approve_once_immediately():
+    """SAFETY: the fast Approve button maps to `approve_once` ONLY, and
+    submits through the exact same `ApprovalDecided`/`round_id` seam a
+    normal Select+Submit round trip uses -- no new resolution path."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-fast-1")
+        await pilot.pause()
+
+        # Never touched the Select or clicked Submit.
+        app.query_one(".approval-row-fast-approve", Button).press()
+        await pilot.pause()
+
+        assert app.decided == [{"mcp__srv_a__search": "approve_once"}]
+        assert app.decided_round_ids == ["round-fast-1"]
+
+
+@pytest.mark.asyncio
+async def test_fast_deny_button_submits_deny_immediately():
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-fast-2")
+        await pilot.pause()
+
+        app.query_one(".approval-row-fast-deny", Button).press()
+        await pilot.pause()
+
+        assert app.decided == [{"mcp__srv_a__search": "deny"}]
+        assert app.decided_round_ids == ["round-fast-2"]
 
 
 # ---------------------------------------------------------------------------

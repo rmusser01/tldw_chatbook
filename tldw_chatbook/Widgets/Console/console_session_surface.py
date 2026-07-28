@@ -244,23 +244,28 @@ class ConsoleSessionSurface(Vertical):
     def _display_title(cls, title: str) -> str:
         """Return a tab label that preserves space for close/rename controls.
 
-        TASK-375: middle-truncate with a single-cell ellipsis rather than an
-        end "...". The old end-truncation was defeated by the tab button's
-        word-wrap (height-1 showed only the first word, never the mark); a
-        middle ellipsis sits early in the label (well inside the button width),
-        so with the button's nowrap it is always visible, and it preserves the
-        distinguishing words at BOTH ends so two conversations sharing a first
-        word are not reduced to the same fragment.
+        TASK-375 originally middle-truncated here ("Long conv…local RAG")
+        so a shared first word wouldn't collapse two conversations to the
+        same fragment. Fleet-UX expert review F7 (task-1234): the mark
+        lands mid-word often enough to read as GARBLED rather than
+        truncated ("What is t…ate an."), which live UAT judged the worse
+        defect. END-truncation now matches ``derive_console_session_title``
+        (``console_chat_models.py``, the auto-title helper this label
+        usually renders) -- one truncation convention, not two. TASK-375's
+        own word-wrap fix (``ConsoleSessionTabButton``'s ``text-wrap:
+        nowrap`` DEFAULT_CSS above) is untouched and still what keeps a
+        single-line label from hiding the ellipsis off-screen; only the
+        cut POSITION changes here. Trade-off accepted: two conversations
+        sharing a long common prefix can once again render identical tab
+        labels (the disambiguation TASK-375 added AC#2 for) -- the full
+        title always remains one hover away in the tab's tooltip
+        (``_session_tab_tooltip``).
         """
         normalized_title = title.strip() or "Untitled"
         if len(normalized_title) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS:
             return normalized_title
         keep = CONSOLE_SESSION_TAB_DISPLAY_CHARS - 1  # room for the ellipsis cell
-        head = (keep + 1) // 2
-        tail = keep - head
-        head_text = normalized_title[:head].rstrip()
-        tail_text = normalized_title[len(normalized_title) - tail:].lstrip()
-        return f"{head_text}…{tail_text}"
+        return f"{normalized_title[:keep].rstrip()}…"
 
     def _build_session_tab_button(
         self,
