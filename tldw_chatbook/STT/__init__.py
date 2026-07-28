@@ -29,6 +29,22 @@ from .contracts import (
     TranscriptionTimings,
     TranscriptionWarningCode,
 )
+from .registry import (
+    AdapterRegistrationError,
+    CapabilitySet,
+    CatalogDeclarationError,
+    CatalogDeclarations,
+    DuplicateAdapterError,
+    DuplicateDeclarationError,
+    ModelMetadata,
+    ProviderMetadata,
+    ProviderRegistry,
+    ProviderRegistryError,
+    ProviderTranscriptionOutput,
+    RuntimeCapabilityError,
+    RuntimeObservation,
+    TranscriptionAdapter,
+)
 
 __all__ = [
     "MAX_BUFFER_AUDIO_BYTES",
@@ -58,4 +74,18 @@ __all__ = [
     "TranscriptionTask",
     "TranscriptionTimings",
     "TranscriptionWarningCode",
+    "AdapterRegistrationError",
+    "CapabilitySet",
+    "CatalogDeclarationError",
+    "CatalogDeclarations",
+    "DuplicateAdapterError",
+    "DuplicateDeclarationError",
+    "ModelMetadata",
+    "ProviderMetadata",
+    "ProviderRegistry",
+    "ProviderRegistryError",
+    "ProviderTranscriptionOutput",
+    "RuntimeCapabilityError",
+    "RuntimeObservation",
+    "TranscriptionAdapter",
 ]
