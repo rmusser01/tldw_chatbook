@@ -20,7 +20,7 @@ The original plan was written against a stale baseline. It assumed the Console h
 
 `tldw_chatbook/Widgets/Console/console_composer_bar.py`:
 - `#console-dictation` "Mic" button in the action row
-- `_set_dictation_state(state)` driving four states — `idle` / `starting` / `recording` / `transcribing` — each with label, tooltip, `disabled`, `variant`, and a `console-dictation-recording` class
+- `sync_dictation_state(state: _DictationState)` driving four states — `idle` / `starting` / `recording` / `transcribing` — each with label, tooltip, `disabled`, `variant`, and a `console-dictation-recording` class
 
 `tldw_chatbook/UI/Screens/chat_screen.py`:
 - `_request_console_dictation_start` / `_stop`, workers grouped `console-dictation-start` / `console-dictation-stop`
@@ -132,7 +132,7 @@ Make the chip reflect the shipping four-state lifecycle, so it is wired to real 
 - Test: `Tests/UI/test_console_voice_chip.py`
 
 **Interfaces:**
-- Consumes: `_set_dictation_state(state)` (existing), `set_voice_status(...)` (Task 4).
+- Consumes: `sync_dictation_state(state: _DictationState)` (existing), `set_voice_status(...)` (Task 4).
 - Produces: the chip mirrors `idle` / `starting` / `recording` / `transcribing`.
 
 State mapping — the chip vocabulary differs from the button's, so map explicitly rather than passing the string through:
@@ -154,28 +154,28 @@ async def test_chip_mirrors_the_shipping_dictation_states():
         composer = app.query_one(ConsoleComposerBar)
         chip = composer.query_one("#console-voice-status", Static)
 
-        composer._set_dictation_state("starting")
+        composer.sync_dictation_state("starting")
         assert _visible(chip)
         assert "Preparing" in str(chip.renderable)
 
-        composer._set_dictation_state("recording")
+        composer.sync_dictation_state("recording")
         assert "●" in str(chip.renderable)
 
-        composer._set_dictation_state("transcribing")
+        composer.sync_dictation_state("transcribing")
         assert "Transcribing" in str(chip.renderable)
 
-        composer._set_dictation_state("idle")
+        composer.sync_dictation_state("idle")
         assert chip.styles.width.value == 0
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest Tests/UI/test_console_voice_chip.py -v -k mirrors`
-Expected: FAIL — the chip does not react to `_set_dictation_state`.
+Expected: FAIL — the chip does not react to `sync_dictation_state`.
 
 - [ ] **Step 3: Write minimal implementation**
 
-At the end of `_set_dictation_state`, after the existing button updates, translate the state and call `set_voice_status`. Do not alter any existing button label, tooltip, `disabled`, `variant`, or class assignment — the four shipping tests assert on those.
+At the end of `sync_dictation_state`, after the existing button updates, translate the state and call `set_voice_status`. Do not alter any existing button label, tooltip, `disabled`, `variant`, or class assignment — the four shipping tests assert on those.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
