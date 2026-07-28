@@ -4,7 +4,7 @@ title: Add session-scoped Git status and staging to File Notes
 status: Done
 assignee: []
 created_date: '2026-07-27 20:33'
-updated_date: '2026-07-28 06:42'
+updated_date: '2026-07-28 07:02'
 labels:
   - notes
   - git
@@ -65,11 +65,11 @@ Detailed plan: Docs/superpowers/plans/2026-07-27-file-notes-session-git-staging.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented process-scoped File Notes Session Git status with exact Stage, Stage update, and saved-baseline Unstage. Fail-closed repository, HEAD, topology, semantic ownership, trust and identity revalidation, session-path whitelist, and file/directory mutation-closure controls preserve unrelated index state and revoke authority on mismatch.
+Implemented process-scoped File Notes Session Git status with exact Stage, Stage update, and saved-baseline Unstage. Fail-closed repository, HEAD, topology, semantic ownership, trust and identity revalidation, session-path whitelist, and file/directory mutation-closure controls preserve unrelated index state and revoke authority on mismatch. Admission-to-publication invalidation generations reject in-flight or coalesced status snapshots after newer session changes.
 
 Retained Library navigation preserves session rows, process trust, and valid ownership across fresh screens. The application-owned Git service completes child execution and postflight across unmount, with bounded shutdown even when no Library screen is mounted. ADR-034 conforms to ADR-033; ADR-029 disk authority and independent SQLite replica authority remain unchanged.
 
-Fresh focused verification passed: 239 Notes tests, 76 UI/workspace tests, 7 navigation tests, and 7 lifecycle tests. Compileall, targeted Ruff, and git diff checks passed.
+Fresh focused verification passed: 242 Notes tests, 76 UI/workspace tests, 7 navigation tests, and 7 lifecycle tests. Compileall, targeted Ruff, and git diff checks passed.
 
 Isolated disposable-repository mounted UAT passed 10/10: edit, create, move, and delete; coalesced session-only rows; exact CLI cached and worktree diffs; byte-for-byte Stage, Stage update, and Unstage baseline restoration; unrelated staged and unstaged state unchanged; fresh-screen continuity; restart external classification; and no commit, push, remote, branch, or full-status controls. No Git action wrote the worktree, SQLite replica, or File Notes session history.
 <!-- SECTION:NOTES:END -->
