@@ -171,6 +171,45 @@ nothing else has happened; an empty file means the sink did not install.
 - The existing sentinel matrices and `Tests/test_persistent_diagnostic_boundary.py` must pass
   unchanged.
 
+## Relationship to metrics and OpenTelemetry
+
+The admitted schema reads like OpenTelemetry span attributes — `provider`, `model`, `operation`,
+`status`, `duration_ms`, `status_code`, `cache_hit`, `streaming`, `retry_count` — and this repo
+does have a real telemetry layer: `Metrics/Otel_Metrics.py`, wired at `app.py:8331`, whose own
+docstring warns about attribute cardinality in the same terms `_TOKEN_RE` enforces. It is
+reasonable to wonder whether the metadata-only boundary was really a telemetry design.
+
+It was not. `persistent_diagnostics.py` describes itself as a *"strict admission boundary for
+metadata written to persistent diagnostics"*, and it arrived with ADR-029 and task series
+489-494 — privacy hardening, not observability. The vocabularies converge because both problems
+have the same answer: structured, low-cardinality, no payloads.
+
+**They cannot substitute for each other**, which is why this design does not simply route the six
+events to OTel:
+
+| | `Metrics/` + OTel | Persistent diagnostics |
+| --- | --- | --- |
+| Consumer | Prometheus/OTLP collector | a file on the user's disk |
+| Shape | aggregates over many runs | individual events in one run |
+| Available to a user filing a bug | no — needs a collector running | yes |
+| Survives a crash on a laptop | no | yes |
+
+Purposes 1-3 in this design (post-mortem, support bundle, developer debugging) all require bytes
+on local disk after the process is gone. Aggregate monitoring is a different job that the metrics
+layer already does.
+
+**Two facts worth carrying forward.**
+
+`metrics_logger._log_metric` emits through `logger.bind(event=..., type=..., value=..., ...)` —
+Loguru. So metrics hit exactly the wall described in §1: the persistent filter rejects Loguru
+records, and metric lines never reach the file either. The two systems are separated by transport
+rather than by any deliberate decision about what belongs where.
+
+Both use an `event=` vocabulary and neither shares a schema with the other. New fields added here
+should reuse `metrics_logger`'s label names where the concept already exists, so the two do not
+drift into separate dialects for the same idea. `component` is consistent with that: it names a
+subsystem, the way a metric label would.
+
 ## Governance
 
 ADR-029 is **Accepted**, with a design spec, a checked inventory
