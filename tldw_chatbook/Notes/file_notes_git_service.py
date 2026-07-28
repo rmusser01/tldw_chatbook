@@ -14,6 +14,7 @@ from typing import Any, Generic, Literal, Protocol, TypeVar
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
     FileSystemIdentity,
+    GitMutationLease,
     GitStatusLease,
     HeadIdentity,
     IndexBaseline,
@@ -49,6 +50,7 @@ DiscoveryState = Literal[
     "unsafe_root",
 ]
 HeadReadFailureKind = Literal["unavailable", "error"]
+GitActionState = Literal["success", "blocked", "stale", "error", "uncertain"]
 
 _REDIRECTING_GIT_ENVIRONMENT = frozenset(
     {
@@ -105,6 +107,51 @@ class DiscoveryResult:
 
 
 @dataclass(frozen=True, slots=True)
+class GitActionResult:
+    """Checked result of one retained Git index action."""
+
+    action: Literal["stage"]
+    state: GitActionState
+    requested_group_ids: tuple[int, ...]
+    staged_group_ids: tuple[int, ...] = ()
+    clean_group_ids: tuple[int, ...] = ()
+    blocked_group_ids: tuple[int, ...] = ()
+    message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _StageInspection:
+    """Fresh repository facts used by one exact Stage pre/postflight."""
+
+    repository: RepositoryIdentity
+    head: HeadIdentity
+    groups: tuple[SessionChangeGroup, ...]
+    repository_groups: Mapping[int, SessionChangeGroup]
+    rows: Mapping[int, SessionGitRow]
+    index_entries: Mapping[str, IndexEntry]
+    status_records: tuple[PorcelainRecord, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _RawGitInspection:
+    """Shared fresh HEAD/index/status facts for status and Stage."""
+
+    head: HeadIdentity
+    index_entries: tuple[IndexEntry, ...]
+    status_records: tuple[PorcelainRecord, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _RawGitInspectionFailure:
+    """Typed shared inspection refusal without UI/action policy."""
+
+    state: Literal["stale", "unavailable", "error", "uncertain"]
+    message: str
+    head: HeadIdentity | None = None
+    revoke_ownership: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class _HeadReadFailure:
     """Typed failure that cannot be confused with a semantic HEAD state."""
 
@@ -119,6 +166,13 @@ GitStatusAdmissionReason = Literal[
     "shutdown",
     "status_active",
 ]
+GitMutationAdmissionReason = Literal[
+    "untrusted",
+    "mutation_active",
+    "transition_active",
+    "stale_binding",
+    "shutdown",
+]
 
 
 class GitStatusAdmissionError(RuntimeError):
@@ -127,6 +181,18 @@ class GitStatusAdmissionError(RuntimeError):
     def __init__(
         self,
         reason: GitStatusAdmissionReason,
+        message: str,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class GitMutationAdmissionError(RuntimeError):
+    """Typed synchronous refusal before a retained mutation task exists."""
+
+    def __init__(
+        self,
+        reason: GitMutationAdmissionReason,
         message: str,
     ) -> None:
         super().__init__(message)
@@ -241,6 +307,23 @@ def build_index_argv(git_executable: str) -> tuple[GitArg, ...]:
         "--stage",
         "-v",
         "--",
+    )
+
+
+def build_stage_argv(
+    git_executable: str,
+    repository_paths: Sequence[bytes],
+) -> tuple[GitArg, ...]:
+    """Build one exact fail-fast literal path-scoped Stage command."""
+    return (
+        git_executable,
+        "--literal-pathspecs",
+        "-c",
+        "add.ignoreErrors=false",
+        "add",
+        "--all",
+        "--",
+        *repository_paths,
     )
 
 
@@ -531,6 +614,8 @@ class FileNotesGitService:
         self._rerun_available = False
         self._status_dirty = False
         self._status_request_generation = 0
+        self._action_cycle: asyncio.Task[GitActionResult] | None = None
+        self._action_waiter: asyncio.Task[GitActionResult] | None = None
         self._shutdown_settlement: Awaitable[None] | None = None
 
     async def discover(
@@ -770,16 +855,141 @@ class FileNotesGitService:
         cycle.add_done_callback(self._status_cycle_completed)
         return waiter
 
+    def start_stage(
+        self,
+        binding: SessionBinding,
+        group_ids: Collection[int],
+    ) -> asyncio.Task[GitActionResult]:
+        """Synchronously admit and retain one exact Stage operation."""
+        requested = tuple(dict.fromkeys(group_ids))
+        if self._sealed:
+            raise GitMutationAdmissionError(
+                "shutdown",
+                "File Notes Git service is shut down",
+            )
+        snapshot = self._owner.snapshot(binding)
+        if binding != self._owner.current_binding():
+            raise GitMutationAdmissionError(
+                "stale_binding",
+                "File Notes root binding is stale",
+            )
+        repository = snapshot.trusted_repository
+        if repository is None:
+            raise GitMutationAdmissionError(
+                "untrusted",
+                "Repository trust is required before staging",
+            )
+        admission = self._owner.admit_mutation(binding)
+        lease = admission.lease
+        if lease is None:
+            reason = admission.reason or "mutation_active"
+            raise GitMutationAdmissionError(
+                reason,
+                "File Notes Git mutation admission was refused",
+            )
+        status_cycle = self._status_cycle
+        cycle: asyncio.Task[GitActionResult] | None = None
+        try:
+            cycle = self._create_action_task(
+                self._run_stage_cycle(
+                    binding,
+                    requested,
+                    repository,
+                    lease,
+                    status_cycle,
+                )
+            )
+            waiter = self._create_action_task(
+                self._shield_action_cycle(cycle)
+            )
+        except BaseException:
+            if cycle is not None:
+                cycle.cancel()
+            lease.release()
+            raise
+        self._action_cycle = cycle
+        self._action_waiter = waiter
+        cycle.add_done_callback(self._action_cycle_completed)
+        return waiter
+
+    async def _run_stage_cycle(
+        self,
+        binding: SessionBinding,
+        requested: tuple[int, ...],
+        repository: RepositoryIdentity,
+        lease: GitMutationLease,
+        status_cycle: asyncio.Task[SessionGitStatus] | None,
+    ) -> GitActionResult:
+        try:
+            if status_cycle is not None and not status_cycle.done():
+                await asyncio.shield(status_cycle)
+            if self._sealed:
+                return GitActionResult(
+                    "stage",
+                    "uncertain",
+                    requested,
+                    message="File Notes Git service shut down during Stage",
+                )
+            inspection = await self._inspect_stage(
+                binding,
+                repository,
+            )
+            if isinstance(inspection, GitActionResult):
+                return replace(
+                    inspection,
+                    requested_group_ids=requested,
+                    blocked_group_ids=(
+                        requested
+                        if inspection.state == "blocked"
+                        else inspection.blocked_group_ids
+                    ),
+                )
+            return await self._apply_stage(
+                binding,
+                requested,
+                inspection,
+            )
+        finally:
+            lease.release()
+
+    async def _shield_action_cycle(
+        self,
+        cycle: asyncio.Task[GitActionResult],
+    ) -> GitActionResult:
+        return await asyncio.shield(cycle)
+
+    def _action_cycle_completed(
+        self,
+        cycle: asyncio.Task[GitActionResult],
+    ) -> None:
+        if self._action_cycle is cycle:
+            self._action_cycle = None
+            self._action_waiter = None
+
+    def _create_action_task(
+        self,
+        coroutine: object,
+    ) -> asyncio.Task[GitActionResult]:
+        try:
+            return asyncio.get_running_loop().create_task(coroutine)  # type: ignore[arg-type]
+        except BaseException:
+            close = getattr(coroutine, "close", None)
+            if close is not None:
+                close()
+            raise
+
     def shutdown(self) -> Awaitable[None]:
         """Seal admission and return retained finite service settlement."""
         if self._shutdown_settlement is not None:
             return self._shutdown_settlement
         cycle = self._status_cycle
         waiter = self._status_waiter
+        action_cycle = self._action_cycle
+        action_waiter = self._action_waiter
         active_task = next(
             (
                 task
-                for task in (cycle, waiter)
+                for task in (cycle, waiter, action_cycle, action_waiter)
                 if task is not None and not task.done()
             ),
             None,
@@ -807,6 +1017,8 @@ class FileNotesGitService:
         if (
             (cycle is None or cycle.done())
             and (waiter is None or waiter.done())
+            and (action_cycle is None or action_cycle.done())
+            and (action_waiter is None or action_waiter.done())
             and (
                 runner_settlement is None
                 or isinstance(runner_settlement, _ImmediateSettlement)
@@ -814,6 +1026,8 @@ class FileNotesGitService:
         ):
             self._status_cycle = None
             self._status_waiter = None
+            self._action_cycle = None
+            self._action_waiter = None
             self._shutdown_settlement = _ImmediateSettlement(None)
             return self._shutdown_settlement
         settlement = _RetainedSettlement(
@@ -822,6 +1036,8 @@ class FileNotesGitService:
                     binding,
                     cycle,
                     waiter,
+                    action_cycle,
+                    action_waiter,
                     runner_settlement,
                 )
             )
@@ -834,12 +1050,14 @@ class FileNotesGitService:
         binding: SessionBinding | None,
         cycle: asyncio.Task[SessionGitStatus] | None,
         waiter: asyncio.Task[SessionGitStatus] | None,
+        action_cycle: asyncio.Task[GitActionResult] | None,
+        action_waiter: asyncio.Task[GitActionResult] | None,
         runner_settlement: Awaitable[bool] | None,
     ) -> None:
         """Join every retained task and preserve fail-closed shutdown state."""
         owned_tasks = tuple(
             task
-            for task in (cycle, waiter)
+            for task in (cycle, waiter, action_cycle, action_waiter)
             if task is not None and not task.done()
         )
         results: list[object] = []
@@ -863,6 +1081,8 @@ class FileNotesGitService:
                 runner_confirmed = False
         self._status_cycle = None
         self._status_waiter = None
+        self._action_cycle = None
+        self._action_waiter = None
         self._pending_status = None
         self._rerun_available = False
         self._status_dirty = False
@@ -1054,108 +1274,49 @@ class FileNotesGitService:
             repository_groups.append(mapped_group)
             original_groups[group.group_id] = group
 
-        head_result = await self._read_head(root)
-        if isinstance(head_result, _HeadReadFailure):
-            self._owner.clear_ownership(binding)
+        raw = await self._read_raw_git_inspection(
+            root,
+            repository,
+            repository_groups,
+        )
+        if isinstance(raw, _RawGitInspectionFailure):
+            if raw.revoke_ownership:
+                self._owner.clear_ownership(binding)
             return self._failed_status(
                 binding,
                 (
-                    "unavailable"
-                    if head_result.kind == "unavailable"
-                    else "error"
+                    "stale"
+                    if raw.state == "uncertain"
+                    else raw.state
                 ),
                 repository=repository,
-                message=head_result.message,
+                head=raw.head,
+                message=raw.message,
             )
-        head = head_result
-        index_result = await self._run_status_command(
-            repository,
-            build_index_argv(self._git_executable_or_raise()),
-        )
-        if not _command_succeeded(index_result):
-            return self._failed_status(
-                binding,
-                "stale",
-                repository=repository,
-                head=head,
-                message=_command_failure_message(
-                    index_result,
-                    "Git index read failed",
-                ),
-            )
-        try:
-            index_entries = parse_index_entries_z(index_result.stdout)
-        except GitIndexParseError as error:
-            return self._failed_status(
-                binding,
-                "error",
-                repository=repository,
-                head=head,
-                message=str(error),
-            )
+        head = raw.head
+        index_entries = raw.index_entries
+        status_records = raw.status_records
 
-        status_records: tuple[PorcelainRecord, ...] = ()
-        repository_paths = tuple(
-            os.fsencode(path)
-            for group in repository_groups
-            for path in group.endpoints
-        )
-        if repository_paths:
-            allowed_paths = frozenset(
-                {
-                    *(
-                        path
-                        for group in repository_groups
-                        for path in group.endpoints
-                    ),
-                    *(
-                        index_entry.path
-                        for index_entry in index_entries
-                        if any(
-                            _paths_overlap(index_entry.path, endpoint)
-                            for group in repository_groups
-                            for endpoint in group.endpoints
-                        )
-                    ),
-                }
+        ownership_by_id: dict[int, StagingOwnership] = {}
+        current_ownership = self._owner.snapshot(binding).staging_ownership
+        for repository_group in repository_groups:
+            owned = current_ownership.get(repository_group.group_id)
+            if owned is None:
+                continue
+            original_group = original_groups[repository_group.group_id]
+            mapped_ownership = _map_ownership_topology(
+                owned,
+                original_group,
+                repository_group,
             )
-            status_result = await self._run_status_command(
-                repository,
-                build_status_argv(
-                    self._git_executable_or_raise(),
-                    repository_paths,
-                ),
-            )
-            if not _command_succeeded(status_result):
-                return self._failed_status(
-                    binding,
-                    "stale",
-                    repository=repository,
-                    head=head,
-                    message=_command_failure_message(
-                        status_result,
-                        "Git status failed",
-                    ),
-                )
-            try:
-                status_records = parse_porcelain_v2_z(
-                    status_result.stdout,
-                    allowed_paths=allowed_paths,
-                )
-            except PorcelainV2ParseError as error:
-                return self._failed_status(
-                    binding,
-                    "error",
-                    repository=repository,
-                    head=head,
-                    message=str(error),
-                )
+            if mapped_ownership is not None:
+                ownership_by_id[repository_group.group_id] = mapped_ownership
 
         classified = classify_session_rows(
             repository_groups,
             status_records,
             index_entries,
-            {},
+            ownership_by_id,
         )
         classified_by_id = {
             row.group_id: replace(
@@ -1176,6 +1337,505 @@ class FileNotesGitService:
             repository=repository,
             head=head,
         )
+
+    async def _read_raw_git_inspection(
+        self,
+        root: Path,
+        repository: RepositoryIdentity,
+        groups: Sequence[SessionChangeGroup],
+    ) -> _RawGitInspection | _RawGitInspectionFailure:
+        """Read the shared fresh HEAD, complete index, and scoped status."""
+        head_result = await self._read_head(root)
+        if isinstance(head_result, _HeadReadFailure):
+            return _RawGitInspectionFailure(
+                (
+                    "unavailable"
+                    if head_result.kind == "unavailable"
+                    else "error"
+                ),
+                head_result.message,
+                revoke_ownership=True,
+            )
+        index_result = await self._run_status_command(
+            repository,
+            build_index_argv(self._git_executable_or_raise()),
+        )
+        if not _command_succeeded(index_result):
+            return _RawGitInspectionFailure(
+                (
+                    "uncertain"
+                    if index_result.termination_uncertain
+                    else "stale"
+                ),
+                _command_failure_message(index_result, "Git index read failed"),
+                head=head_result,
+                revoke_ownership=index_result.termination_uncertain,
+            )
+        try:
+            index_entries = parse_index_entries_z(index_result.stdout)
+        except GitIndexParseError as error:
+            return _RawGitInspectionFailure(
+                "error",
+                str(error),
+                head=head_result,
+                revoke_ownership=True,
+            )
+
+        status_records: tuple[PorcelainRecord, ...] = ()
+        repository_paths = tuple(
+            os.fsencode(path)
+            for group in groups
+            for path in group.endpoints
+        )
+        if repository_paths:
+            allowed_paths = frozenset(
+                {
+                    *(path for group in groups for path in group.endpoints),
+                    *(
+                        entry.path
+                        for entry in index_entries
+                        if any(
+                            _paths_overlap(entry.path, endpoint)
+                            for group in groups
+                            for endpoint in group.endpoints
+                        )
+                    ),
+                }
+            )
+            status_result = await self._run_status_command(
+                repository,
+                build_status_argv(
+                    self._git_executable_or_raise(),
+                    repository_paths,
+                ),
+            )
+            if not _command_succeeded(status_result):
+                return _RawGitInspectionFailure(
+                    (
+                        "uncertain"
+                        if status_result.termination_uncertain
+                        else "stale"
+                    ),
+                    _command_failure_message(status_result, "Git status failed"),
+                    head=head_result,
+                )
+            try:
+                status_records = parse_porcelain_v2_z(
+                    status_result.stdout,
+                    allowed_paths=allowed_paths,
+                )
+            except PorcelainV2ParseError as error:
+                return _RawGitInspectionFailure(
+                    "error",
+                    str(error),
+                    head=head_result,
+                )
+        return _RawGitInspection(
+            head_result,
+            index_entries,
+            status_records,
+        )
+
+    async def _inspect_stage(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+    ) -> _StageInspection | GitActionResult:
+        """Read one fresh identity/HEAD/index/status Stage preflight."""
+        failure = lambda state, message: GitActionResult(  # noqa: E731
+            "stage",
+            state,
+            (),
+            message=message,
+        )
+        snapshot = self._owner.snapshot(binding)
+        if (
+            snapshot.trusted_repository != repository
+            or not await self.revalidate_repository(binding, repository)
+        ):
+            return failure("stale", "Repository identity changed; trust was cleared")
+        root = self._safe_root(binding)
+        if root is None:
+            self._owner.clear_trust_if_matches(binding, repository)
+            return failure("stale", "Selected File Notes root is no longer safe")
+        sparse = await self._sparse_checkout_state(repository)
+        if sparse is None:
+            return failure("error", "Unable to verify sparse-checkout state")
+        if sparse:
+            return failure(
+                "blocked",
+                "Sparse checkout or sparse index is unsupported",
+            )
+
+        groups = coalesce_session_changes(snapshot.changes)
+        repository_groups: dict[int, SessionChangeGroup] = {}
+        invalid_rows: dict[int, SessionGitRow] = {}
+        for group in groups:
+            mapped, invalid = self._map_group(root, repository, group)
+            if invalid is not None:
+                invalid_rows[group.group_id] = invalid
+            else:
+                assert mapped is not None
+                repository_groups[group.group_id] = mapped
+
+        raw = await self._read_raw_git_inspection(
+            root,
+            repository,
+            tuple(repository_groups.values()),
+        )
+        if isinstance(raw, _RawGitInspectionFailure):
+            if raw.revoke_ownership:
+                self._owner.clear_ownership(binding)
+            return failure(
+                (
+                    "uncertain"
+                    if raw.state in {"stale", "unavailable", "uncertain"}
+                    else "error"
+                ),
+                raw.message,
+            )
+        head_result = raw.head
+        index_sequence = raw.index_entries
+        index_entries = _stage_zero_index(index_sequence)
+        status_records = raw.status_records
+
+        classified = classify_session_rows(
+            tuple(repository_groups.values()),
+            status_records,
+            index_sequence,
+            {},
+        )
+        rows = {row.group_id: row for row in classified}
+        rows.update(invalid_rows)
+        return _StageInspection(
+            repository=repository,
+            head=head_result,
+            groups=groups,
+            repository_groups=repository_groups,
+            rows=rows,
+            index_entries=index_entries,
+            status_records=status_records,
+        )
+
+    async def _apply_stage(
+        self,
+        binding: SessionBinding,
+        requested: tuple[int, ...],
+        inspection: _StageInspection,
+    ) -> GitActionResult:
+        """Apply one checked Stage command and publish exact ownership."""
+        snapshot = self._owner.snapshot(binding)
+        ownership = dict(snapshot.staging_ownership)
+        staged: list[int] = []
+        clean: list[int] = []
+        blocked: list[int] = []
+        pathspecs: list[bytes] = []
+        baselines: dict[int, dict[str, IndexBaseline]] = {}
+        affected_paths: dict[int, tuple[str, ...]] = {}
+        groups_by_id = {group.group_id: group for group in inspection.groups}
+        ownership_revoked = False
+
+        for group_id in requested:
+            group = groups_by_id.get(group_id)
+            repository_group = inspection.repository_groups.get(group_id)
+            row = inspection.rows.get(group_id)
+            if group is None or repository_group is None or row is None:
+                blocked.append(group_id)
+                continue
+            current_owned = ownership.get(group_id)
+            if current_owned is None:
+                eligible = row.state == "unstaged" and row.stage_action == "stage"
+            else:
+                eligible = self._owned_stage_preflight_matches(
+                    current_owned,
+                    inspection,
+                    repository_group,
+                )
+            effective = stage_pathspecs(
+                repository_group,
+                inspection.status_records,
+                groups=tuple(inspection.repository_groups.values()),
+            )
+            if not eligible:
+                if current_owned is not None:
+                    ownership.pop(group_id, None)
+                    ownership_revoked = True
+                if row.state == "clean":
+                    clean.append(group_id)
+                else:
+                    blocked.append(group_id)
+                continue
+            if not effective:
+                clean.append(group_id)
+                continue
+            decoded = tuple(os.fsdecode(path) for path in effective)
+            staged.append(group_id)
+            pathspecs.extend(effective)
+            affected_paths[group_id] = decoded
+            original = (
+                dict(current_owned.original_baselines)
+                if current_owned is not None
+                else {}
+            )
+            for path in decoded:
+                original.setdefault(
+                    path,
+                    IndexBaseline(inspection.index_entries.get(path)),
+                )
+            baselines[group_id] = original
+
+        if not staged:
+            if ownership_revoked:
+                self._owner.publish_stage_result(
+                    binding,
+                    inspection.repository,
+                    ownership,
+                )
+            return GitActionResult(
+                "stage",
+                "blocked",
+                requested,
+                clean_group_ids=tuple(clean),
+                blocked_group_ids=tuple(blocked),
+                message="No requested session group is eligible for Stage",
+            )
+        if not await self.revalidate_repository(binding, inspection.repository):
+            return GitActionResult(
+                "stage",
+                "stale",
+                requested,
+                blocked_group_ids=tuple(requested),
+                message="Repository identity changed before Stage",
+            )
+
+        result = await self._run_stage_command(
+            inspection.repository,
+            build_stage_argv(
+                self._git_executable_or_raise(),
+                tuple(dict.fromkeys(pathspecs)),
+            ),
+        )
+        if not _command_succeeded(result):
+            for group_id in staged:
+                ownership.pop(group_id, None)
+            self._owner.publish_stage_result(
+                binding,
+                inspection.repository,
+                ownership,
+            )
+            return GitActionResult(
+                "stage",
+                "uncertain" if result.termination_uncertain else "error",
+                requested,
+                blocked_group_ids=tuple(staged + blocked),
+                clean_group_ids=tuple(clean),
+                message=_command_failure_message(result, "Git Stage failed"),
+            )
+
+        postflight = await self._read_stage_postflight(
+            binding,
+            inspection.repository,
+        )
+        if isinstance(postflight, GitActionResult):
+            self._owner.clear_ownership(binding)
+            self._owner.clear_status(binding)
+            return replace(postflight, requested_group_ids=requested)
+        post_head, post_index = postflight
+        latest_groups = {
+            group.group_id: group
+            for group in coalesce_session_changes(
+                self._owner.snapshot(binding).changes
+            )
+        }
+        if post_head != inspection.head or any(
+            latest_groups.get(group_id) is None
+            or latest_groups[group_id].topology_signature
+            != groups_by_id[group_id].topology_signature
+            for group_id in staged
+        ):
+            self._owner.clear_ownership(binding)
+            self._owner.clear_status(binding)
+            return GitActionResult(
+                "stage",
+                "uncertain",
+                requested,
+                blocked_group_ids=tuple(staged + blocked),
+                clean_group_ids=tuple(clean),
+                message="Git HEAD or session topology changed during Stage",
+            )
+        if any(
+            not stage_group_is_closed(
+                inspection.repository_groups[group_id],
+                post_index,
+            )
+            for group_id in staged
+        ):
+            self._owner.clear_ownership(binding)
+            self._owner.clear_status(binding)
+            return GitActionResult(
+                "stage",
+                "uncertain",
+                requested,
+                blocked_group_ids=tuple(staged + blocked),
+                clean_group_ids=tuple(clean),
+                message="Git index topology changed during Stage",
+            )
+
+        for group_id in staged:
+            previous = ownership.get(group_id)
+            paths = set(affected_paths[group_id])
+            if previous is not None:
+                paths.update(previous.post_stage_entries)
+            post_entries = {path: post_index.get(path) for path in paths}
+            if any(
+                entry is not None
+                and (entry.stage != 0 or entry.semantic_flags)
+                for entry in post_entries.values()
+            ):
+                self._owner.clear_ownership(binding)
+                self._owner.clear_status(binding)
+                return GitActionResult(
+                    "stage",
+                    "uncertain",
+                    requested,
+                    blocked_group_ids=tuple(staged + blocked),
+                    clean_group_ids=tuple(clean),
+                    message="Git index semantics changed during Stage",
+                )
+            if any(
+                inspection.index_entries.get(path) == post_index.get(path)
+                for path in affected_paths[group_id]
+            ):
+                self._owner.clear_ownership(binding)
+                self._owner.clear_status(binding)
+                return GitActionResult(
+                    "stage",
+                    "uncertain",
+                    requested,
+                    blocked_group_ids=tuple(staged + blocked),
+                    clean_group_ids=tuple(clean),
+                    message="Git Stage did not change every effective path",
+                )
+            ownership[group_id] = StagingOwnership(
+                repository=inspection.repository,
+                head=post_head,
+                approved_endpoint_topology=groups_by_id[group_id].endpoints,
+                approved_move_edges=groups_by_id[group_id].move_edges,
+                approved_current_path=groups_by_id[group_id].current_path,
+                original_baselines=baselines[group_id],
+                post_stage_entries=post_entries,
+            )
+
+        if not self._owner.publish_stage_result(
+            binding,
+            inspection.repository,
+            ownership,
+        ):
+            return GitActionResult(
+                "stage",
+                "uncertain",
+                requested,
+                blocked_group_ids=tuple(staged + blocked),
+                clean_group_ids=tuple(clean),
+                message="Stage result no longer matches the selected session",
+            )
+        return GitActionResult(
+            "stage",
+            "success",
+            requested,
+            staged_group_ids=tuple(staged),
+            clean_group_ids=tuple(clean),
+            blocked_group_ids=tuple(blocked),
+        )
+
+    @staticmethod
+    def _owned_stage_preflight_matches(
+        ownership: StagingOwnership,
+        inspection: _StageInspection,
+        group: SessionChangeGroup,
+    ) -> bool:
+        if (
+            ownership.repository != inspection.repository
+            or ownership.head != inspection.head
+            or any(
+                inspection.index_entries.get(path) != expected
+                for path, expected in ownership.post_stage_entries.items()
+            )
+            or not stage_group_is_closed(group, inspection.index_entries)
+        ):
+            return False
+        return not any(
+            path not in ownership.post_stage_entries
+            for record in inspection.status_records
+            for path in _staged_record_paths(record)
+            if path in group.endpoints
+        )
+
+    async def _read_stage_postflight(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+    ) -> tuple[HeadIdentity, Mapping[str, IndexEntry]] | GitActionResult:
+        if not await self.revalidate_repository(binding, repository):
+            return GitActionResult(
+                "stage",
+                "uncertain",
+                (),
+                message="Repository identity changed after Stage",
+            )
+        root = self._safe_root(binding)
+        if root is None:
+            return GitActionResult(
+                "stage",
+                "uncertain",
+                (),
+                message="Selected File Notes root changed after Stage",
+            )
+        head = await self._read_head(root)
+        if isinstance(head, _HeadReadFailure):
+            return GitActionResult(
+                "stage",
+                "uncertain",
+                (),
+                message=head.message,
+            )
+        index_result = await self._run_stage_command(
+            repository,
+            build_index_argv(self._git_executable_or_raise()),
+        )
+        if not _command_succeeded(index_result):
+            return GitActionResult(
+                "stage",
+                "uncertain",
+                (),
+                message=_command_failure_message(
+                    index_result,
+                    "Git post-Stage index read failed",
+                ),
+            )
+        try:
+            entries = parse_index_entries_z(index_result.stdout)
+        except GitIndexParseError as error:
+            return GitActionResult("stage", "uncertain", (), message=str(error))
+        return head, _stage_zero_index(entries)
+
+    async def _run_stage_command(
+        self,
+        repository: RepositoryIdentity,
+        argv: Sequence[GitArg],
+    ) -> GitCommandResult:
+        try:
+            return await self._runner.run(
+                argv,
+                cwd=repository.worktree_root,
+                environment=build_git_environment(self._environment),
+            )
+        except OSError as error:
+            return GitCommandResult(
+                127,
+                b"",
+                str(error).encode("utf-8", "replace"),
+            )
 
     async def _sparse_checkout_state(
         self,
@@ -1752,6 +2412,17 @@ def _command_succeeded(result: GitCommandResult) -> bool:
     )
 
 
+def _stage_zero_index(
+    entries: Sequence[IndexEntry],
+) -> dict[str, IndexEntry]:
+    """Return an exact path map only when each entry is unconflicted stage 0."""
+    mapped: dict[str, IndexEntry] = {}
+    for entry in entries:
+        if entry.stage == 0:
+            mapped[entry.path] = entry
+    return mapped
+
+
 def _command_failure_message(
     result: GitCommandResult,
     fallback: str,
@@ -2121,6 +2792,32 @@ def ownership_signature_matches(
     return all(
         current_index_entries.get(path) == expected
         for path, expected in ownership.post_stage_entries.items()
+    )
+
+
+def _map_ownership_topology(
+    ownership: StagingOwnership,
+    original_group: SessionChangeGroup,
+    repository_group: SessionChangeGroup,
+) -> StagingOwnership | None:
+    """Project owner topology into repository coordinates for row policy."""
+    mapping = dict(zip(original_group.endpoints, repository_group.endpoints))
+    try:
+        endpoints = tuple(
+            mapping[path] for path in ownership.approved_endpoint_topology
+        )
+        move_edges = tuple(
+            (mapping[source], mapping[destination])
+            for source, destination in ownership.approved_move_edges
+        )
+        current_path = mapping[ownership.approved_current_path]
+    except KeyError:
+        return None
+    return replace(
+        ownership,
+        approved_endpoint_topology=endpoints,
+        approved_move_edges=move_edges,
+        approved_current_path=current_path,
     )
 
 

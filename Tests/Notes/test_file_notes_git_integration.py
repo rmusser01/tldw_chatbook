@@ -406,6 +406,359 @@ def _change(
 
 
 @pytest.mark.asyncio
+async def test_stage_bulk_exact_paths_preserves_unrelated_index_and_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ForbiddenReplica:
+        def __getattribute__(self, name: str) -> object:
+            raise AssertionError(f"Stage touched the replica boundary: {name}")
+
+    repository = _disposable_repository(tmp_path)
+    created = repository.path / "created.md"
+    created.write_text("created\n", encoding="utf-8")
+    tracked = repository.path / "tracked.md"
+    tracked.write_text("modified\n", encoding="utf-8")
+    deleted = repository.path / "deleted.md"
+    deleted.write_text("delete me\n", encoding="utf-8")
+    unrelated = repository.path / "unrelated.md"
+    unrelated.write_text("baseline\n", encoding="utf-8")
+    repository.run("add", "--", "deleted.md", "unrelated.md")
+    repository.run("commit", "-m", "more baseline")
+    deleted.unlink()
+    unrelated.write_text("externally staged\n", encoding="utf-8")
+    repository.run("add", "--", "unrelated.md")
+    unrelated_index_before = repository.run(
+        "ls-files",
+        "--stage",
+        "--",
+        "unrelated.md",
+    ).stdout
+
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    changes = (
+        _change(1, "modified", "tracked.md"),
+        _change(2, "created", "created.md"),
+        _change(3, "deleted", "deleted.md"),
+    )
+    for item in changes:
+        assert owner.record_change(binding, item.change)
+    runner = _RecordingRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    service._replica = ForbiddenReplica()  # type: ignore[attr-defined]
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+    changes_before = owner.snapshot(binding).changes
+    record_calls: list[tuple[object, ...]] = []
+
+    def forbidden_record_change(*args: object) -> bool:
+        record_calls.append(args)
+        raise AssertionError("Stage wrote File Notes session history")
+
+    monkeypatch.setattr(
+        FileNotesSessionOwner,
+        "record_change",
+        forbidden_record_change,
+    )
+
+    result = await service.start_stage(binding, (1, 2, 3))
+
+    assert result.state == "success"
+    assert result.staged_group_ids == (1, 2, 3)
+    assert repository.run(
+        "diff",
+        "--cached",
+        "--name-only",
+        "--",
+        "tracked.md",
+        "created.md",
+        "deleted.md",
+    ).stdout.splitlines() == [b"created.md", b"deleted.md", b"tracked.md"]
+    assert repository.run(
+        "ls-files",
+        "--stage",
+        "--",
+        "unrelated.md",
+    ).stdout == unrelated_index_before
+    stage_calls = [
+        call
+        for call in runner.calls
+        if "add" in tuple(os.fsdecode(argument) for argument in call)
+    ]
+    assert len(stage_calls) == 1
+    assert tuple(os.fsdecode(argument) for argument in stage_calls[0][:7]) == (
+        repository.git,
+        "--literal-pathspecs",
+        "-c",
+        "add.ignoreErrors=false",
+        "add",
+        "--all",
+        "--",
+    )
+    snapshot = owner.snapshot(binding)
+    assert snapshot.changes == changes_before
+    assert not record_calls
+    assert snapshot.git_status is None
+    assert set(snapshot.staging_ownership) == {1, 2, 3}
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stage_update_retains_original_baseline_and_expands_owned_content(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "tracked.md"),
+    )
+    service = FileNotesGitService(
+        owner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+    original_entry = repository.run(
+        "ls-files",
+        "--stage",
+        "--",
+        "tracked.md",
+    ).stdout
+
+    (repository.path / "tracked.md").write_text("first\n", encoding="utf-8")
+    first = await service.start_stage(binding, (1,))
+    assert first.state == "success"
+    first_ownership = owner.snapshot(binding).staging_ownership[1]
+
+    (repository.path / "tracked.md").write_text("second\n", encoding="utf-8")
+    second = await service.start_stage(binding, (1,))
+
+    assert second.state == "success"
+    second_ownership = owner.snapshot(binding).staging_ownership[1]
+    assert (
+        second_ownership.original_baselines
+        == first_ownership.original_baselines
+    )
+    assert second_ownership.post_stage_entries != first_ownership.post_stage_entries
+    baseline = second_ownership.original_baselines["tracked.md"].entry
+    assert baseline is not None
+    assert (
+        f"{baseline.mode} {baseline.object_id} {baseline.stage}\ttracked.md\n".encode()
+        == original_entry
+    )
+    refreshed = await service.start_status(
+        binding,
+        owner.snapshot(binding).changes,
+    )
+    assert refreshed.rows[0].state == "owned"
+    assert refreshed.rows[0].unstage_eligible
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stage_preflight_blocks_partially_staged_same_path(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    tracked = repository.path / "tracked.md"
+    tracked.write_text("staged version\n", encoding="utf-8")
+    repository.run("add", "--", "tracked.md")
+    index_before = repository.run(
+        "ls-files",
+        "--stage",
+        "--",
+        "tracked.md",
+    ).stdout
+    tracked.write_text("newer worktree version\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "tracked.md"),
+    )
+    runner = _RecordingRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+
+    result = await service.start_stage(binding, (1,))
+
+    assert result.state == "blocked"
+    assert result.blocked_group_ids == (1,)
+    assert not owner.snapshot(binding).staging_ownership
+    assert repository.run(
+        "ls-files",
+        "--stage",
+        "--",
+        "tracked.md",
+    ).stdout == index_before
+    assert not any(
+        "add" in tuple(os.fsdecode(argument) for argument in call)
+        for call in runner.calls
+    )
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stage_nonzero_result_claims_no_ownership(
+    tmp_path: Path,
+) -> None:
+    class FailingAddRunner(_RecordingRunner):
+        async def run(
+            self,
+            argv: Sequence[str | bytes],
+            *,
+            cwd: str,
+            environment: Mapping[str, str],
+            stdin: bytes | None = None,
+            timeout: float | None = None,
+        ) -> GitCommandResult:
+            text = tuple(os.fsdecode(argument) for argument in argv)
+            if "add" in text:
+                self.calls.append(tuple(argv))
+                return GitCommandResult(1, b"", b"index refused")
+            return await super().run(
+                argv,
+                cwd=cwd,
+                environment=environment,
+                stdin=stdin,
+                timeout=timeout,
+            )
+
+    repository = _disposable_repository(tmp_path)
+    (repository.path / "tracked.md").write_text("changed\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "tracked.md"),
+    )
+    runner = FailingAddRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+
+    result = await service.start_stage(binding, (1,))
+
+    assert result.state == "error"
+    assert not result.staged_group_ids
+    assert not owner.snapshot(binding).staging_ownership
+    assert repository.run(
+        "diff",
+        "--cached",
+        "--name-only",
+        "--",
+        "tracked.md",
+    ).stdout == b""
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stage_update_revokes_ownership_after_external_index_change(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    tracked = repository.path / "tracked.md"
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "tracked.md"),
+    )
+    service = FileNotesGitService(
+        owner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+    tracked.write_text("owned\n", encoding="utf-8")
+    assert (await service.start_stage(binding, (1,))).state == "success"
+    assert 1 in owner.snapshot(binding).staging_ownership
+
+    tracked.write_text("external index\n", encoding="utf-8")
+    repository.run("add", "--", "tracked.md")
+    tracked.write_text("newer worktree\n", encoding="utf-8")
+    result = await service.start_stage(binding, (1,))
+
+    assert result.state == "blocked"
+    assert 1 not in owner.snapshot(binding).staging_ownership
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stage_supports_mode_change_and_grouped_move(tmp_path: Path) -> None:
+    repository = _disposable_repository(tmp_path)
+    script = repository.path / "script.sh"
+    moved = repository.path / "before.md"
+    script.write_text("#!/bin/sh\n", encoding="utf-8")
+    moved.write_text("move\n", encoding="utf-8")
+    repository.run("add", "--", "script.sh", "before.md")
+    repository.run("commit", "-m", "stage cases")
+    script.chmod(0o755)
+    moved.rename(repository.path / "after.md")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "script.sh"),
+    )
+    assert owner.record_change(
+        binding,
+        SessionChange("moved", "before.md", "after.md"),
+    )
+    service = FileNotesGitService(
+        owner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+
+    result = await service.start_stage(binding, (1, 2))
+
+    assert result.state == "success"
+    assert result.staged_group_ids == (1, 2)
+    assert repository.run(
+        "diff",
+        "--cached",
+        "--name-status",
+        "--",
+        "script.sh",
+        "before.md",
+        "after.md",
+    ).stdout.splitlines() == [b"R100\tbefore.md\tafter.md", b"M\tscript.sh"]
+    ownership = owner.snapshot(binding).staging_ownership
+    assert set(ownership[2].post_stage_entries) == {"before.md", "after.md"}
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_status_maps_repo_above_notes_and_supports_weird_filenames(
     tmp_path: Path,
 ) -> None:
@@ -563,4 +916,249 @@ async def test_status_blocks_endpoint_beneath_nested_worktree(
     assert status.state == "ready"
     assert len(status.rows) == 1
     assert status.rows[0].state == "nested_repository"
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "blocked_case",
+    ["ignored", "nested", "sparse", "unsafe", "semantic", "closure"],
+)
+async def test_stage_preflight_refusals_start_no_add_child(
+    tmp_path: Path,
+    blocked_case: str,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    action = "modified"
+    relative_path = "tracked.md"
+    if blocked_case == "ignored":
+        (repository.path / ".gitignore").write_text(
+            "ignored.md\n",
+            encoding="utf-8",
+        )
+        repository.run("add", "--", ".gitignore")
+        repository.run("commit", "-m", "ignore")
+        relative_path = "ignored.md"
+        action = "created"
+        (repository.path / relative_path).write_text("ignored\n", encoding="utf-8")
+    elif blocked_case == "nested":
+        nested = repository.path / "nested"
+        nested.mkdir()
+        repository.run("init", "--initial-branch=main", cwd=nested)
+        (nested / "note.md").write_text("nested\n", encoding="utf-8")
+        relative_path = "nested/note.md"
+    elif blocked_case == "sparse":
+        repository.run("sparse-checkout", "init", "--cone", "--sparse-index")
+        (repository.path / relative_path).write_text("changed\n", encoding="utf-8")
+    elif blocked_case == "unsafe":
+        relative_path = "directory"
+        action = "created"
+        (repository.path / relative_path).mkdir()
+    elif blocked_case == "semantic":
+        repository.run(
+            "update-index",
+            "--assume-unchanged",
+            "--",
+            relative_path,
+        )
+        (repository.path / relative_path).write_text("changed\n", encoding="utf-8")
+    else:
+        ancestor = repository.path / "collision"
+        ancestor.write_text("tracked ancestor\n", encoding="utf-8")
+        repository.run("add", "--", "collision")
+        repository.run("commit", "-m", "collision")
+        ancestor.unlink()
+        ancestor.mkdir()
+        (ancestor / "child.md").write_text("child\n", encoding="utf-8")
+        relative_path = "collision/child.md"
+        action = "created"
+
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange(action, relative_path),  # type: ignore[arg-type]
+    )
+    runner = _RecordingRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+
+    result = await service.start_stage(binding, (1,))
+
+    assert result.state == "blocked"
+    assert result.blocked_group_ids == (1,)
+    assert not owner.snapshot(binding).staging_ownership
+    assert not any(
+        "add" in tuple(os.fsdecode(argument) for argument in call)
+        for call in runner.calls
+    )
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stage_bulk_stages_only_eligible_and_reports_clean_and_blocked(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    clean = repository.path / "clean.md"
+    clean.write_text("clean\n", encoding="utf-8")
+    (repository.path / ".gitignore").write_text("ignored.md\n", encoding="utf-8")
+    repository.run("add", "--", "clean.md", ".gitignore")
+    repository.run("commit", "-m", "bulk baseline")
+    (repository.path / "tracked.md").write_text("changed\n", encoding="utf-8")
+    (repository.path / "ignored.md").write_text("ignored\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    for change in (
+        SessionChange("modified", "tracked.md"),
+        SessionChange("created", "ignored.md"),
+        SessionChange("modified", "clean.md"),
+    ):
+        assert owner.record_change(binding, change)
+    runner = _RecordingRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+
+    result = await service.start_stage(binding, (1, 2, 3))
+
+    assert result.state == "success"
+    assert result.staged_group_ids == (1,)
+    assert result.blocked_group_ids == (2,)
+    assert result.clean_group_ids == (3,)
+    add_calls = [
+        call
+        for call in runner.calls
+        if "add" in tuple(os.fsdecode(argument) for argument in call)
+    ]
+    assert len(add_calls) == 1
+    boundary = add_calls[0].index("--")
+    assert tuple(add_calls[0][boundary + 1 :]) == (b"tracked.md",)
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stage_update_expands_chained_move_topology_without_noop_ownership(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    notes_root = repository.path / "notes"
+    notes_root.mkdir()
+    source_name = "-before[1].md"
+    transient_name = "middle*.md"
+    final_name = "final?.md"
+    source = notes_root / source_name
+    source.write_text("baseline\n", encoding="utf-8")
+    repository.run("add", "--", f"notes/{source_name}")
+    repository.run("commit", "-m", "move baseline")
+    repository.run("config", "--local", "add.ignoreErrors", "true")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(notes_root)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", source_name),
+    )
+    source.write_text("first stage\n", encoding="utf-8")
+    runner = _RecordingRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+    assert (await service.start_stage(binding, (1,))).state == "success"
+    first = owner.snapshot(binding).staging_ownership[1]
+
+    transient = notes_root / transient_name
+    final = notes_root / final_name
+    source.rename(transient)
+    assert owner.record_change(
+        binding,
+        SessionChange("moved", source_name, transient_name),
+    )
+    transient.rename(final)
+    assert owner.record_change(
+        binding,
+        SessionChange("moved", transient_name, final_name),
+    )
+
+    result = await service.start_stage(binding, (1,))
+
+    assert result.state == "success"
+    updated = owner.snapshot(binding).staging_ownership[1]
+    assert updated.approved_endpoint_topology == (
+        source_name,
+        transient_name,
+        final_name,
+    )
+    assert (
+        updated.original_baselines[f"notes/{source_name}"]
+        == first.original_baselines[f"notes/{source_name}"]
+    )
+    assert updated.original_baselines[f"notes/{final_name}"].entry is None
+    assert f"notes/{transient_name}" not in updated.original_baselines
+    assert f"notes/{transient_name}" not in updated.post_stage_entries
+    add_calls = [
+        tuple(os.fsdecode(argument) for argument in call)
+        for call in runner.calls
+        if "add" in tuple(os.fsdecode(argument) for argument in call)
+    ]
+    assert add_calls[-1][:7] == (
+        repository.git,
+        "--literal-pathspecs",
+        "-c",
+        "add.ignoreErrors=false",
+        "add",
+        "--all",
+        "--",
+    )
+    assert set(add_calls[-1][7:]) == {
+        f"notes/{source_name}",
+        f"notes/{final_name}",
+    }
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stage_supports_restored_session_change(tmp_path: Path) -> None:
+    repository = _disposable_repository(tmp_path)
+    (repository.path / "tracked.md").write_text(
+        "restored version\n",
+        encoding="utf-8",
+    )
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("restored", "tracked.md"),
+    )
+    service = FileNotesGitService(
+        owner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+
+    result = await service.start_stage(binding, (1,))
+
+    assert result.state == "success"
+    assert result.staged_group_ids == (1,)
     await service.shutdown()

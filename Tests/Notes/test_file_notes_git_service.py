@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from pathlib import Path
 
 import pytest
@@ -14,6 +14,7 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     FileNotesGitService,
     GitCommandResult,
     GitIndexParseError,
+    GitMutationAdmissionError,
     GitShutdownAffinityError,
     GitStatusAdmissionError,
     PorcelainV2ParseError,
@@ -22,6 +23,7 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     build_git_environment,
     build_index_argv,
     build_file_notes_session_owner,
+    build_stage_argv,
     build_status_argv,
     classify_session_rows,
     coalesce_session_changes,
@@ -1936,6 +1938,25 @@ def test_index_command_is_complete_nul_safe_and_has_explicit_boundary() -> None:
     assert "-v" in argv
 
 
+def test_stage_command_is_one_exact_fail_fast_literal_path_operation() -> None:
+    argv = build_stage_argv(
+        "git",
+        (b"notes/-leading.md", b"notes/[literal]*.md"),
+    )
+
+    assert argv == (
+        "git",
+        "--literal-pathspecs",
+        "-c",
+        "add.ignoreErrors=false",
+        "add",
+        "--all",
+        "--",
+        b"notes/-leading.md",
+        b"notes/[literal]*.md",
+    )
+
+
 def test_parse_index_entries_preserves_stage_and_semantic_flags() -> None:
     payload = (
         b"H 100644 " + OID_A.encode("ascii") + b" 0\tnormal.md\0"
@@ -2037,6 +2058,7 @@ class _DelayedStatusRunner:
         self.calls: list[tuple[str | bytes, ...]] = []
         self.query_count = 0
         self.shutdown_calls = 0
+        self.add_seen = False
 
     async def run(
         self,
@@ -2074,6 +2096,12 @@ class _DelayedStatusRunner:
             if self.query_count == 1:
                 self.first_index_started.set()
                 await self.release_first_index.wait()
+            if self.add_seen:
+                return GitCommandResult(
+                    0,
+                    b"H 100644 " + OID_B.encode() + b" 0\tnote.md\0",
+                    b"",
+                )
             return GitCommandResult(0, b"", b"")
         if "status" in text:
             boundary = command.index("--")
@@ -2083,6 +2111,9 @@ class _DelayedStatusRunner:
             )
             self.status_completed.set()
             return GitCommandResult(0, payload, b"")
+        if "add" in text:
+            self.add_seen = True
+            return GitCommandResult(0, b"", b"")
         raise AssertionError(f"Unexpected Git command: {text!r}")
 
     def shutdown(self) -> None:
@@ -2438,6 +2469,61 @@ async def test_status_after_mutation_admission_starts_no_child_or_rerun(
     assert error.value.reason == "mutation_active"
     assert not runner.calls
     mutation.release()
+
+
+@pytest.mark.asyncio
+async def test_stage_transition_refusal_is_synchronous_and_starts_no_task_or_child(
+    tmp_path: Path,
+) -> None:
+    owner, binding, service, runner = _status_service(tmp_path)
+    transition = owner.try_acquire_transition(binding, "path")  # type: ignore[arg-type]
+    assert transition is not None
+
+    with pytest.raises(GitMutationAdmissionError) as error:
+        service.start_stage(binding, (1,))  # type: ignore[arg-type]
+
+    assert error.value.reason == "transition_active"
+    assert service._action_cycle is None
+    assert service._action_waiter is None
+    assert not runner.calls
+    transition.release()
+
+
+@pytest.mark.asyncio
+async def test_stage_admission_holds_mutation_lease_while_waiting_for_status(
+    tmp_path: Path,
+) -> None:
+    owner, binding, service, runner = _status_service(tmp_path)
+    root = tmp_path / "notes"
+    (root / "note.md").write_text("note\n", encoding="utf-8")
+    assert owner.record_change(
+        binding,  # type: ignore[arg-type]
+        SessionChange("created", "note.md"),
+    )
+    status = service.start_status(
+        binding,  # type: ignore[arg-type]
+        (_change(1, "created", "note.md"),),
+    )
+    await runner.first_index_started.wait()
+
+    stage = service.start_stage(binding, (1,))  # type: ignore[arg-type]
+
+    assert owner.try_acquire_transition(binding, "root") is None  # type: ignore[arg-type]
+    with pytest.raises(GitStatusAdmissionError) as error:
+        service.start_status(
+            binding,  # type: ignore[arg-type]
+            (_change(2, "modified", "note.md"),),
+        )
+    assert error.value.reason == "mutation_active"
+    assert not stage.done()
+
+    runner.release_first_index.set()
+    await status
+    result = await stage
+    assert result.state in {"success", "blocked"}
+    transition = owner.try_acquire_transition(binding, "root")  # type: ignore[arg-type]
+    assert transition is not None
+    transition.release()
 
 
 @pytest.mark.asyncio
@@ -2825,3 +2911,194 @@ async def test_status_rejects_git_output_outside_repo_coordinate_whitelist(
     assert status.state == "error"
     assert status.message is not None
     assert "outside the session whitelist" in status.message
+
+
+class _PostflightStageRaceRunner(_DelayedStatusRunner):
+    def __init__(
+        self,
+        *,
+        race: str,
+        owner: FileNotesSessionOwner,
+        binding: SessionBinding,
+        root: Path,
+    ) -> None:
+        super().__init__()
+        self.release_first_index.set()
+        self.race = race
+        self.owner = owner
+        self.binding = binding
+        self.root = root
+        self.add_seen = False
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        text = tuple(os.fsdecode(argument) for argument in argv)
+        if "add" in text:
+            self.calls.append(tuple(argv))
+            self.add_seen = True
+            if self.race == "topology":
+                assert self.owner.record_change(
+                    self.binding,
+                    SessionChange("moved", "note.md", "next.md"),
+                )
+            return GitCommandResult(0, b"", b"")
+        if self.add_seen and self.race == "identity" and "--show-toplevel" in text:
+            replacement = self.root / "replacement"
+            replacement.mkdir(exist_ok=True)
+            self.calls.append(tuple(argv))
+            return GitCommandResult(0, os.fsencode(replacement) + b"\n", b"")
+        if (
+            self.add_seen
+            and self.race == "head"
+            and "rev-parse" in text
+            and "HEAD^{commit}" in text
+        ):
+            self.calls.append(tuple(argv))
+            return GitCommandResult(0, OID_B.encode() + b"\n", b"")
+        if self.add_seen and self.race == "semantic" and "ls-files" in text:
+            self.calls.append(tuple(argv))
+            return GitCommandResult(
+                0,
+                b"S 100644 " + OID_B.encode() + b" 0\tnote.md\0",
+                b"",
+            )
+        if self.add_seen and self.race == "index_topology" and "ls-files" in text:
+            self.calls.append(tuple(argv))
+            return GitCommandResult(
+                0,
+                b"H 100644 " + OID_B.encode() + b" 0\tnote.md/child\0",
+                b"",
+            )
+        return await super().run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "race",
+    ["identity", "head", "index_topology", "semantic", "topology"],
+)
+async def test_stage_postflight_races_publish_no_ownership(
+    tmp_path: Path,
+    race: str,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("note\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    assert owner.record_change(binding, SessionChange("created", "note.md"))
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    runner = _PostflightStageRaceRunner(
+        race=race,
+        owner=owner,
+        binding=binding,
+        root=root,
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+
+    result = await service.start_stage(binding, (1,))
+
+    assert result.state == "uncertain"
+    assert not owner.snapshot(binding).staging_ownership
+    transition = owner.try_acquire_transition(binding, "path")
+    assert transition is not None
+    transition.release()
+
+
+class _ShutdownDuringStageRunner(_DelayedStatusRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.release_first_index.set()
+        self.add_started = asyncio.Event()
+        self.release_add = asyncio.Event()
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        text = tuple(os.fsdecode(argument) for argument in argv)
+        if "add" in text:
+            self.calls.append(tuple(argv))
+            self.add_started.set()
+            await self.release_add.wait()
+            return GitCommandResult(
+                None,
+                b"",
+                b"shutdown",
+                termination_uncertain=True,
+            )
+        return await super().run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+        )
+
+    def shutdown(self) -> Awaitable[bool]:
+        self.shutdown_calls += 1
+        self.release_add.set()
+
+        async def settle() -> bool:
+            await asyncio.sleep(0)
+            return True
+
+        return asyncio.create_task(settle())
+
+
+@pytest.mark.asyncio
+async def test_shutdown_settles_active_stage_and_releases_mutation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("note\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    assert owner.record_change(binding, SessionChange("created", "note.md"))
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    runner = _ShutdownDuringStageRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+    stage = service.start_stage(binding, (1,))
+    await runner.add_started.wait()
+
+    settlement = service.shutdown()
+    await asyncio.wait_for(settlement, timeout=1)
+
+    result = await stage
+    assert result.state == "uncertain"
+    assert runner.shutdown_calls == 1
+    assert not owner.snapshot(binding).staging_ownership
+    transition = owner.try_acquire_transition(binding, "screen")
+    assert transition is not None
+    transition.release()

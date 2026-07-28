@@ -49,6 +49,12 @@ GitStatusAdmissionReason = Literal[
     "stale_binding",
     "shutdown",
 ]
+GitMutationAdmissionReason = Literal[
+    "mutation_active",
+    "transition_active",
+    "stale_binding",
+    "shutdown",
+]
 _TRANSITION_KINDS = frozenset({"root", "path", "source", "screen"})
 
 
@@ -357,6 +363,18 @@ class GitStatusAdmission:
     def __post_init__(self) -> None:
         if (self.lease is None) == (self.reason is None):
             raise ValueError("Status admission requires exactly one outcome")
+
+
+@dataclass(frozen=True, slots=True)
+class GitMutationAdmission:
+    """Atomic mutation admission with a typed refusal reason."""
+
+    lease: GitMutationLease | None = None
+    reason: GitMutationAdmissionReason | None = None
+
+    def __post_init__(self) -> None:
+        if (self.lease is None) == (self.reason is None):
+            raise ValueError("Mutation admission requires exactly one outcome")
 
 
 @dataclass(frozen=True, slots=True)
@@ -690,6 +708,24 @@ class FileNotesSessionOwner:
             self._staging_ownership = dict(ownership)
             return True
 
+    def publish_stage_result(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+        ownership: Mapping[int, StagingOwnership],
+    ) -> bool:
+        """Atomically publish checked ownership and make prior status stale."""
+        with self._lock:
+            if (
+                self._shutdown
+                or binding != self._binding
+                or repository != self._trusted_repository
+            ):
+                return False
+            self._staging_ownership = dict(ownership)
+            self._clear_git_status_locked()
+            return True
+
     def clear_ownership(self, binding: SessionBinding) -> bool:
         """Clear every staging ownership record for the current binding."""
         with self._lock:
@@ -722,17 +758,27 @@ class FileNotesSessionOwner:
         binding: SessionBinding,
     ) -> GitMutationLease | None:
         """Try to admit one mutation without awaiting."""
+        return self.admit_mutation(binding).lease
+
+    def admit_mutation(
+        self,
+        binding: SessionBinding,
+    ) -> GitMutationAdmission:
+        """Atomically admit a mutation or identify the current refusal."""
         with self._lock:
-            if (
-                self._shutdown
-                or binding != self._binding
-                or self._transition_tokens
-                or self._mutation_token is not None
-            ):
-                return None
+            if self._shutdown:
+                return GitMutationAdmission(reason="shutdown")
+            if binding != self._binding:
+                return GitMutationAdmission(reason="stale_binding")
+            if self._transition_tokens:
+                return GitMutationAdmission(reason="transition_active")
+            if self._mutation_token is not None:
+                return GitMutationAdmission(reason="mutation_active")
             token = object()
             self._mutation_token = token
-            return GitMutationLease(self, token)
+            return GitMutationAdmission(
+                lease=GitMutationLease(self, token),
+            )
 
     def try_acquire_status(
         self,
