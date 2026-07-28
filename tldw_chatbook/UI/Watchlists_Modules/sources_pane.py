@@ -117,9 +117,21 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
         "sources-create-type",
         "sources-create-active",
         "sources-create-tags",
+        "sources-create-frequency",
         "sources-create-submit",
         "sources-create-cancel",
     )
+
+    #: How often a new source is checked, in seconds. Mirrors the
+    #: `check_frequency INTEGER DEFAULT 3600` column in Subscriptions_DB, so
+    #: leaving the control alone reproduces the database default (TASK-1210).
+    _FREQUENCY_OPTIONS = [
+        ("Every 15m", 900),
+        ("Every 1h", 3600),
+        ("Every 6h", 21_600),
+        ("Every 24h", 86_400),
+    ]
+    _DEFAULT_FREQUENCY_SECONDS = 3600
 
     #: Which create-form control `recompose()` should focus once it has
     #: remounted this pane's children. See `recompose` for why focus has to
@@ -249,10 +261,22 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     Switch(value=True, id="sources-create-active"),
                     classes="sources-create-type-row",
                 )
-                yield Input(
-                    placeholder="Tags (comma separated)",
-                    id="sources-create-tags",
-                    value=self.create_draft_tags,
+                # Tags and the check cadence share a row for the same reason
+                # Type and Active do: the pane has no spare rows, and a sixth
+                # full-height row would push `Create`/`Cancel` off the bottom.
+                yield Horizontal(
+                    Input(
+                        placeholder="Tags (comma separated)",
+                        id="sources-create-tags",
+                        value=self.create_draft_tags,
+                    ),
+                    Select(
+                        self._FREQUENCY_OPTIONS,
+                        value=self._DEFAULT_FREQUENCY_SECONDS,
+                        id="sources-create-frequency",
+                        allow_blank=False,
+                    ),
+                    classes="sources-create-tags-row",
                 )
                 # `.dialog-buttons` is the same one-row, side-by-side pairing
                 # `WatchlistNameDialog` uses for its own Create/Cancel, so the
@@ -578,6 +602,12 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                 tags.append(clean)
             else:
                 self.app.notify(f"Tag '{tag}' was skipped due to invalid content.", severity="warning")
+        try:
+            check_frequency = int(
+                self.query_one("#sources-create-frequency", Select).value
+            )
+        except (TypeError, ValueError):
+            check_frequency = self._DEFAULT_FREQUENCY_SECONDS
         self.post_message(
             CreateSourceRequested(
                 {
@@ -586,6 +616,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
                     "source_type": source_type,
                     "active": active,
                     "tags": tags,
+                    "check_frequency": check_frequency,
                 }
             )
         )

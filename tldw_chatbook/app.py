@@ -4672,10 +4672,10 @@ class TldwCli(
         )
 
         watchlist_checks_enabled = get_cli_setting(
-            "scheduling", "watchlist_checks_enabled", False
+            "scheduling", "watchlist_checks_enabled", True
         )
         watchlist_checks_shadow = get_cli_setting(
-            "scheduling", "watchlist_checks_shadow", True
+            "scheduling", "watchlist_checks_shadow", False
         )
 
         watchlist_handler = None
