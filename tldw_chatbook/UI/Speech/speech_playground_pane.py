@@ -41,6 +41,7 @@ from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
 from .speech_axis_row import SpeechAxisRow
 from .speech_catalog_mixin import SpeechCatalogMixin
+from .speech_playback_mixin import SpeechPlaybackMixin
 from .speech_synthesis_mixin import SpeechSynthesisMixin
 from .speech_param_group import SpeechParamGroup
 from .speech_result_history import SpeechResultHistory, SpeechTake
@@ -122,7 +123,9 @@ class SpeechChip(Static):
         )
 
 
-class SpeechPlaygroundPane(SpeechSynthesisMixin, SpeechCatalogMixin, Vertical):
+class SpeechPlaygroundPane(
+    SpeechSynthesisMixin, SpeechCatalogMixin, SpeechPlaybackMixin, Vertical
+):
     """The TTS Playground body: title, actions, input, settings, status.
 
     Synthesis comes from `SpeechSynthesisMixin`, shared with the legacy
@@ -170,17 +173,7 @@ class SpeechPlaygroundPane(SpeechSynthesisMixin, SpeechCatalogMixin, Vertical):
         self.capability_line = capability_line
         self.init_synthesis_state()
         self.init_catalog_state()
-
-    @on(Button.Pressed, "#tts-generate-btn")
-    def _on_generate_pressed(self, event: Button.Pressed) -> None:
-        """Run the shared synthesis path.
-
-        Args:
-            event: The press, stopped here so it does not also reach a
-                host screen's own button handling.
-        """
-        event.stop()
-        self._generate_tts()
+        self.init_playback_state()
 
     @on(Select.Changed)
     def on_tts_provider_select_changed(self, event: Select.Changed) -> None:
