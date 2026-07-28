@@ -338,7 +338,14 @@ class LazyLiveDictationService:
         """Initialize streaming transcriber if available."""
         if self.privacy_settings["local_only"]:
             # Only use local providers when in privacy mode
-            allowed_providers = ["parakeet-mlx", "faster-whisper", "lightning-whisper"]
+            # Ids must match transcription_service's dispatch values exactly;
+            # "lightning-whisper" matched nothing and silently rewrote the
+            # user's provider to parakeet-mlx.
+            allowed_providers = [
+                "parakeet-mlx",
+                "faster-whisper",
+                "lightning-whisper-mlx",
+            ]
             if self.transcription_provider not in allowed_providers:
                 logger.info(
                     f"Provider '{self.transcription_provider}' not allowed in privacy mode. "
