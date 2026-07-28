@@ -7722,21 +7722,6 @@ class TldwCli(
         logging.shutdown()
         self.loguru_logger.info("--- App Unmounted (Loguru) ---")
 
-    ########################################################################
-    #
-    # WATCHER - Handles UI changes when current_tab's VALUE changes
-    #
-    # ######################################################################
-    def watch_current_tab(self, old_tab: Optional[str], new_tab: str) -> None:
-        """Legacy tab-content watcher; retained as a permanent no-op.
-
-        Screen-based navigation (``self._use_screen_navigation``, set
-        unconditionally in ``__init__``) now owns every tab switch, so
-        this watcher's original show/hide dispatch (``_execute_tab_switch``,
-        task-577 PR2 T2) has been retired along with it.
-        """
-        return
-
     def _log_view_dimensions(self, view, parent):
         """Helper to log view dimensions after refresh."""
         self.loguru_logger.info(
