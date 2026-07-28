@@ -26,6 +26,11 @@ than the point of misconfiguration, it repeats forever without escalating, and i
 to a task type that was deliberately retired.
 
 Raised by Qodo's review of PR #1054, which recommended a startup check as a follow-up.
+
+Confirmed while verifying TASK-1210 against the running app: a full boot with a watchlist source
+present writes **zero** lines matching `scheduler` or `scheduling` to `tldw_cli_app.log`. The
+scheduler reports neither which handlers it registered nor that it started, so there is no way to
+tell a working scheduler from a completely unwired one by observation.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -35,4 +40,5 @@ Raised by Qodo's review of PR #1054, which recommended a startup check as a foll
 - [ ] #3 A metric distinguishes tasks dropped for want of a handler from tasks that ran
 - [ ] #4 Deliberately unregistered task types can be declared so they do not produce a warning on every run
 - [ ] #5 A test asserts that wiring a projection without its handler is reported, and that the fully wired case is silent
+- [ ] #6 Scheduler startup logs which handlers were registered, so a running app can be told apart from an unwired one
 <!-- AC:END -->
