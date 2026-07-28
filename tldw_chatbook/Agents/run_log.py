@@ -33,6 +33,29 @@ _ENV_FALSE = {"0", "false", "no", "off"}
 #: tools meant to read it there. `bind()` dots this name instead when the
 #: root came from the SANDBOX FALLBACK -- see its own comment (final-review
 #: CRITICAL 2).
+#:
+#: KNOWN OPEN VULNERABILITY -- TASK-1270 (2026-07-28, not yet fixed): the
+#: undotted-for-workspace choice above rests on the premise that
+#: `glob_files`/`grep_files` cannot reach a workspace folder root. TASK-850
+#: made that premise FALSE -- both tools now resolve every root
+#: `allowed_file_roots()` returns (sandbox + every bound workspace folder;
+#: see `Tools/file_operation_tools.py`'s `GlobFiles.execute`/
+#: `GrepFiles.execute`), so the undotted directory in a bound workspace
+#: folder is reachable by a sub-agent through them today -- the exact
+#: disclosure `bind()`'s sandbox-fallback dotting exists to prevent,
+#: reopened for the workspace case. Reproduced with a planted secret in
+#: `Tests/Agents/test_run_log_workspace_isolation.py` (both tests there are
+#: `xfail(strict=True)`, i.e. confirmed still broken). The designed fix --
+#: dot the name unconditionally in `bind()` below, deleting the
+#: sandbox-fallback-only conditional and the `_root_kind` machinery it
+#: depends on entirely -- is BLOCKED: it also flips the directory-name
+#: string asserted by ~22 pre-existing tests in `Tests/Agents/
+#: test_run_log_writer.py` / `Tests/Agents/test_run_log_service_wiring.py`,
+#: which a routine security-defect pass was not authorized to edit. DO NOT
+#: treat the surrounding comments (here and in `bind()`) as a correct
+#: threat model -- they describe the premise this note just disproved. See
+#: `task-1270-report.md` at the repository root for the ready-to-apply
+#: diff and full accounting before touching this again.
 DEFAULT_DIR_NAME = "agent-runs"
 DEFAULT_SEGMENT_BYTES = 4_000_000
 DEFAULT_MAX_RECORD_BYTES = 1_000_000
@@ -379,6 +402,17 @@ class RunLogWriter:
             self._active = False
             return
         is_sandbox_fallback = getattr(_root_kind, "is_sandbox_fallback", False)
+        # TASK-1270 (2026-07-28, open/blocked): everything from here down to
+        # `dir_name = self._dir_name` decides WHICH root counts as "the
+        # sandbox" so only THAT case gets dotted. That premise -- that a
+        # bound workspace folder is otherwise safe undotted because
+        # grep_files/glob_files cannot reach it -- is false as of TASK-850
+        # (see the module-level note above `DEFAULT_DIR_NAME`). The correct
+        # fix is to delete this whole `is_sandbox_fallback` branch (and the
+        # F8 containment check it guards) and dot `dir_name` unconditionally
+        # a few lines down -- not implemented yet because it also flips ~22
+        # pre-existing tests outside this pass's authorization. See
+        # `task-1270-report.md`.
         # F8 (Qodo #8, task-1251): the fallback FLAG only reports which
         # BRANCH resolve_log_root() took internally -- but what the dotted
         # name actually protects against is reachability from the

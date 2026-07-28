@@ -395,9 +395,40 @@ likely a git repository, is a new disclosure path. Mitigations:
 
 - `agent-runs/.gitignore` containing `*`, created **only if absent**, never
   overwritten — creating files in a user's repository is itself a mutation.
-- The directory is **undotted** deliberately: dotted directories are excluded by
-  `_is_hidden_within`, which would make the log invisible to the very tools meant
-  to read it.
+- **Corrected by TASK-1270 (2026-07-28), superseding the paragraph below as
+  originally written.** This section originally said the directory was
+  undotted *deliberately* everywhere, on the premise that `glob_files`/
+  `grep_files` glob `_tool_sandbox_root()` alone and could never reach a
+  workspace folder root — so dotting there would only ever hide the log
+  from `read_file`/`write_file`/`list_directory`, tools that were never
+  going to see it anyway. **TASK-850 made that premise false**: both
+  `glob_files` and `grep_files` now resolve every root
+  `allowed_file_roots()` returns — the sandbox root *and* every bound
+  workspace folder (`Tools/file_operation_tools.py`,
+  `GlobFiles.execute`/`GrepFiles.execute` via
+  `_iter_candidates_across_roots`) — so an undotted log directory landing
+  in a bound workspace folder is now a root those two tools search
+  directly. A spawned sub-agent, which inherits its parent's tool
+  allow-list, can therefore `grep_files`/`glob_files` its way to the
+  parent's entire log — the exact disclosure the sandbox-fallback dotting
+  (below) was introduced to prevent, reopened for the workspace case by an
+  unrelated change. TASK-1270 reproduced this with a planted secret
+  (`Tests/Agents/test_run_log_workspace_isolation.py`) and designed the
+  fix: dot the directory name **unconditionally**, in both the
+  sandbox-fallback and the bound-workspace case, deleting the
+  sandbox-fallback-only conditional in `RunLogWriter.bind()` entirely — a
+  dotted directory stays a fully visible, ordinary directory to the
+  *user* (`ls -a`, editors, git), it is only excluded from this app's own
+  sandboxed file tools, which is exactly the intent regardless of which
+  root the log happened to land under. **Landing that fix is currently
+  BLOCKED**: it flips the literal directory-name string asserted by
+  roughly two dozen pre-existing tests in `Tests/Agents/
+  test_run_log_writer.py` / `Tests/Agents/test_run_log_service_wiring.py`
+  (all of which exercise the writer through a bare `resolve_log_root`
+  monkeypatch that reads as "not the sandbox fallback" under the current
+  conditional), which a routine security-defect pass was not authorized to
+  edit. See `task-1270-report.md` at the repository root for the
+  ready-to-apply diff and the full list of affected tests.
 - Sensitive paths remain refused at the writer via `is_sensitive_path`.
 
 ### 9.2 Path validation
@@ -409,20 +440,37 @@ The writer resolves through `allowed_file_roots` → `is_within` →
 
 Covered in §5.3–5.4: literal default, bounded opt-in regex.
 
-### 9.4 Out of scope: `grep_files` / `glob_files`
+### 9.4 `grep_files` / `glob_files` now also search workspace folders (TASK-850)
 
-Both glob and containment-check against `_tool_sandbox_root()` alone and never
-consult `allowed_file_roots`, unlike `read_file`. A workspace-folder log is
-therefore readable by exact path but **not searchable** by them. This asymmetry
-is arguably a defect in those tools, but correcting it widens two shared,
-security-reviewed tools for every caller and belongs in its own task with its own
-review. This design routes around it via `search_run_log` instead.
+**Corrected by TASK-850, which shipped the "its own task" this section
+originally deferred to.** This section originally said `grep_files`/
+`glob_files` glob and containment-check against `_tool_sandbox_root()`
+alone and never consult `allowed_file_roots`, unlike `read_file` — making a
+workspace-folder log readable by exact path but **not searchable** by
+them — and that correcting the asymmetry belonged in its own task (also
+listed under §11 Deferred).
 
-Likewise, adopting ripgrep as a search backend was considered and rejected for
-now: it would remove every cap listed in §5.3, but it introduces an external
-binary dependency that the repository has no precedent for, and its discovery
-would conflict with the established rule that binaries are never resolved via
-ambient `PATH` (`resolve_interpreter` searches only `SCRUBBED_PATH`).
+That task shipped. TASK-850 ("Scope glob_files and grep_files to workspace
+folder roots") made both tools resolve every root `allowed_file_roots()`
+returns, exactly like `read_file`/`write_file`/`list_directory` already
+did (`_iter_candidates_across_roots` and its two callers in
+`Tools/file_operation_tools.py`). The path-vs-search asymmetry this
+section described no longer exists: a workspace-folder log is now
+reachable by search too, not just by exact path.
+
+That closed the original gap for legitimate use, but reopened the
+sub-agent run-log disclosure the sandbox-fallback directory dotting was
+meant to prevent, for the bound-workspace case specifically — this
+design's premise that a workspace-folder log is "not searchable" is what
+made an undotted directory name seem safe there. See §9.1 and
+TASK-1270 (currently open/blocked) for the follow-up.
+
+Ripgrep-as-search-backend, the other half of this section, remains
+out of scope for the reasons originally given: it would remove every cap
+listed in §5.3, but it introduces an external binary dependency this
+repository has no precedent for, and its discovery would conflict with the
+established rule that binaries are never resolved via ambient `PATH`
+(`resolve_interpreter` searches only `SCRUBBED_PATH`).
 
 ## 10. Phasing
 
@@ -476,7 +524,9 @@ for not treating Phase 1 as the finished feature.
   filesystem-confined, and its trust model assumes a *trusted skill bundle* —
   model-authored code is neither. Needs its own confinement design.
 - **Ripgrep backend** (§9.4).
-- **Extending `glob_files`/`grep_files` to workspace roots** (§9.4).
+- ~~Extending `glob_files`/`grep_files` to workspace roots~~ — shipped as
+  TASK-850 (§9.4); see TASK-1270 for the sub-agent-disclosure follow-up it
+  reopened.
 - **Cross-run search.** The log is per-run; searching *across* runs is a natural
   Phase 2+ extension.
 
