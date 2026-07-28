@@ -19,12 +19,14 @@ from tldw_chatbook.TTS import (
     ProfileRepositoryError,
     STTSGeneratedAudio,
     TTSGenerationProfile,
+    TTSPlaygroundSelectionPreset,
     TTSProfileAvailability,
     TTSProfileAvailabilitySnapshot,
     TTSProfileDraft,
     TTSProfilePageSnapshot,
     TTSRequestedSelectionSnapshot,
 )
+from tldw_chatbook.UI import STTS_Window as stts_window_module
 from tldw_chatbook.UI import stts_profile_library as profile_library_module
 from tldw_chatbook.UI.Dictation_Window_Improved import ImprovedDictationWindow
 from tldw_chatbook.UI.stts_profile_library import (
@@ -121,6 +123,9 @@ class _PipelineProfileService:
         self.maximum_active_list_calls = 0
         self.cancelled_list_calls = 0
         self.cancelled_availability_calls = 0
+        self.preview_preset_calls: list[
+            tuple[LoadedTTSProfile, TTSProfileAvailability]
+        ] = []
 
     async def list_profiles(
         self,
@@ -156,6 +161,23 @@ class _PipelineProfileService:
         except asyncio.CancelledError:
             self.cancelled_availability_calls += 1
             raise
+
+    def preview_preset(
+        self,
+        loaded: LoadedTTSProfile,
+        availability: TTSProfileAvailability,
+    ) -> TTSPlaygroundSelectionPreset:
+        self.preview_preset_calls.append((loaded, availability))
+        profile = loaded.profile
+        return TTSPlaygroundSelectionPreset(
+            provider_id=profile.provider_id,
+            model_id=profile.model_id,
+            voice_id=profile.voice_id,
+            response_format=profile.response_format,
+            speed=profile.speed,
+            options=profile.options,
+            availability=availability.state,
+        )
 
 
 class _StoreFailureProfileService:
@@ -231,6 +253,9 @@ class _ActionProfileService:
         self.duplicate_calls: list[tuple[LoadedTTSProfile, str]] = []
         self.assignment_count_calls: list[LoadedTTSProfile] = []
         self.delete_calls: list[LoadedTTSProfile] = []
+        self.preview_preset_calls: list[
+            tuple[LoadedTTSProfile, TTSProfileAvailability]
+        ] = []
         self.assignment_total = 0
         self.update_error: BaseException | None = None
         self.duplicate_error: BaseException | None = None
@@ -300,6 +325,23 @@ class _ActionProfileService:
         self.delete_calls.append(loaded)
         if self.delete_error is not None:
             raise self.delete_error
+
+    def preview_preset(
+        self,
+        loaded: LoadedTTSProfile,
+        availability: TTSProfileAvailability,
+    ) -> TTSPlaygroundSelectionPreset:
+        self.preview_preset_calls.append((loaded, availability))
+        profile = loaded.profile
+        return TTSPlaygroundSelectionPreset(
+            provider_id=profile.provider_id,
+            model_id=profile.model_id,
+            voice_id=profile.voice_id,
+            response_format=profile.response_format,
+            speed=profile.speed,
+            options=profile.options,
+            availability=availability.state,
+        )
 
 
 class _PendingAvailabilityActionProfileService(_ActionProfileService):
@@ -941,6 +983,10 @@ async def test_stale_rendered_rows_cannot_arm_actions_or_emit_preview() -> None:
         current_disabled = tuple(
             app.query_one(selector, Button).disabled for selector in action_selectors
         )
+        assert current_loaded is not None
+        assert current_loaded.repository_generation == 6
+        assert current_disabled == (False, False, False, False)
+        assert library._action_target_is_current(current_loaded)
         preview.press()
         await _wait_until(pilot, lambda: bool(app.preview_messages))
 
@@ -950,16 +996,13 @@ async def test_stale_rendered_rows_cannot_arm_actions_or_emit_preview() -> None:
             target_is_current,
             stale_preview_count,
         ) == (None, (True, True, True, True), False, 0)
-        assert current_loaded is not None
-        assert current_loaded.repository_generation == 6
-        assert current_disabled == (False, False, False, False)
-        assert library._action_target_is_current(current_loaded)
         message = app.preview_messages[0]
         assert isinstance(
             message,
             profile_library_module.ProfilePreviewRequested,
         )
-        assert message.loaded is current_loaded
+        assert message.preset.model_id == current_loaded.profile.model_id
+        assert service.preview_preset_calls[-1][0] is current_loaded
 
 
 @pytest.mark.asyncio
@@ -1234,12 +1277,70 @@ async def test_preview_posts_the_exact_loaded_profile_and_current_availability()
             message,
             profile_library_module.ProfilePreviewRequested,
         )
-        assert message.loaded is selected
+        current_availability = library._row_availability[
+            str(selected.profile.profile_id)
+        ]
+        assert service.preview_preset_calls == [(selected, current_availability)]
         assert (
-            message.availability
-            is library._row_availability[str(selected.profile.profile_id)]
+            message.preset.model_id,
+            message.preset.voice_id,
+            message.preset.availability,
+        ) == (
+            selected.profile.model_id,
+            selected.profile.voice_id,
+            current_availability.state,
         )
-        assert not hasattr(service, "preview_preset_calls")
+
+
+@pytest.mark.asyncio
+async def test_stts_window_consumes_exact_profile_preview_once_on_playground_remount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _ActionProfileService(
+        replace(
+            _profile(0),
+            model_id="missing/exact-model",
+            voice_id="missing/exact-voice",
+        )
+    )
+    app = _ActionHost(service)
+
+    async def _unavailable_tts_service() -> object:
+        raise RuntimeError("catalog deliberately unavailable")
+
+    monkeypatch.setattr(
+        stts_window_module,
+        "get_tts_service",
+        _unavailable_tts_service,
+    )
+
+    async with app.run_test(size=(150, 55)) as pilot:
+        library, selected = await _select_action_profile(app, pilot)
+        await _wait_until(
+            pilot,
+            lambda: str(selected.profile.profile_id) in library._row_availability,
+        )
+
+        await pilot.click("#stts-profile-preview-btn")
+        await _wait_until(
+            pilot,
+            lambda: app.query_one(STTSWindow).current_view == "playground",
+        )
+        first_playground = app.query_one(TTSPlaygroundWidget)
+        window = app.query_one(STTSWindow)
+
+        assert first_playground._profile_preset is not None
+        assert first_playground._profile_preset.model_id == "missing/exact-model"
+        assert first_playground._profile_preset.voice_id == "missing/exact-voice"
+        assert window._pending_playground_preset is None
+
+        await pilot.click("#view-settings-btn")
+        await pilot.click("#view-playground-btn")
+        await pilot.pause()
+        second_playground = app.query_one(TTSPlaygroundWidget)
+
+        assert second_playground is not first_playground
+        assert second_playground._profile_preset is None
 
 
 @pytest.mark.asyncio
@@ -1278,7 +1379,6 @@ async def test_profile_editor_preserves_opaque_values_and_builds_exact_draft() -
         assert "3 assignments" in str(
             modal.query_one("#stts-profile-editor-scope", Static).render()
         )
-
         modal.query_one("#stts-profile-editor-name", Input).value = "Renamed"
         modal.query_one("#stts-profile-editor-model", Input).value = "New Opaque/Model"
         modal.query_one("#stts-profile-editor-voice", Input).value = "New Exact/Voice"
@@ -1296,6 +1396,29 @@ async def test_profile_editor_preserves_opaque_values_and_builds_exact_draft() -
             options={},
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_save_result_name_dialog_focuses_name_and_returns_trimmed_value() -> None:
+    modal = profile_library_module.TTSProfileNameModal()
+    results: list[str | None] = []
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(modal, results.append)
+        await pilot.pause()
+        name = modal.query_one("#stts-profile-name-input", Input)
+        assert name.has_focus
+
+        name.value = "  Character narrator  "
+        await pilot.click("#stts-profile-name-save")
+        await pilot.pause()
+
+    assert results == ["Character narrator"]
 
 
 @pytest.mark.parametrize("mode", ["edit", "duplicate"])

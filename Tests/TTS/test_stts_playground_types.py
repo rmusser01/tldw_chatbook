@@ -144,6 +144,44 @@ def test_generated_audio_requested_selection_is_optional_and_immutable(
     assert legacy.requested_selection is None
 
 
+def test_only_native_artifact_provenance_is_profile_save_eligible(
+    tmp_path: Path,
+) -> None:
+    selection = TTSRequestedSelectionSnapshot(
+        provider_id="audio_cpp",
+        model_id="exact/model",
+        voice_id="exact/voice",
+        response_format="wav",
+        speed=1.0,
+        options={},
+        configuration_revision=2,
+    )
+    native = STTSGeneratedAudio(
+        path=tmp_path / "native.wav",
+        provider_id="audio_cpp",
+        model_id="response/model",
+        voice_id=None,
+        source_text="private text",
+        operation_id="native-operation",
+        audio_format="wav",
+        content_type="audio/wav",
+        requested_selection=selection,
+    )
+    legacy = STTSGeneratedAudio(
+        path=tmp_path / "legacy.wav",
+        provider_id="openai",
+        model_id="tts-1",
+        voice_id="alloy",
+        source_text="private text",
+        operation_id="legacy-operation",
+        audio_format="wav",
+        content_type="audio/wav",
+    )
+
+    assert getattr(native, "profile_save_eligible", False) is True
+    assert getattr(legacy, "profile_save_eligible", False) is False
+
+
 class _PrivateOption:
     def __init__(self, value: str) -> None:
         self.value = value

@@ -34,6 +34,7 @@ from tldw_chatbook.TTS import (
     ProfileServiceError,
     ProfileValidationError,
     STTSGeneratedAudio,
+    TTSPlaygroundSelectionPreset,
     TTSProfileAvailability,
     TTSProfileAvailabilitySnapshot,
     TTSProfileDraft,
@@ -135,6 +136,12 @@ class _ProfileService(Protocol):
 
     async def delete_profile(self, loaded: LoadedTTSProfile) -> None: ...
 
+    def preview_preset(
+        self,
+        loaded: LoadedTTSProfile,
+        availability: TTSProfileAvailability,
+    ) -> TTSPlaygroundSelectionPreset: ...
+
 
 ProfileServiceLoader = Callable[[], Awaitable[_ProfileService | None]]
 
@@ -150,14 +157,9 @@ class _PageRequest:
 class ProfilePreviewRequested(Message):
     """Request a one-shot exact Playground preview without synthesizing."""
 
-    def __init__(
-        self,
-        loaded: LoadedTTSProfile,
-        availability: TTSProfileAvailability,
-    ) -> None:
+    def __init__(self, preset: TTSPlaygroundSelectionPreset) -> None:
         super().__init__()
-        self.loaded = loaded
-        self.availability = availability
+        self.preset = preset
 
 
 def _assignment_copy(count: int) -> str:
@@ -165,7 +167,7 @@ def _assignment_copy(count: int) -> str:
     return f"{count} {noun}"
 
 
-def _error_copy(error: BaseException) -> str:
+def profile_action_error_copy(error: BaseException) -> str:
     """Map structured failures without rendering exception-owned values."""
 
     code = getattr(error, "code", None)
@@ -189,6 +191,85 @@ def _is_store_unavailable(error: BaseException) -> bool:
         isinstance(error, ProfileRepositoryError)
         and error.code in _STORE_UNAVAILABLE_CODES
     )
+
+
+class TTSProfileNameModal(ModalScreen[str | None]):
+    """Ask for one display name before saving an eligible Playground result."""
+
+    BINDINGS = (("escape", "dismiss", "Cancel"),)
+
+    DEFAULT_CSS = """
+    TTSProfileNameModal {
+        align: center middle;
+        background: $background 75%;
+    }
+
+    #stts-profile-name-dialog {
+        width: 64;
+        height: auto;
+        background: $panel;
+        border: round $accent;
+        padding: 1;
+    }
+
+    #stts-profile-name-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #stts-profile-name-error {
+        height: auto;
+        color: $warning;
+    }
+
+    #stts-profile-name-actions {
+        height: 3;
+        margin-top: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="stts-profile-name-dialog"):
+            yield Label("Save result as profile", id="stts-profile-name-title")
+            yield Input(
+                placeholder="Profile name",
+                id="stts-profile-name-input",
+            )
+            yield Static("", id="stts-profile-name-error")
+            with Horizontal(id="stts-profile-name-actions"):
+                yield Button(
+                    "Save",
+                    id="stts-profile-name-save",
+                    variant="primary",
+                )
+                yield Button("Cancel", id="stts-profile-name-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#stts-profile-name-input", Input).focus()
+
+    def _submit(self) -> None:
+        name = self.query_one("#stts-profile-name-input", Input).value.strip()
+        if not name:
+            self.query_one("#stts-profile-name-error", Static).update(
+                Text(_PROFILE_VALIDATION_COPY)
+            )
+            return
+        self.dismiss(name)
+
+    @on(Input.Submitted, "#stts-profile-name-input")
+    def _handle_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit()
+
+    @on(Button.Pressed, "#stts-profile-name-save")
+    def _handle_save(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit()
+
+    @on(Button.Pressed, "#stts-profile-name-cancel")
+    def _handle_cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
 
 
 class TTSProfileEditorModal(ModalScreen[TTSProfileDraft | None]):
@@ -1239,7 +1320,7 @@ class STTSProfileLibrary(Widget):
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - map to bounded UI copy
-            self._set_status(_error_copy(error))
+            self._set_status(profile_action_error_copy(error))
             return None
         if type(count) is not int or count < 0:
             self._set_status(PROFILE_ACTION_FAILED_COPY)
@@ -1261,7 +1342,7 @@ class STTSProfileLibrary(Widget):
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - map to bounded UI copy
-            self._set_status(_error_copy(error))
+            self._set_status(profile_action_error_copy(error))
             return None
         if self._live:
             self._queue_page_request(self._search, self._offset)
@@ -1314,7 +1395,7 @@ class STTSProfileLibrary(Widget):
                 "stale",
             }:
                 self._retained_editor_draft = (loaded_key, draft)
-            self._set_status(_error_copy(error))
+            self._set_status(profile_action_error_copy(error))
             return None
 
         self._retained_editor_draft = None
@@ -1361,7 +1442,7 @@ class STTSProfileLibrary(Widget):
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - map to bounded UI copy
-            self._set_status(_error_copy(error))
+            self._set_status(profile_action_error_copy(error))
             return None
         if self._live:
             self._queue_page_request(self._search, self._offset)
@@ -1405,7 +1486,7 @@ class STTSProfileLibrary(Widget):
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - map to bounded UI copy
-            self._set_status(_error_copy(error))
+            self._set_status(profile_action_error_copy(error))
             return False
         if self._live:
             self._queue_page_request(self._search, self._offset)
@@ -1461,7 +1542,19 @@ class STTSProfileLibrary(Widget):
                 state="unverified",
                 recovery_action="refresh",
             )
-        self.post_message(ProfilePreviewRequested(loaded, availability))
+        service = self._service
+        if service is None:
+            self._set_status(PROFILE_STORE_UNAVAILABLE_COPY)
+            return
+        try:
+            preset = service.preview_preset(loaded, availability)
+        except Exception as error:  # noqa: BLE001 - map to bounded UI copy
+            self._set_status(profile_action_error_copy(error))
+            return
+        if type(preset) is not TTSPlaygroundSelectionPreset:
+            self._set_status(PROFILE_ACTION_FAILED_COPY)
+            return
+        self.post_message(ProfilePreviewRequested(preset))
 
     @on(Button.Pressed, "#stts-profile-edit-btn")
     def _handle_edit(self, event: Button.Pressed) -> None:

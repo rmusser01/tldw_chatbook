@@ -152,3 +152,8 @@ class STTSGeneratedAudio:
     def file_suffix(self) -> str:
         """Return the suffix implied by the actual response format."""
         return f".{self.audio_format.removeprefix('.')}"
+
+    @property
+    def profile_save_eligible(self) -> bool:
+        """Return whether exact native request provenance can seed a profile."""
+        return type(self.requested_selection) is TTSRequestedSelectionSnapshot

@@ -11,6 +11,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSProviderDescriptor,
 )
+from tldw_chatbook.TTS.profile_service import TTSPlaygroundSelectionPreset
 
 AUDIO_CPP_PROVIDER_ID = "audio_cpp"
 SERVER_DEFAULT_VOICE_LABEL = "Server default"
@@ -206,6 +207,48 @@ def controls_from_catalog(
         speed_locked=speed_locked,
         generation_allowed=generation_allowed,
         selection_changed=selection_changed or voice_changed,
+    )
+
+
+def controls_from_profile_preset(
+    catalog: TTSProviderCatalog,
+    *,
+    preset: TTSPlaygroundSelectionPreset,
+    discovered_voices: tuple[str, ...] | None,
+) -> PlaygroundControls:
+    """Project one exact profile selection without catalog substitution."""
+
+    model_options = tuple(
+        (model.display_name or model.model_id, model.model_id)
+        for model in catalog.models
+    )
+    if preset.model_id not in {value for _label, value in model_options}:
+        model_options = (*model_options, (preset.model_id, preset.model_id))
+
+    voice_options: tuple[SelectOption, ...] = (
+        (SERVER_DEFAULT_VOICE_LABEL, SERVER_DEFAULT_VOICE_ID),
+        *((voice, voice) for voice in (discovered_voices or ())),
+    )
+    selected_voice: SelectValue = (
+        SERVER_DEFAULT_VOICE_ID if preset.voice_id is None else preset.voice_id
+    )
+    if selected_voice not in {value for _label, value in voice_options}:
+        assert isinstance(selected_voice, str)
+        voice_options = (*voice_options, (selected_voice, selected_voice))
+
+    return PlaygroundControls(
+        provider_id=preset.provider_id,
+        model_options=model_options,
+        selected_model_id=preset.model_id,
+        voice_options=voice_options,
+        selected_voice_id=selected_voice,
+        format_options=(preset.response_format,),
+        selected_format=preset.response_format,
+        format_locked=True,
+        speed=preset.speed,
+        speed_locked=True,
+        generation_allowed=preset.availability != "unavailable",
+        selection_changed=False,
     )
 
 
