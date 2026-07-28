@@ -168,7 +168,12 @@ SEARCH_RUN_LOG_TOOL_SCHEMA = ToolSchema(
         "Use 'tool', 'type', 'status', and 'kind' to filter by metadata "
         "instead -- e.g. to find every call to a specific tool, filter "
         "with 'tool' rather than 'contains', since the tool's name may "
-        "never appear inside its own arguments or result."
+        "never appear inside its own arguments or result. A record's "
+        "rendered content is windowed: when 'contains' or 'pattern' is set, "
+        "the window is centred on that record's first match; otherwise it "
+        "starts at the beginning. When a record is shown only partially, "
+        "the render states the character range and total size, and the "
+        "'offset' to pass next to keep reading."
     ),
     parameters={
         "type": "object",
@@ -199,6 +204,15 @@ SEARCH_RUN_LOG_TOOL_SCHEMA = ToolSchema(
             "context": {
                 "type": "integer",
                 "description": "Records to include either side of each hit.",
+            },
+            "offset": {
+                "type": "integer",
+                "description": "Character offset into each record's rendered "
+                "content to start from. Use this to page through a record "
+                "larger than the render window -- the previous result names "
+                "the offset to pass next. Defaults to 0; ignored in favour "
+                "of a match-centred window when 'contains' or 'pattern' "
+                "matches and no offset is given.",
             },
         },
         "required": [],

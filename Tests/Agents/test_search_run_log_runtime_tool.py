@@ -36,6 +36,9 @@ def test_name_is_registered_as_a_runtime_tool():
     assert SEARCH_RUN_LOG_TOOL_SCHEMA.name == SEARCH_RUN_LOG_TOOL_NAME
     props = SEARCH_RUN_LOG_TOOL_SCHEMA.parameters["properties"]
     assert "contains" in props and "pattern" in props and "from_record" in props
+    # TASK-1250: offset is the schema-level knob that lets a model page
+    # deterministically through a record larger than the render ceiling.
+    assert "offset" in props
 
 
 def test_loop_dispatches_to_the_injected_callable():
@@ -373,3 +376,52 @@ def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkey
     ]
     assert search_results, "expected a search_run_log tool_result step"
     assert any(child_marker in r for r in search_results)
+
+
+def test_real_closure_never_raises_on_a_junk_offset(tmp_path, monkeypatch):
+    """TASK-1250: `offset` must be coerced defensively, the same way the
+    closure already coerces from_record/to_record/context -- a model
+    sending a non-numeric value must come back as an ordinary error
+    ToolResult, never an exception that aborts the run.
+    """
+    from tldw_chatbook.Agents import run_log as run_log_module
+
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = ToolCatalogRegistry()
+    reg.register_provider(BuiltinToolProvider())
+
+    script = [
+        _svc_fence(
+            SEARCH_RUN_LOG_TOOL_NAME, {"contains": "x", "offset": "not-a-number"}
+        ),
+        {"choices": [{"message": {"content": "done"}}]},
+    ]
+
+    def chat(**kwargs):
+        return script.pop(0)
+
+    service = AgentService(db, reg, chat_call=chat)
+    _rid, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "go"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+
+    parent_runs = [r for r in db.list_runs("c1") if r["agent_kind"] == "primary"]
+    assert len(parent_runs) == 1
+    tool_results = [
+        s["result"]
+        for s in parent_runs[0]["steps"]
+        if s["kind"] == "tool_result" and s.get("tool_name") == SEARCH_RUN_LOG_TOOL_NAME
+    ]
+    assert tool_results, "expected a search_run_log tool_result step"
+    assert any("Invalid search arguments" in r for r in tool_results)

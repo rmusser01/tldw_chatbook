@@ -789,12 +789,14 @@ class AgentService:
             log_dir = self.run_log_writer.log_dir
             if log_dir is None:
                 return ToolResult(ok=False, error="No run log is available.")
+            contains = str(args.get("contains", ""))
+            pattern = str(args.get("pattern", ""))
             try:
                 records = load_records(log_dir)
                 hits = search_records(
                     records,
-                    contains=str(args.get("contains", "")),
-                    pattern=str(args.get("pattern", "")),
+                    contains=contains,
+                    pattern=pattern,
                     tool=str(args.get("tool", "")),
                     type=str(args.get("type", "")),
                     status=str(args.get("status", "")),
@@ -803,6 +805,13 @@ class AgentService:
                     to_record=int(args.get("to_record") or 0),
                     context=int(args.get("context") or 0),
                 )
+                # TASK-1250: offset, coerced the same defensively-numeric way
+                # as from_record/to_record/context above -- a model sending
+                # junk (a non-numeric string) is caught below like any other
+                # bad numeric arg, never raised into the run. Negative and
+                # past-the-end clamping happens in format_results itself
+                # (single point of truth, mirroring `context`'s own clamp).
+                offset = int(args.get("offset") or 0)
             except (TypeError, ValueError) as exc:
                 return ToolResult(ok=False, error=f"Invalid search arguments: {exc}")
             # Final-review CRITICAL 1: render recovered records at THIS run's
@@ -822,10 +831,28 @@ class AgentService:
             # _truncate_tool_result at the history-append seam, so this
             # cannot blow the run's context budget -- it only stops the
             # recovery path from being strictly worse than what it repairs.
+            #
+            # TASK-1250: that alone was not enough. format_results always
+            # rendered from character 0 of each record, which is the SAME
+            # ceiling that truncated the result in the first place -- so a
+            # record larger than render_max_chars still rendered byte-
+            # identical to what history already showed, and a `contains=`
+            # match past that ceiling could render a body that did not
+            # contain it. Passing `contains`/`pattern` lets format_results
+            # centre the window on the actual match; passing `offset` lets
+            # the model page past render_max_chars deterministically once a
+            # render tells it the next offset to use.
             ceiling = config.budget.max_tool_result_chars
             render_max_chars = ceiling if ceiling > 0 else sys.maxsize
             return ToolResult(
-                ok=True, content=format_results(hits, max_chars=render_max_chars)
+                ok=True,
+                content=format_results(
+                    hits,
+                    max_chars=render_max_chars,
+                    contains=contains,
+                    pattern=pattern,
+                    offset=offset,
+                ),
             )
 
         def on_record(record_type: str, payload: dict) -> int | None:

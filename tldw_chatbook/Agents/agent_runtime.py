@@ -333,9 +333,18 @@ def _truncate_tool_result(
     if max_chars <= 0 or len(content) <= max_chars:
         return content
     if record_number is not None:
+        # TASK-1250: a bare from_record/to_record call renders the SAME
+        # first `max_chars` this trailer already cut -- format_results
+        # windows at this run's own tool-result ceiling, so it cannot show
+        # more in one call. Naming `contains=`/`offset=` here is what makes
+        # the pointer actually deliver content beyond this cut, instead of
+        # promising recovery a bare call can't provide.
         recovery = (
             f" The full result is recorded at record {record_number:06d} — "
-            f"search_run_log(from_record={record_number}, to_record={record_number})."
+            f"search_run_log(from_record={record_number}, to_record={record_number}) "
+            f"renders it windowed at this same limit, so add contains=<term> to "
+            f"jump straight to a match, or offset=<n> to page past it (the "
+            f"rendered output states the next offset)."
         )
     else:
         recovery = (
