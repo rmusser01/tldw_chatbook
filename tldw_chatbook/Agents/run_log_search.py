@@ -3,9 +3,13 @@
 
 Pure module. Literal substring search is the DEFAULT and carries no
 line-length cap: `str.__contains__` is linear and cannot backtrack. Regex
-is opt-in and scan-bounded, because Python's `re` has no match timeout and
+is opt-in and scan-bounded: the bound makes catastrophic-backtracking worst
+cases finite, not fast. A sufficiently adversarial pattern can still be
+expensive within the window. Python's `re` has no match timeout, and
 `agent_service._call_with_timeout` abandons rather than kills its worker
-thread -- the same reasoning behind `grep_files`' own 500-char window.
+thread -- bounding the scan to the first 500 characters avoids runaway
+execution, not catastrophe within the bound. See also
+`file_operation_tools._MAX_GREP_LINE_SEARCH_CHARS`.
 """
 
 from __future__ import annotations
@@ -15,7 +19,9 @@ from pathlib import Path
 
 from .run_log_format import RunLogRecord, iter_records
 
-#: Per-record scan window for opt-in regex mode; mirrors
+#: Per-record scan window for opt-in regex mode. This bound makes
+#: catastrophic-backtracking worst cases finite, not fast. Neither bound
+#: makes such a pattern fast — only bounded. Mirrors
 #: `file_operation_tools._MAX_GREP_LINE_SEARCH_CHARS`.
 MAX_REGEX_SCAN_CHARS = 500
 
@@ -69,10 +75,12 @@ def search_records(
         from_record: Inclusive lower bound on record number.
         to_record: Inclusive upper bound on record number.
         context: Include this many records either side of each hit.
-        limit: Maximum records returned.
+        limit: Maximum number of matching records returned; context records
+            are returned in addition to this limit.
 
     Returns:
-        Matching records in record order, deduplicated, capped at ``limit``.
+        Matching records in record order, deduplicated, with context records
+        included (result may exceed ``limit`` when context is used).
     """
     compiled = None
     if pattern:
@@ -102,12 +110,15 @@ def search_records(
         ):
             continue
         hit_indexes.append(index)
+    # Apply limit to hits first, then expand context around the limited hits.
+    # Context records are returned in addition to the limit.
+    limited_hit_indexes = hit_indexes[:limit]
     selected: set[int] = set()
-    for index in hit_indexes:
+    for index in limited_hit_indexes:
         low = max(0, index - context)
         high = min(len(records) - 1, index + context)
         selected.update(range(low, high + 1))
-    return [records[i] for i in sorted(selected)][:limit]
+    return [records[i] for i in sorted(selected)]
 
 
 def format_results(records: list[RunLogRecord], *, max_chars: int = 400) -> str:

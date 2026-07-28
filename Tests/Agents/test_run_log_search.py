@@ -83,3 +83,27 @@ def test_format_results_is_readable_and_truncates_long_content():
 
 def test_format_results_reports_no_matches():
     assert "no matching records" in format_results([]).lower()
+
+
+def test_limit_applies_to_hits_before_context_expansion():
+    # Reproducer from reviewer: 11-record corpus with only one match at record 6,
+    # context=3, limit=3. The match must be in the result.
+    corpus = [
+        rec(1, "a"),
+        rec(2, "b"),
+        rec(3, "c"),
+        rec(4, "d"),
+        rec(5, "e"),
+        rec(6, "NEEDLE"),
+        rec(7, "f"),
+        rec(8, "g"),
+        rec(9, "h"),
+        rec(10, "i"),
+        rec(11, "j"),
+    ]
+    result = search_records(corpus, contains="NEEDLE", context=3, limit=3)
+    # The one matching record (6) must be present.
+    assert 6 in [r.number for r in result]
+    # Context should include records 3-9 (3 before and after record 6),
+    # which is 7 records total (exceeding limit because context is additional).
+    assert [r.number for r in result] == [3, 4, 5, 6, 7, 8, 9]
