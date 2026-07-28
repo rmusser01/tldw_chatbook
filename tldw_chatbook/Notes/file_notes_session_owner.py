@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Condition, Lock, RLock
+from types import MappingProxyType
 from typing import Literal, Protocol
 
 SessionChangeAction = Literal[
@@ -16,6 +17,25 @@ SessionChangeAction = Literal[
     "restored",
 ]
 SessionTransitionKind = Literal["root", "path", "source", "screen"]
+HeadKind = Literal["attached", "detached", "unborn"]
+SessionGitRowState = Literal[
+    "unstaged",
+    "owned",
+    "owned_newer_edits",
+    "owned_topology_changed",
+    "external_staged",
+    "external_partial",
+    "clean",
+    "ignored",
+    "conflict",
+    "unsupported",
+    "nested_repository",
+    "unsafe_closure",
+    "unavailable",
+    "error",
+]
+SessionGitStageAction = Literal["stage", "stage_update"]
+SessionGitStatusState = Literal["ready", "stale", "unavailable", "error"]
 _TRANSITION_KINDS = frozenset({"root", "path", "source", "screen"})
 
 
@@ -44,12 +64,197 @@ class SequencedSessionChange:
     change: SessionChange
 
 
+def _sanitize_display_path(path: str) -> str:
+    replacements = {
+        "\n": r"\n",
+        "\r": r"\r",
+        "\t": r"\t",
+    }
+    return "".join(
+        replacements.get(character, f"\\x{ord(character):02x}")
+        if ord(character) < 32 or ord(character) == 127
+        else character
+        for character in path
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class FileSystemIdentity:
+    """Platform-stable identity for one repository filesystem location."""
+
+    device: int | None
+    inode: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryIdentity:
+    """Canonical worktree and Git-directory identity trusted for one root."""
+
+    worktree_root: str
+    git_dir: str
+    git_common_dir: str
+    worktree_identity: FileSystemIdentity
+    git_dir_identity: FileSystemIdentity
+    git_common_dir_identity: FileSystemIdentity
+
+
+@dataclass(frozen=True, slots=True)
+class HeadIdentity:
+    """Exact attached, detached, or explicit unborn HEAD identity."""
+
+    kind: HeadKind
+    object_id: str | None
+    branch: str | None
+
+    @classmethod
+    def attached(cls, branch: str, object_id: str) -> HeadIdentity:
+        """Build an attached branch identity."""
+        return cls("attached", object_id, branch)
+
+    @classmethod
+    def detached(cls, object_id: str) -> HeadIdentity:
+        """Build a detached HEAD identity."""
+        return cls("detached", object_id, None)
+
+    @classmethod
+    def unborn(cls, branch: str) -> HeadIdentity:
+        """Build an explicit unborn branch identity."""
+        return cls("unborn", None, branch)
+
+
+@dataclass(frozen=True, slots=True)
+class SessionChangeGroup:
+    """One stable, inseparable lineage of session-authored paths."""
+
+    group_id: int
+    endpoints: tuple[str, ...]
+    source_path: str
+    destination_path: str | None
+    current_path: str
+    latest_action: SessionChangeAction
+    latest_sequence: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "endpoints", tuple(self.endpoints))
+
+    @property
+    def display_text(self) -> str:
+        """Return a control-character-safe label without changing raw paths."""
+        source = _sanitize_display_path(self.source_path)
+        if self.destination_path is None:
+            return source
+        return f"{source} → {_sanitize_display_path(self.destination_path)}"
+
+
+@dataclass(frozen=True, slots=True)
+class IndexEntry:
+    """One exact Git index entry and its nondefault semantic flags."""
+
+    path: str
+    mode: str
+    object_id: str
+    stage: int = 0
+    semantic_flags: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "semantic_flags",
+            tuple(sorted(set(self.semantic_flags))),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class IndexBaseline:
+    """Exact pre-Stage stage-0 entry, or an explicit absence."""
+
+    entry: IndexEntry | None
+
+
+@dataclass(frozen=True, slots=True)
+class StagingOwnership:
+    """Evidence needed to reverse exactly one Chatbook Stage result."""
+
+    repository: RepositoryIdentity
+    head: HeadIdentity
+    approved_endpoint_topology: tuple[str, ...]
+    original_baselines: Mapping[str, IndexBaseline]
+    post_stage_entries: Mapping[str, IndexEntry | None]
+
+    def __post_init__(self) -> None:
+        baselines = dict(self.original_baselines)
+        post_stage_entries = dict(self.post_stage_entries)
+        for path, baseline in baselines.items():
+            if baseline.entry is not None and baseline.entry.path != path:
+                raise ValueError("Index baseline path does not match its key")
+        for path, entry in post_stage_entries.items():
+            if entry is not None and entry.path != path:
+                raise ValueError("Post-Stage index entry path does not match its key")
+        object.__setattr__(
+            self,
+            "approved_endpoint_topology",
+            tuple(self.approved_endpoint_topology),
+        )
+        object.__setattr__(
+            self,
+            "original_baselines",
+            MappingProxyType(baselines),
+        )
+        object.__setattr__(
+            self,
+            "post_stage_entries",
+            MappingProxyType(post_stage_entries),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionGitRow:
+    """Frozen presentation and action policy for one session group."""
+
+    group: SessionChangeGroup
+    state: SessionGitRowState
+    stage_action: SessionGitStageAction | None = None
+    unstage_eligible: bool = False
+    disabled_reason: str | None = None
+
+    @property
+    def group_id(self) -> int:
+        """Return the stable earliest-sequence group identity."""
+        return self.group.group_id
+
+    @property
+    def stage_eligible(self) -> bool:
+        """Return whether this row participates in Stage actions."""
+        return self.stage_action is not None
+
+
+@dataclass(frozen=True, slots=True)
+class SessionGitStatus:
+    """One generation-checked immutable session Git status result."""
+
+    binding_generation: int
+    status_generation: int
+    state: SessionGitStatusState
+    rows: tuple[SessionGitRow, ...] = ()
+    repository: RepositoryIdentity | None = None
+    head: HeadIdentity | None = None
+    message: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "rows", tuple(self.rows))
+
+
 @dataclass(frozen=True, slots=True)
 class FileNotesSessionSnapshot:
     """Immutable state for one requested root generation."""
 
     binding: SessionBinding
     changes: tuple[SequencedSessionChange, ...] = ()
+    trusted_repository: RepositoryIdentity | None = None
+    git_status: SessionGitStatus | None = None
+    staging_ownership: Mapping[int, StagingOwnership] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 class FileNotesGitServiceLifecycle(Protocol):
@@ -144,6 +349,7 @@ class FileNotesSessionOwner:
         "_changes",
         "_generation",
         "_git_service",
+        "_git_status",
         "_lock",
         "_mutation_token",
         "_next_sequence",
@@ -154,7 +360,10 @@ class FileNotesSessionOwner:
         "_shutdown_condition",
         "_shutdown_error",
         "_shutdown_state",
+        "_staging_ownership",
+        "_status_generation",
         "_status_token",
+        "_trusted_repository",
         "_transition_tokens",
     )
 
@@ -167,6 +376,10 @@ class FileNotesSessionOwner:
         self._generation = 0
         self._changes: list[SequencedSessionChange] = []
         self._next_sequence = 1
+        self._trusted_repository: RepositoryIdentity | None = None
+        self._git_status: SessionGitStatus | None = None
+        self._staging_ownership: dict[int, StagingOwnership] = {}
+        self._status_generation = 0
         self._transition_tokens: set[object] = set()
         self._mutation_token: object | None = None
         self._status_token: object | None = None
@@ -314,8 +527,101 @@ class FileNotesSessionOwner:
     def snapshot(self, binding: SessionBinding) -> FileNotesSessionSnapshot:
         """Return an immutable snapshot without exposing another generation."""
         with self._lock:
-            changes = tuple(self._changes) if binding == self._binding else ()
-            return FileNotesSessionSnapshot(binding=binding, changes=changes)
+            if binding != self._binding:
+                return FileNotesSessionSnapshot(binding=binding)
+            return FileNotesSessionSnapshot(
+                binding=binding,
+                changes=tuple(self._changes),
+                trusted_repository=self._trusted_repository,
+                git_status=self._git_status,
+                staging_ownership=MappingProxyType(
+                    dict(self._staging_ownership)
+                ),
+            )
+
+    def publish_trust(
+        self,
+        binding: SessionBinding,
+        repository: RepositoryIdentity,
+    ) -> bool:
+        """Publish process-only repository trust for the current binding."""
+        with self._lock:
+            if self._shutdown or binding != self._binding:
+                return False
+            if (
+                self._trusted_repository is not None
+                and self._trusted_repository != repository
+            ):
+                self._clear_git_status_locked()
+                self._staging_ownership.clear()
+            self._trusted_repository = repository
+            return True
+
+    def clear_trust(self, binding: SessionBinding) -> bool:
+        """Clear trust and all state whose authority depends on that trust."""
+        with self._lock:
+            if binding != self._binding:
+                return False
+            self._trusted_repository = None
+            self._clear_git_status_locked()
+            self._staging_ownership.clear()
+            return True
+
+    def next_status_generation(
+        self,
+        binding: SessionBinding,
+    ) -> int | None:
+        """Return the next monotonic status generation for this binding."""
+        with self._lock:
+            if self._shutdown or binding != self._binding:
+                return None
+            return self._status_generation + 1
+
+    def publish_status(
+        self,
+        binding: SessionBinding,
+        status: SessionGitStatus,
+    ) -> bool:
+        """Publish a newer status only for the current root generation."""
+        with self._lock:
+            if (
+                self._shutdown
+                or binding != self._binding
+                or status.binding_generation != binding.generation
+                or status.status_generation <= self._status_generation
+            ):
+                return False
+            self._status_generation = status.status_generation
+            self._git_status = status
+            return True
+
+    def clear_status(self, binding: SessionBinding) -> bool:
+        """Clear status and invalidate already-started older publications."""
+        with self._lock:
+            if binding != self._binding:
+                return False
+            self._clear_git_status_locked()
+            return True
+
+    def publish_ownership(
+        self,
+        binding: SessionBinding,
+        ownership: Mapping[int, StagingOwnership],
+    ) -> bool:
+        """Replace staging ownership for the current binding atomically."""
+        with self._lock:
+            if self._shutdown or binding != self._binding:
+                return False
+            self._staging_ownership = dict(ownership)
+            return True
+
+    def clear_ownership(self, binding: SessionBinding) -> bool:
+        """Clear every staging ownership record for the current binding."""
+        with self._lock:
+            if binding != self._binding:
+                return False
+            self._staging_ownership.clear()
+            return True
 
     def try_acquire_transition(
         self,
@@ -456,7 +762,14 @@ class FileNotesSessionOwner:
         self._binding = SessionBinding(root_key, self._generation)
         self._changes.clear()
         self._next_sequence = 1
+        self._trusted_repository = None
+        self._clear_git_status_locked()
+        self._staging_ownership.clear()
         return self._binding
+
+    def _clear_git_status_locked(self) -> None:
+        self._status_generation += 1
+        self._git_status = None
 
     def _root_selection_matches_locked(
         self,

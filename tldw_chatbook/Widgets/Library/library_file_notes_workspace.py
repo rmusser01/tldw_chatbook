@@ -25,6 +25,7 @@ from tldw_chatbook.config import (
     get_cli_setting,
     get_user_data_dir,
 )
+from tldw_chatbook.Notes.file_notes_git_service import coalesce_session_changes
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
@@ -864,7 +865,11 @@ class LibraryFileNotesWorkspace(Vertical):
         count = (
             0
             if binding is None
-            else len(self._session_owner.snapshot(binding).changes)
+            else len(
+                coalesce_session_changes(
+                    self._session_owner.snapshot(binding).changes
+                )
+            )
         )
         self.query_one("#file-notes-session-changes", Static).update(
             f"Session Git ({count})"

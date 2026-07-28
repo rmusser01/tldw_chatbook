@@ -1346,7 +1346,7 @@ async def test_create_move_delete_protect_and_restore_use_real_service(
         )
         assert (
             _static_text(workspace, "#file-notes-session-changes")
-            == "Session Git (4)"
+            == "Session Git (1)"
         )
     replica.close()
 

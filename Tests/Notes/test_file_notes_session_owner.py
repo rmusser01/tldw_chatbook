@@ -8,8 +8,16 @@ from time import monotonic
 import pytest
 
 from tldw_chatbook.Notes.file_notes_session_owner import (
+    FileSystemIdentity,
     FileNotesSessionOwner,
+    HeadIdentity,
+    IndexBaseline,
+    IndexEntry,
+    RepositoryIdentity,
     SessionChange,
+    SessionChangeGroup,
+    SessionGitStatus,
+    StagingOwnership,
 )
 
 
@@ -43,6 +51,183 @@ def test_same_root_keeps_session_and_different_root_resets_it(
     assert second.generation == first.generation + 1
     assert owner.snapshot(second).changes == ()
     assert owner.record_change(first, SessionChange("modified", "late.md")) is False
+
+
+def _git_owner_state():
+    filesystem_identity = FileSystemIdentity(device=1, inode=2)
+    repository = RepositoryIdentity(
+        worktree_root="/repo",
+        git_dir="/repo/.git",
+        git_common_dir="/repo/.git",
+        worktree_identity=filesystem_identity,
+        git_dir_identity=filesystem_identity,
+        git_common_dir_identity=filesystem_identity,
+    )
+    entry = IndexEntry(
+        path="note.md",
+        mode="100644",
+        object_id="a" * 40,
+        stage=0,
+    )
+    ownership = StagingOwnership(
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", "b" * 40),
+        approved_endpoint_topology=("note.md",),
+        original_baselines={"note.md": IndexBaseline(None)},
+        post_stage_entries={"note.md": entry},
+    )
+    group = SessionChangeGroup(
+        group_id=1,
+        endpoints=("note.md",),
+        source_path="note.md",
+        destination_path=None,
+        current_path="note.md",
+        latest_action="modified",
+        latest_sequence=1,
+    )
+    return repository, ownership, group
+
+
+def test_same_root_retains_git_state_and_root_change_clears_it_atomically(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    first = owner.select_root(tmp_path / "first")
+    repository, ownership, _group = _git_owner_state()
+    generation = owner.next_status_generation(first)
+    assert generation is not None
+    status = SessionGitStatus(
+        binding_generation=first.generation,
+        status_generation=generation,
+        state="ready",
+        repository=repository,
+    )
+
+    assert owner.publish_trust(first, repository)
+    assert owner.publish_status(first, status)
+    assert owner.publish_ownership(first, {1: ownership})
+
+    same = owner.select_root(tmp_path / "first")
+    snapshot = owner.snapshot(same)
+    assert same == first
+    assert snapshot.trusted_repository == repository
+    assert snapshot.git_status == status
+    assert dict(snapshot.staging_ownership) == {1: ownership}
+
+    transition = owner.try_acquire_transition(first, "root")
+    assert transition is not None
+    second = owner.select_root(tmp_path / "second")
+    reset = owner.snapshot(second)
+    assert reset.trusted_repository is None
+    assert reset.git_status is None
+    assert dict(reset.staging_ownership) == {}
+
+    transition.release()
+    transition.release()
+    replacement = owner.try_acquire_transition(second, "root")
+    assert replacement is not None
+    replacement.release()
+
+
+def test_stale_binding_cannot_publish_or_clear_git_state(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    stale = owner.select_root(tmp_path / "old")
+    current = owner.select_root(tmp_path / "current")
+    repository, ownership, _group = _git_owner_state()
+    stale_status = SessionGitStatus(
+        binding_generation=stale.generation,
+        status_generation=1,
+        state="ready",
+        repository=repository,
+    )
+
+    assert not owner.publish_trust(stale, repository)
+    assert not owner.publish_status(stale, stale_status)
+    assert not owner.publish_ownership(stale, {1: ownership})
+    assert not owner.clear_trust(stale)
+    assert not owner.clear_status(stale)
+    assert not owner.clear_ownership(stale)
+    assert owner.next_status_generation(stale) is None
+    assert owner.snapshot(current).trusted_repository is None
+
+
+def test_status_publication_rejects_older_generation_under_same_binding(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, _ownership, _group = _git_owner_state()
+    assert owner.publish_trust(binding, repository)
+
+    newer = SessionGitStatus(
+        binding_generation=binding.generation,
+        status_generation=10,
+        state="ready",
+        repository=repository,
+    )
+    older = SessionGitStatus(
+        binding_generation=binding.generation,
+        status_generation=9,
+        state="error",
+        message="late failure",
+    )
+
+    assert owner.publish_status(binding, newer)
+    assert not owner.publish_status(binding, older)
+    assert owner.snapshot(binding).git_status == newer
+
+
+def test_checked_git_clear_methods_and_public_mappings_are_immutable(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(tmp_path / "notes")
+    repository, ownership, _group = _git_owner_state()
+    status_generation = owner.next_status_generation(binding)
+    assert status_generation is not None
+    status = SessionGitStatus(
+        binding_generation=binding.generation,
+        status_generation=status_generation,
+        state="ready",
+        repository=repository,
+    )
+    assert owner.publish_trust(binding, repository)
+    assert owner.publish_status(binding, status)
+    assert owner.publish_ownership(binding, {1: ownership})
+
+    snapshot = owner.snapshot(binding)
+    with pytest.raises(TypeError):
+        snapshot.staging_ownership[2] = ownership  # type: ignore[index]
+    with pytest.raises(TypeError):
+        ownership.post_stage_entries["other.md"] = IndexEntry(  # type: ignore[index]
+            path="other.md",
+            mode="100644",
+            object_id="c" * 40,
+        )
+
+    assert owner.clear_status(binding)
+    assert owner.snapshot(binding).git_status is None
+    assert owner.snapshot(binding).trusted_repository == repository
+    assert owner.clear_ownership(binding)
+    assert dict(owner.snapshot(binding).staging_ownership) == {}
+
+    replacement_generation = owner.next_status_generation(binding)
+    assert replacement_generation is not None
+    replacement_status = SessionGitStatus(
+        binding_generation=binding.generation,
+        status_generation=replacement_generation,
+        state="ready",
+        repository=repository,
+    )
+    assert owner.publish_status(binding, replacement_status)
+    assert owner.publish_ownership(binding, {1: ownership})
+    assert owner.clear_trust(binding)
+    cleared = owner.snapshot(binding)
+    assert cleared.trusted_repository is None
+    assert cleared.git_status is None
+    assert dict(cleared.staging_ownership) == {}
 
 
 def test_checked_root_selection_preserves_unexpected_or_same_root_state(
