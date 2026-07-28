@@ -677,6 +677,27 @@
     background: $ds-surface-panel;
 }
 
+/* `border: none` on a Select does NOT reach its inner SelectCurrent, which
+ * keeps its own three-row bordered box. Clipped to `height: 1`, every axis
+ * rendered its top border and nothing else -- a visible control showing
+ * neither its value nor its arrow. The child needs the rule too. */
+.speech-axis-control SelectCurrent {
+    border: none;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
+.speech-axis-control SelectCurrent Static {
+    height: 1;
+}
+
+/* The speed Input has the same inner-border problem in reverse: it is the
+ * bordered widget itself. */
+Input.speech-axis-control {
+    padding: 0 1;
+}
+
 /* --- Speech: player, generation status, clip source ------------------- */
 
 /* The player sits under the take list and must not steal its rows: the

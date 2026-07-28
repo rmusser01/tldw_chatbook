@@ -391,10 +391,17 @@ class SpeechPlaygroundPane(
                 markup=False,
             )
             with Horizontal(classes="speech-player-transport"):
+                # `total` and `hidden` both matter. Without `total` a
+                # ProgressBar renders its indeterminate pulse, so an idle
+                # screen animates two bars forever; without `hidden` it is
+                # on screen with nothing to report. Legacy carried both and
+                # the rebuild dropped them -- visible only on a live run.
                 yield ProgressBar(
                     id="audio-progress-bar",
+                    total=100,
                     show_eta=False,
                     show_percentage=False,
+                    classes="audio-progress hidden",
                 )
                 yield Static(
                     "0:00 / 0:00",
@@ -413,8 +420,11 @@ class SpeechPlaygroundPane(
         Returns:
             A ``ComposeResult`` yielding the status container and the log.
         """
+        # Hidden until a generation starts, as legacy was: otherwise the
+        # placeholder ETA (`--% --:--:--`) sits on an idle screen.
         with Horizontal(
-            id="generation-status-container", classes="speech-generation-status"
+            id="generation-status-container",
+            classes="speech-generation-status hidden",
         ):
             yield Static(
                 "Ready to generate",
@@ -423,7 +433,10 @@ class SpeechPlaygroundPane(
                 markup=False,
             )
             yield ProgressBar(
-                id="generation-progress", show_eta=True, show_percentage=True
+                id="generation-progress",
+                total=100,
+                show_eta=True,
+                show_percentage=True,
             )
 
         yield Collapsible(
