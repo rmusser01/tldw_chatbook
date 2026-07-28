@@ -24,11 +24,11 @@ artifact ownership, storage, or runtime contracts.
 
 **Approved design:** `Docs/superpowers/specs/2026-07-27-simple-stt-model-comparison-design.md`
 
-For this worktree, use the absolute interpreter path in every command because
-shell variables do not persist between tool invocations:
+Run every command from the repository root. Use the repository-local
+interpreter path so commands remain portable:
 
 ```text
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
+.venv/bin/python
 ```
 
 ## File map
@@ -110,7 +110,7 @@ Also cover:
 - [ ] Run:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+.venv/bin/python \
   -m pytest Tests/Helper_Scripts/test_stt_model_comparison.py -v
 ```
 
@@ -161,15 +161,15 @@ Invalid cases or missing model directories fail before the output is touched.
 - [ ] Run:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+.venv/bin/python \
   -m pytest Tests/Helper_Scripts/test_stt_model_comparison.py -v
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+.venv/bin/python \
   -m ruff check Helper_Scripts/Benchmarks/stt_model_comparison.py \
   Tests/Helper_Scripts/test_stt_model_comparison.py
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+.venv/bin/python \
   -m ruff format --check Helper_Scripts/Benchmarks/stt_model_comparison.py \
   Tests/Helper_Scripts/test_stt_model_comparison.py
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+.venv/bin/python \
   Helper_Scripts/Benchmarks/stt_model_comparison.py --help
 ```
 
@@ -273,7 +273,7 @@ The external `encoder-model.onnx.data` file is required by the F32 encoder.
 the same pinned snapshot directory:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+.venv/bin/python \
   Helper_Scripts/Benchmarks/stt_model_comparison.py \
   --cases Docs/STT_Evaluation/task-593/cases.jsonl \
   --v2-int8 .benchmarks/stt-task-593/models/parakeet-v2 \
@@ -294,15 +294,15 @@ observed failures, and a plain conclusion. State prominently that this is an
 - [ ] Run final verification:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+.venv/bin/python \
   -m pytest Tests/Helper_Scripts/test_stt_model_comparison.py -v
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+.venv/bin/python \
   -m ruff check Helper_Scripts/Benchmarks/stt_model_comparison.py \
   Tests/Helper_Scripts/test_stt_model_comparison.py
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+.venv/bin/python \
   -m ruff format --check Helper_Scripts/Benchmarks/stt_model_comparison.py \
   Tests/Helper_Scripts/test_stt_model_comparison.py
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python \
+.venv/bin/python \
   -m json.tool Docs/STT_Evaluation/task-593/report.json >/dev/null
 git diff --check
 ```

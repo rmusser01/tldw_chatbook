@@ -70,21 +70,21 @@ is not directly comparable with the routed Parakeet subsets.
 
 | Model | Scheduled/successful | WER | CER | Elapsed (s) | Audio (s) | RTF | Silence output |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| Parakeet v2 INT8 | 5/5 | 16.87% | 12.74% | 2.184 | 94.931 | 0.0230 | empty |
-| Parakeet v2 F32 | 5/5 | 15.06% | 9.86% | 2.991 | 94.931 | 0.0315 | empty |
-| Parakeet v3 INT8 | 25/25 | 17.45% | 4.99% | 5.709 | 275.300 | 0.0207 | empty |
-| Parakeet v3 F32 | 25/25 | 10.43% | 2.42% | 7.923 | 275.300 | 0.0288 | empty |
-| faster-whisper base INT8 | 29/29 | 43.24% | 14.46% | 25.304 | 365.231 | 0.0693 | `you` |
+| Parakeet v2 INT8 | 5/5 | 16.87% | 12.74% | 2.102 | 94.931 | 0.0221 | empty |
+| Parakeet v2 F32 | 5/5 | 15.06% | 9.86% | 3.617 | 94.931 | 0.0381 | empty |
+| Parakeet v3 INT8 | 25/25 | 17.45% | 4.99% | 7.601 | 275.300 | 0.0276 | empty |
+| Parakeet v3 F32 | 25/25 | 10.43% | 2.42% | 7.845 | 275.300 | 0.0285 | empty |
+| faster-whisper base INT8 | 29/29 | 43.24% | 14.46% | 24.516 | 365.231 | 0.0671 | `you` |
 
-The raw v2 aggregate shows 26.98% lower RTF for INT8, but that number is
+The raw v2 aggregate shows 41.90% lower RTF for INT8, but that number is
 first-call-sensitive. Models ran once in fixed order with INT8 first, no
-warm-up, and no repetitions. INT8 was faster on only 1 of 5 matched v2 cases:
-the first timed case took 0.217 seconds for INT8 and 1.298 seconds for F32.
-Across the remaining four matched cases, INT8 was 16.14% slower. V2 timing is
+warm-up, and no repetitions. INT8 was faster on 3 of 5 matched v2 cases: the
+first timed case took 0.202 seconds for INT8 and 1.554 seconds for F32. Across
+the remaining four matched cases, INT8 was 7.92% faster. V2 timing is
 therefore inconclusive. Its WER was 1.81 percentage points higher and CER was
 2.88 points higher than F32.
 
-The raw v3 INT8 aggregate RTF was 27.94% lower than F32, while WER was 7.02
+The raw v3 INT8 aggregate RTF was 3.11% lower than F32, while WER was 7.02
 points higher and CER was 2.57 points higher. That timing remains indicative
 because it comes from the same fixed-order, single-run design.
 
@@ -115,8 +115,8 @@ omitted one repeated clause in the long case, and faster-whisper produced
 `you` on silence. All Parakeet variants returned empty silence output.
 
 F32 was more accurate than INT8 for both Parakeet families. V2 performance is
-inconclusive because its apparent aggregate INT8 advantage came from the first
-timed case; excluding that case reverses the result. V3 INT8 had a lower raw
+inconclusive because a large first-call difference dominates its aggregate and
+the run had no warm-up or repetition. V3 INT8 had a slightly lower raw
 aggregate RTF but a materially higher WER. The stock v3 INT8 result does not
 provide strong evidence for default promotion. Faster-whisper had the highest
 mixed-scope aggregate WER, but it also handled every case, so this run does not

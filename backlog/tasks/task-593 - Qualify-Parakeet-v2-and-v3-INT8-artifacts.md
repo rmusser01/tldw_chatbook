@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:02'
-updated_date: '2026-07-28 02:07'
+updated_date: '2026-07-28 02:30'
 labels:
   - stt
   - evaluation
@@ -45,7 +45,7 @@ ADR required: no. ADR path: N/A. Reason: this one-shot diagnostic does not chang
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Recorded a real indicative macOS comparison using 25 pinned FLEURS test utterances plus synthetic accent, deterministic -12.76 dB SNR noise, 63.36-second repeated long-form, and silence cases with pinned local model snapshots. The single run completed 89/89 scheduled rows with zero execution errors; observed quality failures are documented separately. V2 INT8/F32 measured 16.87%/15.06% WER and raw aggregate 0.0230/0.0315 RTF, but v2 timing is first-call-sensitive: INT8 was faster on only 1/5 cases and was 16.14% slower after excluding the first timed case, so the v2 timing result is inconclusive. V3 INT8/F32 measured 17.45%/10.43% WER and raw aggregate 0.0207/0.0288 RTF; faster-whisper measured 43.24% WER and 0.0693 RTF and emitted `you` on silence. Added cases.jsonl, the unedited generated report.json, corrected README.md, and provenance.json with exact source rows, generation argv, portable run identity, and independently checked local audio/model SHA-256 values and sizes. No production routing, artifact ownership, or legacy-provider behavior changed. ADR required: no. ADR path: N/A. Reason: this one-shot diagnostic is governed by ADR-025 and makes no architectural change.
+Refreshed the real indicative macOS evidence with reviewed runner commit `5994108c1180efe25f023a04eed857e41a7f0ba9`; the single 29-case rerun completed 89/89 scheduled rows with zero execution errors and now records `vocabulary.txt` in faster-whisper model identity. V2 INT8/F32 retained 16.87%/15.06% WER and measured raw aggregate 0.0221/0.0381 RTF, but v2 timing remains first-call-sensitive and inconclusive: INT8 was faster on 3/5 cases and 7.92% faster after excluding the first timed case in a fixed-order run with no warm-up or repetition. V3 INT8/F32 retained 17.45%/10.43% WER and measured raw aggregate 0.0276/0.0285 RTF; faster-whisper retained 43.24% WER and measured 0.0671 RTF, with `you` on silence. Updated the portable plan/README and refreshed provenance report/runner hashes, timestamp, and run bindings while preserving cases, audio, and pinned models. No production routing, artifact ownership, or legacy-provider behavior changed. ADR required: no. ADR path: N/A. Reason: this one-shot diagnostic is governed by ADR-025 and makes no architectural change.
 
-Follow-up evidence verification: provenance JSON parsed successfully; all 29 recorded audio hashes and all 18 loader-relevant model hashes/sizes matched the local files and pinned snapshot metadata; the README stress table matched report rows; 70 focused tests, Ruff lint/format, report/provenance JSON parsing, unchanged cases/report checks, and diff checks passed.
+Refresh verification: 71 focused tests passed; Ruff lint/format and report/provenance JSON parsing passed; the report has 89 rows and zero errors with `vocabulary.txt` in faster-whisper identity; all 29 audio and 18 model hashes/sizes/revisions matched local artifacts; stress rows and v2 timing matched the report; cases remained unchanged; portability, diff, and local-ignore checks passed.
 <!-- SECTION:NOTES:END -->

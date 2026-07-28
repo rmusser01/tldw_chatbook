@@ -424,7 +424,7 @@
       "--output",
       "Docs/STT_Evaluation/task-593/report.json"
     ],
-    "generated_at": "2026-07-28T01:41:44.368675+00:00",
+    "generated_at": "2026-07-28T02:27:49.646912+00:00",
     "host_environment": {
       "packages": {
         "ctranslate2": "4.8.1",
@@ -458,10 +458,10 @@
     "repetitions": 1,
     "report_label": "indicative_macos_comparison",
     "report_path": "Docs/STT_Evaluation/task-593/report.json",
-    "report_sha256": "524409b147cdedb10291aa81ebc23cc3a93ec20e7c508a636e59ad93520ffca4",
-    "runner_commit": "d0549618f94c8ef4eda2c5397b5cbf2dc8dcd4ae",
+    "report_sha256": "fd459f10b49a25960b623f8e3f9652fadf7c7bbb8fe84c5fe556c438b708c014",
+    "runner_commit": "5994108c1180efe25f023a04eed857e41a7f0ba9",
     "runner_path": "Helper_Scripts/Benchmarks/stt_model_comparison.py",
-    "runner_sha256": "52bacbe48068305bf0ad95456b9557facae79a2d78324f459deac5fdab2ab23c",
+    "runner_sha256": "027d626a15eb72a9b0caadecf6d3a1608ebcdc6e8506aa4256540fed16fb4864",
     "timing_scope": "Each transcription call only; model loading occurs outside timed rows.",
     "warm_up_runs": 0
   },
