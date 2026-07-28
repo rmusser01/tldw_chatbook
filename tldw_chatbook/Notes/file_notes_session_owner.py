@@ -786,6 +786,11 @@ class FileNotesSessionOwner:
         """Try to admit one mutation without awaiting."""
         return self.admit_mutation(binding).lease
 
+    def mutation_active(self, binding: SessionBinding) -> bool:
+        """Return whether the current exact binding owns a Git mutation."""
+        with self._lock:
+            return binding == self._binding and self._mutation_token is not None
+
     def admit_mutation(
         self,
         binding: SessionBinding,

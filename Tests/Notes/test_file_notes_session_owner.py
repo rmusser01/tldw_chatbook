@@ -14,6 +14,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     IndexBaseline,
     IndexEntry,
     RepositoryIdentity,
+    SessionBinding,
     SessionChange,
     SessionChangeGroup,
     SessionGitStatus,
@@ -429,6 +430,22 @@ def test_owner_admits_transitions_mutations_and_status_atomically(
     assert owner.try_acquire_status(binding) is None
     status.release()
     waiting_mutation.release()
+
+
+def test_mutation_active_is_exact_binding_read_only_query(
+    tmp_path: Path,
+) -> None:
+    owner = FileNotesSessionOwner()
+    first = owner.select_root(tmp_path / "first")
+    stale_same_path = SessionBinding(first.root_key, first.generation - 1)
+    mutation = owner.try_acquire_mutation(first)
+    assert mutation is not None
+
+    assert owner.mutation_active(first)
+    assert not owner.mutation_active(stale_same_path)
+
+    mutation.release()
+    assert not owner.mutation_active(first)
 
 
 def test_stale_binding_cannot_publish_or_acquire_any_lease(

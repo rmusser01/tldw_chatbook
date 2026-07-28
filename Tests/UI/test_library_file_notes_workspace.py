@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Button, Input, Static, TextArea, Tree
+from textual.widgets import Button, Input, TextArea, Tree
 
 # Avoid importing the unrelated optional MLX stack during focused UI tests.
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
@@ -104,7 +104,8 @@ async def _wait_until(
 
 
 def _static_text(workspace: LibraryFileNotesWorkspace, selector: str) -> str:
-    renderable = workspace.query_one(selector, Static).renderable
+    widget = workspace.query_one(selector)
+    renderable = widget.label if isinstance(widget, Button) else widget.renderable
     return getattr(renderable, "plain", str(renderable))
 
 
