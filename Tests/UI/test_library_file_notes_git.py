@@ -1033,6 +1033,14 @@ async def test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation(
     replacement.mkdir()
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("two.md")
+        delete_button = workspace.query_one("#file-notes-delete", Button)
+        delete_button.press()
+        await _wait_until(
+            pilot,
+            lambda: workspace._delete_confirmation_path == "two.md",
+            "delete did not enter its confirmed state",
+        )
         with workspace._hold_path_transition() as transition:
             assert transition is not None
             assert owner.try_acquire_mutation(binding) is None
@@ -1052,9 +1060,26 @@ async def test_mutation_blocks_root_and_path_while_path_lease_blocks_mutation(
         )
         assert not await workspace.set_root(replacement, persist=False)
         assert workspace.root == root.resolve()
+        assert (
+            _text(workspace.query_one("#file-notes-action-status", Static))
+            == "Session Git mutation in progress; structural actions are busy."
+        )
+
+        workspace._set_action_status("")
+        await workspace._delete_file(Button.Pressed(delete_button))
+        assert (root / "two.md").exists()
+        assert workspace._opened is not None
+        assert workspace._opened.relative_path == "two.md"
+        assert (
+            _text(workspace.query_one("#file-notes-action-status", Static))
+            == "Session Git mutation in progress; structural actions are busy."
+        )
+
+        workspace._set_action_status("")
         assert not await workspace.open_path("two.md")
-        assert "mutation in progress" in _text(
-            workspace.query_one("#file-notes-action-status", Static)
+        assert (
+            _text(workspace.query_one("#file-notes-action-status", Static))
+            == "Session Git mutation in progress; structural actions are busy."
         )
         assert workspace.query_one("#file-notes-choose-root", Button).disabled
         assert workspace.query_one("#file-notes-save-copy", Button).disabled

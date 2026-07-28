@@ -57,6 +57,9 @@ from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
 
 SaveState = Literal["idle", "dirty", "saving", "saved", "conflict", "error"]
 _UNSET = object()
+_SESSION_GIT_MUTATION_BUSY = (
+    "Session Git mutation in progress; structural actions are busy."
+)
 _TreeData = tuple[Literal["file", "folder", "deleted"], str]
 
 
@@ -1195,9 +1198,7 @@ class LibraryFileNotesWorkspace(Vertical):
         lease = self._session_owner.try_acquire_transition(binding, "path")
         if lease is None:
             if self._session_owner.mutation_active(binding):
-                self._set_action_status(
-                    "Session Git mutation in progress; structural actions are busy."
-                )
+                self._set_action_status(_SESSION_GIT_MUTATION_BUSY)
             yield None
             return
         self._path_transitioning = True
@@ -1588,17 +1589,19 @@ class LibraryFileNotesWorkspace(Vertical):
             self._set_action_status(result.replica_warning or "")
             return False
 
+    def _mutation_blocks_flush(self, binding: SessionBinding | None) -> bool:
+        """Explain an exact-binding mutation refusal without changing admission."""
+        if binding is None or not self._session_owner.mutation_active(binding):
+            return False
+        self._set_action_status(_SESSION_GIT_MUTATION_BUSY)
+        return True
+
     async def flush_pending_work(self) -> bool:
         """Flush a pending autosave; unresolved draft states veto leaving."""
         binding = self._session_binding
-        if (
-            self._root_transitioning
-            or self._path_transitioning
-            or (
-                binding is not None
-                and self._session_owner.mutation_active(binding)
-            )
-        ):
+        if self._root_transitioning or self._path_transitioning:
+            return False
+        if self._mutation_blocks_flush(binding):
             return False
         if not self._active:
             return self.leave_allowed
@@ -1616,10 +1619,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._save_state == "dirty":
             await self._save_draft()
         binding = self._session_binding
-        if (
-            binding is not None
-            and self._session_owner.mutation_active(binding)
-        ):
+        if self._mutation_blocks_flush(binding):
             return False
         return self.leave_allowed
 
