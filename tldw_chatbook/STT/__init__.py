@@ -18,6 +18,7 @@ from .contracts import (
     ProgressSink,
     ResolvedTranscriptionRequest,
     TimestampGranularity,
+    TranscriptionAction,
     TranscriptionFailure,
     TranscriptionFailureCode,
     TranscriptionPhase,
@@ -29,6 +30,12 @@ from .contracts import (
     TranscriptionTask,
     TranscriptionTimings,
     TranscriptionWarningCode,
+)
+from .coordinator import (
+    TranscriptionCoordinator,
+    TranscriptionCoordinatorError,
+    TranscriptionFailureDecision,
+    device_retry_policy_for_failure,
 )
 from .registry import (
     AdapterRegistrationError,
@@ -71,6 +78,7 @@ __all__ = [
     "ProducedCapabilities",
     "ProgressSink",
     "TimestampGranularity",
+    "TranscriptionAction",
     "TranscriptionFailure",
     "TranscriptionFailureCode",
     "TranscriptionPhase",
@@ -82,6 +90,10 @@ __all__ = [
     "TranscriptionTask",
     "TranscriptionTimings",
     "TranscriptionWarningCode",
+    "TranscriptionCoordinator",
+    "TranscriptionCoordinatorError",
+    "TranscriptionFailureDecision",
+    "device_retry_policy_for_failure",
     "AdapterRegistrationError",
     "CapabilitySet",
     "CatalogDeclarationError",

@@ -27,6 +27,7 @@ from tldw_chatbook.STT import (
     ProducedCapabilities,
     ProgressSink,
     TimestampGranularity,
+    TranscriptionAction,
     TranscriptionFailure,
     TranscriptionFailureCode,
     TranscriptionPhase,
@@ -875,6 +876,21 @@ _FAILURE_CASES = (
 )
 
 
+def test_transcription_action_values_are_exact_and_closed() -> None:
+    assert tuple(action.value for action in TranscriptionAction) == (
+        "install_model",
+        "choose_installed_model",
+        "retry_same_configuration",
+        "retry_with_faster_whisper",
+        "change_language_to_auto",
+    )
+    assert all(
+        TranscriptionAction(action.value) is action for action in TranscriptionAction
+    )
+    with pytest.raises(ValueError):
+        TranscriptionAction("adapter-supplied-action")
+
+
 def _failure(**overrides: object) -> TranscriptionFailure:
     values: dict[str, object] = {
         "code": TranscriptionFailureCode.INFERENCE_FAILED,
@@ -939,10 +955,12 @@ def test_failure_contract_mapping_is_complete_and_immutable() -> None:
         (message, retryable) for _, message, retryable in _FAILURE_CASES
     )
     with pytest.raises(TypeError):
-        TRANSCRIPTION_FAILURE_CONTRACT[TranscriptionFailureCode.CANCELLED] = (
+        TRANSCRIPTION_FAILURE_CONTRACT[  # type: ignore[index]
+            TranscriptionFailureCode.CANCELLED
+        ] = (
             "unsafe",
             False,
-        )  # type: ignore[index]
+        )
 
 
 @pytest.mark.parametrize(

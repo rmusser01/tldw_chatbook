@@ -125,6 +125,16 @@ class TranscriptionWarningCode(str, Enum):
     REQUESTED_LANGUAGE_NOT_ENFORCED = "requested_language_not_enforced"
 
 
+class TranscriptionAction(str, Enum):
+    """Coordinator-owned actions that may create a future request."""
+
+    INSTALL_MODEL = "install_model"
+    CHOOSE_INSTALLED_MODEL = "choose_installed_model"
+    RETRY_SAME_CONFIGURATION = "retry_same_configuration"
+    RETRY_WITH_FASTER_WHISPER = "retry_with_faster_whisper"
+    CHANGE_LANGUAGE_TO_AUTO = "change_language_to_auto"
+
+
 class TranscriptionFailureCode(str, Enum):
     """Stable provider-neutral transcription failure codes."""
 
@@ -920,6 +930,7 @@ __all__ = [
     "ProgressSink",
     "ResolvedTranscriptionRequest",
     "TimestampGranularity",
+    "TranscriptionAction",
     "TranscriptionFailure",
     "TranscriptionFailureCode",
     "TranscriptionPhase",

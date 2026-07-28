@@ -57,6 +57,7 @@ _EXPECTED_EXPORTS = (
     "ProducedCapabilities",
     "ProgressSink",
     "TimestampGranularity",
+    "TranscriptionAction",
     "TranscriptionFailure",
     "TranscriptionFailureCode",
     "TranscriptionPhase",
@@ -68,6 +69,10 @@ _EXPECTED_EXPORTS = (
     "TranscriptionTask",
     "TranscriptionTimings",
     "TranscriptionWarningCode",
+    "TranscriptionCoordinator",
+    "TranscriptionCoordinatorError",
+    "TranscriptionFailureDecision",
+    "device_retry_policy_for_failure",
     "AdapterRegistrationError",
     "CapabilitySet",
     "CatalogDeclarationError",
@@ -164,6 +169,7 @@ def test_contracts_import_without_runtime_or_legacy_dependencies() -> None:
             } <= attempted_imports
             attempted_imports.clear()
             import tldw_chatbook.STT.contracts
+            import tldw_chatbook.STT.coordinator
             import tldw_chatbook.STT.registry
             import tldw_chatbook.STT.routing
         finally:
