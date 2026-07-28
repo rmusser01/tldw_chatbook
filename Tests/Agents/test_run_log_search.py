@@ -58,6 +58,16 @@ def test_context_returns_neighbours_in_order_without_duplicates():
     assert [r.number for r in hits] == [1, 2, 3]
 
 
+def test_negative_context_is_clamped_and_still_returns_the_hit():
+    # Reviewer finding: a negative context made low > high, so
+    # range(low, high + 1) came back empty and even the matching record
+    # itself was silently dropped -- "No matching records." even though a
+    # match exists. context must clamp to 0, not widen the window the
+    # wrong direction.
+    hits = search_records(CORPUS, contains="refused", context=-5)
+    assert [r.number for r in hits] == [2]
+
+
 def test_regex_mode_is_opt_in_and_scan_bounded():
     assert [r.number for r in search_records(CORPUS, pattern=r"conn\w+")] == [2]
     # Beyond the scan window the pattern cannot match, by design.

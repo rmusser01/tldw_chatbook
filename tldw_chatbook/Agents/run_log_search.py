@@ -114,6 +114,12 @@ def search_records(
     # Context records are returned in addition to the limit.
     limited_hit_indexes = hit_indexes[:limit]
     selected: set[int] = set()
+    # A negative context would make low > high below, so range(low, high+1)
+    # comes back empty and even the hit itself is dropped -- a caller (or a
+    # model guessing at search_run_log's args) passing context=-5 would be
+    # told "No matching records." even though a match exists, which is
+    # worse than an error. Clamp here, at the point of use.
+    context = max(0, context)
     for index in limited_hit_indexes:
         low = max(0, index - context)
         high = min(len(records) - 1, index + context)
