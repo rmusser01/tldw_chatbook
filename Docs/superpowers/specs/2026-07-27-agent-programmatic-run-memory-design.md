@@ -559,6 +559,36 @@ existing "if nothing fits, drop every middle turn" fallback still returns
 them — an over-budget payload the provider may reject is accepted in
 preference to ever silently dropping the task instruction.
 
+**Second live-verified defect, same day: a floor on recent rounds, not just
+the current one.** The pin fix alone was necessary but not sufficient. A
+follow-up live run (same model, eviction on, window 3000) produced two
+runs with byte-identical payload sequences `[1402, 1899, 1985, 1985]`, both
+`status=stuck`. The run log showed why: the agent read three files, then
+read the FIRST TWO again, then the cycle detector fired. Calls 3 and 4 being
+byte-identical at the same token count is the signature of a fixed point —
+eviction removing exactly as many new rounds as are added, because "keep
+whatever fits" under a tight enough window degenerates to keeping ONLY the
+current turn. The task's own "mechanism" line — "keep recent **rounds**
+verbatim" (plural) — was under-implemented: only ONE round was actually
+guaranteed.
+
+Fixed with a floor: `bound_messages_to_window` gained `min_recent_turns: int
+= 0` (default 0, so every Console call site is unaffected — `0` and `1` are
+both equivalent to the original "current turn alone" contract). It caps how
+far the binary search that drops oldest turns is even ALLOWED to go:
+`max_drop = max(0, len(kept_turns) - max(0, min_recent_turns - 1))` (the
+current turn already counts as 1 of the floor). `Agents/run_log_eviction.py`
+adds `[agents] run_log_evict_min_recent_rounds` (default **4**, chosen
+because the live reproduction — read four files, one round each, then
+answer — needs exactly that many rounds simultaneously visible to avoid
+re-reading any of them; smaller risked the same bug one round later,
+larger meaningfully narrows what eviction can save on a small-context
+model). Degenerate case, decided the same way as the pin's: if the pinned
+prefix plus the floor of recent rounds alone still exceed the window, the
+SAME existing "drop the most allowed" fallback governs — an over-budget send
+rather than ever shrinking below the floor. No new degenerate-case code was
+needed; both fixes reuse the one fallback the primitive already had.
+
 ### 10.1 Which goals each phase actually delivers
 
 | Goal (§2.1) | Phase 1 | Phase 2 | Phase 3 |

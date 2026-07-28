@@ -140,6 +140,7 @@ def bound_messages_to_window(
     count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
     is_turn_boundary: Callable[[dict[str, Any]], bool] | None = None,
     pin_first_user: bool = False,
+    min_recent_turns: int = 0,
 ) -> BoundResult:
     """Drop oldest whole turns until the payload fits the model window.
 
@@ -182,6 +183,26 @@ def bound_messages_to_window(
             be emitted before the task that triggered it, so the first
             ``role == "user"`` row scanning forward is unambiguously the
             task, for either tool-call protocol.
+        min_recent_turns: Minimum number of most-recent turns guaranteed to
+            survive, COUNTING the current turn as one of them (so ``0`` and
+            ``1`` are equivalent to the original contract, where the current
+            turn alone was always kept and every Console call site leaves
+            this at its default). Values above ``1`` additionally protect
+            the most recent ``min_recent_turns - 1`` entries of
+            ``kept_turns`` from the oldest-first drop below, regardless of
+            budget. Needed for an agent run at a tight window: without a
+            floor, "keep whatever fits" can degenerate to keeping ONLY the
+            current turn, so an agent can no longer see the handful of
+            rounds it just completed and repeats work it already did (a
+            fixed-point payload — dropping exactly as many new rounds as
+            are added — is the live-verified signature of this). Degenerate
+            case, decided deliberately: if the pinned prefix plus the floor
+            of recent turns alone still exceeds budget, this floor is NEVER
+            reduced to make room — the binary search below simply cannot
+            drop more than it allows, so the over-budget payload is sent
+            as-is (the same "kept anyway" fallback that already governs the
+            plain system-prefix-plus-current-turn case) rather than ever
+            silently shrinking below the floor.
 
     Returns:
         ``BoundResult(messages, dropped_count, dropped_turns)``.
@@ -255,8 +276,17 @@ def bound_messages_to_window(
     # (O(n^2) on the long histories this trimmer exists for). The chosen drop
     # count -- and thus the returned messages -- is identical to dropping one
     # turn at a time.
-    lo, hi = 0, len(kept_turns)
-    best = hi  # if nothing fits, drop every middle turn
+    #
+    # `min_recent_turns` caps how far the search is even ALLOWED to drop:
+    # current_turn already guarantees 1; protecting
+    # `min_recent_turns - 1` more of the most recent `kept_turns` means the
+    # search may never remove more than `len(kept_turns) - (min_recent_turns
+    # - 1)` of them. At the default 0 (every Console call site), this is
+    # `max(0, len(kept_turns) - max(0, -1))` = `len(kept_turns)`, identical
+    # to the original unbounded search.
+    max_drop = max(0, len(kept_turns) - max(0, min_recent_turns - 1))
+    lo, hi = 0, max_drop
+    best = hi  # if nothing fits within the floor, drop the most the floor allows
     while lo <= hi:
         mid = (lo + hi) // 2
         if counter(assemble(mid), model) <= budget:

@@ -33,7 +33,9 @@ from tldw_chatbook.Chat import console_history_budget as budget_module
 from tldw_chatbook.Chat.console_history_budget import bound_messages_to_window
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.run_log_eviction import (
+    DEFAULT_MIN_RECENT_ROUNDS,
     RUN_LOG_EVICT_ENABLED_KEY,
+    RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY,
     _make_round_boundary,
     bound_history_for_send,
 )
@@ -321,6 +323,91 @@ def test_pin_does_not_change_console_default_behaviour():
 
 
 # --------------------------------------------------------------------------
+# Live-verified follow-up (2026-07-28, same day as the pin fix): even with
+# the task instruction pinned, a tight enough window can still collapse
+# "keep whatever fits" down to ONLY the current turn. The agent then cannot
+# see the handful of rounds it just completed and repeats them -- live
+# reproduction against llama.cpp gemma-4-26B showed byte-identical payloads
+# across consecutive calls (a "fixed point": eviction removing exactly as
+# many new rounds as are added), ending in the cycle detector firing and the
+# run going `stuck`. `min_recent_turns` fixes this with a floor.
+# --------------------------------------------------------------------------
+
+
+def test_min_recent_turns_floor_keeps_the_last_N_rounds_under_a_starving_window():
+    payload = _build_fence_rounds(8)
+    bound = bound_messages_to_window(
+        payload, model="m", provider="p", response_reservation=0,
+        window=10, count_fn=_wordcount,  # would keep ONLY the current round without a floor
+        is_turn_boundary=_make_round_boundary(native=False),
+        pin_first_user=True,
+        min_recent_turns=4,
+    )
+    # Verified by direct computation: kept_turns = [round1..round7] (7
+    # entries; the task instruction is pinned separately, not one of
+    # them), floor 4 permits dropping at most 7 - (4 - 1) = 4 of them, so
+    # exactly rounds 5, 6, 7 survive from kept_turns plus round 8 as the
+    # always-kept current turn -- 4 rounds total.
+    assert bound.dropped_turns == 4
+    for i in (5, 6, 7, 8):
+        assert any(
+            f"MARK{i}" in str(m.get("content", "")) for m in bound.messages
+        ), f"round {i} should be within the floor"
+    for i in (1, 2, 3, 4):
+        assert not any(
+            f"MARK{i} " in str(m.get("content", "")) for m in bound.messages
+        ), f"round {i} is older than the floor and should have been dropped"
+
+
+def test_without_a_floor_the_same_budget_keeps_only_the_current_round():
+    """The behavioural bar: the exact same payload and budget, with
+    `min_recent_turns` at its default (0), keeps ONLY round 8 -- proving
+    the floor is load-bearing, not redundant with the pin or round-boundary
+    fixes alone."""
+    payload = _build_fence_rounds(8)
+    unfloored = bound_messages_to_window(
+        payload, model="m", provider="p", response_reservation=0,
+        window=10, count_fn=_wordcount,
+        is_turn_boundary=_make_round_boundary(native=False),
+        pin_first_user=True,
+    )
+    for i in (5, 6, 7):
+        assert not any(
+            f"MARK{i} " in str(m.get("content", "")) for m in unfloored.messages
+        ), (
+            f"expected round {i} to be dropped WITHOUT a floor -- if this "
+            f"now passes, the pin/round-boundary fixes alone became "
+            f"sufficient and this regression test needs revisiting"
+        )
+    assert any(
+        "MARK8" in str(m.get("content", "")) for m in unfloored.messages
+    ), "the current round must still survive regardless"
+
+
+def test_floor_degenerate_case_sends_over_budget_rather_than_shrinking_below_it():
+    """If the pinned prefix plus the floor of recent rounds alone already
+    exceed the window, the floor must never be reduced to make room --
+    the payload is sent over budget instead, exactly as documented in
+    `bound_messages_to_window`'s `min_recent_turns` docstring."""
+    payload = _build_fence_rounds(8)
+    # window=1 is smaller than even the system row alone can fit under any
+    # positive margin -- the ultimate "nothing fits" case.
+    bound = bound_messages_to_window(
+        payload, model="m", provider="p", response_reservation=0,
+        window=1, count_fn=_wordcount,
+        is_turn_boundary=_make_round_boundary(native=False),
+        pin_first_user=True,
+        min_recent_turns=4,
+    )
+    # The floor (rounds 5-8) is still fully present despite being
+    # impossible to fit in a window this tiny -- an over-budget send,
+    # never a below-floor one.
+    for i in (5, 6, 7, 8):
+        assert any(f"MARK{i}" in str(m.get("content", "")) for m in bound.messages)
+    assert bound.dropped_turns == 4
+
+
+# --------------------------------------------------------------------------
 # bound_history_for_send: the actual production entry point
 # --------------------------------------------------------------------------
 
@@ -473,6 +560,9 @@ def _run_config(**kw):
 #: string, mirroring `run_log._env_override`'s `TLDW_AGENTS_<KEY upper>`
 #: convention.
 _EVICT_ENV_VAR = f"TLDW_AGENTS_{RUN_LOG_EVICT_ENABLED_KEY.upper()}"
+_MIN_RECENT_ROUNDS_ENV_VAR = (
+    f"TLDW_AGENTS_{RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY.upper()}"
+)
 
 
 @pytest.fixture()
@@ -642,3 +732,145 @@ def test_flag_on_native_protocol_task_instruction_survives_a_starving_window(
             m.get("role") == "user" and m.get("content") == _TASK_TEXT
             for m in payload
         ), "task instruction missing from a payload actually sent"
+
+
+# --------------------------------------------------------------------------
+# Live-verified follow-up (2026-07-28): the minimum-recent-rounds floor at
+# the actual production seam.
+#
+# Round content uses DISTINCT markers (`_fence_replies`/`_make_registry`,
+# each round calling `echo` with different args) rather than identical
+# repeated calls: `run_agent_loop`'s OWN cycle detector
+# (`LOOP_DETECTION_N = 3`) operates on the loop's untouched `messages` list,
+# independent of eviction, and fires after 3 IDENTICAL consecutive calls --
+# which a scripted `chat_call` that always returns the same canned call
+# trips well before enough rounds accumulate to observe the fixed point.
+# A scripted chat_call also cannot reproduce a real model's confusion
+# itself (it returns whatever is next in its list regardless of what it
+# received) -- only the PAYLOAD SHAPE that live-verified as the cause of
+# that confusion: without a floor, the number of DISTINCT rounds visible
+# in any one payload is capped at 1 no matter how many rounds have
+# happened, which is the structural "fixed point" the coordinator's byte-
+# identical live payloads are a real model's symptom of.
+# --------------------------------------------------------------------------
+
+
+def _visible_round_marks(payload: list[dict], n: int) -> set[int]:
+    return {
+        i
+        for i in range(1, n + 1)
+        if any(f"MARK{i}_" in str(m.get("content", "")) for m in payload)
+    }
+
+
+def test_without_a_floor_the_production_payload_never_shows_more_than_one_round(
+    db, tmp_path, monkeypatch
+):
+    """The floor forced to 0 (env override): once eviction is actually
+    trimming, every payload shows AT MOST one round's worth of tool
+    activity -- the structural signature behind the live-verified
+    byte-identical-payload symptom."""
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setenv(_MIN_RECENT_ROUNDS_ENV_VAR, "0")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 50)
+    n = 8
+    chat = ScriptedChat(_fence_replies(n))
+    service = AgentService(db=db, registry=_make_registry(n), chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": _TASK_TEXT}],
+        config=_run_config(native_tools=False),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.final_text == "done."
+    assert len(chat.calls) >= 4, "test needs enough rounds to be meaningful"
+    for call in chat.calls[2:]:
+        marks = _visible_round_marks(call["messages_payload"], n)
+        assert len(marks) <= 1, (
+            f"expected at most 1 round visible without a floor, saw {marks}"
+        )
+
+
+def test_with_the_default_floor_multiple_rounds_stay_visible_together(
+    db, tmp_path, monkeypatch
+):
+    """The behavioural bar: the identical setup, WITHOUT overriding the
+    floor (so the default of 4 applies), must show MORE than one round
+    simultaneously once enough rounds have happened -- the floor prevents
+    the single-round collapse the test above reproduces."""
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 50)
+    n = 8
+    chat = ScriptedChat(_fence_replies(n))
+    service = AgentService(db=db, registry=_make_registry(n), chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": _TASK_TEXT}],
+        config=_run_config(native_tools=False),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.final_text == "done."
+    assert len(chat.calls) >= 4
+    last_marks = _visible_round_marks(chat.calls[-1]["messages_payload"], n)
+    assert len(last_marks) > 1, (
+        "expected the default floor to keep more than one round visible -- "
+        "if this now fails, the floor stopped taking effect at the "
+        "production seam"
+    )
+
+
+def test_default_floor_keeps_distinct_recent_rounds_visible_together(
+    db, tmp_path, monkeypatch
+):
+    """Positive check with DISTINCT round markers (not identical calls):
+    under a starving window, the last `DEFAULT_MIN_RECENT_ROUNDS` rounds
+    must all be simultaneously visible in the final payload, not just the
+    single most recent one."""
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 50)
+    n = 10
+    chat = ScriptedChat(_fence_replies(n))
+    service = AgentService(db=db, registry=_make_registry(n), chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": _TASK_TEXT}],
+        config=_run_config(native_tools=False),
+        api_endpoint="llama_cpp",
+    )
+    last_payload = chat.calls[-1]["messages_payload"]
+    for i in range(n - DEFAULT_MIN_RECENT_ROUNDS + 1, n + 1):
+        assert any(
+            f"MARK{i}_" in str(m.get("content", "")) for m in last_payload
+        ), f"round {i} should be within the default floor of {DEFAULT_MIN_RECENT_ROUNDS}"
+
+
+def test_min_recent_rounds_config_key_is_honored(db, tmp_path, monkeypatch):
+    """A caller can raise or lower the floor via `[agents]
+    run_log_evict_min_recent_rounds` (env-var tier here, mirroring
+    `run_log._setting`'s resolution order); confirms the wiring from config
+    through `agent_service` to `bound_history_for_send` end to end, not
+    just that the default happens to work."""
+    monkeypatch.setenv(_EVICT_ENV_VAR, "true")
+    monkeypatch.setenv(_MIN_RECENT_ROUNDS_ENV_VAR, "2")
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    monkeypatch.setattr(budget_module, "get_model_token_limit", lambda *a, **k: 50)
+    n = 8
+    chat = ScriptedChat(_fence_replies(n))
+    service = AgentService(db=db, registry=_make_registry(n), chat_call=chat)
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": _TASK_TEXT}],
+        config=_run_config(native_tools=False),
+        api_endpoint="llama_cpp",
+    )
+    last_payload = chat.calls[-1]["messages_payload"]
+    # Floor 2: only the last 2 rounds are guaranteed -- round n-2 (one
+    # older than the floor) should be gone, unlike the default-floor test
+    # above where a matching offset stays.
+    assert not any(
+        f"MARK{n - 2}_" in str(m.get("content", "")) for m in last_payload
+    ), "floor=2 should not have kept a round two positions back"
+    assert any(f"MARK{n}_" in str(m.get("content", "")) for m in last_payload)

@@ -44,6 +44,71 @@ from .agent_models import FENCE_TOOL_RESULT_PREFIX, SEARCH_RUN_LOG_TOOL_NAME
 #: byte-identical to today's payload until a user opts in.
 RUN_LOG_EVICT_ENABLED_KEY = "run_log_evict_enabled"
 
+#: `[agents]` config key for the minimum-recent-rounds floor (live-verified
+#: 2026-07-28 follow-up). See `DEFAULT_MIN_RECENT_ROUNDS` for the default
+#: and its rationale.
+RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY = "run_log_evict_min_recent_rounds"
+
+#: Never trim below this many of the most recent complete rounds,
+#: regardless of the token budget (`bound_messages_to_window`'s
+#: `min_recent_turns`). Without a floor, "keep whatever fits" can
+#: degenerate at a tight window to keeping only the in-flight round -- an
+#: agent then cannot see the handful of steps it just took and repeats
+#: them, which live-verified as a fixed-point payload (eviction removing
+#: new rounds as fast as they are added) ending in the cycle detector
+#: firing and the run going `stuck`. 4 is chosen to comfortably cover a
+#: short, linear multi-step task -- e.g. the live reproduction (read four
+#: files, one round each, then answer) -- entirely in view at once: with a
+#: floor of 4, all four read rounds stay visible together right up to the
+#: final answering turn, instead of the oldest of them aging out mid-task.
+#: Smaller (2-3) risked keeping the SAME class of bug on a task just one
+#: round longer than the floor; larger meaningfully narrows how much
+#: eviction can ever save on a small-context model, which is this phase's
+#: whole point. Configurable because that trade-off is genuinely
+#: workload-dependent.
+DEFAULT_MIN_RECENT_ROUNDS = 4
+
+
+def coerce_min_recent_rounds(value: object) -> int:
+    """Defensively coerce a configured floor to a non-negative int.
+
+    Called by ``agent_service._make_call_model`` on the raw value
+    ``run_log._setting(RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY, ...)`` returns
+    (a string from an env-var override, whatever TOML parsed it to, or
+    already the int default) before it reaches
+    ``bound_history_for_send``/``bound_messages_to_window``, mirroring the
+    defensive-coercion pattern ``run_log._coerce_positive_int`` already
+    establishes for the other numeric run-log settings.
+
+    Args:
+        value: The raw configured value.
+
+    Returns:
+        ``value`` as a non-negative int. ``0`` is a valid, deliberate
+        choice (opts out of the floor, keeping only the current-turn
+        guarantee ``bound_messages_to_window`` already provides
+        unconditionally) and is passed through, not treated as invalid.
+        Anything non-numeric or negative falls back to
+        ``DEFAULT_MIN_RECENT_ROUNDS``, logged at warning.
+    """
+    try:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise TypeError(f"unsupported type {type(value).__name__}")
+        parsed = int(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            f"run log: invalid {RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY}={value!r}; "
+            f"using default {DEFAULT_MIN_RECENT_ROUNDS}"
+        )
+        return DEFAULT_MIN_RECENT_ROUNDS
+    if parsed < 0:
+        logger.warning(
+            f"run log: negative {RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY}={parsed}; "
+            f"using default {DEFAULT_MIN_RECENT_ROUNDS}"
+        )
+        return DEFAULT_MIN_RECENT_ROUNDS
+    return parsed
+
 
 def _is_fence_tool_result(message: dict[str, Any]) -> bool:
     """Whether ``message`` is a fence-protocol tool-result continuation row.
@@ -180,6 +245,7 @@ def bound_history_for_send(
     response_reservation: int = DEFAULT_RESPONSE_RESERVATION,
     window: int | None = None,
     count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
+    min_recent_rounds: int = DEFAULT_MIN_RECENT_ROUNDS,
 ) -> list[dict[str, Any]]:
     """Bound one turn's SEND payload to the model window, run-log-aware.
 
@@ -207,6 +273,14 @@ def bound_history_for_send(
             the normal token_counter lookup.
         count_fn: Injectable token counter (tests); ``None`` uses the real
             one.
+        min_recent_rounds: Minimum number of most recent complete rounds
+            that must always survive, regardless of budget (forwarded to
+            ``bound_messages_to_window``'s ``min_recent_turns``; see
+            ``DEFAULT_MIN_RECENT_ROUNDS`` for the default and its
+            rationale). Already coerced/validated by the caller
+            (``agent_service._make_call_model``, via ``run_log._setting``)
+            -- this function trusts it as-is, same as every other
+            already-resolved parameter here.
 
     Returns:
         ``payload`` unchanged (same object) when ``enabled`` is ``False``,
@@ -237,6 +311,11 @@ def bound_history_for_send(
             # its own log instead of finishing). See the parameter's
             # docstring in console_history_budget.py.
             pin_first_user=True,
+            # Live-verified follow-up, same day: without a floor, a tight
+            # enough window can keep only the in-flight round, so the agent
+            # can no longer see the handful of steps it just took and
+            # repeats them -- see `DEFAULT_MIN_RECENT_ROUNDS`.
+            min_recent_turns=min_recent_rounds,
         )
         if not bound.dropped_turns:
             return payload

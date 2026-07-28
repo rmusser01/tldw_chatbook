@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-28 00:00'
-updated_date: '2026-07-28 22:55'
+updated_date: '2026-07-28 23:20'
 labels:
   - agents
   - run-log
@@ -179,4 +179,69 @@ defined relative to what "a turn" means for the CALLER's payload shape, and an
 agent run's shape (one real user row, everything after it is loop-generated)
 breaks the assumption Console was built under. Always ask what a caller's
 FIRST user-role row means, not just its last.
+
+--- SECOND FOLLOW-UP (2026-07-28, same day): live-verified missing recent-rounds floor ---
+
+The pin fix above was necessary but not sufficient. A further live run
+(coordinator, same llama.cpp gemma-4-26B setup, eviction on, window 3000)
+produced two runs with byte-identical payload sequences [1402, 1899, 1985,
+1985], both status=stuck. The run log showed why: the agent read three
+files, then re-read the first two, then the cycle detector fired. Calls 3
+and 4 being byte-identical at the same token count is the signature of a
+fixed point -- eviction removing exactly as many new rounds as are added,
+because "keep whatever fits" under a tight enough window degenerates to
+keeping ONLY the current round. The task-1272 backlog's own wording --
+"keep recent ROUNDS verbatim" (plural) -- was under-implemented: only ONE
+round was actually guaranteed regardless of window size.
+
+Fix: added a floor. bound_messages_to_window gained min_recent_turns: int =
+0 (default 0, so Console is unaffected -- 0 and 1 both mean "current turn
+only", the original contract). It caps how far the existing oldest-first
+binary search is even ALLOWED to drop:
+  max_drop = max(0, len(kept_turns) - max(0, min_recent_turns - 1))
+(current_turn already counts as 1 of the floor). New [agents]
+run_log_evict_min_recent_rounds config key (env-var/TOML/default tiering
+via run_log._setting, coerced defensively -- coerce_min_recent_rounds in
+run_log_eviction.py, non-negative int, 0 is a valid deliberate opt-out).
+Default chosen: 4, because the live reproduction (read four files, one
+round each, then answer) needs exactly that many rounds simultaneously
+visible to avoid re-reading any of them; smaller risked the same bug one
+round later, larger meaningfully narrows what eviction can ever save on a
+small-context model, which is this phase's whole point.
+
+Degenerate case (prefix + floor > window), decided the same way as the
+pin's: the SAME existing "if nothing fits, drop the most allowed" fallback
+already in bound_messages_to_window governs -- an over-budget send rather
+than ever shrinking below the floor. No new degenerate-case code was
+needed; both the pin and the floor reuse the one fallback the primitive
+already had (`best = hi` initialization in the binary search).
+
+Verified with the same bar as both prior fixes: forced min_recent_turns=0
+at the production call site (tldw_chatbook/Agents/run_log_eviction.py),
+confirmed the two floor-guarantee tests fail -- one showing only a single
+round visible instead of >1, the other showing a round that should be
+within the floor missing -- restored, confirmed all 27 eviction tests green
+again. Full Tests/Agents (560) and Tests/Chat (2684 passed / 4 known
+failures / 13 known errors -- unchanged baseline) both re-run clean with
+PLAIN pytest output (not -q), per the coordinator's explicit instruction
+after -q was found to have hidden real regressions in this repo before.
+
+Files touched by this follow-up: tldw_chatbook/Chat/console_history_budget.py
+(min_recent_turns param + binary-search cap), tldw_chatbook/Agents/
+run_log_eviction.py (DEFAULT_MIN_RECENT_ROUNDS, RUN_LOG_EVICT_MIN_RECENT_
+ROUNDS_KEY, coerce_min_recent_rounds, min_recent_rounds param threaded to
+bound_history_for_send), tldw_chatbook/Agents/agent_service.py (resolves
+and passes the floor alongside evict_enabled), Tests/Agents/
+test_run_log_eviction.py (+14 tests), design spec doc (§10).
+
+LESSON: a token-budget trimmer with no floor on retained UNITS (only a
+byte/token ceiling) can starve down to a single unit under a tight enough
+window, regardless of how many units exist. For a human conversation that
+unit is a whole exchange and starving to one is merely terse; for an
+autonomous agent loop the unit is a round of WORK, and starving to one
+erases the agent's own short-term memory of what it just did, causing it to
+repeat completed steps. Any reuse of a "keep whatever fits" trimmer for an
+agentic (not conversational) history needs an explicit minimum-recent-units
+floor from the start, not as an afterthought once cycle detection starts
+firing.
 <!-- SECTION:NOTES:END -->
