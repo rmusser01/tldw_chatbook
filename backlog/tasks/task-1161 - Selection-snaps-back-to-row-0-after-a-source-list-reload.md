@@ -1,5 +1,5 @@
 ---
-id: TASK-1141
+id: TASK-1161
 title: >-
   Selection snaps back to the first row after the source list reloads
 status: To Do

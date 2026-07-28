@@ -1,5 +1,5 @@
 ---
-id: TASK-1140
+id: TASK-1160
 title: >-
   The global focus outline makes the bottom row of every DataTable unclickable
 status: To Do
