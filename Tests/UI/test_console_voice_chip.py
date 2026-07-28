@@ -122,3 +122,30 @@ async def test_there_is_exactly_one_microphone_button():
         assert len(mic_like) == 1
         assert mic_like[0].id == "console-dictation"
         assert not composer.query("#console-voice-toggle")
+
+
+@pytest.mark.asyncio
+async def test_chip_mirrors_the_shipping_dictation_states():
+    """The chip must track the button's real four-state lifecycle.
+
+    ``ConsoleComposerBar.sync_dictation_state`` is the existing driver behind
+    ``#console-dictation`` (see ``Tests/UI/test_console_dictation.py``); this
+    asserts the voice-status chip mirrors it end to end.
+    """
+    app = ComposerApp()
+    async with app.run_test():
+        composer = app.query_one(ConsoleComposerBar)
+        chip = composer.query_one("#console-voice-status", Static)
+
+        composer.sync_dictation_state("starting")
+        assert _visible(chip)
+        assert "Preparing" in str(chip.renderable)
+
+        composer.sync_dictation_state("recording")
+        assert "●" in str(chip.renderable)
+
+        composer.sync_dictation_state("transcribing")
+        assert "Transcribing" in str(chip.renderable)
+
+        composer.sync_dictation_state("idle")
+        assert chip.styles.width.value == 0

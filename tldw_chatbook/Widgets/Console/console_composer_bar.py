@@ -17,6 +17,12 @@ from textual.geometry import Region
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from ...Chat.console_voice_input import (
+    STATE_FINISHING,
+    STATE_IDLE,
+    STATE_LISTENING,
+    STATE_PREPARING,
+)
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -480,6 +486,18 @@ class ConsoleComposerBar(Horizontal):
         button.disabled = state in {"starting", "transcribing"}
         button.variant = "warning" if state == "recording" else "default"
         button.set_class(state == "recording", "console-dictation-recording")
+
+        # Mirror the lifecycle into the inline voice chip. The chip has its
+        # own vocabulary (STATE_* from console_voice_input), so map the
+        # button's states explicitly rather than passing the string through.
+        if state == "idle":
+            self.set_voice_status(STATE_IDLE)
+        elif state == "starting":
+            self.set_voice_status(STATE_PREPARING, message="◌ Preparing microphone…")
+        elif state == "recording":
+            self.set_voice_status(STATE_LISTENING, elapsed_seconds=0)
+        elif state == "transcribing":
+            self.set_voice_status(STATE_FINISHING, message="◌ Transcribing…")
 
     @classmethod
     def _wrap_draft_lines(cls, text: str, width: int) -> list[str]:
