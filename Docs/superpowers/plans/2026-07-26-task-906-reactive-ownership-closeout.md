@@ -49,31 +49,31 @@ imports surrogate app/widget harnesses. Do not claim a raw repository-wide
 
 ## Task 1: Start TASK-906 and Freeze the Exact Final Contract
 
-- [ ] Move TASK-906 In Progress and add its task-local plan:
+- [x] Move TASK-906 In Progress and add its task-local plan:
 
 ```bash
 backlog task edit 906 -s "In Progress"
 backlog task edit 906 --plan $'ADR required: yes\nADR path: backlog/decisions/032-immutable-installed-distribution-assets.md; backlog/decisions/033-application-session-state-ownership.md\nReason: ADR-033 defines the final root owners and ADR-032 requires clean installed-artifact proof.\n\n1. Enforce the exact TldwCli reactive set.\n2. Run every affected registered route in the production app.\n3. Extend installed-wheel ownership and maturity probes.\n4. Run the authorized integrated gate and reconcile TASK-647–652 and TASK-904–906.'
 ```
 
-- [ ] Add one AST helper that finds class-body `reactive(...)` assignments on
+- [x] Add one AST helper that finds class-body `reactive(...)` assignments on
   `TldwCli`, including annotated assignments, and require exactly:
 
 ```python
 {"current_tab", "splash_screen_active"}
 ```
 
-- [ ] Define `RETIRED_TLDW_REACTIVES` from the other 59 reviewed names in the
+- [x] Define `RETIRED_TLDW_REACTIVES` from the other 59 reviewed names in the
   specification and scan every production Python file for:
   class descriptors, assignments/deletes, root `app.<name>` access, constant
   `getattr`/`setattr`/`delattr`, string-key access, and handler
   `reactive_attr` values.
-- [ ] Scope the guard to `TldwCli`/application-root access so legitimate
+- [x] Scope the guard to `TldwCli`/application-root access so legitimate
   destination fields such as `MediaWindow.media_active_view` remain allowed.
-- [ ] Delete the already-no-op `watch_current_tab()`. Navigation remains the
+- [x] Delete the already-no-op `watch_current_tab()`. Navigation remains the
   only writer of canonical `current_tab`; do not recreate its retired
   view-toggling body.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 pytest Tests/test_application_state_ownership.py -q
@@ -83,25 +83,25 @@ Expected: PASS only when the exact two-descriptor contract and all 59 removals h
 
 ## Task 2: Exercise Every Changed Registered Destination
 
-- [ ] In `test_reactive_ownership_maturity.py`, construct a normal `TldwCli`
+- [x] In `test_reactive_ownership_maturity.py`, construct a normal `TldwCli`
   and navigate, in fresh-screen mode, through:
   `llm`, `chat`, `personas`, `library`, `media`, `search`, `ingest`,
   `mcp`, `evals`, and `settings`.
-- [ ] Assert each route resolves to its registered production screen and the
+- [x] Assert each route resolves to its registered production screen and the
   intended owner is mounted. Exercise one safe local state/action on each
   screen; then navigate away/back to detect removed-name access during save,
   restore, resume, unmount, and fresh construction.
-- [ ] Assert the app instance has no retired reactive/companion attributes and
+- [x] Assert the app instance has no retired reactive/companion attributes and
   that snapshots contain only allowlisted primitives, not prompt bodies,
   records, widgets, workers, services, or removed names.
-- [ ] Add an AST-based source test that scans every file in
+- [x] Add an AST-based source test that scans every file in
   `Tests/ProductionApp/` and rejects class bases ending in `App`/`Screen`,
   imports or calls of `SimpleNamespace`/`MagicMock`, calls to
   `object.__new__(TldwCli)`, unbound `TldwCli` method calls, imports from the
   two legacy test-harness modules, and fixtures returning an app substitute.
   Do not use raw substring rejection that would fail on this guard's own
   pattern declarations.
-- [ ] Run:
+- [x] Run:
 
 ```bash
 pytest Tests/ProductionApp Tests/test_application_state_ownership.py -q
@@ -111,12 +111,12 @@ Expected: PASS; record exact counts and duration.
 
 ## Task 3: Extend the Installed-Distribution Probe
 
-- [ ] In `Tests/Packaging/test_installed_distribution.py`, extend the existing
+- [x] In `Tests/Packaging/test_installed_distribution.py`, extend the existing
   copied-source build fixture and installed child probe; do not replace it
   with a source-checkout smoke.
-- [ ] Before the child starts, write a minimal private config with splash and
+- [x] Before the child starts, write a minimal private config with splash and
   first-run UI disabled under the child `TLDW_CONFIG_PATH`.
-- [ ] Add both `CHECKOUT_ROOT` (the real worktree) and
+- [x] Add both `CHECKOUT_ROOT` (the real worktree) and
   `BUILD_SOURCE_ROOT` (the copied temporary build input) to the child
   environment. Resolve both strictly before launch. Assert:
   - the imported package root is under the pip `--target` directory;
@@ -130,13 +130,13 @@ Expected: PASS; record exact counts and duration.
     retired name;
   - packaged CSS/config/eval/templates/licenses and console entry points still
     satisfy the existing resource contract.
-- [ ] Use the already-created real `TldwCli` in the child probe with
+- [x] Use the already-created real `TldwCli` in the child probe with
   `app.run_test()`, wait for the registered Home screen, navigate to one
   affected destination such as Chat or Models, and exit cleanly. Do not define
   an installed test app or screen.
-- [ ] Preserve the before/after hash assertion proving the installed target is
+- [x] Preserve the before/after hash assertion proving the installed target is
   immutable.
-- [ ] Run focused source and production-app sentinels, then commit the
+- [x] Run focused source and production-app sentinels, then commit the
   TASK-906 source/test candidate before any release build:
 
 ```bash
@@ -145,7 +145,7 @@ git add tldw_chatbook/app.py Tests/ProductionApp/test_reactive_ownership_maturit
 git commit -m "test(state): enforce installed reactive ownership (task-906)"
 ```
 
-- [ ] Confirm the committed source/test scope is clean, then run:
+- [x] Confirm the committed source/test scope is clean, then run:
 
 ```bash
 git diff --exit-code -- tldw_chatbook Tests Packaging pyproject.toml MANIFEST.in
@@ -160,7 +160,7 @@ loaded package module from the checkout or copied build source.
 
 ## Task 4: Run Static and Authorized Integrated Gates
 
-- [ ] Confirm all implementation/test changes are committed before the release
+- [x] Confirm all implementation/test changes are committed before the release
   build while ignoring the unrelated `.superpowers/sdd` files:
 
 ```bash
@@ -168,7 +168,7 @@ git diff --exit-code -- tldw_chatbook Tests Packaging pyproject.toml MANIFEST.in
 git diff --cached --exit-code -- tldw_chatbook Tests Packaging pyproject.toml MANIFEST.in
 ```
 
-- [ ] Run compile and formatting/lint checks over the final changed scope:
+- [x] Run compile and formatting/lint checks over the final changed scope:
 
 ```bash
 python -m compileall -q tldw_chatbook Tests/ProductionApp Tests/State Tests/Provider Tests/Library/test_server_ingest_request.py Tests/test_application_state_ownership.py Tests/Packaging/test_installed_distribution.py
@@ -190,7 +190,7 @@ paths rather than restoring them. The pre-task format exceptions are
 The JSON assertion records the stronger latest-`dev` baseline:
 `settings_screen.py` has zero F841 findings.
 
-- [ ] Run the authorized integrated suite:
+- [x] Run the authorized integrated suite:
 
 ```bash
 pytest Tests/ProductionApp Tests/State/test_pending_handoff_store.py Tests/Provider/test_provider_model_resolution.py Tests/Library/test_server_ingest_request.py Tests/test_application_state_ownership.py Tests/Packaging/test_installed_distribution.py -q
@@ -201,18 +201,18 @@ only integrated claim for the tranche.
 
 ## Task 5: Reconcile TASK-647–652 and TASK-904–906 and Commit Closeout Documentation
 
-- [ ] Re-read TASK-647–652 and TASK-904–906 with
+- [x] Re-read TASK-647–652 and TASK-904–906 with
   `backlog task <id> --plain`.
   Confirm each earlier task is Done, each acceptance criterion is checked, its
   Implementation Notes contain exact evidence, and no final gate regressed an
   earlier invariant.
-- [ ] Check TASK-906 acceptance criteria only after the fresh source,
+- [x] Check TASK-906 acceptance criteria only after the fresh source,
   production-app, installed-wheel, static, and integrated evidence is recorded.
-- [ ] Update the approved specification status to `Implemented` and add the
+- [x] Update the approved specification status to `Implemented` and add the
   final task/plan links only after TASK-647–652 and TASK-904–905 are Done and
   TASK-906 has all
   implementation, verification, ADR, and documentation evidence complete.
-- [ ] Add TASK-906 Implementation Notes with the exact source,
+- [x] Add TASK-906 Implementation Notes with the exact source,
   production-app, installed-wheel, static, and integrated commands; result
   counts and durations; modified files; ADR links; and any deviations. Re-read
   the task, then mark it Done only when no placeholder text remains:
@@ -222,7 +222,7 @@ backlog task 906 --plain
 backlog task edit 906 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 -s Done
 ```
 
-- [ ] Commit final documentation/task reconciliation:
+- [x] Commit final documentation/task reconciliation:
 
 ```bash
 git add Docs/superpowers/specs/2026-07-26-tldwcli-reactive-state-decomposition-design.md 'backlog/tasks/task-647 - Restore-LLM-destination-actions-and-retire-the-dead-app-button-dispatcher.md' 'backlog/tasks/task-648 - Move-provider-selection-to-Settings-Console-sessions-and-a-typed-handoff.md' 'backlog/tasks/task-649 - Retire-the-unreachable-legacy-Chat-composition.md' 'backlog/tasks/task-650 - Remove-legacy-Chat-root-reactive-and-worker-state.md' 'backlog/tasks/task-651 - Remove-legacy-CCP-and-prompt-root-state.md' 'backlog/tasks/task-652 - Remove-duplicate-Media-root-state-and-stop-mutation-bubbling.md' 'backlog/tasks/task-904 - Remove-retired-Notes-Search-Ingest-Tools-and-Evals-root-state.md' 'backlog/tasks/task-905 - Retire-unreachable-TLDW-API-worker-context-and-handlers.md' 'backlog/tasks/task-906 - Close-TldwCli-reactive-ownership-with-installed-distribution-sentinels.md'
