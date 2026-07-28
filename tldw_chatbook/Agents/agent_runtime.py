@@ -305,7 +305,9 @@ def _emit_record(deps: "LoopDeps", record_type: str, **payload) -> int | None:
         return None
 
 
-def _truncate_tool_result(content: str, max_chars: int, tool_name: str) -> str:
+def _truncate_tool_result(
+    content: str, max_chars: int, tool_name: str, record_number: int | None = None
+) -> str:
     """Bound one tool result before it enters history.
 
     Applied at the append seam rather than inside each tool so a tool that
@@ -318,6 +320,10 @@ def _truncate_tool_result(content: str, max_chars: int, tool_name: str) -> str:
             negative means unlimited.
         tool_name: Named in the trailer so the model knows which call was
             cut and can re-issue it more narrowly.
+        record_number: The run-log record number the untruncated result was
+            captured under, or ``None`` when logging is off or the capture
+            failed. When given, the trailer points at it via
+            ``search_run_log`` instead of suggesting a re-issue.
 
     Returns:
         ``content`` unchanged when under the cap or when unlimited;
@@ -326,11 +332,20 @@ def _truncate_tool_result(content: str, max_chars: int, tool_name: str) -> str:
     """
     if max_chars <= 0 or len(content) <= max_chars:
         return content
+    if record_number is not None:
+        recovery = (
+            f" The full result is recorded at record {record_number:06d} — "
+            f"search_run_log(from_record={record_number}, to_record={record_number})."
+        )
+    else:
+        recovery = (
+            " Re-issue the call with a narrower query, or use the tool's "
+            "offset/limit arguments to read the rest."
+        )
     return (
         content[:max_chars]
         + f"\n\n[truncated: {tool_name} returned {len(content)} characters; "
-        f"showing the first {max_chars}. Re-issue the call with a narrower "
-        f"query, or use the tool's offset/limit arguments to read the rest.]"
+        f"showing the first {max_chars}.{recovery}]"
     )
 
 
@@ -710,7 +725,7 @@ def run_agent_loop(
                 status="",
                 call_id=call.call_id,
             )
-            _emit_record(
+            record_number = _emit_record(
                 deps,
                 "tool_result",
                 content=content,
@@ -722,9 +737,15 @@ def run_agent_loop(
             # Truncate once, unconditionally, regardless of which branch set
             # `content` above -- the review-hook refusal string (verdict !=
             # "proceed") and every dispatched-tool result share the same cap
-            # so neither path can enter history unbounded.
+            # so neither path can enter history unbounded. `record_number`
+            # (Task 7) is the number the tool_result record above was just
+            # captured under -- threading it through lets a truncated result
+            # point at its own full copy in the run log.
             content = _truncate_tool_result(
-                content, budget.max_tool_result_chars, call.name
+                content,
+                budget.max_tool_result_chars,
+                call.name,
+                record_number=record_number,
             )
 
             add(STEP_TOOL_RESULT, tool_name=call.name, result=content[:2000])

@@ -63,6 +63,20 @@ SUBAGENT_SYSTEM_PROMPT = CATALOG["agents.subagent_system"].default
 
 TRUNCATION_NOTICE = "\n[truncated]"
 
+# Task 7: appended to config.system_prompt only when THIS run wired the
+# search_run_log tool (see the `log_active` gate in _run_one, reused
+# verbatim by _make_call_model) -- so the model is never told a log exists
+# when it can't actually search it.
+RUN_LOG_PROMPT_SECTION = (
+    "Run log: every model turn, tool call, and tool result of this run is "
+    "recorded in full to a log file. Your context holds a truncated view of "
+    "it. When a result was truncated, or you need something from earlier in "
+    "this run, call search_run_log to read the complete record instead of "
+    "re-running the work or guessing. Prefer the 'contains' argument (a "
+    "literal substring, searched over the whole record) over 'pattern'. "
+    "Search for specific content you know you need rather than browsing."
+)
+
 
 class SkillRunner(Protocol):
     """Executes a skill-tool call as a budget-counted, spawn-wired sub-agent.
@@ -315,7 +329,11 @@ class AgentService:
     # -- internals -------------------------------------------------------
 
     def _make_call_model(
-        self, config: AgentConfig, api_endpoint: str, runtime_schemas: list
+        self,
+        config: AgentConfig,
+        api_endpoint: str,
+        runtime_schemas: list,
+        log_active: bool = False,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
         # task-245: one render per active-set change, not per turn. Keyed by
@@ -346,6 +364,8 @@ class AgentService:
                     protocol_key = key
                 if protocol_text:
                     system_content = f"{config.system_prompt}\n\n{protocol_text}"
+            if log_active:
+                system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
             payload = [{"role": "system", "content": system_content}]
             payload.extend(messages)
             resp = self.chat_call(
@@ -511,11 +531,15 @@ class AgentService:
         # `tools=` kwarg) of a deliberately tool-less run. See task-243
         # minor m3: a native-capable endpoint with no disclosable schemas
         # must send no `tools=` kwarg at all.
-        if (
+        # Task 7: reused verbatim (not re-derived) as the gate on whether the
+        # system prompt's RUN_LOG_PROMPT_SECTION gets appended below, so the
+        # prompt can never mention a tool this run didn't actually disclose.
+        log_active = (
             agent_kind == AGENT_KIND_PRIMARY
             and self.run_log_writer.is_active
             and (runtime_schemas or active)
-        ):
+        )
+        if log_active:
             runtime_schemas.append(SEARCH_RUN_LOG_TOOL_SCHEMA)
 
         def find_tools(query: str):
@@ -793,7 +817,9 @@ class AgentService:
             )
 
         deps = LoopDeps(
-            call_model=self._make_call_model(config, api_endpoint, runtime_schemas),
+            call_model=self._make_call_model(
+                config, api_endpoint, runtime_schemas, log_active
+            ),
             invoke_tool=invoke_tool,
             spawn=spawn,
             find_tools=find_tools,
