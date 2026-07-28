@@ -56,6 +56,49 @@ V3_LANGUAGES = frozenset(
         "uk",
     }
 )
+REQUIRED_MODEL_FILES = {
+    "v2_int8": frozenset(
+        {
+            "config.json",
+            "vocab.txt",
+            "encoder-model.int8.onnx",
+            "decoder_joint-model.int8.onnx",
+        }
+    ),
+    "v2_f32": frozenset(
+        {
+            "config.json",
+            "vocab.txt",
+            "encoder-model.onnx",
+            "encoder-model.onnx.data",
+            "decoder_joint-model.onnx",
+        }
+    ),
+    "v3_int8": frozenset(
+        {
+            "config.json",
+            "vocab.txt",
+            "encoder-model.int8.onnx",
+            "decoder_joint-model.int8.onnx",
+        }
+    ),
+    "v3_f32": frozenset(
+        {
+            "config.json",
+            "vocab.txt",
+            "encoder-model.onnx",
+            "encoder-model.onnx.data",
+            "decoder_joint-model.onnx",
+        }
+    ),
+    "faster_whisper": frozenset(
+        {
+            "config.json",
+            "model.bin",
+            "tokenizer.json",
+        }
+    ),
+}
 
 Case = dict[str, object]
 Row = dict[str, object]
@@ -110,6 +153,7 @@ def _wav_identity(path: Path, case_id: str) -> tuple[float, str]:
             frame_rate = audio.getframerate()
             frames = audio.getnframes()
             compression = audio.getcomptype()
+            payload_bytes = len(audio.readframes(frames))
     except (EOFError, OSError, wave.Error) as error:
         raise ValueError(f"case {case_id!r} is not a readable WAV: {path}") from error
     if compression != "NONE":
@@ -122,6 +166,9 @@ def _wav_identity(path: Path, case_id: str) -> tuple[float, str]:
         raise ValueError(f"case {case_id!r} WAV must be mono")
     if frames < 1:
         raise ValueError(f"case {case_id!r} WAV must contain audio frames")
+    expected_payload_bytes = frames * channels * sample_width
+    if payload_bytes < expected_payload_bytes:
+        raise ValueError(f"case {case_id!r} WAV payload is truncated")
 
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -259,9 +306,9 @@ def _base_row(case: Case, model_id: str) -> Row:
         "word_reference_units": len(reference_words),
         "character_edits": None,
         "character_reference_units": len(reference_characters),
-        "elapsed_seconds": 0.0,
+        "elapsed_seconds": None,
         "audio_duration_seconds": float(case["audio_duration_seconds"]),
-        "rtf": 0.0,
+        "rtf": None,
         "audio_sha256": str(case["audio_sha256"]),
         "error": None,
         "tag": str(case["tag"]),
@@ -273,14 +320,14 @@ def _failure_row(
     model_id: str,
     error: BaseException,
     *,
-    elapsed_seconds: float = 0.0,
+    elapsed_seconds: float | None = None,
 ) -> Row:
     row = _base_row(case, model_id)
     duration = float(row["audio_duration_seconds"])
     row.update(
         {
             "elapsed_seconds": elapsed_seconds,
-            "rtf": elapsed_seconds / duration,
+            "rtf": elapsed_seconds / duration if elapsed_seconds is not None else None,
             "error": _error_text(error),
         }
     )
@@ -330,6 +377,9 @@ def _summarize(rows: Sequence[Row]) -> dict[str, object]:
         if not model_rows:
             continue
         successful_rows = [row for row in model_rows if row["error"] is None]
+        attempted_rows = [
+            row for row in model_rows if row["elapsed_seconds"] is not None
+        ]
         quality_rows = [row for row in successful_rows if row["tag"] != "silence"]
         word_edits = sum(int(row["word_edits"]) for row in quality_rows)
         word_units = sum(int(row["word_reference_units"]) for row in quality_rows)
@@ -337,9 +387,9 @@ def _summarize(rows: Sequence[Row]) -> dict[str, object]:
         character_units = sum(
             int(row["character_reference_units"]) for row in quality_rows
         )
-        elapsed = sum(float(row["elapsed_seconds"]) for row in successful_rows)
+        elapsed = sum(float(row["elapsed_seconds"]) for row in attempted_rows)
         audio_duration = sum(
-            float(row["audio_duration_seconds"]) for row in successful_rows
+            float(row["audio_duration_seconds"]) for row in attempted_rows
         )
         model_summaries[model_id] = {
             "scheduled_cases": len(model_rows),
@@ -474,7 +524,7 @@ def _build_model_runners(
         from faster_whisper import WhisperModel
 
         model = WhisperModel(
-            directories["faster_whisper"],
+            str(directories["faster_whisper"]),
             device="cpu",
             compute_type="int8",
             local_files_only=True,
@@ -547,6 +597,12 @@ def _validate_model_directories(
         if not path.is_dir():
             raise ValueError(f"{name} model path is not a directory: {path}")
         validated[name] = path.resolve()
+    for name, path in validated.items():
+        for filename in sorted(REQUIRED_MODEL_FILES[name]):
+            if not (path / filename).is_file():
+                raise ValueError(
+                    f"{name} model directory is missing required file: {filename}"
+                )
     return validated
 
 
@@ -555,6 +611,7 @@ def _selected_filenames(model_id: str) -> set[str] | None:
         return {
             "config.json",
             "model.bin",
+            "preprocessor_config.json",
             "tokenizer.json",
             "vocabulary.json",
         }
@@ -687,7 +744,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = _parse_args(argv)
     try:
-        cases = load_cases(args.cases)
+        cases_path = args.cases.expanduser().resolve()
+        output_path = args.output.expanduser().resolve()
+        cases = load_cases(cases_path)
         directories = _validate_model_directories(
             {
                 "v2_int8": args.v2_int8,
@@ -697,6 +756,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "faster_whisper": args.faster_whisper,
             }
         )
+        if output_path == cases_path:
+            raise ValueError("--output cannot replace the case JSONL file")
+        if any(output_path == Path(case["audio"]) for case in cases):
+            raise ValueError("--output cannot replace a case audio file")
+        for name, directory in directories.items():
+            if output_path.is_relative_to(directory):
+                raise ValueError(
+                    f"--output cannot be inside the {name} model directory"
+                )
         model_directories = {
             "parakeet_v2_int8": directories["v2_int8"],
             "parakeet_v2_f32": directories["v2_f32"],
@@ -733,7 +801,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "silence": summary["silence"],
             "has_errors": has_errors,
         }
-        write_report(args.output, report)
+        write_report(output_path, report)
     except (OSError, ValueError) as error:
         print(f"stt model comparison: {_error_text(error)}", file=sys.stderr)
         return 2

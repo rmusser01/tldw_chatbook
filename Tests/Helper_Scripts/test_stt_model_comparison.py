@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
 import wave
+import weakref
 
 import pytest
 
@@ -122,7 +123,13 @@ def _model_directories(tmp_path: Path) -> dict[str, Path]:
         directory = tmp_path / flag
         directory.mkdir()
         if flag == "faster_whisper":
-            (directory / "model.bin").write_bytes(flag.encode())
+            for filename in (
+                "config.json",
+                "model.bin",
+                "tokenizer.json",
+                "preprocessor_config.json",
+            ):
+                (directory / filename).write_bytes(filename.encode())
         else:
             quantization = "int8" if flag.endswith("int8") else "f32"
             suffix = ".int8.onnx" if quantization == "int8" else ".onnx"
@@ -217,6 +224,15 @@ def test_load_cases_validates_wav_format(
         comparison.load_cases(cases_path)
 
 
+def test_load_cases_rejects_truncated_wav_payload(tmp_path: Path) -> None:
+    audio = _write_wav(tmp_path / "audio.wav")
+    audio.write_bytes(audio.read_bytes()[:-10])
+    cases_path = _write_cases(tmp_path / "cases.jsonl", [_case("truncated")])
+
+    with pytest.raises(ValueError, match="truncated"):
+        comparison.load_cases(cases_path)
+
+
 def test_empty_reference_is_allowed_only_for_silence(tmp_path: Path) -> None:
     _write_wav(tmp_path / "audio.wav")
     invalid_path = _write_cases(
@@ -273,6 +289,109 @@ def test_main_rejects_each_invalid_model_input_before_touching_output(
 
     assert status == 2
     assert output.read_text(encoding="utf-8") == "sentinel"
+
+
+@pytest.mark.parametrize(
+    ("model_flag", "missing_file"),
+    [
+        ("v2_int8", "config.json"),
+        ("v2_int8", "vocab.txt"),
+        ("v2_int8", "encoder-model.int8.onnx"),
+        ("v2_int8", "decoder_joint-model.int8.onnx"),
+        ("v2_f32", "config.json"),
+        ("v2_f32", "vocab.txt"),
+        ("v2_f32", "encoder-model.onnx"),
+        ("v2_f32", "encoder-model.onnx.data"),
+        ("v2_f32", "decoder_joint-model.onnx"),
+        ("v3_int8", "config.json"),
+        ("v3_int8", "vocab.txt"),
+        ("v3_int8", "encoder-model.int8.onnx"),
+        ("v3_int8", "decoder_joint-model.int8.onnx"),
+        ("v3_f32", "config.json"),
+        ("v3_f32", "vocab.txt"),
+        ("v3_f32", "encoder-model.onnx"),
+        ("v3_f32", "encoder-model.onnx.data"),
+        ("v3_f32", "decoder_joint-model.onnx"),
+        ("faster_whisper", "config.json"),
+        ("faster_whisper", "model.bin"),
+        ("faster_whisper", "tokenizer.json"),
+    ],
+)
+def test_main_rejects_incomplete_model_before_touching_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    model_flag: str,
+    missing_file: str,
+) -> None:
+    _write_wav(tmp_path / "audio.wav")
+    cases_path = _write_cases(tmp_path / "cases.jsonl", [_case("case")])
+    directories = _model_directories(tmp_path)
+    (directories[model_flag] / missing_file).unlink()
+    monkeypatch.setattr(
+        comparison,
+        "_build_model_runners",
+        lambda _directories: {
+            model_id: lambda: lambda case: str(case["reference"])
+            for model_id in MODEL_IDS
+        },
+    )
+    output = tmp_path / "report.json"
+    output.write_text("sentinel", encoding="utf-8")
+
+    status = comparison.main(_main_args(cases_path, directories, output))
+
+    assert status == 2
+    assert output.read_text(encoding="utf-8") == "sentinel"
+
+
+@pytest.mark.parametrize(
+    "collision",
+    (
+        "cases",
+        "audio",
+        *(f"{model_flag}_equal" for model_flag in MODEL_FLAGS),
+        *(f"{model_flag}_inside" for model_flag in MODEL_FLAGS),
+    ),
+)
+def test_main_rejects_output_input_collisions_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    collision: str,
+) -> None:
+    audio = _write_wav(tmp_path / "audio.wav")
+    cases_path = _write_cases(tmp_path / "cases.jsonl", [_case("case")])
+    directories = _model_directories(tmp_path)
+    if collision == "cases":
+        output = cases_path
+        sentinel = cases_path.read_bytes()
+        sentinel_path = cases_path
+    elif collision == "audio":
+        output = audio
+        sentinel = audio.read_bytes()
+        sentinel_path = audio
+    else:
+        model_flag, position = collision.rsplit("_", 1)
+        model_directory = directories[model_flag]
+        sentinel_path = model_directory / "config.json"
+        sentinel = sentinel_path.read_bytes()
+        if position == "equal":
+            output = model_directory
+        else:
+            output = model_directory / "report.json"
+            output.write_text("old report", encoding="utf-8")
+            sentinel_path = output
+            sentinel = output.read_bytes()
+
+    monkeypatch.setattr(
+        comparison,
+        "_build_model_runners",
+        lambda _directories: pytest.fail("model execution started"),
+    )
+
+    status = comparison.main(_main_args(cases_path, directories, output))
+
+    assert status == 2
+    assert sentinel_path.read_bytes() == sentinel
 
 
 def test_scheduled_models_match_language_matrix() -> None:
@@ -385,7 +504,7 @@ def test_local_model_loaders_use_exact_arguments(
     ]
     assert whisper_init_calls == [
         (
-            (directories["faster_whisper"],),
+            (str(directories["faster_whisper"]),),
             {
                 "device": "cpu",
                 "compute_type": "int8",
@@ -440,11 +559,15 @@ def test_model_load_failure_creates_every_scheduled_error_row() -> None:
     failed_rows = [row for row in rows if row["model_id"] == "parakeet_v2_int8"]
     assert [row["case_id"] for row in failed_rows] == ["one", "two"]
     assert all("model load failed" in str(row["error"]) for row in failed_rows)
+    assert all(row["elapsed_seconds"] is None for row in failed_rows)
+    assert all(row["rtf"] is None for row in failed_rows)
     assert has_errors
     assert len(rows) == 6
 
 
-def test_transcription_error_does_not_stop_later_cases() -> None:
+def test_transcription_error_does_not_stop_or_hide_attempt_timing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     cases = [
         _loaded_case("bad", reference="bad", language="ja"),
         _loaded_case("good", reference="good", language="ja"),
@@ -458,15 +581,23 @@ def test_transcription_error_does_not_stop_later_cases() -> None:
             raise RuntimeError("decode failed")
         return "good"
 
-    rows, _summary, has_errors = comparison.run_comparison(
+    clock = iter((10.0, 12.0, 20.0, 24.0))
+    monkeypatch.setattr(comparison.time, "perf_counter", lambda: next(clock))
+    rows, summary, has_errors = comparison.run_comparison(
         cases,
         {"faster_whisper": lambda: transcribe},
     )
 
     assert attempted == ["bad", "good"]
     assert rows[0]["error"] == "RuntimeError: decode failed"
+    assert rows[0]["elapsed_seconds"] == pytest.approx(2.0)
+    assert rows[0]["rtf"] == pytest.approx(1.0)
     assert rows[1]["hypothesis"] == "good"
     assert rows[1]["error"] is None
+    aggregate = summary["models"]["faster_whisper"]
+    assert aggregate["elapsed_seconds"] == pytest.approx(6.0)
+    assert aggregate["audio_duration_seconds"] == pytest.approx(4.0)
+    assert aggregate["rtf"] == pytest.approx(1.5)
     assert has_errors
 
 
@@ -531,6 +662,10 @@ def test_main_writes_identity_timings_hashes_and_separate_silence(
         "size_bytes": len(b"encoder-model.int8.onnx"),
     } in v2_int8_files
     assert "unused.bin" not in {file["name"] for file in v2_int8_files}
+    assert {
+        "name": "preprocessor_config.json",
+        "size_bytes": len(b"preprocessor_config.json"),
+    } in report["models"]["faster_whisper"]["files"]
     speech_row = next(row for row in report["rows"] if row["case_id"] == "speech")
     assert speech_row["elapsed_seconds"] >= 0
     assert speech_row["audio_duration_seconds"] == pytest.approx(2.0)
@@ -551,6 +686,64 @@ def test_write_report_replaces_existing_file_atomically(tmp_path: Path) -> None:
 
     assert json.loads(output.read_text(encoding="utf-8")) == {"new": True}
     assert list(tmp_path.glob(f".{output.name}.*.tmp")) == []
+
+
+def test_write_report_failure_preserves_old_report_and_removes_temp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "report.json"
+    old_report = b'{"old": true}\n'
+    output.write_bytes(old_report)
+
+    def fail_replace(_source: Path, _destination: Path) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(comparison.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        comparison.write_report(output, {"new": True})
+
+    assert output.read_bytes() == old_report
+    assert list(tmp_path.glob(f".{output.name}.*.tmp")) == []
+
+
+def test_run_comparison_releases_each_model_before_loading_next() -> None:
+    cases = [_loaded_case("english", reference="hello", language="en")]
+    events: list[str] = []
+
+    class FakeModel:
+        pass
+
+    def loader(name: str, previous: str | None) -> object:
+        def load() -> object:
+            if previous is not None:
+                assert f"released:{previous}" in events
+            model = FakeModel()
+            weakref.finalize(model, events.append, f"released:{name}")
+
+            def transcribe(_case: dict[str, object]) -> str:
+                assert model is not None
+                return "hello"
+
+            return transcribe
+
+        return load
+
+    comparison.run_comparison(
+        cases,
+        {
+            "parakeet_v2_int8": loader("v2_int8", None),
+            "parakeet_v2_f32": loader("v2_f32", "v2_int8"),
+            "faster_whisper": loader("faster_whisper", "v2_f32"),
+        },
+    )
+
+    assert events == [
+        "released:v2_int8",
+        "released:v2_f32",
+        "released:faster_whisper",
+    ]
 
 
 def test_main_returns_one_when_published_report_has_error(
