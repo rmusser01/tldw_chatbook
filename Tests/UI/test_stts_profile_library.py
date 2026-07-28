@@ -305,9 +305,7 @@ class _ActionProfileService:
 class _PendingAvailabilityActionProfileService(_ActionProfileService):
     def __init__(self, profile: TTSGenerationProfile) -> None:
         super().__init__(profile)
-        self.availability_future: (
-            asyncio.Future[TTSProfileAvailabilitySnapshot] | None
-        ) = None
+        self.availability_future: asyncio.Future[Any] | None = None
 
     async def observe_availability(
         self,
@@ -1642,7 +1640,10 @@ async def test_edit_cancel_preserves_pending_availability_failure(
         assert service.update_calls == []
 
 
-@pytest.mark.parametrize("availability_outcome", ["success", "failure"])
+@pytest.mark.parametrize(
+    "availability_outcome",
+    ["success", "failure", "invalid"],
+)
 @pytest.mark.asyncio
 async def test_late_availability_does_not_replace_newer_action_failure(
     availability_outcome: str,
@@ -1665,10 +1666,12 @@ async def test_late_availability_does_not_replace_newer_action_failure(
             service.availability_future.set_result(
                 _availability(service.page, state="unavailable")
             )
-        else:
+        elif availability_outcome == "failure":
             service.availability_future.set_exception(
                 RuntimeError("must remain bounded")
             )
+        else:
+            service.availability_future.set_result(object())
         await _wait_until(pilot, lambda: library._active_page_task is None)
 
         assert _status_copy(app) == profile_library_module.PROFILE_ACTION_FAILED_COPY
