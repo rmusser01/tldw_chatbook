@@ -10279,6 +10279,8 @@ class ChatScreen(BaseAppScreen):
         """Initialize the native Console screen."""
         super().on_mount()
 
+        self._notify_console_fleet_teardown_if_any()
+
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
@@ -10295,6 +10297,89 @@ class ChatScreen(BaseAppScreen):
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
 
+    def _notify_console_fleet_teardown_if_any(self) -> None:
+        """One-shot toast reporting a fleet the LAST Console instance lost.
+
+        TASK-1143 (F5): navigating away from Console unmounts the screen,
+        and ``on_unmount`` records how many runs/rounds its ``shutdown()``
+        call killed in ``app_instance._console_fleet_teardown_notice`` --
+        the app outlives this screen instance, and screens are never
+        cached (``TldwCli._create_navigation_screen`` always builds a
+        fresh instance, so there is no "same screen" to have shown a toast
+        on when it happened). A non-zero count here means the user left a
+        busy Console before this mount and the fleet was torn down without
+        being acknowledged; show it exactly once and clear the slot so an
+        ordinary mount (nothing killed, or already reported) stays silent.
+        """
+        count = getattr(self.app_instance, "_console_fleet_teardown_notice", 0)
+        if not count:
+            return
+        self.app_instance._console_fleet_teardown_notice = 0
+        noun = "run" if count == 1 else "runs"
+        verb = "was" if count == 1 else "were"
+        self.app_instance.notify(
+            f"{count} agent {noun} {verb} cancelled when you left Console.",
+            severity="warning",
+        )
+
+    async def confirm_navigation(self) -> bool:
+        """Confirm leaving Console while the agent fleet still has live work.
+
+        TASK-1143 (F5): navigating away from Console unmounts this screen,
+        and ``on_unmount`` awaits ``ConsoleChatController.shutdown()`` --
+        cancelling every in-flight stream and denying every pending/parked
+        approval round for EVERY session this controller owns, not just
+        the one being viewed (see ``ConsoleChatController.shutdown``'s own
+        docstring). That is correct, by-design teardown -- screens are
+        never cached, so nothing could resolve those rounds through this
+        instance again regardless -- but it was previously silent. This
+        hook is the ``flush_pending_work`` sibling seam
+        ``TldwCli.handle_screen_navigation`` awaits before the switch
+        commits: returning ``False`` keeps this screen (and its
+        controller, and its fleet) mounted exactly like a flush veto.
+
+        Returns:
+            ``True`` when navigation may proceed -- an idle fleet (the
+            common case: no dialog, no delay), or the user chose "Leave"
+            in the confirmation dialog. ``False`` when the user chose
+            "Stay": the screen and its controller are left exactly as
+            they were, nothing cancelled, nothing denied.
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            return True
+        busy_count = controller.busy_fleet_session_count()
+        if busy_count <= 0:
+            return True
+        noun = "run" if busy_count == 1 else "runs"
+        dialog = ConfirmationDialog(
+            title="Leave Console?",
+            message=(
+                f"{busy_count} agent {noun} will be cancelled if you "
+                "leave Console. Leave anyway?"
+            ),
+            confirm_label="Leave",
+            cancel_label="Stay",
+        )
+        # `push_screen_wait` (the usual way to await a dialog's result) may
+        # ONLY be called from within a worker -- `App.push_screen` raises
+        # `NoActiveWorker` otherwise, since blocking a bare Future-await
+        # for a result only a LATER message resolves is exactly the
+        # deadlock shape workers exist to make safe. `confirm_navigation`
+        # itself runs on `TldwCli.handle_screen_navigation`'s own call
+        # stack (an ordinary message handler, not a worker), so the wait
+        # is delegated to a worker here and its result awaited back out --
+        # `exit_on_error=False` so a broken dialog fails this navigation
+        # closed (see the caller's except branch) rather than crashing the
+        # app.
+        worker = self.run_worker(
+            self.app_instance.push_screen_wait(dialog),
+            exclusive=False,
+            exit_on_error=False,
+        )
+        proceed = await worker.wait()
+        return bool(proceed)
+
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
         self._stop_console_transcript_sync_timer()
@@ -10308,7 +10393,19 @@ class ChatScreen(BaseAppScreen):
         self._console_original_attempt_previews.clear()
         controller = self._console_chat_controller
         if controller is not None:
+            # TASK-1143 (F5): snapshot what shutdown() is ABOUT to kill
+            # BEFORE calling it, using the SAME busy_fleet_session_count()
+            # confirm_navigation showed the user before they chose "Leave"
+            # (or that a non-navigation teardown, e.g. app exit, never got
+            # to show) -- the pre-navigate warning and the post-navigate
+            # record always agree on N. The app (not this doomed screen)
+            # holds the count so the NEXT Console mount -- a fresh
+            # instance; screens are never cached -- can report it via
+            # ``_notify_console_fleet_teardown_if_any``.
+            killed = controller.busy_fleet_session_count()
             await controller.shutdown()
+            if killed:
+                self.app_instance._console_fleet_teardown_notice = killed
         gateway = self._console_provider_gateway
         close = getattr(gateway, "aclose", None)
         if callable(close):

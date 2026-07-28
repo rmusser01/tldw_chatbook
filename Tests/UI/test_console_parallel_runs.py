@@ -1708,3 +1708,155 @@ async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_rou
         controller.resolve_pending_skill_script(True, False, request_id=request_id)
         decision = await asyncio.wait_for(decision_task, timeout=2.0)
         assert decision == {"allow": True, "remember": False}
+
+
+@pytest.mark.asyncio
+async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -> None:
+    """TASK-1143 (F5): navigating away from Console (e.g. to Settings to
+    change the run cap) unmounts the screen, shuts down the controller,
+    and denies every in-flight/parked run -- by design (screens are never
+    cached: ``TldwCli._create_navigation_screen`` always builds a fresh
+    instance) -- but previously nothing warned before and nothing recorded
+    after: returning showed a fresh Console with no marker of the killed
+    runs. This drives the REAL navigation seam (``NavigateToScreen`` ->
+    ``TldwCli.handle_screen_navigation``) on the real running app rather
+    than ``ConsoleHarness`` + a synthetic call, because the confirm-on-
+    navigate guard (``ChatScreen.confirm_navigation``) is only reachable
+    through that real handler.
+
+    One continuous journey covers all three TDD points:
+    (b) idle fleet -- no dialog, instant navigation.
+    (a) busy fleet -- dialog shown; Stay keeps the screen and the run
+        alive; Leave proceeds and the run is torn down.
+    (c) record-after -- the NEXT Console mount toasts the killed count
+        exactly once, then a further mount stays silent.
+    """
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    app = _build_test_app()
+    notifications: list[str] = []
+    app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+    async def _wait_for_screen(screen_type_name: str, *, attempts: int = 300):
+        # Plain `asyncio.sleep` polling, NOT `pilot.pause()`: while the
+        # confirm-on-navigate dialog is open, `TldwCli.handle_screen_
+        # navigation` -- the App's OWN message-pump handler -- is
+        # legitimately still suspended awaiting the user's Stay/Leave
+        # choice (ChatScreen.confirm_navigation -> a worker awaiting
+        # push_screen_wait). `Pilot.pause()` internally calls Textual's
+        # `_wait_for_screen()`, which schedules a `call_later` on the App's
+        # OWN pump and blocks until it fires -- but that pump can't
+        # advance to it until the suspended handler returns, so any
+        # `pilot.pause()` call made while the dialog is up hangs for its
+        # full 30s timeout. Plain `asyncio.sleep` just yields the event
+        # loop, which is all polling `app.screen`'s type needs here.
+        for _ in range(attempts):
+            if type(app.screen).__name__ == screen_type_name:
+                return app.screen
+            await asyncio.sleep(0.02)
+        raise AssertionError(
+            f"Never reached {screen_type_name}; "
+            f"current screen: {type(app.screen).__name__}"
+        )
+
+    async with app.run_test(size=(160, 44)) as pilot:
+        # Let the initial boot screen (splash, if enabled) resolve before
+        # posting our own navigation -- racing a NavigateToScreen against
+        # the splash screen's own dismiss timer corrupts switch_screen's
+        # result-callback stack (unrelated to this task; other real-
+        # navigation journeys in this suite wait out the same way).
+        for _ in range(150):
+            if type(app.screen).__name__ != "Screen":
+                break
+            await pilot.pause(0.02)
+
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen("ChatScreen")
+        controller = console._ensure_console_chat_controller()
+
+        # -- (b) idle fleet: navigating away is instant, no dialog, no toast. --
+        assert controller.busy_fleet_session_count() == 0
+        app.post_message(NavigateToScreen("home"))
+        await _wait_for_screen("HomeScreen")
+        assert not notifications, "an idle fleet must never prompt or toast"
+
+        # Back to a busy Console.
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen("ChatScreen")
+        controller = console._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "run"),
+            session_id=session_id,
+        )
+        assert controller.in_flight_run_count() == 1
+        assert controller.busy_fleet_session_count() == 1
+
+        # -- (a) busy fleet: dialog shown; Stay keeps the screen + run alive. --
+        app.post_message(NavigateToScreen("home"))
+        dialog = await _wait_for_screen("ConfirmationDialog")
+        assert isinstance(dialog, ConfirmationDialog)
+        assert "1 agent run" in dialog.message
+        assert "Console" in dialog.message
+        dialog.query_one("#cancel-button", Button).press()  # Stay
+        await _wait_for_screen("ChatScreen")
+        assert app.screen is console, "Stay must abort the switch, not just delay it"
+        assert controller.in_flight_run_count() == 1, "Stay must not cancel the run"
+        assert app._console_fleet_teardown_notice == 0
+
+        # -- (a continued) busy fleet: Leave proceeds and tears the fleet down. --
+        app.post_message(NavigateToScreen("home"))
+        dialog = await _wait_for_screen("ConfirmationDialog")
+        dialog.query_one("#confirm-button", Button).press()  # Leave
+        await _wait_for_screen("HomeScreen")
+        # `switch_screen` updates `app.screen` SYNCHRONOUSLY (the screen
+        # stack append happens before its returned awaitable's actual
+        # `do_switch()` body runs), but the outgoing ChatScreen's own
+        # `remove()`/on_unmount -- where the kill count is recorded --
+        # only finishes when `handle_screen_navigation`'s own `await
+        # self.switch_screen(...)` completes. `app.screen` can therefore
+        # already read "HomeScreen" before that recording has happened;
+        # wait for the OLD screen to actually finish tearing down
+        # (`_console_chat_controller` cleared in `on_unmount`) rather than
+        # racing it.
+        for _ in range(150):
+            if console._console_chat_controller is None:
+                break
+            await asyncio.sleep(0.02)
+        assert console._console_chat_controller is None, (
+            "outgoing Console screen never finished on_unmount"
+        )
+        assert app._console_fleet_teardown_notice == 1
+
+        # -- (c) record-after: the next Console mount toasts once. --
+        # `app.screen` reports "ChatScreen" as soon as the new screen is
+        # pushed onto the stack (synchronous), which is BEFORE its own
+        # `on_mount` (where the toast fires) has necessarily run -- poll
+        # for the slot to actually clear rather than a fixed sleep.
+        notifications.clear()
+        app.post_message(NavigateToScreen("chat"))
+        await _wait_for_screen("ChatScreen")
+        for _ in range(150):
+            if app._console_fleet_teardown_notice == 0:
+                break
+            await asyncio.sleep(0.02)
+        assert app._console_fleet_teardown_notice == 0, "slot must clear on consume"
+        teardown_toasts = [
+            n for n in notifications if "cancelled when you left Console" in n
+        ]
+        assert len(teardown_toasts) == 1
+        assert "1 agent run" in teardown_toasts[0]
+
+        # A second mount with nothing new killed stays silent.
+        app.post_message(NavigateToScreen("home"))
+        await _wait_for_screen("HomeScreen")
+        notifications.clear()
+        app.post_message(NavigateToScreen("chat"))
+        await _wait_for_screen("ChatScreen")
+        await asyncio.sleep(0.2)
+        assert not [
+            n for n in notifications if "cancelled when you left Console" in n
+        ]

@@ -678,6 +678,103 @@ async def test_navigation_flush_exception_warns_and_aborts_switch(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_navigation_confirms_with_outgoing_screen_and_honors_veto(monkeypatch):
+    """TASK-1143 (F5): navigating away must consult the outgoing screen's
+    ``confirm_navigation()`` the same way it already consults
+    ``flush_pending_work()``. Console (``ChatScreen``) implements this to
+    warn when the agent fleet is busy -- unmounting cancels every
+    in-flight run and denies every pending/parked approval round. False
+    vetoes the switch, leaving the screen (and its live fleet) mounted
+    exactly like a flush veto; True (idle fleet, or the user chose
+    "Leave") lets it proceed.
+    """
+    app = _build_test_app()
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def fake_resolve(target):
+        return "chat", "chat", FakeTargetScreen
+
+    switched_screens = []
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+
+    confirm_results = {"value": False}
+    confirm_calls = []
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def confirm_navigation(self):
+            confirm_calls.append(True)
+            return confirm_results["value"]
+
+    outgoing = FakeOutgoingScreen()
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+    assert confirm_calls, "outgoing screen's confirm_navigation was never awaited"
+    assert switched_screens == [], "veto (False) must abort the switch"
+
+    confirm_results["value"] = True
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+    assert len(switched_screens) == 1, "confirm returning True must allow the switch"
+
+
+@pytest.mark.asyncio
+async def test_navigation_confirm_exception_warns_and_aborts_switch(monkeypatch):
+    """A broken outgoing confirm_navigation must fail closed, not silently
+    let navigation proceed and tear down live work nobody was asked about.
+    """
+    app = _build_test_app()
+    created_screens = []
+    switched_screens = []
+    notifications = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            created_screens.append(app_instance)
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def confirm_navigation(self):
+            raise RuntimeError("simulated confirm failure")
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append((message, kwargs)),
+    )
+    outgoing = FakeOutgoingScreen()
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+
+    assert switched_screens == []
+    assert created_screens == []
+
+
+@pytest.mark.asyncio
 async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
     """Live-repro regression lock for the rapid-tab-switch freeze.
 
