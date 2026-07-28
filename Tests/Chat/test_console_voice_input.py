@@ -111,3 +111,68 @@ def test_module_installed_returns_false_when_find_spec_raises(monkeypatch, exc):
     monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
 
     assert cvi._module_installed("broken.namespace.package") is False
+
+
+def _stub_settings(monkeypatch, values: dict[str, object]) -> None:
+    """Route console_voice_input's config reads through a dict."""
+
+    def fake_get(section, key=None, default=None):
+        if key is not None and not isinstance(key, str):
+            default = key
+            key = None
+        lookup = section if key is None else f"{section}.{key}"
+        return values.get(lookup, default)
+
+    monkeypatch.setattr(cvi, "get_cli_setting", fake_get)
+
+
+def test_resolve_keeps_configured_provider_when_installed(monkeypatch):
+    monkeypatch.setattr(
+        cvi, "installed_local_providers", lambda: ("faster-whisper", "parakeet-mlx")
+    )
+    _stub_settings(
+        monkeypatch,
+        {
+            "transcription.provider": "faster-whisper",
+            "transcription.model": "base",
+            "transcription.language": "en",
+        },
+    )
+
+    effective = cvi.resolve()
+
+    assert effective is not None
+    assert effective.provider == "faster-whisper"
+    assert effective.model == "base"
+    assert effective.was_overridden is False
+
+
+def test_resolve_flags_override_instead_of_swapping_silently(monkeypatch):
+    """A configured provider that is not installed is replaced, and it shows."""
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.provider": "parakeet-mlx"})
+
+    effective = cvi.resolve()
+
+    assert effective is not None
+    assert effective.provider == "faster-whisper"
+    assert effective.configured_provider == "parakeet-mlx"
+    assert effective.was_overridden is True
+
+
+def test_resolve_never_returns_an_uninstalled_provider(monkeypatch):
+    """This is the guard against the service's parakeet-mlx rewrite."""
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.provider": "lightning-whisper-mlx"})
+
+    effective = cvi.resolve()
+
+    assert effective is not None
+    assert effective.provider in cvi.installed_local_providers()
+
+
+def test_resolve_returns_none_when_nothing_installed(monkeypatch):
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ())
+    _stub_settings(monkeypatch, {"transcription.provider": "faster-whisper"})
+
+    assert cvi.resolve() is None

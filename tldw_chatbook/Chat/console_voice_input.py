@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 from loguru import logger
 
+from ..config import get_cli_setting
+
 # Capture backends, in preference order. AudioRecordingService picks between
 # them itself; we only need to know whether at least one exists.
 CAPTURE_MODULES: tuple[str, ...] = ("pyaudio", "sounddevice")
@@ -94,3 +96,62 @@ def probe() -> Availability:
             remedy=PROVIDER_REMEDY,
         )
     return Availability(ok=True)
+
+
+DEFAULT_LANGUAGE = "en"
+
+
+@dataclass(frozen=True)
+class EffectiveConfig:
+    """The transcription settings dictation will actually run with."""
+
+    provider: str
+    model: str | None
+    language: str
+    configured_provider: str
+    was_overridden: bool
+
+
+def resolve() -> EffectiveConfig | None:
+    """Choose the provider before the dictation service gets the chance.
+
+    `LazyLiveDictationService._initialize_streaming_transcriber` rewrites the
+    provider to `parakeet-mlx` whenever privacy mode is on and the configured
+    provider is not on its allowlist -- silently, and to an Apple-Silicon-only
+    provider. Resolving here means the service is always handed a provider that
+    is both local and installed, so that branch never fires.
+
+    Returns:
+        The settings to run with, or None when no local provider is installed.
+    """
+    installed = installed_local_providers()
+    if not installed:
+        return None
+
+    configured = get_cli_setting("transcription", "provider", None) or get_cli_setting(
+        "STTSettings", "default_stt_provider", ""
+    )
+    configured = str(configured or "")
+
+    if configured in installed:
+        provider = configured
+    else:
+        # Preference order is LOCAL_PROVIDER_MODULES' declaration order.
+        provider = installed[0]
+        if configured:
+            logger.info(
+                "Console dictation provider '{}' unavailable; using '{}'",
+                configured,
+                provider,
+            )
+
+    model = get_cli_setting("transcription", "model", None)
+    language = get_cli_setting("transcription", "language", DEFAULT_LANGUAGE)
+
+    return EffectiveConfig(
+        provider=provider,
+        model=str(model) if model else None,
+        language=str(language or DEFAULT_LANGUAGE),
+        configured_provider=configured,
+        was_overridden=bool(configured) and provider != configured,
+    )
