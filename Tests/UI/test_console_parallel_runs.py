@@ -14,6 +14,11 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Chat.console_agent_bridge import (
+    AgentLiveSnapshot,
+    AgentLiveStep,
+    SubAgentSummary,
+)
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunMarker,
@@ -513,6 +518,270 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
 
 
 @pytest.mark.asyncio
+async def test_park_toast_survives_a_viewed_run_completion_re_invocation() -> None:
+    """TASK-1141 (UAT F2): a parked round's toast must not re-fire when a
+    DIFFERENT, VIEWED session's own run completes.
+
+    Live UAT: session B parked (toast fired once); a run in the VIEWED
+    session A then completed; at that moment, the exact same
+    ``needs approval`` toast re-fired for B's completely unchanged,
+    still-parked round. Exhaustively tracing the suspect call sites
+    (``_set_run_state``'s COMPLETED branch, ``_finalize_agent_*``,
+    ``switch_session``/``_remount_parked_*``'s re-derive step) found none
+    of them invoke ``park_pending_approval``/``_park_console_approval`` a
+    second time under single-threaded/synchronous conditions -- but
+    ``_park_console_approval`` itself carried no protection against a
+    second, differently-triggered invocation for the SAME still-live
+    round (a re-marshal/re-derive/re-park), relying entirely on the
+    structural assumption that its three owning bridges each call it
+    exactly once per round. This drives the REAL sequence UAT observed --
+    park B, run A to a real terminal COMPLETED transition via
+    ``_set_run_state`` (the established seam other tests in this file use
+    to drive "real" terminal transitions), then a second invocation of the
+    shared park seam for B's own round, unchanged -- and asserts the toast
+    still fires exactly once total. Must fail on HEAD (pre-TASK-1141):
+    the second invocation was unconditional and always re-toasted.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        controller.app = host
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)  # keep viewing A
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        decision_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_mcp_approvals,
+                [
+                    MCPPendingCall(
+                        llm_name="mcp__srv__tool",
+                        server_key="local:srv",
+                        tool_name="tool",
+                        server_label="Srv",
+                        arguments={},
+                        reason="ask",
+                        options=["approve_once", "deny"],
+                    )
+                ],
+                session_id=background,
+            )
+        )
+        await pilot.pause(0.3)
+
+        approval_toasts = [n for n in notifications if "needs approval" in n]
+        assert len(approval_toasts) == 1
+        round_id = controller._parked_approval_payloads[background]["round_id"]
+
+        # A's own real terminal transition -- A stays active/viewed
+        # throughout, so `_set_run_state`'s non-active toast branch never
+        # even considers B; nothing about B's round changes here.
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
+            session_id=viewed,
+        )
+        await pilot.pause(0.1)
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
+            session_id=viewed,
+        )
+        await pilot.pause(0.2)
+
+        # A re-marshal/re-derive re-invoking the shared park seam for B's
+        # SAME, still-outstanding round (round_id unchanged) -- the
+        # hazard TASK-1141 guards against regardless of which real
+        # trigger UAT actually hit.
+        assert controller._parked_approval_payloads[background]["round_id"] == round_id
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+
+        approval_toasts_after = [n for n in notifications if "needs approval" in n]
+        assert len(approval_toasts_after) == 1, (
+            f"expected exactly 1 park toast total across the re-invocation, "
+            f"got {approval_toasts_after}"
+        )
+
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "deny"}, round_id=round_id
+        )
+        decisions = await asyncio.wait_for(decision_task, timeout=2.0)
+        assert decisions == {"mcp__srv__tool": "deny"}
+
+
+@pytest.mark.asyncio
+async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session() -> None:
+    """TASK-1141: the round-identity guard must not over-suppress -- a
+    SECOND, genuinely different round for the SAME session (e.g. the
+    first round having resolved/timed out and a fresh one starting) must
+    still toast, per AC#1's "a genuinely NEW round ... must still toast".
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        controller.add_pending_round(background, "round-1")
+        controller._parked_approval_payloads[background] = {
+            "round_id": "round-1",
+            "session_id": background,
+            "calls": [],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        # Round 1 resolves and clears completely.
+        controller.discard_pending_round(background, "round-1")
+        controller._parked_approval_payloads.pop(background, None)
+
+        # A genuinely new round (different id) parks for the same session.
+        controller.add_pending_round(background, "round-2")
+        controller._parked_approval_payloads[background] = {
+            "round_id": "round-2",
+            "session_id": background,
+            "calls": [],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        toasts = [n for n in notifications if "needs approval" in n]
+        assert len(toasts) == 2, f"expected the new round to toast again, got {toasts}"
+
+
+@pytest.mark.asyncio
+async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round() -> None:
+    """TASK-1141 review round 1 (reviewer-reproduced live on HEAD before
+    this fix): `_current_park_round_ids` alone only inspects the three
+    LIVE `_parked_*_payloads` maps -- every owning bridge's own `finally`
+    pops its round out of those maps once resolved (see
+    `request_mcp_approvals`'s teardown), so a re-invocation of the shared
+    park seam that lands AFTER that teardown found every live map empty
+    and fell straight into the "no identity to key on" unconditional-toast
+    fallback, re-firing the toast for a round with no card left at all --
+    despite that round's id already sitting in
+    `_console_toasted_park_round_ids` (documented as never-pruned
+    precisely so a case like this could be recognized). Tears down
+    round-1 exactly like `request_mcp_approvals`'s own `finally`
+    (``discard_pending_round`` + popping the retained payload) directly,
+    rather than through a live worker thread, to isolate the guard's own
+    post-teardown fallback logic from timing.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        controller.add_pending_round(background, "round-1")
+        controller._parked_approval_payloads[background] = {
+            "round_id": "round-1",
+            "session_id": background,
+            "calls": [],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        # Tear down round-1 exactly like `request_mcp_approvals`'s own
+        # `finally` does once it resolves: discard the round id, then pop
+        # the retained payload (no sibling round left, so the pop fires
+        # -- mirrors the real "not still_armed_same_session" branch).
+        controller.discard_pending_round(background, "round-1")
+        controller._parked_approval_payloads.pop(background, None)
+        assert background not in controller._parked_approval_payloads
+
+        # A stray re-invocation of the shared park seam landing AFTER
+        # teardown -- the exact hazard the reviewer reproduced live.
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        toasts = [n for n in notifications if "needs approval" in n]
+        assert len(toasts) == 1, f"expected NO second toast post-teardown, got {toasts}"
+
+
+@pytest.mark.asyncio
+async def test_park_toast_fires_once_for_a_new_round_arriving_after_teardown() -> None:
+    """TASK-1141 review round 1: the post-teardown fallback guard added
+    above (see the sibling test) must not over-suppress a genuinely NEW
+    round for the same session that parks only after the previous one
+    fully resolved and tore down -- distinct from ``test_park_toast_
+    fires_again_for_a_genuinely_new_round_same_session`` above in that
+    this pins the specific "arrives after the post-teardown fallback path
+    was exercised" shape the review round targeted.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        controller.add_pending_round(background, "round-1")
+        controller._parked_approval_payloads[background] = {
+            "round_id": "round-1",
+            "session_id": background,
+            "calls": [],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        controller.discard_pending_round(background, "round-1")
+        controller._parked_approval_payloads.pop(background, None)
+
+        # A genuinely NEW round (different id) parks for the same session
+        # AFTER the previous one's full teardown.
+        controller.add_pending_round(background, "round-2")
+        controller._parked_approval_payloads[background] = {
+            "round_id": "round-2",
+            "session_id": background,
+            "calls": [],
+            "timeout_seconds": 30.0,
+        }
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        toasts = [n for n in notifications if "needs approval" in n]
+        assert len(toasts) == 2, f"expected the new round to toast, got {toasts}"
+
+
+@pytest.mark.asyncio
 async def test_background_completion_fires_single_toast() -> None:
     """Task 10 (background completion toasts, parallel-agents spec): a
     NON-viewed session's run finishing (COMPLETED) or failing (FAILED)
@@ -641,6 +910,242 @@ async def test_fleet_summary_line_is_reachable_on_the_live_rendered_surface() ->
         assert not fleet_summary.display or str(
             getattr(fleet_summary.renderable, "plain", fleet_summary.renderable)
         ) == ""
+
+
+class _TallStepsFleetBridge:
+    """Fake Console agent bridge: a DONE viewed run with several long step
+    bullets -- the exact shape task-1140/UAT F1 reproduced live (region
+    ``y=48`` in a 44-row viewport). ``.console-agent-section-steps`` is
+    ``height: auto`` with wrapping text (no ``nowrap``), so several
+    80-char-ish bullets reliably grow the section tall enough to push
+    anything BELOW them past the rail's scroll fold.
+    """
+
+    def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
+        return AgentLiveSnapshot(
+            status="done",
+            step=5,
+            steps=tuple(
+                AgentLiveStep(
+                    "tool_result",
+                    f"step {i}: a long rendered summary line padding out the "
+                    "agent rail section with wrapped content",
+                    "primary",
+                )
+                for i in range(5)
+            ),
+            subagents=(SubAgentSummary("research pricing", status="done"),),
+        )
+
+    def historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
+        return self.live_snapshot(conversation_id)
+
+    def subagent_run(self, run_id: str):
+        return None
+
+    def subagent_runs(self, conversation_id: str) -> list:
+        return []
+
+
+async def _setup_tall_steps_and_parked_fleet(
+    console, *, collapse_session_and_model: bool
+):
+    """Shared AC#2 repro rig: a done viewed session with several long step
+    bullets (the tall Agent-section content F1 called out) plus a parked
+    background session (the fleet-busy signal). Returns the mounted
+    ``#console-agent-fleet-summary`` widget after a settle pause.
+
+    ``collapse_session_and_model`` toggles whether Session/Model -- both
+    open by PERSISTED DEFAULT (``ConsoleRailPreferences.session_open``/
+    ``model_open``) -- are left at that default or explicitly collapsed.
+    Both arrangements must find the fleet line painted post-fix (round 1,
+    reorder-only, only passed the collapsed case -- see task-1140's
+    Implementation Notes for the reviewer's revert-check against that
+    placement).
+    """
+    controller = console._ensure_console_chat_controller()
+    store = controller.store
+    viewed = store.active_session_id
+    background = controller.new_session().id
+    store.switch_session(viewed)  # keep viewing the first (done) session
+
+    # Done viewed session with several long step bullets -- the tall
+    # rail content that pushed the fleet line below the fold live.
+    console._console_agent_bridge = _TallStepsFleetBridge()
+
+    # A parked background session needing approval -- same fleet-busy
+    # signal the sibling reachability test drives via a running session,
+    # here via the approval path so the fleet line reads "waiting for
+    # approval" (matching UAT's own repro).
+    console._park_console_approval(background)
+
+    if collapse_session_and_model:
+        console._set_console_rail_preference(
+            section_updates={"session": False, "model": False},
+            notify_on_failure=False,
+        )
+
+    await console._sync_native_console_chat_ui()
+    return console.query_one("#console-agent-fleet-summary", Static)
+
+
+def _assert_painted_at_own_region(host, widget) -> None:
+    """AC#2: viewport intersection via the compositor's own hit-test, not
+    a raw ``region.y`` bound and not just the display chain.
+
+    ``Widget.region`` is reported in an UNCLIPPED coordinate space --  a
+    widget scrolled out of (or, pre-round-1-fix, simply positioned below
+    the fold within) a scrollable ancestor still has a ``region``, just
+    one that ancestor never paints -- so comparing ``region.y`` to
+    ``console.size.height`` alone cannot distinguish "below THIS specific
+    scrollable ancestor's fold" from "within it". ``App.get_widget_at``
+    asks the compositor what is ACTUALLY painted at that cell, the same
+    bar a live terminal renders against.
+    """
+    region = widget.region
+    try:
+        hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
+    except Exception as exc:  # textual.errors.NoWidget
+        pytest.fail(
+            f"nothing is painted at {widget!r}'s own region {region!r}: {exc}"
+        )
+    assert hit_widget is widget, (
+        f"the compositor paints {hit_widget!r} at {region!r}, not {widget!r} "
+        "itself -- the widget's display chain is all-True but it is not "
+        "actually visible on screen"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fleet_summary_line_intersects_the_visible_viewport_default_sections() -> None:
+    """AC#2 (task-1140 / UAT F1), fix round 1 regression: Session and Model
+    are BOTH open by PERSISTED DEFAULT (``ConsoleRailPreferences.
+    session_open``/``model_open``) -- the layout every real session
+    actually starts in, never explicitly collapsed by anything in this
+    test. Round 1's fix (reorder-only: fleet line moved to the top of the
+    Agent section body, still inside the shared, scrollable
+    ``#console-left-rail-body``) was reviewed and found insufficient
+    against exactly this arrangement: Session alone renders far more
+    content than the rail body's own ~10-row visible budget in a 44-row
+    terminal, so the Agent section -- and anything inside it, regardless
+    of its own position -- could still land below the fold before a user
+    ever touches the Agent section's own step content.
+
+    Round 2 pins the fleet line OUTSIDE the scrollable rail flow entirely
+    (a non-scrolling sibling of the rail's own header), so it is painted
+    unconditionally. This test is the reviewer's own repro (their one
+    change to the round-1 test harness: leave Session/Model at their real
+    defaults) promoted to a permanent regression guard -- see task-1140's
+    Implementation Notes for the revert-check confirming it fails against
+    the round-1 commit.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        fleet_summary = await _setup_tall_steps_and_parked_fleet(
+            console, collapse_session_and_model=False
+        )
+        await pilot.pause(0.3)
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+
+        assert (
+            getattr(fleet_summary.renderable, "plain", str(fleet_summary.renderable))
+            == "0 other agents running, 1 waiting for approval."
+        )
+        _assert_widget_and_ancestors_displayed(fleet_summary)
+        _assert_painted_at_own_region(host, fleet_summary)
+
+
+@pytest.mark.asyncio
+async def test_fleet_summary_line_intersects_the_visible_viewport_collapsed_sections() -> None:
+    """Same repro as the sibling default-sections test above, but with
+    Session/Model explicitly collapsed first. Kept alongside the default-
+    arrangement test (not replaced by it) -- the pinned fleet line must
+    stay painted across BOTH arrangements, since collapsing/reopening
+    other rail sections must never affect its own visibility.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        fleet_summary = await _setup_tall_steps_and_parked_fleet(
+            console, collapse_session_and_model=True
+        )
+        await pilot.pause(0.3)
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+
+        assert (
+            getattr(fleet_summary.renderable, "plain", str(fleet_summary.renderable))
+            == "0 other agents running, 1 waiting for approval."
+        )
+        _assert_widget_and_ancestors_displayed(fleet_summary)
+        _assert_painted_at_own_region(host, fleet_summary)
+
+
+@pytest.mark.asyncio
+async def test_fleet_summary_line_occupies_no_row_when_fleet_is_quiet() -> None:
+    """Hidden-at-zero (task-1140 fix round 1 requirement): pinning the
+    fleet line as a non-scrolling sibling of the rail header must not
+    leave a blank row when both counts are zero -- ``display: none``
+    excludes it from layout entirely, same contract as before it was
+    pinned (mirrors the Model section's ``#console-model-section-recovery``
+    Static). Asserted directly against the rendered region/size, not just
+    the ``styles.display`` string, so a future CSS change that keeps
+    ``display: block`` but zeroes height some other way would still be
+    caught (or rather, would need an equally-zero rendered footprint).
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        # No fake bridge, no parked approval, no running background --
+        # fleet_summary_counts() stays (0, 0): the quiet baseline.
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.2)
+
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+        assert not fleet_summary.display
+        assert fleet_summary.region.width == 0
+        assert fleet_summary.region.height == 0
+
+        # Busy, then quiet again -- the docked slot must collapse back to
+        # zero rows, not retain a stale non-zero region from when it was
+        # last painted (`_sync_console_agent_section` toggles `styles.
+        # display` on every payload change, not just at compose time).
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "bg"),
+            session_id=background,
+        )
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.3)
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+        assert fleet_summary.display
+        assert fleet_summary.region.height > 0
+
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.COMPLETED, "done"),
+            session_id=background,
+        )
+        controller.mark_session_visited(background)
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.3)
+        fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
+        assert not fleet_summary.display
+        assert fleet_summary.region.width == 0
+        assert fleet_summary.region.height == 0
 
 
 def _agent_section_open(console) -> bool:
@@ -1115,3 +1620,243 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
         decision = await asyncio.wait_for(decision_task, timeout=2.0)
         assert decision == {"allow": True, "remember": False}
         assert background not in controller._pending_approvals
+
+
+@pytest.mark.asyncio
+async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_round() -> None:
+    """TASK-1141 sweep: `_park_console_approval` is the SAME shared seam
+    for all three bridges (see its own docstring) -- this pins that the
+    round-identity guard covers the skill-install park path too, not just
+    MCP approvals. Mirrors ``test_park_toast_survives_a_viewed_run_
+    completion_re_invocation`` above."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        controller.app = host
+        controller.skill_install_confirm_timeout_seconds = lambda: 30.0
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        decision_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_skill_install_confirm,
+                "https://github.com/o/r",
+                session_id=background,
+            )
+        )
+        await pilot.pause(0.3)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+        request_id = controller._parked_skill_install_payloads[background]["request_id"]
+
+        # Re-invoke the shared park seam for the SAME, still-outstanding
+        # skill-install round.
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        controller.resolve_pending_skill_install(True, request_id=request_id)
+        allowed = await asyncio.wait_for(decision_task, timeout=2.0)
+        assert allowed is True
+
+
+@pytest.mark.asyncio
+async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_round() -> None:
+    """TASK-1141 sweep: same guard, skill-script park path."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._ensure_console_chat_controller()
+        controller.app = host
+        controller.skill_script_confirm_timeout_seconds = lambda: 30.0
+        store = controller.store
+        viewed = store.active_session_id
+        background = controller.new_session().id
+        store.switch_session(viewed)
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        decision_task = asyncio.create_task(
+            asyncio.to_thread(
+                controller.request_skill_script_confirm,
+                {"skill_name": "demo", "script_path": "scripts/hello.py"},
+                session_id=background,
+            )
+        )
+        await pilot.pause(0.3)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+        request_id = controller._parked_skill_script_payloads[background]["request_id"]
+
+        # Re-invoke the shared park seam for the SAME, still-outstanding
+        # skill-script round.
+        console._park_console_approval(background)
+        await pilot.pause(0.1)
+        assert len([n for n in notifications if "needs approval" in n]) == 1
+
+        controller.resolve_pending_skill_script(True, False, request_id=request_id)
+        decision = await asyncio.wait_for(decision_task, timeout=2.0)
+        assert decision == {"allow": True, "remember": False}
+
+
+@pytest.mark.asyncio
+async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -> None:
+    """TASK-1143 (F5): navigating away from Console (e.g. to Settings to
+    change the run cap) unmounts the screen, shuts down the controller,
+    and denies every in-flight/parked run -- by design (screens are never
+    cached: ``TldwCli._create_navigation_screen`` always builds a fresh
+    instance) -- but previously nothing warned before and nothing recorded
+    after: returning showed a fresh Console with no marker of the killed
+    runs. This drives the REAL navigation seam (``NavigateToScreen`` ->
+    ``TldwCli.handle_screen_navigation``) on the real running app rather
+    than ``ConsoleHarness`` + a synthetic call, because the confirm-on-
+    navigate guard (``ChatScreen.confirm_navigation``) is only reachable
+    through that real handler.
+
+    One continuous journey covers all three TDD points:
+    (b) idle fleet -- no dialog, instant navigation.
+    (a) busy fleet -- dialog shown; Stay keeps the screen and the run
+        alive; Leave proceeds and the run is torn down.
+    (c) record-after -- the NEXT Console mount toasts the killed count
+        exactly once, then a further mount stays silent.
+    """
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    app = _build_test_app()
+    notifications: list[str] = []
+    app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+    async def _wait_for_screen(screen_type_name: str, *, attempts: int = 300):
+        # Plain `asyncio.sleep` polling, NOT `pilot.pause()`: while the
+        # confirm-on-navigate dialog is open, `TldwCli.handle_screen_
+        # navigation` -- the App's OWN message-pump handler -- is
+        # legitimately still suspended awaiting the user's Stay/Leave
+        # choice (ChatScreen.confirm_navigation -> a worker awaiting
+        # push_screen_wait). `Pilot.pause()` internally calls Textual's
+        # `_wait_for_screen()`, which schedules a `call_later` on the App's
+        # OWN pump and blocks until it fires -- but that pump can't
+        # advance to it until the suspended handler returns, so any
+        # `pilot.pause()` call made while the dialog is up hangs for its
+        # full 30s timeout. Plain `asyncio.sleep` just yields the event
+        # loop, which is all polling `app.screen`'s type needs here.
+        for _ in range(attempts):
+            if type(app.screen).__name__ == screen_type_name:
+                return app.screen
+            await asyncio.sleep(0.02)
+        raise AssertionError(
+            f"Never reached {screen_type_name}; "
+            f"current screen: {type(app.screen).__name__}"
+        )
+
+    async with app.run_test(size=(160, 44)) as pilot:
+        # Let the initial boot screen (splash, if enabled) resolve before
+        # posting our own navigation -- racing a NavigateToScreen against
+        # the splash screen's own dismiss timer corrupts switch_screen's
+        # result-callback stack (unrelated to this task; other real-
+        # navigation journeys in this suite wait out the same way).
+        for _ in range(150):
+            if type(app.screen).__name__ != "Screen":
+                break
+            await pilot.pause(0.02)
+
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen("ChatScreen")
+        controller = console._ensure_console_chat_controller()
+
+        # -- (b) idle fleet: navigating away is instant, no dialog, no toast. --
+        assert controller.busy_fleet_session_count() == 0
+        app.post_message(NavigateToScreen("home"))
+        await _wait_for_screen("HomeScreen")
+        assert not notifications, "an idle fleet must never prompt or toast"
+
+        # Back to a busy Console.
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen("ChatScreen")
+        controller = console._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "run"),
+            session_id=session_id,
+        )
+        assert controller.in_flight_run_count() == 1
+        assert controller.busy_fleet_session_count() == 1
+
+        # -- (a) busy fleet: dialog shown; Stay keeps the screen + run alive. --
+        app.post_message(NavigateToScreen("home"))
+        dialog = await _wait_for_screen("ConfirmationDialog")
+        assert isinstance(dialog, ConfirmationDialog)
+        assert "1 agent run" in dialog.message
+        assert "Console" in dialog.message
+        dialog.query_one("#cancel-button", Button).press()  # Stay
+        await _wait_for_screen("ChatScreen")
+        assert app.screen is console, "Stay must abort the switch, not just delay it"
+        assert controller.in_flight_run_count() == 1, "Stay must not cancel the run"
+        assert app._console_fleet_teardown_notice == 0
+
+        # -- (a continued) busy fleet: Leave proceeds and tears the fleet down. --
+        app.post_message(NavigateToScreen("home"))
+        dialog = await _wait_for_screen("ConfirmationDialog")
+        dialog.query_one("#confirm-button", Button).press()  # Leave
+        await _wait_for_screen("HomeScreen")
+        # `switch_screen` updates `app.screen` SYNCHRONOUSLY (the screen
+        # stack append happens before its returned awaitable's actual
+        # `do_switch()` body runs), but the outgoing ChatScreen's own
+        # `remove()`/on_unmount -- where the kill count is recorded --
+        # only finishes when `handle_screen_navigation`'s own `await
+        # self.switch_screen(...)` completes. `app.screen` can therefore
+        # already read "HomeScreen" before that recording has happened;
+        # wait for the OLD screen to actually finish tearing down
+        # (`_console_chat_controller` cleared in `on_unmount`) rather than
+        # racing it.
+        for _ in range(150):
+            if console._console_chat_controller is None:
+                break
+            await asyncio.sleep(0.02)
+        assert console._console_chat_controller is None, (
+            "outgoing Console screen never finished on_unmount"
+        )
+        assert app._console_fleet_teardown_notice == 1
+
+        # -- (c) record-after: the next Console mount toasts once. --
+        # `app.screen` reports "ChatScreen" as soon as the new screen is
+        # pushed onto the stack (synchronous), which is BEFORE its own
+        # `on_mount` (where the toast fires) has necessarily run -- poll
+        # for the slot to actually clear rather than a fixed sleep.
+        notifications.clear()
+        app.post_message(NavigateToScreen("chat"))
+        await _wait_for_screen("ChatScreen")
+        for _ in range(150):
+            if app._console_fleet_teardown_notice == 0:
+                break
+            await asyncio.sleep(0.02)
+        assert app._console_fleet_teardown_notice == 0, "slot must clear on consume"
+        teardown_toasts = [
+            n for n in notifications if "cancelled when you left Console" in n
+        ]
+        assert len(teardown_toasts) == 1
+        assert "1 agent run" in teardown_toasts[0]
+
+        # A second mount with nothing new killed stays silent.
+        app.post_message(NavigateToScreen("home"))
+        await _wait_for_screen("HomeScreen")
+        notifications.clear()
+        app.post_message(NavigateToScreen("chat"))
+        await _wait_for_screen("ChatScreen")
+        await asyncio.sleep(0.2)
+        assert not [
+            n for n in notifications if "cancelled when you left Console" in n
+        ]

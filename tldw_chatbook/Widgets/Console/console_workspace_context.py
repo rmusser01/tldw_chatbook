@@ -144,6 +144,65 @@ def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def wrap_console_plain_text_uncapped(text: str, budget: int) -> tuple[str, ...]:
+    """Word-wrap ``text`` into budget-width lines with NO cap on line count
+    and no ellipsis.
+
+    TASK-1142 round-2 review (Qodo, PR #1050): ``_empty_copy_line_count``
+    used to call ``wrap_console_conversation_title``, which intentionally
+    hard-caps at ``_TITLE_WRAP_MAX_LINES`` (2) and ellipsizes the remainder
+    -- correct for a row TITLE (which really is rendered that way), but an
+    empty-copy ``Static`` has no such cap: Rich wraps it to as many lines
+    as it needs. Any empty-copy string that legitimately needs 3+ lines
+    (a narrower rail, longer copy, a future localization) would silently
+    undercount again through the capped helper, re-opening the exact
+    clipping bug TASK-1142 round 1 fixed (a later section's header pushed
+    out of the tray's own visible bounds). This is the SAME greedy
+    word-wrap rule ``wrap_console_conversation_title`` uses per line
+    (word-boundary wrap; a single token longer than one line hard-breaks
+    at the budget) with the two-line cap removed, so it cannot disagree
+    with that helper for text that already fits within the cap -- this is
+    strictly what it would compute with the cap lifted.
+
+    Args:
+        text: Raw text to wrap (already-rendered plain copy, not a title --
+            no blank-text fallback is applied).
+        budget: Target line width in terminal cells; clamped up to a floor
+            of ``_MIN_TITLE_WRAP_BUDGET``.
+
+    Returns:
+        A tuple of one or more raw text lines, each at most ``budget``
+        cells wide (an over-length spaceless token is the sole exception,
+        hard-broken at the budget instead). Empty for blank/whitespace-only
+        input.
+    """
+    budget = max(_MIN_TITLE_WRAP_BUDGET, int(budget))
+    remaining = str(text).strip()
+    if not remaining:
+        return ()
+    lines: list[str] = []
+    while remaining:
+        if cell_len(remaining) <= budget:
+            lines.append(remaining)
+            break
+        head = _cut_prefix_cells(remaining, budget)
+        on_boundary = head.endswith(" ") or (
+            len(head) < len(remaining) and remaining[len(head)] == " "
+        )
+        if on_boundary:
+            lines.append(head.rstrip())
+            remaining = remaining[len(head) :].lstrip()
+            continue
+        break_at = head.rfind(" ")
+        if break_at > 0:
+            lines.append(remaining[:break_at].rstrip())
+            remaining = remaining[break_at + 1 :].lstrip()
+        else:
+            lines.append(head)
+            remaining = remaining[len(head) :].lstrip()
+    return tuple(lines)
+
+
 def _marker_prefixed_name_lines(
     title: str, run_marker: str, budget: int
 ) -> tuple[str, ...]:
@@ -713,11 +772,60 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         )
 
     @staticmethod
+    def _empty_copy_line_count(text: str, budget: int) -> int:
+        """Return the rendered line count for an empty-copy Static at
+        ``budget`` cells wide.
+
+        TASK-1142 round 1 review: ``_conversation_browser_list_height`` used
+        to assume every empty-copy line ("No starred conversations." etc.)
+        always renders as exactly one row. Unlike a row title, this Static
+        is NOT reduced by ``_BROWSER_ROW_CHROME_WIDTH`` (there is no star
+        column beside it), so at the tray's real content width it can (and
+        does) wrap to two lines while the flat-constant heuristic still
+        counted one. That single missing row silently undercounted the
+        `#console-workspace-conversations` container's explicit height,
+        clipping whatever composed after it -- including a LATER section's
+        entire header, caret and all -- out of the tray's own visible
+        bounds. Confirmed via a coordinate-honest repro: after a real click
+        collapsed "Chats", "Chats"'s own re-expand caret vanished from the
+        rendered pane entirely (not just off in a click-miss sense -- not
+        painted at all), because "No starred conversations." and "No
+        workspace conversations." both silently wrapped to two lines above
+        it.
+
+        TASK-1142 round-2 review (Qodo, PR #1050): the first fix here called
+        ``wrap_console_conversation_title``, which hard-caps at two lines
+        and ellipsizes -- correct for a row title, but an empty-copy
+        ``Static`` wraps with no such cap. Any empty-copy string that
+        legitimately needs 3+ lines would silently undercount again through
+        that capped helper. Now uses ``wrap_console_plain_text_uncapped``
+        instead, which is the same per-line word-wrap rule with the cap
+        removed -- see its docstring for why a dedicated helper (rather
+        than reusing the row-title one) is required.
+        """
+        return max(
+            _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT,
+            len(wrap_console_plain_text_uncapped(text, budget)),
+        )
+
+    @staticmethod
     def _conversation_browser_list_height(
         browser: ConsoleConversationBrowserState,
-        budget: int,
+        row_title_budget: int,
+        empty_copy_budget: int,
     ) -> int:
-        """Return the full content height for the grouped browser rows."""
+        """Return the full content height for the grouped browser rows.
+
+        Args:
+            browser: The grouped browser state being measured.
+            row_title_budget: Wrap budget for row titles (reduced for the
+                star column, matches ``_browser_title_budget()``).
+            empty_copy_budget: Wrap budget for empty-copy lines, which span
+                the tray's full row width with no star-column reduction
+                (matches ``_row_content_width``) -- see
+                ``_empty_copy_line_count`` for why this must differ from
+                ``row_title_budget``.
+        """
         height = 0
         for section in browser.sections:
             height += _CONVERSATION_BROWSER_HEADER_HEIGHT
@@ -730,17 +838,21 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                         continue
                     if group.rows:
                         height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-                            group.rows, budget
+                            group.rows, row_title_budget
                         )
                     elif group.empty_copy:
-                        height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
+                        height += ConsoleWorkspaceContextTray._empty_copy_line_count(
+                            group.empty_copy, empty_copy_budget
+                        )
                 continue
             if section.rows:
                 height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
-                    section.rows, budget
+                    section.rows, row_title_budget
                 )
             elif section.empty_copy:
-                height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
+                height += ConsoleWorkspaceContextTray._empty_copy_line_count(
+                    section.empty_copy, empty_copy_budget
+                )
         return max(_CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT, height)
 
     def compose(self) -> ComposeResult:
@@ -1041,7 +1153,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         row_index = 0
         conversation_list = Vertical(id="console-workspace-conversations")
         conversation_list.styles.height = self._conversation_browser_list_height(
-            browser, self._browser_title_budget()
+            browser,
+            self._browser_title_budget(),
+            self._row_content_width,
         )
         conversation_list.styles.min_height = 0
         with conversation_list:

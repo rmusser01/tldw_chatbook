@@ -2060,6 +2060,30 @@ class ChatScreen(BaseAppScreen):
         # switch initiation; consumed by the deferred draft swap.
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
         self._console_agent_bridge: Any | None = None
+        # TASK-1141: round/request ids (namespaced "mcp:<round_id>" /
+        # "install:<request_id>" / "script:<request_id>") this screen has
+        # already fired a park toast for -- see `_park_console_approval`'s
+        # docstring for the re-invocation hazard this guards against. Never
+        # pruned: entries are one-off UUIDs minted per approval-like round,
+        # so this set's steady-state size is bounded by "how many rounds
+        # this screen instance has EVER parked", not by anything unbounded
+        # over a session's lifetime.
+        self._console_toasted_park_round_ids: set[str] = set()
+        #: TASK-1141 review round 1: the LAST non-empty snapshot of
+        #: `_current_park_round_ids(controller, session_id)`, per session
+        #: id -- the fallback identity `_park_console_approval` consults
+        #: when a re-invocation arrives AFTER the round's own teardown has
+        #: already popped it from every live `_parked_*_payloads` map (so
+        #: `_current_park_round_ids` alone reads back empty and can no
+        #: longer distinguish "a stray post-teardown re-announcement of a
+        #: round already toasted" from "a session this screen has never
+        #: parked anything for"). Overwritten (not merged) on every
+        #: non-empty snapshot -- only the MOST RECENT live round/request
+        #: id set for a session is a useful fallback key, since anything
+        #: older has already been superseded or resolved. Never pruned,
+        #: for the same "bounded by distinct sessions ever parked" reason
+        #: as `_console_toasted_park_round_ids` above.
+        self._console_last_parked_round_ids: dict[str, frozenset[str]] = {}
         self._console_agent_drilldown_run_id: str | None = None
         # Finding C: the conversation the drill-in was set for -- used to
         # detect a conversation/session switch and drop back to the
@@ -7533,11 +7557,21 @@ class ChatScreen(BaseAppScreen):
         Parallel-agents spec §6, fix round 2 (live-smoke finding): the Agent
         section's persisted preference defaults collapsed (``agent_open=
         False``, see ``ConsoleRailPreferences``) and nothing previously
-        reopened it, so its BODY -- where the fleet summary line
-        (``#console-agent-fleet-summary``) lives -- stayed ``display: none``
-        even while another session was running or parked on an approval.
-        Scrolling the rail only ever reached the still-collapsed header; the
-        line itself was unreachable regardless of scroll position.
+        reopened it, so its BODY -- the status/step/sub-agent detail for
+        the viewed session's own run -- stayed ``display: none`` even
+        while another session was running or parked on an approval.
+        Scrolling the rail only ever reached the still-collapsed header;
+        that detail was unreachable regardless of scroll position.
+
+        TASK-1140 (UAT F1, fix round 1): ``#console-agent-fleet-summary``
+        itself no longer lives inside this section's body -- it is now a
+        pinned, non-scrolling sibling of the rail's own header (see the
+        compose block a few hundred lines up), painted unconditionally
+        whenever the fleet has anything to report, independent of this
+        section's open/collapsed state. This method's force-open still
+        matters for the Agent section's OWN contextual detail (status/
+        steps/sub-agents for whichever conversation is viewed), just not
+        for fleet-line visibility anymore.
 
         Mirrors ``_apply_pending_launch_inspector_auto_open``: an ephemeral
         override applied to the RENDERED rail state only, never written back
@@ -7545,8 +7579,8 @@ class ChatScreen(BaseAppScreen):
         takes effect the moment the fleet goes quiet (``fleet_summary_
         counts()`` returns to ``(0, 0)``). Uses ``_console_agent_fleet_
         summary_line()`` -- the exact same non-empty-string signal the
-        fleet Static's own ``display`` toggles on -- so "must render open"
-        and "has a line to show" can never disagree.
+        pinned fleet Static's own ``display`` toggles on -- so "must render
+        the section open" and "has a line to show" can never disagree.
 
         TASK-915: fix round 3 (live-smoke finding). Round 2's force was a
         one-shot-per-rendered-state override, but the 0.2s sync tick
@@ -9721,6 +9755,51 @@ class ChatScreen(BaseAppScreen):
                         collapse_button.styles.min_width = 3
                         collapse_button.styles.max_width = 3
                         yield collapse_button
+
+                    # TASK-1140 (UAT F1, fix round 1): the fleet summary --
+                    # "N other agents running, M waiting for approval."
+                    # (parallel-agents spec §6, PA-T8) -- is pinned HERE, a
+                    # plain sibling of `left_rail_header` inside the
+                    # non-scrolling `left_rail` Vertical, deliberately
+                    # OUTSIDE `#console-left-rail-body` (the `VerticalScroll`
+                    # every section below shares). `#console-left-rail-body`
+                    # is CSS `height: 1fr` -- it only ever claims whatever
+                    # vertical space is left over after ITS non-scrolling
+                    # siblings (the header, this line) are laid out, so this
+                    # widget is painted unconditionally: independent of rail
+                    # scroll position, which sections are open/collapsed,
+                    # and how much step content the Agent section carries.
+                    # Round 1 (compose-order-only, fleet line first inside
+                    # the Agent section body) was insufficient -- Session
+                    # and Model are BOTH open by persisted default
+                    # (`ConsoleRailPreferences.session_open`/`model_open`)
+                    # and together already exceed the rail body's own
+                    # ~10-row visible budget in a 44-row terminal, so any
+                    # position inside that shared scrollable flow could
+                    # still land below the fold before a user ever touches
+                    # the Agent section's own content.
+                    #
+                    # Present but display:none when both counts are zero
+                    # (mirrors the recovery Static in the Model section),
+                    # so `_sync_console_agent_section`'s targeted update
+                    # never needs to mount/unmount it -- and the pinned slot
+                    # collapses to zero rows rather than leaving a blank
+                    # line (`height: auto` + `display: none` both cooperate
+                    # here: Textual excludes a `display: none` widget from
+                    # layout entirely).
+                    fleet_line = self._console_agent_fleet_summary_line()
+                    fleet_summary = Static(
+                        fleet_line,
+                        id="console-agent-fleet-summary",
+                        classes="console-agent-section-fleet-summary",
+                        markup=False,
+                    )
+                    fleet_summary.styles.height = "auto"
+                    fleet_summary.styles.display = (
+                        "block" if fleet_line else "none"
+                    )
+                    yield fleet_summary
+
                     with VerticalScroll(
                         id="console-left-rail-body",
                         classes="console-left-rail-body",
@@ -9902,6 +9981,27 @@ class ChatScreen(BaseAppScreen):
                         if not rail_state.agent_open:
                             agent_body.styles.display = "none"
                         with agent_body:
+                            # TASK-1140 (UAT F1, fix round 1): the fleet
+                            # summary Static used to mount HERE (first, per
+                            # round 1's compose-order-only fix). Round 1's
+                            # own harness proved that placement insufficient
+                            # once the reviewer ran it against Session/Model
+                            # left at their real PERSISTED DEFAULTS (both
+                            # open) rather than collapsed: those two
+                            # sections alone already exceed the rail's own
+                            # ~10-row visible budget in a 44-row terminal,
+                            # so ANY position inside the shared, scrollable
+                            # `#console-left-rail-body` -- including the top
+                            # of the Agent section -- can still land below
+                            # the fold. The widget now lives OUTSIDE that
+                            # scrollable flow entirely (see `left_rail_header`
+                            # below, a few hundred lines up in this same
+                            # compose method) so it is painted regardless of
+                            # scroll position, section open/collapsed state,
+                            # or step-content length. Not duplicated here --
+                            # two widgets sharing one id is invalid, and the
+                            # pinned copy already covers "does the Agent
+                            # section's own busy state show a fleet line".
                             status_line, steps_text, subagents_text = (
                                 self._console_agent_section_lines()
                             )
@@ -9923,23 +10023,6 @@ class ChatScreen(BaseAppScreen):
                                 classes="console-agent-section-subagents",
                                 markup=False,
                             )
-                            # Parallel-agents spec §6 (PA-T8): fleet summary
-                            # -- "N other agents running, M waiting for
-                            # approval." Present but display:none when both
-                            # counts are zero (mirrors the recovery Static
-                            # above), so `_sync_console_agent_section`'s
-                            # targeted update never needs to mount/unmount.
-                            fleet_line = self._console_agent_fleet_summary_line()
-                            fleet_summary = Static(
-                                fleet_line,
-                                id="console-agent-fleet-summary",
-                                classes="console-agent-section-fleet-summary",
-                                markup=False,
-                            )
-                            fleet_summary.styles.display = (
-                                "block" if fleet_line else "none"
-                            )
-                            yield fleet_summary
                             back_button = Button(
                                 "Back",
                                 id="console-agent-drilldown-back",
@@ -10196,6 +10279,8 @@ class ChatScreen(BaseAppScreen):
         """Initialize the native Console screen."""
         super().on_mount()
 
+        self._notify_console_fleet_teardown_if_any()
+
         # Restore collapsible states after mount
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
@@ -10212,6 +10297,89 @@ class ChatScreen(BaseAppScreen):
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
 
+    def _notify_console_fleet_teardown_if_any(self) -> None:
+        """One-shot toast reporting a fleet the LAST Console instance lost.
+
+        TASK-1143 (F5): navigating away from Console unmounts the screen,
+        and ``on_unmount`` records how many runs/rounds its ``shutdown()``
+        call killed in ``app_instance._console_fleet_teardown_notice`` --
+        the app outlives this screen instance, and screens are never
+        cached (``TldwCli._create_navigation_screen`` always builds a
+        fresh instance, so there is no "same screen" to have shown a toast
+        on when it happened). A non-zero count here means the user left a
+        busy Console before this mount and the fleet was torn down without
+        being acknowledged; show it exactly once and clear the slot so an
+        ordinary mount (nothing killed, or already reported) stays silent.
+        """
+        count = getattr(self.app_instance, "_console_fleet_teardown_notice", 0)
+        if not count:
+            return
+        self.app_instance._console_fleet_teardown_notice = 0
+        noun = "run" if count == 1 else "runs"
+        verb = "was" if count == 1 else "were"
+        self.app_instance.notify(
+            f"{count} agent {noun} {verb} cancelled when you left Console.",
+            severity="warning",
+        )
+
+    async def confirm_navigation(self) -> bool:
+        """Confirm leaving Console while the agent fleet still has live work.
+
+        TASK-1143 (F5): navigating away from Console unmounts this screen,
+        and ``on_unmount`` awaits ``ConsoleChatController.shutdown()`` --
+        cancelling every in-flight stream and denying every pending/parked
+        approval round for EVERY session this controller owns, not just
+        the one being viewed (see ``ConsoleChatController.shutdown``'s own
+        docstring). That is correct, by-design teardown -- screens are
+        never cached, so nothing could resolve those rounds through this
+        instance again regardless -- but it was previously silent. This
+        hook is the ``flush_pending_work`` sibling seam
+        ``TldwCli.handle_screen_navigation`` awaits before the switch
+        commits: returning ``False`` keeps this screen (and its
+        controller, and its fleet) mounted exactly like a flush veto.
+
+        Returns:
+            ``True`` when navigation may proceed -- an idle fleet (the
+            common case: no dialog, no delay), or the user chose "Leave"
+            in the confirmation dialog. ``False`` when the user chose
+            "Stay": the screen and its controller are left exactly as
+            they were, nothing cancelled, nothing denied.
+        """
+        controller = self._console_chat_controller
+        if controller is None:
+            return True
+        busy_count = controller.busy_fleet_session_count()
+        if busy_count <= 0:
+            return True
+        noun = "run" if busy_count == 1 else "runs"
+        dialog = ConfirmationDialog(
+            title="Leave Console?",
+            message=(
+                f"{busy_count} agent {noun} will be cancelled if you "
+                "leave Console. Leave anyway?"
+            ),
+            confirm_label="Leave",
+            cancel_label="Stay",
+        )
+        # `push_screen_wait` (the usual way to await a dialog's result) may
+        # ONLY be called from within a worker -- `App.push_screen` raises
+        # `NoActiveWorker` otherwise, since blocking a bare Future-await
+        # for a result only a LATER message resolves is exactly the
+        # deadlock shape workers exist to make safe. `confirm_navigation`
+        # itself runs on `TldwCli.handle_screen_navigation`'s own call
+        # stack (an ordinary message handler, not a worker), so the wait
+        # is delegated to a worker here and its result awaited back out --
+        # `exit_on_error=False` so a broken dialog fails this navigation
+        # closed (see the caller's except branch) rather than crashing the
+        # app.
+        worker = self.run_worker(
+            self.app_instance.push_screen_wait(dialog),
+            exclusive=False,
+            exit_on_error=False,
+        )
+        proceed = await worker.wait()
+        return bool(proceed)
+
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
         self._stop_console_transcript_sync_timer()
@@ -10225,7 +10393,19 @@ class ChatScreen(BaseAppScreen):
         self._console_original_attempt_previews.clear()
         controller = self._console_chat_controller
         if controller is not None:
+            # TASK-1143 (F5): snapshot what shutdown() is ABOUT to kill
+            # BEFORE calling it, using the SAME busy_fleet_session_count()
+            # confirm_navigation showed the user before they chose "Leave"
+            # (or that a non-navigation teardown, e.g. app exit, never got
+            # to show) -- the pre-navigate warning and the post-navigate
+            # record always agree on N. The app (not this doomed screen)
+            # holds the count so the NEXT Console mount -- a fresh
+            # instance; screens are never cached -- can report it via
+            # ``_notify_console_fleet_teardown_if_any``.
+            killed = controller.busy_fleet_session_count()
             await controller.shutdown()
+            if killed:
+                self.app_instance._console_fleet_teardown_notice = killed
         gateway = self._console_provider_gateway
         close = getattr(gateway, "aclose", None)
         if callable(close):
@@ -15834,6 +16014,63 @@ class ChatScreen(BaseAppScreen):
         registered yet -- i.e. when this method is used standalone (the
         test-seam usage the docstring above describes).
 
+        TASK-1141 (UAT F2): this callback's "once per round" guarantee
+        previously relied ENTIRELY on the structural assumption that each
+        owning bridge invokes it exactly once per round -- true for a
+        single, race-free `request_mcp_approvals`/`request_skill_install_
+        confirm`/`request_skill_script_confirm` call, but the callback
+        itself carried no memory of which round it had already announced.
+        Live UAT observed a duplicate toast for an unchanged, still-parked
+        round: with a background session already parked (toast shown), a
+        DIFFERENT viewed session's own run completing re-fired the exact
+        same toast text for the backgrounded round, even though nothing
+        about that round had changed. Exhaustively tracing the suspects
+        (`_set_run_state`'s COMPLETED branch, `_finalize_agent_*`,
+        `switch_session`/`_remount_parked_*`'s re-derive step, the
+        unvisited-marker stamp) found none of them invoke this callback a
+        second time for the SAME round under single-threaded/synchronous
+        conditions -- but nothing in this method itself prevented a
+        second, differently-triggered invocation (e.g. a re-marshal racing
+        `call_from_thread`, or any future caller of the shared park seam)
+        from re-announcing a round whose identity hasn't changed. Rather
+        than depend on every CALLER staying single-invocation-per-round
+        forever, this method now keys its own idempotency directly off the
+        round/request id(s) the owning controller is CURRENTLY retaining
+        for `session_id` (`_parked_approval_payloads`/`_parked_skill_
+        install_payloads`/`_parked_skill_script_payloads` -- the exact
+        maps `switch_session` re-derives the mounted card from), via
+        `_current_park_round_ids`. A round/request id already recorded in
+        `_console_toasted_park_round_ids` is a re-announcement of a round
+        this screen already toasted for -- silently absorbed. A round/
+        request id NOT yet recorded (a genuinely new round, even for a
+        session that already has an outstanding one) still toasts, per
+        spec (parking must never go silent just because a SIBLING round is
+        also live). When none of the three maps carry any id for
+        `session_id` yet (the standalone test-seam usage described above,
+        or a caller that races ahead of the owning bridge's own
+        `_parked_*_payloads` write), there is no identity to key on, so
+        this falls back to the pre-TASK-1141 unconditional toast --
+        preserving every existing direct-call test's behavior.
+
+        TASK-1141 review round 1: the live-map lookup above alone is
+        blind to a re-invocation that arrives AFTER the round's own
+        teardown -- every owning bridge's `finally` pops its round out of
+        `_parked_*_payloads` once resolved (`request_mcp_approvals`'
+        docstring on that pop explains why), so a STRAY re-invocation
+        landing post-teardown finds all three maps empty and, pre-review,
+        fell straight into the "no identity to key on" unconditional-toast
+        branch above -- exactly the live-reproduced gap this review round
+        closes. `_console_last_parked_round_ids` remembers the most recent
+        NON-empty snapshot `_current_park_round_ids` ever returned for
+        `session_id`; when the live lookup now comes back empty, that
+        remembered snapshot is consulted instead: if every id in it is
+        already in `_console_toasted_park_round_ids`, this is a
+        post-teardown re-announcement of an already-surfaced round --
+        absorbed, same as the still-live case. Only when NO snapshot was
+        ever recorded for `session_id` (this screen has truly never seen a
+        live round for it -- the standalone test-seam case) does the
+        unconditional-toast fallback still apply.
+
         Args:
             session_id: The parked round's OWNING session.
         """
@@ -15842,12 +16079,84 @@ class ChatScreen(BaseAppScreen):
             return
         if not controller.has_pending_approval_round(session_id):
             controller.set_run_pending_approval(session_id, True)
+        current_round_ids = self._current_park_round_ids(controller, session_id)
+        if current_round_ids:
+            # Remember this as the most recent LIVE snapshot for
+            # `session_id`, unconditionally -- consulted below by a later
+            # invocation that arrives after this round's own teardown has
+            # already emptied every live map (review round 1).
+            self._console_last_parked_round_ids[session_id] = current_round_ids
+            new_round_ids = current_round_ids - self._console_toasted_park_round_ids
+            if not new_round_ids:
+                # Every round/request id currently parked for this session
+                # has already been toasted -- this invocation is a
+                # re-announcement (re-marshal/re-derive/re-park) of round(s)
+                # already surfaced, not a genuinely new one.
+                return
+            self._console_toasted_park_round_ids.update(current_round_ids)
+        else:
+            # Nothing is currently live for `session_id` in any of the
+            # three bridges' payload maps. Fall back to the last snapshot
+            # this screen ever saw live for it (review round 1): if every
+            # id in that snapshot was already toasted, this is a stray
+            # post-teardown re-invocation for an already-surfaced round --
+            # absorbed. No snapshot at all means this screen has never
+            # parked a round for `session_id` (the standalone test-seam
+            # usage this method's own docstring describes), so it falls
+            # through and toasts, preserving that pre-TASK-1141 behavior.
+            last_round_ids = self._console_last_parked_round_ids.get(session_id)
+            if last_round_ids and last_round_ids <= self._console_toasted_park_round_ids:
+                return
         session_title, workspace_name = self._console_session_title_and_workspace_name(
             controller, session_id
         )
         self.app_instance.notify(
             f"Agent in {session_title} ({workspace_name}) needs approval."
         )
+
+    @staticmethod
+    def _current_park_round_ids(
+        controller: ConsoleChatController, session_id: str
+    ) -> frozenset[str]:
+        """Return every round/request id CURRENTLY retained for ``session_id``.
+
+        TASK-1141: namespaced per bridge (``"mcp:"``/``"install:"``/
+        ``"script:"``) since the three bridges mint their ids
+        independently -- two different bridges could theoretically mint
+        the same raw UUID by construction, however astronomically
+        unlikely, and namespacing costs nothing. Reads the SAME three
+        retained-payload maps ``switch_session``/``_remount_parked_
+        skill_install``/``_remount_parked_skill_script`` already treat as
+        the single source of truth for "what round is this session's card
+        showing right now" -- deliberately not a separate/parallel piece
+        of state that could itself drift from theirs.
+
+        Args:
+            controller: The owning Console chat controller.
+            session_id: The session to look up.
+
+        Returns:
+            A ``frozenset`` of namespaced round/request ids, empty when
+            none of the three bridges currently retain a payload for
+            ``session_id``.
+        """
+        ids: set[str] = set()
+        mcp_payload = controller._parked_approval_payloads.get(session_id)
+        if mcp_payload is not None:
+            round_id = mcp_payload.get("round_id")
+            if round_id:
+                ids.add(f"mcp:{round_id}")
+        install_payload = controller._parked_skill_install_payloads.get(session_id)
+        if install_payload is not None:
+            request_id = install_payload.get("request_id")
+            if request_id:
+                ids.add(f"install:{request_id}")
+        script_payload = controller._parked_skill_script_payloads.get(session_id)
+        if script_payload is not None:
+            request_id = script_payload.get("request_id")
+            if request_id:
+                ids.add(f"script:{request_id}")
+        return frozenset(ids)
 
     def _console_session_title_and_workspace_name(
         self, controller: ConsoleChatController, session_id: str

@@ -3422,6 +3422,14 @@ class TldwCli(
         load_runtime_policy_for_app(self)
         self.screen_state_store = ScreenStateStore()
         self.pending_handoffs = PendingHandoffStore()
+        #: TASK-1143 (F5): count of Console agent runs/rounds the last
+        #: navigation-away teardown killed (``ChatScreen.on_unmount`` ->
+        #: ``ConsoleChatController.shutdown()``). The app outlives the
+        #: screen instance that recorded it -- screens are never cached
+        #: (``_create_navigation_screen``) -- so the NEXT Console mount
+        #: reads and clears this one-shot slot to show a single toast.
+        #: 0 means nothing to report.
+        self._console_fleet_teardown_notice: int = 0
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
@@ -6033,6 +6041,45 @@ class TldwCli(
                 try:
                     self.notify(
                         "Couldn't save pending changes before switching screens.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
+                return
+
+        # TASK-1143 (F5): give the outgoing screen one awaited chance to
+        # ASK before it (and whatever it owns) is torn down -- e.g. Console
+        # unmounting cancels every in-flight run and denies every pending/
+        # parked approval round for its ConsoleChatController (see
+        # ChatScreen.on_unmount / ConsoleChatController.shutdown). Mirrors
+        # the flush-veto seam immediately above: False keeps the outgoing
+        # screen mounted exactly like a flush veto, only here the decision
+        # comes from a user-facing confirmation dialog rather than an
+        # unresolved save conflict.
+        confirm_navigation = getattr(current_screen, "confirm_navigation", None)
+        if callable(confirm_navigation):
+            try:
+                confirm_result = confirm_navigation()
+                if inspect.isawaitable(confirm_result):
+                    confirm_result = await confirm_result
+                if confirm_result is False:
+                    logger.info(
+                        f"Navigation to {screen_name} vetoed by the outgoing "
+                        "screen's confirm_navigation"
+                    )
+                    return
+            except Exception as exc:
+                # A broken confirm hook must not silently let navigation
+                # proceed and tear down live work the user was never asked
+                # about -- fail closed, same as the flush veto above.
+                logger.warning(
+                    "Screen navigation confirm failed (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+                try:
+                    self.notify(
+                        "Couldn't confirm leaving this screen; staying put.",
                         severity="warning",
                     )
                 except Exception:

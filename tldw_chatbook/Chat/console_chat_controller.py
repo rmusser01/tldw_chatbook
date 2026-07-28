@@ -1208,6 +1208,34 @@ class ConsoleChatController:
         other_busy = {sid for sid in self._live_busy_session_ids() if sid != active}
         return len(other_busy - other_pending), len(other_pending)
 
+    def busy_fleet_session_count(self) -> int:
+        """Count of LIVE sessions ``shutdown()`` would tear down right now.
+
+        TASK-1143 (F5): union of ``_live_busy_session_ids()`` (a session
+        with an active stream/citation-repair task -- the same set
+        ``in_flight_run_count`` reports) and every LIVE session with at
+        least one outstanding approval-like round, mounted or parked
+        (``_pending_approvals``, the same registry ``run_marker_for``'s
+        NEEDS_APPROVAL branch and ``has_pending_approval_round`` read --
+        MCP tool approvals, skill-install, and skill-script confirms all
+        register through the same ``add_pending_round``). A session that
+        is both busy and mid-approval is counted once: this answers "how
+        many agent runs" for fleet-teardown UX (the Console
+        confirm-on-navigate guard and its post-navigate record), not "how
+        many independent events" -- no new definition of "busy" beyond
+        the union of the two predicates those existing callers already
+        use.
+
+        Returns:
+            The number of live sessions with in-flight work and/or an
+            outstanding approval-like round -- 0 when the fleet is idle.
+        """
+        live_ids = {session.id for session in self.store.sessions()}
+        with self._approval_state_lock:
+            pending_ids = set(self._pending_approvals)
+        busy_ids = set(self._live_busy_session_ids())
+        return len(busy_ids | (pending_ids & live_ids))
+
     @property
     def max_parallel_runs(self) -> int:
         """User-adjustable global cap on simultaneous runs (parallel-agents spec §4).

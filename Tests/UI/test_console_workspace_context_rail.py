@@ -4,18 +4,25 @@ from __future__ import annotations
 
 import inspect
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.test_console_workspace_action_row_geometry import StyledConsoleHarness
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
+)
 from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
@@ -26,6 +33,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
+from tldw_chatbook.Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
 from tldw_chatbook.Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     ConsoleWorkspaceACPHandoffState,
@@ -1575,6 +1583,463 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
         )
 
 
+async def _click_conversation_browser_toggle(console, pilot, selector: str) -> None:
+    """Scroll a browser toggle into view, then drive it via a REAL click at
+    the WIDGET's own center.
+
+    `.press()` (used by every collapse test above this point in the file)
+    calls the Button's own handler directly and never exercises Textual's
+    actual click-routing (`get_widget_at` hit-testing against the
+    compositor). This helper does exercise real click routing, but clicks
+    at the widget's center coordinate, not at the caret glyph's actual
+    rendered screen position -- see `test_section_header_caret_is_
+    clickable_at_its_rendered_screen_coordinates` below for the
+    coordinate-honest version that reproduces TASK-1142/UAT F4 directly
+    (round-1 review: this widget-center approach could not distinguish a
+    real fix from an inert one, since a toggle that's merely present
+    somewhere on screen still centers inside its own region regardless of
+    whether its rendered caret is where a live user would actually click).
+    Scrolling first mirrors what a real user does before clicking anything
+    below the fold; without it, `pilot.click` can silently miss a widget
+    that is currently clipped out of the rail's visible viewport (nothing
+    to do with either defect -- you simply cannot click what is not on
+    screen).
+    """
+    rail_body = console.query_one("#console-left-rail-body")
+
+    # The tray settles its post-recompose layout over more than one message
+    # turn (`_schedule_recomposed_content_fit` schedules nested `call_later`
+    # passes plus a 0.01s timer): a freshly-scrolled/recomposed region can
+    # report a screen position the compositor has not painted yet, which is
+    # exactly the kind of stale-geometry race a real user's own click could
+    # also lose to. Re-scroll and re-check on every attempt (not just once)
+    # until the toggle's own reported region agrees with what
+    # `get_widget_at` resolves there, then click.
+    for _ in range(10):
+        toggle = console.query_one(selector, Button)
+        rail_body.scroll_to_widget(toggle, animate=False)
+        await pilot.pause()  # wait for CPU idle, not a fixed guessed delay
+        toggle = console.query_one(selector, Button)
+        cx = toggle.region.x + toggle.region.width // 2
+        cy = toggle.region.y + toggle.region.height // 2
+        widget_at_center, _ = console.screen.get_widget_at(cx, cy)
+        if widget_at_center is toggle:
+            break
+    else:
+        raise AssertionError(
+            f"{selector!r} never settled at a hittable on-screen position"
+        )
+
+    landed = await pilot.click(selector)
+    assert landed, f"real click missed {selector!r} (not on screen / not hittable)"
+    await pilot.pause(0.2)
+
+
+async def _seed_console_transcript_message(console) -> None:
+    """Append one message to the active session's transcript.
+
+    Session onboarding renders a full-screen setup card + backdrop
+    (`ConsoleSetupBackdrop`) over an EMPTY transcript, which swallows every
+    click in the harness regardless of where it lands -- a real user with
+    any chat history never sees it. Every real-click test in this file
+    seeds one message first so it is exercising section-toggle click
+    routing, not incidentally re-testing the onboarding card.
+    """
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    await console._sync_native_console_chat_ui()
+    console._sync_console_transcript_guidance()
+
+
+@pytest.mark.asyncio
+async def test_section_header_toggles_via_real_click_and_persists_across_rebuild() -> (
+    None
+):
+    """TASK-1142 (UAT F4): Starred/Workspaces/Chats section headers render a
+    collapse caret that must actually respond to a real mouse click, not
+    just `Button.press()`. Drives the real click path end to end: collapse,
+    persistence across a rail rebuild (the same `_sync_console_workspace_
+    context` seam a workspace switch drives), then expand -- mirroring
+    `test_console_workspace_browser_group_collapse_persists_locally` above
+    but through `pilot.click` instead of `.press()`.
+
+    Collapse and expand are each driven from a freshly rebuilt tray rather
+    than chained back-to-back on one instance: `ConsoleWorkspaceContextTray.
+    _fit_height_to_content` settles its own auto-height over several
+    deferred passes, and re-toggling within a couple hundred milliseconds
+    of the previous toggle's own settle can catch it mid-flight (a
+    real, pre-existing race in that unrelated fit-pass machinery, not a
+    click-routing defect and out of this task's scope) -- the rail-rebuild
+    seam this test already needs for persistence conveniently also gives
+    every click a fresh, from-scratch layout to click into.
+    """
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    default_workspace = service.get_active_workspace()
+    service.link_membership(
+        default_workspace.workspace_id,
+        item_type="conversation",
+        item_id="real-click-chat-a",
+        role="workspace-thread",
+        title="Real Click Chat A",
+    )
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _seed_console_transcript_message(console)
+        await pilot.pause(0.2)
+
+        assert any(
+            "Real Click Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_EXPANDED
+
+        # Click: collapses -- rows unmount, caret flips.
+        await _click_conversation_browser_toggle(
+            console, pilot, "#console-conversation-browser-section-toggle-chats"
+        )
+        assert all(
+            "Real Click Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_COLLAPSED
+        collapsed_groups = app.app_config["console"]["conversation_browser"][
+            "collapsed_groups"
+        ]
+        assert collapsed_groups["section:chats"] is True
+
+        # Rebuild the rail (a workspace switch forces a fresh
+        # `_build_console_workspace_context_state()` and re-syncs the
+        # mounted tray with a brand-new instance) -- collapsed state must
+        # round-trip.
+        other_workspace = service.create_workspace(
+            workspace_id="ws-rebuild-check", name="Rebuild Check"
+        )
+        service.set_active_workspace(other_workspace.workspace_id)
+        console._sync_console_workspace_context()
+        await pilot.pause(0.2)
+        service.set_active_workspace(default_workspace.workspace_id)
+        console._sync_console_workspace_context()
+        await pilot.pause(0.2)
+
+        assert all(
+            "Real Click Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_COLLAPSED
+
+        # Click on the freshly-rebuilt tray: expands -- rows remount, caret
+        # flips back.
+        await _click_conversation_browser_toggle(
+            console, pilot, "#console-conversation-browser-section-toggle-chats"
+        )
+        assert any(
+            "Real Click Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-chats", Button
+        )
+        assert str(toggle.label) == GLYPH_EXPANDED
+        assert (
+            app.app_config["console"]["conversation_browser"]["collapsed_groups"][
+                "section:chats"
+            ]
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_collapsing_workspaces_via_real_click_reveals_aggregate_marker_from_busy_group() -> (
+    None
+):
+    """TASK-1142 + TASK-912: task-912 taught the Workspaces section header
+    to borrow the most-urgent glyph from a hidden busy group when
+    collapsed, but with the header inert to real clicks that marker was
+    only ever reachable via the empty-Chats default collapse -- never by a
+    user actually collapsing a populated section live. A real background
+    session with a live run in its own workspace group, collapsed via the
+    real click path, must surface the aggregate glyph on the header.
+    """
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    busy_workspace = service.create_workspace(workspace_id="ws-busy", name="Busy")
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        store = console._ensure_console_chat_store()
+        viewed = store.ensure_session()
+        store.append_message(viewed.id, role=ConsoleMessageRole.USER, content="hi")
+        background = store.create_session(
+            title="Busy background chat",
+            workspace_id=busy_workspace.workspace_id,
+        )
+        store.switch_session(viewed.id)  # stay viewing the first session
+
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "running"),
+            session_id=background.id,
+        )
+        await console._sync_native_console_chat_ui()
+        console._sync_console_transcript_guidance()
+        await pilot.pause(0.2)
+
+        # Expanded: the row shows its own marker, so the header stays plain.
+        assert (
+            _static_plain(console, "#console-conversation-browser-workspaces-title")
+            == "Workspaces"
+        )
+
+        await _click_conversation_browser_toggle(
+            console, pilot, "#console-conversation-browser-section-toggle-workspaces"
+        )
+
+        assert (
+            _static_plain(console, "#console-conversation-browser-workspaces-title")
+            == "Workspaces ●"
+        )
+
+
+def _render_screen_lines(console) -> list[str]:
+    """Render the full screen to plain text lines -- the same view a human
+    (or a tmux capture, matching the UAT's own flow) would see, not the
+    widget tree."""
+    compositor = console.screen._compositor
+    return [
+        "".join(seg.text for seg in strip._segments)
+        for strip in compositor.render_strips()
+    ]
+
+
+def _find_caret_in_row_with(lines: list[str], label_text: str) -> tuple[int, int]:
+    """Return the (x, y) SCREEN coordinates of the caret glyph on the row
+    containing ``label_text``, using cumulative CELL width up to the glyph
+    (matches how a real terminal/tmux column position works, not a raw
+    Python string index -- some rendered rows carry box-drawing characters
+    ahead of the target text)."""
+    for y, line in enumerate(lines):
+        if label_text in line and (GLYPH_EXPANDED in line or GLYPH_COLLAPSED in line):
+            for glyph in (GLYPH_EXPANDED, GLYPH_COLLAPSED):
+                idx = line.find(glyph)
+                if idx != -1:
+                    return cell_len(line[:idx]), y
+    raise AssertionError(f"No caret found on a rendered row containing {label_text!r}")
+
+
+@pytest.mark.asyncio
+async def test_section_header_caret_is_clickable_at_its_rendered_screen_coordinates() -> (
+    None
+):
+    """TASK-1142 round-1 review: the round-0 fix (an inline width on the
+    toggle `Button`) was INERT. Removing it left every real-click test in
+    this file passing, because `pilot.click(selector)` clicks at the
+    WIDGET's own center -- never at the coordinates a live user's mouse
+    actually lands on, which is the caret GLYPH's position in the rendered
+    pane. This test is coordinate-honest: it locates the caret exactly the
+    way the UAT's tmux flow did (``line.index('▾')`` against the rendered
+    text, not a widget query), then clicks at THOSE screen coordinates via
+    ``pilot.click(offset=...)`` with no selector.
+
+    The reviewer's hypothesis A (the visible caret is painted inside the
+    non-interactive title `Static`, not the `Button`) does not hold: a
+    width-scan across 100-200 column terminals on a freshly-mounted tray
+    found the glyph's rendered position resolving to the toggle `Button`
+    every time. The REAL, reproduced mechanism: ``_conversation_browser_
+    list_height`` (the tray's own auto-height estimate for `#console-
+    workspace-conversations`) assumed every empty-copy line ("No starred
+    conversations." etc.) renders as exactly one row. That Static is NOT
+    reduced by the star-column chrome width the way a row title is, so at
+    the tray's real content width it silently wraps to two lines while the
+    heuristic still counted one -- undercounting the container's explicit
+    height and clipping whatever composed after it out of the tray's own
+    visible bounds. Concretely: collapse "Chats" via its rendered caret,
+    then look for "Chats"'s own (now ▸) caret again in the freshly
+    rendered pane -- on the unfixed code this raises ``AssertionError``
+    (verified directly against 168f61ed8: the header is not merely
+    off-position, it is not painted at all), because "No starred
+    conversations." and "No workspace conversations." both wrap to two
+    rows above it. Fixed in ``_empty_copy_line_count`` /
+    ``_conversation_browser_list_height`` (see their docstrings).
+    """
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    default_workspace = service.get_active_workspace()
+    service.link_membership(
+        default_workspace.workspace_id,
+        item_type="conversation",
+        item_id="real-click-chat-a",
+        role="workspace-thread",
+        title="Real Click Chat A",
+    )
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _seed_console_transcript_message(console)
+        await pilot.pause(0.3)
+
+        # Click #1 at the CARET'S rendered screen coordinates: collapse.
+        lines = _render_screen_lines(console)
+        x, y = _find_caret_in_row_with(lines, "Chats")
+        landed = await pilot.click(offset=(x, y))
+        assert landed, "click at the caret's rendered coordinates missed the toggle"
+        await pilot.pause(0.3)
+        assert all(
+            "Real Click Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        ), "collapse via glyph-coordinate click did not take effect"
+
+        # Click #2: re-locate the caret in the FRESHLY rendered pane (not
+        # the widget tree, not a cached position) and click there again.
+        lines2 = _render_screen_lines(console)
+        x2, y2 = _find_caret_in_row_with(lines2, "Chats")
+        landed2 = await pilot.click(offset=(x2, y2))
+        assert landed2, "click at the caret's rendered coordinates missed the toggle"
+        await pilot.pause(0.3)
+        assert any(
+            "Real Click Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        ), "expand via glyph-coordinate click did not take effect"
+
+
+@pytest.mark.asyncio
+async def test_empty_copy_estimator_handles_three_plus_line_wrap() -> None:
+    """TASK-1142 round-2 review (Qodo, PR #1050): ``_empty_copy_line_count``
+    called ``wrap_console_conversation_title``, which hard-caps at two
+    lines and ellipsizes -- correct for a row title, wrong for an
+    empty-copy ``Static``, which Rich wraps with no cap at all. The round-1
+    width-probe (100-220 columns) found no divergence only because the
+    CURRENT empty-copy strings ("No starred conversations." etc.) never
+    exceed two lines above the rail's minimum width. This forces a 3+-line
+    wrap through the real render seam -- a deliberately long empty-copy
+    string injected into an otherwise-real, `build_console_conversation_
+    browser_state`-built state and fed through `tray.sync_state()`, exactly
+    like every other state-injection test in this file -- and checks the
+    estimator against the REAL settled `Static` height, plus that a LATER
+    section header ("Chats") is still hittable at its rendered screen
+    coordinates (the round-1 coordinate-honest pattern): not just present,
+    not clipped out of the tray's own box by an undercounted estimate.
+
+    Verified (see TASK-1142's Implementation Notes / report) that reverting
+    ``_empty_copy_line_count`` to the capped ``wrap_console_conversation_
+    title`` makes this test fail: the injected text's true 3rd+ line goes
+    uncounted, `#console-workspace-conversations` is undersized by exactly
+    that many rows, and "Chats"'s header is pushed past the container's own
+    clipped bottom -- the same class of defect round 1 fixed for the
+    2-line case, now caught for 3+.
+    """
+    app = _build_test_app()
+    host = StyledConsoleHarness(app)
+
+    long_empty_copy = (
+        "This workspace currently has no starred conversations saved. Star "
+        "a saved chat from any workspace to pin it here for quick access "
+        "later, even after switching workspaces around."
+    )
+
+    # Tall enough that the injected multi-line empty copy doesn't push
+    # "Chats" below the rail's own scroll fold -- this test is about the
+    # estimator undercounting the tray's OWN box, not about needing to
+    # scroll first (round 1 already covers that: "you cannot click what is
+    # not on screen" is expected, not a bug).
+    async with host.run_test(size=(160, 70)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _seed_console_transcript_message(console)
+        await pilot.pause(0.2)
+
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        base_state = _base_grouped_workspace_state()
+        # All three sections empty (their real default empty_copy), built
+        # through the actual production state builder -- not hand-rolled.
+        empty_browser = build_console_conversation_browser_state(
+            rows=(),
+            active_workspace_id="ws-a",
+            group_collapse_preferences={"section:chats": False},
+        )
+        starred_section = next(
+            section
+            for section in empty_browser.sections
+            if section.section_id == "starred"
+        )
+        long_starred_section = replace(starred_section, empty_copy=long_empty_copy)
+        forced_sections = tuple(
+            long_starred_section if section.section_id == "starred" else section
+            for section in empty_browser.sections
+        )
+        forced_browser = replace(empty_browser, sections=forced_sections)
+        forced_state = replace(base_state, conversation_browser=forced_browser)
+
+        tray.sync_state(forced_state)
+        await pilot.pause()
+        await pilot.pause()
+
+        starred_empty = console.query_one(
+            "#console-conversation-browser-starred-empty", Static
+        )
+        assert starred_empty.region.height >= 3, (
+            "test setup did not force a 3+-line wrap -- widen the injected "
+            f"empty_copy text (rendered height={starred_empty.region.height})"
+        )
+
+        conversation_list = console.query_one("#console-workspace-conversations")
+        empty_copy_widgets = list(
+            conversation_list.query(".console-workspace-empty-copy").results(Static)
+        )
+        empty_copies_height = sum(
+            max(1, widget.region.height) for widget in empty_copy_widgets
+        )
+        row_buttons = list(
+            conversation_list.query(
+                ".console-workspace-conversation-row"
+            ).results(Button)
+        )
+        rows_height = sum(
+            int(button.styles.height.value) + 1 for button in row_buttons
+        )
+        header_count = len(
+            conversation_list.query(".console-conversation-browser-section-header")
+        ) + len(
+            conversation_list.query(".console-conversation-browser-group-header")
+        )
+        assert (
+            int(conversation_list.styles.height.value)
+            == rows_height + header_count + empty_copies_height
+        ), "the estimator disagrees with the real settled Static heights"
+
+        # Coordinate-honest: "Chats" (the LAST section, rendered after the
+        # 3+-line "Starred" empty copy) must still be hittable at its
+        # rendered screen coordinates -- not clipped out of the tray's own
+        # box by an undercounted estimate.
+        lines = _render_screen_lines(console)
+        x, y = _find_caret_in_row_with(lines, "Chats")
+        widget_at, _ = console.screen.get_widget_at(x, y)
+        assert (
+            getattr(widget_at, "id", None)
+            == "console-conversation-browser-section-toggle-chats"
+        ), f"Chats caret at ({x}, {y}) resolved to {widget_at!r}, not its toggle"
+
+
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
     for _ in range(40):
         if host.screen_stack and host.screen_stack[-1].query(
@@ -2349,12 +2814,23 @@ async def test_console_rail_list_height_matches_rendered_rows() -> None:
         ) + len(
             conversation_list.query(".console-conversation-browser-group-header")
         )
-        empty_copies = len(
-            conversation_list.query(".console-workspace-empty-copy")
+        # TASK-1142 round 1 review: an empty-copy line ("No starred
+        # conversations." etc.) is NOT always exactly one row -- unlike a
+        # row title it is not reduced by the star-column chrome width, so
+        # at a narrow content width it wraps to two rows while the tray's
+        # own height estimate must still budget for that (see
+        # `_empty_copy_line_count`). Sum each widget's OWN settled rendered
+        # height (ground truth: what Static actually painted) rather than
+        # assuming a flat one row per occurrence.
+        empty_copy_widgets = list(
+            conversation_list.query(".console-workspace-empty-copy").results(Static)
+        )
+        empty_copies_height = sum(
+            max(1, widget.region.height) for widget in empty_copy_widgets
         )
         assert (
             int(conversation_list.styles.height.value)
-            == rows_height + header_count + empty_copies
+            == rows_height + header_count + empty_copies_height
         )
 
 
