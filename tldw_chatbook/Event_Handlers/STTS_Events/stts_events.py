@@ -944,10 +944,21 @@ class STTSEventHandler:
     def _mounted_playground(self, operation_id: str) -> Any | None:
         if operation_id != self._active_playground_operation_id:
             return None
-        try:
-            from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
+        # Either playground may be mounted. Looking up only the legacy
+        # widget meant the rebuilt pane could start a generation and never
+        # receive its result: the audio was delivered to a widget that was
+        # not on screen, so the take silently never appeared.
+        from tldw_chatbook.UI.Speech.speech_playground_pane import (
+            SpeechPlaygroundPane,
+        )
+        from tldw_chatbook.UI.STTS_Window import TTSPlaygroundWidget
 
-            return self.app.query_one(TTSPlaygroundWidget)
+        try:
+            for host in (SpeechPlaygroundPane, TTSPlaygroundWidget):
+                found = self.app.query(host)
+                if found:
+                    return found.first()
+            raise LookupError("no playground mounted")
         except Exception as error:
             logger.debug(
                 "TTS Playground is not mounted ({})",

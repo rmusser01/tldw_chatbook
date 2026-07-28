@@ -44,6 +44,26 @@ EXAMPLE_TEXTS = [
 class SpeechPlaybackMixin:
     """Transport, export and picker behaviour, independent of the layout."""
 
+    def _generation_complete(
+        self,
+        artifact: STTSGeneratedAudio | None,
+    ) -> None:
+        """Store one delivered artifact independently of current selectors."""
+        if (
+            artifact is not None
+            and self._generation_operation_id is not None
+            and artifact.operation_id != self._generation_operation_id
+        ):
+            return
+        self._generation_operation_id = None
+        self._sync_generate_enabled()
+
+        if artifact is not None:
+            self._store_delivered_artifact(artifact, announce=True)
+        else:
+            log = self.query_one("#tts-generation-log", RichLog)
+            log.write("[bold red]✗ TTS generation failed![/bold red]")
+
     def init_playback_state(self) -> None:
         """Initialise the state playback and export read.
 
