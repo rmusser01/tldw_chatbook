@@ -56,18 +56,29 @@ def _session_tab_tooltip(
     rather than leaving the reader to infer ● / ◆ / ✓ / ✗ from shape alone.
     ``ConsoleRunMarker.NONE`` (the steady state) adds no suffix at all, so
     an unmarked tab's tooltip is byte-for-byte the pre-task-1233 copy.
+    Every tooltip ends in a period, marked or not -- the sidebar's mirrored
+    ``_marker_aware_tooltip`` (``console_workspace_context.py``) matches
+    this convention (task-1233 review round 1).
 
-    ``session.title`` is escaped: the tooltip widget renders Rich markup
-    (Textual's ``Tooltip`` is a ``Static`` with markup parsing on), so an
-    unescaped title containing e.g. ``"[red]"`` would be interpreted as a
-    style tag instead of shown literally.
+    The whole assembled sentence is escaped exactly once, at the end, not
+    per-fragment: the tooltip widget renders Rich markup (Textual's
+    ``Tooltip`` is a ``Static`` with markup parsing on), so an unescaped
+    ``"["`` anywhere in the sentence -- not just in ``session.title`` --
+    would be read as a style-tag start. Escaping only the title fragment
+    left a sibling bug in the sidebar row tooltip (a literal
+    ``"[saved]"`` status badge concatenated in unescaped): an unrecognized
+    tag name is silently DROPPED from the rendered text, not shown
+    literally. Escaping the fully-assembled sentence once, here, avoids
+    that class of bug even though today's fixed vocabulary (the marker
+    meaning, "Click again to rename.") happens to contain no brackets.
     """
-    title = _escape_markup(session.title)
     meaning = CONSOLE_RUN_MARKER_MEANINGS.get(marker, "")
     tail = f" — {meaning}." if meaning else "."
     if active:
-        return f"Active Console tab: {title}{tail} Click again to rename."
-    return f"Switch to Console tab: {title}{tail}"
+        text = f"Active Console tab: {session.title}{tail} Click again to rename."
+    else:
+        text = f"Switch to Console tab: {session.title}{tail}"
+    return _escape_markup(text)
 
 
 class ConsoleSessionTabButton(Button):

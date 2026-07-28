@@ -70,6 +70,15 @@ CONSOLE_RUN_MARKER_GLYPHS: dict[ConsoleRunMarker, str] = {
 #: `NONE` maps to the empty string -- same "guard with `if meaning:`"
 #: contract `CONSOLE_RUN_MARKER_GLYPHS` already documents for its own NONE
 #: entry, so an unmarked tab/row's tooltip gets no stray suffix.
+#:
+#: TWIN CONSTANT -- see `CONSOLE_FLEET_MARKER_LEGEND` in
+#: `tldw_chatbook/UI/Screens/chat_screen.py` (the F1 Help "Agents" section's
+#: legend line, task-1232). That legend deliberately uses its OWN shorter
+#: per-glyph wording ("running"/"needs approval"/"finished"/"failed") in one
+#: combined scannable line, distinct from this dict's fuller in-context
+#: phrasing ("agent running"/"waiting for approval"/"finished — unseen") --
+#: a deliberate register split (task-1233 review round 1), not drift. If you
+#: change what a glyph MEANS, update both.
 CONSOLE_RUN_MARKER_MEANINGS: dict[ConsoleRunMarker, str] = {
     ConsoleRunMarker.NONE: "",
     ConsoleRunMarker.RUNNING: "agent running",

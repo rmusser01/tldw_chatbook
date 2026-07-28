@@ -8,11 +8,27 @@ from unittest.mock import MagicMock
 import pytest
 from textual.app import App
 from textual.containers import HorizontalScroll
+from textual.content import Content
 from textual.widgets import Button
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
 from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
+
+
+def _rendered_tooltip(button: Button) -> str:
+    """Return a tab's tooltip as Textual will actually DISPLAY it.
+
+    TASK-1233 review round 1: `Button.tooltip` is a markup *source*
+    string, not the rendered text -- Textual's `Tooltip` widget parses it
+    the same way `Content.from_markup` does, at display time. Asserting
+    the raw attribute (as round 0 of this task did) can pass against a
+    tooltip that is silently broken once rendered: an un-escaped literal
+    "[" is read as a style-tag start, and an unrecognized tag name is
+    DROPPED from the rendered text rather than shown literally. Render
+    through the same path the app uses before asserting.
+    """
+    return Content.from_markup(button.tooltip or "").plain
 
 
 class TabStripHost(App[None]):
@@ -64,7 +80,7 @@ async def test_streaming_session_tab_shows_run_glyph() -> None:
         assert not str(idle_tab.label).startswith("●")
         # TASK-1233: the tooltip decodes the ● glyph in context instead of
         # a bare "Run in progress." fragment.
-        assert "agent running" in (streaming_tab.tooltip or "")
+        assert "agent running" in _rendered_tooltip(streaming_tab)
 
         # Glyph clears when the run ends.
         await surface.sync_sessions(
@@ -109,7 +125,7 @@ async def test_tab_tooltip_decodes_marker_meaning(
         await pilot.pause()
 
         tab = app.query_one("#console-session-tab-s2", Button)
-        tooltip = tab.tooltip or ""
+        tooltip = _rendered_tooltip(tab)
         if expected_fragment is None:
             assert tooltip == "Switch to Console tab: Session 2."
         else:
@@ -120,7 +136,14 @@ async def test_tab_tooltip_decodes_marker_meaning(
 async def test_tab_tooltip_escapes_markup_in_title() -> None:
     """A session title containing bracket tokens must render literally in
     the tooltip, not be interpreted as Rich markup (Textual's Tooltip is a
-    Static with markup parsing on)."""
+    Static with markup parsing on).
+
+    TASK-1233 review round 1: asserts the RENDERED plain text (what a user
+    actually sees), not the raw markup-source attribute -- an earlier round
+    pinned the raw escaped-with-backslashes form, which would not have
+    caught a sibling bug (a differently-assembled fragment left
+    un-escaped) the way rendering it does.
+    """
     app = TabStripHost()
     async with app.run_test(size=(80, 24)) as pilot:
         surface = app.query_one(ConsoleSessionSurface)
@@ -133,8 +156,8 @@ async def test_tab_tooltip_escapes_markup_in_title() -> None:
         await pilot.pause()
 
         tab = app.query_one("#console-session-tab-s1", Button)
-        assert tab.tooltip == (
-            r"Active Console tab: \[red]Alarm\[/red] — waiting for approval."
+        assert _rendered_tooltip(tab) == (
+            "Active Console tab: [red]Alarm[/red] — waiting for approval."
             " Click again to rename."
         )
 

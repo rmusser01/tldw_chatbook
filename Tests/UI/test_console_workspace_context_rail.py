@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
+from textual.content import Content
 from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_console_workspace_action_row_geometry import StyledConsoleHarness
@@ -556,11 +557,28 @@ def _workspace_rows_with_marker_at(index: int, marker: str, *, count: int):
     )
 
 
+def _rendered_tooltip(widget) -> str:
+    """Return a widget's tooltip as Textual will actually DISPLAY it.
+
+    TASK-1233 review round 1: `Widget.tooltip` is a markup *source*
+    string, not the rendered text -- the `Tooltip` widget parses it the
+    same way `Content.from_markup` does, at display time. Asserting the
+    raw attribute (as round 0 of this task did) passed against a tooltip
+    that was silently broken once rendered: `status_suffix`'s literal
+    ``"[saved]"`` was read as an unrecognized style tag and DROPPED from
+    the rendered text entirely (confirmed via this exact helper against
+    the pre-fix code: rendered to ``"Switch to Alpha "``, the word gone).
+    Render through the same path the app uses before asserting.
+    """
+    return Content.from_markup(widget.tooltip or "").plain
+
+
 @pytest.mark.asyncio
 async def test_conversation_row_tooltip_has_no_marker_suffix_when_unmarked() -> None:
-    """TASK-1233 AC#1 pinned regression: an unmarked row's tooltip is
-    byte-for-byte the pre-task-1233 copy -- no dangling suffix, no stray
-    em dash."""
+    """TASK-1233 AC#1 pinned regression: an unmarked row's tooltip renders
+    the pre-task-1233 copy (plus the trailing period every tooltip this
+    module builds now carries, task-1233 review round 1's consistency
+    fix) -- no dangling marker suffix, no stray em dash."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -585,7 +603,7 @@ async def test_conversation_row_tooltip_has_no_marker_suffix_when_unmarked() -> 
         await pilot.pause()
 
         row = console.query_one("#console-workspace-conversation-0", Button)
-        assert row.tooltip == "Switch to Alpha [saved]"
+        assert _rendered_tooltip(row) == "Switch to Alpha [saved]."
 
 
 @pytest.mark.asyncio
@@ -618,14 +636,24 @@ async def test_conversation_row_tooltip_decodes_marker_meaning() -> None:
         await pilot.pause()
 
         row = console.query_one("#console-workspace-conversation-0", Button)
-        assert row.tooltip == "Switch to Alpha [saved] — waiting for approval"
+        assert (
+            _rendered_tooltip(row)
+            == "Switch to Alpha [saved] — waiting for approval."
+        )
 
 
 @pytest.mark.asyncio
 async def test_conversation_row_tooltip_escapes_markup_in_title() -> None:
     """A conversation title containing bracket tokens must render literally
     in the tooltip, not be interpreted as Rich markup (Qodo #821 pattern,
-    now pinned for the marker-aware row tooltip too)."""
+    now pinned for the marker-aware row tooltip too).
+
+    TASK-1233 review round 1: this row's own STATUS badge ("[saved]") is
+    itself bracket-wrapped fixed vocabulary, not user data -- so this test
+    also guards the sibling bug the review caught (an earlier round
+    escaped only the user-supplied title and left that badge's literal
+    "[" unescaped, silently dropping "saved" from the render).
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -651,7 +679,9 @@ async def test_conversation_row_tooltip_escapes_markup_in_title() -> None:
         await pilot.pause()
 
         row = console.query_one("#console-workspace-conversation-0", Button)
-        assert row.tooltip == r"Switch to \[b]danger\[/b] [saved] — waiting for approval"
+        assert _rendered_tooltip(row) == (
+            "Switch to [b]danger[/b] [saved] — waiting for approval."
+        )
 
 
 @pytest.mark.asyncio
@@ -688,7 +718,78 @@ async def test_collapsed_section_toggle_tooltip_decodes_aggregate_marker() -> No
         toggle = console.query_one(
             "#console-conversation-browser-section-toggle-workspaces", Button
         )
-        assert toggle.tooltip == "Expand Workspaces — agent running"
+        assert _rendered_tooltip(toggle) == "Expand Workspaces — agent running."
+
+
+@pytest.mark.asyncio
+async def test_collapsed_group_toggle_tooltip_decodes_aggregate_marker() -> None:
+    """TASK-1233 AC#1 minor (a): the symmetric case one level down -- a
+    collapsed WORKSPACE GROUP's toggle tooltip decodes the aggregate
+    marker borrowed onto its header from the hidden rows beneath it."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    # ws-b is not the active workspace -> defaults collapsed.
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-b",
+                        workspace_label="Workspace B",
+                        run_marker="●",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        toggle = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert toggle.group_id == "workspace:ws-b"
+        assert _rendered_tooltip(toggle) == "Expand Workspace B — agent running."
+
+
+@pytest.mark.asyncio
+async def test_expanded_capped_group_toggle_tooltip_decodes_aggregate_marker() -> None:
+    """TASK-1233 AC#1 minor (a): the expanded-but-capped variant -- a marked
+    row pushed past `CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT` borrows
+    its marker onto the (still expanded) group header via
+    `capped_run_marker`; the toggle tooltip must decode that too."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    marked_index = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 1
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=_workspace_rows_with_marker_at(
+                    marked_index,
+                    "●",
+                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                ),
+            )
+        )
+        await pilot.pause()
+
+        toggle = console.query_one(
+            "#console-conversation-browser-group-toggle-0", Button
+        )
+        assert toggle.group_id == "workspace:ws-a"
+        assert _rendered_tooltip(toggle) == "Collapse Workspace A — agent running."
 
 
 @pytest.mark.asyncio

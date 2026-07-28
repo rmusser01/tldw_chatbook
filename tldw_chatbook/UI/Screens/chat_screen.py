@@ -584,9 +584,19 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
     ),
 )
 
-#: Fleet-UX expert review F4 (task-1233 will also reference this legend --
+#: Fleet-UX expert review F4 (task-1233 also references this legend --
 #: keep it a single, clearly-marked string so that task can find/reuse it
 #: verbatim rather than re-deriving the copy).
+#:
+#: TWIN CONSTANT -- see `CONSOLE_RUN_MARKER_MEANINGS` in
+#: `tldw_chatbook/Chat/console_chat_models.py` (task-1233's marker-aware
+#: tab/sidebar tooltips). That dict deliberately uses its OWN fuller
+#: in-context phrasing ("agent running"/"waiting for approval"/
+#: "finished — unseen") rather than this line's shorter per-glyph words
+#: ("running"/"needs approval"/"finished"/"failed") -- a deliberate
+#: register split (task-1233 review round 1: a compact scannable legend
+#: line vs. a specific in-context tooltip sentence), not drift. If you
+#: change what a glyph MEANS, update both.
 CONSOLE_FLEET_MARKER_LEGEND = (
     "Status markers: ● running · ◆ needs approval · ✓ finished · ✗ failed "
     "— clears once you visit that tab."

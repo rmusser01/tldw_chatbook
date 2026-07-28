@@ -48,4 +48,34 @@ Expert UAT F4: the fleet's status vocabulary (● running, ◆ needs approval, �
 - `Tests/UI/test_console_session_tab_strip.py` -- updated streaming-tab assertion; added per-marker + escaping tests.
 - `Tests/UI/test_console_workspace_context_rail.py` -- added row tooltip (unmarked/marked/escaped) and section-toggle tooltip tests.
 
-**Verification**: `Tests/UI/test_console_session_tab_strip.py` + `Tests/UI/test_console_workspace_context_rail.py` + `Tests/UI/test_console_parallel_runs.py` in one run: 100 passed, 1 failed. The failure (`test_console_workspace_context_syncs_active_conversation_marker`, a `TypeError` on `ChatScreen._sync_console_workspace_context` arity) reproduces identically on the pre-task-1233 `HEAD` (verified via `git stash`), so it is pre-existing and unrelated to this change.
+**Verification (round 0)**: `Tests/UI/test_console_session_tab_strip.py` + `Tests/UI/test_console_workspace_context_rail.py` + `Tests/UI/test_console_parallel_runs.py` in one run: 100 passed, 1 failed. The failure (`test_console_workspace_context_syncs_active_conversation_marker`, a `TypeError` on `ChatScreen._sync_console_workspace_context` arity) reproduces identically on the pre-task-1233 `HEAD` (verified via `git stash`), so it is pre-existing and unrelated to this change.
+
+## Round 1 (review response)
+
+**Verdict addressed**: one Important, three minors.
+
+### Important fix -- unescaped bracket-wrapped status badge silently dropped words from the rendered tooltip
+Reviewer verified against this venv's `textual.content.Content.from_markup`: the sidebar row tooltip's `status_suffix = f" [{status}]"` was concatenated UNESCAPED alongside the (correctly escaped) title. `"["` is read as a style-tag start by Rich/Textual markup parsing; an unrecognized tag name (`"saved"`) is silently DROPPED from the rendered text rather than shown literally -- confirmed: `Content.from_markup("Switch to Alpha [saved] — waiting for approval").plain` renders as `"Switch to Alpha  — waiting for approval"` (the word gone, double space left behind). The round-0 pinned test asserted the raw `Button.tooltip` *markup-source* string via `==`, which happened to equal the (broken) input, locking in the bug instead of catching it.
+
+Fix: introduced one centralized assembly point, `_marker_aware_tooltip(text, marker_glyph)` in `console_workspace_context.py`. Every sidebar tooltip (row, section-header toggle, group-header toggle) now builds its RAW, un-escaped sentence body first (title + bracket-wrapped status badge, or "Expand X"/"Collapse X"), then calls this one function, which appends the marker-meaning suffix, a trailing period, and escapes the ENTIRE assembled sentence exactly once. `ConsoleSessionSurface._session_tab_tooltip` was refactored the same way for symmetry (assemble raw, escape once at the end) even though no bracket-bearing fragment exists there today -- per-fragment escaping is exactly the fragile pattern that caused the bug, so the whole module now escapes at assembly, never per-fragment.
+
+All round-0 pinned tests that asserted the raw `.tooltip` markup-source string were rewritten to assert the RENDERED plain text instead, via a new `_rendered_tooltip()` helper (both test files) that renders through `Content.from_markup(...).plain` -- the same path Textual's `Tooltip` widget uses at display time. This is the same idiom `test_console_native_chat_flow.py` already established elsewhere in this suite.
+
+### Minor (a) -- untested symmetric branches
+Added `test_collapsed_group_toggle_tooltip_decodes_aggregate_marker` (a collapsed workspace group borrowing its marker onto the header, mirroring the section-level test) and `test_expanded_capped_group_toggle_tooltip_decodes_aggregate_marker` (the expanded-but-past-the-row-cap variant, `capped_run_marker`) in `test_console_workspace_context_rail.py`.
+
+### Minor (b) -- trailing-period consistency
+Picked "every tooltip this module builds ends in a period" (matching the tab tooltip's pre-existing, already-pinned convention for its `ConsoleRunMarker.NONE` case, which cannot change). Applied uniformly via `_marker_aware_tooltip`: sidebar row and header toggle tooltips now end in a period in BOTH the marked and unmarked cases (previously neither did). No other test in the repo asserted the old no-period sidebar copy (confirmed via a targeted grep before changing it), so this was a safe, requested copy tweak.
+
+### Minor (c) -- legend/meanings cross-reference
+Added a "TWIN CONSTANT" comment block at both `CONSOLE_RUN_MARKER_MEANINGS` (`console_chat_models.py`) and `CONSOLE_FLEET_MARKER_LEGEND` (`chat_screen.py`), each pointing at the other and stating the register split is deliberate (compact scannable legend vs. specific in-context tooltip sentence) so a future glyph-meaning edit finds its twin instead of drifting silently.
+
+### Additional files touched (round 1)
+- `tldw_chatbook/Chat/console_chat_models.py` -- cross-reference comment only (no behavior change).
+- `tldw_chatbook/UI/Screens/chat_screen.py` -- cross-reference comment only (no behavior change).
+
+### Verification (round 1)
+Same three gate suites, one blocking foreground pytest call: **102 passed, 1 pre-existing failure** (same `test_console_workspace_context_syncs_active_conversation_marker` as round 0, unrelated -- re-confirmed via `git stash` in round 0 and unchanged by round-1 edits).
+
+## Concerns (round 1)
+None blocking.
