@@ -608,10 +608,13 @@ def _console_workbench_agents_notes(max_parallel_runs: int) -> tuple[str, ...]:
     Returns:
         Ordered prose lines for the help panel's "Agents" notes block.
     """
+    # task-1232 round 1 (Minor b): cap=1 is a supported floored value
+    # (MIN_CONSOLE_MAX_PARALLEL_RUNS), so "1 runs" must not ship.
+    run_noun = "run" if max_parallel_runs == 1 else "runs"
     return (
         "Each Console tab runs its own agent; a run keeps going in the "
         "background while you're on another tab.",
-        f"Up to {max_parallel_runs} runs in parallel "
+        f"Up to {max_parallel_runs} {run_noun} in parallel "
         "(change in Settings > Console Behavior).",
         "Built-in tools ask before running; a background session that "
         "needs approval parks with a ◆ badge and a toast.",

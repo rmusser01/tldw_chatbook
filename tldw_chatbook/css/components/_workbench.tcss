@@ -221,3 +221,43 @@
 .density-compact .workbench-pane {
     padding: 0 1;
 }
+
+/* task-1232 round 1 (fleet-UX expert review F2, Critical fix): the F1 help
+   overlay used to be a bare, unstyled Vertical -- Textual's own defaults
+   (height: 1fr, overflow: hidden hidden) silently clipped anything past the
+   fold with no scrollbar. Mirrors ConsoleScopePickerModal's bounded-panel +
+   scrollable-body + pinned-footer shape (_agentic_terminal.tcss
+   #console-scope-picker-modal / #console-scope-picker-list). */
+WorkbenchHelpPanel {
+    align: center middle;
+}
+
+#workbench-help-panel {
+    width: 76;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    padding: 1 2;
+}
+
+#workbench-help-scroll {
+    height: 1fr;
+    min-height: 3;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+#workbench-help-body {
+    width: 100%;
+    height: auto;
+}
+
+#workbench-help-close {
+    width: auto;
+    height: auto;
+    margin: 1 0 0 0;
+}
