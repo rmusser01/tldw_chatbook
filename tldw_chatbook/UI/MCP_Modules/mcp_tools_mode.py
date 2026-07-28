@@ -29,6 +29,7 @@ from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     tool_state_kind,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import parse_schema
+from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixin
 
 _TABLE_COLUMNS = ("Tool", "State", "Server", "Tags", "Schema")
 # UX batch item 11: the Tags column is omitted entirely when no tool in the
@@ -74,7 +75,7 @@ _EMPTY_ACTION_TOOLTIPS: dict[str, str] = {
 _ECHO_CONSUMED = object()
 
 
-class MCPToolsMode(Vertical):
+class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Tools mode: cross-server catalog, filters, empty state."""
 
     DEFAULT_CSS = """
@@ -349,6 +350,10 @@ class MCPToolsMode(Vertical):
         # (the filtered subset) -- a text/server filter that happens to
         # narrow the visible rows to an all-tagless subset must not make
         # the column flicker away mid-typing.
+        # Rebuilding the rows moves the cursor back to row 0, which emits the
+        # same RowHighlighted a click does. Declaring the rebuild stops that
+        # being read as a selection -- see DataTableClickSelectMixin.
+        self.repopulating_table()
         table.clear(columns=True)
         table.add_columns(*(_TABLE_COLUMNS if self._has_tags else _TABLE_COLUMNS_NO_TAGS))
         seen_keys: set[str] = set()

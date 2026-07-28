@@ -32,6 +32,7 @@ from tldw_chatbook.MCP.permission_store import (
     cycle_global,
     cycle_ui_state,
 )
+from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixin
 
 _TABLE_COLUMNS = ("Tool", "State", "Tags")
 # UX batch item 11: the Tags column is omitted entirely when no row in the
@@ -314,7 +315,7 @@ def _tool_column_text(row: PermRow) -> str:
     return f"{_TOOL_ROW_INDENT}{row.tool_name or ''}"
 
 
-class MCPPermissionsMode(Vertical):
+class MCPPermissionsMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Permissions mode: kill switch, matrix, policy preview."""
 
     DEFAULT_CSS = """
@@ -673,6 +674,10 @@ class MCPPermissionsMode(Vertical):
         # (`clear(columns=True)`), mirroring `mcp_servers_mode.py`'s own
         # per-source Scope-column precedent (Task 11 there).
         show_tags = self._has_tags
+        # Rebuilding moves the cursor to row 0 before the key-based restore
+        # below puts it back; declaring the rebuild keeps that transient from
+        # being read as a selection (DataTableClickSelectMixin).
+        self.repopulating_table()
         table.clear(columns=True)
         table.add_columns(*(_TABLE_COLUMNS if show_tags else _TABLE_COLUMNS_NO_TAGS))
         for row in rows:
