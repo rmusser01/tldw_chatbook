@@ -6980,7 +6980,10 @@ class LibraryScreen(BaseAppScreen):
         ):
             # First Collections entry must load the snapshot the retired chip
             # flow ran; _sync_collections_panel recomposes once records arrive.
-            await self._sync_collections_panel(refresh_snapshot=True)
+            await self._sync_collections_panel(
+                refresh_snapshot=True,
+                wait_for_recompose=True,
+            )
             return
         await self.recompose()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:
@@ -14390,13 +14393,21 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
 
-    async def _sync_collections_panel(self, *, refresh_snapshot: bool = False) -> None:
+    async def _sync_collections_panel(
+        self,
+        *,
+        refresh_snapshot: bool = False,
+        wait_for_recompose: bool = False,
+    ) -> None:
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
             self._library_collection_pending_delete_id = ""
             return
         if refresh_snapshot:
             await self._refresh_library_collections_snapshot()
-        self.refresh(recompose=True)
+        if wait_for_recompose:
+            await self.recompose()
+        else:
+            self.refresh(recompose=True)
 
     async def _refresh_collections_panel_action_state_widgets(self) -> None:
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS or not list(
