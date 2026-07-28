@@ -10,6 +10,7 @@ from textual.app import App
 from textual.containers import HorizontalScroll
 from textual.widgets import Button
 
+from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
 from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
 
@@ -61,7 +62,9 @@ async def test_streaming_session_tab_shows_run_glyph() -> None:
         idle_tab = app.query_one("#console-session-tab-s1", Button)
         assert str(streaming_tab.label).startswith("●")
         assert not str(idle_tab.label).startswith("●")
-        assert "Run in progress" in (streaming_tab.tooltip or "")
+        # TASK-1233: the tooltip decodes the ● glyph in context instead of
+        # a bare "Run in progress." fragment.
+        assert "agent running" in (streaming_tab.tooltip or "")
 
         # Glyph clears when the run ends.
         await surface.sync_sessions(
@@ -71,6 +74,69 @@ async def test_streaming_session_tab_shows_run_glyph() -> None:
         )
         await pilot.pause()
         assert not str(streaming_tab.label).startswith("●")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("marker", "expected_fragment"),
+    [
+        (ConsoleRunMarker.NONE, None),
+        (ConsoleRunMarker.RUNNING, "— agent running."),
+        (ConsoleRunMarker.NEEDS_APPROVAL, "— waiting for approval."),
+        (ConsoleRunMarker.FINISHED_OK, "— finished — unseen."),
+        (ConsoleRunMarker.FINISHED_FAILED, "— failed — unseen."),
+    ],
+)
+async def test_tab_tooltip_decodes_marker_meaning(
+    marker: ConsoleRunMarker, expected_fragment: str | None
+) -> None:
+    """TASK-1233 AC#1: a tab's tooltip decodes its fleet run-marker glyph in
+    context instead of leaving the reader to infer meaning from shape alone.
+
+    ``ConsoleRunMarker.NONE`` is the pinned no-regression case: the tooltip
+    must be byte-for-byte the pre-task-1233 copy (no dangling suffix, no
+    stray em dash).
+    """
+    app = TabStripHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        sessions = _sessions(2)
+        await surface.sync_sessions(
+            sessions=sessions,
+            active_session_id="s1",
+            run_markers={"s2": marker},
+        )
+        await pilot.pause()
+
+        tab = app.query_one("#console-session-tab-s2", Button)
+        tooltip = tab.tooltip or ""
+        if expected_fragment is None:
+            assert tooltip == "Switch to Console tab: Session 2."
+        else:
+            assert expected_fragment in tooltip
+
+
+@pytest.mark.asyncio
+async def test_tab_tooltip_escapes_markup_in_title() -> None:
+    """A session title containing bracket tokens must render literally in
+    the tooltip, not be interpreted as Rich markup (Textual's Tooltip is a
+    Static with markup parsing on)."""
+    app = TabStripHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        sessions = [ConsoleChatSession(title="[red]Alarm[/red]", id="s1")]
+        await surface.sync_sessions(
+            sessions=sessions,
+            active_session_id="s1",
+            run_markers={"s1": ConsoleRunMarker.NEEDS_APPROVAL},
+        )
+        await pilot.pause()
+
+        tab = app.query_one("#console-session-tab-s1", Button)
+        assert tab.tooltip == (
+            r"Active Console tab: \[red]Alarm\[/red] — waiting for approval."
+            " Click again to rename."
+        )
 
 
 @pytest.mark.asyncio

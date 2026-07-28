@@ -64,6 +64,35 @@ CONSOLE_RUN_MARKER_GLYPHS: dict[ConsoleRunMarker, str] = {
 }
 
 
+#: Human-readable meaning for each `ConsoleRunMarker`, for tooltips that
+#: decode the fleet glyph in context rather than leaving a reader to infer
+#: ● / ◆ / ✓ / ✗ from shape alone (fleet-UX expert review F4, task-1233).
+#: `NONE` maps to the empty string -- same "guard with `if meaning:`"
+#: contract `CONSOLE_RUN_MARKER_GLYPHS` already documents for its own NONE
+#: entry, so an unmarked tab/row's tooltip gets no stray suffix.
+CONSOLE_RUN_MARKER_MEANINGS: dict[ConsoleRunMarker, str] = {
+    ConsoleRunMarker.NONE: "",
+    ConsoleRunMarker.RUNNING: "agent running",
+    ConsoleRunMarker.NEEDS_APPROVAL: "waiting for approval",
+    ConsoleRunMarker.FINISHED_OK: "finished — unseen",
+    ConsoleRunMarker.FINISHED_FAILED: "failed — unseen",
+}
+
+#: Reverse lookup from rendered glyph to its meaning, for callers along the
+#: sidebar conversation-browser pipeline that thread the resolved glyph
+#: *string* rather than the `ConsoleRunMarker` enum itself (the pipeline
+#: deliberately stores glyphs so `Workspaces/conversation_browser_state.py`
+#: stays free of a Chat-layer model import -- see that module's own
+#: `run_marker` docstrings). The empty NONE glyph is excluded so a lookup
+#: miss (no marker) and an explicit `""` marker both fall back the same way
+#: via `.get(glyph, "")`.
+CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH: dict[str, str] = {
+    glyph: CONSOLE_RUN_MARKER_MEANINGS[marker]
+    for marker, glyph in CONSOLE_RUN_MARKER_GLYPHS.items()
+    if glyph
+}
+
+
 ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "failed"]
 ConsoleMessageFeedback = Literal["up", "down"]
 CONSOLE_GLOBAL_WORKSPACE_ID = "global"

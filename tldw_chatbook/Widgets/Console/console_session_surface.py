@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import replace
 from typing import Any
 
+from rich.markup import escape as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, HorizontalScroll, Vertical
@@ -14,6 +15,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_RUN_MARKER_GLYPHS,
+    CONSOLE_RUN_MARKER_MEANINGS,
     ConsoleRunMarker,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
@@ -45,13 +47,27 @@ def _session_tab_tooltip(
     session: ConsoleChatSession,
     *,
     active: bool,
-    streaming: bool = False,
+    marker: ConsoleRunMarker = ConsoleRunMarker.NONE,
 ) -> str:
-    """Return action copy for a Console session tab."""
-    suffix = " Run in progress." if streaming else ""
+    """Return action copy for a Console session tab.
+
+    Fleet-UX expert review F4 (task-1233): decodes the tab's fleet
+    run-marker glyph in context ("Blue Chat — waiting for approval.")
+    rather than leaving the reader to infer ● / ◆ / ✓ / ✗ from shape alone.
+    ``ConsoleRunMarker.NONE`` (the steady state) adds no suffix at all, so
+    an unmarked tab's tooltip is byte-for-byte the pre-task-1233 copy.
+
+    ``session.title`` is escaped: the tooltip widget renders Rich markup
+    (Textual's ``Tooltip`` is a ``Static`` with markup parsing on), so an
+    unescaped title containing e.g. ``"[red]"`` would be interpreted as a
+    style tag instead of shown literally.
+    """
+    title = _escape_markup(session.title)
+    meaning = CONSOLE_RUN_MARKER_MEANINGS.get(marker, "")
+    tail = f" — {meaning}." if meaning else "."
     if active:
-        return f"Active Console tab: {session.title}.{suffix} Click again to rename."
-    return f"Switch to Console tab: {session.title}.{suffix}"
+        return f"Active Console tab: {title}{tail} Click again to rename."
+    return f"Switch to Console tab: {title}{tail}"
 
 
 class ConsoleSessionTabButton(Button):
@@ -254,7 +270,7 @@ class ConsoleSessionSurface(Vertical):
             session_id=session.id,
         )
         button.tooltip = _session_tab_tooltip(
-            session, active=active, streaming=marker is ConsoleRunMarker.RUNNING
+            session, active=active, marker=marker
         )
         button.styles.width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.min_width = CONSOLE_SESSION_TAB_WIDTH
@@ -362,7 +378,7 @@ class ConsoleSessionSurface(Vertical):
                 child.tooltip = _session_tab_tooltip(
                     session,
                     active=session.id == active_session_id,
-                    streaming=marker is ConsoleRunMarker.RUNNING,
+                    marker=marker,
                 )
                 child.set_class(
                     session.id == active_session_id,

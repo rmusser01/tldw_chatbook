@@ -12,6 +12,9 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH,
+)
 from tldw_chatbook.Chat.console_glyphs import (
     GLYPH_COLLAPSED,
     GLYPH_EXPANDED,
@@ -231,6 +234,19 @@ def _marker_prefixed_name_lines(
     if not lines:
         return lines
     return (f"{prefix}{lines[0]}", *lines[1:])
+
+
+def _marker_meaning_tooltip_suffix(marker_glyph: str) -> str:
+    """Return `" — <meaning>"` for a non-empty fleet run-marker glyph, else "".
+
+    Fleet-UX expert review F4 (task-1233): sidebar row and header tooltips
+    decode whichever marker glyph they carry in context, same as Console
+    session tab tooltips (``ConsoleSessionSurface._session_tab_tooltip``).
+    An unrecognized or empty glyph (the steady state) adds no suffix, so a
+    caller can always append this unconditionally.
+    """
+    meaning = CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH.get(str(marker_glyph or "").strip(), "")
+    return f" — {meaning}" if meaning else ""
 
 
 # Pre-measurement fallback for the tray's usable row width. Only the first
@@ -1125,10 +1141,19 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             toggle.group_id = f"section:{section.section_id}"
+            # TASK-1233 AC#1: decode whichever aggregate marker the header
+            # itself is currently showing (same collapsed/capped split as
+            # the label above) rather than inventing a new tooltip surface.
+            header_marker = (
+                section.run_marker if section.collapsed else section.capped_run_marker
+            )
+            escaped_section_label = _escape_markup(section.label)
             toggle.tooltip = (
-                f"Expand {section.label}"
+                f"Expand {escaped_section_label}"
+                f"{_marker_meaning_tooltip_suffix(header_marker)}"
                 if section.collapsed
-                else f"Collapse {section.label}"
+                else f"Collapse {escaped_section_label}"
+                f"{_marker_meaning_tooltip_suffix(header_marker)}"
             )
             yield toggle
 
@@ -1180,10 +1205,19 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             toggle.group_id = group.group_id
+            # TASK-1233 AC#1: same collapsed/capped aggregate-marker split
+            # as the label above, decoded into the already-existing toggle
+            # tooltip rather than a new tooltip surface.
+            header_marker = (
+                group.run_marker if group.collapsed else group.capped_run_marker
+            )
+            escaped_group_label = _escape_markup(group.label)
             toggle.tooltip = (
-                f"Expand {group.label}"
+                f"Expand {escaped_group_label}"
+                f"{_marker_meaning_tooltip_suffix(header_marker)}"
                 if group.collapsed
-                else f"Collapse {group.label}"
+                else f"Collapse {escaped_group_label}"
+                f"{_marker_meaning_tooltip_suffix(header_marker)}"
             )
             yield toggle
 
@@ -1218,11 +1252,17 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 budget,
             )
             status_suffix = f" [{status}]" if status else ""
+            marker_suffix = _marker_meaning_tooltip_suffix(row.run_marker)
             row_button = self._conversation_button(
                 "\n".join((*name_lines, secondary)),
                 id=f"console-workspace-conversation-{index}",
                 conversation_id=row.conversation_id or row.row_key,
-                tooltip_label=f"{title}{status_suffix}",
+                # TASK-1233 AC#1: the tooltip decodes the row's fleet
+                # run-marker glyph in context. Escaped because `Button.
+                # tooltip` renders Rich markup and `title` is user data
+                # (a conversation title), unlike `status_suffix`/
+                # `marker_suffix`, which are both fixed app vocabulary.
+                tooltip_label=f"{_escape_markup(title)}{status_suffix}{marker_suffix}",
                 selected=row.selected,
                 subagent_count=row.subagent_count,
                 name_line_count=len(name_lines),

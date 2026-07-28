@@ -557,6 +557,141 @@ def _workspace_rows_with_marker_at(index: int, marker: str, *, count: int):
 
 
 @pytest.mark.asyncio
+async def test_conversation_row_tooltip_has_no_marker_suffix_when_unmarked() -> None:
+    """TASK-1233 AC#1 pinned regression: an unmarked row's tooltip is
+    byte-for-byte the pre-task-1233 copy -- no dangling suffix, no stray
+    em dash."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert row.tooltip == "Switch to Alpha [saved]"
+
+
+@pytest.mark.asyncio
+async def test_conversation_row_tooltip_decodes_marker_meaning() -> None:
+    """TASK-1233 AC#1: a sidebar conversation row's tooltip decodes its
+    fleet run-marker glyph in context, same vocabulary as the tab tooltip
+    (`CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH`)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                        run_marker="◆",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert row.tooltip == "Switch to Alpha [saved] — waiting for approval"
+
+
+@pytest.mark.asyncio
+async def test_conversation_row_tooltip_escapes_markup_in_title() -> None:
+    """A conversation title containing bracket tokens must render literally
+    in the tooltip, not be interpreted as Rich markup (Qodo #821 pattern,
+    now pinned for the marker-aware row tooltip too)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    _browser_row(
+                        "conv-a",
+                        "[b]danger[/b]",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                        run_marker="◆",
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert row.tooltip == r"Switch to \[b]danger\[/b] [saved] — waiting for approval"
+
+
+@pytest.mark.asyncio
+async def test_collapsed_section_toggle_tooltip_decodes_aggregate_marker() -> None:
+    """TASK-1233 AC#1: the section-header toggle already carries an Expand/
+    Collapse tooltip -- when the header is also showing an aggregate
+    marker (borrowed from hidden rows/groups beneath it), the tooltip
+    decodes that glyph too, same as the visible header-label suffix."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(
+                rows=(
+                    _browser_row(
+                        "conv-a",
+                        "Alpha",
+                        workspace_id="ws-a",
+                        workspace_label="Workspace A",
+                        run_marker="●",
+                    ),
+                ),
+                group_collapse_preferences={"section:workspaces": True},
+            )
+        )
+        await pilot.pause()
+
+        toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-workspaces", Button
+        )
+        assert toggle.tooltip == "Expand Workspaces — agent running"
+
+
+@pytest.mark.asyncio
 async def test_collapsed_section_header_shows_aggregate_from_busy_group_beneath() -> None:
     """TASK-912 AC#1: collapsing the whole Workspaces section hides every
     group (and every row) beneath it, so the busy group's marker was
