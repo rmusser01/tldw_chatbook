@@ -46,6 +46,7 @@ tldw_chatbook/TTS/
 │   └── v0_to_v1.py         # Versioned profile-store schema migration
 ├── profile_store_lock.py    # Cooperative shared/exclusive process locking
 ├── profile_repository.py    # Serialized CRUD, backup, and restore lifecycle
+├── profile_service.py       # Native profile validation and capability overlay
 ├── playground_types.py      # Immutable Playground request/artifact contracts
 ├── adapters/
 │   └── audio_cpp.py         # Native external audio.cpp adapter
@@ -88,7 +89,7 @@ shutdown. Registration is sealed at construction time.
 registry are compatibility-bridge internals. They are not the extension point
 for new providers.
 
-### Local generation profile repository (Slice 2A)
+### Local generation profiles (Slices 2A–2B)
 
 Reusable generation profiles now have a dedicated, versioned SQLite ownership
 boundary. `TldwCli` constructs one initially closed `TTSProfileRepository` and
@@ -160,12 +161,31 @@ configuration. Provider origins, credentials, API keys, custom headers, binary
 paths, `server.json` paths, health observations, message text, and raw local
 paths are excluded from profile data and safe repository diagnostics.
 
-This slice is storage infrastructure only. It does not yet provide an STTS
-profile-management library, character-assignment UI or authority acquisition,
+`TTSProfileService` is a native-only boundary over the application-owned
+repository and `TTSService`. It creates profiles only from immutable successful
+audio.cpp Playground artifacts and copies the artifact's admitted provider,
+exact model, optional exact voice, WAV format, speed `1.0`, and empty options.
+Before saving, it verifies that the artifact's admitted
+configuration revision is still current; the revision itself is not persisted.
+It never derives persisted values from mutable UI selectors. The service also
+provides bounded 50-row pages, optimistic
+edit/delete/duplicate operations, assignment-aware deletion, and exact
+capability observation without mutating stored rows.
+
+The **Voice profiles** view renders repository rows before capability
+enrichment, then marks each exact selection `available`, `unavailable`, or
+`unverified`. Unavailable is an authoritative incompatibility and recovers by
+editing; unverified is a transient or stale observation and recovers by
+refreshing. Preview copies the stored values into a one-shot exact Playground
+preset without synthesizing. Search, paging, refresh, edit, duplicate, preview,
+and delete operate on the exact loaded repository generation and revision.
+Repository failures remain isolated: the library shows bounded recovery copy
+while ordinary Playground and Console speech continue to work.
+
+Slice 2B does not provide character-assignment UI or authority acquisition,
 roleplay routing, profile/card portability or synchronization, legacy-provider
 profile execution, provider connection details, or managed audio.cpp process
-behavior. Those remain separately reviewed Slice 2B, Slice 3, Slice 4, and
-managed-process work. See
+behavior. See
 [ADR-028](../../../backlog/decisions/028-character-tts-generation-profile-ownership.md).
 
 ### Global defaults and Console request admission
