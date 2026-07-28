@@ -2256,7 +2256,7 @@ def _repository_at(root: Path) -> RepositoryIdentity:
 
 
 class _DelayedStatusRunner:
-    def __init__(self) -> None:
+    def __init__(self, *, index_path: str = "note.md") -> None:
         self.first_index_started = asyncio.Event()
         self.release_first_index = asyncio.Event()
         self.status_completed = asyncio.Event()
@@ -2264,6 +2264,7 @@ class _DelayedStatusRunner:
         self.query_count = 0
         self.shutdown_calls = 0
         self.add_seen = False
+        self.index_path = index_path
 
     async def run(
         self,
@@ -2304,7 +2305,11 @@ class _DelayedStatusRunner:
             if self.add_seen:
                 return GitCommandResult(
                     0,
-                    b"H 100644 " + OID_B.encode() + b" 0\tnote.md\0",
+                    b"H 100644 "
+                    + OID_B.encode()
+                    + b" 0\t"
+                    + os.fsencode(self.index_path)
+                    + b"\0",
                     b"",
                 )
             return GitCommandResult(0, b"", b"")
@@ -2324,6 +2329,81 @@ class _DelayedStatusRunner:
     def shutdown(self) -> None:
         self.shutdown_calls += 1
         self.release_first_index.set()
+
+
+class _DelayedUnstageRunner(_DelayedStatusRunner):
+    def __init__(self, *, index_path: str = "note.md") -> None:
+        super().__init__(index_path=index_path)
+        self.add_seen = True
+        self.update_stdins: list[bytes] = []
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        text = tuple(os.fsdecode(argument) for argument in argv)
+        if "update-index" in text:
+            self.calls.append(tuple(argv))
+            assert stdin is not None
+            self.update_stdins.append(stdin)
+            self.add_seen = False
+            return GitCommandResult(0, b"", b"")
+        return await super().run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+        )
+
+
+class _PausedUnstageRunner(_DelayedUnstageRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.release_first_index.set()
+        self.update_started = asyncio.Event()
+        self.release_update = asyncio.Event()
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        text = tuple(os.fsdecode(argument) for argument in argv)
+        if "update-index" in text:
+            self.calls.append(tuple(argv))
+            assert stdin is not None
+            self.update_stdins.append(stdin)
+            self.update_started.set()
+            await self.release_update.wait()
+            self.add_seen = False
+            return GitCommandResult(0, b"", b"")
+        return await super().run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+        )
+
+    def shutdown(self) -> Awaitable[bool]:
+        self.shutdown_calls += 1
+        self.release_update.set()
+
+        async def settle() -> bool:
+            await asyncio.sleep(0)
+            return True
+
+        return asyncio.create_task(settle())
 
 
 class _HeadFailureStatusRunner(_DelayedStatusRunner):
@@ -2414,6 +2494,59 @@ def _status_service(
         environment={"PATH": "/bin"},
     )
     return owner, binding, service, runner
+
+
+def _unstage_service(
+    tmp_path: Path,
+    *,
+    runner: _DelayedUnstageRunner | None = None,
+    relative_path: str = "note.md",
+    create_file: bool = True,
+) -> tuple[
+    FileNotesSessionOwner,
+    SessionBinding,
+    FileNotesGitService,
+    _DelayedUnstageRunner,
+]:
+    root = tmp_path / "notes"
+    root.mkdir()
+    if create_file:
+        (root / relative_path).write_text("owned\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    assert owner.record_change(
+        binding,
+        SessionChange("created", relative_path),
+    )
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    group = _single_group(relative_path)
+    assert owner.publish_ownership(
+        binding,
+        {
+            1: StagingOwnership(
+                repository=repository,
+                head=HeadIdentity.attached("refs/heads/main", OID_A),
+                approved_endpoint_topology=group.endpoints,
+                approved_move_edges=group.move_edges,
+                approved_current_path=group.current_path,
+                original_baselines={relative_path: IndexBaseline(None)},
+                post_stage_entries={
+                    relative_path: _entry(relative_path, object_id=OID_B),
+                },
+            )
+        },
+    )
+    selected_runner = runner or _DelayedUnstageRunner(
+        index_path=relative_path,
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=selected_runner,
+        git_executable="git",
+        environment={"PATH": "/bin"},
+    )
+    return owner, binding, service, selected_runner
 
 
 def _publish_actionable_status(
@@ -2677,15 +2810,17 @@ async def test_status_after_mutation_admission_starts_no_child_or_rerun(
 
 
 @pytest.mark.asyncio
-async def test_stage_transition_refusal_is_synchronous_and_starts_no_task_or_child(
+@pytest.mark.parametrize("action", ["stage", "unstage"])
+async def test_stage_and_unstage_transition_refusal_is_synchronous(
     tmp_path: Path,
+    action: str,
 ) -> None:
     owner, binding, service, runner = _status_service(tmp_path)
     transition = owner.try_acquire_transition(binding, "path")  # type: ignore[arg-type]
     assert transition is not None
 
     with pytest.raises(GitMutationAdmissionError) as error:
-        service.start_stage(binding, (1,))  # type: ignore[arg-type]
+        getattr(service, f"start_{action}")(binding, (1,))
 
     assert error.value.reason == "transition_active"
     assert service._action_cycle is None
@@ -2695,8 +2830,10 @@ async def test_stage_transition_refusal_is_synchronous_and_starts_no_task_or_chi
 
 
 @pytest.mark.asyncio
-async def test_stage_admission_holds_mutation_lease_while_waiting_for_status(
+@pytest.mark.parametrize("action", ["stage", "unstage"])
+async def test_stage_and_unstage_hold_mutation_lease_while_status_settles(
     tmp_path: Path,
+    action: str,
 ) -> None:
     owner, binding, service, runner = _status_service(tmp_path)
     root = tmp_path / "notes"
@@ -2711,7 +2848,7 @@ async def test_stage_admission_holds_mutation_lease_while_waiting_for_status(
     )
     await runner.first_index_started.wait()
 
-    stage = service.start_stage(binding, (1,))  # type: ignore[arg-type]
+    action_waiter = getattr(service, f"start_{action}")(binding, (1,))
 
     assert owner.try_acquire_transition(binding, "root") is None  # type: ignore[arg-type]
     with pytest.raises(GitStatusAdmissionError) as error:
@@ -2720,15 +2857,104 @@ async def test_stage_admission_holds_mutation_lease_while_waiting_for_status(
             (_change(2, "modified", "note.md"),),
         )
     assert error.value.reason == "mutation_active"
-    assert not stage.done()
+    assert not action_waiter.done()
 
     runner.release_first_index.set()
     await status
-    result = await stage
+    result = await action_waiter
     assert result.state in {"success", "blocked"}
     transition = owner.try_acquire_transition(binding, "root")  # type: ignore[arg-type]
     assert transition is not None
     transition.release()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_unstage_waiter_does_not_cancel_retained_action(
+    tmp_path: Path,
+) -> None:
+    paused_runner = _PausedUnstageRunner()
+    owner, binding, service, runner = _unstage_service(
+        tmp_path,
+        runner=paused_runner,
+    )
+
+    waiter = service.start_unstage(binding, (1,))
+    await asyncio.wait_for(runner.update_started.wait(), timeout=1)
+    retained = service._action_cycle
+    assert retained is not None
+
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert not retained.cancelled()
+    assert not retained.done()
+
+    runner.release_update.set()
+    result = await asyncio.wait_for(retained, timeout=1)
+
+    assert result.state == "success"
+    assert result.unstaged_group_ids == (1,)
+    assert not owner.snapshot(binding).staging_ownership
+    transition = owner.try_acquire_transition(binding, "screen")
+    assert transition is not None
+    transition.release()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_settles_active_unstage_and_releases_mutation(
+    tmp_path: Path,
+) -> None:
+    paused_runner = _PausedUnstageRunner()
+    owner, binding, service, runner = _unstage_service(
+        tmp_path,
+        runner=paused_runner,
+    )
+    unstage = service.start_unstage(binding, (1,))
+    await asyncio.wait_for(runner.update_started.wait(), timeout=1)
+
+    settlement = service.shutdown()
+    await asyncio.wait_for(settlement, timeout=1)
+
+    result = await unstage
+    assert result.state == "uncertain"
+    assert runner.shutdown_calls == 1
+    assert not owner.snapshot(binding).staging_ownership
+    transition = owner.try_acquire_transition(binding, "screen")
+    assert transition is not None
+    transition.release()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw_path",
+    (b"raw-\xff.md", b"tab\tand-newline\n.md"),
+    ids=("surrogateescaped", "tab-newline"),
+)
+async def test_unstage_execution_preserves_exact_filename_bytes_in_stdin(
+    tmp_path: Path,
+    raw_path: bytes,
+) -> None:
+    # macOS rejects creating raw non-UTF-8 names, so exercise that byte
+    # boundary through the retained runner while still using start_unstage.
+    relative_path = os.fsdecode(raw_path)
+    assert os.fsencode(relative_path) == raw_path
+    byte_runner = _DelayedUnstageRunner(index_path=relative_path)
+    byte_runner.release_first_index.set()
+    _, binding, service, runner = _unstage_service(
+        tmp_path,
+        runner=byte_runner,
+        relative_path=relative_path,
+        create_file=False,
+    )
+
+    result = await service.start_unstage(binding, (1,))
+
+    assert result.state == "success"
+    assert result.unstaged_group_ids == (1,)
+    assert runner.update_stdins == [
+        b"0 " + b"0" * 40 + b"\t" + raw_path + b"\0",
+    ]
+    assert runner.update_stdins[0].count(b"\0") == 1
 
 
 @pytest.mark.asyncio

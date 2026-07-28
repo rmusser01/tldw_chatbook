@@ -655,6 +655,57 @@ async def test_unstage_restores_saved_baseline_and_keeps_newer_worktree_edits(
 
 
 @pytest.mark.asyncio
+async def test_unstage_execution_preserves_exact_filename_bytes_in_stdin(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    raw_name = b"tab\tand-newline\n.md"
+    relative_path = os.fsdecode(raw_name)
+    assert os.fsencode(relative_path) == raw_name
+    note = repository.path / relative_path
+    note.write_bytes(b"session bytes\n")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("created", relative_path),
+    )
+    runner = _RecordingRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+    assert (await service.start_stage(binding, (1,))).state == "success"
+    stdin_boundary = len(runner.stdins)
+
+    result = await service.start_unstage(binding, (1,))
+
+    assert result.state == "success"
+    payloads = [
+        payload
+        for payload in runner.stdins[stdin_boundary:]
+        if payload is not None
+    ]
+    assert payloads == [
+        b"0 " + b"0" * 40 + b"\t" + raw_name + b"\0",
+    ]
+    assert payloads[0].count(b"\0") == 1
+    assert note.read_bytes() == b"session bytes\n"
+    assert repository.run(
+        "ls-files",
+        "-z",
+        "--",
+        relative_path,
+    ).stdout == b""
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_stage_preflight_blocks_partially_staged_same_path(
     tmp_path: Path,
 ) -> None:
