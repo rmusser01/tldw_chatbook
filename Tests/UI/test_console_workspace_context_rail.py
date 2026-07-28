@@ -834,6 +834,154 @@ async def test_rail_title_budget_scales_with_terminal_width() -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_resize_alone_regrows_wrap_budget_within_one_pause() -> None:
+    """TASK-1191 fast-follow: `on_resize` must regrow the row-wrap budget on
+    its OWN, isolated from any caller also driving an explicit
+    `sync_state()`.
+
+    `test_rail_title_budget_scales_with_terminal_width` above proves the
+    budget grows with terminal width, but it re-calls `tray.sync_state()`
+    after every resize -- so it cannot tell whether `on_resize`'s own
+    `call_after_refresh(self._fit_height_to_content)` pass (see
+    `ConsoleWorkspaceContextTray.on_resize`) is doing the regrow work by
+    itself, or whether the explicit sync is silently carrying it. This test
+    resizes the mounted tray and reads its measured width/budget back with
+    no `sync_state()` call anywhere in between, single `pilot.pause()`
+    only -- the same one-deferred-pass path TASK-1191 collapsed
+    `_schedule_recomposed_content_fit` down to (`_fit_height_to_content`'s
+    docstring: `on_resize` already used `call_after_refresh` for this job
+    before TASK-1191 and is unchanged by it, but this is still the first
+    test to isolate that on_resize path from a follow-up sync).
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        narrow_row_width = tray._row_content_width
+        narrow_budget = tray._browser_title_budget()
+
+        # Resize only -- deliberately no `tray.sync_state()` call anywhere
+        # below, so any regrow observed here is `on_resize`'s own doing.
+        await pilot.resize_terminal(260, 60)
+        await pilot.pause()  # one pause only: the single fit pass must land here
+
+        wide_row_width = tray._row_content_width
+        wide_budget = tray._browser_title_budget()
+        settled_height = int(tray.region.height)
+
+    assert wide_row_width > narrow_row_width, (
+        "on_resize alone (no sync_state in between) must regrow the "
+        f"measured row content width (narrow={narrow_row_width}, "
+        f"wide={wide_row_width})"
+    )
+    assert wide_budget > narrow_budget, (
+        "on_resize alone (no sync_state in between) must regrow the row "
+        f"wrap budget (narrow={narrow_budget}, wide={wide_budget})"
+    )
+    assert settled_height > 0, (
+        "the tray height must converge within on_resize's single fit pass, "
+        f"got {settled_height}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_state_schedules_exactly_one_deferred_fit_pass(monkeypatch) -> None:
+    """TASK-1191 regression guard for `_schedule_recomposed_content_fit`'s
+    scheduling shape, not just its outcome.
+
+    The other TASK-1191 tests in this file (`test_rail_title_budget_scales_
+    with_terminal_width`, `test_on_resize_alone_regrows_wrap_budget_within_
+    one_pause`) prove the tray still converges within a single
+    `pilot.pause()` -- an outcome that a reintroduced two-`call_later`-hop
+    fan-out could still satisfy by coincidence in a fast test run. This test
+    instead pins the SCHEDULING CALLS `sync_state()` itself makes: exactly
+    one `call_after_refresh` registration for the fit-and-restore-scroll
+    closure, and zero `call_later`/`set_timer` calls from this seam --
+    the old shape `_schedule_recomposed_content_fit`'s docstring describes
+    (two `call_later` hops plus a 0.01s `set_timer` scroll-restore, commit
+    1115fa624, collapsed by TASK-1191's f10c6bcdd).
+
+    `call_after_refresh`/`call_later`/`set_timer` are spied at the INSTANCE
+    level with record-and-forward wrappers, so the tray still settles
+    normally (behavior preserved) while every scheduling call is captured.
+    The fit seam's own callback is a nested closure literally named
+    `fit_and_restore_scroll` inside `_schedule_recomposed_content_fit`, so
+    it is identified by `callback.__name__` -- discriminating it from any
+    other legitimate `call_after_refresh` use on this widget (`on_mount`,
+    `on_resize`) rather than assuming every recorded call belongs to this
+    seam.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        # Settle the tray's own on_mount fit pass first so it cannot leak
+        # into the calls recorded below.
+        await pilot.pause()
+
+        recorded: dict[str, list] = {
+            "call_after_refresh": [],
+            "call_later": [],
+            "set_timer": [],
+        }
+        original_call_after_refresh = tray.call_after_refresh
+        original_call_later = tray.call_later
+        original_set_timer = tray.set_timer
+
+        def _call_after_refresh_spy(callback, *args, **kwargs):
+            recorded["call_after_refresh"].append(callback)
+            return original_call_after_refresh(callback, *args, **kwargs)
+
+        def _call_later_spy(callback, *args, **kwargs):
+            recorded["call_later"].append(callback)
+            return original_call_later(callback, *args, **kwargs)
+
+        def _set_timer_spy(delay, callback=None, *, name=None, pause=False):
+            recorded["set_timer"].append(callback)
+            return original_set_timer(delay, callback, name=name, pause=pause)
+
+        monkeypatch.setattr(tray, "call_after_refresh", _call_after_refresh_spy)
+        monkeypatch.setattr(tray, "call_later", _call_later_spy)
+        monkeypatch.setattr(tray, "set_timer", _set_timer_spy)
+
+        tray.sync_state(_base_grouped_workspace_state())
+
+        # No call_later fan-out and no set_timer scroll-restore hop -- the
+        # old two-hop-plus-timer shape this pins against regressing to.
+        assert recorded["call_later"] == []
+        assert recorded["set_timer"] == []
+
+        # Exactly one deferred fit pass was scheduled via call_after_refresh,
+        # and it is THE fit seam's own callback (by name), not some other
+        # call_after_refresh use miscounted as this seam.
+        fit_callbacks = [
+            callback
+            for callback in recorded["call_after_refresh"]
+            if getattr(callback, "__name__", None) == "fit_and_restore_scroll"
+        ]
+        assert len(fit_callbacks) == 1
+        assert recorded["call_after_refresh"] == fit_callbacks
+
+        # Let the scheduled pass actually run so the tray settles normally
+        # before the harness tears down (spies forward to the real
+        # primitives, so this is unaffected by the patch above).
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
 async def test_console_conversation_star_uses_recognizable_star_glyphs():
     """TASK-357: the star toggle must use a recognizable ★/☆ pair, not the
     near-invisible one-cell '*'/'.' distinction."""
@@ -1181,203 +1329,19 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
     app.chat_api_model_value = model
 
 
-@pytest.mark.asyncio
-async def test_console_workspace_conversations_render_bounded_expanded_section() -> (
-    None
-):
-    app = _build_test_app()
-    section = _section_state(collapsed=False, rows=8)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one(
-            "#console-workspace-context", ConsoleWorkspaceContextTray
-        )
-        tray.sync_state(_base_workspace_state(section))
-        await pilot.pause()
-
-        assert (
-            _static_plain(console, "#console-workspace-conversations-title")
-            == "Conversations (8)"
-        )
-        assert (
-            _static_plain(console, "#console-workspace-selected-conversation")
-            == "Conversation 2 - saved chat"
-        )
-        assert len(console.query("#console-workspace-conversation-search")) == 1
-        assert len(console.query("#console-workspace-conversation-search-clear")) == 1
-        assert len(console.query("#console-new-workspace-conversation")) == 1
-        conversation_list = console.query_one("#console-workspace-conversations")
-        rows = list(console.query(".console-workspace-conversation-row"))
-        assert len(rows) == 8
-        assert conversation_list.region.height >= len(rows) * 2
-        assert getattr(conversation_list, "max_scroll_y", 0) == 0
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversations_collapsed_shows_selected_summary_only() -> (
-    None
-):
-    app = _build_test_app()
-    section = _section_state(collapsed=True, rows=8)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one(
-            "#console-workspace-context", ConsoleWorkspaceContextTray
-        )
-        tray.sync_state(_base_workspace_state(section))
-        await pilot.pause()
-
-        assert (
-            _static_plain(console, "#console-workspace-conversations-title")
-            == "Conversations (8)"
-        )
-        assert (
-            _static_plain(console, "#console-workspace-selected-conversation")
-            == "Conversation 2 - saved chat"
-        )
-        assert len(console.query("#console-workspace-conversation-search")) == 0
-        assert len(console.query("#console-workspace-conversations")) == 0
-        assert len(console.query("#console-new-workspace-conversation")) == 0
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_legacy_conversation_toggle_collapses_and_expands() -> (
-    None
-):
-    app = _build_test_app()
-    section = _section_state(collapsed=False, rows=3)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one(
-            "#console-workspace-context", ConsoleWorkspaceContextTray
-        )
-        tray.sync_state(_base_workspace_state(section))
-        await pilot.pause()
-
-        toggle = console.query_one("#console-workspace-conversations-toggle", Button)
-        assert toggle.disabled is False
-        assert len(console.query("#console-workspace-conversations")) == 1
-        assert any(
-            "Conversation 0" in text for text in _conversation_row_texts(console)
-        )
-
-        toggle.press()
-        await pilot.pause(0.1)
-        assert len(console.query("#console-workspace-conversations-toggle")) == 1
-        assert len(console.query("#console-workspace-conversations")) == 0
-        assert (
-            _static_plain(
-                console,
-                "#console-workspace-selected-conversation",
-            )
-            == "Conversation 2 - saved chat"
-        )
-        assert (
-            app.app_config["console"]["conversation_section"]["ws-a"]["collapsed"]
-            is True
-        )
-
-        console.query_one("#console-workspace-conversations-toggle", Button).press()
-        await pilot.pause(0.1)
-        assert len(console.query("#console-workspace-conversations")) == 1
-        assert any(
-            "Conversation 0" in text for text in _conversation_row_texts(console)
-        )
-        assert (
-            app.app_config["console"]["conversation_section"]["ws-a"]["collapsed"]
-            is False
-        )
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversations_fallback_disables_unowned_controls() -> (
-    None
-):
-    app = _build_test_app()
-    section = _section_state(collapsed=False, rows=3)
-    state = _base_workspace_state(section)
-    legacy_state = ConsoleWorkspaceContextState(
-        heading=state.heading,
-        workspace_label=state.workspace_label,
-        authority_label=state.authority_label,
-        sync_label=state.sync_label,
-        runtime_label=state.runtime_label,
-        conversation_rows=state.conversation_rows,
-        conversation_section=None,
-        conversation_empty_copy=state.conversation_empty_copy,
-        change_workspace_enabled=state.change_workspace_enabled,
-        change_workspace_recovery=state.change_workspace_recovery,
-        new_conversation_enabled=state.new_conversation_enabled,
-        new_conversation_recovery=state.new_conversation_recovery,
-        recovery_copy=state.recovery_copy,
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one(
-            "#console-workspace-context", ConsoleWorkspaceContextTray
-        )
-        tray.sync_state(legacy_state)
-        await pilot.pause()
-
-        search_input = console.query_one(
-            "#console-workspace-conversation-search", Input
-        )
-        clear_button = console.query_one(
-            "#console-workspace-conversation-search-clear",
-            Button,
-        )
-        toggle_button = console.query_one(
-            "#console-workspace-conversations-toggle",
-            Button,
-        )
-
-        assert search_input.disabled is True
-        assert clear_button.disabled is True
-        assert toggle_button.disabled is True
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversations_clear_requires_enabled_search() -> None:
-    app = _build_test_app()
-    section = _section_state(
-        collapsed=False,
-        rows=3,
-        query="research",
-        search_enabled=False,
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one(
-            "#console-workspace-context", ConsoleWorkspaceContextTray
-        )
-        tray.sync_state(_base_workspace_state(section))
-        await pilot.pause()
-
-        search_input = console.query_one(
-            "#console-workspace-conversation-search", Input
-        )
-        clear_button = console.query_one(
-            "#console-workspace-conversation-search-clear",
-            Button,
-        )
-
-        assert search_input.disabled is True
-        assert clear_button.disabled is True
+# TASK-1190: five tests that pinned `ConsoleWorkspaceContextTray`'s
+# transitional legacy conversation-list compose path (rendered only when
+# `state.conversation_browser is None` -- reached here only by directly
+# calling `sync_state()` with a hand-built legacy-shaped state, never by any
+# production code path, see the reachability note on `compose()` in
+# `console_workspace_context.py`) were removed along with that dead path:
+#   - test_console_workspace_conversations_render_bounded_expanded_section
+#   - test_console_workspace_conversations_collapsed_shows_selected_summary_only
+#   - test_console_workspace_legacy_conversation_toggle_collapses_and_expands
+#   - test_console_workspace_conversations_fallback_disables_unowned_controls
+#   - test_console_workspace_conversations_clear_requires_enabled_search
+# `test_console_workspace_context_renders_grouped_conversation_browser`
+# above already covers the one real path (`conversation_browser` present).
 
 
 @pytest.mark.asyncio
@@ -1607,28 +1571,25 @@ async def _click_conversation_browser_toggle(console, pilot, selector: str) -> N
     """
     rail_body = console.query_one("#console-left-rail-body")
 
-    # The tray settles its post-recompose layout over more than one message
-    # turn (`_schedule_recomposed_content_fit` schedules nested `call_later`
-    # passes plus a 0.01s timer): a freshly-scrolled/recomposed region can
-    # report a screen position the compositor has not painted yet, which is
-    # exactly the kind of stale-geometry race a real user's own click could
-    # also lose to. Re-scroll and re-check on every attempt (not just once)
-    # until the toggle's own reported region agrees with what
-    # `get_widget_at` resolves there, then click.
-    for _ in range(10):
-        toggle = console.query_one(selector, Button)
-        rail_body.scroll_to_widget(toggle, animate=False)
-        await pilot.pause()  # wait for CPU idle, not a fixed guessed delay
-        toggle = console.query_one(selector, Button)
-        cx = toggle.region.x + toggle.region.width // 2
-        cy = toggle.region.y + toggle.region.height // 2
-        widget_at_center, _ = console.screen.get_widget_at(cx, cy)
-        if widget_at_center is toggle:
-            break
-    else:
-        raise AssertionError(
-            f"{selector!r} never settled at a hittable on-screen position"
-        )
+    # TASK-1191: this used to re-scroll and re-check on every one of up to 10
+    # attempts, compensating for a theorized multi-message-turn settle race in
+    # `_schedule_recomposed_content_fit` (nested `call_later` passes plus a
+    # 0.01s timer). That machinery is gone -- the tray now fits its height in
+    # a single `call_after_refresh` pass, same primitive `on_mount`/
+    # `on_resize` already used -- so one scroll-into-view plus one CPU-idle
+    # pause is enough for `get_widget_at` to agree with the toggle's own
+    # region before clicking.
+    toggle = console.query_one(selector, Button)
+    rail_body.scroll_to_widget(toggle, animate=False)
+    await pilot.pause()  # wait for CPU idle, not a fixed guessed delay
+    toggle = console.query_one(selector, Button)
+    cx = toggle.region.x + toggle.region.width // 2
+    cy = toggle.region.y + toggle.region.height // 2
+    widget_at_center, _ = console.screen.get_widget_at(cx, cy)
+    assert widget_at_center is toggle, (
+        f"{selector!r} did not settle at a hittable on-screen position "
+        f"(got {widget_at_center!r})"
+    )
 
     landed = await pilot.click(selector)
     assert landed, f"real click missed {selector!r} (not on screen / not hittable)"
@@ -1665,14 +1626,13 @@ async def test_section_header_toggles_via_real_click_and_persists_across_rebuild
     but through `pilot.click` instead of `.press()`.
 
     Collapse and expand are each driven from a freshly rebuilt tray rather
-    than chained back-to-back on one instance: `ConsoleWorkspaceContextTray.
-    _fit_height_to_content` settles its own auto-height over several
-    deferred passes, and re-toggling within a couple hundred milliseconds
-    of the previous toggle's own settle can catch it mid-flight (a
-    real, pre-existing race in that unrelated fit-pass machinery, not a
-    click-routing defect and out of this task's scope) -- the rail-rebuild
-    seam this test already needs for persistence conveniently also gives
-    every click a fresh, from-scratch layout to click into.
+    than chained back-to-back on one instance -- not required for
+    correctness since TASK-1191 (`ConsoleWorkspaceContextTray.
+    _fit_height_to_content` now fits in a single deferred pass instead of
+    several, so there is no settle window left to catch re-toggling
+    mid-flight), but kept as-is because the rail-rebuild seam this test
+    already needs for persistence conveniently also gives every click a
+    fresh, from-scratch layout to click into.
     """
     app = _build_test_app()
     service = app.workspace_registry_service
