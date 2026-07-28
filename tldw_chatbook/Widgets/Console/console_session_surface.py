@@ -8,7 +8,7 @@ from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import HorizontalScroll, Vertical
+from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
@@ -36,6 +36,9 @@ CONSOLE_NEW_TAB_BUTTON_HEIGHT = 1
 CONSOLE_SESSION_TAB_DISPLAY_CHARS = 19
 CONSOLE_SESSION_TAB_WIDTH = 21
 CONSOLE_TRANSCRIPT_TITLE = "Transcript / Event Stream"
+#: Fleet-UX expert review F2 (task-1232): one-time coach-mark row mounted
+#: under the tab strip, hidden until `show_fleet_coachmark` reveals it.
+CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH = 3
 
 
 def _session_tab_tooltip(
@@ -126,6 +129,7 @@ class ConsoleSessionSurface(Vertical):
         tab_strip.styles.max_height = 1
         with tab_strip:
             yield self._build_new_tab_button()
+        yield self._build_fleet_coachmark()
         yield ChatTaskCards(id="console-task-surface")
         yield ConsoleTranscriptSurface(
             self._transcript_background_effect_settings(
@@ -134,6 +138,68 @@ class ConsoleSessionSurface(Vertical):
             id="console-transcript-surface",
             classes="console-transcript-surface",
         )
+
+    def _build_fleet_coachmark(self) -> Horizontal:
+        """Build the (initially hidden) one-time parallel-agents coach-mark.
+
+        Fleet-UX expert review F2 / Upgrade proposal 1 (task-1232): composed
+        every time (mirrors the composer's `#console-clear-attachment`
+        pattern of always mounting a `display: none` control and toggling
+        it later) so visibility is driven by `show_fleet_coachmark`/
+        `hide_fleet_coachmark` calls off real state, never by a one-shot
+        value baked in at mount time.
+        """
+        row = Horizontal(
+            id="console-fleet-coachmark",
+            classes="console-fleet-coachmark",
+        )
+        row.styles.height = 1
+        row.styles.min_height = 1
+        row.styles.max_height = 1
+        row.styles.display = "none"
+        text = Static("", id="console-fleet-coachmark-text")
+        text.styles.width = "1fr"
+        dismiss = Button(
+            GLYPH_CLOSE,
+            id="console-fleet-coachmark-dismiss",
+            compact=True,
+        )
+        dismiss.tooltip = "Dismiss"
+        dismiss.styles.width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
+        dismiss.styles.min_width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
+        dismiss.styles.max_width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
+        # Children are composed via `compose_add_child` rather than a
+        # generator `with row: yield ...` block because THIS helper itself
+        # returns a plain `Horizontal` (not a generator) so its caller can
+        # `yield self._build_fleet_coachmark()` alongside the tab strip's own
+        # already-established `with tab_strip: yield ...` pattern.
+        row.compose_add_child(text)
+        row.compose_add_child(dismiss)
+        return row
+
+    def show_fleet_coachmark(self, text: str) -> None:
+        """Reveal the one-time parallel-agents coach-mark with the given copy.
+
+        Args:
+            text: Plain-text copy to show; rendered via ``rich.text.Text``
+                (not markup-parsed) so the copy is safe even if it ever
+                contains literal square brackets.
+        """
+        try:
+            banner = self.query_one("#console-fleet-coachmark")
+            content = self.query_one("#console-fleet-coachmark-text", Static)
+        except Exception:
+            return
+        content.update(Text(text))
+        banner.styles.display = "block"
+
+    def hide_fleet_coachmark(self) -> None:
+        """Hide the parallel-agents coach-mark (dismissed, or nothing to show)."""
+        try:
+            banner = self.query_one("#console-fleet-coachmark")
+        except Exception:
+            return
+        banner.styles.display = "none"
 
     def _build_new_tab_button(self) -> Button:
         """Return the compact symbolic Console new-session control."""

@@ -564,7 +564,61 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("F2", "rename a session (in the Ctrl+K switcher)"),
         ),
     ),
+    (
+        # Fleet-UX expert review F2 (task-1232): Alt+W and Alt+1..9 are real
+        # BINDINGS (see this screen's BINDINGS list) but the footer is a
+        # single-line, non-wrapping Static already at ~120 chars for its 7
+        # entries -- adding all of these there would just push more of an
+        # already-overflowing line further off tested narrow-terminal widths
+        # (this suite runs Console at 80 columns). Help is the reachable
+        # surface for the full set; Ctrl+T/Ctrl+K are repeated here (they
+        # also appear above) because this group is what a user scanning for
+        # "how do multiple tabs work" will read top-to-bottom.
+        "Agents & fleet",
+        (
+            ("Alt+W", "switch workspace"),
+            ("Alt+1..9", "jump to tab 1-9"),
+            ("Ctrl+T", "new tab (new agent)"),
+            ("Ctrl+K", "switch session"),
+        ),
+    ),
 )
+
+#: Fleet-UX expert review F4 (task-1233 will also reference this legend --
+#: keep it a single, clearly-marked string so that task can find/reuse it
+#: verbatim rather than re-deriving the copy).
+CONSOLE_FLEET_MARKER_LEGEND = (
+    "Status markers: ● running · ◆ needs approval · ✓ finished · ✗ failed "
+    "— clears once you visit that tab."
+)
+
+
+def _console_workbench_agents_notes(max_parallel_runs: int) -> tuple[str, ...]:
+    """Build the F1 Help "Agents" section lines (fleet-UX F2, task-1232).
+
+    A function, not a module constant: the parallel-run cap is user-
+    adjustable (``console.max_parallel_runs``, Settings > Console Behavior)
+    and this must read the LIVE value, not the default baked in at import
+    time.
+
+    Args:
+        max_parallel_runs: The live ``ConsoleChatController.max_parallel_runs``
+            cap to quote in the second line.
+
+    Returns:
+        Ordered prose lines for the help panel's "Agents" notes block.
+    """
+    return (
+        "Each Console tab runs its own agent; a run keeps going in the "
+        "background while you're on another tab.",
+        f"Up to {max_parallel_runs} runs in parallel "
+        "(change in Settings > Console Behavior).",
+        "Built-in tools ask before running; a background session that "
+        "needs approval parks with a ◆ badge and a toast.",
+        CONSOLE_FLEET_MARKER_LEGEND,
+        "Leaving Console cancels any runs still in progress -- you'll be "
+        "asked first.",
+    )
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -1092,12 +1146,18 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context
         )
         workbench_state = self._build_console_workbench_state(control_state)
+        # Fleet-UX expert review F2 (task-1232): read the LIVE parallel-run
+        # cap so the help copy tracks a user override instead of quoting the
+        # baked-in default.
+        max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
         self.app.push_screen(
             WorkbenchHelpPanel(
                 WorkbenchHelpState(
                     route_id=workbench_state.route_id,
                     title="Console",
                     actions=workbench_state.actions,
+                    notes_heading="Agents",
+                    notes=_console_workbench_agents_notes(max_parallel_runs),
                     shortcut_groups=CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
                 )
             )
@@ -1603,6 +1663,12 @@ class ChatScreen(BaseAppScreen):
         """Open the active Console workspace switcher."""
         event.stop()
         self._open_console_workspace_switcher()
+
+    @on(Button.Pressed, "#console-fleet-coachmark-dismiss")
+    def on_console_fleet_coachmark_dismiss(self, event: Button.Pressed) -> None:
+        """Dismiss the one-time fleet coach-mark and persist the seen flag."""
+        event.stop()
+        self._record_console_fleet_coachmark_dismissed()
 
     def action_open_console_workspace_switcher(self) -> None:
         """Open the workspace switcher (Alt+W / command palette, TASK-722)."""
@@ -2197,6 +2263,14 @@ class ChatScreen(BaseAppScreen):
         self._last_console_rail_state: ConsoleRailState | None = None
         self._console_guidance_dismissed = False
         self._console_first_send_completed_cached: bool | None = None
+        # Fleet-UX expert review F2 (task-1232): one-time coach-mark shown
+        # the first time the session count actually TRANSITIONS to 2 (not
+        # merely "is 2" -- a restore that lands the store at 2+ sessions on
+        # first sync must not misfire as a "creation" event). `None` means
+        # "not seeded yet"; seeded from the count observed on this screen's
+        # first sync tick.
+        self._last_console_session_count: int | None = None
+        self._console_fleet_coachmark_seen_cached: bool | None = None
         self._console_detected_local_server: DiscoveredLocalServer | None = None
         self._console_local_discovery_started = False
         # P1g: cached "what's in play" chat-dictionary summary for the
@@ -7291,6 +7365,112 @@ class ChatScreen(BaseAppScreen):
         except Exception as exc:
             logger.warning("Failed to persist Console onboarding flag: {}", exc)
 
+    def _console_fleet_coachmark_seen(self) -> bool:
+        """Return the persisted one-time fleet coach-mark flag (fleet-UX F2, task-1232).
+
+        Mirrors ``_console_first_send_completed``'s manual nested-dict read
+        rather than ``get_cli_setting`` -- ``get_cli_setting`` takes a flat
+        ``(section, key)`` pair and does not resolve a dotted
+        ``"console.onboarding"`` section (a prior program's documented trap).
+        """
+        if self._console_fleet_coachmark_seen_cached is None:
+            app_config = getattr(self.app_instance, "app_config", None)
+            raw = None
+            if isinstance(app_config, dict):
+                onboarding = app_config.get("console", {})
+                if isinstance(onboarding, dict):
+                    onboarding = onboarding.get("onboarding", {})
+                raw = (
+                    onboarding.get("fleet_coachmark_seen")
+                    if isinstance(onboarding, dict)
+                    else None
+                )
+            self._console_fleet_coachmark_seen_cached = coerce_bool_setting(
+                raw, False
+            )
+        return self._console_fleet_coachmark_seen_cached
+
+    def _maybe_show_fleet_coachmark(
+        self,
+        sessions: list[ConsoleChatSession],
+        surface: ConsoleSessionSurface,
+    ) -> None:
+        """Show the one-time "each tab runs its own agent" coach-mark.
+
+        Fleet-UX expert review F2 / Upgrade proposal 1 (task-1232): fires the
+        first time the Console session count actually TRANSITIONS to
+        exactly 2 (Ctrl+T, the tab strip's "New tab" button, a workspace
+        auto-tab, a Personas "Start Chat" handoff -- every creation path
+        already lands here via ``_sync_native_console_chat_ui`` ->
+        ``_sync_console_native_session_tabs``). Seeded from whatever count
+        this screen instance first observes, so a restore that starts the
+        store already at 2+ sessions is never mistaken for a "creation".
+
+        Args:
+            sessions: The current Console session list (already fetched by
+                the caller for the tab-strip sync).
+            surface: The mounted Console session surface to render the
+                banner on (already resolved by the caller).
+        """
+        current_count = len(sessions)
+        previous_count = self._last_console_session_count
+        self._last_console_session_count = current_count
+        if previous_count is None:
+            # First sync tick for this screen instance: seed only. Whatever
+            # the store already holds is not a "creation" event.
+            return
+        if current_count != 2 or previous_count >= 2:
+            return
+        if self._console_fleet_coachmark_seen():
+            return
+        max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
+        surface.show_fleet_coachmark(
+            f"Each tab runs its own agent — up to {max_parallel_runs} in "
+            "parallel (change in Settings > Console Behavior)."
+        )
+
+    def _record_console_fleet_coachmark_dismissed(self) -> None:
+        """Hide the fleet coach-mark and persist the one-time seen flag.
+
+        The flag is written on DISMISS (not on show): an undismissed banner
+        is allowed to reappear next time the session count transitions to 2
+        (e.g. the user never noticed it, closed the tab, and reopened a
+        second one) -- only an explicit acknowledgement makes it gone for
+        good, including across restarts.
+        """
+        surface = self.console_session_surface
+        if surface is not None:
+            surface.hide_fleet_coachmark()
+        if self._console_fleet_coachmark_seen_cached is True:
+            return
+        self._console_fleet_coachmark_seen_cached = True
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            console_cfg = app_config.get("console")
+            if not isinstance(console_cfg, dict):
+                console_cfg = {}
+                app_config["console"] = console_cfg
+            onboarding_cfg = console_cfg.get("onboarding")
+            if not isinstance(onboarding_cfg, dict):
+                onboarding_cfg = {}
+                console_cfg["onboarding"] = onboarding_cfg
+            onboarding_cfg["fleet_coachmark_seen"] = True
+        self._save_console_fleet_coachmark_flag()
+
+    @work(thread=True)
+    def _save_console_fleet_coachmark_flag(self) -> None:
+        """Persist the fleet coach-mark seen flag without blocking the UI thread."""
+        try:
+            save_setting_to_cli_config(
+                "console.onboarding",
+                "fleet_coachmark_seen",
+                True,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist Console fleet coach-mark flag: {}", exc
+            )
+
     def _migrate_console_rail_fallback_preferences(
         self,
         key: str,
@@ -11906,6 +12086,7 @@ class ChatScreen(BaseAppScreen):
             if controller is not None
             else None
         )
+        self._maybe_show_fleet_coachmark(sessions, surface)
         await surface.sync_sessions(
             sessions=sessions,
             active_session_id=store.active_session_id,
