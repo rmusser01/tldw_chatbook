@@ -22,7 +22,9 @@ DOMAIN_OWNERS = [
     ("ingestion", "tldw_chatbook.Local_Ingestion.Document_Processing_Lib"),
     ("media_database", "tldw_chatbook.DB.Client_Media_DB_v2"),
     ("notes_sync", "tldw_chatbook.Notes.sync_engine"),
-    ("subscriptions", "tldw_chatbook.Subscriptions.content_processor"),
+    # content_processor was retired in TASK-1220; monitoring_engine is the live
+    # subscriptions module that WatchlistCheckHandler actually calls.
+    ("subscriptions", "tldw_chatbook.Subscriptions.monitoring_engine"),
     ("web", "tldw_chatbook.Web_Scraping.Article_Extractor_Lib"),
     ("application", "tldw_chatbook.app"),
 ]
