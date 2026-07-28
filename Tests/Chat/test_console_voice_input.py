@@ -607,3 +607,137 @@ def test_abandon_swallows_a_raising_release(monkeypatch):
     controller.abandon()  # must not raise
 
     assert controller.state == cvi.STATE_IDLE
+
+
+# -- Fix round 2: cascading double-VoiceFailed, ghost-listening race, --------
+# -- abandon-then-start, unguarded override-emit/spawn -----------------------
+
+
+def test_probe_failure_does_not_cascade_into_a_second_voicefailed(monkeypatch):
+    """`_fail()`'s own second emit (`VoiceStateChanged(idle)`) raising must
+    not be caught by the outer probe/resolve guard in `start()` and re-fire
+    `_fail()` with the plumbing exception's message instead of the real,
+    original unavailability reason.
+
+    Reproduces the exact scenario Finding 2 exists for -- an `emit` that
+    raises partway through `_fail()`'s two calls -- one level up, at the
+    call site that wraps `probe()`/`resolve()`.
+    """
+    monkeypatch.setattr(cvi, "capture_available", lambda: False)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+
+    recorded = []
+
+    def emit_raising_on_third_event(event):
+        recorded.append(event)
+        if len(recorded) == 3:  # VoiceStateChanged(idle), _fail()'s 2nd emit
+            raise RuntimeError("widget torn down mid-delivery")
+
+    controller = cvi.ConsoleVoiceInputController(
+        emit=emit_raising_on_third_event,
+        spawn=lambda thunk: thunk(),
+        service_factory=lambda **kwargs: FakeDictationService(**kwargs),
+    )
+
+    with pytest.raises(RuntimeError):
+        controller.start()
+
+    failures = [e for e in recorded if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert failures[0].reason == cvi.CAPTURE_REASON
+
+
+def test_fail_emits_voicefailed_before_voicestatechanged_idle_after_restructure(monkeypatch):
+    """Re-confirms the Finding 2 invariant survives the try/except
+    restructuring done for NEW BREAKAGE 1: state mutated first, then
+    VoiceFailed, then VoiceStateChanged(idle)."""
+    service = FakeDictationService()
+    service.start_error = RuntimeError("no input device")
+    controller, events, _ = _controller(monkeypatch, service)
+
+    controller.start()
+
+    failed_index = next(i for i, e in enumerate(events) if isinstance(e, cvi.VoiceFailed))
+    idle_index = next(
+        i
+        for i, e in enumerate(events)
+        if isinstance(e, cvi.VoiceStateChanged) and e.state == cvi.STATE_IDLE
+    )
+    assert failed_index < idle_index
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_start_returns_to_idle_when_spawn_raises(monkeypatch):
+    """A raising spawn() (e.g. a Textual run_worker() call itself failing)
+    must not wedge `preparing` forever, same as a probe()/resolve() crash."""
+
+    def raising_spawn(thunk):
+        raise RuntimeError("worker pool exhausted")
+
+    controller, events, _ = _controller(monkeypatch, spawn=raising_spawn)
+
+    controller.start()
+
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    assert "worker pool exhausted" in failures[0].reason
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_ghost_listening_race_is_closed_by_the_atomic_recheck(monkeypatch):
+    """Reproduces the narrow gap between claiming the service (locked, in
+    `_begin()`) and transitioning to `listening` (originally unlocked): if
+    `abandon()` lands in that exact gap, the in-flight `_begin()` must not
+    stomp the state back to `listening` with the microphone already
+    released. `_enter_listening()` is the seam: it is invoked only after the
+    service is claimed, so patching it to run `abandon()` first simulates
+    `abandon()` firing on the UI thread at the worst possible instant.
+    """
+    audio = FakeAudioService()
+    service = FakeDictationService()
+    service._audio_service = audio
+    controller, events, _ = _controller(monkeypatch, service=service)
+
+    real_enter_listening = controller._enter_listening
+
+    def enter_listening_after_concurrent_abandon():
+        controller.abandon()
+        real_enter_listening()
+
+    monkeypatch.setattr(controller, "_enter_listening", enter_listening_after_concurrent_abandon)
+
+    controller.start()
+
+    assert controller.state == cvi.STATE_IDLE
+    assert controller.is_active is False
+    assert controller._service is None
+    assert audio.stop_called is True
+
+
+def test_start_after_abandon_never_constructs_a_service(monkeypatch):
+    """`abandon()` is a one-way, terminal latch: once torn down, a later
+    `start()` on the same controller must not engage the microphone at all,
+    even briefly -- not construct a service, not call start_dictation(), not
+    emit anything.
+    """
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    def factory_must_not_be_called(**kwargs):
+        raise AssertionError("service_factory must not be called after abandon()")
+
+    events = []
+    controller = cvi.ConsoleVoiceInputController(
+        emit=events.append,
+        spawn=lambda thunk: thunk(),
+        service_factory=factory_must_not_be_called,
+    )
+    controller.abandon()
+    events.clear()
+
+    controller.start()
+
+    assert events == []
+    assert controller.state == cvi.STATE_IDLE
+    assert controller.is_active is False

@@ -271,39 +271,61 @@ class ConsoleVoiceInputController:
         self._emit(VoiceStateChanged(STATE_IDLE))
 
     def start(self) -> None:
-        """Begin capture. Rejected unless currently idle."""
+        """Begin capture. Rejected unless currently idle and never abandoned."""
         with self._state_lock:
-            if self._state != STATE_IDLE:
-                logger.debug("Console dictation start ignored in state {}", self._state)
+            if self._abandoned or self._state != STATE_IDLE:
+                logger.debug(
+                    "Console dictation start ignored (abandoned={}, state={})",
+                    self._abandoned,
+                    self._state,
+                )
                 return
             self._state = STATE_PREPARING
         self._emit(VoiceStateChanged(STATE_PREPARING))
 
+        # Each `try` below covers only the call that can crash unexpectedly,
+        # never the `_fail()` that handles its result: `_fail()`'s own emit
+        # can itself raise (that's the whole point of Finding 2), and if that
+        # raise were caught by one of these `except` blocks it would trigger
+        # a second, mislabeled `_fail()` describing the plumbing exception
+        # instead of the real cause.
         try:
             availability = probe()
-            if not availability.ok:
-                self._fail(availability.reason, availability.remedy)
-                return
-
-            effective = resolve()
-            if effective is None:
-                self._fail(PROVIDER_REASON, PROVIDER_REMEDY)
-                return
-        except Exception as exc:  # noqa: BLE001 - a probe/resolve crash must not wedge preparing
-            logger.opt(exception=True).warning("Console dictation availability check failed")
+        except Exception as exc:  # noqa: BLE001 - a probe crash must not wedge preparing
+            logger.opt(exception=True).warning("Console dictation availability probe crashed")
             self._fail(str(exc))
             return
 
-        if effective.was_overridden and not self._override_announced:
-            self._override_announced = True
-            self._emit(
-                VoiceProviderOverridden(
-                    configured=effective.configured_provider,
-                    effective=effective.provider,
-                )
-            )
+        if not availability.ok:
+            self._fail(availability.reason, availability.remedy)
+            return
 
-        self._spawn(lambda: self._begin(effective))
+        try:
+            effective = resolve()
+        except Exception as exc:  # noqa: BLE001 - a resolve crash must not wedge preparing
+            logger.opt(exception=True).warning("Console dictation provider resolution crashed")
+            self._fail(str(exc))
+            return
+
+        if effective is None:
+            self._fail(PROVIDER_REASON, PROVIDER_REMEDY)
+            return
+
+        try:
+            if effective.was_overridden and not self._override_announced:
+                self._override_announced = True
+                self._emit(
+                    VoiceProviderOverridden(
+                        configured=effective.configured_provider,
+                        effective=effective.provider,
+                    )
+                )
+
+            self._spawn(lambda: self._begin(effective))
+        except Exception as exc:  # noqa: BLE001 - override-announce/spawn must not wedge preparing
+            logger.opt(exception=True).warning("Console dictation could not be spawned")
+            self._fail(str(exc))
+            return
 
     def _begin(self, effective: EffectiveConfig) -> None:
         """Blocking half of start(); always runs via `spawn`."""
@@ -346,7 +368,24 @@ class ConsoleVoiceInputController:
             self._fail("Could not start the microphone.")
             return
 
-        self._set_state(STATE_LISTENING)
+        self._enter_listening()
+
+    def _enter_listening(self) -> None:
+        """Atomically transition to `listening`, re-checking abandonment.
+
+        Between claiming the service above (under `_state_lock`) and this
+        call, `abandon()` may have run on another thread -- a real one in
+        production, since `_begin()` runs on a worker thread while `abandon()`
+        fires from the UI thread -- and already released the microphone and
+        returned the machine to idle. Re-checking `_abandoned` here, under
+        the same lock, closes that window instead of stomping the state back
+        to `listening` with no service behind it.
+        """
+        with self._state_lock:
+            if self._abandoned:
+                return
+            self._state = STATE_LISTENING
+        self._emit(VoiceStateChanged(STATE_LISTENING))
 
     def stop(self) -> None:
         """End capture and commit. No-op unless currently listening."""
