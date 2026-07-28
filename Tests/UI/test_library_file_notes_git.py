@@ -560,10 +560,13 @@ async def test_buttons_emit_typed_messages_with_selected_and_bulk_group_ids() ->
 
         assert isinstance(app.messages[0], LibraryFileNotesGitPanel.StageRequested)
         assert app.messages[0].group_ids == (4,)
+        assert not app.messages[0].bulk
         assert isinstance(app.messages[1], LibraryFileNotesGitPanel.StageRequested)
         assert app.messages[1].group_ids == (4,)
+        assert app.messages[1].bulk
         assert isinstance(app.messages[2], LibraryFileNotesGitPanel.UnstageRequested)
         assert app.messages[2].group_ids == (8,)
+        assert app.messages[2].bulk
         assert isinstance(app.messages[3], LibraryFileNotesGitPanel.RefreshRequested)
         assert isinstance(app.messages[4], LibraryFileNotesGitPanel.BackRequested)
 
@@ -836,6 +839,113 @@ async def test_stage_flushes_then_gate_keeps_editor_back_and_one_latest_refresh(
         assert "Staged 1 · clean 0 · blocked 0" in _text(
             workspace.query_one("#file-notes-git-action-status", Static)
         )
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_stage_all_summary_counts_the_complete_displayed_snapshot(
+    tmp_path: Path,
+) -> None:
+    _root, owner, _binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    git_service.rows = (
+        _row("unstaged", group_id=1, stage_action="stage"),
+        _row("owned", group_id=2, unstage_eligible=True),
+        _row("clean", group_id=3),
+        _row("conflict", group_id=4, disabled_reason="conflict"),
+    )
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace.query_one("#file-notes-session-changes", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(git_service.status_calls) == 1,
+            "initial status did not finish",
+        )
+
+        workspace.query_one("#file-notes-git-stage-all", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: git_service.stage_calls == [(1,)]
+            and len(git_service.status_calls) == 2,
+            "Stage All did not settle and refresh",
+        )
+
+        assert (
+            _text(workspace.query_one("#file-notes-git-action-status", Static))
+            == "Staged 1 · already staged 1 · clean 1 · blocked 1"
+        )
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_unstage_all_summary_counts_the_complete_displayed_snapshot(
+    tmp_path: Path,
+) -> None:
+    _root, owner, _binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    git_service.rows = (
+        _row("owned", group_id=1, unstage_eligible=True),
+        _row("unstaged", group_id=2, stage_action="stage"),
+        _row("clean", group_id=3),
+        _row("conflict", group_id=4, disabled_reason="conflict"),
+    )
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace.query_one("#file-notes-session-changes", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(git_service.status_calls) == 1,
+            "initial status did not finish",
+        )
+
+        workspace.query_one("#file-notes-git-unstage-all", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: git_service.unstage_calls == [(1,)]
+            and len(git_service.status_calls) == 2,
+            "Unstage All did not settle and refresh",
+        )
+
+        assert (
+            _text(workspace.query_one("#file-notes-git-action-status", Static))
+            == "Unstaged 1 · skipped 1 · clean 1 · blocked 1"
+        )
+        selected_context = workspace._git_action_summary_context(
+            "stage",
+            (1,),
+            bulk=False,
+        )
+        assert (
+            workspace._git_action_summary(
+                GitActionResult(
+                    "stage",
+                    "uncertain",
+                    (1,),
+                    blocked_group_ids=(1,),
+                    message="Git Stage outcome is uncertain",
+                ),
+                selected_context,
+            )
+            == "Git Stage outcome is uncertain"
+        )
+        uncertain = workspace._git_action_summary(
+            GitActionResult(
+                "stage",
+                "uncertain",
+                (1,),
+                blocked_group_ids=(1,),
+            ),
+            selected_context,
+        )
+        assert uncertain == "Stage uncertain · clean 0 · blocked 1"
+        assert "Staged" not in uncertain
     await workspace.shutdown()
     owner.shutdown()
     replica.close()

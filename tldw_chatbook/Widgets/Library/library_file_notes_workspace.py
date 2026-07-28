@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from threading import Lock, RLock
 from typing import Any, Literal, Protocol, cast
@@ -38,6 +38,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     RepositoryIdentity,
     SequencedSessionChange,
     SessionBinding,
+    SessionGitRow,
     SessionGitStatus,
 )
 from tldw_chatbook.Notes.file_notes_service import (
@@ -61,6 +62,17 @@ _SESSION_GIT_MUTATION_BUSY = (
     "Session Git mutation in progress; structural actions are busy."
 )
 _TreeData = tuple[Literal["file", "folder", "deleted"], str]
+
+
+@dataclass(frozen=True, slots=True)
+class _GitActionSummaryContext:
+    """Immutable presentation counts captured before one bulk action."""
+
+    bulk: bool = False
+    skipped: int = 0
+    already_staged: int = 0
+    clean: int = 0
+    blocked: int = 0
 
 
 class _SessionGitService(Protocol):
@@ -1852,7 +1864,7 @@ class LibraryFileNotesWorkspace(Vertical):
         event: LibraryFileNotesGitPanel.StageRequested,
     ) -> None:
         event.stop()
-        await self._start_git_action("stage", event.group_ids)
+        await self._start_git_action("stage", event.group_ids, bulk=event.bulk)
 
     @on(LibraryFileNotesGitPanel.UnstageRequested)
     async def _session_git_unstage(
@@ -1860,18 +1872,25 @@ class LibraryFileNotesWorkspace(Vertical):
         event: LibraryFileNotesGitPanel.UnstageRequested,
     ) -> None:
         event.stop()
-        await self._start_git_action("unstage", event.group_ids)
+        await self._start_git_action("unstage", event.group_ids, bulk=event.bulk)
 
     async def _start_git_action(
         self,
         action: Literal["stage", "unstage"],
         group_ids: tuple[int, ...],
+        *,
+        bulk: bool,
     ) -> None:
         """Flush as required, then synchronously admit one retained action."""
         binding = self._session_binding
         service = self._session_git_service()
         if binding is None or service is None or self._navigator_mode != "git":
             return
+        summary_context = self._git_action_summary_context(
+            action,
+            group_ids,
+            bulk=bulk,
+        )
         pending_save = (
             self._save_state in {"dirty", "saving"}
             or self._autosave_timer is not None
@@ -1915,7 +1934,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self._update_root_surface()
         self._update_controls()
         self._git_action_worker = self.run_worker(
-            self._render_git_action(task, binding),
+            self._render_git_action(task, binding, summary_context),
             name=f"file-notes-git-{action}",
             group="file-notes-git-action",
             exclusive=True,
@@ -1925,6 +1944,7 @@ class LibraryFileNotesWorkspace(Vertical):
         self,
         task: asyncio.Task[GitActionResult],
         binding: SessionBinding,
+        summary_context: _GitActionSummaryContext,
     ) -> None:
         result: GitActionResult | None = None
         try:
@@ -1937,7 +1957,10 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._git_panel_widget.set_action_status(self._git_action_detail)
         else:
             if self._git_binding_is_current(binding):
-                self._git_action_detail = self._git_action_summary(result)
+                self._git_action_detail = self._git_action_summary(
+                    result,
+                    summary_context,
+                )
                 self._git_panel_widget.set_action_status(self._git_action_detail)
         finally:
             binding_changed = (
@@ -1960,23 +1983,69 @@ class LibraryFileNotesWorkspace(Vertical):
                                 "Git action finished while Session Git was hidden."
                             )
 
+    def _git_action_summary_context(
+        self,
+        action: Literal["stage", "unstage"],
+        group_ids: tuple[int, ...],
+        *,
+        bulk: bool,
+    ) -> _GitActionSummaryContext:
+        """Classify excluded displayed rows without re-deciding eligibility."""
+        if not bulk:
+            return _GitActionSummaryContext()
+        requested = frozenset(group_ids)
+        excluded: tuple[SessionGitRow, ...] = tuple(
+            row
+            for row in self._git_panel_widget.rows
+            if row.group_id not in requested
+        )
+        clean = sum(row.state == "clean" for row in excluded)
+        if action == "stage":
+            already_staged = sum(row.state == "owned" for row in excluded)
+            return _GitActionSummaryContext(
+                bulk=True,
+                already_staged=already_staged,
+                clean=clean,
+                blocked=len(excluded) - clean - already_staged,
+            )
+        skipped = sum(row.state == "unstaged" for row in excluded)
+        return _GitActionSummaryContext(
+            bulk=True,
+            skipped=skipped,
+            clean=clean,
+            blocked=len(excluded) - clean - skipped,
+        )
+
     @staticmethod
-    def _git_action_summary(result: GitActionResult) -> str:
-        verb = "Staged" if result.action == "stage" else "Unstaged"
+    def _git_action_summary(
+        result: GitActionResult,
+        context: _GitActionSummaryContext,
+    ) -> str:
+        """Render selected counts or complete pre-action bulk counts."""
+        if result.message:
+            return result.message
+        verb = (
+            ("Staged" if result.action == "stage" else "Unstaged")
+            if result.state == "success"
+            else f"{result.action.title()} {result.state}"
+        )
         changed = (
             len(result.staged_group_ids)
             if result.action == "stage"
             else len(result.unstaged_group_ids)
         )
-        parts = [
-            f"{verb} {changed}",
-            f"clean {len(result.clean_group_ids)}",
-            f"blocked {len(result.blocked_group_ids)}",
-        ]
-        detail = " · ".join(parts)
-        if result.message:
-            detail = f"{detail} — {result.message}"
-        return detail
+        parts = [f"{verb} {changed}" if result.state == "success" else verb]
+        if context.bulk and result.action == "stage":
+            parts.append(f"already staged {context.already_staged}")
+        if context.bulk and result.action == "unstage":
+            parts.append(f"skipped {context.skipped}")
+        parts.extend(
+            (
+                f"clean {len(result.clean_group_ids) + context.clean}",
+                f"blocked {len(result.blocked_group_ids) + context.blocked}",
+            )
+        )
+        return " · ".join(parts)
 
     @on(Button.Pressed, "#file-notes-new")
     async def _new_file(self, event: Button.Pressed) -> None:

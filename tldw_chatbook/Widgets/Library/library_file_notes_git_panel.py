@@ -147,15 +147,27 @@ class LibraryFileNotesGitPanel(Vertical):
     class StageRequested(Message):
         """Request Stage for exact stable session group identities."""
 
-        def __init__(self, group_ids: tuple[int, ...]) -> None:
+        def __init__(
+            self,
+            group_ids: tuple[int, ...],
+            *,
+            bulk: bool = False,
+        ) -> None:
             self.group_ids = group_ids
+            self.bulk = bulk
             super().__init__()
 
     class UnstageRequested(Message):
         """Request Unstage for exact stable session group identities."""
 
-        def __init__(self, group_ids: tuple[int, ...]) -> None:
+        def __init__(
+            self,
+            group_ids: tuple[int, ...],
+            *,
+            bulk: bool = False,
+        ) -> None:
             self.group_ids = group_ids
+            self.bulk = bulk
             super().__init__()
 
     def __init__(self, **kwargs: object) -> None:
@@ -174,6 +186,11 @@ class LibraryFileNotesGitPanel(Vertical):
     def selected_group_id(self) -> int | None:
         """Return the stable identity of the currently selected row."""
         return self._selected_group_id
+
+    @property
+    def rows(self) -> tuple[SessionGitRow, ...]:
+        """Return the immutable row snapshot currently presented to the user."""
+        return self._rows
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="file-notes-git-header"):
@@ -480,7 +497,7 @@ class LibraryFileNotesGitPanel(Vertical):
             row for row in self._rows if row.stage_eligible
         )
         if group_ids:
-            self.post_message(self.StageRequested(group_ids))
+            self.post_message(self.StageRequested(group_ids, bulk=True))
 
     @on(Button.Pressed, "#file-notes-git-unstage-all")
     def _unstage_all_pressed(self, event: Button.Pressed) -> None:
@@ -489,7 +506,7 @@ class LibraryFileNotesGitPanel(Vertical):
             row for row in self._rows if row.unstage_eligible
         )
         if group_ids:
-            self.post_message(self.UnstageRequested(group_ids))
+            self.post_message(self.UnstageRequested(group_ids, bulk=True))
 
     @staticmethod
     def _eligible_group_ids(rows: Iterable[SessionGitRow]) -> tuple[int, ...]:
