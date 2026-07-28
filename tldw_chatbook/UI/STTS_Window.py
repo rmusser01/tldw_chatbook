@@ -52,6 +52,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSProviderReconfiguringError,
     TTSRegistryClosedError,
+    TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.legacy_catalogs import (
@@ -72,6 +73,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     SelectValue,
     controls_from_catalog,
     controls_from_profile_preset,
+    profile_availability_from_catalog,
     provider_options,
     voice_id_for_request,
 )
@@ -306,6 +308,7 @@ class TTSPlaygroundWidget(Widget):
         )
         self._profile_preview_loading = profile_preset is not None
         self._profile_configuration_revision: int | None = None
+        self._profile_voice_validation_token: CatalogRequestToken | None = None
         self.current_audio_file = None
         self.current_audio_artifact: STTSGeneratedAudio | None = None
         self.reference_audio_path = None
@@ -820,6 +823,7 @@ class TTSPlaygroundWidget(Widget):
     ) -> None:
         """Load descriptors and one selected provider catalog."""
         token: CatalogRequestToken | None = None
+        profile_voice_token: CatalogRequestToken | None = None
         try:
             if self._tts_service is None:
                 self._tts_service = await get_tts_service()
@@ -914,8 +918,20 @@ class TTSPlaygroundWidget(Widget):
             preset = self._profile_preset
             if preset is not None and preset.provider_id == provider_id:
                 self._profile_effective_availability = (
-                    self._profile_availability_from_catalog(preset, catalog)
+                    profile_availability_from_catalog(preset, catalog)
                 )
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and preset.voice_id is not None
+                and self._profile_effective_availability != "unavailable"
+            ):
+                profile_voice_token = self._reserve_voice_request_token(
+                    provider_id,
+                    preset.model_id,
+                    catalog.revision,
+                )
+                self._profile_voice_validation_token = profile_voice_token
             self._apply_catalog(provider_id, catalog)
             if (
                 preset is not None
@@ -927,6 +943,17 @@ class TTSPlaygroundWidget(Widget):
                 if self._profile_effective_availability != "unavailable":
                     self._set_provider_status("The TTS service is unavailable")
                 self._sync_generate_enabled()
+                if profile_voice_token is not None:
+                    self._clear_profile_voice_validation(profile_voice_token)
+                return
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and (
+                    self._profile_effective_availability == "unavailable"
+                    or preset.voice_id is None
+                )
+            ):
                 return
 
             model_id = self._current_select_value("#tts-model-select")
@@ -936,10 +963,17 @@ class TTSPlaygroundWidget(Widget):
                     model_id,
                     catalog.revision,
                     refresh=refresh,
+                    request_token=profile_voice_token,
                 )
+            elif profile_voice_token is not None:
+                self._clear_profile_voice_validation(profile_voice_token)
         except asyncio.CancelledError:
+            if profile_voice_token is not None:
+                self._clear_profile_voice_validation(profile_voice_token)
             raise
         except Exception as error:
+            if profile_voice_token is not None:
+                self._clear_profile_voice_validation(profile_voice_token)
             target = provider_id or self._selected_provider_id
             if token is not None and not self._catalog_token_is_current(token):
                 if self._catalog_request_is_latest(token):
@@ -970,16 +1004,53 @@ class TTSPlaygroundWidget(Widget):
         catalog_revision: int,
         *,
         refresh: bool = False,
+        request_token: CatalogRequestToken | None = None,
     ) -> None:
         """Reserve request identity before starting exclusive voice work."""
-        request_key = (provider_id, model_id)
-        request_generation = self._voice_request_generations.get(request_key, 0) + 1
-        self._voice_request_generations[request_key] = request_generation
+        token = request_token or self._reserve_voice_request_token(
+            provider_id,
+            model_id,
+            catalog_revision,
+        )
+        preset = self._profile_preset
+        if (
+            preset is not None
+            and preset.provider_id == provider_id
+            and preset.model_id == model_id
+            and preset.voice_id is not None
+        ):
+            self._profile_voice_validation_token = token
+            self._sync_profile_preview_status()
+            self._sync_generate_enabled()
         self._load_provider_voices_worker(
             provider_id,
             model_id,
             catalog_revision,
             refresh=refresh,
+            request_token=token,
+        )
+
+    def _reserve_voice_request_token(
+        self,
+        provider_id: str,
+        model_id: str,
+        catalog_revision: int,
+    ) -> CatalogRequestToken:
+        """Reserve one voice request and capture its catalog authority."""
+        request_key = (provider_id, model_id)
+        request_generation = self._voice_request_generations.get(request_key, 0) + 1
+        self._voice_request_generations[request_key] = request_generation
+        configuration_revision = self._catalog_configuration_revisions.get(provider_id)
+        if configuration_revision is None:
+            service = self._tts_service
+            if service is None:
+                raise TTSRegistryClosedError("The TTS service is unavailable")
+            configuration_revision = service.configuration_revision(provider_id)
+        return CatalogRequestToken(
+            provider_id=provider_id,
+            configuration_revision=configuration_revision,
+            catalog_revision=catalog_revision,
+            model_id=model_id,
             request_generation=request_generation,
         )
 
@@ -995,29 +1066,50 @@ class TTSPlaygroundWidget(Widget):
         catalog_revision: int,
         *,
         refresh: bool = False,
-        request_generation: int,
+        request_token: CatalogRequestToken,
     ) -> None:
         """Load voices for only the selected provider model."""
-        service = self._tts_service
-        if service is None:
-            return
-        token = CatalogRequestToken(
-            provider_id=provider_id,
-            configuration_revision=service.configuration_revision(provider_id),
-            catalog_revision=catalog_revision,
-            model_id=model_id,
-            request_generation=request_generation,
-        )
         try:
-            voices = await service.get_voices(
-                provider_id,
-                model_id,
-                refresh=refresh,
-            )
+            service = self._tts_service
+            if service is None:
+                self._clear_profile_voice_validation(request_token)
+                return
+            observation: TTSVoiceDiscoveryResult | None = None
+            preset = self._profile_preset
+            observe_voices = getattr(service, "observe_voices", None)
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and provider_id == AUDIO_CPP_PROVIDER_ID
+                and callable(observe_voices)
+            ):
+                observation = await observe_voices(
+                    provider_id,
+                    model_id,
+                    refresh=refresh,
+                )
+                if (
+                    type(observation) is not TTSVoiceDiscoveryResult
+                    or observation.provider_id != provider_id
+                    or observation.model_id != model_id
+                    or observation.catalog_revision != catalog_revision
+                ):
+                    raise ValueError(
+                        "The selected provider returned incompatible voice metadata"
+                    )
+                voices = observation.voices if observation.state == "complete" else ()
+            else:
+                voices = await service.get_voices(
+                    provider_id,
+                    model_id,
+                    refresh=refresh,
+                )
         except asyncio.CancelledError:
+            self._clear_profile_voice_validation(request_token)
             raise
         except Exception as error:
-            if not self._voice_token_is_current(token):
+            self._clear_profile_voice_validation(request_token)
+            if not self._voice_token_is_current(request_token):
                 return
             if isinstance(
                 error,
@@ -1091,18 +1183,47 @@ class TTSPlaygroundWidget(Widget):
                 )
             return
 
-        if not self._voice_token_is_current(token):
+        if not self._voice_token_is_current(request_token):
+            self._clear_profile_voice_validation(request_token)
             return
         self._discovered_voices[(provider_id, model_id)] = tuple(voices)
         catalog = self._catalogs.get(provider_id)
         preset = self._profile_preset
         if preset is not None and preset.provider_id == provider_id:
-            if catalog is not None:
+            if observation is not None:
+                if observation.state == "unverified":
+                    if self._profile_effective_availability != "unavailable":
+                        self._profile_effective_availability = "unverified"
+                elif observation.state == "model_missing":
+                    self._profile_effective_availability = "unavailable"
+                elif (
+                    preset.voice_id is not None
+                    and preset.voice_id not in observation.voices
+                ):
+                    self._profile_effective_availability = "unavailable"
+                elif catalog is not None:
+                    self._profile_effective_availability = (
+                        profile_availability_from_catalog(preset, catalog)
+                    )
+            elif catalog is not None:
                 self._profile_effective_availability = (
-                    self._profile_availability_from_catalog(preset, catalog)
+                    profile_availability_from_catalog(preset, catalog)
                 )
         if catalog is not None:
             self._apply_catalog(provider_id, catalog)
+        self._clear_profile_voice_validation(request_token)
+
+    def _clear_profile_voice_validation(
+        self,
+        request_token: CatalogRequestToken,
+    ) -> None:
+        """Clear only the pending exact-profile observation owned by a token."""
+        if self._profile_voice_validation_token != request_token:
+            return
+        self._profile_voice_validation_token = None
+        if self.is_mounted:
+            self._sync_profile_preview_status()
+            self._sync_generate_enabled()
 
     def _voice_token_is_current(self, token: CatalogRequestToken) -> bool:
         """Return whether a voice result still targets the displayed model."""
@@ -1215,20 +1336,6 @@ class TTSPlaygroundWidget(Widget):
             provider_id,
             generation_allowed=False,
         )
-
-    @staticmethod
-    def _profile_availability_from_catalog(
-        preset: TTSPlaygroundSelectionPreset,
-        catalog: TTSProviderCatalog,
-    ) -> ProfileAvailabilityState:
-        """Classify current catalog health without weakening preset authority."""
-        if preset.availability == "unavailable":
-            return "unavailable"
-        if not catalog.health.fresh or catalog.health.state == "reconfiguring":
-            return "unverified"
-        if catalog.health.state != "available":
-            return "unavailable"
-        return preset.availability
 
     def _apply_catalog(
         self,
@@ -1716,7 +1823,10 @@ class TTSPlaygroundWidget(Widget):
                 "Profile preview unavailable — return to Voice profiles and "
                 "choose Edit."
             )
-        elif self._profile_preview_loading:
+        elif (
+            self._profile_preview_loading
+            or self._profile_voice_validation_token is not None
+        ):
             copy = "Profile preview loading — checking the exact saved selection."
             style_state = "loading"
         elif (
@@ -1811,6 +1921,7 @@ class TTSPlaygroundWidget(Widget):
                 )
             )
             and self._generation_operation_id is None
+            and self._profile_voice_validation_token is None
             and not getattr(self.app, "_is_generating", False)
         )
 
@@ -1834,6 +1945,11 @@ class TTSPlaygroundWidget(Widget):
 
         preset = self._profile_preset
         if preset is not None:
+            if self._profile_voice_validation_token is not None:
+                return (
+                    "The exact profile voice is still being checked; "
+                    "wait before generating"
+                )
             if self._profile_effective_availability == "unavailable":
                 return (
                     "The exact profile selection is unavailable; return to Voice "
@@ -1920,6 +2036,12 @@ class TTSPlaygroundWidget(Widget):
             for key, value in self._discovered_voices.items()
             if key[0] != provider_id
         }
+        pending_voice_token = self._profile_voice_validation_token
+        if (
+            pending_voice_token is not None
+            and pending_voice_token.provider_id == provider_id
+        ):
+            self._profile_voice_validation_token = None
         if provider_id != self._selected_provider_id:
             return
         self.app.workers.cancel_group(self, "stts-catalog-discovery")
@@ -1940,6 +2062,7 @@ class TTSPlaygroundWidget(Widget):
         self._profile_effective_availability = None
         self._profile_preview_loading = False
         self._profile_configuration_revision = None
+        self._profile_voice_validation_token = None
         self._profile_controls_applied = True
         self._sync_profile_preview_status()
         self._sync_generate_enabled()

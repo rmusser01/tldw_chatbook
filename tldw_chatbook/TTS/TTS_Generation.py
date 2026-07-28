@@ -1007,6 +1007,20 @@ class TTSService:
             refresh=refresh,
         )
 
+    async def observe_voices(
+        self,
+        provider_id: str,
+        model_id: str,
+        refresh: bool = False,
+    ) -> TTSVoiceDiscoveryResult:
+        """Return structured voice authority for one native provider model."""
+        self._require_native_provider(provider_id)
+        return await self.registry.observe_voices(
+            provider_id,
+            model_id,
+            refresh=refresh,
+        )
+
     async def reconfigure_provider(
         self,
         provider_id: str,

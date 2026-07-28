@@ -33,6 +33,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderSpec,
     TTSRequest,
     TTSRegistryClosedError,
+    TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
@@ -1538,6 +1539,45 @@ async def test_catalog_voice_and_reconfigure_delegate_to_registry() -> None:
     assert adapter.get_voices_requests == [("model", True)]
     assert result is ReconfigureResult.CHANGED
     assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_structured_voice_observation_delegates_through_service_registry() -> (
+    None
+):
+    class StructuredAdapter(FakeAdapter):
+        async def observe_voices(
+            self,
+            model_id: str,
+            refresh: bool = False,
+        ) -> TTSVoiceDiscoveryResult:
+            self.get_voices_requests.append((model_id, refresh))
+            return TTSVoiceDiscoveryResult(
+                provider_id=self.provider_id,
+                model_id=model_id,
+                catalog_revision=7,
+                voices=("voice-a",),
+                state="complete",
+            )
+
+    adapter = StructuredAdapter("audio_cpp")
+    service = service_for_adapter(adapter)
+
+    observation = await service.observe_voices(
+        "audio_cpp",
+        "model",
+        refresh=True,
+    )
+
+    assert observation == TTSVoiceDiscoveryResult(
+        provider_id="audio_cpp",
+        model_id="model",
+        catalog_revision=7,
+        voices=("voice-a",),
+        state="complete",
+    )
+    assert adapter.get_voices_requests == [("model", True)]
+    await service.registry.close()
 
 
 @pytest.mark.asyncio

@@ -45,6 +45,9 @@ _PROFILE_RESPONSE_FORMAT = "wav"
 _PROFILE_SPEED = 1.0
 _PROFILE_PAGE_LIMIT = 50
 _TTS_GENERATION_PROFILE_TYPE: type[TTSGenerationProfile] = TTSGenerationProfile
+_TTS_NATIVE_CAPABILITY_SNAPSHOT_TYPE: type[TTSNativeCapabilitySnapshot] = (
+    TTSNativeCapabilitySnapshot
+)
 _BoundedValue = TypeVar("_BoundedValue")
 _AVAILABILITY_RECOVERY: Mapping[
     ProfileAvailabilityState,
@@ -276,7 +279,7 @@ def _canonicalize_consumed_capability_snapshot(
     canonical: TTSNativeCapabilitySnapshot | None = None
     failed = False
     try:
-        if type(value) is not TTSNativeCapabilitySnapshot:
+        if type(value) is not _TTS_NATIVE_CAPABILITY_SNAPSHOT_TYPE:
             raise TypeError
         snapshot = cast(TTSNativeCapabilitySnapshot, value)
 
@@ -966,6 +969,11 @@ class TTSProfileService:
             raise ProfileValidationError("availability")
         if availability.profile_id != profile.profile_id:
             raise ProfileValidationError("profile_id")
+        effective_availability = (
+            availability.state
+            if _profile_is_structurally_supported(profile)
+            else "unavailable"
+        )
         return TTSPlaygroundSelectionPreset(
             provider_id=profile.provider_id,
             model_id=profile.model_id,
@@ -973,7 +981,7 @@ class TTSProfileService:
             response_format=profile.response_format,
             speed=profile.speed,
             options=profile.options,
-            availability=availability.state,
+            availability=effective_availability,
         )
 
     @staticmethod

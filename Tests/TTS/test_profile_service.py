@@ -2872,6 +2872,33 @@ def test_preview_preset_copies_only_persisted_selection_and_availability() -> No
     assert not hasattr(tts_service, "synthesis_calls")
 
 
+def test_preview_preset_forces_unsupported_profile_unavailable_before_enrichment() -> (
+    None
+):
+    service, repository, tts_service = _service()
+    loaded = LoadedTTSProfile(
+        repository_generation=repository.generation,
+        profile=_profile(
+            provider_id="openai",
+            model_id="tts-1",
+            voice_id="alloy",
+        ),
+    )
+    pending = TTSProfileAvailability(
+        profile_id=loaded.profile.profile_id,
+        state="unverified",
+        recovery_action="refresh",
+    )
+
+    preset = service.preview_preset(loaded, pending)
+
+    assert preset.provider_id == "openai"
+    assert preset.availability == "unavailable"
+    assert repository.calls == []
+    assert tts_service.capability_calls == []
+    assert tts_service.revision_decisions == []
+
+
 def test_preview_preset_rejects_availability_for_another_profile() -> None:
     service, repository, _tts_service = _service()
     loaded = LoadedTTSProfile(

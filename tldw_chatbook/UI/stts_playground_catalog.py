@@ -11,7 +11,10 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProviderCatalog,
     TTSProviderDescriptor,
 )
-from tldw_chatbook.TTS.profile_service import TTSPlaygroundSelectionPreset
+from tldw_chatbook.TTS.profile_service import (
+    ProfileAvailabilityState,
+    TTSPlaygroundSelectionPreset,
+)
 
 AUDIO_CPP_PROVIDER_ID = "audio_cpp"
 SERVER_DEFAULT_VOICE_LABEL = "Server default"
@@ -240,6 +243,7 @@ def controls_from_profile_preset(
         assert isinstance(selected_voice, str)
         voice_options = (*voice_options, (selected_voice, selected_voice))
 
+    availability = profile_availability_from_catalog(preset, catalog)
     return PlaygroundControls(
         provider_id=preset.provider_id,
         model_options=model_options,
@@ -251,9 +255,42 @@ def controls_from_profile_preset(
         format_locked=True,
         speed=preset.speed,
         speed_locked=True,
-        generation_allowed=preset.availability != "unavailable",
+        generation_allowed=availability != "unavailable",
         selection_changed=False,
     )
+
+
+def profile_availability_from_catalog(
+    preset: TTSPlaygroundSelectionPreset,
+    catalog: TTSProviderCatalog | None,
+) -> ProfileAvailabilityState:
+    """Conservatively revalidate exact profile fields against one catalog."""
+    if preset.availability == "unavailable":
+        return "unavailable"
+    if (
+        preset.provider_id != AUDIO_CPP_PROVIDER_ID
+        or preset.response_format != "wav"
+        or preset.speed != 1.0
+        or bool(preset.options)
+    ):
+        return "unavailable"
+    if catalog is None:
+        return "unverified"
+    if catalog.provider_id != preset.provider_id:
+        return "unavailable"
+    if not catalog.health.fresh or catalog.health.state == "reconfiguring":
+        return "unverified"
+    if catalog.health.state != "available":
+        return "unavailable"
+    model = next(
+        (item for item in catalog.models if item.model_id == preset.model_id),
+        None,
+    )
+    if model is None or preset.response_format not in model.formats:
+        return "unavailable"
+    if preset.voice_id is None and not model.omit_voice_uses_server_default:
+        return "unavailable"
+    return preset.availability
 
 
 def _selected_model(
