@@ -1499,11 +1499,26 @@ class FileNotesGitService:
         index_entries = _stage_zero_index(index_sequence)
         status_records = raw.status_records
 
+        ownership_by_id: dict[int, StagingOwnership] = {}
+        groups_by_id = {group.group_id: group for group in groups}
+        for group_id, owned in snapshot.staging_ownership.items():
+            original_group = groups_by_id.get(group_id)
+            repository_group = repository_groups.get(group_id)
+            if original_group is None or repository_group is None:
+                continue
+            mapped = _map_ownership_topology(
+                owned,
+                original_group,
+                repository_group,
+            )
+            if mapped is not None:
+                ownership_by_id[group_id] = mapped
+
         classified = classify_session_rows(
             tuple(repository_groups.values()),
             status_records,
             index_sequence,
-            {},
+            ownership_by_id,
         )
         rows = {row.group_id: row for row in classified}
         rows.update(invalid_rows)
@@ -1543,13 +1558,25 @@ class FileNotesGitService:
                 blocked.append(group_id)
                 continue
             current_owned = ownership.get(group_id)
+            owned_clean = False
             if current_owned is None:
                 eligible = row.state == "unstaged" and row.stage_action == "stage"
             else:
-                eligible = self._owned_stage_preflight_matches(
+                owned_matches = self._owned_stage_preflight_matches(
                     current_owned,
                     inspection,
                     repository_group,
+                )
+                eligible = (
+                    owned_matches
+                    and row.state
+                    in {"owned_newer_edits", "owned_topology_changed"}
+                    and row.stage_action == "stage_update"
+                )
+                owned_clean = (
+                    owned_matches
+                    and row.state == "owned"
+                    and row.stage_action is None
                 )
             effective = stage_pathspecs(
                 repository_group,
@@ -1557,6 +1584,9 @@ class FileNotesGitService:
                 groups=tuple(inspection.repository_groups.values()),
             )
             if not eligible:
+                if owned_clean:
+                    clean.append(group_id)
+                    continue
                 if current_owned is not None:
                     ownership.pop(group_id, None)
                     ownership_revoked = True

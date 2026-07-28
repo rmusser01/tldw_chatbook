@@ -711,6 +711,67 @@ async def test_stage_update_revokes_ownership_after_external_index_change(
 
 
 @pytest.mark.asyncio
+async def test_stage_update_blocks_move_to_newly_ignored_destination_before_add(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    source = repository.path / "tracked.md"
+    ignored = repository.path / "ignored.md"
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "tracked.md"),
+    )
+    source.write_text("owned stage\n", encoding="utf-8")
+    runner = _RecordingRunner()
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+    assert (await service.start_stage(binding, (1,))).state == "success"
+    assert 1 in owner.snapshot(binding).staging_ownership
+    add_calls_before = sum(
+        "add" in tuple(os.fsdecode(argument) for argument in call)
+        for call in runner.calls
+    )
+
+    (repository.path / ".gitignore").write_text(
+        "ignored.md\n",
+        encoding="utf-8",
+    )
+    source.rename(ignored)
+    assert owner.record_change(
+        binding,
+        SessionChange("moved", "tracked.md", "ignored.md"),
+    )
+
+    result = await service.start_stage(binding, (1,))
+
+    assert result.state == "blocked"
+    assert result.blocked_group_ids == (1,)
+    assert sum(
+        "add" in tuple(os.fsdecode(argument) for argument in call)
+        for call in runner.calls
+    ) == add_calls_before
+    assert 1 not in owner.snapshot(binding).staging_ownership
+    assert repository.run(
+        "diff",
+        "--cached",
+        "--name-only",
+        "--",
+        "tracked.md",
+        "ignored.md",
+    ).stdout == b"tracked.md\n"
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_stage_supports_mode_change_and_grouped_move(tmp_path: Path) -> None:
     repository = _disposable_repository(tmp_path)
     script = repository.path / "script.sh"
