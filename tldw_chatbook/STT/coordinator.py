@@ -624,6 +624,13 @@ class TranscriptionCoordinator:
                 phase=TranscriptionPhase.QUEUED,
                 resolved=resolved,
             )
+        if request.diarization and request.timestamps is TimestampGranularity.NONE:
+            self._raise_failure(
+                request,
+                TranscriptionFailureCode.UNSUPPORTED_CAPABILITY,
+                phase=TranscriptionPhase.QUEUED,
+                resolved=resolved,
+            )
 
         input_kind = (
             InputKind.FILE

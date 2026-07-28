@@ -748,14 +748,41 @@ def test_result_requires_ordered_immutable_segments_and_warning_tuple() -> None:
         _result(warnings=["requested_language_not_enforced"])
 
 
-def test_result_rejects_timestamp_and_segment_contradictions() -> None:
+def test_result_rejects_segments_without_produced_timestamps() -> None:
     with pytest.raises(ValueError):
         _result(produced_capabilities=_produced(timestamps=TimestampGranularity.NONE))
+
+
+@pytest.mark.parametrize(
+    "timestamps",
+    [TimestampGranularity.SEGMENT, TimestampGranularity.WORD],
+)
+def test_result_accepts_silence_with_produced_timestamp_capability(
+    timestamps: TimestampGranularity,
+) -> None:
+    result = _result(
+        text="",
+        segments=(),
+        produced_capabilities=_produced(timestamps=timestamps),
+    )
+
+    assert result.text == ""
+    assert result.segments == ()
+    assert result.produced_capabilities.timestamps is timestamps
+
+
+@pytest.mark.parametrize(
+    "timestamps",
+    [TimestampGranularity.SEGMENT, TimestampGranularity.WORD],
+)
+def test_result_rejects_nonempty_timestamped_transcript_without_segments(
+    timestamps: TimestampGranularity,
+) -> None:
     with pytest.raises(ValueError):
         _result(
-            text="",
+            text="hello",
             segments=(),
-            produced_capabilities=_produced(timestamps=TimestampGranularity.SEGMENT),
+            produced_capabilities=_produced(timestamps=timestamps),
         )
 
 

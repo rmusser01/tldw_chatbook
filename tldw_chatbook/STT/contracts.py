@@ -902,10 +902,10 @@ class TranscriptionResult:
         has_timestamps = (
             self.produced_capabilities.timestamps is not TimestampGranularity.NONE
         )
-        if has_segments != has_timestamps:
-            raise ValueError(
-                "segment presence must agree with produced timestamp granularity"
-            )
+        if has_segments and not has_timestamps:
+            raise ValueError("segments require produced timestamp capability")
+        if self.text and has_timestamps and not has_segments:
+            raise ValueError("non-empty timestamped transcript requires segments")
         if not self.produced_capabilities.diarization and any(
             segment.speaker is not None for segment in self.segments
         ):

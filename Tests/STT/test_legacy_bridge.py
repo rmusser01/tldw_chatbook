@@ -570,8 +570,8 @@ def test_coordinator_bridge_rejects_none_timestamps_with_diarization_before_exec
     with pytest.raises(TranscriptionCoordinatorError) as caught:
         _coordinator(backend).transcribe(request)
 
-    assert caught.value.failure.code is TranscriptionFailureCode.INFERENCE_FAILED
-    assert caught.value.failure.phase is TranscriptionPhase.TRANSCRIBING
+    assert caught.value.failure.code is TranscriptionFailureCode.UNSUPPORTED_CAPABILITY
+    assert caught.value.failure.phase is TranscriptionPhase.QUEUED
     assert not any(
         call[0] in {"transcribe", "transcribe_buffer"} for call in backend.calls
     )

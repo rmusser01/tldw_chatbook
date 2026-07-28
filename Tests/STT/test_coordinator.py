@@ -427,6 +427,28 @@ def test_resolve_rejects_unsupported_composed_timestamp_before_probe() -> None:
     assert adapter.probe_calls == []
 
 
+def test_transcribe_rejects_diarization_without_timestamps_before_adapter_work() -> (
+    None
+):
+    coordinator, adapter = _coordinator()
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        coordinator.transcribe(
+            _request(
+                timestamps=TimestampGranularity.NONE,
+                diarization=True,
+            )
+        )
+
+    failure = caught.value.failure
+    assert failure.code is TranscriptionFailureCode.UNSUPPORTED_CAPABILITY
+    assert failure.phase is TranscriptionPhase.QUEUED
+    assert failure.provider_id == "test-provider"
+    assert failure.model_id == "model-a"
+    assert adapter.probe_calls == []
+    assert adapter.transcribe_calls == []
+
+
 @pytest.mark.parametrize(
     ("capability", "supplied_by_pipeline"), [("vad", True), ("diarization", True)]
 )
@@ -1340,6 +1362,68 @@ def test_transcribe_rejects_contradictory_or_unsupported_provider_output(
     assert len(adapter.transcribe_calls) == 1
 
 
+@pytest.mark.parametrize(
+    "timestamps",
+    [TimestampGranularity.SEGMENT, TimestampGranularity.WORD],
+)
+def test_transcribe_accepts_silent_timestamped_output(
+    timestamps: TimestampGranularity,
+) -> None:
+    produced = ProducedCapabilities(
+        timestamps=timestamps,
+        punctuation=True,
+        capitalization=True,
+        vad=False,
+        diarization=False,
+    )
+    adapter = _Adapter(
+        _provider(),
+        (_model(),),
+        output=_output(
+            text="",
+            segments=(),
+            produced_capabilities=produced,
+        ),
+    )
+    coordinator, _ = _coordinator(adapter=adapter)
+
+    result = coordinator.transcribe(_request(timestamps=timestamps))
+
+    assert result.text == ""
+    assert result.segments == ()
+    assert result.produced_capabilities == produced
+
+
+@pytest.mark.parametrize(
+    "timestamps",
+    [TimestampGranularity.SEGMENT, TimestampGranularity.WORD],
+)
+def test_transcribe_rejects_nonempty_timestamped_output_without_segments(
+    timestamps: TimestampGranularity,
+) -> None:
+    adapter = _Adapter(
+        _provider(),
+        (_model(),),
+        output=_output(
+            segments=(),
+            produced_capabilities=ProducedCapabilities(
+                timestamps=timestamps,
+                punctuation=True,
+                capitalization=True,
+                vad=False,
+                diarization=False,
+            ),
+        ),
+    )
+    coordinator, _ = _coordinator(adapter=adapter)
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        coordinator.transcribe(_request(timestamps=timestamps))
+
+    _assert_failure(caught, TranscriptionFailureCode.INFERENCE_FAILED)
+    assert len(adapter.transcribe_calls) == 1
+
+
 def test_cancellation_requested_during_adapter_call_discards_its_success() -> None:
     cancelled = False
     token = _Token(lambda _: cancelled)
@@ -1462,12 +1546,21 @@ def test_transcribe_accepts_capabilities_supplied_by_the_composed_pipeline(
 ) -> None:
     requested_timestamp = (
         TimestampGranularity.SEGMENT
-        if capability == "timestamps"
+        if capability in {"timestamps", "diarization"}
         else TimestampGranularity.NONE
     )
     model = _model(
         capabilities=_capabilities(
-            timestamps=frozenset({TimestampGranularity.NONE}),
+            timestamps=(
+                frozenset(
+                    {
+                        TimestampGranularity.NONE,
+                        TimestampGranularity.SEGMENT,
+                    }
+                )
+                if capability == "diarization"
+                else frozenset({TimestampGranularity.NONE})
+            ),
             vad=False,
             diarization=False,
         )
