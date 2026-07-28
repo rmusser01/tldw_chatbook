@@ -96,6 +96,9 @@ class LegacyTranscriptionBridge:
         provider_metadata: ProviderMetadata | None = None,
         models: tuple[ModelMetadata, ...] = (),
         legacy_provider_id: str | None = None,
+        execution_observer: (
+            Callable[[_LegacyBackend], tuple[ExecutionDevice, str]] | None
+        ) = None,
     ) -> None:
         if not callable(backend_factory):
             raise TypeError("backend_factory must be callable")
@@ -111,6 +114,10 @@ class LegacyTranscriptionBridge:
         if provider_metadata is None:
             if models or legacy_provider_id is not None:
                 raise ValueError("provider metadata is required for an adapter binding")
+            if execution_observer is not None:
+                raise ValueError(
+                    "execution observer is only valid for an adapter binding"
+                )
         else:
             if not models:
                 raise ValueError("an adapter binding requires at least one model")
@@ -122,11 +129,21 @@ class LegacyTranscriptionBridge:
                 raise ValueError(
                     "an adapter binding requires a legacy provider identifier"
                 )
+            if not callable(execution_observer):
+                raise ValueError("an adapter binding requires an execution observer")
+            if any(
+                TimestampGranularity.WORD in model.capabilities.timestamps
+                for model in models
+            ):
+                raise ValueError(
+                    "legacy adapter bindings cannot declare word timestamps"
+                )
 
         self._backend_factory = backend_factory
         self._provider_metadata = provider_metadata
         self._models = models
         self._legacy_provider_id = legacy_provider_id
+        self._execution_observer = execution_observer
         self._backend: _LegacyBackend | None = None
         self._backend_lock = RLock()
 
@@ -141,6 +158,13 @@ class LegacyTranscriptionBridge:
         """Expose the retained mutable config for compatibility callers."""
 
         return self._get_backend().config
+
+    @config.setter
+    def config(self, value: dict[str, Any]) -> None:
+        """Replace the retained config as the legacy service allowed."""
+
+        with self._backend_lock:
+            self._get_backend().config = value
 
     def provider(self) -> ProviderMetadata:
         """Return the exact provider declaration for adapter use."""
@@ -172,16 +196,17 @@ class LegacyTranscriptionBridge:
                 detail_code="legacy_model_unavailable",
             )
         try:
-            backend = self._get_backend()
-            providers = backend.get_available_providers()
-            models = backend.list_available_models(legacy_provider_id).get(
-                legacy_provider_id,
-                [],
-            )
-            effective_device, effective_precision = self._execution_config(
-                backend,
-                model,
-            )
+            with self._backend_lock:
+                backend = self._get_backend()
+                providers = backend.get_available_providers()
+                models = backend.list_available_models(legacy_provider_id).get(
+                    legacy_provider_id,
+                    [],
+                )
+                effective_device, effective_precision = self._observe_execution(
+                    backend,
+                    model,
+                )
         except Exception:
             return RuntimeObservation(
                 provider_id=provider.provider_id,
@@ -228,63 +253,66 @@ class LegacyTranscriptionBridge:
             or self._legacy_provider_id is None
         ):
             raise LegacyTranscriptionBridgeError()
+        if request.request.timestamps is TimestampGranularity.WORD:
+            raise LegacyTranscriptionBridgeError()
 
         legacy_progress = self._legacy_progress_callback(request)
         try:
-            backend = self._get_backend()
-            execution_config = self._execution_config(backend, model)
-            effective_device, effective_precision = execution_config
-            if effective_precision != request.precision or (
-                request.request.device is not ExecutionDevice.AUTO
-                and effective_device is not request.request.device
-            ):
-                raise LegacyTranscriptionBridgeError()
-            source = request.request.source
-            if type(source) is FileAudioSource:
-                result = backend.transcribe(
-                    audio_path=str(source.path),
-                    provider=self._legacy_provider_id,
-                    model=request.model_id,
-                    language=request.effective_language,
-                    source_lang=request.effective_language,
-                    target_lang=(
-                        "en"
-                        if request.request.task is TranscriptionTask.TRANSLATE
-                        else None
-                    ),
-                    vad_filter=request.request.vad,
-                    diarize=request.request.diarization,
-                    progress_callback=legacy_progress,
-                    batch_route_resolved=True,
+            with self._backend_lock:
+                backend = self._get_backend()
+                execution_snapshot = self._observe_execution(backend, model)
+                effective_device, effective_precision = execution_snapshot
+                if effective_precision != request.precision or (
+                    request.request.device is not ExecutionDevice.AUTO
+                    and effective_device is not request.request.device
+                ):
+                    raise LegacyTranscriptionBridgeError()
+                source = request.request.source
+                if type(source) is FileAudioSource:
+                    result = backend.transcribe(
+                        audio_path=str(source.path),
+                        provider=self._legacy_provider_id,
+                        model=request.model_id,
+                        language=request.effective_language,
+                        source_lang=request.effective_language,
+                        target_lang=(
+                            "en"
+                            if request.request.task is TranscriptionTask.TRANSLATE
+                            else None
+                        ),
+                        vad_filter=request.request.vad,
+                        diarize=request.request.diarization,
+                        progress_callback=legacy_progress,
+                        batch_route_resolved=True,
+                    )
+                elif type(source) is BufferAudioSource:
+                    result = backend.transcribe_buffer(
+                        audio_data=source.audio,
+                        sample_rate=source.sample_rate,
+                        channels=source.channels,
+                        sample_width=source.sample_width,
+                        provider=self._legacy_provider_id,
+                        model=request.model_id,
+                        language=request.effective_language,
+                        vad_filter=request.request.vad,
+                        diarize=request.request.diarization,
+                        task=request.request.task.value,
+                        **(
+                            {"progress_callback": legacy_progress}
+                            if legacy_progress is not None
+                            else {}
+                        ),
+                    )
+                else:
+                    raise TypeError("unsupported audio source")
+                if self._observe_execution(backend, model) != execution_snapshot:
+                    raise LegacyTranscriptionBridgeError()
+                return self._normalize_result(
+                    request,
+                    model,
+                    result,
+                    effective_device=effective_device,
                 )
-            elif type(source) is BufferAudioSource:
-                result = backend.transcribe_buffer(
-                    audio_data=source.audio,
-                    sample_rate=source.sample_rate,
-                    channels=source.channels,
-                    sample_width=source.sample_width,
-                    provider=self._legacy_provider_id,
-                    model=request.model_id,
-                    language=request.effective_language,
-                    vad_filter=request.request.vad,
-                    diarize=request.request.diarization,
-                    task=request.request.task.value,
-                    **(
-                        {"progress_callback": legacy_progress}
-                        if legacy_progress is not None
-                        else {}
-                    ),
-                )
-            else:
-                raise TypeError("unsupported audio source")
-            if self._execution_config(backend, model) != execution_config:
-                raise LegacyTranscriptionBridgeError()
-            return self._normalize_result(
-                request,
-                model,
-                result,
-                effective_device=effective_device,
-            )
         except LegacyTranscriptionBridgeError:
             raise
         except Exception:
@@ -328,6 +356,15 @@ class LegacyTranscriptionBridge:
         if type(result) is not dict:
             raise LegacyTranscriptionBridgeError()
         legacy_result = cast(dict[str, object], result)
+        returned_provider = legacy_result.get("provider")
+        returned_model = legacy_result.get("model")
+        if (
+            returned_provider is not None
+            and returned_provider != self._legacy_provider_id
+            or returned_model is not None
+            and returned_model != request.model_id
+        ):
+            raise LegacyTranscriptionBridgeError()
         text = legacy_result.get("text", "")
         if type(text) is not str:
             raise LegacyTranscriptionBridgeError()
@@ -341,6 +378,8 @@ class LegacyTranscriptionBridge:
         if type(duration) not in (int, float):
             duration = max((segment.end_seconds for segment in segments), default=0.0)
         numeric_duration = cast("int | float", duration)
+        if request.request.timestamps is TimestampGranularity.NONE:
+            segments = ()
 
         effective_language = request.effective_language
         detected_language = None
@@ -359,17 +398,13 @@ class LegacyTranscriptionBridge:
         reported_device = legacy_result.get("device")
         if (
             reported_device is not None
-            and self._parse_device(reported_device) is not effective_device
+            and self._parse_reported_device(reported_device) is not effective_device
         ):
             raise LegacyTranscriptionBridgeError()
         has_speakers = any(segment.speaker is not None for segment in segments)
         diarization = legacy_result.get("diarization_performed")
         produced_diarization = diarization is True or has_speakers
-        timestamps = (
-            request.request.timestamps if segments else TimestampGranularity.NONE
-        )
-        if segments and timestamps is TimestampGranularity.NONE:
-            timestamps = TimestampGranularity.SEGMENT
+        timestamps = request.request.timestamps
 
         return ProviderTranscriptionOutput(
             text=text,
@@ -414,7 +449,7 @@ class LegacyTranscriptionBridge:
         )
 
     @staticmethod
-    def _parse_device(value: object) -> ExecutionDevice:
+    def _parse_reported_device(value: object) -> ExecutionDevice:
         aliases = {
             "cpu": ExecutionDevice.CPU,
             "cuda": ExecutionDevice.CUDA,
@@ -423,25 +458,32 @@ class LegacyTranscriptionBridge:
         }
         if type(value) is not str:
             raise LegacyTranscriptionBridgeError()
-        normalized = value.strip().lower()
-        if normalized not in aliases:
+        device = aliases.get(value.strip().lower())
+        if device is None:
             raise LegacyTranscriptionBridgeError()
-        return aliases[normalized]
+        return device
 
-    @classmethod
-    def _execution_config(
-        cls,
+    def _observe_execution(
+        self,
         backend: _LegacyBackend,
         model: ModelMetadata,
     ) -> tuple[ExecutionDevice, str]:
-        device = cls._parse_device(backend.config.get("device"))
-        precision = backend.config.get("compute_type")
+        observer = self._execution_observer
+        if observer is None:
+            raise LegacyTranscriptionBridgeError()
+        snapshot = observer(backend)
+        if type(snapshot) is not tuple or len(snapshot) != 2:
+            raise LegacyTranscriptionBridgeError()
+        device, precision = snapshot
         if (
-            device not in model.capabilities.execution_devices
+            type(device) is not ExecutionDevice
+            or device is ExecutionDevice.AUTO
+            or device not in model.capabilities.execution_devices
             or type(precision) is not str
+            or not precision
+            or precision != precision.strip()
         ):
             raise LegacyTranscriptionBridgeError()
-        precision = precision.strip().lower()
         if precision not in model.capabilities.precisions:
             raise LegacyTranscriptionBridgeError()
         return device, precision

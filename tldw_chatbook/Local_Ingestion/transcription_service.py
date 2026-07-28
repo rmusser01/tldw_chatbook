@@ -3923,6 +3923,12 @@ class TranscriptionService:
 
         return self._bridge.config
 
+    @config.setter
+    def config(self, value: Dict[str, Any]) -> None:
+        """Replace the retained transcription configuration."""
+
+        self._bridge.config = value
+
     def cleanup(self):
         """Clean up resources held by the retained backend."""
 

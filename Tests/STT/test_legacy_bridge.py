@@ -6,7 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 
@@ -57,7 +57,6 @@ def _capabilities(
             {
                 TimestampGranularity.NONE,
                 TimestampGranularity.SEGMENT,
-                TimestampGranularity.WORD,
             }
         ),
         true_streaming=False,
@@ -104,6 +103,7 @@ def _request(
     language: str = "fr",
     precision: str = "int8",
     device: ExecutionDevice = ExecutionDevice.CPU,
+    timestamps: TimestampGranularity = TimestampGranularity.SEGMENT,
     progress: object = None,
 ) -> ResolvedTranscriptionRequest:
     request = TranscriptionRequest(
@@ -117,6 +117,7 @@ def _request(
         task=task,
         precision=precision,
         device=device,
+        timestamps=timestamps,
         vad=True,
         diarization=True,
         progress=progress,  # type: ignore[arg-type]
@@ -139,6 +140,11 @@ class _Backend:
             "device": "cpu",
             "compute_type": "int8",
         }
+        self.execution = {
+            "device": ExecutionDevice.CPU,
+            "precision": "int8",
+        }
+        self.on_transcribe: Callable[[], None] | None = None
         self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
         self.result: dict[str, Any] = {
             "text": "bonjour",
@@ -160,6 +166,8 @@ class _Backend:
 
     def transcribe(self, *args: object, **kwargs: object) -> dict[str, Any]:
         self.calls.append(("transcribe", args, kwargs))
+        if self.on_transcribe is not None:
+            self.on_transcribe()
         callback = kwargs.get("progress_callback")
         if callable(callback):
             callback(25, "path=/private/audio.wav token=secret", {"secret": "value"})
@@ -199,6 +207,10 @@ def _bridge(
         provider_metadata=_provider(),
         models=(model or _model(),),
         legacy_provider_id="faster-whisper",
+        execution_observer=lambda retained: (
+            retained.execution["device"],
+            retained.execution["precision"],
+        ),
     )
 
 
@@ -260,6 +272,16 @@ def test_bridge_exposes_exact_metadata_and_probe_mapping() -> None:
         ("get_available_providers", (), {}),
         ("list_available_models", ("faster-whisper",), {}),
     ]
+
+
+def test_adapter_binding_requires_an_exact_execution_observer() -> None:
+    with pytest.raises(ValueError, match="execution observer"):
+        LegacyTranscriptionBridge(
+            backend_factory=_Backend,
+            provider_metadata=_provider(),
+            models=(_model(),),
+            legacy_provider_id="faster-whisper",
+        )
 
 
 def test_bridge_converts_file_request_and_normalizes_legacy_dictionary() -> None:
@@ -401,6 +423,26 @@ def test_bridge_sanitizes_backend_errors() -> None:
     assert "super-secret" not in rendered
 
 
+@pytest.mark.parametrize(
+    ("field_name", "wrong_value"),
+    [
+        ("provider", "remote-whisper"),
+        ("model", "large"),
+    ],
+)
+def test_bridge_rejects_mismatched_optional_result_identity(
+    field_name: str,
+    wrong_value: str,
+) -> None:
+    backend = _Backend()
+    backend.result[field_name] = wrong_value
+
+    with pytest.raises(LegacyTranscriptionBridgeError) as caught:
+        _bridge(backend).transcribe(_request(FileAudioSource(Path("/tmp/input.wav"))))
+
+    assert str(caught.value) == "The retained speech-to-text provider failed."
+
+
 def test_bridge_normalizes_legacy_unknown_language_values() -> None:
     backend = _Backend()
     backend.result["language"] = "unknown"
@@ -447,8 +489,8 @@ def test_coordinator_bridge_uses_observed_nondefault_device_and_precision() -> N
     )
     model = _model(capabilities)
     backend = _Backend()
-    backend.config["device"] = "cuda"
-    backend.config["compute_type"] = "float32"
+    backend.execution["device"] = ExecutionDevice.CUDA
+    backend.execution["precision"] = "float32"
     backend.result.pop("device")
     request = _request(
         FileAudioSource(Path("/tmp/example.wav")),
@@ -461,8 +503,10 @@ def test_coordinator_bridge_uses_observed_nondefault_device_and_precision() -> N
     assert result.provenance.requested_device is ExecutionDevice.CUDA
     assert result.provenance.effective_device is ExecutionDevice.CUDA
     assert result.provenance.precision == "float32"
-    assert backend.config["device"] == "cuda"
-    assert backend.config["compute_type"] == "float32"
+    assert backend.execution["device"] is ExecutionDevice.CUDA
+    assert backend.execution["precision"] == "float32"
+    assert backend.config["device"] == "cpu"
+    assert backend.config["compute_type"] == "int8"
 
 
 def test_coordinator_bridge_rejects_unobserved_precision() -> None:
@@ -484,13 +528,67 @@ def test_coordinator_bridge_rejects_unobserved_precision() -> None:
 
 def test_coordinator_bridge_does_not_guess_a_missing_device() -> None:
     backend = _Backend()
-    backend.config.pop("device")
+    backend.execution.pop("device")
     request = _request(FileAudioSource(Path("/tmp/example.wav"))).request
 
     with pytest.raises(TranscriptionCoordinatorError) as caught:
         _coordinator(backend).transcribe(request)
 
     assert caught.value.failure.phase is TranscriptionPhase.LOADING
+
+
+def test_coordinator_bridge_allows_none_timestamps_without_incidental_segments() -> (
+    None
+):
+    backend = _Backend()
+    request = _request(
+        FileAudioSource(Path("/tmp/example.wav")),
+        timestamps=TimestampGranularity.NONE,
+    ).request
+
+    result = _coordinator(backend).transcribe(request)
+
+    assert result.segments == ()
+    assert result.produced_capabilities.timestamps is TimestampGranularity.NONE
+    assert any(call[0] == "transcribe" for call in backend.calls)
+
+
+def test_coordinator_bridge_rejects_word_timestamps_without_execution() -> None:
+    backend = _Backend()
+    request = _request(
+        FileAudioSource(Path("/tmp/example.wav")),
+        timestamps=TimestampGranularity.WORD,
+    ).request
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        _coordinator(backend).transcribe(request)
+
+    assert caught.value.failure.phase is TranscriptionPhase.QUEUED
+    assert backend.calls == []
+
+
+def test_bridge_fails_if_execution_snapshot_changes_during_call() -> None:
+    backend = _Backend()
+
+    def change_execution() -> None:
+        backend.execution["precision"] = "float32"
+
+    backend.on_transcribe = change_execution
+
+    with pytest.raises(LegacyTranscriptionBridgeError) as caught:
+        _bridge(backend).transcribe(_request(FileAudioSource(Path("/tmp/input.wav"))))
+
+    assert str(caught.value) == "The retained speech-to-text provider failed."
+
+
+def test_bridge_config_can_be_replaced_explicitly() -> None:
+    backend = _Backend()
+    bridge = LegacyTranscriptionBridge(backend_factory=lambda: backend)
+    replacement = {"default_provider": "remote-whisper"}
+
+    bridge.config = replacement
+
+    assert bridge.config is replacement
 
 
 def test_close_does_not_construct_an_unused_backend() -> None:
@@ -506,6 +604,10 @@ def test_close_does_not_construct_an_unused_backend() -> None:
         provider_metadata=_provider(),
         models=(_model(),),
         legacy_provider_id="faster-whisper",
+        execution_observer=lambda retained: (
+            retained.execution["device"],
+            retained.execution["precision"],
+        ),
     )
 
     bridge.close()

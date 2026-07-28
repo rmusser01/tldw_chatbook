@@ -283,6 +283,18 @@ def test_facade_preserves_backend_config_without_forwarding_private_attributes(
     assert "__getattr__" not in type(service).__dict__
 
 
+def test_facade_config_can_be_replaced_explicitly(
+    facade: tuple[TranscriptionService, _Bridge],
+) -> None:
+    service, bridge = facade
+    replacement = {"default_provider": "remote-whisper"}
+
+    service.config = replacement
+
+    assert service.config is replacement
+    assert bridge.config is replacement
+
+
 def test_facade_preserves_backend_exception_identity(
     facade: tuple[TranscriptionService, _Bridge],
 ) -> None:
