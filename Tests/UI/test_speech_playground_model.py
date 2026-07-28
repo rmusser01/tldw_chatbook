@@ -12,7 +12,10 @@ from tldw_chatbook.UI.Speech.speech_playground_model import (
     ALL_PLAYGROUND_CONTROLS,
     AUDIO_PARAMS,
     AXIS_CONTROLS,
+    LEGACY_PLAYGROUND_CONTROLS,
+    NEW_PLAYGROUND_CONTROLS,
     PROVIDER_PARAMS,
+    REQUEST_PARAMS,
     params_for_provider,
 )
 
@@ -49,7 +52,31 @@ def test_an_unknown_provider_offers_only_the_shared_parameters():
     `params_for_provider` is called from compose(); an exception there takes
     down the screen rather than showing a missing group.
     """
-    assert set(params_for_provider("nonexistent")) == set(AUDIO_PARAMS)
+    assert set(params_for_provider("nonexistent")) == set(AUDIO_PARAMS) | set(
+        REQUEST_PARAMS
+    )
+
+
+@pytest.mark.unit
+def test_every_provider_has_knobs_including_the_ones_with_no_specific_params():
+    """No provider is knob-less.
+
+    audio.cpp, OpenAI and AllTalk have no provider-specific parameters, but
+    every synthesis request carries `download_format` and six
+    `normalization_options` fields -- none of which any screen surfaced
+    before. They looked knob-less because the legacy Playground never
+    offered the request options it was already sending.
+    """
+    for provider in PROVIDER_PARAMS:
+        knobs = params_for_provider(provider)
+        assert knobs, f"{provider} offers nothing to tune"
+        assert set(REQUEST_PARAMS) <= set(knobs)
+
+    for bare in ("audio_cpp", "openai", "alltalk"):
+        assert PROVIDER_PARAMS[bare] == ()
+        assert len(params_for_provider(bare)) == len(AUDIO_PARAMS) + len(
+            REQUEST_PARAMS
+        )
 
 
 @pytest.mark.unit
@@ -62,6 +89,7 @@ def test_axes_and_parameters_do_not_overlap():
     knobs = {c for params in PROVIDER_PARAMS.values() for c in params}
     assert set(AXIS_CONTROLS) & knobs == set()
     assert set(AXIS_CONTROLS) & set(AUDIO_PARAMS) == set()
+    assert set(AXIS_CONTROLS) & set(REQUEST_PARAMS) == set()
 
 
 @pytest.mark.unit
@@ -104,9 +132,13 @@ def test_the_inventory_matches_the_live_widget():
         for match in re.finditer(r'id="([a-z0-9_-]+)"', line)
     }
 
-    assert live - ALL_PLAYGROUND_CONTROLS == set(), (
+    assert live - LEGACY_PLAYGROUND_CONTROLS == set(), (
         "the widget composes controls the model does not know about"
     )
-    assert ALL_PLAYGROUND_CONTROLS - live == set(), (
-        "the model names controls the widget does not compose"
+    assert LEGACY_PLAYGROUND_CONTROLS - live == set(), (
+        "the model files a control as legacy that the widget does not compose "
+        "-- if it is new, it belongs in NEW_PLAYGROUND_CONTROLS"
     )
+    # Additions are deliberate and must not leak into the legacy set.
+    assert NEW_PLAYGROUND_CONTROLS & live == set()
+    assert ALL_PLAYGROUND_CONTROLS == LEGACY_PLAYGROUND_CONTROLS | NEW_PLAYGROUND_CONTROLS

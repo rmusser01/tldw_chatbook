@@ -35,12 +35,35 @@ AUDIO_PARAMS: tuple[str, ...] = (
     "tts-target-db-input",
 )
 
+#: Per-request options carried by every synthesis call and surfaced by no
+#: screen. `OpenAISpeechRequest` (TTS/audio_schemas.py) has `download_format`,
+#: `return_download_link` and a `normalization_options` object with six
+#: fields; `grep` finds **zero** references to any of them under `UI/`.
+#:
+#: These are what give audio.cpp, OpenAI and AllTalk tuning knobs. Those
+#: providers looked knob-less only because the legacy Playground never
+#: offered the request options it was already sending -- not because they
+#: have nothing to tune.
+#:
+#: Adapter honouring varies: the request shape is common, the backends are
+#: not. The wiring task must confirm per adapter and disable what an adapter
+#: ignores rather than showing a control that does nothing.
+REQUEST_PARAMS: tuple[str, ...] = (
+    "tts-download-format-select",
+    "tts-norm-unit-switch",
+    "tts-norm-url-switch",
+    "tts-norm-email-switch",
+    "tts-norm-plural-switch",
+    "tts-norm-phone-switch",
+)
+
 #: Provider -> its own tuning knobs, excluding :data:`AUDIO_PARAMS`.
 #:
-#: A provider with an empty tuple is deliberate, not unfinished: audio.cpp,
-#: OpenAI and AllTalk expose no per-request tuning in the Playground. Their
-#: configuration lives in Settings, which is the larger surface -- 17 of
-#: Chatterbox's 18 controls and 16 of Higgs' 21 are there, not here.
+#: An empty tuple means "no knobs beyond the shared ones" -- every provider
+#: still gets :data:`AUDIO_PARAMS` and :data:`REQUEST_PARAMS`. audio.cpp,
+#: OpenAI and AllTalk have no *provider-specific* parameters; their
+#: connection configuration lives in Settings, which is the larger surface
+#: (17 of Chatterbox's 18 controls and 16 of Higgs' 21 are there).
 PROVIDER_PARAMS: dict[str, tuple[str, ...]] = {
     "elevenlabs": (
         "tts-stability-input",
@@ -115,12 +138,26 @@ _UNSPLIT_CONTROLS: tuple[str, ...] = (
     "higgs-voice-upload-row",
 )
 
-#: Every control id the legacy Playground composes. 57 in total.
-ALL_PLAYGROUND_CONTROLS: frozenset[str] = frozenset(
+#: Exactly what the legacy Playground composes: 57 ids, no more, no less.
+#:
+#: Kept separate from the additions so the completeness guard stays sharp.
+#: The test asserts this equals the live widget in BOTH directions, which
+#: catches a dropped control *and* catches a new control accidentally filed
+#: as legacy.
+LEGACY_PLAYGROUND_CONTROLS: frozenset[str] = frozenset(
     AXIS_CONTROLS
     + AUDIO_PARAMS
     + tuple(control for params in PROVIDER_PARAMS.values() for control in params)
     + _UNSPLIT_CONTROLS
+)
+
+#: Controls this redesign adds. Listed explicitly so an addition is a
+#: decision rather than a diff nobody noticed.
+NEW_PLAYGROUND_CONTROLS: frozenset[str] = frozenset(REQUEST_PARAMS)
+
+#: Everything the rebuilt Playground offers.
+ALL_PLAYGROUND_CONTROLS: frozenset[str] = (
+    LEGACY_PLAYGROUND_CONTROLS | NEW_PLAYGROUND_CONTROLS
 )
 
 
@@ -131,9 +168,14 @@ def params_for_provider(provider: str) -> tuple[str, ...]:
         provider: The selected provider key, e.g. ``"chatterbox"``.
 
     Returns:
-        That provider's own parameters followed by the shared audio
-        post-processing ones. An unknown provider yields only the shared
-        set: this is called from ``compose()``, where raising would take the
-        screen down rather than show a missing group.
+        That provider's own parameters, then the shared audio
+        post-processing ones, then the per-request options every synthesis
+        call carries. An unknown provider yields only the shared sets: this
+        is called from ``compose()``, where raising would take the screen
+        down rather than show a missing group.
+
+        Every provider gets knobs. A provider with no entry in
+        :data:`PROVIDER_PARAMS` is not knob-less -- it has the nine shared
+        ones.
     """
-    return PROVIDER_PARAMS.get(provider, ()) + AUDIO_PARAMS
+    return PROVIDER_PARAMS.get(provider, ()) + AUDIO_PARAMS + REQUEST_PARAMS
