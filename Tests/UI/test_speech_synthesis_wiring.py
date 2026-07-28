@@ -49,7 +49,13 @@ async def test_pressing_generate_invokes_the_synthesis_path(monkeypatch):
     app = _Harness()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app.query_one("#tts-generate-btn").press()
+        # Enable it deliberately. With no catalog loaded the button is
+        # CORRECTLY disabled -- generation cannot resolve a provider -- and
+        # a disabled button swallows the press, so the test would pass or
+        # fail on the button's state rather than on the wiring it is about.
+        button = app.query_one("#tts-generate-btn")
+        button.disabled = False
+        button.press()
         await pilot.pause()
 
     assert called == [True], "Generate did not reach the synthesis path"

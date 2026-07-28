@@ -27,6 +27,10 @@ from textual.app import ComposeResult
 from textual.containers import Grid, Horizontal
 from textual.widgets import Input, Select, Static
 
+from tldw_chatbook.UI.stts_playground_catalog import (
+    LOADING_SELECT_VALUE,
+)
+
 from .speech_playground_model import AXIS_CONTROLS
 
 #: Chip label per axis. Keys are exactly :data:`AXIS_CONTROLS`.
@@ -37,6 +41,20 @@ AXIS_PROMPTS: dict[str, str] = {
     "tts-voice-select": "Choose a voice",
     "tts-language-select": "Choose a language",
     "tts-format-select": "Choose a format",
+    "tts-speed-input": "",
+}
+
+#: Legacy's starting speed, and float()-parseable, which an empty
+#: Input is not.
+DEFAULT_SPEED = "1.0"
+
+#: What an axis says before any catalog has been fetched.
+AXIS_LOADING_LABELS: dict[str, str] = {
+    "tts-provider-select": "Loading providers…",
+    "tts-model-select": "Waiting for provider…",
+    "tts-voice-select": "Waiting for model…",
+    "tts-language-select": "Waiting for provider…",
+    "tts-format-select": "Waiting for provider…",
     "tts-speed-input": "",
 }
 
@@ -146,19 +164,43 @@ class SpeechAxisRow(Grid):
             existing synthesis handler reads it without translation.
         """
         if axis == "tts-speed-input":
+            # Defaults to "1.0", as legacy did, and is typed/bounded the same
+            # way. An empty speed is not a neutral starting state: the
+            # synthesis path calls float() on it, so a fresh pane raised
+            # ValueError the moment Generate was pressed.
             return Input(
-                value=self.values.get(axis, ""),
+                value=self.values.get(axis) or DEFAULT_SPEED,
                 id=axis,
                 classes="speech-axis-control",
+                placeholder="0.25-4.0",
+                type="number",
             )
         options = self.options.get(axis, ())
         current = self.values.get(axis)
+        # `allow_blank=False`, as the legacy screen had it. A blank entry is
+        # SELECTABLE: with it, a user can choose "no provider" and then press
+        # Generate. Legacy expressed not-ready as an explicit sentinel option
+        # instead, and `_get_select_key` already reads that sentinel back as
+        # "nothing chosen" -- so the synthesis path needs no special case.
+        if not options:
+            # LOADING, not UNAVAILABLE. Before a catalog has arrived nothing
+            # is known to be missing -- saying "no models for this provider"
+            # at that point states a fact not yet in evidence, and the shared
+            # catalog code overwrites it with UNAVAILABLE if the catalog
+            # really does come back empty.
+            return Select(
+                [(AXIS_LOADING_LABELS[axis], LOADING_SELECT_VALUE)],
+                id=axis,
+                classes="speech-axis-control",
+                allow_blank=False,
+                prompt=AXIS_EMPTY_PROMPTS[axis],
+            )
         select: Select[str] = Select(
             [(label, value) for label, value in options],
             id=axis,
             classes="speech-axis-control",
-            allow_blank=True,
-            prompt=AXIS_PROMPTS[axis] if options else AXIS_EMPTY_PROMPTS[axis],
+            allow_blank=False,
+            prompt=AXIS_PROMPTS[axis],
         )
         # Only set a value we can honour. `Select.BLANK` is itself falsy and
         # passing it explicitly is rejected as an illegal value; leaving the

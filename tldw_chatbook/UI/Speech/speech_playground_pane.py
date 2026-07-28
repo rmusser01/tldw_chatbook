@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual import on
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical
 from textual.widgets import (
     Button,
@@ -37,11 +38,13 @@ from textual.widgets import (
     TextArea,
 )
 
+from tldw_chatbook.UI.stts_playground_catalog import UNAVAILABLE_SELECT_VALUE
+
 from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
-from .speech_axis_row import SpeechAxisRow
+from .speech_axis_row import AXIS_EMPTY_PROMPTS, SpeechAxisRow
 from .speech_catalog_mixin import SpeechCatalogMixin
-from .speech_playback_mixin import SpeechPlaybackMixin
+from .speech_playback_mixin import EXAMPLE_TEXTS, SpeechPlaybackMixin
 from .speech_synthesis_mixin import SpeechSynthesisMixin
 from .speech_param_group import SpeechParamGroup
 from .speech_result_history import SpeechResultHistory, SpeechTake
@@ -188,6 +191,15 @@ class SpeechPlaygroundPane(
         """
         self.handle_provider_select_changed(event)
 
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Re-evaluate whether Generate is available.
+
+        Args:
+            event: The text change.
+        """
+        if event.text_area.id == "tts-text-input":
+            self._sync_generate_enabled()
+
     def _show_provider_specific_controls(self, provider: str) -> None:
         """Re-scope the parameter group and clip picker to `provider`.
 
@@ -197,19 +209,93 @@ class SpeechPlaygroundPane(
         mounts only the selected provider's knobs -- so the override does the
         equivalent thing for this layout.
 
-        Deliberately NOT a `Select.Changed` handler of its own. The mixin's
-        `on_tts_provider_select_changed` is decorated `@on(Select.Changed)`
-        with no selector, so a second handler here would also fire, and a
-        recompose would destroy the widgets the mixin is midway through
-        populating.
+        Swaps the two provider-scoped regions rather than recomposing the
+        pane. `refresh(recompose=True)` destroys and rebuilds every child,
+        including the axis selects the catalog loader is in the middle of
+        populating -- the exact hazard `SpeechCatalogMixin` documents, which
+        this method previously walked into. It cost five provider-switch
+        tests, each timing out waiting for state written to a widget that no
+        longer existed.
 
         Args:
             provider: The newly selected provider id.
         """
+        # Before the early return: this runs on catalog application as well
+        # as on user change, and the language axis needs settling either way.
+        self._settle_language_axis(provider)
+
         if provider == self.provider:
             return
         self.provider = provider
-        self.refresh(recompose=True)
+
+        try:
+            group = self.query_one("#speech-param-group")
+            text_pane = self.query_one("#speech-text-pane")
+        except NoMatches:
+            return
+
+        # Textual's `remove()` is DEFERRED: the widget is still mounted
+        # when this returns, so mounting the replacement immediately raises
+        # DuplicateIds on `speech-param-group`. The shared parameters
+        # (`AUDIO_PARAMS`, `REQUEST_PARAMS`) are in every provider's group,
+        # so their ids collide too.
+        #
+        # The callback RECONCILES to whatever provider is current rather than
+        # mounting the one captured here. Two provider changes in quick
+        # succession -- which is normal, since loading a catalog can trigger
+        # another -- otherwise queue two mounts and the second duplicates the
+        # first.
+        group.remove()
+        for row in self.query(".speech-source-row"):
+            row.remove()
+        self.call_after_refresh(self._reconcile_provider_regions)
+
+    def _reconcile_provider_regions(self) -> None:
+        """Mount the provider-scoped regions if they are not already there.
+
+        Idempotent by design: it is scheduled once per provider change but
+        several may be pending, and only the current provider should end up
+        on screen.
+        """
+        if not self.is_mounted:
+            return
+        try:
+            anchor = self.query_one("#speech-log-group")
+            text_pane = self.query_one("#speech-text-pane")
+        except NoMatches:
+            return
+
+        if not self.query("#speech-param-group"):
+            self.mount(
+                SpeechParamGroup(provider=self.provider, id="speech-param-group"),
+                after=anchor,
+            )
+        if not self.query(".speech-source-row"):
+            for widget in self._compose_voice_source():
+                text_pane.mount(widget)
+
+    def _settle_language_axis(self, provider: str) -> None:
+        """Say something terminal on the language axis once a catalog is in.
+
+        Language is Kokoro-only; the legacy screen hid the row entirely for
+        every other provider. As a permanent axis it cannot be hidden, so it
+        has to say what is true instead -- and "Waiting for provider…" stops
+        being true the moment that provider's catalog has arrived without
+        languages. Left alone it waits forever.
+
+        Args:
+            provider: The provider whose catalog is being applied.
+        """
+        if provider == "kokoro":
+            return
+        try:
+            select = self.query_one("#tts-language-select", Select)
+        except NoMatches:
+            return
+        label = AXIS_EMPTY_PROMPTS["tts-language-select"]
+        select.set_options([(label, UNAVAILABLE_SELECT_VALUE)])
+        select.value = UNAVAILABLE_SELECT_VALUE
+        select.disabled = True
 
     def _refresh_provider_ids(self) -> None:
         """Record the provider values on offer.
@@ -276,8 +362,12 @@ class SpeechPlaygroundPane(
         with Horizontal(id="speech-split", classes="speech-split"):
             with Vertical(id="speech-text-pane", classes="speech-split-pane"):
                 yield Static("Text", classes="speech-section-head")
+                # Seeded with the first example, as legacy was. The screen
+                # exists to let someone hear the options and pick one, so it
+                # should be one keypress from audio -- not a blank box that
+                # asks you to think of something to say first.
                 editor = TextArea(
-                    "",
+                    EXAMPLE_TEXTS[0],
                     id="tts-text-input",
                     classes="speech-input",
                     placeholder="Type or paste the text to synthesize...",
@@ -304,40 +394,50 @@ class SpeechPlaygroundPane(
             classes="speech-status-line",
             markup=False,
         )
+        # Both carry their legacy copy. The shared catalog code only toggles
+        # these lines' visibility -- the text itself lived in the legacy
+        # compose(), so mounting them empty left a blank status line and a
+        # restriction notice that never said anything.
         yield Static(
-            "",
+            "Loading TTS providers…",
             id="tts-provider-status",
             classes="speech-status-line",
             markup=False,
         )
         yield Static(
-            "",
+            "audio.cpp returns one complete WAV and currently uses speed 1.0.",
             id="tts-audio-cpp-restrictions",
-            classes="speech-status-line",
+            classes="speech-status-line hidden",
             markup=False,
         )
 
     def _compose_voice_source(self) -> ComposeResult:
         """Yield the clip picker for providers that synthesize from one.
 
-        Mounted only for the providers that use it. Legacy mounted both
-        rows for every provider and toggled a `hidden` class, which leaves
-        a focusable control that does nothing -- the same reason the
-        parameter group scopes knobs by provider.
+        Mounted only for the providers that use it. Legacy mounted both rows
+        for every provider and toggled a `hidden` class, which leaves a
+        focusable control that does nothing -- the same reason the parameter
+        group scopes knobs by provider.
+
+        Builds each row by CONSTRUCTION rather than with the `with
+        Horizontal(...)` compose idiom. That idiom only works inside
+        `compose()`, and this is also called from
+        `_reconcile_provider_regions` when the provider changes -- where it
+        raised IndexError off Textual's empty compose stack.
 
         Returns:
             A ``ComposeResult`` yielding a reference-audio row, a voice
             upload row, or nothing.
         """
         if self.provider in REFERENCE_AUDIO_PROVIDERS:
-            with Horizontal(id="reference-audio-row", classes="speech-source-row"):
-                yield Static(
+            yield Horizontal(
+                Static(
                     "No reference clip",
                     id="reference-audio-status",
                     classes="speech-source-status",
                     markup=False,
-                )
-                yield SpeechActionStrip(
+                ),
+                SpeechActionStrip(
                     (
                         WorkbenchAction(
                             id="reference-audio-btn",
@@ -351,17 +451,20 @@ class SpeechPlaygroundPane(
                         ),
                     ),
                     id="speech-reference-actions",
-                )
+                ),
+                id="reference-audio-row",
+                classes="speech-source-row",
+            )
 
         if self.provider in VOICE_UPLOAD_PROVIDERS:
-            with Horizontal(id="higgs-voice-upload-row", classes="speech-source-row"):
-                yield Static(
+            yield Horizontal(
+                Static(
                     "No voice sample",
                     id="higgs-voice-status",
                     classes="speech-source-status",
                     markup=False,
-                )
-                yield SpeechActionStrip(
+                ),
+                SpeechActionStrip(
                     (
                         WorkbenchAction(
                             id="higgs-voice-upload-btn",
@@ -375,7 +478,10 @@ class SpeechPlaygroundPane(
                         ),
                     ),
                     id="speech-voice-upload-actions",
-                )
+                ),
+                id="higgs-voice-upload-row",
+                classes="speech-source-row",
+            )
 
     def _compose_player(self) -> ComposeResult:
         """Yield the playback region for the take being auditioned.
