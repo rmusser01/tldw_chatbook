@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 import pytest
 from textual.app import App, ComposeResult
 from textual.widget import Widget
-from textual.widgets import Button, DataTable, Input, Static, TextArea
+from textual.widgets import Button, DataTable, Input, Static
 
 from tldw_chatbook.TTS import (
     LoadedTTSProfile,
@@ -366,6 +366,15 @@ def _visible_content_rows(widget: Widget) -> tuple[str, ...]:
     )
 
 
+def _status_copy(app: App[Any]) -> str:
+    return str(app.query_one("#stts-profile-status-copy", Static).render())
+
+
+def _identifier_copy(app: App[Any]) -> str:
+    identifiers = app.query_one("#stts-profile-identifiers")
+    return str(identifiers.text)  # type: ignore[attr-defined]
+
+
 def _artifact() -> STTSGeneratedAudio:
     requested = TTSRequestedSelectionSnapshot(
         provider_id="audio_cpp",
@@ -484,6 +493,33 @@ async def test_voice_profiles_sidebar_mounts_focused_library_without_hiding_lega
 
 
 @pytest.mark.asyncio
+async def test_enabled_legacy_sidebar_items_scroll_into_view_on_keyboard_focus_at_80x24() -> (
+    None
+):
+    app = _STTSHost(None)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        sidebar = app.query_one(".stts-sidebar")
+        app.query_one("#view-playground-btn", Button).focus()
+
+        for selector, label in (
+            ("#view-voice-cloning-btn", "Voice Cloning"),
+            ("#view-stt-btn", "Speech Recognition"),
+        ):
+            target = app.query_one(selector, Button)
+            for _ in range(12):
+                await pilot.press("tab")
+                if app.focused is target:
+                    break
+
+            assert app.focused is target
+            assert sidebar.region.contains_region(target.region)
+            assert label in "\n".join(_visible_content_rows(sidebar))
+
+        assert "Audio Effects" in "\n".join(_visible_content_rows(sidebar))
+
+
+@pytest.mark.asyncio
 async def test_profile_store_unavailable_isolated_to_stable_library_recovery() -> None:
     app = _STTSHost(None)
 
@@ -491,14 +527,28 @@ async def test_profile_store_unavailable_isolated_to_stable_library_recovery() -
         await pilot.click("#view-profiles-btn")
         await _wait_until(pilot, lambda: app.profile_service_requests == 1)
 
-        status = app.query_one("#stts-profile-status", TextArea)
-        assert status.text == PROFILE_STORE_UNAVAILABLE_COPY
+        assert _status_copy(app) == PROFILE_STORE_UNAVAILABLE_COPY
         assert app.query_one("#stts-profile-table", DataTable).row_count == 0
         assert not app.query_one("#stts-profile-refresh-btn", Button).disabled
 
         await pilot.click("#view-playground-btn")
         await pilot.pause()
         assert app.query_one("#tts-generate-btn", Button)
+
+
+@pytest.mark.asyncio
+async def test_store_unavailable_recovery_wraps_without_becoming_a_tab_stop_at_80x24() -> (
+    None
+):
+    app = _STTSHost(None)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.click("#view-profiles-btn")
+        await _wait_until(pilot, lambda: app.profile_service_requests == 1)
+
+        status = app.query_one("#stts-profile-status")
+        assert not status.can_focus
+        assert "Choose Refresh" in "\n".join(_visible_content_rows(status))
 
 
 @pytest.mark.parametrize(
@@ -517,10 +567,9 @@ async def test_refresh_reloads_service_after_store_level_list_failure(
         await pilot.click("#view-profiles-btn")
         await _wait_until(pilot, lambda: len(failed_service.list_calls) == 1)
 
-        status = app.query_one("#stts-profile-status", TextArea)
         await _wait_until(
             pilot,
-            lambda: status.text == PROFILE_STORE_UNAVAILABLE_COPY,
+            lambda: _status_copy(app) == PROFILE_STORE_UNAVAILABLE_COPY,
         )
         assert app.profile_service_requests == 1
         assert app.query_one("#stts-profile-table", DataTable).row_count == 0
@@ -609,7 +658,7 @@ async def test_voice_profile_actions_fit_and_remain_keyboard_reachable_at_80x24(
     async with app.run_test(size=(80, 24)) as pilot:
         await _select_action_profile(app, pilot)
         table = app.query_one("#stts-profile-table", DataTable)
-        status = app.query_one("#stts-profile-status", TextArea)
+        status = app.query_one("#stts-profile-status")
         buttons = tuple(
             app.query_one(f"#{button_id}", Button) for button_id in action_ids
         )
@@ -654,7 +703,7 @@ async def test_profile_recovery_copy_is_visible_at_80x24(
 
     async with app.run_test(size=(80, 24)) as pilot:
         await _select_action_profile(app, pilot)
-        status = app.query_one("#stts-profile-status", TextArea)
+        status = app.query_one("#stts-profile-status")
 
         assert _visible_content_rows(status) == (
             expected_recovery,
@@ -665,43 +714,60 @@ async def test_profile_recovery_copy_is_visible_at_80x24(
 
 @pytest.mark.asyncio
 async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> None:
+    display_name = "profile-" + ("n" * 120)
     model_id = f"model/{'opaque-model-segment/' * 5}model-tail"
     voice_id = f"voice/{'opaque-voice-segment/' * 5}voice-tail"
-    profile = replace(_profile(0), model_id=model_id, voice_id=voice_id)
+    profile = replace(
+        _profile(0),
+        display_name=display_name,
+        normalized_name=display_name,
+        model_id=model_id,
+        voice_id=voice_id,
+    )
     service = _ActionProfileService(profile, availability_state="unavailable")
     app = _ActionHost(service)
     detail_copy = f"audio_cpp / {model_id} / {voice_id}"
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await _select_action_profile(app, pilot)
+        library, _selected = await _select_action_profile(app, pilot)
         status = app.query_one("#stts-profile-status")
         visible_lines = _visible_content_rows(status)
 
         assert visible_lines[0] == "Unavailable — Refresh, then Edit."
-        assert visible_lines[1] == "Selected: Voice 00"
+        assert visible_lines[1].startswith("Selected: profile-")
         assert visible_lines[2].startswith("audio_cpp / model/opaque-model")
         assert status.region.height <= 5
+        identifier_control = app.query_one("#stts-profile-identifiers")
+        assert status.region.contains_region(identifier_control.region)
 
         app.query_one("#stts-profile-table", DataTable).focus()
         for _ in range(8):
             await pilot.press("tab")
-            if app.focused is status:
+            if app.focused is not None and app.focused.id == "stts-profile-identifiers":
                 break
-        assert app.focused is status
-        assert isinstance(status, TextArea)
-        assert status.read_only
-        assert not status.soft_wrap
-        assert status.text == (
-            f"Unavailable — Refresh, then Edit.\nSelected: Voice 00\n{detail_copy}"
-        )
+        identifiers = app.focused
+        assert identifiers is not None
+        assert identifiers is not status
+        assert identifiers is identifier_control
+        assert identifiers.text == detail_copy  # type: ignore[attr-defined]
 
-        await pilot.press("down", "down", "end")
-        await _wait_until(pilot, lambda: status.scroll_x > 0)
-        assert _visible_content_rows(status)[2].endswith("voice-tail")
+        await pilot.press("end")
+        await _wait_until(pilot, lambda: identifiers.scroll_x > 0)
+        visible_lines = _visible_content_rows(status)
+        assert visible_lines[0] == "Unavailable — Refresh, then Edit."
+        assert visible_lines[1].startswith("Selected: profile-")
+        assert visible_lines[2].endswith("voice-tail")
 
-        unchanged = status.text
+        unchanged = identifiers.text  # type: ignore[attr-defined]
         await pilot.press("x")
-        assert status.text == unchanged
+        assert identifiers.text == unchanged  # type: ignore[attr-defined]
+
+        library._set_status(PROFILE_STORE_UNAVAILABLE_COPY)
+        await pilot.pause()
+        assert not identifiers.display
+        assert identifiers.scroll_x == 0
+        assert app.focused is not identifiers
+        assert "Choose Refresh" in "\n".join(_visible_content_rows(status))
 
         for selector in (
             "#stts-profile-preview-btn",
@@ -1245,6 +1311,71 @@ async def test_profile_editor_modal_controls_fit_at_80x24(mode: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("assignment_count", "assignment_copy", "recovery_copy", "cancel_label"),
+    [
+        (
+            0,
+            "No assignments were observed.",
+            "profile storage remains the final authority.",
+            "Cancel",
+        ),
+        (
+            3,
+            "3 assignments",
+            "Remove them before deletion.",
+            "Close",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_delete_modal_identifies_long_literal_profile_name_at_80x24(
+    assignment_count: int,
+    assignment_copy: str,
+    recovery_copy: str,
+    cancel_label: str,
+) -> None:
+    display_name = (
+        "[bold]opaque target[/] "
+        + " ".join(f"segment-{index:02d}" for index in range(8))
+        + " tail"
+    )
+    modal = profile_library_module.TTSProfileDeleteModal(
+        display_name=display_name,
+        assignment_count=assignment_count,
+    )
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+
+        dialog = modal.query_one("#stts-profile-delete-dialog")
+        target = modal.query_one("#stts-profile-delete-target", Static)
+        copy = modal.query_one("#stts-profile-delete-copy", Static)
+        cancel = modal.query_one("#stts-profile-delete-cancel", Button)
+        confirm = modal.query_one("#stts-profile-delete-confirm", Button)
+
+        assert str(target.render()) == f"Profile: {display_name}"
+        visible_target = " ".join(" ".join(_visible_content_rows(target)).split())
+        assert visible_target == f"Profile: {display_name}"
+        assert target.region.height >= 2
+        assert assignment_copy in str(copy.render())
+        assert recovery_copy in str(copy.render())
+        assert str(cancel.label) == cancel_label
+        assert confirm.disabled is (assignment_count > 0)
+
+        for widget in (dialog, target, copy, cancel, confirm):
+            assert widget.region.width > 0
+            assert widget.region.height > 0
+            assert widget.region.right <= app.size.width
+            assert widget.region.bottom <= app.size.height
+
+
+@pytest.mark.parametrize(
     ("modal_kind", "expected_result"),
     [("editor", None), ("delete", False)],
 )
@@ -1262,6 +1393,7 @@ async def test_profile_modals_escape_returns_their_cancel_result(
         )
     else:
         modal = profile_library_module.TTSProfileDeleteModal(
+            display_name=loaded.profile.display_name,
             assignment_count=0,
         )
     results: list[object] = []
@@ -1423,10 +1555,7 @@ async def test_edit_conflict_retains_the_exact_draft_without_leaking_values(
         assert await library.edit_selected_profile() is None
         assert service.update_calls[0][0] is selected
         assert service.update_calls[0][1] is submitted
-        assert (
-            app.query_one("#stts-profile-status", TextArea).text
-            == profile_library_module.PROFILE_CONFLICT_COPY
-        )
+        assert _status_copy(app) == profile_library_module.PROFILE_CONFLICT_COPY
 
         await library.edit_selected_profile()
         assert len(service.update_calls) == 1
@@ -1511,10 +1640,7 @@ async def test_create_from_artifact_handoff_preserves_the_exact_artifact() -> No
         assert service.create_calls == [("Saved artifact", artifact)]
         assert service.create_calls[0][1] is artifact
         assert result is service.created_result
-        assert (
-            "must never enter profile UI copy"
-            not in app.query_one("#stts-profile-status", TextArea).text
-        )
+        assert "must never enter profile UI copy" not in _status_copy(app)
 
 
 @pytest.mark.asyncio
@@ -1535,6 +1661,7 @@ async def test_delete_shows_advisory_count_but_repository_conflict_is_final(
                 profile_library_module.TTSProfileDeleteModal,
             )
             assert screen.assignment_count == 0
+            assert screen.display_name == selected.profile.display_name
             return True
 
         monkeypatch.setattr(app, "push_screen_wait", _confirm)
@@ -1542,10 +1669,7 @@ async def test_delete_shows_advisory_count_but_repository_conflict_is_final(
 
         assert service.assignment_count_calls[0] is selected
         assert service.delete_calls[0] is selected
-        assert (
-            app.query_one("#stts-profile-status", TextArea).text
-            == profile_library_module.PROFILE_CONFLICT_COPY
-        )
+        assert _status_copy(app) == profile_library_module.PROFILE_CONFLICT_COPY
 
 
 @pytest.mark.asyncio
@@ -1565,6 +1689,7 @@ async def test_assigned_profile_delete_is_blocked_before_repository_mutation(
                 profile_library_module.TTSProfileDeleteModal,
             )
             assert screen.assignment_count == 2
+            assert screen.display_name == selected.profile.display_name
             return True
 
         monkeypatch.setattr(app, "push_screen_wait", _confirm)
@@ -1572,10 +1697,7 @@ async def test_assigned_profile_delete_is_blocked_before_repository_mutation(
 
         assert service.assignment_count_calls[0] is selected
         assert service.delete_calls == []
-        assert (
-            app.query_one("#stts-profile-status", TextArea).text
-            == profile_library_module.PROFILE_DELETE_PROTECTED_COPY
-        )
+        assert _status_copy(app) == profile_library_module.PROFILE_DELETE_PROTECTED_COPY
 
 
 @pytest.mark.asyncio
@@ -1594,10 +1716,9 @@ async def test_refresh_and_editor_repair_keep_unavailable_persisted_values(
         library, selected = await _select_action_profile(app, pilot)
         await _wait_until(pilot, lambda: len(service.availability_calls) == 1)
 
-        detail = app.query_one("#stts-profile-status", TextArea).text
-        assert "missing/exact-model" in detail
-        assert "missing/exact-voice" in detail
-        assert "Refresh, then Edit" in detail
+        assert "missing/exact-model" in _identifier_copy(app)
+        assert "missing/exact-voice" in _identifier_copy(app)
+        assert "Refresh, then Edit" in _status_copy(app)
 
         app.query_one("#stts-profile-refresh-btn", Button).press()
         await _wait_until(pilot, lambda: len(service.availability_calls) == 2)
@@ -1656,7 +1777,7 @@ async def test_unexpected_action_errors_render_only_value_independent_copy(
         monkeypatch.setattr(app, "push_screen_wait", _duplicate)
         assert await library.duplicate_selected_profile() is None
 
-        status = app.query_one("#stts-profile-status", TextArea).text
+        status = _status_copy(app)
         assert status == profile_library_module.PROFILE_ACTION_FAILED_COPY
         assert "/Users/private/key" not in status
         assert "upstream.invalid" not in status

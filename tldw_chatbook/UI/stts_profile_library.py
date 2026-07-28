@@ -43,9 +43,8 @@ from tldw_chatbook.TTS import (
 PROFILE_PAGE_SIZE = 50
 PROFILE_SEARCH_DEBOUNCE_SECONDS = 0.25
 PROFILE_STORE_UNAVAILABLE_COPY = (
-    "Profile storage unavailable. Ordinary Playground, settings, audiobook, "
-    "dictation, and legacy speech remain available. Choose Refresh to retry "
-    "profile storage."
+    "Profile storage unavailable. Ordinary speech tools remain available. "
+    "Choose Refresh to retry."
 )
 PROFILE_CONFLICT_COPY = (
     "Profile storage changed while this action was pending. Refresh, review "
@@ -424,6 +423,11 @@ class TTSProfileDeleteModal(ModalScreen[bool]):
         margin-bottom: 1;
     }
 
+    #stts-profile-delete-target {
+        height: auto;
+        margin-bottom: 1;
+    }
+
     #stts-profile-delete-actions {
         height: 3;
         align-horizontal: right;
@@ -444,15 +448,20 @@ class TTSProfileDeleteModal(ModalScreen[bool]):
     def __init__(
         self,
         *,
+        display_name: str,
         assignment_count: int,
     ) -> None:
         super().__init__()
+        self.display_name = display_name
         self.assignment_count = assignment_count
 
     def compose(self) -> ComposeResult:
         protected = self.assignment_count > 0
         with Vertical(id="stts-profile-delete-dialog"):
             yield Label("Delete voice profile", id="stts-profile-delete-title")
+            target = Text("Profile: ")
+            target.append(Text(self.display_name))
+            yield Static(target, id="stts-profile-delete-target")
             if protected:
                 copy = (
                     f"This profile has {_assignment_copy(self.assignment_count)}. "
@@ -571,6 +580,32 @@ class STTSProfileLibrary(Widget):
         padding: 0 1;
     }
 
+    #stts-profile-status-copy {
+        width: 100%;
+        height: auto;
+    }
+
+    #stts-profile-status-copy.selected-detail {
+        height: 2;
+        min-height: 2;
+        max-height: 2;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    #stts-profile-identifiers {
+        display: none;
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        max-height: 1;
+        border: none;
+        padding: 0;
+        background: $panel;
+        color: $text;
+        scrollbar-size-horizontal: 0;
+    }
+
     #stts-profile-actions {
         height: 3;
         align-horizontal: right;
@@ -642,14 +677,19 @@ class STTSProfileLibrary(Widget):
             cursor_type="row",
             zebra_stripes=True,
         )
-        yield TextArea(
-            _PROFILE_LOADING_COPY,
-            id="stts-profile-status",
-            read_only=True,
-            soft_wrap=False,
-            show_line_numbers=False,
-            compact=True,
-        )
+        with Vertical(id="stts-profile-status"):
+            yield Static(
+                Text(_PROFILE_LOADING_COPY),
+                id="stts-profile-status-copy",
+            )
+            yield TextArea(
+                "",
+                id="stts-profile-identifiers",
+                read_only=True,
+                soft_wrap=False,
+                show_line_numbers=False,
+                compact=True,
+            )
         with Horizontal(id="stts-profile-actions"):
             yield Button(
                 "Preview",
@@ -1063,7 +1103,12 @@ class STTSProfileLibrary(Widget):
     def _set_status(self, copy: str) -> None:
         if not self.is_mounted:
             return
-        self.query_one("#stts-profile-status", TextArea).text = copy
+        status = self.query_one("#stts-profile-status-copy", Static)
+        status.remove_class("selected-detail")
+        status.update(Text(copy))
+        identifiers = self.query_one("#stts-profile-identifiers", TextArea)
+        identifiers.display = False
+        identifiers.load_text("")
 
     def _sync_selected_actions(self) -> None:
         disabled = (
@@ -1116,11 +1161,14 @@ class STTSProfileLibrary(Widget):
             status_line = "Unverified — Refresh and retry."
         else:
             status_line = f"{state}."
-        self._set_status(
-            f"{status_line}\n"
-            f"Selected: {profile.display_name}\n"
-            f"{profile.provider_id} / {profile.model_id} / {voice}"
-        )
+        status = self.query_one("#stts-profile-status-copy", Static)
+        status.add_class("selected-detail")
+        status.update(Text(f"{status_line}\nSelected: {profile.display_name}"))
+        identifiers = self.query_one("#stts-profile-identifiers", TextArea)
+        identifiers.load_text(f"{profile.provider_id} / {profile.model_id} / {voice}")
+        identifiers.move_cursor((0, 0))
+        identifiers.scroll_home(animate=False)
+        identifiers.display = True
 
     def _action_target_is_current(self, loaded: LoadedTTSProfile) -> bool:
         return self._rendered_request_is_current() and self._selected_profile is loaded
@@ -1321,7 +1369,10 @@ class STTSProfileLibrary(Widget):
 
         try:
             confirmed = await self._push_owned_modal(
-                TTSProfileDeleteModal(assignment_count=count)
+                TTSProfileDeleteModal(
+                    display_name=loaded.profile.display_name,
+                    assignment_count=count,
+                )
             )
         except asyncio.CancelledError:
             raise
