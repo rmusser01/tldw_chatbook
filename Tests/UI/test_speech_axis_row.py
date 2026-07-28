@@ -63,7 +63,6 @@ async def test_the_override_is_not_signalled_by_colour_alone():
         rendered = app.query_one(
             f"#{axis_chip_id('tts-voice-select')}", Static
         ).render_line(0).text
-        assert "Nova" in rendered
         assert "*" in rendered, "override carried by colour only"
 
 
@@ -81,6 +80,10 @@ async def test_every_axis_gets_a_chip_even_with_no_value():
         for axis in AXIS_CONTROLS:
             chip = app.query_one(f"#{axis_chip_id(axis)}", Static)
             assert AXIS_LABELS[axis] in str(chip.renderable)
+            # The axis must be EDITABLE, not a read-only chip: this screen
+            # exists to change these and compare the results.
+            control = app.query_one(f"#{axis}")
+            assert control.allow_focus(), f"{axis} is not reachable/editable"
 
 
 @pytest.mark.asyncio

@@ -6,10 +6,17 @@ Everything else about a provider is a tuning knob and lives in the collapsed
 group beside them.
 
 The Playground owns session-scoped values that never write back to persisted
-defaults, so an override has to be *visible*. A chip that looks identical
+defaults, so an override has to be *visible*. A control that looks identical
 whether or not it differs from the saved default makes deliberate variation
 indistinguishable from configuration -- which is the one thing this screen
 exists to let a user see.
+
+These are **controls, not chips**. An earlier pass rendered them as `Static`
+chips borrowed from Console's status bar, which is a genuine read-only
+status strip -- but the axes are the variables a user changes to compare, so
+read-only text made the screen unusable for its own purpose. They carry the
+legacy control ids (`tts-provider-select` and friends), which is also what
+lets the existing synthesis handler read them unchanged.
 """
 
 from __future__ import annotations
@@ -17,8 +24,8 @@ from __future__ import annotations
 from typing import Any
 
 from textual.app import ComposeResult
-from textual.containers import Grid
-from textual.widgets import Static
+from textual.containers import Grid, Horizontal
+from textual.widgets import Input, Select, Static
 
 from .speech_playground_model import AXIS_CONTROLS
 
@@ -68,6 +75,7 @@ class SpeechAxisRow(Grid):
         *,
         values: dict[str, str],
         defaults: dict[str, str],
+        options: dict[str, tuple[tuple[str, str], ...]] | None = None,
         **kwargs: Any,
     ) -> None:
         """Create the row.
@@ -76,12 +84,16 @@ class SpeechAxisRow(Grid):
             values: Effective value per axis for this session.
             defaults: Persisted default per axis, used only to detect
                 overrides. This widget never writes to it.
+            options: Selectable ``(label, value)`` pairs per axis. Empty for
+                an axis whose catalog has not loaded yet, which renders as a
+                blank Select rather than omitting the control.
             kwargs: Forwarded to ``Horizontal``.
         """
         classes = kwargs.pop("classes", "")
         super().__init__(classes=f"speech-axis-grid {classes}".strip(), **kwargs)
         self.values = dict(values)
         self.defaults = dict(defaults)
+        self.options = dict(options or {})
 
     def is_override(self, axis: str) -> bool:
         """Report whether this axis differs from its persisted default.
@@ -100,23 +112,57 @@ class SpeechAxisRow(Grid):
             return False
         return self.values.get(axis) != self.defaults[axis]
 
-    def compose(self) -> ComposeResult:
-        """Yield one chip per axis, in comparison order, marking overrides."""
-        for axis in AXIS_CONTROLS:
-            label = AXIS_LABELS[axis]
-            value = self.values.get(axis, UNSET_VALUE)
-            override = self.is_override(axis)
+    def _control_for(self, axis: str):
+        """Build the editable control for one axis.
 
-            chip = Static(
-                f"{label}: {value}" + (OVERRIDE_MARKER if override else ""),
-                id=axis_chip_id(axis),
-                classes="speech-chip" + (" speech-chip-override" if override else ""),
-                markup=False,
+        Args:
+            axis: The axis control id.
+
+        Returns:
+            An ``Input`` for speed (a free number) or a ``Select`` for the
+            rest. The id is the legacy control id, unchanged, so the
+            existing synthesis handler reads it without translation.
+        """
+        if axis == "tts-speed-input":
+            return Input(
+                value=self.values.get(axis, ""),
+                id=axis,
+                classes="speech-axis-control",
             )
-            chip.tooltip = (
-                f"Session override — saved default is "
-                f"{self.defaults.get(axis, UNSET_VALUE)}"
-                if override
-                else f"Matches the saved default ({self.defaults.get(axis, UNSET_VALUE)})"
-            )
-            yield chip
+        options = self.options.get(axis, ())
+        current = self.values.get(axis)
+        select: Select[str] = Select(
+            [(label, value) for label, value in options],
+            id=axis,
+            classes="speech-axis-control",
+            allow_blank=True,
+        )
+        # Only set a value we can honour. `Select.BLANK` is itself falsy and
+        # passing it explicitly is rejected as an illegal value; leaving the
+        # default (`Select.NULL`) is how "nothing selected yet" is expressed,
+        # which is the normal state before a provider catalog has loaded.
+        if current is not None and current in {value for _, value in options}:
+            select.value = current
+        return select
+
+    def compose(self) -> ComposeResult:
+        """Yield a labelled, editable control per axis, marking overrides."""
+        for axis in AXIS_CONTROLS:
+            override = self.is_override(axis)
+            with Horizontal(classes="speech-axis-cell"):
+                label = Static(
+                    AXIS_LABELS[axis] + (OVERRIDE_MARKER if override else ""),
+                    id=axis_chip_id(axis),
+                    classes="speech-chip"
+                    + (" speech-chip-override" if override else ""),
+                    markup=False,
+                )
+                label.tooltip = (
+                    "Session override — saved default is "
+                    f"{self.defaults.get(axis, UNSET_VALUE)}"
+                    if override
+                    else "Matches the saved default "
+                    f"({self.defaults.get(axis, UNSET_VALUE)})"
+                )
+                yield label
+                yield self._control_for(axis)
