@@ -124,10 +124,10 @@ class TaskResumeState:
         controller teardown, which contradicts that deny-on-teardown
         architecture -- not attempted here. Restoring
         ``pending_skill_install`` was originally added by TASK-910 for
-        round-trip data fidelity, pinned by
-        ``test_task_resume_state_pending_skill_install_roundtrip`` (now
-        updated alongside this change, not deleted, to assert the drop
-        instead of the round-trip).
+        round-trip data fidelity; live serialization stays pinned by
+        ``test_task_resume_state_pending_skill_install_serializes_while_live``
+        and the restore-side drop by
+        ``test_restored_state_drops_the_pending_install_so_no_dead_card_appears``.
 
         Args:
             data: Untrusted value read from a persisted Console snapshot.
