@@ -58,7 +58,7 @@ ROW_COUNT = 6
 LAST_ROW = ROW_COUNT - 1
 
 
-class _ProductionCssTableHarness(App):
+class ProductionCssTableHarness(App):
     """A plain `DataTable` under the real app stylesheet.
 
     No id, no classes: nothing here can be matched by a screen-scoped rule,
@@ -103,7 +103,7 @@ async def test_clicking_the_last_row_of_a_focused_table_moves_the_cursor() -> No
     it -- and the table is focused before the click, which is the state a
     user is in from their second click onwards.
     """
-    app = _ProductionCssTableHarness()
+    app = ProductionCssTableHarness()
     async with app.run_test(size=(60, 14)) as pilot:
         table = app.query_one(DataTable)
         table.focus()
@@ -132,7 +132,7 @@ async def test_clicking_the_last_row_of_a_focused_table_moves_the_cursor() -> No
 async def test_every_row_of_a_focused_table_is_clickable() -> None:
     """The perimeter, not just the last row: the outline also kills column
     x=0 on every line and overwrites the header line outright."""
-    app = _ProductionCssTableHarness()
+    app = ProductionCssTableHarness()
     async with app.run_test(size=(60, 14)) as pilot:
         table = app.query_one(DataTable)
         table.focus()
@@ -164,7 +164,7 @@ async def test_a_focused_table_still_shows_a_visible_focus_affordance() -> None:
     it, because the cursor can be switched off (`cursor_type="none"`) or
     scrolled out of view while the header is always on screen.
     """
-    app = _ProductionCssTableHarness()
+    app = ProductionCssTableHarness()
     async with app.run_test(size=(60, 14)) as pilot:
         table = app.query_one(DataTable)
 
@@ -193,7 +193,7 @@ async def test_a_focused_table_still_renders_its_column_header() -> None:
     """TASK-1034, generalised: the outline's top edge replaced the header
     line of any focused table. Rendered here through the real compositor,
     not read off the model."""
-    app = _ProductionCssTableHarness()
+    app = ProductionCssTableHarness()
     async with app.run_test(size=(60, 14)) as pilot:
         table = app.query_one(DataTable)
         table.focus()
