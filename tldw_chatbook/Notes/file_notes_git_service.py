@@ -69,6 +69,7 @@ _REDIRECTING_GIT_ENVIRONMENT = frozenset(
         "GIT_NO_REPLACE_OBJECTS",
         "GIT_EXEC_PATH",
         "GIT_PREFIX",
+        "GIT_CONFIG",
         "GIT_CONFIG_SYSTEM",
         "GIT_CONFIG_GLOBAL",
         "GIT_CONFIG_NOSYSTEM",
@@ -1537,11 +1538,16 @@ class FileNotesGitService:
                 message=raw.message,
             )
         head = raw.head
-        index_entries = raw.index_entries
+        index_sequence = raw.index_entries
+        index_entries = _stage_zero_index(index_sequence)
+        conflicted_paths = {
+            entry.path for entry in index_sequence if entry.stage != 0
+        }
         status_records = raw.status_records
 
         ownership_by_id: dict[int, StagingOwnership] = {}
         current_ownership = self._owner.snapshot(binding).staging_ownership
+        retained_ownership = dict(current_ownership)
         for repository_group in repository_groups:
             owned = current_ownership.get(repository_group.group_id)
             if owned is None:
@@ -1552,13 +1558,26 @@ class FileNotesGitService:
                 original_group,
                 repository_group,
             )
-            if mapped_ownership is not None:
-                ownership_by_id[repository_group.group_id] = mapped_ownership
+            if (
+                mapped_ownership is None
+                or mapped_ownership.repository != repository
+                or mapped_ownership.head != head
+                or any(
+                    path in conflicted_paths
+                    or index_entries.get(path) != expected
+                    for path, expected in mapped_ownership.post_stage_entries.items()
+                )
+            ):
+                retained_ownership.pop(repository_group.group_id, None)
+                continue
+            ownership_by_id[repository_group.group_id] = mapped_ownership
+        if len(retained_ownership) != len(current_ownership):
+            self._owner.publish_ownership(binding, retained_ownership)
 
         classified = classify_session_rows(
             repository_groups,
             status_records,
-            index_entries,
+            index_sequence,
             ownership_by_id,
         )
         classified_by_id = {
@@ -1978,6 +1997,45 @@ class FileNotesGitService:
                 requested,
                 blocked_group_ids=tuple(requested),
                 message="Repository identity changed before Stage",
+            )
+        root = self._safe_root(binding)
+        endpoint_safety_changed = root is None
+        if root is not None:
+            for group_id in staged:
+                remapped, invalid = self._map_group(
+                    root,
+                    inspection.repository,
+                    groups_by_id[group_id],
+                )
+                if (
+                    invalid is not None
+                    or remapped is None
+                    or remapped != inspection.repository_groups[group_id]
+                    or not stage_group_is_closed(
+                        remapped,
+                        inspection.index_entries,
+                    )
+                ):
+                    endpoint_safety_changed = True
+                    break
+        if endpoint_safety_changed:
+            ownership_revoked = False
+            for group_id in staged:
+                if ownership.pop(group_id, None) is not None:
+                    ownership_revoked = True
+            if ownership_revoked:
+                self._owner.publish_stage_result(
+                    binding,
+                    inspection.repository,
+                    ownership,
+                )
+            return GitActionResult(
+                "stage",
+                "blocked",
+                requested,
+                blocked_group_ids=tuple(staged + blocked),
+                clean_group_ids=tuple(clean),
+                message="File Notes endpoint safety changed before Stage",
             )
 
         result = await self._run_stage_command(

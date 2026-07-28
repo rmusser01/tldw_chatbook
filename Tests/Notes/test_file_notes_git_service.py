@@ -1128,6 +1128,7 @@ _REDIRECTING_GIT_ENVIRONMENT = {
     "GIT_NO_REPLACE_OBJECTS",
     "GIT_EXEC_PATH",
     "GIT_PREFIX",
+    "GIT_CONFIG",
     "GIT_CONFIG_SYSTEM",
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM",
@@ -3342,6 +3343,97 @@ async def test_status_rejects_git_output_outside_repo_coordinate_whitelist(
     assert status.state == "error"
     assert status.message is not None
     assert "outside the session whitelist" in status.message
+
+
+class _PreAddEndpointRaceRunner(_DelayedStatusRunner):
+    def __init__(
+        self,
+        *,
+        root: Path,
+        relative_path: str,
+        replacement: str,
+    ) -> None:
+        super().__init__(index_path=relative_path)
+        self.release_first_index.set()
+        self.root = root
+        self.relative_path = relative_path
+        self.replacement = replacement
+        self.identity_checks = 0
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        text = tuple(os.fsdecode(argument) for argument in argv)
+        if "--show-toplevel" in text:
+            self.identity_checks += 1
+            if self.identity_checks == 2:
+                if self.replacement == "directory":
+                    endpoint = self.root / self.relative_path
+                    endpoint.unlink()
+                    endpoint.mkdir()
+                    (endpoint / "external.md").write_text(
+                        "outside session lineage\n",
+                        encoding="utf-8",
+                    )
+                else:
+                    (self.root / "nested" / ".git").mkdir()
+        return await super().run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("replacement", "relative_path"),
+    [
+        ("directory", "note.md"),
+        ("nested_repository", "nested/note.md"),
+    ],
+)
+async def test_stage_rechecks_endpoint_safety_after_final_repository_revalidation(
+    tmp_path: Path,
+    replacement: str,
+    relative_path: str,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    endpoint = root / relative_path
+    endpoint.parent.mkdir(parents=True, exist_ok=True)
+    endpoint.write_text("session note\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    assert owner.record_change(binding, SessionChange("created", relative_path))
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    runner = _PreAddEndpointRaceRunner(
+        root=root,
+        relative_path=relative_path,
+        replacement=replacement,
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+
+    result = await service.start_stage(binding, (1,))
+
+    assert runner.identity_checks >= 2
+    assert result.state == "blocked"
+    assert result.blocked_group_ids == (1,)
+    assert not runner.add_seen
+    assert not owner.snapshot(binding).staging_ownership
 
 
 class _PostflightStageRaceRunner(_DelayedStatusRunner):

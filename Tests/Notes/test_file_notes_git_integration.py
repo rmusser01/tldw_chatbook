@@ -895,6 +895,104 @@ async def test_stage_update_revokes_ownership_after_external_index_change(
 
 
 @pytest.mark.asyncio
+async def test_status_head_mismatch_irreversibly_revokes_staging_ownership(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    tracked = repository.path / "tracked.md"
+    original_head = repository.run("rev-parse", "HEAD").stdout.strip()
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "tracked.md"),
+    )
+    service = FileNotesGitService(
+        owner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+    tracked.write_text("owned stage\n", encoding="utf-8")
+    assert (await service.start_stage(binding, (1,))).state == "success"
+    assert 1 in owner.snapshot(binding).staging_ownership
+
+    repository.run("commit", "-m", "external HEAD change")
+    mismatched = await service.start_status(
+        binding,
+        owner.snapshot(binding).changes,
+    )
+
+    assert mismatched.rows[0].state == "clean"
+    assert not owner.snapshot(binding).staging_ownership
+
+    repository.run("reset", "--soft", original_head.decode("ascii"))
+    recurred = await service.start_status(
+        binding,
+        owner.snapshot(binding).changes,
+    )
+
+    assert recurred.rows[0].state == "external_staged"
+    assert not recurred.rows[0].unstage_eligible
+    assert not owner.snapshot(binding).staging_ownership
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_status_index_mismatch_irreversibly_revokes_staging_ownership(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    tracked = repository.path / "tracked.md"
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "tracked.md"),
+    )
+    service = FileNotesGitService(
+        owner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+    tracked.write_text("owned stage\n", encoding="utf-8")
+    assert (await service.start_stage(binding, (1,))).state == "success"
+    owned = owner.snapshot(binding).staging_ownership[1]
+    owned_entry = owned.post_stage_entries["tracked.md"]
+    assert owned_entry is not None
+
+    tracked.write_text("external index\n", encoding="utf-8")
+    repository.run("add", "--", "tracked.md")
+    mismatched = await service.start_status(
+        binding,
+        owner.snapshot(binding).changes,
+    )
+
+    assert mismatched.rows[0].state == "external_staged"
+    assert not owner.snapshot(binding).staging_ownership
+
+    repository.run(
+        "update-index",
+        "--cacheinfo",
+        f"{owned_entry.mode},{owned_entry.object_id},tracked.md",
+    )
+    recurred = await service.start_status(
+        binding,
+        owner.snapshot(binding).changes,
+    )
+
+    assert recurred.rows[0].state == "external_partial"
+    assert not recurred.rows[0].unstage_eligible
+    assert not owner.snapshot(binding).staging_ownership
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_stage_update_blocks_move_to_newly_ignored_destination_before_add(
     tmp_path: Path,
 ) -> None:
