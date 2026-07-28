@@ -151,6 +151,30 @@ LEGACY_PLAYGROUND_CONTROLS: frozenset[str] = frozenset(
     + _UNSPLIT_CONTROLS
 )
 
+#: Legacy *containers*, not controls: empty boxes the old widget mounted for
+#: every provider and toggled with a `hidden` class. `SpeechParamGroup`
+#: replaces them by mounting only the selected provider's knobs, so these ids
+#: are deliberately absent from the rebuild.
+#:
+#: Named here rather than deleted from the legacy set so the completeness
+#: check stays two-directional: dropping one is a decision recorded in the
+#: code, and dropping anything else still fails.
+REPLACED_CONTAINERS: frozenset[str] = frozenset(
+    {
+        "kokoro-settings",
+        "kokoro-language-row",
+        "elevenlabs-settings",
+        "chatterbox-settings",
+        "higgs-settings",
+    }
+)
+
+#: What the rebuild must actually mount: every legacy control except the
+#: containers above.
+REQUIRED_PLAYGROUND_CONTROLS: frozenset[str] = (
+    LEGACY_PLAYGROUND_CONTROLS - REPLACED_CONTAINERS
+)
+
 #: Controls this redesign adds. Listed explicitly so an addition is a
 #: decision rather than a diff nobody noticed.
 NEW_PLAYGROUND_CONTROLS: frozenset[str] = frozenset(REQUEST_PARAMS)

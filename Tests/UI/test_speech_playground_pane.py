@@ -29,7 +29,12 @@ async def test_the_primary_action_is_above_the_fold(size):
         await pilot.pause()
         await pilot.pause()
         body = screen.query_one("#lab-body")
-        generate = screen.query_one("#workbench-action-tts-generate-btn", Button)
+        # The bare id, not `workbench-action-tts-generate-btn`. This test
+        # originally asserted the prefixed one, which is what `CommandStrip`
+        # mounts -- so it passed against a button whose id the handler
+        # (`event.button.id == "tts-generate-btn"`) could never match. A
+        # visible, above-the-fold, permanently dead button.
+        generate = screen.query_one("#tts-generate-btn", Button)
         assert body.region.contains_region(generate.region), (
             f"Generate below the fold at {size}: y={generate.region.y}"
         )

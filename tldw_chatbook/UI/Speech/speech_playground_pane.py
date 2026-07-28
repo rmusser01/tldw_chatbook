@@ -26,10 +26,10 @@ from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Static, TextArea
+from textual.widgets import Collapsible, ProgressBar, RichLog, Static, TextArea
 
 from ..Workbench.workbench_state import WorkbenchAction
-from ..Workbench.workbench_widgets import CommandStrip
+from .speech_action_strip import SpeechActionStrip
 from .speech_axis_row import SpeechAxisRow
 from .speech_param_group import SpeechParamGroup
 from .speech_result_history import SpeechResultHistory, SpeechTake
@@ -45,11 +45,19 @@ if TYPE_CHECKING:
 #: media queries.
 SPEECH_SPLIT_MIN_WIDTH = 64
 
+#: Providers that synthesize from a reference clip, so the clip picker is
+#: only mounted for them -- legacy mounted it always and hid it, which left
+#: it focusable while inert.
+REFERENCE_AUDIO_PROVIDERS = ("chatterbox",)
+
+#: Providers with their own voice-sample upload flow.
+VOICE_UPLOAD_PROVIDERS = ("higgs",)
+
 #: The playground's visible commands, in the order Console orders its own:
 #: the thing you came to do first, then what you do to the result.
-#: The text actions. Ids are the legacy control ids on purpose: the rebuild
-#: re-sites controls, it does not rename them, so wiring is an id lookup
-#: rather than a translation table.
+#: The text actions. Ids are the legacy control ids, and `SpeechActionStrip`
+#: mounts them verbatim: the handler matches `event.button.id` against these
+#: exact strings, so a strip that renames its buttons never fires.
 PLAYGROUND_ACTIONS: tuple[WorkbenchAction, ...] = (
     WorkbenchAction(
         id="tts-generate-btn",
@@ -173,7 +181,7 @@ class SpeechPlaygroundPane(Vertical):
         """
         yield Static("🎤 TTS Playground", classes="speech-pane-title")
 
-        yield CommandStrip(PLAYGROUND_ACTIONS, id="speech-playground-actions")
+        yield SpeechActionStrip(PLAYGROUND_ACTIONS, id="speech-playground-actions")
 
         yield SpeechAxisRow(
             values=self.axis_values,
@@ -192,12 +200,15 @@ class SpeechPlaygroundPane(Vertical):
                 )
                 editor.show_line_numbers = False
                 yield editor
+                yield from self._compose_voice_source()
 
             with Vertical(id="speech-result-pane", classes="speech-split-pane"):
                 yield SpeechResultHistory(
                     takes=self.takes, id="speech-result-history"
                 )
-                yield CommandStrip(PLAYER_ACTIONS, id="speech-result-actions")
+                yield from self._compose_player()
+
+        yield from self._compose_generation_status()
 
         yield SpeechParamGroup(
             provider=self.provider, id="speech-param-group"
@@ -208,4 +219,133 @@ class SpeechPlaygroundPane(Vertical):
             id="speech-capability-line",
             classes="speech-status-line",
             markup=False,
+        )
+        yield Static(
+            "",
+            id="tts-provider-status",
+            classes="speech-status-line",
+            markup=False,
+        )
+        yield Static(
+            "",
+            id="tts-audio-cpp-restrictions",
+            classes="speech-status-line",
+            markup=False,
+        )
+
+    def _compose_voice_source(self) -> ComposeResult:
+        """Yield the clip picker for providers that synthesize from one.
+
+        Mounted only for the providers that use it. Legacy mounted both
+        rows for every provider and toggled a `hidden` class, which leaves
+        a focusable control that does nothing -- the same reason the
+        parameter group scopes knobs by provider.
+
+        Returns:
+            A ``ComposeResult`` yielding a reference-audio row, a voice
+            upload row, or nothing.
+        """
+        if self.provider in REFERENCE_AUDIO_PROVIDERS:
+            with Horizontal(id="reference-audio-row", classes="speech-source-row"):
+                yield Static(
+                    "No reference clip",
+                    id="reference-audio-status",
+                    classes="speech-source-status",
+                    markup=False,
+                )
+                yield SpeechActionStrip(
+                    (
+                        WorkbenchAction(
+                            id="reference-audio-btn",
+                            label="Choose clip",
+                            tooltip="Pick a reference audio file",
+                        ),
+                        WorkbenchAction(
+                            id="clear-reference-audio-btn",
+                            label="Clear",
+                            tooltip="Forget the reference clip",
+                        ),
+                    ),
+                    id="speech-reference-actions",
+                )
+
+        if self.provider in VOICE_UPLOAD_PROVIDERS:
+            with Horizontal(id="higgs-voice-upload-row", classes="speech-source-row"):
+                yield Static(
+                    "No voice sample",
+                    id="higgs-voice-status",
+                    classes="speech-source-status",
+                    markup=False,
+                )
+                yield SpeechActionStrip(
+                    (
+                        WorkbenchAction(
+                            id="higgs-voice-upload-btn",
+                            label="Upload voice",
+                            tooltip="Pick a voice sample to clone",
+                        ),
+                        WorkbenchAction(
+                            id="higgs-clear-voice-btn",
+                            label="Clear",
+                            tooltip="Forget the voice sample",
+                        ),
+                    ),
+                    id="speech-voice-upload-actions",
+                )
+
+    def _compose_player(self) -> ComposeResult:
+        """Yield the playback region for the take being auditioned.
+
+        Returns:
+            A ``ComposeResult`` yielding the player container and its
+            transport actions.
+        """
+        with Vertical(id="audio-player-container", classes="speech-player"):
+            yield Static(
+                "Nothing loaded",
+                id="audio-player-status",
+                classes="speech-player-status",
+                markup=False,
+            )
+            with Horizontal(classes="speech-player-transport"):
+                yield ProgressBar(
+                    id="audio-progress-bar",
+                    show_eta=False,
+                    show_percentage=False,
+                )
+                yield Static(
+                    "0:00 / 0:00",
+                    id="audio-time-display",
+                    classes="speech-player-time",
+                    markup=False,
+                )
+            yield SpeechActionStrip(PLAYER_ACTIONS, id="speech-result-actions")
+
+    def _compose_generation_status(self) -> ComposeResult:
+        """Yield the generation status line, progress, and the log.
+
+        The log is collapsed: it is diagnostic, and the defect this rebuild
+        exists to fix was rows spent on things nobody reads by default.
+
+        Returns:
+            A ``ComposeResult`` yielding the status container and the log.
+        """
+        with Horizontal(
+            id="generation-status-container", classes="speech-generation-status"
+        ):
+            yield Static(
+                "Ready to generate",
+                id="generation-status-text",
+                classes="speech-generation-text",
+                markup=False,
+            )
+            yield ProgressBar(
+                id="generation-progress", show_eta=True, show_percentage=True
+            )
+
+        yield Collapsible(
+            RichLog(id="tts-generation-log", classes="speech-log", markup=False),
+            title="Generation log",
+            id="speech-log-group",
+            collapsed=True,
         )

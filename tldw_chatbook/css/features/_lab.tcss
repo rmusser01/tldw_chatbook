@@ -676,3 +676,77 @@
     border: none;
     background: $ds-surface-panel;
 }
+
+/* --- Speech: player, generation status, clip source ------------------- */
+
+/* The player sits under the take list and must not steal its rows: the
+   history is what the user compares, the transport is how they audition
+   one. */
+.speech-player {
+    height: auto;
+    padding: 0 1;
+    border-top: solid #2c313a;
+}
+
+.speech-player-status {
+    height: 1;
+    color: $text-muted;
+}
+
+.speech-player-transport {
+    height: 1;
+}
+
+#audio-progress-bar {
+    width: 1fr;
+    height: 1;
+}
+
+.speech-player-time {
+    width: auto;
+    min-width: 12;
+    content-align: right middle;
+    color: $text-muted;
+}
+
+/* One row: what is happening, and how far along. */
+.speech-generation-status {
+    height: 1;
+    padding: 0 1;
+}
+
+.speech-generation-text {
+    width: 1fr;
+    color: $text-muted;
+}
+
+#generation-progress {
+    width: auto;
+    min-width: 20;
+    height: 1;
+}
+
+/* Diagnostic, so it stays behind a collapsed disclosure rather than
+   occupying rows nobody reads. */
+#speech-log-group {
+    height: auto;
+    border: none;
+    background: transparent;
+}
+
+.speech-log {
+    height: 8;
+    background: transparent;
+}
+
+/* The reference-clip / voice-sample picker, mounted only for the providers
+   that use one. */
+.speech-source-row {
+    height: 1;
+    margin-top: 1;
+}
+
+.speech-source-status {
+    width: 1fr;
+    color: $text-muted;
+}
