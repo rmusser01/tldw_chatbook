@@ -171,7 +171,7 @@ def _row_secondary_parts(
             "BLOCKED · ",
             reason,
             "; resolve the Git conflict outside Chatbook, then Refresh",
-            "; resolve conflict, then Refresh",
+            "Conflict: use Git; Refresh",
         )
     if state in {
         "unsupported",
@@ -190,7 +190,7 @@ def _row_secondary_parts(
             "BLOCKED · ",
             reason,
             "; restore Git, then Refresh",
-            "; restore Git, then Refresh",
+            "Restore Git first; Refresh",
         )
     return (
         "FAILED · ",

@@ -786,13 +786,23 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
             group_id=2,
             disabled_reason=long_reason,
         ),
+        _row(
+            "conflict",
+            group_id=3,
+            disabled_reason=long_reason,
+        ),
+        _row(
+            "unavailable",
+            group_id=4,
+            disabled_reason=long_reason,
+        ),
         *tuple(
             _row(
                 "unstaged",
                 group_id=group_id,
                 stage_action="stage",
             )
-            for group_id in range(3, 10)
+            for group_id in range(5, 12)
         ),
     )
     repository = _repository(
@@ -875,6 +885,19 @@ async def test_prepare_session_fixed_regions_remain_visible_at_40_by_20() -> Non
         failure_text = _text(failure)
         assert failure_text.endswith("; retry, Refresh")
         assert cell_len(failure_text) <= failure.content_region.width
+
+        conflict, unavailable = tuple(
+            widget
+            for widget in panel.query(".file-notes-git-row-secondary")
+            if _text(widget).startswith("BLOCKED")
+        )
+        conflict_text = _text(conflict)
+        assert conflict_text == "BLOCKED · Conflict: use Git; Refresh"
+        assert cell_len(conflict_text) <= conflict.content_region.width
+
+        unavailable_text = _text(unavailable)
+        assert unavailable_text == "BLOCKED · Restore Git first; Refresh"
+        assert cell_len(unavailable_text) <= unavailable.content_region.width
 
         assert _text(panel.query_one("#file-notes-git-status", Static)).endswith(
             "Retry Refresh."
