@@ -16,9 +16,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime
 def _require_aiohttp():
     """Import `aiohttp` on demand, with an actionable message when absent.
 
-    `aiohttp` is an OPTIONAL dependency -- it is declared only in the
-    ``[websearch]``/``[all-tools]`` extras and registered ``"aiohttp": False``
-    in ``Utils/optional_deps.py``. Importing it at module scope put it on the
+    `aiohttp` is an OPTIONAL dependency -- it ships in the
+    ``[image_generation]``/``[all-tools]`` extras and is registered
+    ``"aiohttp": False`` in ``Utils/optional_deps.py``. Importing it at
+    module scope put it on the
     mandatory startup path (this module <- ImageGenerationService <-
     console_generate_image <- the default chat screen), so a plain install
     without an extra died on boot with ``RuntimeError: Unable to resolve
@@ -37,7 +38,7 @@ def _require_aiohttp():
     if aiohttp is None:
         raise ImportError(
             "SwarmUI image generation requires the optional 'aiohttp' package. "
-            "Install it with: pip install 'tldw_chatbook[websearch]'"
+            "Install it with: pip install 'tldw_chatbook[image_generation]'"
         )
     return aiohttp
 
@@ -52,14 +53,17 @@ def _safe_import_aiohttp():
     module's own import cost unchanged.
 
     Note the deliberate ``feature_name`` choice: the default keys the result
-    as ``"aiohttp"``, which is the existing entry in ``DEPENDENCIES_AVAILABLE``.
-    Passing ``"websearch"`` -- the extra that actually ships aiohttp -- would
-    be wrong, because ``check_websearch_deps()`` owns that key and derives it
-    from lxml/bs4/trafilatura/langdetect; clobbering it from here would report
-    web search as available on an aiohttp-only install. The correct extra is
-    named in `_require_aiohttp()`'s error message instead, since
-    `require_dependency()`'s generated hint (``[aiohttp]``) is not a real
-    extra.
+    as ``"aiohttp"``, the existing entry in ``DEPENDENCIES_AVAILABLE``. It must
+    not be keyed as ``"websearch"`` -- aiohttp also ships in that extra for the
+    article scraper, but ``check_websearch_deps()`` owns that key and derives
+    it from lxml/bs4/trafilatura/langdetect, so writing it here would report
+    web search as available on an aiohttp-only install.
+
+    ``"image_generation"`` (added in task-1262) would be collision-free, but
+    keying on the package rather than the feature keeps one entry accurate for
+    every consumer of aiohttp instead of one per feature. Nothing currently
+    reads either key; the extra a user should install is named in
+    `_require_aiohttp()`'s message.
 
     Returns:
         The ``aiohttp`` module, or ``None`` when it is not installed.

@@ -14,7 +14,13 @@ This file provides comprehensive guidance to Claude Code (claude.ai/code) when w
 ```bash
 # Setup
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"  # Or specific: .[embeddings_rag,websearch,local_vllm,ebook,pdf]
+pip install -e ".[dev]"  # Or specific: .[embeddings_rag,websearch,local_vllm,ebook,pdf,image_generation]
+
+# NOTE: the checked-out .venv here is uv-managed (see .venv/pyvenv.cfg) and ships
+# NO pip, so the line above fails with "No module named pip" against it. Use:
+#   VIRTUAL_ENV=.venv uv pip install -e ".[dev]"
+# Dev deps are often absent from a fresh clone's venv -- if `pytest` is missing,
+# install it before assuming the suite is broken.
 
 # Run
 python3 -m tldw_chatbook.app
@@ -428,7 +434,7 @@ A task is **Done** only when **ALL** of the following are complete:
 | Create with labels      | `backlog task create "Feature" -l auth,backend`                                                                                                               |
 | Create with priority    | `backlog task create "Feature" --priority high`                                                                                                               |
 | Create with plan        | `backlog task create "Feature" --plan "1. Research\n2. Implement"`                                                                                            |
-| Create with AC          | `backlog task create "Feature" --ac "Must work,Must be tested"`                                                                                               |
+| Create with AC          | `backlog task create "Feature" --ac "Must work" --ac "Must be tested"` (repeat the flag; `--ac "a,b"` does NOT split on commas -- it writes one run-on criterion that cannot be ticked off individually) |
 | Create with notes       | `backlog task create "Feature" --notes "Started initial research"`                                                                                            |
 | Create with deps        | `backlog task create "Feature" --dep task-1,task-2`                                                                                                           |
 | Create sub task         | `backlog task create -p 14 "Add Login with Google"`                                                                                                           |

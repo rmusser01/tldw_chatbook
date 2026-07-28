@@ -153,6 +153,7 @@ class OptionalFeatureInfo:
 
 AREA_RAG = "RAG and retrieval"
 AREA_MEDIA = "Media ingestion and transcription"
+AREA_MEDIA_CREATION = "Media creation"
 AREA_MCP = "MCP integration"
 AREA_LOCAL_INFERENCE = "Local inference"
 AREA_WEB = "Web access"
@@ -294,6 +295,18 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         "STTS",
         "Higgs Audio TTS",
         OWNER_LIBRARY_MEDIA,
+    ),
+    "image_generation": _feature(
+        "image_generation",
+        "SwarmUI image generation",
+        AREA_MEDIA_CREATION,
+        ("aiohttp",),
+        # No settings screen owns media_creation; `/generate-image` in the
+        # Console is the real entry point, and SwarmUI is configured under
+        # [media_creation.swarmui] in config.toml.
+        "Console > /generate-image",
+        "Image generation",
+        OWNER_CONSOLE_PROVIDER,
     ),
     "local_mlx": _feature(
         "local_mlx",

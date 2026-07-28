@@ -127,6 +127,13 @@ local_transformers = ["transformers"]
 mcp = [
     "mcp[cli]>=1.0.0",
 ]
+image_generation = [
+    # SwarmUI API client (Media_Creation/swarmui_client.py). aiohttp previously
+    # shipped only in [websearch] -- for the article scraper -- so wanting image
+    # generation meant installing the web-search stack (playwright, trafilatura,
+    # pandas, nltk, scikit-learn, ...) to obtain one HTTP client (task-1262).
+    "aiohttp",
+]
 svg = [
     "cairosvg",  # SVG rasterization for image attachments; needs the cairo C library (e.g. `brew install cairo`)
 ]
@@ -325,6 +332,8 @@ all-tools = [
     "pandas",
     "playwright",
     "trafilatura",
+    # Serves both [websearch] (article scraper) and [image_generation]
+    # (SwarmUI client); listed once here since all-tools enumerates packages.
     "aiohttp",
     "defusedxml",
     
