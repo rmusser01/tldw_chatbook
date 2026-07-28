@@ -1023,6 +1023,240 @@ git commit -m "feat(console): add voice dictation state machine"
 
 ---
 
+### Task 3b: Actually release the microphone on stop
+
+`LazyLiveDictationService.stop_dictation()` never releases audio capture. The
+non-lazy `dictation_service.py` calls `self.audio_service.stop_recording()`; the
+lazy variant this feature depends on does not, and its `_cleanup()` does not
+either. Reproduced against the real service: after a successful
+`controller.stop()`, the controller reports `idle` while the recorder still has
+`is_recording is True` and `stop_calls == 0`.
+
+Every normal toggle-off therefore leaves the microphone live. That defeats the
+spec's Hot-mic safety section outright and makes Task 9's five shutdown triggers
+rest on a false premise. Today the only paths that truly release capture are
+`abandon()` and — incidentally — the stop-failure path added in Task 3.
+
+Fixed in two places on purpose: the dependency, so every consumer benefits, and
+the controller, so the Console stops trusting a dependency that has already been
+wrong once.
+
+**Files:**
+- Modify: `tldw_chatbook/Audio/dictation_service_lazy.py` (`stop_dictation`)
+- Modify: `tldw_chatbook/Chat/console_voice_input.py` (`_run_finish`, `_report_service_error`)
+- Test: `Tests/Audio/test_dictation_capture_release.py`
+- Test: `Tests/Chat/test_console_voice_input.py` (append)
+
+**Interfaces:**
+- Consumes: `_claim_service()`, `_release()`, `_fail()` from Task 3.
+- Produces: no new public names.
+
+**Two details that will bite if missed:**
+
+1. **`audio_service` is a lazily-constructing property.** Reading it opens an
+   audio device. `stop_dictation()` must use the private `self._audio_service`
+   with a `None` guard — never the property — or stopping a dictation that never
+   started will construct a recorder during teardown.
+2. **`stop_recording()` early-returns when not recording** (`recording_service.py`:
+   `if not self.is_recording and not audio_buffer: return None`). So the
+   controller's belt-and-braces release cannot double-stop anything; it logs a
+   warning at worst. This is what makes fixing both layers safe.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `Tests/Audio/test_dictation_capture_release.py`:
+
+```python
+"""Capture must actually stop when dictation stops."""
+
+from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.unit
+
+
+class _Recorder:
+    def __init__(self):
+        self.is_recording = True
+        self.stop_calls = 0
+
+    def stop_recording(self):
+        self.stop_calls += 1
+        self.is_recording = False
+        return b""
+
+
+def _service_with(recorder):
+    from tldw_chatbook.Audio.dictation_service_lazy import (
+        DictationState,
+        LazyLiveDictationService,
+    )
+
+    service = LazyLiveDictationService.__new__(LazyLiveDictationService)
+    service._audio_service = recorder
+    service.state = DictationState.LISTENING
+    service.state_lock = __import__("threading").Lock()
+    service.stop_processing = __import__("threading").Event()
+    service.processing_thread = None
+    service.transcript_segments = []
+    service.current_transcript = ""
+    service.transcript_lock = __import__("threading").Lock()
+    service.audio_buffer = []
+    service.buffer_lock = __import__("threading").Lock()
+    service.start_time = None
+    service.streaming_transcriber = None
+    service.privacy_settings = {"auto_clear_buffer": True, "save_history": False}
+    service.on_state_change = None
+    service.on_error = None
+    service.on_final_transcript = None
+    return service
+
+
+def test_stop_dictation_releases_capture():
+    """The whole point: a successful stop must stop the microphone."""
+    recorder = _Recorder()
+    service = _service_with(recorder)
+
+    service.stop_dictation()
+
+    assert recorder.stop_calls == 1
+    assert recorder.is_recording is False
+
+
+def test_stop_dictation_does_not_construct_a_recorder_when_none_exists():
+    """`audio_service` is a lazy property; reading it opens a device.
+
+    Stopping a dictation that never started must not build one during teardown.
+    """
+    service = _service_with(None)
+
+    service.stop_dictation()  # must not raise, must not construct
+
+    assert service._audio_service is None
+```
+
+Append to `Tests/Chat/test_console_voice_input.py`:
+
+```python
+def test_stop_releases_capture_even_if_the_service_forgets(monkeypatch):
+    """The Console does not trust the dependency to release the microphone.
+
+    LazyLiveDictationService.stop_dictation() historically returned without
+    stopping capture, so the controller verifies it independently.
+    """
+    released = []
+
+    class ForgetfulService:
+        def __init__(self, **kwargs):
+            self._audio_service = type(
+                "R", (), {"stop_recording": lambda s: released.append("stopped")}
+            )()
+
+        def start_dictation(self, **callbacks):
+            return True
+
+        def stop_dictation(self):
+            return None  # deliberately does NOT release capture
+
+    controller, events, _ = _controller(monkeypatch, service=ForgetfulService())
+    controller.start()
+    controller.stop()
+
+    assert released == ["stopped"]
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_mid_session_error_releases_capture(monkeypatch):
+    """An error while listening must not leave a live recorder behind idle.
+
+    Without this, a retry claims a second service and orphans the first --
+    two simultaneously live recorders.
+    """
+    released = []
+
+    class ErroringService:
+        def __init__(self, **kwargs):
+            self._audio_service = type(
+                "R", (), {"stop_recording": lambda s: released.append("stopped")}
+            )()
+            self._on_error = None
+
+        def start_dictation(self, **callbacks):
+            self._on_error = callbacks["on_error"]
+            return True
+
+        def stop_dictation(self):
+            return None
+
+    service = ErroringService()
+    controller, events, _ = _controller(monkeypatch, service=service)
+    controller.start()
+    released.clear()
+
+    service._on_error(RuntimeError("transcription model missing"))
+
+    assert released == ["stopped"]
+    assert controller.state == cvi.STATE_IDLE
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run:
+```
+.venv/bin/python -m pytest Tests/Audio/test_dictation_capture_release.py Tests/Chat/test_console_voice_input.py -v
+```
+Expected: `test_stop_dictation_releases_capture` FAILS (`stop_calls == 0`),
+`test_stop_releases_capture_even_if_the_service_forgets` FAILS (`released == []`),
+`test_mid_session_error_releases_capture` FAILS (`released == []`).
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `dictation_service_lazy.py`, inside `stop_dictation()`, before `_cleanup()`:
+
+```python
+        # Release capture explicitly. The non-lazy service does this in its own
+        # stop_dictation; this one never did, so every successful stop left the
+        # microphone live. Use the private attribute, not the `audio_service`
+        # property -- reading the property lazily CONSTRUCTS a recorder, which
+        # would open an audio device during teardown.
+        recorder = self._audio_service
+        if recorder is not None:
+            try:
+                recorder.stop_recording()
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                logger.opt(exception=True).warning("Failed to release audio capture")
+```
+
+In `console_voice_input.py`, in `_run_finish()`, after `stop_dictation()` returns
+successfully, release the claimed service defensively via the existing
+`_release()`. `stop_recording()` early-returns when not recording, so this cannot
+double-stop.
+
+In `console_voice_input.py`, make `_report_service_error()` claim and release the
+service before reporting, so a mid-session error cannot leave a live recorder
+behind an `idle` machine or be orphaned by a retry. Keep the existing
+`_error_reported` latch semantics and the `VoiceFailed`-before-
+`VoiceStateChanged(idle)` ordering exactly as they are.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run:
+```
+.venv/bin/python -m pytest Tests/Audio/test_dictation_capture_release.py Tests/Chat/test_console_voice_input.py Tests/Audio -v
+```
+Expected: the three new tests pass; no previously-passing test regresses.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tldw_chatbook/Audio/dictation_service_lazy.py tldw_chatbook/Chat/console_voice_input.py \
+        Tests/Audio/test_dictation_capture_release.py Tests/Chat/test_console_voice_input.py
+git commit -m "fix(audio): release the microphone when dictation stops"
+```
+
+---
+
 ### Task 4: Composer chip and mic button
 
 **Files:**
