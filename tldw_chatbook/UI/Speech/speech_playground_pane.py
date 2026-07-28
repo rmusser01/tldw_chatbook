@@ -40,6 +40,7 @@ from textual.widgets import (
 from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
 from .speech_axis_row import SpeechAxisRow
+from .speech_catalog_mixin import SpeechCatalogMixin
 from .speech_synthesis_mixin import SpeechSynthesisMixin
 from .speech_param_group import SpeechParamGroup
 from .speech_result_history import SpeechResultHistory, SpeechTake
@@ -121,7 +122,7 @@ class SpeechChip(Static):
         )
 
 
-class SpeechPlaygroundPane(SpeechSynthesisMixin, Vertical):
+class SpeechPlaygroundPane(SpeechSynthesisMixin, SpeechCatalogMixin, Vertical):
     """The TTS Playground body: title, actions, input, settings, status.
 
     Synthesis comes from `SpeechSynthesisMixin`, shared with the legacy
@@ -168,6 +169,7 @@ class SpeechPlaygroundPane(SpeechSynthesisMixin, Vertical):
         #: screen rather than re-derived here.
         self.capability_line = capability_line
         self.init_synthesis_state()
+        self.init_catalog_state()
 
     @on(Button.Pressed, "#tts-generate-btn")
     def _on_generate_pressed(self, event: Button.Pressed) -> None:
@@ -180,16 +182,38 @@ class SpeechPlaygroundPane(SpeechSynthesisMixin, Vertical):
         event.stop()
         self._generate_tts()
 
-    @on(Select.Changed, "#tts-provider-select")
-    def _on_provider_changed(self, event: Select.Changed) -> None:
-        """Re-scope the parameter group and the clip picker to the provider.
+    @on(Select.Changed)
+    def on_tts_provider_select_changed(self, event: Select.Changed) -> None:
+        """Delegate to the shared catalog mixin.
+
+        The decorator has to live on this class: Textual collects `@on`
+        handlers per-class in its metaclass, so one declared in the mixin is
+        never registered.
 
         Args:
-            event: The selection change.
+            event: Any Select change in this pane.
         """
-        event.stop()
-        provider = event.value
-        if not isinstance(provider, str) or provider == self.provider:
+        self.handle_provider_select_changed(event)
+
+    def _show_provider_specific_controls(self, provider: str) -> None:
+        """Re-scope the parameter group and clip picker to `provider`.
+
+        This is the one method in the catalog closure that was bound to the
+        legacy layout, where it toggled a `hidden` class on five per-provider
+        container boxes. Those containers are gone -- `SpeechParamGroup`
+        mounts only the selected provider's knobs -- so the override does the
+        equivalent thing for this layout.
+
+        Deliberately NOT a `Select.Changed` handler of its own. The mixin's
+        `on_tts_provider_select_changed` is decorated `@on(Select.Changed)`
+        with no selector, so a second handler here would also fire, and a
+        recompose would destroy the widgets the mixin is midway through
+        populating.
+
+        Args:
+            provider: The newly selected provider id.
+        """
+        if provider == self.provider:
             return
         self.provider = provider
         self.refresh(recompose=True)
