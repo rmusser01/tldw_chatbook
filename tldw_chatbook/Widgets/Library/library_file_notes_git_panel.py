@@ -8,6 +8,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.events import Resize
 from textual.message import Message
 from textual.widgets import Button, ListItem, ListView, Static
 
@@ -83,6 +84,7 @@ class LibraryFileNotesGitPanel(Vertical):
     #file-notes-git-repository,
     #file-notes-git-scope,
     #file-notes-git-complete-state,
+    #file-notes-git-empty,
     #file-notes-git-action-status {
         height: auto;
         min-height: 1;
@@ -94,8 +96,14 @@ class LibraryFileNotesGitPanel(Vertical):
 
     #file-notes-git-scope,
     #file-notes-git-complete-state,
+    #file-notes-git-empty,
     #file-notes-git-action-status {
         color: $text-muted;
+    }
+
+    #file-notes-git-empty {
+        display: none;
+        margin: 1 0;
     }
 
     #file-notes-git-rows {
@@ -132,6 +140,16 @@ class LibraryFileNotesGitPanel(Vertical):
 
     LibraryFileNotesGitPanel Button:focus {
         outline: heavy $accent;
+    }
+
+    LibraryFileNotesGitPanel.-stack-actions #file-notes-git-header,
+    LibraryFileNotesGitPanel.-stack-actions #file-notes-git-selected-actions,
+    LibraryFileNotesGitPanel.-stack-actions #file-notes-git-bulk-actions {
+        layout: vertical;
+    }
+
+    LibraryFileNotesGitPanel.-stack-actions Button {
+        width: 1fr;
     }
     """
 
@@ -225,6 +243,11 @@ class LibraryFileNotesGitPanel(Vertical):
             markup=False,
         )
         yield ListView(id="file-notes-git-rows")
+        yield Static(
+            "No current-session Git changes.",
+            id="file-notes-git-empty",
+            markup=False,
+        )
         with Horizontal(id="file-notes-git-selected-actions"):
             yield Button(
                 "Stage selected",
@@ -254,7 +277,15 @@ class LibraryFileNotesGitPanel(Vertical):
         )
 
     def on_mount(self) -> None:
+        self._sync_action_layout(self.size.width)
         self._update_actions()
+
+    def on_resize(self, event: Resize) -> None:
+        """Stack action controls before their intrinsic widths can clip."""
+        self._sync_action_layout(event.size.width)
+
+    def _sync_action_layout(self, width: int) -> None:
+        self.set_class(width <= 48, "-stack-actions")
 
     def render_status(self, status: SessionGitStatus) -> None:
         """Render one immutable owner-published status result."""
@@ -281,6 +312,7 @@ class LibraryFileNotesGitPanel(Vertical):
             "error": "Git status failed; retry.",
         }[status.state]
         self.query_one("#file-notes-git-action-status", Static).update(message)
+        self._sync_empty_state()
         self._replace_rows(prior_group_id)
         self._update_actions()
 
@@ -296,6 +328,7 @@ class LibraryFileNotesGitPanel(Vertical):
         self.query_one("#file-notes-git-action-status", Static).update(
             "Trust is required before checking Session Git status."
         )
+        self._sync_empty_state()
         self._update_actions()
 
     def render_checking(self, repository_path: str) -> None:
@@ -310,6 +343,7 @@ class LibraryFileNotesGitPanel(Vertical):
         self.query_one("#file-notes-git-action-status", Static).update(
             "Checking Session Git status…"
         )
+        self._sync_empty_state()
         self._update_actions()
 
     def set_mutating(self, active: bool, detail: str = "") -> None:
@@ -333,6 +367,7 @@ class LibraryFileNotesGitPanel(Vertical):
             "Repository: unavailable"
         )
         self.query_one("#file-notes-git-action-status", Static).update(detail)
+        self._sync_empty_state()
         self._update_actions()
 
     def mark_stale(self, detail: str = "Session paths changed; refresh status.") -> None:
@@ -342,7 +377,13 @@ class LibraryFileNotesGitPanel(Vertical):
         self.query_one("#file-notes-git-action-status", Static).update(
             f"Stale — {detail}"
         )
+        self._sync_empty_state()
         self._update_actions()
+
+    def _sync_empty_state(self) -> None:
+        ready_empty = self._status_ready and not self._rows
+        self.query_one("#file-notes-git-empty", Static).display = ready_empty
+        self.query_one("#file-notes-git-rows", ListView).display = not ready_empty
 
     def _replace_rows(self, prior_group_id: int | None) -> None:
         group_ids = tuple(row.group_id for row in self._rows)

@@ -339,6 +339,18 @@ async def _wait_until(
     raise AssertionError(message)
 
 
+async def _assert_visible_panel_buttons_fit(panel, pilot) -> None:
+    bounds = panel.content_region
+    for button in panel.query(Button):
+        if not button.display:
+            continue
+        button.focus()
+        await pilot.pause()
+        assert button.has_focus
+        assert button.region.x >= bounds.x
+        assert button.region.right <= bounds.right
+
+
 @pytest.mark.asyncio
 async def test_panel_renders_repository_scope_and_complete_file_state() -> None:
     panel = LibraryFileNotesGitPanel()
@@ -359,6 +371,40 @@ async def test_panel_renders_repository_scope_and_complete_file_state() -> None:
         assert "content, deletion, and mode" in _text(
             panel.query_one("#file-notes-git-complete-state", Static)
         )
+
+
+@pytest.mark.asyncio
+async def test_panel_action_controls_fit_with_focus_at_24_cells() -> None:
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    async with _PanelHarness(panel).run_test(size=(24, 40)) as pilot:
+        panel.render_untrusted("/repo")
+        await pilot.pause()
+        await _assert_visible_panel_buttons_fit(panel, pilot)
+
+        panel.render_status(
+            _status(
+                _row(
+                    "owned_newer_edits",
+                    stage_action="stage_update",
+                    unstage_eligible=True,
+                )
+            )
+        )
+        await pilot.pause()
+        await _assert_visible_panel_buttons_fit(panel, pilot)
+
+
+@pytest.mark.asyncio
+async def test_ready_status_without_rows_renders_explicit_empty_state() -> None:
+    panel = LibraryFileNotesGitPanel()
+    panel.styles.display = "block"
+    async with _PanelHarness(panel).run_test() as pilot:
+        panel.render_status(_status())
+        await pilot.pause()
+        empty = panel.query_one("#file-notes-git-empty", Static)
+        assert empty.display
+        assert _text(empty) == "No current-session Git changes."
 
 
 @pytest.mark.parametrize(
@@ -672,6 +718,50 @@ async def test_workspace_retains_files_search_and_git_modes_with_back_focus(
     owner.shutdown()
     replica.close()
     assert root.exists()
+
+
+@pytest.mark.asyncio
+async def test_opening_session_git_moves_focus_to_a_visible_ready_control(
+    tmp_path: Path,
+) -> None:
+    _root, owner, _binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    git_service.status_release = asyncio.Event()
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        entry.focus()
+        await pilot.press("enter")
+        await _wait_until(
+            pilot,
+            lambda: workspace.query_one("#file-notes-git-back", Button).has_focus,
+            "first open did not focus the visible Back control",
+        )
+        assert not entry.display
+
+        git_service.status_release.set()
+        await _wait_until(
+            pilot,
+            lambda: len(git_service.status_calls) == 1
+            and len(workspace._git_panel_widget.rows) == 2,
+            "initial status did not finish",
+        )
+        workspace.query_one("#file-notes-git-back", Button).press()
+        await pilot.pause()
+        entry.focus()
+        entry.press()
+        rows = workspace.query_one("#file-notes-git-rows", ListView)
+        await _wait_until(
+            pilot,
+            lambda: rows.has_focus,
+            "reopen with retained rows did not focus the row list",
+        )
+        await pilot.press("down")
+        assert workspace._git_panel_widget.selected_group_id == 2
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
 
 
 @pytest.mark.asyncio

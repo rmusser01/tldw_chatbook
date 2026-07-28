@@ -18,7 +18,7 @@ from textual.containers import Horizontal, Vertical
 from textual.events import Resize
 from textual.timer import Timer
 from textual.worker import Worker
-from textual.widgets import Button, Input, Static, TextArea, Tree
+from textual.widgets import Button, Input, ListView, Static, TextArea, Tree
 
 from tldw_chatbook.config import (
     apply_settings_mutation_to_cli_config,
@@ -1818,12 +1818,27 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         self._navigator_mode = "git"
         self._sync_navigator_mode()
+        self.call_after_refresh(self._focus_session_git_panel)
         self.run_worker(
             self._open_session_git(),
             name="file-notes-git-open",
             group="file-notes-git-open",
             exclusive=True,
         )
+
+    def _focus_session_git_panel(self) -> None:
+        """Move focus off the hidden entry into the visible Git surface."""
+        if (
+            not self._active
+            or not self.is_mounted
+            or self._navigator_mode != "git"
+        ):
+            return
+        rows = self.query_one("#file-notes-git-rows", ListView)
+        if self._git_panel_widget.rows and rows.display:
+            rows.focus()
+            return
+        self.query_one("#file-notes-git-back", Button).focus()
 
     @on(LibraryFileNotesGitPanel.BackRequested)
     def _session_git_back(
