@@ -112,6 +112,7 @@ class FakeTTSService:
         self.catalog_started: asyncio.Event | None = None
         self.allow_catalog: asyncio.Event | None = None
         self.catalog_cancelled = False
+        self.catalog_error: Exception | None = None
         self.voice_started: asyncio.Event | None = None
         self.allow_voices: asyncio.Event | None = None
         self.voice_error: Exception | None = None
@@ -159,6 +160,8 @@ class FakeTTSService:
             except asyncio.CancelledError:
                 self.catalog_cancelled = True
                 await self.allow_catalog.wait()
+        if self.catalog_error is not None:
+            raise self.catalog_error
         return self.catalogs[provider_id]
 
     async def get_voices(
@@ -284,6 +287,17 @@ def _label_for_value(select: Select[Any], value: str) -> str:
         if option_value == value:
             return label.plain if isinstance(label, Text) else str(label)
     raise AssertionError(f"Missing Select value: {value}")
+
+
+def _visible_content_rows(widget: Any) -> tuple[str, ...]:
+    strips = widget.screen._compositor.render_strips()
+    region = widget.content_region
+    return tuple(
+        "".join(segment.text for segment in strips[y])[
+            region.x : region.x + region.width
+        ].strip()
+        for y in range(region.y, region.y + region.height)
+    )
 
 
 async def _wait_until(
@@ -488,6 +502,33 @@ async def test_configuration_change_marks_catalog_stale_without_connecting(
 
 
 @pytest.mark.asyncio
+async def test_exact_profile_ctrl_g_cannot_bypass_configuration_change_gate(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    app = _PlaygroundHost(preset=_profile_preset())
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        service.revisions["audio_cpp"] = 2
+        widget.mark_provider_configuration_changed("audio_cpp", 2)
+        await pilot.pause()
+
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        await pilot.press("ctrl+g")
+        await pilot.pause()
+
+        assert app.generation_events == []
+        assert any(
+            "settings changed" in message.lower() and severity == "warning"
+            for message, severity in app.notices
+        )
+
+
+@pytest.mark.asyncio
 async def test_catalog_result_is_discarded_when_configuration_revision_changes(
     audio_cpp_playground: FakeTTSService,
 ) -> None:
@@ -509,6 +550,39 @@ async def test_catalog_result_is_discarded_when_configuration_revision_changes(
         assert app.query_one("#tts-generate-btn", Button).disabled is True
         status = str(app.query_one("#tts-provider-status", Static).render()).lower()
         assert "settings changed" in status
+
+
+@pytest.mark.asyncio
+async def test_exact_profile_revision_invalidated_catalog_projects_but_stays_blocked(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    service.catalog_started = asyncio.Event()
+    service.allow_catalog = asyncio.Event()
+    app = _PlaygroundHost(preset=_profile_preset())
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await service.catalog_started.wait()
+        service.revisions["audio_cpp"] = 2
+        service.allow_catalog.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        assert app.query_one("#tts-model-select", Select).value == "profile/model"
+        assert app.query_one("#tts-voice-select", Select).value == "profile/voice"
+        assert app.query_one("#tts-format-select", Select).value == "wav"
+        assert app.query_one("#tts-speed-input", Input).value == "1.0"
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert app.generation_events == []
+        assert (
+            "settings changed"
+            in str(app.query_one("#tts-provider-status", Static).render()).lower()
+        )
 
 
 @pytest.mark.asyncio
@@ -1923,6 +1997,160 @@ async def test_exact_profile_preset_survives_catalog_and_voice_loading_without_g
 
 
 @pytest.mark.asyncio
+async def test_long_exact_profile_ids_stay_in_fixed_single_row_controls_with_tooltips(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    del audio_cpp_playground
+    model_id = "[opaque-model]" + "/segment" * 24
+    voice_id = "<opaque-voice>" + ":segment" * 24
+    app = _PlaygroundHost(preset=_profile_preset(model_id=model_id, voice_id=voice_id))
+
+    async with app.run_test(size=(50, 24)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        voice_select = app.query_one("#tts-voice-select", Select)
+        model_select = app.query_one("#tts-model-select", Select)
+        voice_row = voice_select.parent
+        model_row = model_select.parent
+        assert voice_row is not None
+        assert model_row is not None
+
+        for select, exact_id in (
+            (voice_select, voice_id),
+            (model_select, model_id),
+        ):
+            select.focus()
+            select.scroll_visible(animate=False)
+            await pilot.pause()
+            label = select.query_one("#label", Static)
+            rows = _visible_content_rows(label)
+
+            assert select.region.height == 3
+            assert label.region.height == 1
+            assert len(tuple(row for row in rows if row)) == 1
+            assert rows[0].endswith("…")
+            assert isinstance(select.tooltip, Text)
+            assert select.tooltip.plain == exact_id
+
+        assert voice_row.virtual_region.height == 3
+        assert model_row.virtual_region.height == 3
+        assert voice_row.virtual_region.bottom <= model_row.virtual_region.y
+
+
+@pytest.mark.asyncio
+async def test_exact_profile_catalog_failure_projects_unverified_selection_for_one_attempt(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    service.catalog_error = RuntimeError("private catalog detail")
+    preset = _profile_preset()
+    app = _PlaygroundHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        assert app.query_one("#tts-provider-select", Select).value == "audio_cpp"
+        assert app.query_one("#tts-model-select", Select).value == "profile/model"
+        assert app.query_one("#tts-voice-select", Select).value == "profile/voice"
+        assert app.query_one("#tts-format-select", Select).value == "wav"
+        assert app.query_one("#tts-speed-input", Input).value == "1.0"
+        assert widget._profile_preset is preset
+        assert app.query_one("#tts-generate-btn", Button).disabled is False
+
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert len(app.generation_events) == 1
+        request = app.generation_events[0].request
+        assert (request.provider_id, request.model_id, request.voice_id) == (
+            "audio_cpp",
+            "profile/model",
+            "profile/voice",
+        )
+        assert any(
+            "unverified" in message.lower() and severity == "warning"
+            for message, severity in app.notices
+        )
+        assert "private catalog detail" not in str(app.notices)
+
+
+@pytest.mark.asyncio
+async def test_unavailable_exact_profile_catalog_failure_projects_but_stays_blocked(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    service.catalog_error = RuntimeError("private catalog detail")
+    app = _PlaygroundHost(preset=_profile_preset(availability="unavailable"))
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        assert app.query_one("#tts-model-select", Select).value == "profile/model"
+        assert app.query_one("#tts-voice-select", Select).value == "profile/voice"
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        status = str(app.query_one("#tts-provider-status", Static).render())
+        assert "unavailable" in status.lower()
+        assert "Edit" in status
+
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert app.generation_events == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("catalog_error", "attempt_allowed"),
+    (
+        (TTSProviderReconfiguringError("private reconfiguring detail"), True),
+        (TTSRegistryClosedError("private closed detail"), False),
+    ),
+)
+async def test_exact_profile_catalog_lifecycle_failure_projects_but_never_bypasses_safety(
+    audio_cpp_playground: FakeTTSService,
+    catalog_error: Exception,
+    attempt_allowed: bool,
+) -> None:
+    service = audio_cpp_playground
+    service.catalog_error = catalog_error
+    app = _PlaygroundHost(preset=_profile_preset())
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        assert app.query_one("#tts-model-select", Select).value == "profile/model"
+        assert app.query_one("#tts-voice-select", Select).value == "profile/voice"
+        assert app.query_one("#tts-format-select", Select).value == "wav"
+        assert app.query_one("#tts-speed-input", Input).value == "1.0"
+        assert app.query_one("#tts-generate-btn", Button).disabled is (
+            not attempt_allowed
+        )
+
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert len(app.generation_events) == int(attempt_allowed)
+        if attempt_allowed:
+            request = app.generation_events[0].request
+            assert (request.provider_id, request.model_id, request.voice_id) == (
+                "audio_cpp",
+                "profile/model",
+                "profile/voice",
+            )
+            assert any(
+                "unverified" in message.lower() and severity == "warning"
+                for message, severity in app.notices
+            )
+        assert "private" not in str(app.notices).lower()
+
+
+@pytest.mark.asyncio
 async def test_unavailable_profile_preset_disables_generation_and_points_to_edit(
     audio_cpp_playground: FakeTTSService,
 ) -> None:
@@ -1971,23 +2199,190 @@ async def test_unverified_profile_preset_requires_warned_explicit_exact_attempt(
 
 
 @pytest.mark.asyncio
+async def test_stale_catalog_downgrades_available_profile_to_warned_unverified_attempt(
+    audio_cpp_playground: FakeTTSService,
+) -> None:
+    service = audio_cpp_playground
+    service.catalogs["audio_cpp"] = _audio_catalog(
+        health=ProviderHealth(state="available", fresh=False)
+    )
+    preset = _profile_preset()
+    app = _PlaygroundHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        assert preset.availability == "available"
+        assert widget._profile_effective_availability == "unverified"
+        assert app.query_one("#tts-model-select", Select).value == preset.model_id
+        assert app.query_one("#tts-voice-select", Select).value == preset.voice_id
+        assert app.query_one("#tts-generate-btn", Button).disabled is False
+
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert len(app.generation_events) == 1
+        assert any(
+            "unverified" in message.lower() and severity == "warning"
+            for message, severity in app.notices
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("availability", "expected_status"),
+    (
+        ("available", "service is unavailable"),
+        ("unavailable", "choose Edit"),
+    ),
+)
+async def test_closed_catalog_health_projects_exact_profile_but_stays_blocked(
+    audio_cpp_playground: FakeTTSService,
+    availability: str,
+    expected_status: str,
+) -> None:
+    service = audio_cpp_playground
+    service.catalogs["audio_cpp"] = _audio_catalog(
+        health=ProviderHealth(state="closed", fresh=False)
+    )
+    preset = _profile_preset(availability=availability)
+    app = _PlaygroundHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        assert app.query_one("#tts-model-select", Select).value == preset.model_id
+        assert app.query_one("#tts-voice-select", Select).value == preset.voice_id
+        assert app.query_one("#tts-generate-btn", Button).disabled is True
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert app.generation_events == []
+        assert (
+            expected_status.lower()
+            in str(app.query_one("#tts-provider-status", Static).render()).lower()
+        )
+
+
+@pytest.mark.asyncio
 async def test_profile_voice_discovery_failure_keeps_exact_no_fallback_copy(
     audio_cpp_playground: FakeTTSService,
 ) -> None:
     service = audio_cpp_playground
     service.voice_error = RuntimeError("private upstream detail")
-    app = _PlaygroundHost(preset=_profile_preset())
+    preset = _profile_preset()
+    app = _PlaygroundHost(preset=preset)
 
     async with app.run_test(size=(180, 70)) as pilot:
         await app.workers.wait_for_complete()
         await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
 
         assert app.query_one("#tts-voice-select", Select).value == "profile/voice"
+        assert preset.availability == "available"
+        assert widget._profile_effective_availability == "unverified"
         status = str(app.query_one("#tts-provider-status", Static).render())
         assert "exact" in status.lower()
         assert "without fallback" in status.lower()
         assert "provider default remains" not in status.lower()
         assert "private upstream detail" not in status
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert len(app.generation_events) == 1
+        assert any(
+            "unverified" in message.lower() and severity == "warning"
+            for message, severity in app.notices
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("voice_error", "attempt_allowed"),
+    (
+        (TTSProviderReconfiguringError("private reconfiguring detail"), True),
+        (TTSRegistryClosedError("private closed detail"), False),
+    ),
+)
+async def test_exact_profile_voice_lifecycle_failure_uses_safe_admission_gate(
+    audio_cpp_playground: FakeTTSService,
+    voice_error: Exception,
+    attempt_allowed: bool,
+) -> None:
+    service = audio_cpp_playground
+    service.voice_error = voice_error
+    preset = _profile_preset()
+    app = _PlaygroundHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        widget = app.query_one(TTSPlaygroundWidget)
+
+        assert app.query_one("#tts-model-select", Select).value == preset.model_id
+        assert app.query_one("#tts-voice-select", Select).value == preset.voice_id
+        assert widget._profile_effective_availability == "unverified"
+        assert app.query_one("#tts-generate-btn", Button).disabled is (
+            not attempt_allowed
+        )
+
+        widget.action_generate_tts()
+        await pilot.pause()
+
+        assert len(app.generation_events) == int(attempt_allowed)
+        if attempt_allowed:
+            assert any(
+                "unverified" in message.lower() and severity == "warning"
+                for message, severity in app.notices
+            )
+        assert "private" not in str(app.notices).lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("original_availability", "failure_availability"),
+    (
+        ("available", "unverified"),
+        ("unverified", "unverified"),
+        ("unavailable", "unavailable"),
+    ),
+)
+async def test_current_voice_discovery_success_restores_only_original_preset_state(
+    audio_cpp_playground: FakeTTSService,
+    original_availability: str,
+    failure_availability: str,
+) -> None:
+    service = audio_cpp_playground
+    service.voice_error = RuntimeError("private upstream detail")
+    preset = _profile_preset(availability=original_availability)
+    app = _PlaygroundHost(preset=preset)
+
+    async with app.run_test(size=(180, 70)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+        assert widget._profile_effective_availability == failure_availability
+        assert preset.availability == original_availability
+        if original_availability == "unavailable":
+            status = str(app.query_one("#tts-provider-status", Static).render())
+            assert "unavailable" in status.lower()
+            assert "Edit" in status
+
+        service.voice_error = None
+        widget._load_provider_voices(
+            "audio_cpp",
+            preset.model_id,
+            service.catalogs["audio_cpp"].revision,
+            refresh=True,
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert widget._profile_effective_availability == original_availability
+        assert preset.availability == original_availability
 
 
 @pytest.mark.asyncio
@@ -2143,6 +2538,62 @@ async def test_successful_native_artifact_save_uses_only_immutable_provenance(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_mode", ("worker", "unmount"))
+async def test_cancelled_profile_name_modal_is_dismissed_without_saving(
+    audio_cpp_playground: FakeTTSService,
+    tmp_path: Path,
+    cancel_mode: str,
+) -> None:
+    del audio_cpp_playground
+    profile_service = _SaveProfileService()
+    app = _PlaygroundHost(profile_service=profile_service)
+    artifact = _native_profile_artifact(tmp_path / "cancelled.wav")
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.workers.wait_for_complete()
+        widget = app.query_one(TTSPlaygroundWidget)
+        widget._store_delivered_artifact(artifact, announce=False)
+        save_button = app.query_one("#audio-save-profile-btn", Button)
+        save_button.scroll_visible(animate=False)
+        await pilot.pause()
+
+        await pilot.click("#audio-save-profile-btn")
+        await _wait_until(
+            pilot,
+            lambda: isinstance(
+                app.screen,
+                profile_library_module.TTSProfileNameModal,
+            ),
+        )
+        modal = app.screen
+        save_workers = tuple(
+            worker
+            for worker in app.workers
+            if getattr(worker, "group", None) == "save_tts_result_as_profile"
+        )
+        assert len(save_workers) == 1
+        assert not save_workers[0].is_finished
+
+        if cancel_mode == "worker":
+            save_workers[0].cancel()
+        else:
+            await widget.remove()
+
+        await _wait_until(pilot, lambda: app.screen is not modal)
+        await _wait_until(
+            pilot,
+            lambda: all(worker.is_finished for worker in save_workers),
+        )
+
+        assert not isinstance(
+            app.screen,
+            profile_library_module.TTSProfileNameModal,
+        )
+        assert profile_service.create_calls == []
+        assert app.profile_service_requests == 0
+
+
+@pytest.mark.asyncio
 async def test_save_profile_action_is_hidden_for_legacy_failed_and_in_progress_states(
     audio_cpp_playground: FakeTTSService,
     tmp_path: Path,
@@ -2201,8 +2652,8 @@ async def test_save_profile_action_is_hidden_for_legacy_failed_and_in_progress_s
         (
             ProfileServiceError("stale_configuration"),
             (
-                "The exact profile selection could not be verified. Refresh and retry "
-                "without changing persisted values."
+                "TTS settings changed after this audio was generated. Generate a new "
+                "result before saving it as a profile."
             ),
         ),
     ),

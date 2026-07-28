@@ -211,16 +211,20 @@ def controls_from_catalog(
 
 
 def controls_from_profile_preset(
-    catalog: TTSProviderCatalog,
+    catalog: TTSProviderCatalog | None,
     *,
     preset: TTSPlaygroundSelectionPreset,
     discovered_voices: tuple[str, ...] | None,
 ) -> PlaygroundControls:
     """Project one exact profile selection without catalog substitution."""
 
-    model_options = tuple(
-        (model.display_name or model.model_id, model.model_id)
-        for model in catalog.models
+    model_options = (
+        tuple(
+            (model.display_name or model.model_id, model.model_id)
+            for model in catalog.models
+        )
+        if catalog is not None
+        else ()
     )
     if preset.model_id not in {value for _label, value in model_options}:
         model_options = (*model_options, (preset.model_id, preset.model_id))

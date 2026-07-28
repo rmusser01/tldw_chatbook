@@ -91,6 +91,7 @@ _PROFILE_STALE_COPY = (
 _PROFILE_VALIDATION_COPY = (
     "Review the profile name, model, and voice. Exact values were not saved."
 )
+_PROFILE_NAME_REQUIRED_COPY = "Enter a profile name. The result was not saved."
 _PROFILE_UNAVAILABLE_COPY = (
     "The exact profile selection is unavailable. Refresh current capabilities "
     "or edit the persisted model and voice."
@@ -205,7 +206,8 @@ class TTSProfileNameModal(ModalScreen[str | None]):
     }
 
     #stts-profile-name-dialog {
-        width: 64;
+        width: 100%;
+        max-width: 64;
         height: auto;
         background: $panel;
         border: round $accent;
@@ -251,7 +253,7 @@ class TTSProfileNameModal(ModalScreen[str | None]):
         name = self.query_one("#stts-profile-name-input", Input).value.strip()
         if not name:
             self.query_one("#stts-profile-name-error", Static).update(
-                Text(_PROFILE_VALIDATION_COPY)
+                Text(_PROFILE_NAME_REQUIRED_COPY)
             )
             return
         self.dismiss(name)

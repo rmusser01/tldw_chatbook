@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 import pytest
 from textual.app import App, ComposeResult
 from textual.widget import Widget
-from textual.widgets import Button, DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Static, TextArea
 
 from tldw_chatbook.TTS import (
     LoadedTTSProfile,
@@ -1344,6 +1344,59 @@ async def test_stts_window_consumes_exact_profile_preview_once_on_playground_rem
 
 
 @pytest.mark.asyncio
+async def test_exact_preview_at_80x24_focuses_playground_with_visible_recovery_banner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _ActionProfileService(
+        replace(
+            _profile(0),
+            model_id="missing/exact-model",
+            voice_id="missing/exact-voice",
+        ),
+        availability_state="unavailable",
+    )
+    app = _ActionHost(service)
+
+    async def _unavailable_tts_service() -> object:
+        raise RuntimeError("catalog deliberately unavailable")
+
+    monkeypatch.setattr(
+        stts_window_module,
+        "get_tts_service",
+        _unavailable_tts_service,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        library, selected = await _select_action_profile(app, pilot)
+        await _wait_until(
+            pilot,
+            lambda: str(selected.profile.profile_id) in library._row_availability,
+        )
+        preview = app.query_one("#stts-profile-preview-btn", Button)
+        preview.focus()
+        preview.scroll_visible(animate=False)
+        await pilot.pause()
+        preview.press()
+        await _wait_until(
+            pilot,
+            lambda: app.query_one(STTSWindow).current_view == "playground",
+        )
+        await pilot.pause()
+
+        playground = app.query_one(TTSPlaygroundWidget)
+        text_input = playground.query_one("#tts-text-input", TextArea)
+        banner = playground.query_one("#tts-profile-preview-status", Static)
+        copy = str(banner.render())
+
+        assert app.focused is text_input
+        assert banner.display is True
+        assert "unavailable" in copy.lower()
+        assert "Edit" in copy
+        assert banner.region.height > 0
+        assert app.screen.region.contains_region(banner.region)
+
+
+@pytest.mark.asyncio
 async def test_profile_editor_preserves_opaque_values_and_builds_exact_draft() -> None:
     profile = replace(
         _profile(0),
@@ -1419,6 +1472,55 @@ async def test_save_result_name_dialog_focuses_name_and_returns_trimmed_value() 
         await pilot.pause()
 
     assert results == ["Character narrator"]
+
+
+@pytest.mark.asyncio
+async def test_save_result_name_dialog_and_input_fit_at_50x24() -> None:
+    modal = profile_library_module.TTSProfileNameModal()
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(50, 24)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+        dialog = modal.query_one("#stts-profile-name-dialog")
+        name = modal.query_one("#stts-profile-name-input", Input)
+
+        for widget in (dialog, name):
+            assert widget.region.width > 0
+            assert widget.region.height > 0
+            assert widget.region.x >= 0
+            assert widget.region.right <= app.size.width
+            assert widget.region.bottom <= app.size.height
+        assert name.has_focus
+
+
+@pytest.mark.asyncio
+async def test_save_result_blank_name_uses_name_specific_not_saved_copy() -> None:
+    modal = profile_library_module.TTSProfileNameModal()
+
+    class _ModalHost(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    app = _ModalHost()
+    async with app.run_test(size=(50, 24)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+        name = modal.query_one("#stts-profile-name-input", Input)
+        name.value = "   "
+
+        await pilot.click("#stts-profile-name-save")
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert (
+            str(modal.query_one("#stts-profile-name-error", Static).render())
+            == "Enter a profile name. The result was not saved."
+        )
 
 
 @pytest.mark.parametrize("mode", ["edit", "duplicate"])
