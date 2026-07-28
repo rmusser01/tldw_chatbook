@@ -91,7 +91,7 @@ class StaticPersonasScopeService:
         self.character_calls.append(kwargs)
         return list(self.characters)
 
-    async def list_user_profiles(self, **kwargs):
+    async def list_persona_profiles(self, **kwargs):
         self.profile_calls.append(kwargs)
         return list(self.profiles)
 
@@ -100,7 +100,7 @@ class RaisingPersonasScopeService:
     async def list_characters(self, **kwargs):
         raise RuntimeError("characters unavailable")
 
-    async def list_user_profiles(self, **kwargs):
+    async def list_persona_profiles(self, **kwargs):
         return []
 
 
@@ -126,7 +126,7 @@ class BlockingPersonasScopeService(StaticPersonasScopeService):
         time.sleep(self.sleep_seconds)
         return list(self.characters)
 
-    def list_user_profiles(self, **kwargs):
+    def list_persona_profiles(self, **kwargs):
         self.profile_calls.append(kwargs)
         return list(self.profiles)
 
@@ -803,7 +803,7 @@ class PolicyDeniedPersonasScopeService:
             authority_owner=self.authority_owner,
         )
 
-    async def list_user_profiles(self, **kwargs):
+    async def list_persona_profiles(self, **kwargs):
         return []
 
 

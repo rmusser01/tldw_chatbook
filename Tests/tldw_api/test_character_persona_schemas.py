@@ -5,6 +5,11 @@ Tests for character/persona/chat-session API schemas.
 import pytest
 from pydantic import ValidationError
 
+import tldw_chatbook.tldw_api as tldw_api
+import tldw_chatbook.tldw_api.character_persona_schemas as character_persona_schemas
+from tldw_chatbook.tldw_api.auth_user_schemas import (
+    UserProfileResponse as AuthUserProfileResponse,
+)
 from tldw_chatbook.tldw_api.character_persona_schemas import (
     CharacterChatSessionCreate,
     CharacterChatSessionUpdate,
@@ -26,9 +31,6 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     PersonaSessionSummary,
     PersonaVoiceDefaults,
     PresetCreate,
-    UserProfileCreate,
-    UserProfileResponse,
-    UserProfileUpdate,
 )
 
 SERVER_PERSONA_CREATE_FIELDS = {
@@ -52,6 +54,25 @@ SERVER_PERSONA_UPDATE_FIELDS = {
     "use_persona_state_context_default",
     "voice_defaults",
     "setup",
+}
+SERVER_PERSONA_RESPONSE_FIELDS = {
+    "id",
+    "name",
+    "archetype_key",
+    "character_card_id",
+    "origin_character_id",
+    "origin_character_name",
+    "origin_character_snapshot_at",
+    "mode",
+    "system_prompt",
+    "is_active",
+    "use_persona_state_context_default",
+    "voice_defaults",
+    "setup",
+    "created_at",
+    "last_modified",
+    "version",
+    "buddy_summary",
 }
 LOCAL_PERSONA_CREATE_FIELDS = SERVER_PERSONA_CREATE_FIELDS | {
     "description",
@@ -260,32 +281,88 @@ class TestLocalPersonaProfileMutationDTOs:
             model_type(**valid_payload, **{field_name: "unexpected"})
 
     @pytest.mark.parametrize(
-        "model",
+        "field_name",
         [
-            pytest.param(
-                LocalPersonaProfileCreate(name="Guide", description=None),
-                id="create",
-            ),
-            pytest.param(
-                LocalPersonaProfileUpdate(description=None),
-                id="update",
-            ),
+            "name",
+            "mode",
+            "is_active",
+            "personality_traits",
+            "use_persona_state_context_default",
+            "voice_defaults",
+            "setup",
         ],
     )
-    def test_explicit_nullable_field_is_distinct_from_omitted_field(self, model):
-        assert "description" in model.model_fields_set
-        assert "system_prompt" not in model.model_fields_set
+    def test_local_persona_update_rejects_explicit_null_for_non_nullable_fields(
+        self, field_name
+    ):
+        with pytest.raises(ValidationError):
+            LocalPersonaProfileUpdate(**{field_name: None})
+
+        omitted = LocalPersonaProfileUpdate()
+        assert field_name not in omitted.model_fields_set
+        assert field_name not in omitted.model_dump(exclude_unset=True, mode="json")
+
+    @pytest.mark.parametrize(
+        "field_name",
+        ["description", "system_prompt", "character_card_id"],
+    )
+    def test_local_persona_update_preserves_explicit_null_for_nullable_fields(
+        self, field_name
+    ):
+        update = LocalPersonaProfileUpdate(**{field_name: None})
+
+        assert update.model_fields_set == {field_name}
+        assert update.model_dump(exclude_unset=True, mode="json") == {
+            field_name: None
+        }
+
+    def test_local_persona_create_tracks_explicit_nullable_field(self):
+        create = LocalPersonaProfileCreate(name="Guide", description=None)
+
+        assert "description" in create.model_fields_set
+        assert "system_prompt" not in create.model_fields_set
 
 
-class TestUserProfileDTOAliases:
-    """task-442 T2: app-side aliases for the PersonaProfile* wire mirror."""
+class TestServerPersonaProfileDTOs:
+    def test_server_persona_models_have_exact_wire_fields(self):
+        assert set(PersonaProfileCreate.model_fields) == SERVER_PERSONA_CREATE_FIELDS
+        assert set(PersonaProfileUpdate.model_fields) == SERVER_PERSONA_UPDATE_FIELDS
+        assert set(PersonaProfileResponse.model_fields) == SERVER_PERSONA_RESPONSE_FIELDS
 
-    def test_user_profile_aliases_are_identical_to_the_wire_mirror_classes(self):
-        assert UserProfileCreate is PersonaProfileCreate
-        assert UserProfileUpdate is PersonaProfileUpdate
-        assert UserProfileResponse is PersonaProfileResponse
+    @pytest.mark.parametrize(
+        "model_type, valid_payload",
+        [
+            (PersonaProfileCreate, {"name": "Guide"}),
+            (PersonaProfileUpdate, {}),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "field_name",
+        [
+            "description",
+            "personality_traits",
+            "origin_character_id",
+            "created_at",
+            "last_modified",
+            "version",
+            "deleted",
+            "future_extension",
+        ],
+    )
+    def test_server_persona_mutations_reject_local_persistence_and_unknown_fields(
+        self, model_type, valid_payload, field_name
+    ):
+        with pytest.raises(ValidationError):
+            model_type(**valid_payload, **{field_name: "unexpected"})
 
-    def test_user_profile_create_alias_validates_like_the_mirror_class(self):
-        profile = UserProfileCreate(id="p-1", name="Guide")
-        assert isinstance(profile, PersonaProfileCreate)
-        assert profile.id == "p-1"
+    def test_persona_schema_module_has_no_user_profile_aliases(self):
+        assert not hasattr(character_persona_schemas, "UserProfileCreate")
+        assert not hasattr(character_persona_schemas, "UserProfileUpdate")
+        assert not hasattr(character_persona_schemas, "UserProfileResponse")
+
+    def test_package_keeps_only_authenticated_account_user_profile_response(self):
+        assert tldw_api.UserProfileResponse is AuthUserProfileResponse
+        assert not hasattr(tldw_api, "UserProfileCreate")
+        assert not hasattr(tldw_api, "UserProfileUpdate")
+        assert "UserProfileCreate" not in tldw_api.__all__
+        assert "UserProfileUpdate" not in tldw_api.__all__

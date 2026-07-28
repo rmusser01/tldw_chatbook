@@ -84,17 +84,17 @@ PROFILE = {
 def stub_scope_service(mock_app_instance):
     """Replace the MagicMock scope service with explicit AsyncMock methods."""
     service = Mock()
-    service.list_user_profiles = AsyncMock(
+    service.list_persona_profiles = AsyncMock(
         return_value={"items": [dict(PROFILE)], "total": 1}
     )
-    service.get_user_profile = AsyncMock(return_value=dict(PROFILE))
-    service.create_user_profile = AsyncMock(
+    service.get_persona_profile = AsyncMock(return_value=dict(PROFILE))
+    service.create_persona_profile = AsyncMock(
         return_value={"id": "p-9", "name": "Mentor"}
     )
-    service.update_user_profile = AsyncMock(
+    service.update_persona_profile = AsyncMock(
         return_value={"id": "p-1", "name": "Archivist 2"}
     )
-    service.delete_user_profile = AsyncMock(
+    service.delete_persona_profile = AsyncMock(
         return_value={"status": "deleted", "persona_id": "p-1"}
     )
     mock_app_instance.character_persona_scope_service = service
@@ -910,7 +910,7 @@ class TestPersonasMode:
     async def test_personas_mode_service_failure_shows_recovery_state(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
-        stub_scope_service.list_user_profiles.side_effect = RuntimeError(
+        stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
             "scope offline"
         )
 
@@ -936,7 +936,7 @@ class TestPersonasMode:
                 "Archivist"
             ]
 
-            stub_scope_service.list_user_profiles.side_effect = RuntimeError(
+            stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
                 "scope offline"
             )
             screen._refresh_profile_rows_worker()
@@ -950,7 +950,7 @@ class TestPersonasMode:
     async def test_personas_mode_empty_state_copy_unchanged(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
-        stub_scope_service.list_user_profiles.return_value = {
+        stub_scope_service.list_persona_profiles.return_value = {
             "items": [],
             "total": 0,
         }
@@ -992,7 +992,7 @@ class TestPersonasMode:
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            stub_scope_service.create_user_profile.assert_awaited_once()
+            stub_scope_service.create_persona_profile.assert_awaited_once()
             # Save-in-place: create -> edit, the editor stays open (not the
             # read-only card).
             assert screen._edit_mode == "edit"
@@ -1008,7 +1008,7 @@ class TestPersonasMode:
                 screen.query_one("#personas-status-row", Static).renderable
             )
 
-            stub_scope_service.list_user_profiles.side_effect = RuntimeError(
+            stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
                 "scope offline"
             )
             await pilot.click("#personas-library-new")
@@ -1042,8 +1042,8 @@ class TestPersonasMode:
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            stub_scope_service.update_user_profile.assert_awaited_once()
-            assert stub_scope_service.update_user_profile.await_args.args[0] == "p-1"
+            stub_scope_service.update_persona_profile.assert_awaited_once()
+            assert stub_scope_service.update_persona_profile.await_args.args[0] == "p-1"
             # Save-in-place: the editor stays open after an edit save too.
             assert screen._edit_mode == "edit"
             assert screen.query_one("#ccp-persona-editor-view").display is True
@@ -1056,11 +1056,11 @@ class TestPersonasMode:
             "description": "RAW-LOCAL-DESCRIPTION-SENTINEL",
             "personality_traits": "RAW-LOCAL-TRAITS-SENTINEL",
         }
-        stub_scope_service.list_user_profiles.return_value = {
+        stub_scope_service.list_persona_profiles.return_value = {
             "items": [dict(raw_local_record)],
             "total": 1,
         }
-        stub_scope_service.get_user_profile.return_value = dict(raw_local_record)
+        stub_scope_service.get_persona_profile.return_value = dict(raw_local_record)
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
@@ -1085,7 +1085,7 @@ class TestPersonasMode:
             await app.workers.wait_for_complete()
             await pilot.pause()
 
-            request = stub_scope_service.update_user_profile.await_args.args[1]
+            request = stub_scope_service.update_persona_profile.await_args.args[1]
             assert isinstance(request, LocalPersonaProfileUpdate)
             assert request.name == "Archivist Revised"
             assert request.description == "RAW-LOCAL-DESCRIPTION-SENTINEL"
@@ -1094,7 +1094,7 @@ class TestPersonasMode:
     async def test_profile_save_failure_keeps_editor_open(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
-        stub_scope_service.create_user_profile.side_effect = RuntimeError("boom")
+        stub_scope_service.create_persona_profile.side_effect = RuntimeError("boom")
         notifications: list[tuple[str, str]] = []
         app = PersonasTestApp(mock_app_instance)
         app.notify = lambda message, severity="information", **kwargs: (
@@ -1135,8 +1135,8 @@ class TestPersonasMode:
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            stub_scope_service.create_user_profile.assert_awaited_once()
-            request = stub_scope_service.create_user_profile.await_args.args[0]
+            stub_scope_service.create_persona_profile.assert_awaited_once()
+            request = stub_scope_service.create_persona_profile.await_args.args[0]
             assert isinstance(request, LocalPersonaProfileCreate)
             assert request.name == "Mentor"
             assert request.description == "Guides new users"
@@ -1167,12 +1167,12 @@ class TestPersonasMode:
             await app.workers.wait_for_complete()
             await pilot.pause()
 
-            request = stub_scope_service.create_user_profile.await_args.args[0]
+            request = stub_scope_service.create_persona_profile.await_args.args[0]
             assert isinstance(request, PersonaProfileCreate)
             assert request.model_dump().keys().isdisjoint(
                 {"description", "personality_traits"}
             )
-            assert stub_scope_service.create_user_profile.await_args.kwargs["mode"] == (
+            assert stub_scope_service.create_persona_profile.await_args.kwargs["mode"] == (
                 "server"
             )
 
@@ -1211,12 +1211,12 @@ class TestPersonasMode:
             await app.workers.wait_for_complete()
             await pilot.pause()
 
-            request = stub_scope_service.update_user_profile.await_args.args[1]
+            request = stub_scope_service.update_persona_profile.await_args.args[1]
             assert isinstance(request, PersonaProfileUpdate)
             assert request.model_dump().keys().isdisjoint(
                 {"description", "personality_traits"}
             )
-            assert stub_scope_service.update_user_profile.await_args.kwargs["mode"] == (
+            assert stub_scope_service.update_persona_profile.await_args.kwargs["mode"] == (
                 "server"
             )
 
@@ -1233,7 +1233,7 @@ class TestPersonasMode:
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            stub_scope_service.create_user_profile.assert_awaited_once()
+            stub_scope_service.create_persona_profile.assert_awaited_once()
 
     async def test_character_mode_unaffected(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1412,7 +1412,7 @@ class TestSearch:
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
         # Replace the scope service stub with two profiles
-        stub_scope_service.list_user_profiles = AsyncMock(
+        stub_scope_service.list_persona_profiles = AsyncMock(
             return_value={"items": [dict(p) for p in PROFILES_FOR_SEARCH], "total": 2}
         )
 
@@ -3418,7 +3418,7 @@ class TestConsoleActions:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_profile(pilot)
             # The service degrades after listing/selection succeeded.
-            stub_scope_service.get_user_profile = AsyncMock(
+            stub_scope_service.get_persona_profile = AsyncMock(
                 side_effect=RuntimeError("service down")
             )
             screen.query_one("#personas-attach-to-console", Button).press()
@@ -5130,8 +5130,8 @@ class TestDelete:
     async def test_delete_profile_calls_scope_service(
         self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
     ):
-        # The full record (with version) comes from get_user_profile.
-        stub_scope_service.get_user_profile = AsyncMock(
+        # The full record (with version) comes from get_persona_profile.
+        stub_scope_service.get_persona_profile = AsyncMock(
             return_value={**PROFILE, "version": 3}
         )
         app = PersonasTestApp(mock_app_instance)
@@ -5140,8 +5140,8 @@ class TestDelete:
             screen = await self._select_profile(pilot)
             self._bypass_confirm(screen, True)
             await self._press_delete(pilot, screen)
-            stub_scope_service.delete_user_profile.assert_awaited_once()
-            await_args = stub_scope_service.delete_user_profile.await_args
+            stub_scope_service.delete_persona_profile.assert_awaited_once()
+            await_args = stub_scope_service.delete_persona_profile.await_args
             assert await_args.args[0] == "p-1"
             assert await_args.kwargs == {"expected_version": 3, "mode": "local"}
             assert screen.state.selected_entity_id is None
@@ -5273,7 +5273,7 @@ class TestPersonaHumanIdentityRemoval:
         legacy_human_config,
     ):
         profile_lister = Mock()
-        profile_lister.list_user_profiles.return_value = [dict(PROFILE)]
+        profile_lister.list_persona_profiles.return_value = [dict(PROFILE)]
         mock_app_instance.app_config = legacy_human_config.mapping
         mock_app_instance.local_character_persona_service = profile_lister
         app = PersonasTestApp(mock_app_instance)
@@ -5292,7 +5292,7 @@ class TestPersonaHumanIdentityRemoval:
             assert greeting == "Hello User, I am Elara."
             assert pane._user_label == "User"
             assert pane.transcript_text().endswith("User: Hi")
-            profile_lister.list_user_profiles.assert_not_called()
+            profile_lister.list_persona_profiles.assert_not_called()
 
         legacy_human_config.assert_unchanged()
 
@@ -5336,9 +5336,9 @@ class TestPersonaHumanIdentityRemoval:
         runtime_source,
     ):
         local_profile_service = Mock()
-        local_profile_service.list_user_profiles.return_value = [dict(PROFILE)]
+        local_profile_service.list_persona_profiles.return_value = [dict(PROFILE)]
         server_profile_service = Mock()
-        server_profile_service.list_user_profiles = AsyncMock(
+        server_profile_service.list_persona_profiles = AsyncMock(
             return_value={"items": [dict(PROFILE)], "total": 1}
         )
 
@@ -5433,8 +5433,8 @@ class TestPersonaHumanIdentityRemoval:
         assert [message["content"] for message in store.messages] == [
             "Hello User, I am Elara."
         ]
-        local_profile_service.list_user_profiles.assert_not_called()
-        server_profile_service.list_user_profiles.assert_not_awaited()
+        local_profile_service.list_persona_profiles.assert_not_called()
+        server_profile_service.list_persona_profiles.assert_not_awaited()
         legacy_human_config.assert_unchanged()
 
     async def test_profile_rename_does_not_follow_legacy_pointer(
@@ -5450,7 +5450,7 @@ class TestPersonaHumanIdentityRemoval:
         async with app.run_test() as pilot:
             screen = await self._select_profile(pilot)
             renamed = {**PROFILE, "name": "Chronicler"}
-            stub_scope_service.list_user_profiles = AsyncMock(
+            stub_scope_service.list_persona_profiles = AsyncMock(
                 return_value={"items": [renamed], "total": 1}
             )
             await screen._after_profile_save(
@@ -5469,7 +5469,7 @@ class TestPersonaHumanIdentityRemoval:
         legacy_human_config,
     ):
         mock_app_instance.app_config = legacy_human_config.mapping
-        stub_scope_service.get_user_profile = AsyncMock(
+        stub_scope_service.get_persona_profile = AsyncMock(
             return_value={**PROFILE, "version": 1}
         )
         app = PersonasTestApp(mock_app_instance)
@@ -5478,7 +5478,7 @@ class TestPersonaHumanIdentityRemoval:
             screen = await self._select_profile(pilot)
             await screen._delete_entity("persona", "p-1", 1)
             await pilot.pause()
-            stub_scope_service.delete_user_profile.assert_awaited_once()
+            stub_scope_service.delete_persona_profile.assert_awaited_once()
 
         legacy_human_config.assert_unchanged()
 

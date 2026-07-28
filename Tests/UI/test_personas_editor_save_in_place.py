@@ -21,6 +21,8 @@ at a real db - the same seam ``create_character``/``update_character``/
 ``fetch_character_by_id``/the library-paging loader all read from).
 """
 
+import json
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Select, Switch, TextArea
@@ -277,7 +279,7 @@ def real_persona_scope_service(tmp_path):
     """A REAL local persona backend (JSON-file-backed), not a mock - so a
     round-tripped Save carries genuine persisted values."""
     local_service = LocalCharacterPersonaService(
-        None, user_profile_store_path=tmp_path / "personas_save_in_place.json"
+        None, persona_store_path=tmp_path / "personas_save_in_place.json"
     )
     return CharacterPersonaScopeService(local_service=local_service, server_service=None)
 
@@ -333,11 +335,11 @@ class TestPersonaSaveInPlace:
             # the in-memory record the screen is holding looks right.
             reloaded_local_service = LocalCharacterPersonaService(
                 None,
-                user_profile_store_path=(
-                    real_persona_scope_service.local_service.user_profile_store_path
+                persona_store_path=(
+                    real_persona_scope_service.local_service.persona_store_path
                 ),
             )
-            record = reloaded_local_service.get_user_profile(saved_id)
+            record = reloaded_local_service.get_persona_profile(saved_id)
             assert record["name"] == "New Guide"
             assert record["personality_traits"] == "brave, kind"
             assert record["mode"] == "persistent_scoped"
@@ -349,23 +351,39 @@ class TestPersonaSaveInPlace:
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
 
-    async def test_edit_save_updates_new_fields_in_place(
+    async def test_list_editor_save_preserves_local_and_unknown_fields(
         self, mock_app_instance, stub_characters, real_persona_scope_service
     ):
-        from tldw_chatbook.tldw_api.character_persona_schemas import (
-            UserProfileCreate,
+        store_path = real_persona_scope_service.local_service.persona_store_path
+        store_path.write_text(
+            json.dumps(
+                {
+                    "profiles": [
+                        {
+                            "id": "p-1",
+                            "name": "Archivist",
+                            "description": "Local description",
+                            "personality_traits": "calm",
+                            "mode": "session_scoped",
+                            "is_active": True,
+                            "version": 1,
+                            "future_extension": {"keep": True},
+                        }
+                    ],
+                    "exemplars": [],
+                    "character_exemplars": [],
+                    "chat_settings": {},
+                    "chat_greeting_selections": {},
+                    "chat_presets": [],
+                    "character_memories": [],
+                }
+            ),
+            encoding="utf-8",
         )
-
-        local_service = real_persona_scope_service.local_service
-        local_service.create_user_profile(
-            UserProfileCreate(
-                id="p-1",
-                name="Archivist",
-                personality_traits="calm",
-                mode="session_scoped",
-                is_active=True,
-            )
+        local_service = LocalCharacterPersonaService(
+            None, persona_store_path=store_path
         )
+        real_persona_scope_service.local_service = local_service
         mock_app_instance.character_persona_scope_service = real_persona_scope_service
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -395,10 +413,12 @@ class TestPersonaSaveInPlace:
             assert screen.state.has_unsaved_changes is False
 
             reloaded_local_service = LocalCharacterPersonaService(
-                None, user_profile_store_path=local_service.user_profile_store_path
+                None, persona_store_path=local_service.persona_store_path
             )
-            record = reloaded_local_service.get_user_profile("p-1")
+            record = reloaded_local_service.get_persona_profile("p-1")
             assert record["personality_traits"] == "fierce, loyal"
             assert record["is_active"] is False
             assert record["mode"] == "session_scoped"  # untouched field preserved
+            assert record["description"] == "Local description"
+            assert record["future_extension"] == {"keep": True}
             assert record["version"] == 2

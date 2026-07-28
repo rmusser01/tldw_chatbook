@@ -6,7 +6,9 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Select, Static, Switch, TextArea
 
-from tldw_chatbook.tldw_api import PersonaProfileCreate
+from tldw_chatbook.tldw_api.character_persona_schemas import (
+    LocalPersonaProfileCreate,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.persona_profile_card_widget import (
     PersonaProfileCardWidget,
 )
@@ -290,7 +292,7 @@ async def test_editor_load_collect_roundtrip_new_fields():
 
 async def test_editor_new_persona_defaults_enabled_and_session_scoped():
     """A fresh/new persona defaults Enabled=True, mode=session_scoped, and
-    an empty personality-traits field - matching PersonaProfileCreate's
+    an empty personality-traits field - matching LocalPersonaProfileCreate's
     defaults."""
     app = WidgetApp()
     async with app.run_test() as pilot:
@@ -335,8 +337,8 @@ async def test_toggling_enabled_switch_marks_dirty():
     assert len(received) == 1
 
 
-async def test_persona_profile_create_schema_accepts_description():
-    profile = PersonaProfileCreate(name="x", description="d")
+async def test_local_persona_profile_create_schema_accepts_description():
+    profile = LocalPersonaProfileCreate(name="x", description="d")
     assert profile.description == "d"
 
 

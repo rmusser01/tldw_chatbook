@@ -600,7 +600,7 @@ class _ProfileService:
         self._names = list(names)
         self.calls = 0
 
-    def list_user_profiles(self, **kwargs):
+    def list_persona_profiles(self, **kwargs):
         self.calls += 1
         return [{"name": name} for name in self._names]
 
@@ -650,7 +650,7 @@ class _ServerScopeService:
         self._payload = payload
         self.calls = 0
 
-    async def list_user_profiles(self, **kwargs):
+    async def list_persona_profiles(self, **kwargs):
         self.calls += 1
         return self._payload
 

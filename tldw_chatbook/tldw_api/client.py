@@ -11834,9 +11834,7 @@ class TLDWAPIClient:
         return await self._request(
             "PATCH",
             f"/api/v1/persona/profiles/{persona_id}",
-            json_data=request_data.model_dump(
-                exclude_unset=True, exclude_none=True, mode="json"
-            ),
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
             params=params,
         )
 

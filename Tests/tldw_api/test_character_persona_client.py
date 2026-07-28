@@ -281,6 +281,25 @@ class TestCharacterPersonaClient:
             PersonaSetupState.model_validate(create_payload["setup"]), PersonaSetupState
         )
 
+    async def test_persona_patch_preserves_explicit_null_and_omits_unset_fields(
+        self, monkeypatch
+    ):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.update_persona_profile(
+            "persona-1", PersonaProfileUpdate(system_prompt=None)
+        )
+        await client.update_persona_profile(
+            "persona-1", PersonaProfileUpdate(name="Guide")
+        )
+
+        assert mocked.await_args_list[0].kwargs["json_data"] == {
+            "system_prompt": None
+        }
+        assert mocked.await_args_list[1].kwargs["json_data"] == {"name": "Guide"}
+
     async def test_persona_archetype_endpoint_wiring(self, monkeypatch):
         client = TLDWAPIClient("http://localhost:8000")
         mocked = AsyncMock(

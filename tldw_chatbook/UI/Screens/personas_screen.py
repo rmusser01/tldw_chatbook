@@ -32,7 +32,7 @@ from ...Character_Chat.expression_generation import (
     EXPRESSION_PROMPT_STATES,
     compose_expression_prompt,
 )
-from ...Character_Chat.persona_list_paging import page_user_profiles
+from ...Character_Chat.persona_list_paging import page_persona_profiles
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -221,8 +221,6 @@ _MODE_PLACEHOLDER_BODY: dict[str, str] = {
     "prompts": "Prompts are moving to the Library — you'll manage them there.",
 }
 _PLACEHOLDER_FALLBACK = "This mode is coming soon."
-_LOCAL_ONLY_PERSONA_FIELDS = ("description", "personality_traits")
-
 #: Onboarding guidance shown in the Characters center pane when nothing is
 #: selected (task-436). Non-adaptive: rendered at on_mount before the character
 #: count loads, so it must read correctly whether or not characters exist.
@@ -324,21 +322,6 @@ def _character_row_meta(record: dict) -> str | None:
         return description
     last_modified = str(record.get("last_modified") or "")
     return last_modified[:10] if last_modified else None
-
-
-def _server_persona_request_without_local_fields(
-    request: PersonaProfileCreate | PersonaProfileUpdate,
-) -> PersonaProfileCreate | PersonaProfileUpdate:
-    """Prevent the pre-Task-4 wire DTO from serializing local extensions.
-
-    Task 4 narrows the models themselves. Until then, deleting the two
-    app-local default attributes from this instance makes every downstream
-    ``model_dump`` omit them, including the existing server client serializer.
-    """
-    for field_name in _LOCAL_ONLY_PERSONA_FIELDS:
-        if field_name in request.__dict__:
-            delattr(request, field_name)
-    return request
 
 
 #: Center-area widgets toggled by ``_show_center``.
@@ -1314,7 +1297,7 @@ class PersonasScreen(BaseAppScreen):
             self.state.sort_key if self.state.sort_key != "relevance" else "name_asc"
         )
         offset = self.state.page_offset
-        page_rows, total = page_user_profiles(
+        page_rows, total = page_persona_profiles(
             self._profiles,
             search_term=self.state.search_query,
             sort_key=sort_key,
@@ -1328,7 +1311,7 @@ class PersonasScreen(BaseAppScreen):
                 (total - 1) // PERSONAS_LIBRARY_PAGE_SIZE
             ) * PERSONAS_LIBRARY_PAGE_SIZE
             self.state.page_offset = offset
-            page_rows, total = page_user_profiles(
+            page_rows, total = page_persona_profiles(
                 self._profiles,
                 search_term=self.state.search_query,
                 sort_key=sort_key,
@@ -1559,10 +1542,10 @@ class PersonasScreen(BaseAppScreen):
         """
         fallback = dict(self._profile_record(persona_id) or {"id": persona_id})
         service = getattr(self.app_instance, "character_persona_scope_service", None)
-        if service is None or not hasattr(service, "get_user_profile"):
+        if service is None or not hasattr(service, "get_persona_profile"):
             return fallback, False
         try:
-            record = await service.get_user_profile(
+            record = await service.get_persona_profile(
                 persona_id, mode=self.persona_handler.current_mode()
             )
         except Exception:
@@ -6826,13 +6809,13 @@ class PersonasScreen(BaseAppScreen):
             service = getattr(
                 self.app_instance, "character_persona_scope_service", None
             )
-            if service is None or not hasattr(service, "delete_user_profile"):
+            if service is None or not hasattr(service, "delete_persona_profile"):
                 self._notify(
                     "Delete failed: personas are unavailable.", "error"
                 )
                 return
             try:
-                await service.delete_user_profile(
+                await service.delete_persona_profile(
                     entity_id,
                     expected_version=version,
                     mode=self.persona_handler.current_mode(),
@@ -7130,36 +7113,29 @@ class PersonasScreen(BaseAppScreen):
                         ),
                     )
                 else:
-                    request = _server_persona_request_without_local_fields(
-                        PersonaProfileCreate(
-                            id=data.get("id") or None,
-                            name=str(data.get("name") or ""),
-                            mode=data.get("mode") or "session_scoped",
-                            system_prompt=data.get("system_prompt"),
-                            is_active=bool(data.get("is_active", True)),
-                        )
-                    )
-                result = await service.create_user_profile(request, mode=mode)
-            else:
-                if mode == "local":
-                    request = LocalPersonaProfileUpdate(
+                    request = PersonaProfileCreate(
+                        id=data.get("id") or None,
                         name=str(data.get("name") or ""),
-                        description=data.get("description"),
-                        mode=data.get("mode"),
+                        mode=data.get("mode") or "session_scoped",
                         system_prompt=data.get("system_prompt"),
-                        is_active=data.get("is_active"),
-                        personality_traits=data.get("personality_traits"),
+                        is_active=bool(data.get("is_active", True)),
                     )
+                result = await service.create_persona_profile(request, mode=mode)
+            else:
+                update_payload: dict[str, Any] = {
+                    "name": str(data.get("name") or "")
+                }
+                for field_name in ("mode", "system_prompt", "is_active"):
+                    if field_name in data:
+                        update_payload[field_name] = data[field_name]
+                if mode == "local":
+                    for field_name in ("description", "personality_traits"):
+                        if field_name in data:
+                            update_payload[field_name] = data[field_name]
+                    request = LocalPersonaProfileUpdate(**update_payload)
                 else:
-                    request = _server_persona_request_without_local_fields(
-                        PersonaProfileUpdate(
-                            name=str(data.get("name") or ""),
-                            mode=data.get("mode"),
-                            system_prompt=data.get("system_prompt"),
-                            is_active=data.get("is_active"),
-                        )
-                    )
-                result = await service.update_user_profile(
+                    request = PersonaProfileUpdate(**update_payload)
+                result = await service.update_persona_profile(
                     persona_id,
                     request,
                     expected_version=data.get("version"),

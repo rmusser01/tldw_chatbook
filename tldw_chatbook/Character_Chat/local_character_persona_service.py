@@ -28,23 +28,23 @@ def _clean_text(value: Any) -> str | None:
 class LocalCharacterPersonaService:
     """Wrap local character cards and local CCP chat-session metadata."""
 
-    def __init__(self, db: Any, *, user_profile_store_path: str | Path | None = None):
+    def __init__(self, db: Any, *, persona_store_path: str | Path | None = None):
         self.db = db
         self.conversations = ChatConversationService(db)
         self.world_books = WorldBookManager(db) if db is not None else None
-        self.user_profile_store_path = (
-            Path(user_profile_store_path).expanduser()
-            if user_profile_store_path is not None
+        self.persona_store_path = (
+            Path(persona_store_path).expanduser()
+            if persona_store_path is not None
             else None
         )
-        self._user_profiles: list[dict[str, Any]] = []
+        self._persona_profiles: list[dict[str, Any]] = []
         self._persona_exemplars: list[dict[str, Any]] = []
         self._character_exemplars: list[dict[str, Any]] = []
         self._chat_settings: dict[str, dict[str, Any]] = {}
         self._chat_greeting_selections: dict[str, int] = {}
         self._chat_presets: list[dict[str, Any]] = []
         self._character_memories: list[dict[str, Any]] = []
-        self._load_user_profiles()
+        self._load_personas()
 
     def _require_db(self) -> Any:
         if self.db is None:
@@ -95,13 +95,13 @@ class LocalCharacterPersonaService:
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def _load_user_profiles(self) -> None:
-        if self.user_profile_store_path is None or not self.user_profile_store_path.exists():
+    def _load_personas(self) -> None:
+        if self.persona_store_path is None or not self.persona_store_path.exists():
             return
         try:
-            payload = json.loads(self.user_profile_store_path.read_text(encoding="utf-8"))
+            payload = json.loads(self.persona_store_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            self._user_profiles = []
+            self._persona_profiles = []
             return
         if isinstance(payload, dict):
             profile_records = payload.get("profiles", payload.get("items", []))
@@ -120,9 +120,9 @@ class LocalCharacterPersonaService:
             chat_preset_records = []
             character_memory_records = []
         if not isinstance(profile_records, list):
-            self._user_profiles = []
+            self._persona_profiles = []
             return
-        self._user_profiles = [
+        self._persona_profiles = [
             dict(item) for item in profile_records if isinstance(item, dict)
         ]
         self._persona_exemplars = (
@@ -168,17 +168,17 @@ class LocalCharacterPersonaService:
             else []
         )
 
-    def _persist_user_profiles(self) -> None:
-        if self.user_profile_store_path is None:
+    def _persist_personas(self) -> None:
+        if self.persona_store_path is None:
             return
-        self.user_profile_store_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.user_profile_store_path.with_suffix(
-            self.user_profile_store_path.suffix + ".tmp"
+        self.persona_store_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.persona_store_path.with_suffix(
+            self.persona_store_path.suffix + ".tmp"
         )
         temp_path.write_text(
             json.dumps(
                 {
-                    "profiles": self._user_profiles,
+                    "profiles": self._persona_profiles,
                     "exemplars": self._persona_exemplars,
                     "character_exemplars": self._character_exemplars,
                     "chat_settings": self._chat_settings,
@@ -191,10 +191,10 @@ class LocalCharacterPersonaService:
             ),
             encoding="utf-8",
         )
-        temp_path.replace(self.user_profile_store_path)
+        temp_path.replace(self.persona_store_path)
 
     @staticmethod
-    def _user_profile_view(record: Mapping[str, Any]) -> dict[str, Any]:
+    def _persona_profile_view(record: Mapping[str, Any]) -> dict[str, Any]:
         normalized = dict(record)
         normalized.setdefault("backend", "local")
         normalized.setdefault(
@@ -204,11 +204,11 @@ class LocalCharacterPersonaService:
         normalized["version"] = int(normalized.get("version", 1) or 1)
         return normalized
 
-    def _find_user_profile(
+    def _find_persona_profile(
         self, persona_id: str, *, include_deleted: bool = False
     ) -> dict[str, Any]:
         normalized_id = str(persona_id)
-        for record in self._user_profiles:
+        for record in self._persona_profiles:
             if str(record.get("id")) != normalized_id:
                 continue
             if record.get("deleted") and not include_deleted:
@@ -747,7 +747,7 @@ class LocalCharacterPersonaService:
         )
         return self.get_character_world_book(world_book_id)
 
-    def list_user_profiles(
+    def list_persona_profiles(
         self,
         *,
         active_only: bool = False,
@@ -756,8 +756,8 @@ class LocalCharacterPersonaService:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         records = [
-            self._user_profile_view(record)
-            for record in self._user_profiles
+            self._persona_profile_view(record)
+            for record in self._persona_profiles
             if (include_deleted or not record.get("deleted", False))
             and (not active_only or bool(record.get("is_active", True)))
         ]
@@ -766,20 +766,20 @@ class LocalCharacterPersonaService:
         )
         return records[offset : offset + limit]
 
-    def get_user_profile(self, persona_id: str) -> dict[str, Any]:
-        return self._user_profile_view(self._find_user_profile(persona_id))
+    def get_persona_profile(self, persona_id: str) -> dict[str, Any]:
+        return self._persona_profile_view(self._find_persona_profile(persona_id))
 
-    def create_user_profile(self, request_data: Any) -> dict[str, Any]:
+    def create_persona_profile(self, request_data: Any) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api.character_persona_schemas import UserProfileCreate
+        from ..tldw_api.character_persona_schemas import LocalPersonaProfileCreate
 
         payload = _model_payload(
-            UserProfileCreate.model_validate(_model_payload(request_data))
+            LocalPersonaProfileCreate.model_validate(_model_payload(request_data))
         )
         persona_id = str(payload.get("id") or f"local-persona-{uuid.uuid4().hex}")
         if any(
             str(record.get("id")) == persona_id and not record.get("deleted")
-            for record in self._user_profiles
+            for record in self._persona_profiles
         ):
             raise ValueError(f"local_persona_profile_exists:{persona_id}")
         now = self._now()
@@ -792,11 +792,11 @@ class LocalCharacterPersonaService:
                 "deleted": False,
             }
         )
-        self._user_profiles.append(payload)
-        self._persist_user_profiles()
-        return self._user_profile_view(payload)
+        self._persona_profiles.append(payload)
+        self._persist_personas()
+        return self._persona_profile_view(payload)
 
-    def update_user_profile(
+    def update_persona_profile(
         self,
         persona_id: str,
         request_data: Any,
@@ -804,43 +804,48 @@ class LocalCharacterPersonaService:
         expected_version: int | None = None,
     ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
-        from ..tldw_api.character_persona_schemas import UserProfileUpdate
+        from ..tldw_api.character_persona_schemas import LocalPersonaProfileUpdate
 
-        record = self._find_user_profile(persona_id)
+        record = self._find_persona_profile(persona_id)
         self._check_profile_version(record, expected_version, persona_id)
-        request = UserProfileUpdate.model_validate(_model_payload(request_data))
-        payload = request.model_dump(mode="json", exclude_none=True)
+        request_payload = (
+            request_data.model_dump(exclude_unset=True, mode="json")
+            if hasattr(request_data, "model_dump")
+            else dict(request_data or {})
+        )
+        request = LocalPersonaProfileUpdate.model_validate(request_payload)
+        changes = request.model_dump(exclude_unset=True, mode="json")
         current_version = int(record.get("version", 1) or 1)
-        record.update(payload)
+        record.update(changes)
         record["last_modified"] = self._now()
         record["version"] = current_version + 1
-        self._persist_user_profiles()
-        return self._user_profile_view(record)
+        self._persist_personas()
+        return self._persona_profile_view(record)
 
-    def delete_user_profile(
+    def delete_persona_profile(
         self,
         persona_id: str,
         *,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
-        record = self._find_user_profile(persona_id)
+        record = self._find_persona_profile(persona_id)
         self._check_profile_version(record, expected_version, persona_id)
         record["deleted"] = True
         record["last_modified"] = self._now()
         record["version"] = int(record.get("version", 1) or 1) + 1
-        self._persist_user_profiles()
+        self._persist_personas()
         return {"status": "deleted", "persona_id": persona_id}
 
-    def restore_user_profile(
+    def restore_persona_profile(
         self, persona_id: str, expected_version: int
     ) -> dict[str, Any]:
-        record = self._find_user_profile(persona_id, include_deleted=True)
+        record = self._find_persona_profile(persona_id, include_deleted=True)
         self._check_profile_version(record, expected_version, persona_id)
         record["deleted"] = False
         record["last_modified"] = self._now()
         record["version"] = int(record.get("version", 1) or 1) + 1
-        self._persist_user_profiles()
-        return self._user_profile_view(record)
+        self._persist_personas()
+        return self._persona_profile_view(record)
 
     def list_persona_exemplars(
         self,
@@ -852,7 +857,7 @@ class LocalCharacterPersonaService:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        self._find_user_profile(persona_id, include_deleted=include_deleted_personas)
+        self._find_persona_profile(persona_id, include_deleted=include_deleted_personas)
         records = [
             self._persona_exemplar_view(record)
             for record in self._persona_exemplars
@@ -868,7 +873,7 @@ class LocalCharacterPersonaService:
         return records[offset : offset + limit]
 
     def get_persona_exemplar(self, persona_id: str, exemplar_id: str) -> dict[str, Any]:
-        self._find_user_profile(persona_id)
+        self._find_persona_profile(persona_id)
         return self._persona_exemplar_view(
             self._find_persona_exemplar(persona_id, exemplar_id)
         )
@@ -879,7 +884,7 @@ class LocalCharacterPersonaService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import PersonaExemplarCreate
 
-        self._find_user_profile(persona_id)
+        self._find_persona_profile(persona_id)
         payload = _model_payload(
             PersonaExemplarCreate.model_validate(_model_payload(request_data))
         )
@@ -906,7 +911,7 @@ class LocalCharacterPersonaService:
             }
         )
         self._persona_exemplars.append(payload)
-        self._persist_user_profiles()
+        self._persist_personas()
         return self._persona_exemplar_view(payload)
 
     def import_persona_exemplars(
@@ -918,7 +923,7 @@ class LocalCharacterPersonaService:
             PersonaExemplarImportRequest,
         )
 
-        self._find_user_profile(persona_id)
+        self._find_persona_profile(persona_id)
         request = PersonaExemplarImportRequest.model_validate(
             _model_payload(request_data)
         )
@@ -946,14 +951,14 @@ class LocalCharacterPersonaService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import PersonaExemplarUpdate
 
-        self._find_user_profile(persona_id)
+        self._find_persona_profile(persona_id)
         record = self._find_persona_exemplar(persona_id, exemplar_id)
         request = PersonaExemplarUpdate.model_validate(_model_payload(request_data))
         payload = request.model_dump(mode="json", exclude_none=True)
         record.update(payload)
         record["last_modified"] = self._now()
         record["version"] = int(record.get("version", 1) or 1) + 1
-        self._persist_user_profiles()
+        self._persist_personas()
         return self._persona_exemplar_view(record)
 
     def review_persona_exemplar(
@@ -962,7 +967,7 @@ class LocalCharacterPersonaService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api.character_persona_schemas import PersonaExemplarReviewRequest
 
-        self._find_user_profile(persona_id)
+        self._find_persona_profile(persona_id)
         record = self._find_persona_exemplar(
             persona_id, exemplar_id, include_deleted=True
         )
@@ -974,18 +979,18 @@ class LocalCharacterPersonaService:
             record["notes"] = request.notes
         record["last_modified"] = self._now()
         record["version"] = int(record.get("version", 1) or 1) + 1
-        self._persist_user_profiles()
+        self._persist_personas()
         return self._persona_exemplar_view(record)
 
     def delete_persona_exemplar(
         self, persona_id: str, exemplar_id: str
     ) -> dict[str, Any]:
-        self._find_user_profile(persona_id)
+        self._find_persona_profile(persona_id)
         record = self._find_persona_exemplar(persona_id, exemplar_id)
         record["deleted"] = True
         record["last_modified"] = self._now()
         record["version"] = int(record.get("version", 1) or 1) + 1
-        self._persist_user_profiles()
+        self._persist_personas()
         return {
             "status": "deleted",
             "persona_id": persona_id,
@@ -1071,7 +1076,7 @@ class LocalCharacterPersonaService:
             }
         )
         self._character_exemplars.append(payload)
-        self._persist_user_profiles()
+        self._persist_personas()
         return self._character_exemplar_view(payload)
 
     def update_character_exemplar(
@@ -1091,7 +1096,7 @@ class LocalCharacterPersonaService:
         )
         record.update(payload)
         record["updated_at"] = self._now()
-        self._persist_user_profiles()
+        self._persist_personas()
         return self._character_exemplar_view(record)
 
     def delete_character_exemplar(
@@ -1101,7 +1106,7 @@ class LocalCharacterPersonaService:
         record = self._find_character_exemplar(character_id, exemplar_id)
         record["deleted"] = True
         record["updated_at"] = self._now()
-        self._persist_user_profiles()
+        self._persist_personas()
         return {
             "status": "deleted",
             "character_id": int(character_id),
@@ -1538,7 +1543,7 @@ class LocalCharacterPersonaService:
             _model_payload(request_data, exclude_none=False)
         )
         self._chat_settings[str(chat_id)] = dict(request.settings)
-        self._persist_user_profiles()
+        self._persist_personas()
         return self.get_chat_settings(chat_id)
 
     def get_character_chat_settings(
@@ -1600,7 +1605,7 @@ class LocalCharacterPersonaService:
             "metadata": payload.get("metadata") or {},
         }
         self._character_memories.append(record)
-        self._persist_user_profiles()
+        self._persist_personas()
         return self._character_memory_view(record)
 
     def update_character_memory(
@@ -1621,7 +1626,7 @@ class LocalCharacterPersonaService:
             record["metadata"] = payload.get("metadata") or {}
         record["version"] = int(record.get("version", 1) or 1) + 1
         record["updated_at"] = self._now()
-        self._persist_user_profiles()
+        self._persist_personas()
         return self._character_memory_view(record)
 
     def archive_character_memory(
@@ -1636,7 +1641,7 @@ class LocalCharacterPersonaService:
         record["archived"] = bool(payload.get("archived", True))
         record["version"] = int(record.get("version", 1) or 1) + 1
         record["updated_at"] = self._now()
-        self._persist_user_profiles()
+        self._persist_personas()
         return self._character_memory_view(record)
 
     def delete_character_memory(
@@ -1646,7 +1651,7 @@ class LocalCharacterPersonaService:
         record["deleted"] = True
         record["version"] = int(record.get("version", 1) or 1) + 1
         record["updated_at"] = self._now()
-        self._persist_user_profiles()
+        self._persist_personas()
         return {"deleted": True}
 
     def extract_character_memories(
@@ -1749,7 +1754,7 @@ class LocalCharacterPersonaService:
         if normalized_index < 0 or normalized_index >= len(greetings):
             raise ValueError(f"local_chat_greeting_not_found:{chat_id}:{index}")
         self._chat_greeting_selections[str(chat_id)] = normalized_index
-        self._persist_user_profiles()
+        self._persist_personas()
         return {
             "chat_id": str(chat_id),
             "selected_index": normalized_index,
@@ -1790,7 +1795,7 @@ class LocalCharacterPersonaService:
             "deleted": False,
         }
         self._chat_presets.append(record)
-        self._persist_user_profiles()
+        self._persist_personas()
         return self._chat_preset_view(record)
 
     def update_chat_preset(self, preset_id: str, request_data: Any) -> dict[str, Any]:
@@ -1808,7 +1813,7 @@ class LocalCharacterPersonaService:
         )
         record.update(payload)
         record["updated_at"] = self._now()
-        self._persist_user_profiles()
+        self._persist_personas()
         return self._chat_preset_view(record)
 
     def delete_chat_preset(self, preset_id: str) -> dict[str, Any]:
@@ -1817,7 +1822,7 @@ class LocalCharacterPersonaService:
         record = self._find_chat_preset(preset_id)
         record["deleted"] = True
         record["updated_at"] = self._now()
-        self._persist_user_profiles()
+        self._persist_personas()
         return {"status": "deleted", "preset_id": str(preset_id), "source": "local"}
 
 

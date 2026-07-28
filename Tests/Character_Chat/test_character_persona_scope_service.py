@@ -27,12 +27,12 @@ class FakeCharacterPersonaClient:
         self.update_character_calls = []
         self.delete_character_calls = []
         self.restore_character_calls = []
-        self.list_user_profiles_calls = []
-        self.get_user_profile_calls = []
-        self.create_user_profile_calls = []
-        self.update_user_profile_calls = []
-        self.delete_user_profile_calls = []
-        self.restore_user_profile_calls = []
+        self.list_persona_profiles_calls = []
+        self.get_persona_profile_calls = []
+        self.create_persona_profile_calls = []
+        self.update_persona_profile_calls = []
+        self.delete_persona_profile_calls = []
+        self.restore_persona_profile_calls = []
         self.list_persona_archetypes_calls = 0
         self.get_persona_archetype_calls = []
         self.preview_persona_archetype_calls = []
@@ -123,10 +123,10 @@ class FakeCharacterPersonaClient:
             "deleted": False,
         }
 
-    async def list_user_profiles(
+    async def list_persona_profiles(
         self, active_only=False, include_deleted=False, limit=100, offset=0
     ):
-        self.list_user_profiles_calls.append(
+        self.list_persona_profiles_calls.append(
             {
                 "active_only": active_only,
                 "include_deleted": include_deleted,
@@ -136,8 +136,8 @@ class FakeCharacterPersonaClient:
         )
         return [{"id": "persona-1", "name": "Guide"}]
 
-    async def get_user_profile(self, persona_id):
-        self.get_user_profile_calls.append(persona_id)
+    async def get_persona_profile(self, persona_id):
+        self.get_persona_profile_calls.append(persona_id)
         return {
             "id": persona_id,
             "name": "Guide",
@@ -145,9 +145,9 @@ class FakeCharacterPersonaClient:
             "system_prompt": "Be useful.",
         }
 
-    async def create_user_profile(self, request_data):
+    async def create_persona_profile(self, request_data):
         payload = request_data.model_dump(mode="json")
-        self.create_user_profile_calls.append(payload)
+        self.create_persona_profile_calls.append(payload)
         return {
             "id": payload.get("id") or "persona-created",
             "name": payload["name"],
@@ -156,11 +156,11 @@ class FakeCharacterPersonaClient:
             "version": 1,
         }
 
-    async def update_user_profile(
+    async def update_persona_profile(
         self, persona_id, request_data, expected_version=None
     ):
         payload = request_data.model_dump(exclude_none=True, mode="json")
-        self.update_user_profile_calls.append(
+        self.update_persona_profile_calls.append(
             {
                 "persona_id": persona_id,
                 "payload": payload,
@@ -175,46 +175,17 @@ class FakeCharacterPersonaClient:
             "version": expected_version or 1,
         }
 
-    async def delete_user_profile(self, persona_id, expected_version=None):
-        self.delete_user_profile_calls.append(
+    async def delete_persona_profile(self, persona_id, expected_version=None):
+        self.delete_persona_profile_calls.append(
             {"persona_id": persona_id, "expected_version": expected_version}
         )
         return {"status": "deleted", "persona_id": persona_id}
 
-    async def restore_user_profile(self, persona_id, expected_version):
-        self.restore_user_profile_calls.append(
+    async def restore_persona_profile(self, persona_id, expected_version):
+        self.restore_persona_profile_calls.append(
             {"persona_id": persona_id, "expected_version": expected_version}
         )
         return {"id": persona_id, "name": "Guide", "version": expected_version + 1}
-
-    # Wire-mirror aliases: ``ServerCharacterPersonaService`` (task-442 T2)
-    # keeps calling ``TLDWAPIClient``'s original ``*_persona_profile`` method
-    # names (the sanctioned wire-contract remnant) even though its own
-    # public surface is now ``*_user_profile``. This fake plays BOTH roles
-    # across this file (``client=`` for ``ServerCharacterPersonaService``
-    # tests, ``server_service=`` for ``CharacterPersonaScopeService`` tests),
-    # so both spellings must resolve to the same call-tracking lists above.
-    async def list_persona_profiles(self, **kwargs):
-        return await self.list_user_profiles(**kwargs)
-
-    async def get_persona_profile(self, persona_id):
-        return await self.get_user_profile(persona_id)
-
-    async def create_persona_profile(self, request_data):
-        return await self.create_user_profile(request_data)
-
-    async def update_persona_profile(self, persona_id, request_data, expected_version=None):
-        return await self.update_user_profile(
-            persona_id, request_data, expected_version=expected_version
-        )
-
-    async def delete_persona_profile(self, persona_id, expected_version=None):
-        return await self.delete_user_profile(
-            persona_id, expected_version=expected_version
-        )
-
-    async def restore_persona_profile(self, persona_id, expected_version):
-        return await self.restore_user_profile(persona_id, expected_version)
 
     async def list_persona_archetypes(self):
         self.list_persona_archetypes_calls += 1
@@ -686,32 +657,32 @@ class FakeLocalPersonaProfileBackend(FakeLocalCharacterBackend):
         super().__init__()
         self.calls = []
 
-    def list_user_profiles(self, **kwargs):
-        self.calls.append(("list_user_profiles", kwargs))
+    def list_persona_profiles(self, **kwargs):
+        self.calls.append(("list_persona_profiles", kwargs))
         return [{"id": "local-persona-1", "name": "Local Guide"}]
 
-    def get_user_profile(self, persona_id):
-        self.calls.append(("get_user_profile", persona_id))
+    def get_persona_profile(self, persona_id):
+        self.calls.append(("get_persona_profile", persona_id))
         return {"id": persona_id, "name": "Local Guide", "version": 1}
 
-    def create_user_profile(self, request_data):
-        self.calls.append(("create_user_profile", request_data))
+    def create_persona_profile(self, request_data):
+        self.calls.append(("create_persona_profile", request_data))
         return {"id": "local-persona-created", "name": "Created", "version": 1}
 
-    def update_user_profile(self, persona_id, request_data, **kwargs):
-        self.calls.append(("update_user_profile", persona_id, request_data, kwargs))
+    def update_persona_profile(self, persona_id, request_data, **kwargs):
+        self.calls.append(("update_persona_profile", persona_id, request_data, kwargs))
         return {
             "id": persona_id,
             "name": "Updated",
             "version": kwargs.get("expected_version", 1) + 1,
         }
 
-    def delete_user_profile(self, persona_id, **kwargs):
-        self.calls.append(("delete_user_profile", persona_id, kwargs))
+    def delete_persona_profile(self, persona_id, **kwargs):
+        self.calls.append(("delete_persona_profile", persona_id, kwargs))
         return {"status": "deleted", "persona_id": persona_id}
 
-    def restore_user_profile(self, persona_id, expected_version):
-        self.calls.append(("restore_user_profile", persona_id, expected_version))
+    def restore_persona_profile(self, persona_id, expected_version):
+        self.calls.append(("restore_persona_profile", persona_id, expected_version))
         return {"id": persona_id, "deleted": False, "version": expected_version + 1}
 
 
@@ -936,9 +907,9 @@ async def test_scope_service_routes_to_server_backend_when_mode_is_server():
         server_service=server_service,
     )
 
-    await scope_service.list_user_profiles(mode="server")
+    await scope_service.list_persona_profiles(mode="server")
 
-    assert server_service.list_user_profiles_calls == [
+    assert server_service.list_persona_profiles_calls == [
         {
             "active_only": False,
             "include_deleted": False,
@@ -946,7 +917,23 @@ async def test_scope_service_routes_to_server_backend_when_mode_is_server():
             "offset": 0,
         }
     ]
-    local_service.list_user_profiles.assert_not_called()
+    local_service.list_persona_profiles.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_backend_with_only_retired_persona_list_method():
+    backend = type("RetiredPersonaBackend", (), {})()
+    retired_list = Mock(return_value=[{"id": "legacy-only"}])
+    setattr(backend, "_".join(("list", "user", "profiles")), retired_list)
+    scope_service = CharacterPersonaScopeService(
+        local_service=backend,
+        server_service=Mock(),
+    )
+
+    with pytest.raises(ValueError, match="Local personas are not available yet"):
+        await scope_service.list_persona_profiles(mode="local")
+
+    retired_list.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -958,7 +945,7 @@ async def test_character_persona_scope_service_denies_server_persona_listing_in_
     )
 
     with pytest.raises(PolicyDeniedError):
-        await scope_service.list_user_profiles(mode="server")
+        await scope_service.list_persona_profiles(mode="server")
 
 
 @pytest.mark.asyncio
@@ -1003,7 +990,7 @@ async def test_scope_service_routes_character_and_persona_parameters():
     )
 
     await scope_service.list_characters(mode="server", limit=7, offset=3)
-    await scope_service.list_user_profiles(
+    await scope_service.list_persona_profiles(
         mode="server",
         active_only=True,
         include_deleted=True,
@@ -1012,7 +999,7 @@ async def test_scope_service_routes_character_and_persona_parameters():
     )
 
     assert server_service.list_characters_calls == [{"limit": 7, "offset": 3}]
-    assert server_service.list_user_profiles_calls == [
+    assert server_service.list_persona_profiles_calls == [
         {
             "active_only": True,
             "include_deleted": True,
@@ -1118,7 +1105,7 @@ async def test_scope_service_routes_character_crud_to_selected_backend():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_user_profile_crud_to_server_backend():
+async def test_scope_service_routes_persona_profile_crud_to_server_backend():
     policy = FakePolicyEnforcer()
     server_service = FakeCharacterPersonaClient()
     scope_service = CharacterPersonaScopeService(
@@ -1127,24 +1114,24 @@ async def test_scope_service_routes_user_profile_crud_to_server_backend():
         policy_enforcer=policy,
     )
 
-    profiles = await scope_service.list_user_profiles(mode="server")
-    persona = await scope_service.get_user_profile("persona-1", mode="server")
-    created = await scope_service.create_user_profile(
+    profiles = await scope_service.list_persona_profiles(mode="server")
+    persona = await scope_service.get_persona_profile("persona-1", mode="server")
+    created = await scope_service.create_persona_profile(
         Mock(
             model_dump=lambda mode="json": {"name": "Guide", "mode": "session_scoped"}
         ),
         mode="server",
     )
-    updated = await scope_service.update_user_profile(
+    updated = await scope_service.update_persona_profile(
         "persona-1",
         Mock(model_dump=lambda exclude_none=True, mode="json": {"name": "Guide 2"}),
         expected_version=7,
         mode="server",
     )
-    deleted = await scope_service.delete_user_profile(
+    deleted = await scope_service.delete_persona_profile(
         "persona-1", expected_version=8, mode="server"
     )
-    restored = await scope_service.restore_user_profile(
+    restored = await scope_service.restore_persona_profile(
         "persona-1", expected_version=9, mode="server"
     )
 
@@ -1158,7 +1145,7 @@ async def test_scope_service_routes_user_profile_crud_to_server_backend():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_user_profile_crud_to_local_backend():
+async def test_scope_service_routes_persona_profile_crud_to_local_backend():
     local_service = FakeLocalPersonaProfileBackend()
     policy = FakePolicyEnforcer()
     scope_service = CharacterPersonaScopeService(
@@ -1169,21 +1156,21 @@ async def test_scope_service_routes_user_profile_crud_to_local_backend():
     create_data = Mock()
     update_data = Mock()
 
-    listed = await scope_service.list_user_profiles(
+    listed = await scope_service.list_persona_profiles(
         mode="local", active_only=True, limit=5, offset=2
     )
-    detail = await scope_service.get_user_profile("local-persona-1", mode="local")
-    created = await scope_service.create_user_profile(create_data, mode="local")
-    updated = await scope_service.update_user_profile(
+    detail = await scope_service.get_persona_profile("local-persona-1", mode="local")
+    created = await scope_service.create_persona_profile(create_data, mode="local")
+    updated = await scope_service.update_persona_profile(
         "local-persona-1",
         update_data,
         expected_version=1,
         mode="local",
     )
-    deleted = await scope_service.delete_user_profile(
+    deleted = await scope_service.delete_persona_profile(
         "local-persona-1", expected_version=2, mode="local"
     )
-    restored = await scope_service.restore_user_profile(
+    restored = await scope_service.restore_persona_profile(
         "local-persona-1", expected_version=3, mode="local"
     )
 
@@ -1195,19 +1182,19 @@ async def test_scope_service_routes_user_profile_crud_to_local_backend():
     assert restored["version"] == 4
     assert local_service.calls == [
         (
-            "list_user_profiles",
+            "list_persona_profiles",
             {"active_only": True, "include_deleted": False, "limit": 5, "offset": 2},
         ),
-        ("get_user_profile", "local-persona-1"),
-        ("create_user_profile", create_data),
+        ("get_persona_profile", "local-persona-1"),
+        ("create_persona_profile", create_data),
         (
-            "update_user_profile",
+            "update_persona_profile",
             "local-persona-1",
             update_data,
             {"expected_version": 1},
         ),
-        ("delete_user_profile", "local-persona-1", {"expected_version": 2}),
-        ("restore_user_profile", "local-persona-1", 3),
+        ("delete_persona_profile", "local-persona-1", {"expected_version": 2}),
+        ("restore_persona_profile", "local-persona-1", 3),
     ]
     assert policy.calls == [
         "character.persona.list.local",
@@ -2189,15 +2176,11 @@ async def test_scope_service_raises_when_local_backend_lacks_persona_method():
         server_service=Mock(),
     )
 
-    with pytest.raises(
-        ValueError, match="Local user profiles are not available yet"
-    ):
-        await scope_service.list_user_profiles(mode="local")
+    with pytest.raises(ValueError, match="Local personas are not available yet"):
+        await scope_service.list_persona_profiles(mode="local")
 
-    with pytest.raises(
-        ValueError, match="Local user profiles are not available yet"
-    ):
-        await scope_service.get_user_profile("persona-1", mode="local")
+    with pytest.raises(ValueError, match="Local personas are not available yet"):
+        await scope_service.get_persona_profile("persona-1", mode="local")
 
 
 @pytest.mark.asyncio
@@ -2334,7 +2317,7 @@ def test_scope_service_does_not_report_local_session_crud_when_backend_wraps_it(
     assert "character.sessions.execution.local" in operation_ids
 
 
-def test_scope_service_does_not_report_local_user_profiles_when_backend_wraps_them():
+def test_scope_service_does_not_report_local_persona_profiles_when_backend_wraps_them():
     scope_service = CharacterPersonaScopeService(
         local_service=FakeLocalPersonaProfileBackend(),
         server_service=FakeCharacterPersonaClient(),
@@ -2473,7 +2456,7 @@ async def test_server_character_persona_service_delegates_to_client():
     service = ServerCharacterPersonaService(client=client)
 
     characters = await service.list_characters(limit=13, offset=4)
-    user_profiles = await service.list_user_profiles(
+    persona_profiles = await service.list_persona_profiles(
         active_only=True,
         include_deleted=True,
         limit=25,
@@ -2481,9 +2464,9 @@ async def test_server_character_persona_service_delegates_to_client():
     )
 
     assert characters == [{"id": 1, "name": "Ada"}]
-    assert user_profiles == [{"id": "persona-1", "name": "Guide"}]
+    assert persona_profiles == [{"id": "persona-1", "name": "Guide"}]
     assert client.list_characters_calls == [{"limit": 13, "offset": 4}]
-    assert client.list_user_profiles_calls == [
+    assert client.list_persona_profiles_calls == [
         {
             "active_only": True,
             "include_deleted": True,
@@ -2756,14 +2739,14 @@ async def test_server_character_persona_service_enforces_policy_actions():
     await service.list_persona_archetypes()
     await service.get_persona_archetype("researcher")
     await service.preview_persona_archetype("researcher")
-    await service.list_user_profiles(active_only=True)
-    await service.get_user_profile("persona-1")
-    await service.create_user_profile(Mock(model_dump=lambda **_: {"name": "Guide"}))
-    await service.update_user_profile(
+    await service.list_persona_profiles(active_only=True)
+    await service.get_persona_profile("persona-1")
+    await service.create_persona_profile(Mock(model_dump=lambda **_: {"name": "Guide"}))
+    await service.update_persona_profile(
         "persona-1", Mock(model_dump=lambda **_: {"name": "Guide v2"})
     )
-    await service.delete_user_profile("persona-1", expected_version=8)
-    await service.restore_user_profile("persona-1", expected_version=9)
+    await service.delete_persona_profile("persona-1", expected_version=8)
+    await service.restore_persona_profile("persona-1", expected_version=9)
     await service.list_persona_exemplars("persona-1")
     await service.get_persona_exemplar("persona-1", "ex-1")
     await service.create_persona_exemplar(
