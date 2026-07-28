@@ -304,6 +304,48 @@ def test_provider_and_model_metadata_reject_malformed_values(
 
 
 @pytest.mark.parametrize(
+    ("language_input_mode", "enforces_language_hint"),
+    [
+        (LanguageInputMode.ENFORCED, True),
+        (LanguageInputMode.AUTOMATIC, True),
+        (LanguageInputMode.ROUTING_ASSERTION, False),
+        (LanguageInputMode.AUTOMATIC_ONLY, False),
+    ],
+)
+def test_model_metadata_accepts_each_coherent_language_enforcement_pair(
+    language_input_mode: LanguageInputMode,
+    enforces_language_hint: bool,
+) -> None:
+    model = _model(
+        capabilities=_capabilities(language_input_mode=language_input_mode),
+        enforces_language_hint=enforces_language_hint,
+    )
+
+    assert model.capabilities.language_input_mode is language_input_mode
+    assert model.enforces_language_hint is enforces_language_hint
+
+
+@pytest.mark.parametrize(
+    ("language_input_mode", "enforces_language_hint"),
+    [
+        (LanguageInputMode.ENFORCED, False),
+        (LanguageInputMode.AUTOMATIC, False),
+        (LanguageInputMode.ROUTING_ASSERTION, True),
+        (LanguageInputMode.AUTOMATIC_ONLY, True),
+    ],
+)
+def test_model_metadata_rejects_each_incoherent_language_enforcement_pair(
+    language_input_mode: LanguageInputMode,
+    enforces_language_hint: bool,
+) -> None:
+    with pytest.raises(ValueError, match="enforces_language_hint"):
+        _model(
+            capabilities=_capabilities(language_input_mode=language_input_mode),
+            enforces_language_hint=enforces_language_hint,
+        )
+
+
+@pytest.mark.parametrize(
     ("providers", "models"),
     [
         ([], (_model(),)),
@@ -623,7 +665,10 @@ def test_runtime_observation_forbids_loss_of_every_semantic_field(
             else LanguageInputMode.AUTOMATIC
         )
     )
-    model = _model(capabilities=declared_capabilities)
+    model = _model(
+        capabilities=declared_capabilities,
+        enforces_language_hint=field_name != "automatic_language",
+    )
     registry = ProviderRegistry.sealed(_declarations(models=(model,)))
     runtime_capabilities = replace(
         declared_capabilities,
@@ -704,7 +749,12 @@ def test_adapter_metadata_equality_protects_default_and_language_enforcement() -
     declarations = _declarations()
     mismatches = (
         _model(default_precision="fp32"),
-        _model(enforces_language_hint=False),
+        _model(
+            capabilities=_capabilities(
+                language_input_mode=LanguageInputMode.ROUTING_ASSERTION
+            ),
+            enforces_language_hint=False,
+        ),
     )
 
     for mismatched_model in mismatches:

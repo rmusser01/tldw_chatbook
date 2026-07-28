@@ -675,16 +675,14 @@ def test_semantic_default_yue_fails_closed_for_faster_whisper_base() -> None:
 
 
 @pytest.mark.parametrize(
-    ("field_name", "replacement"),
+    "field_name",
     [
-        ("language_input_mode", LanguageInputMode.ENFORCED),
-        ("automatic_language", False),
-        ("enforces_language_hint", True),
+        "language_input_mode",
+        "enforces_language_hint",
     ],
 )
-def test_parakeet_v3_route_fails_closed_when_language_metadata_is_unsafe(
+def test_parakeet_v3_incoherent_language_metadata_fails_at_construction(
     field_name: str,
-    replacement: object,
 ) -> None:
     policy = _policy()
     declarations = build_builtin_declarations(policy)
@@ -693,27 +691,35 @@ def test_parakeet_v3_route_fails_closed_when_language_metadata_is_unsafe(
         for model in declarations.models
         if model.model_id == policy.parakeet_v3_model_id
     )
-    if field_name == "enforces_language_hint":
-        unsafe_v3 = replace(
-            v3,
-            enforces_language_hint=cast(bool, replacement),
-        )
-    elif field_name == "automatic_language":
-        unsafe_v3 = replace(
-            v3,
-            capabilities=replace(
-                v3.capabilities,
-                automatic_language=cast(bool, replacement),
-            ),
-        )
-    else:
-        unsafe_v3 = replace(
-            v3,
-            capabilities=replace(
-                v3.capabilities,
-                language_input_mode=cast(LanguageInputMode, replacement),
-            ),
-        )
+
+    with pytest.raises(ValueError, match="enforces_language_hint"):
+        if field_name == "enforces_language_hint":
+            replace(v3, enforces_language_hint=True)
+        else:
+            replace(
+                v3,
+                capabilities=replace(
+                    v3.capabilities,
+                    language_input_mode=LanguageInputMode.ENFORCED,
+                ),
+            )
+
+
+def test_parakeet_v3_route_fails_closed_when_automatic_language_is_disabled() -> None:
+    policy = _policy()
+    declarations = build_builtin_declarations(policy)
+    v3 = next(
+        model
+        for model in declarations.models
+        if model.model_id == policy.parakeet_v3_model_id
+    )
+    unsafe_v3 = replace(
+        v3,
+        capabilities=replace(
+            v3.capabilities,
+            automatic_language=False,
+        ),
+    )
     registry = _replace_builtin_model(
         policy,
         policy.parakeet_provider_id,

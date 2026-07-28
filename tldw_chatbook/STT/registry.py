@@ -229,6 +229,15 @@ class ModelMetadata:
             "semantic_default_eligible",
         )
         _require_bool(self.enforces_language_hint, "enforces_language_hint")
+        enforcing_modes = {
+            LanguageInputMode.ENFORCED,
+            LanguageInputMode.AUTOMATIC,
+        }
+        expected_enforcement = self.capabilities.language_input_mode in enforcing_modes
+        if self.enforces_language_hint is not expected_enforcement:
+            raise ValueError(
+                "enforces_language_hint must agree with language_input_mode"
+            )
 
 
 @dataclass(frozen=True, slots=True)
