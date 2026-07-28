@@ -2001,7 +2001,11 @@ class FileNotesGitService:
                 requested,
                 blocked_group_ids=tuple(staged + blocked),
                 clean_group_ids=tuple(clean),
-                message=_command_failure_message(result, "Git Stage failed"),
+                message=_index_mutation_failure_message(
+                    result,
+                    "Git Stage failed",
+                    inspection.repository,
+                ),
             )
 
         postflight = await self._read_stage_postflight(
@@ -2398,7 +2402,11 @@ class FileNotesGitService:
                 message=(
                     "Unstage postflight did not verify the saved baseline"
                     if _command_succeeded(result)
-                    else _command_failure_message(result, "Git Unstage failed")
+                    else _index_mutation_failure_message(
+                        result,
+                        "Git Unstage failed",
+                        inspection.repository,
+                    )
                 ),
             )
         if not self._owner.publish_unstage_result(
@@ -3182,6 +3190,26 @@ def _command_failure_message(
     if not diagnostic:
         return fallback
     return f"{fallback}: {diagnostic}"
+
+
+def _index_mutation_failure_message(
+    result: GitCommandResult,
+    fallback: str,
+    repository: RepositoryIdentity,
+) -> str:
+    """Report an existing Git index lock without deleting or retrying it."""
+    if (
+        result.returncode != 0
+        and not result.timed_out
+        and not result.termination_uncertain
+    ):
+        try:
+            (Path(repository.git_dir) / "index.lock").lstat()
+        except OSError:
+            pass
+        else:
+            return "Git index busy; retry"
+    return _command_failure_message(result, fallback)
 
 
 class PorcelainV2ParseError(ValueError):

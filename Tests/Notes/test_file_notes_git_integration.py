@@ -803,7 +803,6 @@ async def test_stage_nonzero_result_claims_no_ownership(
     assert owner.publish_trust(binding, discovery.repository)
 
     result = await service.start_stage(binding, (1,))
-    await service.shutdown()
 
     assert result.state == "error"
     assert not result.staged_group_ids
@@ -846,15 +845,18 @@ async def test_stage_with_index_lock_reports_busy_without_mutating_or_taking_own
     lock_contents = b"external Git owns this lock\n"
     index_lock.write_bytes(lock_contents)
 
-    result = await service.start_stage(binding, (1,))
+    try:
+        result = await service.start_stage(binding, (1,))
 
-    assert result.state == "error"
-    assert result.message is not None
-    assert "index.lock" in result.message.lower()
-    assert not result.staged_group_ids
-    assert not owner.snapshot(binding).staging_ownership
-    assert tracked.read_bytes() == worktree_before
-    assert index.read_bytes() == index_before
+        assert result.state == "error"
+        assert result.message == "Git index busy; retry"
+        assert not result.staged_group_ids
+        assert not owner.snapshot(binding).staging_ownership
+        assert tracked.read_bytes() == worktree_before
+        assert index.read_bytes() == index_before
+        assert index_lock.read_bytes() == lock_contents
+    finally:
+        await service.shutdown()
     assert index_lock.read_bytes() == lock_contents
 
 
@@ -1129,6 +1131,8 @@ async def test_configured_clean_filter_requires_trust_and_stage_preserves_worktr
     assert status.rows[0].stage_action == "stage"
     assert tracked.read_bytes() == worktree_before
 
+    sentinel.unlink(missing_ok=True)
+    assert not sentinel.exists()
     staged = await service.start_stage(binding, (1,))
 
     assert staged.state == "success"

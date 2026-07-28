@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -15,8 +16,10 @@ from textual.widgets import Button, Input, Label, ListView, Static, TextArea, Tr
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
 
 from tldw_chatbook.Notes.file_notes_git_service import (  # noqa: E402
+    FileNotesGitService,
     DiscoveryResult,
     GitActionResult,
+    GitCommandResult,
     GitMutationAdmissionError,
 )
 from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
@@ -223,6 +226,57 @@ class _FakeGitService:
                 admission.lease.release()
 
         return asyncio.create_task(finish())
+
+    def shutdown(self) -> None:
+        return
+
+
+class _PathspecRecordingRunner:
+    """Serve deterministic Git reads and retain real service command argv."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.calls: list[tuple[str | bytes, ...]] = []
+
+    async def run(
+        self,
+        argv: Sequence[str | bytes],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        del cwd, environment, stdin, timeout
+        command = tuple(argv)
+        self.calls.append(command)
+        text = tuple(os.fsdecode(argument) for argument in command)
+        if "--is-inside-work-tree" in text:
+            return GitCommandResult(0, b"true\n", b"")
+        if "--show-toplevel" in text:
+            return GitCommandResult(0, os.fsencode(self.root) + b"\n", b"")
+        if "--absolute-git-dir" in text or "--git-common-dir" in text:
+            return GitCommandResult(
+                0,
+                os.fsencode(self.root / ".git") + b"\n",
+                b"",
+            )
+        if "symbolic-ref" in text:
+            return GitCommandResult(0, b"refs/heads/main\n", b"")
+        if "rev-parse" in text:
+            return GitCommandResult(0, (b"a" * 40) + b"\n", b"")
+        if "config" in text:
+            return GitCommandResult(1, b"", b"")
+        if "ls-files" in text:
+            return GitCommandResult(0, b"", b"")
+        if "status" in text:
+            boundary = command.index("--")
+            payload = b"".join(
+                b"? " + os.fsencode(path) + b"\0"
+                for path in command[boundary + 1 :]
+            )
+            return GitCommandResult(0, payload, b"")
+        raise AssertionError(f"Unexpected Git command: {text!r}")
 
     def shutdown(self) -> None:
         return
@@ -727,6 +781,7 @@ async def test_thousand_unrelated_notes_send_only_three_session_groups_and_resto
     root = tmp_path / "notes"
     unrelated_root = root / "archive"
     unrelated_root.mkdir(parents=True)
+    (root / ".git").mkdir()
     for index in range(1_005):
         (unrelated_root / f"unrelated-{index:04d}.md").write_text(
             f"scale marker {index:04d}\n",
@@ -739,13 +794,17 @@ async def test_thousand_unrelated_notes_send_only_three_session_groups_and_resto
     binding = owner.select_root(root)
     for path in session_paths:
         assert owner.record_change(binding, SessionChange("modified", path))
-    rows = tuple(
-        _row("unstaged", group_id=group_id, stage_action="stage")
-        for group_id in range(1, 4)
+    runner = _PathspecRecordingRunner(root)
+    git_service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
     )
-    git_service = _FakeGitService(owner, rows)
     owner.attach_git_service(git_service)
-    assert owner.publish_trust(binding, git_service.repository)
+    discovery = await git_service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
     replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(
         root=root,
@@ -778,19 +837,28 @@ async def test_thousand_unrelated_notes_send_only_three_session_groups_and_resto
         entry.press()
         await _wait_until(
             pilot,
-            lambda: len(git_service.status_calls) == 1,
+            lambda: len(workspace._git_panel_widget.rows) == 3,
             "Session Git did not request the three session groups",
         )
-        handed_off_paths = tuple(
-            change.change.relative_path
-            for change in git_service.status_calls[0]
+        status_calls = tuple(
+            call
+            for call in runner.calls
+            if "status" in tuple(os.fsdecode(argument) for argument in call)
         )
-        assert handed_off_paths == session_paths
+        assert len(status_calls) == 1
+        status_argv = status_calls[0]
+        boundary = status_argv.index("--")
+        assert status_argv[boundary + 1 :] == tuple(
+            os.fsencode(path) for path in session_paths
+        )
         assert len(workspace._git_panel_widget.rows) == 3
         assert {
             row.group.current_path for row in workspace._git_panel_widget.rows
         } == set(session_paths)
-        assert all("unrelated-" not in path for path in handed_off_paths)
+        assert all(
+            b"unrelated-" not in os.fsencode(argument)
+            for argument in status_argv
+        )
 
         workspace.query_one("#file-notes-git-back", Button).press()
         await _wait_until(
@@ -807,7 +875,7 @@ async def test_thousand_unrelated_notes_send_only_three_session_groups_and_resto
         )
 
     await workspace.shutdown()
-    owner.shutdown()
+    await owner.shutdown_async()
     replica.close()
 
 
