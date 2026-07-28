@@ -239,9 +239,15 @@ class SpeechPlaygroundPane(SpeechSynthesisMixin, SpeechCatalogMixin, Vertical):
         self._sync_split_layout()
 
     def on_mount(self) -> None:
-        """Apply the split layout and record the provider options."""
+        """Apply the split layout, then load the catalog.
+
+        The catalog is what fills the axes. Without this call the pane
+        renders correct, empty selects -- controls with nothing to choose --
+        which looks like a finished screen and cannot synthesize anything.
+        """
         self._sync_split_layout()
         self._refresh_provider_ids()
+        self._load_provider_catalog(initialize=True)
 
     def _sync_split_layout(self) -> None:
         """Toggle the stacked class from the pane's measured width."""
