@@ -403,6 +403,26 @@
     border: none;
 }
 
+/* Tree node labels read as a list, so they align left (TASK-1091).
+ *
+ * Every node is a `Button`, and Textual centres a Button's label. With names
+ * of different lengths that puts each one at a different indent:
+ *
+ *     ▸     Daily  0
+ *     ▸  Security Watch  0
+ *
+ * The third Watchlists UAT read that leading gap as a stored leading space and
+ * filed it as a trimming bug. It is not — `WatchlistBundleService.create`/
+ * `rename` both strip before storing, and a whitespace-only name is already
+ * rejected (verified directly against the service). The cause is label
+ * centring, and left-alignment is the fix.
+ */
+.watchlist-tree .watchlist-tree-root,
+.watchlist-tree .watchlist-tree-watchlist,
+.watchlist-tree .watchlist-tree-source {
+    text-align: left;
+}
+
 /* Left-rail tree selection highlight (task-876).
  *
  * `WatchlistTree` rendered every node as a `compact=True` Button and never

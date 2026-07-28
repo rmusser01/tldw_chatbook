@@ -110,6 +110,25 @@ WC_SERVICE_ERROR_COPY = "Watchlists services unavailable; retry Watchlists later
 WC_SERVICE_UNAVAILABLE_COPY = "Watchlists services are unavailable in this runtime."
 WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
 
+
+def watchlist_delete_consequence(source_count: int) -> str:
+    """Explain what happens to a watchlist's sources when it is deleted.
+
+    Split out so the wording is testable without driving a modal. The noun was
+    already pluralised; the verb and pronoun were not, so a single-source
+    watchlist read "Its 1 source are not deleted. They stay in..." (TASK-1091).
+    """
+    if source_count == 1:
+        return (
+            "Its 1 source is not deleted. It stays in Watchlists and appears "
+            "under Unassigned unless it also belongs to another watchlist."
+        )
+    return (
+        f"Its {source_count} sources are not deleted. They stay in Watchlists "
+        "and appear under Unassigned unless they also belong to another "
+        "watchlist."
+    )
+
 # task-895. Watchlist bundles and their membership are a LOCAL concept: the
 # server API has no wire path for them at all -- `SourceUpdateRequest`
 # carries no `group_ids`, neither group request carries members, and all of
@@ -1784,15 +1803,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         name = self._watchlist_display_name(watchlist_id)
         source_count = len(service.list_source_rows(watchlist_id))
-        noun = "source" if source_count == 1 else "sources"
         confirmed = await self.app.push_screen_wait(
             ConfirmationDialog(
                 title="Delete watchlist",
                 message=(
                     f'Delete the watchlist "{escape_markup(name)}"?\n\n'
-                    f"Its {source_count} {noun} are not deleted. They stay in "
-                    "Watchlists and appear under Unassigned unless they also "
-                    "belong to another watchlist."
+                    + watchlist_delete_consequence(source_count)
                 ),
                 confirm_label="Delete watchlist",
                 cancel_label="Keep it",
