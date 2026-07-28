@@ -29,9 +29,10 @@ Observed on `origin/dev` @ `048e53cab`:
 The tests are Hypothesis `@given` properties with no `settings(...)` override anywhere in the file
 and no Hypothesis profile in `Tests/conftest.py`, so they run under the default 200 ms per-example
 deadline. `test_safe_paths_always_validate` does real filesystem work per example — a
-`TemporaryDirectory` plus up to five `mkdir` calls — which is exactly the kind of work that crosses
-200 ms when the machine is loaded. This repo routinely has 10+ concurrent pytest processes from
-parallel agents.
+`TemporaryDirectory` plus up to four `mkdir` calls (the strategy generates 1-5 components and the
+loop walks `components[:-1]`, since the last component is the file, not a directory) — which is
+exactly the kind of work that crosses 200 ms when the machine is loaded. This repo routinely has
+10+ concurrent pytest processes from parallel agents.
 
 **Why this is worth fixing rather than tolerating.** The failure is indistinguishable from a real
 regression at the moment it appears. Attributing this one instance cost five separate runs across

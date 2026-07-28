@@ -284,10 +284,12 @@ are cheaper than re-deriving the graph.
 **TASK-1260, 2026-07-28.** `test_safe_paths_always_validate` failed once inside a
 three-directory run, passed alone, passed on re-run, and passed on a clean
 baseline with the identical command. It is a Hypothesis `@given` property that
-creates a `TemporaryDirectory` and up to five directories per example, with no
-`settings(...)` override and no Hypothesis profile in `Tests/conftest.py` — so it
-runs under the default **200 ms per-example deadline**. On a machine with 10+
-concurrent pytest processes, filesystem work crosses that.
+creates a `TemporaryDirectory` and up to four directories per example (the
+strategy yields 1-5 components; the loop walks `components[:-1]`, the last being
+the file), with no `settings(...)` override and no Hypothesis profile in
+`Tests/conftest.py` — so it runs under the default **200 ms per-example
+deadline**. On a machine with 10+ concurrent pytest processes, filesystem work
+crosses that.
 
 **The cost is in attribution, not in the failure.** Establishing that it was not
 a regression took five runs across two worktrees: the identical command on a
