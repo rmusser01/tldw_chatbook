@@ -1,5 +1,5 @@
 ---
-id: TASK-1090
+id: TASK-1300
 title: >-
   Escape does not dismiss the watchlist dialogs — only clicking Cancel does
 status: To Do

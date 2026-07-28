@@ -25,7 +25,7 @@ invisibility — is now verified in the running app, not just in tests.
 
 ## Found
 
-- **task-1090 (high)** — `Escape` does not dismiss the dialogs; only clicking
+- **task-1300 (high)** — `Escape` does not dismiss the dialogs; only clicking
   `Cancel` does. A keyboard user cannot back out, and because the dialog is
   modal the app appears to ignore every subsequent click. This bit the UAT
   itself: a `Delete` click was silently swallowed by a still-open Rename dialog.
