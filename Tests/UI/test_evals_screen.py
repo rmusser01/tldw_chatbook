@@ -559,6 +559,40 @@ async def test_detail_empty_text_stays_generic_when_the_library_has_real_rows(
 
 
 @pytest.mark.asyncio
+async def test_selection_change_recompose_reads_tasks_once_for_the_empty_state_check(
+    evals_app, evals_db, monkeypatch
+):
+    """TASK-1076-QODO: ``_empty_detail_text()`` used to call
+    ``view_model.benches()`` and ``view_model.classic_tasks()`` back to
+    back on every selection-change recompose -- each independently
+    re-running ``EvalsDB.list_tasks(limit=500)`` -- on top of
+    ``LibraryRail``'s own two reads of the exact same table for the same
+    recompose (out of this fix's scope; it needs the full rows to render
+    rail sections, not just an emptiness check). Pins the fixed shape: the
+    rail still costs two ``list_tasks`` calls, but the detail pane's
+    emptiness check (now ``EvalsViewModel.library_is_empty()``) costs
+    exactly one more, not two -- three calls per recompose, never the old
+    four. A test that only checked the copy (see the two tests above)
+    would pass against the inefficient version just as well; this is the
+    assertion that actually protects the fix.
+    """
+    calls: list[int] = []
+    original_list_tasks = EvalsDB.list_tasks
+
+    def counting_list_tasks(self, *args, **kwargs):
+        calls.append(1)
+        return original_list_tasks(self, *args, **kwargs)
+
+    async with evals_app.run_test() as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(EvalsDB, "list_tasks", counting_list_tasks)
+        calls.clear()
+        evals_app.screen.select(kind="none", id=None)
+        await pilot.pause()
+        assert len(calls) == 3
+
+
+@pytest.mark.asyncio
 async def test_inspector_pane_widens_at_a_wide_terminal_instead_of_staying_fixed(
     evals_app, seeded_bench
 ):

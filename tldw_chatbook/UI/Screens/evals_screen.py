@@ -507,15 +507,16 @@ class EvalsScreen(LabScreen):
         common "none" case -- a user who deleted their selection, or
         clicked empty rail padding, while real rows still exist -- where
         the original sentence is still the correct instruction.
+
+        The emptiness check itself lives in
+        ``EvalsViewModel.library_is_empty()``, not inline here: this
+        method reruns on every selection change (``select()`` ->
+        ``refresh(recompose=True)``), so a single, minimal-read helper
+        matters more here than in a one-shot call site -- see that
+        method's docstring for why it costs one task read (not two) and a
+        1-row dataset existence check (not a 500-row page).
         """
-        vm = self._view_model
-        library_is_empty = (
-            not vm.benches()
-            and not vm.classic_tasks()
-            and not vm.datasets()
-            and not vm.run_groups()
-        )
-        if library_is_empty:
+        if self._view_model.library_is_empty():
             return (
                 "Nothing here yet. Create a sample bench in the library "
                 "rail to get started -- it builds a dataset and a run for "
