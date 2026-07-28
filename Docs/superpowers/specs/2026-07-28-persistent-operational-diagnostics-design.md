@@ -101,7 +101,7 @@ the only widening of the admitted surface in this design.
 
 ### 3. The event set
 
-Seven events, each tied to a failure this project has actually had. All fields already exist in
+Six events, each tied to a failure this project has actually had. All fields already exist in
 the schema apart from `component`.
 
 | Event | Component | Fields | Why |
@@ -109,7 +109,6 @@ the schema apart from `component`.
 | `app_started` | `app` | — | Anchors a session; its absence dates a crash. |
 | `app_stopping` | `app` | — | Distinguishes a clean exit from a kill. |
 | `persistent_sink_installed` | `logging` | `status` | Emitted immediately after install, so an empty file is unambiguous. |
-| `worker_started` | caller's | `operation` | Which background work began. |
 | `worker_failed` | caller's | `operation`, `exception_type` | The TASK-1210 class: a worker that dies leaves a trace. |
 | `scheduler_configured` | `scheduling` | `item_count`, `status` | Handlers registered, and whether queued work had none. |
 | `unhandled_exception` | caller's | `exception_type`, `error_category` | A crash names its type without its message. |
@@ -124,13 +123,20 @@ defined home, and the two that could have sprawled do not:
 | --- | --- |
 | `app_started`, `app_stopping` | `TldwCli.on_mount` / `on_unmount` |
 | `persistent_sink_installed` | `Logging_Config._configure_private_file_logging`, after `addHandler` |
-| `worker_started`, `worker_failed` | `TldwCli.on_worker_state_changed` — **one existing hook** that already sees every worker transition; `WorkerState.ERROR` carries the exception on `event.worker.error` |
+| `worker_failed` | `TldwCli.on_worker_state_changed` — **one existing hook** that already sees every worker transition; `WorkerState.ERROR` carries the exception on `event.worker.error` |
 | `scheduler_configured` | `SchedulerLoop.report_configuration` (added in TASK-1212) |
 | `unhandled_exception` | `App._handle_exception` override |
 
-The worker pair is the load-bearing one: without a central hook it would have meant editing every
+`worker_failed` is the load-bearing one: without a central hook it would have meant editing every
 `run_worker` call site, which is the kind of sprawl that made this area expensive in the first
 place.
+
+**Why there is no `worker_started`.** An earlier draft had one. The app has 398 `run_worker` call
+sites and 118 `@work` decorators, and `on_worker_state_changed` fires on every transition — so a
+start event would emit a line per worker, including keystroke-triggered searches and periodic
+timers. Since these records also reach the terminal and the Logs screen, that is volume in three
+places at once, for a signal that says only "something began". Failures are rare and diagnostic;
+starts are neither. Dropped.
 
 Deliberately excluded for now: provider/model call outcomes (they serve the unrealized
 support-bundle goal), and an app `version` field (would need an eighth schema field; add it with
@@ -177,6 +183,9 @@ fixed.
 
 ## Risks
 
+- **Volume.** Six events per session is negligible. That holds only while the set stays failure-
+  shaped; any future event that fires per-operation needs the same volume check `worker_started`
+  failed.
 - **The allowlist rots.** Seven events could drift out of date as the app changes. The non-empty
   guard catches total regression but not staleness; that is accepted, because the alternative
   (an automatic adapter) trades the guarantee for coverage and was rejected.
