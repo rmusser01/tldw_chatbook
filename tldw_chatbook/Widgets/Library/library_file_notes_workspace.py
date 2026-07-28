@@ -238,6 +238,19 @@ class LibraryFileNotesWorkspace(Vertical):
         width: 1fr;
     }
 
+    LibraryFileNotesWorkspace.-stack-editor-actions
+    .file-notes-toolbar.-confirm-delete {
+        grid-size: 4;
+        grid-columns: 1fr 1fr 1fr 1fr;
+        grid-rows: 1 1;
+        height: 2;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions
+    #file-notes-delete.-confirm-delete {
+        column-span: 2;
+    }
+
     LibraryFileNotesWorkspace.-stack-editor-actions #file-notes-editor {
         min-height: 3;
     }
@@ -982,6 +995,18 @@ class LibraryFileNotesWorkspace(Vertical):
             return
         self._editor_action_layout_sync_scheduled = True
         self.call_after_refresh(self._sync_editor_action_layout)
+
+    def _set_delete_confirmation(self, relative_path: str = "") -> None:
+        """Project one confirmation state into its copy and narrow layout."""
+        confirmed = bool(relative_path)
+        self._delete_confirmation_path = relative_path
+        delete = self.query_one("#file-notes-delete", Button)
+        delete.label = "Confirm delete" if confirmed else "Delete"
+        delete.set_class(confirmed, "-confirm-delete")
+        toolbar = delete.parent
+        if toolbar is not None:
+            toolbar.set_class(confirmed, "-confirm-delete")
+        self._schedule_editor_action_layout()
 
     def _sync_editor_action_layout(self) -> None:
         """Stack current editor actions only when their labels need the space."""
@@ -1743,14 +1768,13 @@ class LibraryFileNotesWorkspace(Vertical):
         self._current_path = opened.relative_path
         self._selected_deleted_path = ""
         self._session_key = uuid4().hex
-        self._delete_confirmation_path = ""
+        self._set_delete_confirmation()
         editor = self.query_one("#file-notes-editor", TextArea)
         with editor.prevent(TextArea.Changed):
             editor.load_text(opened.body)
         editor.read_only = not opened.editable
         self.query_one("#file-notes-path", Input).value = opened.relative_path
         self.query_one("#file-notes-breadcrumb", Static).update(opened.relative_path)
-        self.query_one("#file-notes-delete", Button).label = "Delete"
         if opened.editable:
             self._set_save_state("saved")
         else:
@@ -1782,7 +1806,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if not keep_restore_path:
             self.query_one("#file-notes-path", Input).value = ""
             self.query_one("#file-notes-breadcrumb", Static).update("No file selected")
-        self.query_one("#file-notes-delete", Button).label = "Delete"
+        self._set_delete_confirmation()
         self._set_save_state("idle")
         self._update_controls()
 
@@ -2087,8 +2111,7 @@ class LibraryFileNotesWorkspace(Vertical):
             or not self._opened.editable
         ):
             return
-        self._delete_confirmation_path = ""
-        self.query_one("#file-notes-delete", Button).label = "Delete"
+        self._set_delete_confirmation()
         self._set_save_state("dirty")
         self._arm_autosave()
 
@@ -2188,6 +2211,7 @@ class LibraryFileNotesWorkspace(Vertical):
     @on(Button.Pressed, "#file-notes-session-changes")
     def _session_git_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        entry_owned_focus = event.button.has_focus
         if self._navigator_mode != "git":
             self._navigator_mode_before_git = (
                 "search"
@@ -2196,6 +2220,11 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         self._navigator_mode = "git"
         self._sync_navigator_mode()
+        if entry_owned_focus:
+            self.screen.set_focus(
+                self.query_one("#file-notes-git-back", Button),
+                scroll_visible=False,
+            )
         self.call_after_refresh(self._focus_session_git_panel)
         self.run_worker(
             self._open_session_git(),
@@ -2212,19 +2241,34 @@ class LibraryFileNotesWorkspace(Vertical):
             or self._navigator_mode != "git"
         ):
             return
+        entry = self.query_one("#file-notes-session-changes", Button)
+        back = self.query_one("#file-notes-git-back", Button)
+        focused = self.app.focused
+        if not (
+            focused is entry
+            or focused is back
+            or (
+                focused is not None
+                and (
+                    focused is self._git_panel_widget
+                    or self._git_panel_widget in focused.ancestors
+                )
+            )
+        ):
+            return
         rows = self.query_one("#file-notes-git-rows", ListView)
         if self._git_panel_widget.rows:
             if rows.display:
-                rows.focus()
+                self.screen.set_focus(rows, scroll_visible=False)
             elif retries_remaining:
                 self.call_after_refresh(
                     self._focus_session_git_panel,
                     retries_remaining - 1,
                 )
             else:
-                self.query_one("#file-notes-git-back", Button).focus()
+                self.screen.set_focus(back, scroll_visible=False)
             return
-        self.query_one("#file-notes-git-back", Button).focus()
+        self.screen.set_focus(back, scroll_visible=False)
 
     @on(LibraryFileNotesGitPanel.BackRequested)
     def _session_git_back(
@@ -2541,6 +2585,17 @@ class LibraryFileNotesWorkspace(Vertical):
                 if part
             )
 
+        if result.state == "blocked" and not affected and clean and not blocked:
+            return " ".join(
+                part
+                for part in (
+                    message,
+                    counts_text,
+                    "No eligible note changes remain; Refresh status.",
+                )
+                if part
+            )
+
         fallback = {
             "blocked": f"{result.action.title()} was blocked.",
             "stale": f"{result.action.title()} status became stale.",
@@ -2627,8 +2682,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._service is None or opened is None:
             return
         if self._delete_confirmation_path != opened.relative_path:
-            self._delete_confirmation_path = opened.relative_path
-            event.button.label = "Confirm delete"
+            self._set_delete_confirmation(opened.relative_path)
             self._set_action_status("Click Delete again to confirm.")
             return
         if not await self.flush_pending_work():

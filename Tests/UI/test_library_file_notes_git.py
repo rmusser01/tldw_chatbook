@@ -479,19 +479,22 @@ async def _wait_until(
     raise AssertionError(message)
 
 
-async def _settle_current_git_row_render(
+async def _wait_for_current_git_row_projection(
     workspace: LibraryFileNotesWorkspace,
 ) -> None:
-    """Await the current non-cancelled panel row replacement, if any."""
-    row_workers = tuple(
-        worker
-        for worker in workspace.app.workers
-        if worker.node is workspace._git_panel_widget
-        and worker.group == "file-notes-git-render-rows"
-        and not worker.is_cancelled
+    """Wait until the panel model and mounted row projection agree."""
+    panel = workspace._git_panel_widget
+    row_list = panel.query_one("#file-notes-git-rows", ListView)
+    for _ in range(200):
+        mounted_count = len(panel.query(".file-notes-git-row"))
+        if mounted_count == len(panel.rows) and row_list.display is bool(panel.rows):
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(
+        "Git row projection did not settle: "
+        f"model={len(panel.rows)}, mounted={mounted_count}, "
+        f"display={row_list.display}"
     )
-    if row_workers:
-        await workspace.app.workers.wait_for_complete(row_workers)
 
 
 async def _open_git_and_stage_one(
@@ -523,7 +526,24 @@ async def _open_git_and_stage_one(
     status_worker = workspace._git_status_worker
     if status_worker is not None:
         await status_worker.wait()
-    await _settle_current_git_row_render(workspace)
+    await _wait_for_current_git_row_projection(workspace)
+
+
+def _assert_visible_editor_actions_fit(
+    workspace: LibraryFileNotesWorkspace,
+) -> None:
+    """Assert visible editor actions keep complete labels inside their pane."""
+    pane = workspace.query_one("#file-notes-editor-pane")
+    visible_actions = tuple(button for button in pane.query(Button) if button.display)
+    assert visible_actions
+    for button in visible_actions:
+        label = str(button.label)
+        assert button.render().plain == label
+        assert cell_len(label) <= button.content_region.width
+        assert button.region.x >= pane.region.x
+        assert button.region.right <= pane.region.right
+        assert button.region.y >= pane.region.y
+        assert button.region.bottom <= pane.region.bottom
 
 
 async def _assert_visible_panel_buttons_fit(panel, pilot) -> None:
@@ -2112,16 +2132,14 @@ async def test_session_change_invalidates_last_action_before_refresh(
             finally:
                 scheduled_refresh = workspace._git_refresh_timer
                 if scheduled_refresh is not None:
-                    scheduled_task = scheduled_refresh._task
                     scheduled_refresh.stop()
-                    if scheduled_task is not None:
-                        await asyncio.gather(
-                            scheduled_task,
-                            return_exceptions=True,
-                        )
                     workspace._git_refresh_timer = None
                 release.set()
-                await _settle_current_git_row_render(workspace)
+                await pilot.pause()
+                status_worker = workspace._git_status_worker
+                if status_worker is not None:
+                    await status_worker.wait()
+                await _wait_for_current_git_row_projection(workspace)
     finally:
         await workspace.shutdown()
         owner.shutdown()
@@ -2159,7 +2177,7 @@ async def test_selected_root_change_clears_rows_and_last_action(
             Static,
         ).display
         assert workspace._git_last_action is None
-        await _settle_current_git_row_render(workspace)
+        await _wait_for_current_git_row_projection(workspace)
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
@@ -2204,7 +2222,7 @@ async def test_repository_retrust_clears_old_rows_and_action_before_prompt(
             Static,
         ).display
         assert workspace._git_last_action is None
-        await _settle_current_git_row_render(workspace)
+        await _wait_for_current_git_row_projection(workspace)
         await pilot.press("escape")
     await workspace.shutdown()
     owner.shutdown()
@@ -2665,6 +2683,16 @@ def test_action_summary_contract_matrix(tmp_path: Path) -> None:
                 stage_context,
                 "Service supplied detail. Counts: clean 1; blocked 1. "
                 "Resolve the reported Git state outside Chatbook, then Refresh.",
+            ),
+            (
+                GitActionResult(
+                    "stage",
+                    "blocked",
+                    (1,),
+                    clean_group_ids=(1,),
+                ),
+                stage_context,
+                "Counts: clean 1. No eligible note changes remain; Refresh status.",
             ),
             (
                 GitActionResult("stage", "stale", (1,)),
@@ -3142,7 +3170,14 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
         assert len(toolbars) == 2
         assert all(toolbar.display for toolbar in toolbars)
 
-        workspace.query_one("#file-notes-session-changes", Button).press()
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        entry.focus()
+        await _wait_until(
+            pilot,
+            lambda: entry.has_focus,
+            "Prepare session entry did not receive focus",
+        )
+        entry.press()
         await _wait_until(
             pilot,
             lambda: len(git_service.status_calls) == 1
@@ -3150,7 +3185,7 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
             and all(not toolbar.display for toolbar in toolbars),
             "Prepare session did not quiet both editor toolbars",
         )
-        await _settle_current_git_row_render(workspace)
+        await _wait_for_current_git_row_projection(workspace)
         await pilot.pause()
         git_back = workspace.query_one("#file-notes-git-back", Button)
         git_rows = workspace.query_one("#file-notes-git-rows", ListView)
@@ -3193,6 +3228,122 @@ async def test_wide_prepare_session_quiets_and_restores_editor_toolbars_without_
 
 
 @pytest.mark.asyncio
+async def test_deferred_git_row_focus_does_not_steal_retained_editor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _root, owner, _binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    panel = workspace._git_panel_widget
+    render_rows = panel._render_rows
+    render_started = asyncio.Event()
+    release_rows = asyncio.Event()
+
+    async def blocked_render_rows(generation, group_id, rows) -> None:
+        render_started.set()
+        await release_rows.wait()
+        await render_rows(generation, group_id, rows)
+
+    monkeypatch.setattr(panel, "_render_rows", blocked_render_rows)
+    try:
+        async with _WorkspaceHarness(workspace).run_test(size=(150, 42)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: workspace.initialized,
+                "scan did not finish",
+            )
+            assert await workspace.open_path("folder/one.md")
+            editor = workspace.query_one("#file-notes-editor", TextArea)
+            original_body = editor.text
+            entry = workspace.query_one("#file-notes-session-changes", Button)
+            entry.focus()
+            await _wait_until(
+                pilot,
+                lambda: entry.has_focus,
+                "Prepare session entry did not receive focus",
+            )
+            entry.press()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    render_started.is_set()
+                    and len(git_service.status_calls) == 1
+                    and len(panel.rows) == 2
+                ),
+                "Git row replacement did not enter its pending state",
+            )
+
+            workspace.query_one("#file-notes-git-back", Button).focus()
+            workspace._focus_session_git_panel(retries_remaining=1)
+            assert not editor.read_only
+            editor.focus()
+            release_rows.set()
+            await _wait_for_current_git_row_projection(workspace)
+            await pilot.pause()
+
+            assert editor.has_focus, repr(workspace.app.focused)
+            await pilot.press("x")
+            await _wait_until(
+                pilot,
+                lambda: workspace.save_state == "dirty",
+                "typing after the Git focus retry did not retain the draft",
+            )
+            assert editor.text != original_body
+            assert editor.has_focus
+    finally:
+        release_rows.set()
+        await workspace.shutdown()
+        owner.shutdown()
+        replica.close()
+
+
+@pytest.mark.asyncio
+async def test_narrow_delete_confirmation_keeps_complete_action_labels(
+    tmp_path: Path,
+) -> None:
+    _root, owner, _binding, replica, _git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    async with _WorkspaceHarness(workspace).run_test(size=(40, 20)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("folder/one.md")
+        await _wait_until(
+            pilot,
+            lambda: workspace.has_class("-stack-editor-actions"),
+            "narrow editor actions did not switch to the three-column grid",
+        )
+        delete = workspace.query_one("#file-notes-delete", Button)
+        delete.press()
+        await _wait_until(
+            pilot,
+            lambda: workspace._delete_confirmation_path == "folder/one.md",
+            "Delete did not enter its confirmation state",
+        )
+        await pilot.pause()
+
+        assert str(delete.label) == "Confirm delete"
+        assert delete.has_class("-confirm-delete")
+        assert delete.styles.column_span == 2
+        _assert_visible_editor_actions_fit(workspace)
+
+        editor = workspace.query_one("#file-notes-editor", TextArea)
+        editor.focus()
+        await pilot.press("x")
+        await _wait_until(
+            pilot,
+            lambda: str(delete.label) == "Delete",
+            "editing did not leave Delete confirmation",
+        )
+        await pilot.pause()
+        assert not delete.has_class("-confirm-delete")
+        _assert_visible_editor_actions_fit(workspace)
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_narrow_editor_actions_keep_complete_labels_at_40_by_20(
     tmp_path: Path,
 ) -> None:
@@ -3207,25 +3358,7 @@ async def test_narrow_editor_actions_keep_complete_labels_at_40_by_20(
             lambda: workspace.has_class("-stack-editor-actions"),
             "narrow editor actions did not switch to the three-column grid",
         )
-        pane = workspace.query_one("#file-notes-editor-pane")
-
-        def assert_editor_actions_fit() -> None:
-            visible_actions = tuple(
-                button
-                for button in pane.query(Button)
-                if button.display
-            )
-            assert visible_actions
-            for button in visible_actions:
-                label = str(button.label)
-                assert button.render().plain == label
-                assert cell_len(label) <= button.content_region.width
-                assert button.region.x >= pane.region.x
-                assert button.region.right <= pane.region.right
-                assert button.region.y >= pane.region.y
-                assert button.region.bottom <= pane.region.bottom
-
-        assert_editor_actions_fit()
+        _assert_visible_editor_actions_fit(workspace)
         protect = workspace.query_one("#file-notes-protect", Button)
         assert str(protect.label) == "Protect"
         protect.press()
@@ -3236,7 +3369,7 @@ async def test_narrow_editor_actions_keep_complete_labels_at_40_by_20(
         )
         await pilot.pause()
         assert workspace.has_class("-stack-editor-actions")
-        assert_editor_actions_fit()
+        _assert_visible_editor_actions_fit(workspace)
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
