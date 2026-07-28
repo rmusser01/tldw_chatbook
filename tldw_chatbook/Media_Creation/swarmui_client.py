@@ -33,14 +33,40 @@ def _require_aiohttp():
             initialize()` catches this and reports the service unavailable,
             so SwarmUI image generation degrades instead of blocking startup.
     """
-    try:
-        import aiohttp
-    except ImportError as exc:
+    aiohttp = _safe_import_aiohttp()
+    if aiohttp is None:
         raise ImportError(
             "SwarmUI image generation requires the optional 'aiohttp' package. "
             "Install it with: pip install 'tldw_chatbook[websearch]'"
-        ) from exc
+        )
     return aiohttp
+
+
+def _safe_import_aiohttp():
+    """Import aiohttp through the shared optional-dependency helper.
+
+    Routes through ``Utils/optional_deps.get_safe_import`` rather than a
+    bare ``import aiohttp`` so the result is registered centrally in
+    ``DEPENDENCIES_AVAILABLE`` (per CLAUDE.md: "check with optional_deps.py
+    before importing"). The helper is imported lazily here to keep this
+    module's own import cost unchanged.
+
+    Note the deliberate ``feature_name`` choice: the default keys the result
+    as ``"aiohttp"``, which is the existing entry in ``DEPENDENCIES_AVAILABLE``.
+    Passing ``"websearch"`` -- the extra that actually ships aiohttp -- would
+    be wrong, because ``check_websearch_deps()`` owns that key and derives it
+    from lxml/bs4/trafilatura/langdetect; clobbering it from here would report
+    web search as available on an aiohttp-only install. The correct extra is
+    named in `_require_aiohttp()`'s error message instead, since
+    `require_dependency()`'s generated hint (``[aiohttp]``) is not a real
+    extra.
+
+    Returns:
+        The ``aiohttp`` module, or ``None`` when it is not installed.
+    """
+    from ..Utils.optional_deps import get_safe_import
+
+    return get_safe_import("aiohttp")
 
 
 def _client_error_types() -> tuple:
@@ -57,9 +83,8 @@ def _client_error_types() -> tuple:
     Returns:
         ``(aiohttp.ClientError,)``, or ``()`` when aiohttp is not installed.
     """
-    try:
-        import aiohttp
-    except ImportError:
+    aiohttp = _safe_import_aiohttp()
+    if aiohttp is None:
         return ()
     return (aiohttp.ClientError,)
 

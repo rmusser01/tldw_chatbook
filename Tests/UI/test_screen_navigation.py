@@ -1739,7 +1739,13 @@ def test_no_route_reaches_the_retired_ingest_screen():
 
 
 def test_screen_load_error_reports_underlying_import_failure(monkeypatch):
-    """`screen_load_error()` must return the exception blocking a route's load."""
+    """`screen_load_error()` must return the exception blocking a route's load.
+
+    Args:
+        monkeypatch: pytest fixture; points the chat route at a module that
+            does not exist, so the load fails the way a missing dependency
+            deep in the import chain does.
+    """
     from tldw_chatbook.UI.Navigation import screen_registry
 
     route = screen_registry._SCREEN_ROUTES["chat"]
@@ -1768,6 +1774,11 @@ def test_screen_load_error_reports_missing_optional_dependency(monkeypatch):
     The gate short-circuits before the import is attempted, so there is no
     exception to surface -- but the caller still needs a reason, otherwise the
     fatal startup message stays as uninformative as the bug this guards.
+
+    Args:
+        monkeypatch: pytest fixture; gates the chat route on a dependency
+            check name that `optional_deps` does not define, so
+            `dependencies_available()` reports False.
     """
     from tldw_chatbook.UI.Navigation import screen_registry
 
@@ -1801,6 +1812,11 @@ def test_push_initial_screen_fatal_error_names_the_underlying_cause(monkeypatch)
     repo-root pytest.ini, so a sweep spanning Tests/UI *and* other
     directories resolves a different rootdir/config and would not collect
     this as an async test.
+
+    Args:
+        monkeypatch: pytest fixture; points the chat route at a module that
+            does not exist, making the default screen unresolvable so the
+            fatal branch is reached.
     """
     from tldw_chatbook.UI.Navigation import screen_registry
 
