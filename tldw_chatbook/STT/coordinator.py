@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from threading import RLock
 from typing import NoReturn
 
 from .contracts import (
@@ -33,6 +34,79 @@ from .registry import (
     RuntimeObservation,
 )
 from .routing import RoutingResolutionError, TranscriptionRouter
+
+
+class _AdapterProgressGate:
+    """Forward only monotonic in-phase adapter progress with request identity."""
+
+    __slots__ = (
+        "_active",
+        "_coordinator",
+        "_delivery_lock",
+        "_failure",
+        "_last_fraction",
+        "_request",
+        "_resolved",
+    )
+
+    def __init__(
+        self,
+        coordinator: TranscriptionCoordinator,
+        request: TranscriptionRequest,
+        resolved: ResolvedTranscriptionRequest,
+    ) -> None:
+        self._coordinator = coordinator
+        self._request = request
+        self._resolved = resolved
+        self._active = True
+        self._delivery_lock = RLock()
+        self._last_fraction: float | None = None
+        self._failure: TranscriptionCoordinatorError | None = None
+
+    def __call__(self, event: TranscriptionProgress) -> None:
+        with self._delivery_lock:
+            if (
+                not self._active
+                or type(event) is not TranscriptionProgress
+                or event.phase is not TranscriptionPhase.TRANSCRIBING
+                or (
+                    event.fraction is not None
+                    and self._last_fraction is not None
+                    and event.fraction < self._last_fraction
+                )
+            ):
+                return
+            if event.fraction is not None:
+                self._last_fraction = event.fraction
+            forwarded = TranscriptionProgress(
+                attempt_id=self._request.attempt_id,
+                batch_id=self._request.batch_id,
+                job_id=self._request.job_id,
+                phase=TranscriptionPhase.TRANSCRIBING,
+                fraction=event.fraction,
+                detail_code=event.detail_code,
+            )
+            try:
+                self._coordinator._deliver_progress(
+                    self._request,
+                    forwarded,
+                    resolved=self._resolved,
+                )
+            except TranscriptionCoordinatorError as error:
+                self._failure = error
+                raise
+
+    def close(self) -> None:
+        """Stop retained adapter callbacks from reaching the caller."""
+
+        with self._delivery_lock:
+            self._active = False
+
+    def raise_if_failed(self) -> None:
+        """Preserve callback failure even if an adapter swallowed it."""
+
+        if self._failure is not None:
+            raise self._failure
 
 
 def device_retry_policy_for_failure(
@@ -165,7 +239,11 @@ class TranscriptionCoordinator:
             raise TypeError("resolved must be a ResolvedTranscriptionRequest")
         self._validate_resolved_declaration(resolved)
         request = resolved.request
-        self._check_cancelled(request, phase=TranscriptionPhase.LOADING)
+        self._check_cancelled(
+            request,
+            phase=TranscriptionPhase.LOADING,
+            resolved=resolved,
+        )
 
         model = self.registry.model(resolved.provider_id, resolved.model_id)
         if model is None:
@@ -201,6 +279,11 @@ class TranscriptionCoordinator:
                 phase=TranscriptionPhase.LOADING,
                 resolved=resolved,
             )
+        self._check_cancelled(
+            request,
+            phase=TranscriptionPhase.LOADING,
+            resolved=resolved,
+        )
         try:
             validated = self.registry.validate_observation(model, observation)
         except (RuntimeCapabilityError, TypeError, ValueError):
@@ -284,9 +367,20 @@ class TranscriptionCoordinator:
             TranscriptionPhase.TRANSCRIBING,
             resolved=resolved,
         )
+        progress_gate: _AdapterProgressGate | None = None
+        adapter_request = resolved
+        if request.progress is not None:
+            progress_gate = _AdapterProgressGate(self, request, resolved)
+            adapter_request = replace(
+                resolved,
+                request=replace(request, progress=progress_gate),
+            )
         try:
-            output = adapter.transcribe(resolved)
+            output = adapter.transcribe(adapter_request)
         except Exception:
+            if progress_gate is not None:
+                progress_gate.close()
+                progress_gate.raise_if_failed()
             self._check_cancelled(
                 request,
                 phase=TranscriptionPhase.TRANSCRIBING,
@@ -298,6 +392,9 @@ class TranscriptionCoordinator:
                 phase=TranscriptionPhase.TRANSCRIBING,
                 resolved=resolved,
             )
+        if progress_gate is not None:
+            progress_gate.close()
+            progress_gate.raise_if_failed()
         self._check_cancelled(
             request,
             phase=TranscriptionPhase.TRANSCRIBING,
@@ -692,13 +789,30 @@ class TranscriptionCoordinator:
             job_id=request.job_id,
             phase=phase,
         )
+        self._deliver_progress(
+            request,
+            event,
+            resolved=resolved,
+            effective_device=effective_device,
+        )
+
+    def _deliver_progress(
+        self,
+        request: TranscriptionRequest,
+        event: TranscriptionProgress,
+        *,
+        resolved: ResolvedTranscriptionRequest | None,
+        effective_device: ExecutionDevice | None = None,
+    ) -> None:
+        if request.progress is None:
+            return
         try:
             request.progress(event)
         except Exception:
             self._raise_failure(
                 request,
                 TranscriptionFailureCode.INFERENCE_FAILED,
-                phase=phase,
+                phase=event.phase,
                 resolved=resolved,
                 effective_device=effective_device,
             )

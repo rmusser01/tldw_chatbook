@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
+from threading import Event, Thread
 from typing import Callable
 
 import pytest
@@ -583,6 +584,42 @@ def test_cancellation_set_during_successful_probe_discards_observation() -> None
     assert adapter.transcribe_calls == []
 
 
+@pytest.mark.parametrize("probe_result", ["unavailable", "incompatible"])
+def test_cancellation_during_probe_wins_over_probe_result_classification(
+    probe_result: str,
+) -> None:
+    cancelled = False
+    token = _Token(lambda _: cancelled)
+    model = _model()
+
+    def cancelled_probe(model_id: str) -> RuntimeObservation:
+        nonlocal cancelled
+        cancelled = True
+        if probe_result == "unavailable":
+            return RuntimeObservation(
+                provider_id=model.provider_id,
+                model_id=model_id,
+                available=False,
+                capabilities=None,
+            )
+        return RuntimeObservation(
+            provider_id="incompatible-provider",
+            model_id=model_id,
+            available=True,
+            capabilities=model.capabilities,
+        )
+
+    adapter = _Adapter(_provider(), (model,), observation=cancelled_probe)
+    coordinator, _ = _coordinator(model=model, adapter=adapter)
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        coordinator.preflight(coordinator.resolve(_request(cancellation=token)))
+
+    _assert_failure(caught, TranscriptionFailureCode.CANCELLED)
+    assert adapter.probe_calls == ["model-a"]
+    assert adapter.transcribe_calls == []
+
+
 @pytest.mark.parametrize(
     "observation",
     [
@@ -709,6 +746,36 @@ def test_cancellation_before_probe_never_calls_the_adapter() -> None:
     assert adapter.transcribe_calls == []
 
 
+def test_cancellation_before_probe_preserves_exact_resolved_identity() -> None:
+    token = _Token(lambda _: True)
+    registry = build_builtin_registry(POLICY)
+    coordinator = TranscriptionCoordinator(
+        registry,
+        TranscriptionRouter(POLICY),
+        PipelineCapabilities(),
+    )
+    request = TranscriptionRequest(
+        attempt_id="attempt-resolved-cancel",
+        source=BufferAudioSource(b"\x00\x00", 16_000),
+        language="en",
+        device=ExecutionDevice.CPU,
+        timestamps=TimestampGranularity.NONE,
+        cancellation=token,
+    )
+    resolved = coordinator.resolve(request)
+
+    with pytest.raises(TranscriptionCoordinatorError) as caught:
+        coordinator.preflight(resolved)
+
+    failure = caught.value.failure
+    assert failure.code is TranscriptionFailureCode.CANCELLED
+    assert failure.provider_id == POLICY.parakeet_provider_id
+    assert failure.model_id == POLICY.parakeet_v2_model_id
+    assert failure.precision == "int8"
+    assert failure.requested_device is ExecutionDevice.CPU
+    assert failure.effective_device is None
+
+
 def test_cancellation_immediately_before_execution_never_calls_transcribe() -> None:
     token = _Token(lambda call: call >= 4)
     coordinator, adapter = _coordinator()
@@ -759,6 +826,170 @@ def test_success_normalizes_provenance_warnings_and_progress_without_percentages
     ]
     assert all(event.fraction is None for event in events)
     assert all(event.detail_code is None for event in events)
+
+
+def test_adapter_progress_is_wrapped_and_cannot_break_coordinator_ordering() -> None:
+    events: list[TranscriptionProgress] = []
+    raw_sink = events.append
+    adapter_sinks: list[object] = []
+
+    def malicious_progress(
+        request: ResolvedTranscriptionRequest,
+    ) -> ProviderTranscriptionOutput:
+        sink = request.request.progress
+        assert sink is not None
+        adapter_sinks.append(sink)
+        sink(
+            TranscriptionProgress(
+                attempt_id="malicious-attempt",
+                batch_id="malicious-batch",
+                job_id="malicious-job",
+                phase=TranscriptionPhase.COMPLETE,
+                fraction=0.5,
+            )
+        )
+        sink(
+            TranscriptionProgress(
+                attempt_id="malicious-attempt",
+                batch_id=None,
+                job_id=None,
+                phase=TranscriptionPhase.TRANSCRIBING,
+                fraction=0.7,
+                detail_code="decode.segment-7",
+            )
+        )
+        sink(
+            TranscriptionProgress(
+                attempt_id="malicious-attempt",
+                batch_id=None,
+                job_id=None,
+                phase=TranscriptionPhase.TRANSCRIBING,
+                fraction=0.2,
+            )
+        )
+        sink(
+            TranscriptionProgress(
+                attempt_id="malicious-attempt",
+                batch_id=None,
+                job_id=None,
+                phase=TranscriptionPhase.QUEUED,
+                fraction=0.9,
+            )
+        )
+        return _output(
+            effective_language=request.effective_language,
+            produced_capabilities=ProducedCapabilities(
+                timestamps=request.request.timestamps,
+                punctuation=True,
+                capitalization=True,
+                vad=request.request.vad,
+                diarization=request.request.diarization,
+            ),
+        )
+
+    adapter = _Adapter(_provider(), (_model(),), output=malicious_progress)
+    coordinator, _ = _coordinator(adapter=adapter)
+
+    result = coordinator.transcribe(_request(progress=raw_sink))
+
+    assert result.text == "hello"
+    assert adapter_sinks and adapter_sinks[0] is not raw_sink
+    assert [event.phase for event in events] == [
+        TranscriptionPhase.QUEUED,
+        TranscriptionPhase.LOADING,
+        TranscriptionPhase.TRANSCRIBING,
+        TranscriptionPhase.TRANSCRIBING,
+        TranscriptionPhase.POST_PROCESSING,
+        TranscriptionPhase.COMPLETE,
+    ]
+    assert [event.fraction for event in events] == [
+        None,
+        None,
+        None,
+        0.7,
+        None,
+        None,
+    ]
+    forwarded = events[3]
+    assert forwarded.attempt_id == "attempt-1"
+    assert forwarded.batch_id == "batch-1"
+    assert forwarded.job_id == "job-1"
+    assert forwarded.detail_code == "decode.segment-7"
+
+
+def test_adapter_progress_close_waits_for_in_flight_delivery() -> None:
+    events: list[TranscriptionProgress] = []
+    delivery_started = Event()
+    release_delivery = Event()
+    transcription_finished = Event()
+    callback_threads: list[Thread] = []
+    result_holder: list[object] = []
+
+    def blocking_sink(event: TranscriptionProgress) -> None:
+        if event.phase is TranscriptionPhase.TRANSCRIBING and event.fraction == 0.5:
+            delivery_started.set()
+            assert release_delivery.wait(timeout=2)
+        events.append(event)
+
+    def retained_progress(
+        request: ResolvedTranscriptionRequest,
+    ) -> ProviderTranscriptionOutput:
+        sink = request.request.progress
+        assert sink is not None
+        callback = Thread(
+            target=sink,
+            args=(
+                TranscriptionProgress(
+                    attempt_id="retained-attempt",
+                    batch_id=None,
+                    job_id=None,
+                    phase=TranscriptionPhase.TRANSCRIBING,
+                    fraction=0.5,
+                ),
+            ),
+            daemon=True,
+        )
+        callback_threads.append(callback)
+        callback.start()
+        assert delivery_started.wait(timeout=2)
+        return _output(
+            effective_language=request.effective_language,
+            produced_capabilities=ProducedCapabilities(
+                timestamps=request.request.timestamps,
+                punctuation=True,
+                capitalization=True,
+                vad=request.request.vad,
+                diarization=request.request.diarization,
+            ),
+        )
+
+    adapter = _Adapter(_provider(), (_model(),), output=retained_progress)
+    coordinator, _ = _coordinator(adapter=adapter)
+
+    def run_transcription() -> None:
+        result_holder.append(coordinator.transcribe(_request(progress=blocking_sink)))
+        transcription_finished.set()
+
+    transcription = Thread(target=run_transcription, daemon=True)
+    transcription.start()
+    assert delivery_started.wait(timeout=2)
+    transcription_finished.wait(timeout=0.2)
+    release_delivery.set()
+    transcription.join(timeout=2)
+    for callback in callback_threads:
+        callback.join(timeout=2)
+
+    assert not transcription.is_alive()
+    assert result_holder
+    assert [event.phase for event in events] == [
+        TranscriptionPhase.QUEUED,
+        TranscriptionPhase.LOADING,
+        TranscriptionPhase.TRANSCRIBING,
+        TranscriptionPhase.TRANSCRIBING,
+        TranscriptionPhase.POST_PROCESSING,
+        TranscriptionPhase.COMPLETE,
+    ]
+    assert events[-1].phase is TranscriptionPhase.COMPLETE
 
 
 def test_v3_normalization_keeps_routing_only_language_fields_and_warning() -> None:
@@ -946,9 +1177,28 @@ def test_transcribe_rejects_contradictory_or_unsupported_provider_output(
 
 
 def test_cancellation_requested_during_adapter_call_discards_its_success() -> None:
-    token = _Token(lambda call: call >= 5)
+    cancelled = False
+    token = _Token(lambda _: cancelled)
     events: list[TranscriptionProgress] = []
-    coordinator, adapter = _coordinator()
+
+    def cancelled_success(
+        request: ResolvedTranscriptionRequest,
+    ) -> ProviderTranscriptionOutput:
+        nonlocal cancelled
+        cancelled = True
+        return _output(
+            effective_language=request.effective_language,
+            produced_capabilities=ProducedCapabilities(
+                timestamps=request.request.timestamps,
+                punctuation=True,
+                capitalization=True,
+                vad=request.request.vad,
+                diarization=request.request.diarization,
+            ),
+        )
+
+    adapter = _Adapter(_provider(), (_model(),), output=cancelled_success)
+    coordinator, _ = _coordinator(adapter=adapter)
 
     with pytest.raises(TranscriptionCoordinatorError) as caught:
         coordinator.transcribe(_request(cancellation=token, progress=events.append))
