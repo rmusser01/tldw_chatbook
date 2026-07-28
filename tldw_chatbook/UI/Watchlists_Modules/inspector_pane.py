@@ -26,6 +26,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, Static
 
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
+from .overview_pane import OverviewPane
 from .watchlist_tree import TreeScope
 
 
@@ -128,11 +129,18 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
     selected_entity = reactive[dict[str, Any] | None](None, recompose=True)
     scope = reactive[TreeScope | None](None, recompose=True)
     breadcrumb_labels = reactive[list[str]]([], recompose=True)
-    #: TASK-998. Whether this profile has nothing to select at all. Screen-
-    #: seeded like the three reactives above, for the same reason: the pane
-    #: has no service of its own, and "nothing is selected" and "nothing
-    #: exists to select" are different states that need different copy.
-    first_run = reactive(False, recompose=True)
+    #: TASK-998, widened by TASK-1020. What the profile behind this Inspector
+    #: reports: `loading`, `empty` or `populated` (`OverviewPane.LOADING` and
+    #: friends). Screen-seeded like the three reactives above, for the same
+    #: reason: the pane has no service of its own, and "nothing is selected",
+    #: "nothing exists to select" and "nothing has answered yet" are three
+    #: different states that need three different lines. It was a bool, and
+    #: `False` had to stand for both loading and populated -- so during the
+    #: in-flight window the rail told a brand-new user to "Select a source,
+    #: run, item, rule, or notification", naming five things that did not
+    #: exist. The value is the same one the Overview region keys off, so the
+    #: two regions cannot disagree.
+    profile_state = reactive(OverviewPane.LOADING, recompose=True)
 
     def compose(self):
         # No "Inspector" title here. `_build_inspector_pane` already opens the
@@ -158,7 +166,16 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             # cover both -- the populated copy is right and stays exactly as
             # it was. The id is shared so callers testing for "the Inspector
             # has nothing selected" keep working across both.
-            if self.first_run:
+            if self.profile_state == OverviewPane.LOADING:
+                # TASK-1020: the third state. Says nothing about what exists,
+                # because nothing has answered yet.
+                yield Static(
+                    "Loading...",
+                    id="inspector-empty-state",
+                    classes="watchlists-loading-state",
+                )
+                return
+            if self.profile_state == OverviewPane.EMPTY:
                 yield Static(
                     "Nothing to inspect yet.",
                     id="inspector-empty-state",

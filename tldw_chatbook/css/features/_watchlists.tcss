@@ -887,3 +887,16 @@ WatchlistSourcePickerDialog {
     color: $ds-focus-fg;
     text-style: bold underline;
 }
+
+/* TASK-1020. The Overview region's and the Inspector's third state: the
+ * overview worker has been started and has not answered yet. Muted like
+ * `.watchlists-region-placeholder` and `.watchlists-first-run-body` so a
+ * transient line does not read as an alert, and `height: auto` so it does not
+ * claim the region's rows on the way past.
+ */
+.watchlists-loading-state {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    color: $ds-text-muted;
+}

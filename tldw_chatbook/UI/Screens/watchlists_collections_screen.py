@@ -1152,6 +1152,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         """
         return OverviewPane.profile_is_empty(self.overview_data)
 
+    def _watchlists_profile_state(self) -> str:
+        """Loading, empty or populated (TASK-1020).
+
+        The same call the Overview region makes, so the Inspector's own
+        first-run text can never contradict it.
+
+        Returns:
+            One of `OverviewPane.LOADING`/`EMPTY`/`POPULATED`.
+        """
+        return OverviewPane.profile_state(self.overview_data)
 
     def _build_inspector_pane(
         self,
@@ -1251,10 +1261,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         inspector.selected_entity = self.selected_entity
         inspector.scope = self.selected_scope
         inspector.breadcrumb_labels = self._breadcrumb_labels
-        # TASK-998: same seeding rationale as the three lines above -- and the
-        # Inspector cannot work this out for itself, since it is handed a
-        # selection rather than the data behind it.
-        inspector.first_run = self._watchlists_are_empty()
+        # TASK-998, widened by TASK-1020: same seeding rationale as the three
+        # lines above -- and the Inspector cannot work this out for itself,
+        # since it is handed a selection rather than the data behind it. The
+        # value is the same one the Overview region keys off, so the rail's
+        # first-run text and the region's can never disagree.
+        inspector.profile_state = self._watchlists_profile_state()
         children.append(inspector)
         return Vertical(
             *children,
