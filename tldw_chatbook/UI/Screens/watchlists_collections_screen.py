@@ -1803,6 +1803,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         name = self._watchlist_display_name(watchlist_id)
         source_count = len(service.list_source_rows(watchlist_id))
+        # Still needed by the post-delete notification below, which reads
+        # correctly either way ("Its 1 source moved", "Its 2 sources moved").
+        noun = "source" if source_count == 1 else "sources"
         confirmed = await self.app.push_screen_wait(
             ConfirmationDialog(
                 title="Delete watchlist",
