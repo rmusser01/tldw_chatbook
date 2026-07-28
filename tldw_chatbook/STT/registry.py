@@ -170,6 +170,13 @@ class CapabilitySet:
             LanguageInputMode,
             "language_input_mode",
         )
+        if not self.automatic_language and self.language_input_mode in {
+            LanguageInputMode.AUTOMATIC,
+            LanguageInputMode.AUTOMATIC_ONLY,
+        }:
+            raise ValueError(
+                "automatic language input modes require automatic_language"
+            )
         _require_frozenset(
             self.execution_devices,
             ExecutionDevice,

@@ -235,6 +235,30 @@ def test_capability_set_rejects_malformed_fields(
 
 
 @pytest.mark.parametrize(
+    "language_input_mode",
+    [LanguageInputMode.AUTOMATIC, LanguageInputMode.AUTOMATIC_ONLY],
+)
+def test_automatic_language_input_modes_require_automatic_language_support(
+    language_input_mode: LanguageInputMode,
+) -> None:
+    with pytest.raises(ValueError, match="automatic_language"):
+        _capabilities(
+            automatic_language=False,
+            language_input_mode=language_input_mode,
+        )
+
+
+def test_routing_assertion_does_not_require_automatic_language_requests() -> None:
+    capabilities = _capabilities(
+        automatic_language=False,
+        language_input_mode=LanguageInputMode.ROUTING_ASSERTION,
+    )
+
+    assert not capabilities.automatic_language
+    assert capabilities.language_input_mode is LanguageInputMode.ROUTING_ASSERTION
+
+
+@pytest.mark.parametrize(
     "metadata",
     [
         _provider(),
@@ -592,9 +616,17 @@ def test_runtime_observation_forbids_loss_of_every_semantic_field(
     field_name: str,
     runtime_value: object,
 ) -> None:
-    registry = ProviderRegistry.sealed(_declarations())
+    declared_capabilities = _capabilities(
+        language_input_mode=(
+            LanguageInputMode.ROUTING_ASSERTION
+            if field_name == "automatic_language"
+            else LanguageInputMode.AUTOMATIC
+        )
+    )
+    model = _model(capabilities=declared_capabilities)
+    registry = ProviderRegistry.sealed(_declarations(models=(model,)))
     runtime_capabilities = replace(
-        _capabilities(),
+        declared_capabilities,
         **{field_name: runtime_value},  # type: ignore[arg-type]
     )
     observation = RuntimeObservation(
@@ -605,7 +637,7 @@ def test_runtime_observation_forbids_loss_of_every_semantic_field(
     )
 
     with pytest.raises(RuntimeCapabilityError, match=field_name):
-        registry.validate_observation(_model(), observation)
+        registry.validate_observation(model, observation)
 
 
 def test_runtime_observation_forbids_semantic_escalation() -> None:

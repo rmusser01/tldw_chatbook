@@ -1742,7 +1742,7 @@ def test_failure_action_matrix_is_exact_for_a_compatible_non_faster_whisper_requ
     assert decision.device_retry_policy == DeviceRetryPolicy.no_retry()
 
 
-def test_automatic_only_unsupported_language_adds_change_to_auto_action() -> None:
+def test_automatic_only_unsupported_language_offers_routable_auto_action() -> None:
     model = _model(
         capabilities=_capabilities(
             languages=frozenset(),
@@ -1762,6 +1762,9 @@ def test_automatic_only_unsupported_language_adds_change_to_auto_action() -> Non
         TranscriptionAction.RETRY_WITH_FASTER_WHISPER,
         TranscriptionAction.CHANGE_LANGUAGE_TO_AUTO,
     )
+    resolved = coordinator.resolve(_request(language="auto"))
+    assert resolved.request.language == "auto"
+    assert resolved.effective_language == "auto"
 
 
 def test_change_to_auto_is_not_offered_for_non_automatic_only_models() -> None:
