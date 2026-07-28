@@ -721,6 +721,97 @@ async def test_workspace_retains_files_search_and_git_modes_with_back_focus(
 
 
 @pytest.mark.asyncio
+async def test_thousand_unrelated_notes_send_only_three_session_groups_and_restore_files_state(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    unrelated_root = root / "archive"
+    unrelated_root.mkdir(parents=True)
+    for index in range(1_005):
+        (unrelated_root / f"unrelated-{index:04d}.md").write_text(
+            f"scale marker {index:04d}\n",
+            encoding="utf-8",
+        )
+    session_paths = ("note-1.md", "note-2.md", "note-3.md")
+    for path in session_paths:
+        (root / path).write_text(f"{path}\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    for path in session_paths:
+        assert owner.record_change(binding, SessionChange("modified", path))
+    rows = tuple(
+        _row("unstaged", group_id=group_id, stage_action="stage")
+        for group_id in range(1, 4)
+    )
+    git_service = _FakeGitService(owner, rows)
+    owner.attach_git_service(git_service)
+    assert owner.publish_trust(binding, git_service.repository)
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica=replica,
+        session_owner=owner,
+        poll_interval=10,
+        autosave_delay=10,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        files_tree = workspace.query_one("#file-notes-tree", Tree)
+        search_tree = workspace.query_one("#file-notes-search-results", Tree)
+        archive_node = next(
+            node
+            for node in files_tree.root.children
+            if node.data == ("folder", "archive")
+        )
+        search = workspace.query_one("#file-notes-search", Input)
+        search.value = "scale marker 1004"
+        await _wait_until(pilot, lambda: search_tree.display, "search mode not shown")
+        files_tree.select_node(archive_node)
+        await pilot.pause()
+        tree_children_before = tuple(
+            node.data for node in files_tree.root.children
+        )
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        assert str(entry.label) == "Session Git (3)"
+
+        entry.press()
+        await _wait_until(
+            pilot,
+            lambda: len(git_service.status_calls) == 1,
+            "Session Git did not request the three session groups",
+        )
+        handed_off_paths = tuple(
+            change.change.relative_path
+            for change in git_service.status_calls[0]
+        )
+        assert handed_off_paths == session_paths
+        assert len(workspace._git_panel_widget.rows) == 3
+        assert {
+            row.group.current_path for row in workspace._git_panel_widget.rows
+        } == set(session_paths)
+        assert all("unrelated-" not in path for path in handed_off_paths)
+
+        workspace.query_one("#file-notes-git-back", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: search_tree.display and entry.has_focus,
+            "Back did not restore the prior search view",
+        )
+        assert workspace.query_one("#file-notes-tree", Tree) is files_tree
+        assert workspace.query_one("#file-notes-search-results", Tree) is search_tree
+        assert search.value == "scale marker 1004"
+        assert files_tree.cursor_node is archive_node
+        assert tuple(node.data for node in files_tree.root.children) == (
+            tree_children_before
+        )
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_opening_session_git_moves_focus_to_a_visible_ready_control(
     tmp_path: Path,
 ) -> None:

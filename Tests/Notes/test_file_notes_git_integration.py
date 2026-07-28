@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -14,6 +15,7 @@ from tldw_chatbook.Notes.file_notes_git_service import (
     AsyncGitProcessRunner,
     FileNotesGitService,
     GitCommandResult,
+    GitStatusAdmissionError,
     coalesce_session_changes,
     parse_index_entries_z,
 )
@@ -801,6 +803,7 @@ async def test_stage_nonzero_result_claims_no_ownership(
     assert owner.publish_trust(binding, discovery.repository)
 
     result = await service.start_stage(binding, (1,))
+    await service.shutdown()
 
     assert result.state == "error"
     assert not result.staged_group_ids
@@ -813,6 +816,46 @@ async def test_stage_nonzero_result_claims_no_ownership(
         "tracked.md",
     ).stdout == b""
     await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stage_with_index_lock_reports_busy_without_mutating_or_taking_ownership(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    tracked = repository.path / "tracked.md"
+    tracked.write_text("changed while locked\n", encoding="utf-8")
+    worktree_before = tracked.read_bytes()
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "tracked.md"),
+    )
+    service = FileNotesGitService(
+        owner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert owner.publish_trust(binding, discovery.repository)
+    index = Path(discovery.repository.git_dir) / "index"
+    index_before = index.read_bytes()
+    index_lock = Path(discovery.repository.git_dir) / "index.lock"
+    lock_contents = b"external Git owns this lock\n"
+    index_lock.write_bytes(lock_contents)
+
+    result = await service.start_stage(binding, (1,))
+
+    assert result.state == "error"
+    assert result.message is not None
+    assert "index.lock" in result.message.lower()
+    assert not result.staged_group_ids
+    assert not owner.snapshot(binding).staging_ownership
+    assert tracked.read_bytes() == worktree_before
+    assert index.read_bytes() == index_before
+    assert index_lock.read_bytes() == lock_contents
 
 
 @pytest.mark.asyncio
@@ -1012,6 +1055,85 @@ async def test_status_maps_repo_above_notes_and_supports_weird_filenames(
         and "outside" not in row.group.current_path
         for row in status.rows
     )
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_configured_clean_filter_requires_trust_and_stage_preserves_worktree(
+    tmp_path: Path,
+) -> None:
+    repository = _disposable_repository(tmp_path)
+    filter_executable = repository.path / ".git" / "chatbook-clean-filter"
+    sentinel = tmp_path / "filter-invocations.log"
+    filter_executable.write_text(
+        '#!/bin/sh\nprintf "invoked\\\\n" >> "$1"\ncat\n',
+        encoding="utf-8",
+    )
+    filter_executable.chmod(
+        filter_executable.stat().st_mode | stat.S_IXUSR,
+    )
+    repository.run(
+        "config",
+        "--local",
+        "filter.chatbook-test.clean",
+        f"{shlex.quote(str(filter_executable))} {shlex.quote(str(sentinel))}",
+    )
+    repository.run(
+        "config",
+        "--local",
+        "filter.chatbook-test.required",
+        "true",
+    )
+    (repository.path / ".gitattributes").write_text(
+        "tracked.md filter=chatbook-test\n",
+        encoding="utf-8",
+    )
+    repository.run("add", "--", ".gitattributes")
+    repository.run("commit", "-m", "configure repository-local clean filter")
+    sentinel.unlink(missing_ok=True)
+
+    tracked = repository.path / "tracked.md"
+    tracked.write_text("filter-visible edit\n", encoding="utf-8")
+    worktree_before = tracked.read_bytes()
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(repository.path)
+    assert owner.record_change(
+        binding,
+        SessionChange("modified", "tracked.md"),
+    )
+    service = FileNotesGitService(
+        owner,
+        git_executable=repository.git,
+        environment=repository.service_environment,
+    )
+
+    discovery = await service.discover(binding)
+    assert discovery.repository is not None
+    assert not sentinel.exists()
+    with pytest.raises(
+        GitStatusAdmissionError,
+        match="Repository trust is required before Git status",
+    ):
+        await service.start_status(
+            binding,
+            owner.snapshot(binding).changes,
+        )
+    assert not sentinel.exists()
+
+    assert owner.publish_trust(binding, discovery.repository)
+    status = await service.start_status(
+        binding,
+        owner.snapshot(binding).changes,
+    )
+    assert status.state == "ready"
+    assert status.rows[0].stage_action == "stage"
+    assert tracked.read_bytes() == worktree_before
+
+    staged = await service.start_stage(binding, (1,))
+
+    assert staged.state == "success"
+    assert sentinel.read_text(encoding="utf-8").splitlines()
+    assert tracked.read_bytes() == worktree_before
     await service.shutdown()
 
 
