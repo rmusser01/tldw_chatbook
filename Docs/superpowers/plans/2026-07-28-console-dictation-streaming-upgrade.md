@@ -57,9 +57,9 @@ Everything from the original plan's Global Constraints still binds. Restated, pl
 
 ---
 
-### Task R1: Remove the duplicate affordance
+### Task 11: Remove the duplicate affordance
 
-Task 4 of the superseded plan added `#console-voice-toggle` beside the existing `#console-dictation`, leaving two Mic buttons in one row. Remove mine; keep the status chip, which the existing feature has no equivalent of and which R3 needs for partials.
+Task 4 of the superseded plan added `#console-voice-toggle` beside the existing `#console-dictation`, leaving two Mic buttons in one row. Remove mine; keep the status chip, which the existing feature has no equivalent of and which Task 13 needs for partials.
 
 **Files:**
 - Modify: `tldw_chatbook/Widgets/Console/console_composer_bar.py`
@@ -123,9 +123,9 @@ git commit -m "fix(console): drop the duplicate mic button, keep the status chip
 
 ---
 
-### Task R2: Drive the chip from the existing dictation state
+### Task 12: Drive the chip from the existing dictation state
 
-Make the chip reflect the shipping four-state lifecycle, so it is wired to real state before R3 puts partials in it.
+Make the chip reflect the shipping four-state lifecycle, so it is wired to real state before Task 13 puts partials in it.
 
 **Files:**
 - Modify: `tldw_chatbook/Widgets/Console/console_composer_bar.py`
@@ -141,7 +141,7 @@ State mapping — the chip vocabulary differs from the button's, so map explicit
 |---|---|
 | `idle` | hidden (`width: 0`) |
 | `starting` | `◌ Preparing microphone…` |
-| `recording` | `● 0:07` plus partial once R3 lands |
+| `recording` | `● 0:07` plus partial once Task 13 lands |
 | `transcribing` | `◌ Transcribing…` |
 
 - [ ] **Step 1: Write the failing test**
@@ -193,7 +193,7 @@ git commit -m "feat(console): mirror dictation state in the voice status chip"
 
 ---
 
-### Task R3: Swap the backend to the streaming controller
+### Task 13: Swap the backend to the streaming controller
 
 The substance of the upgrade. Replace `ConsoleDictationSession` with `ConsoleVoiceInputController` behind the *existing* button, preserving every externally-observable behavior the four shipping tests assert.
 
@@ -214,7 +214,7 @@ The substance of the upgrade. Replace `ConsoleDictationSession` with `ConsoleVoi
 
 **Mapping:** controller `preparing` → button `starting`; controller `listening` → button `recording`; controller `finishing` → button `transcribing`; controller `idle` → button `idle`. `VoiceFailed` drives the existing failure path.
 
-**Segment accumulation:** the controller emits per-segment `VoiceFinal` events, but the shipping insertion contract is one transcript at the end. Accumulate finals and insert once on reaching `idle`, so behavior 2 is unchanged. Live partials go to the chip only (R4) and never to the draft.
+**Segment accumulation:** the controller emits per-segment `VoiceFinal` events, but the shipping insertion contract is one transcript at the end. Accumulate finals and insert once on reaching `idle`, so behavior 2 is unchanged. Live partials go to the chip only (Task 14) and never to the draft.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -246,7 +246,7 @@ git commit -m "feat(console): stream dictation through the hardened voice contro
 
 ---
 
-### Task R4: Live partials in the chip
+### Task 14: Live partials in the chip
 
 **Files:**
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`, `tldw_chatbook/Widgets/Console/console_composer_bar.py`
@@ -260,7 +260,7 @@ git commit -m "feat(console): stream dictation through the hardened voice contro
 
 ---
 
-### Task R5: Provider availability on the existing button
+### Task 15: Provider availability on the existing button
 
 Today the Mic button offers no guidance when the local model directory is missing. `probe()`/`resolve()` already distinguish the two failure causes.
 
@@ -276,11 +276,11 @@ Today the Mic button offers no guidance when the local model directory is missin
 
 ---
 
-### Task R6: Verification, retirement, and follow-ups
+### Task 16: Verification, retirement, and follow-ups
 
 - [ ] **Step 1: Guard the import cost.** Confirm `tldw_chatbook.Audio`, `transcription_service`, `faster_whisper` and `nemo` are all absent from `sys.modules` after a Console mount. The existing subprocess test in `Tests/Chat/test_console_voice_input.py` covers the module; extend it to the screen path.
 - [ ] **Step 2: Baseline diff by NAME.** Compare against `.superpowers/sdd/2026-07-27-console-voice-dictation/baseline-full.txt` (189 failed / 8174 passed / 14 errors, none of them this branch's). Use `comm` on sorted `FAILED`/`ERROR` name lists — never counts. Note `Tests/UI/test_chat_shell_bar.py` fails to COLLECT on the base (`ImportError: TabState`); `--continue-on-collection-errors` is required.
-- [ ] **Step 3: Decide `ConsoleDictationSession`'s fate.** If R3 leaves it with no callers, propose retirement in the report — do not delete it in this task. `Audio/console_dictation.py` is 228 lines with its own model-directory resolution that nothing else uses.
+- [ ] **Step 3: Decide `ConsoleDictationSession`'s fate.** If Task 13 leaves it with no callers, propose retirement in the report — do not delete it in this task. `Audio/console_dictation.py` is 228 lines with its own model-directory resolution that nothing else uses.
 - [ ] **Step 4: Live verification with a real microphone.** No test in this plan exercises real audio. Confirm by hand: the Mic button starts capture; partials appear while speaking; the transcript lands at the caret without sending; Send becomes enabled; navigating away releases the microphone (OS indicator clears); and with `speech_recording` uninstalled the button is disabled with an actionable tooltip. Record each outcome.
 - [ ] **Step 5: File follow-ups** in `backlog/tasks/`, assigning IDs via a Python `os.listdir` + regex scan across **all** worktrees against `origin/dev` (`git ls-tree | uniq` misses em-dash filenames), re-verified immediately before writing:
   1. Delete `Widgets/voice_input_button.py` — zero callers, and it touches widgets from the transcription worker thread.
