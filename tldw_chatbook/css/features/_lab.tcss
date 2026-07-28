@@ -566,3 +566,12 @@
 .speech-split-stacked .speech-split {
     height: auto;
 }
+
+/* An override is stated, not implied. The Playground owns session-scoped
+ * values that never write back, so the user must be able to see at a glance
+ * what they have deliberately changed. The asterisk in the label carries it
+ * for anyone who cannot use the colour. */
+.speech-chip-override {
+    color: $ds-status-warning;
+    text-style: bold;
+}
