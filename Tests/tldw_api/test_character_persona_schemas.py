@@ -12,6 +12,8 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     CharacterListResponse,
     CharacterResponse,
     ChatSettingsUpdate,
+    LocalPersonaProfileCreate,
+    LocalPersonaProfileUpdate,
     PersonaBuddySummary,
     PersonaExemplarCreate,
     PersonaInfo,
@@ -28,6 +30,37 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     UserProfileResponse,
     UserProfileUpdate,
 )
+
+SERVER_PERSONA_CREATE_FIELDS = {
+    "id",
+    "name",
+    "archetype_key",
+    "character_card_id",
+    "mode",
+    "system_prompt",
+    "is_active",
+    "use_persona_state_context_default",
+    "voice_defaults",
+    "setup",
+}
+SERVER_PERSONA_UPDATE_FIELDS = {
+    "name",
+    "character_card_id",
+    "mode",
+    "system_prompt",
+    "is_active",
+    "use_persona_state_context_default",
+    "voice_defaults",
+    "setup",
+}
+LOCAL_PERSONA_CREATE_FIELDS = SERVER_PERSONA_CREATE_FIELDS | {
+    "description",
+    "personality_traits",
+}
+LOCAL_PERSONA_UPDATE_FIELDS = SERVER_PERSONA_UPDATE_FIELDS | {
+    "description",
+    "personality_traits",
+}
 
 
 class TestCharacterPersonaSchemas:
@@ -188,6 +221,60 @@ class TestCharacterPersonaSchemas:
                 section_order=["system"],
                 section_templates={"system": "hi"},
             )
+
+
+class TestLocalPersonaProfileMutationDTOs:
+    def test_local_persona_create_has_exact_local_fields(self):
+        assert (
+            set(LocalPersonaProfileCreate.model_fields)
+            == LOCAL_PERSONA_CREATE_FIELDS
+        )
+
+    def test_local_persona_update_has_exact_local_fields(self):
+        assert (
+            set(LocalPersonaProfileUpdate.model_fields)
+            == LOCAL_PERSONA_UPDATE_FIELDS
+        )
+
+    @pytest.mark.parametrize(
+        "model_type, valid_payload",
+        [
+            (LocalPersonaProfileCreate, {"name": "Guide"}),
+            (LocalPersonaProfileUpdate, {}),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "field_name",
+        [
+            "origin_character_id",
+            "version",
+            "deleted",
+            "created_at",
+            "future_extension",
+        ],
+    )
+    def test_local_persona_mutations_reject_persistence_owned_and_unknown_fields(
+        self, model_type, valid_payload, field_name
+    ):
+        with pytest.raises(ValidationError):
+            model_type(**valid_payload, **{field_name: "unexpected"})
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            pytest.param(
+                LocalPersonaProfileCreate(name="Guide", description=None),
+                id="create",
+            ),
+            pytest.param(
+                LocalPersonaProfileUpdate(description=None),
+                id="update",
+            ),
+        ],
+    )
+    def test_explicit_nullable_field_is_distinct_from_omitted_field(self, model):
+        assert "description" in model.model_fields_set
+        assert "system_prompt" not in model.model_fields_set
 
 
 class TestUserProfileDTOAliases:
