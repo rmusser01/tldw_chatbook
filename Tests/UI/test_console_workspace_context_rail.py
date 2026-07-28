@@ -1423,28 +1423,25 @@ async def _click_conversation_browser_toggle(console, pilot, selector: str) -> N
     """
     rail_body = console.query_one("#console-left-rail-body")
 
-    # The tray settles its post-recompose layout over more than one message
-    # turn (`_schedule_recomposed_content_fit` schedules nested `call_later`
-    # passes plus a 0.01s timer): a freshly-scrolled/recomposed region can
-    # report a screen position the compositor has not painted yet, which is
-    # exactly the kind of stale-geometry race a real user's own click could
-    # also lose to. Re-scroll and re-check on every attempt (not just once)
-    # until the toggle's own reported region agrees with what
-    # `get_widget_at` resolves there, then click.
-    for _ in range(10):
-        toggle = console.query_one(selector, Button)
-        rail_body.scroll_to_widget(toggle, animate=False)
-        await pilot.pause()  # wait for CPU idle, not a fixed guessed delay
-        toggle = console.query_one(selector, Button)
-        cx = toggle.region.x + toggle.region.width // 2
-        cy = toggle.region.y + toggle.region.height // 2
-        widget_at_center, _ = console.screen.get_widget_at(cx, cy)
-        if widget_at_center is toggle:
-            break
-    else:
-        raise AssertionError(
-            f"{selector!r} never settled at a hittable on-screen position"
-        )
+    # TASK-1191: this used to re-scroll and re-check on every one of up to 10
+    # attempts, compensating for a theorized multi-message-turn settle race in
+    # `_schedule_recomposed_content_fit` (nested `call_later` passes plus a
+    # 0.01s timer). That machinery is gone -- the tray now fits its height in
+    # a single `call_after_refresh` pass, same primitive `on_mount`/
+    # `on_resize` already used -- so one scroll-into-view plus one CPU-idle
+    # pause is enough for `get_widget_at` to agree with the toggle's own
+    # region before clicking.
+    toggle = console.query_one(selector, Button)
+    rail_body.scroll_to_widget(toggle, animate=False)
+    await pilot.pause()  # wait for CPU idle, not a fixed guessed delay
+    toggle = console.query_one(selector, Button)
+    cx = toggle.region.x + toggle.region.width // 2
+    cy = toggle.region.y + toggle.region.height // 2
+    widget_at_center, _ = console.screen.get_widget_at(cx, cy)
+    assert widget_at_center is toggle, (
+        f"{selector!r} did not settle at a hittable on-screen position "
+        f"(got {widget_at_center!r})"
+    )
 
     landed = await pilot.click(selector)
     assert landed, f"real click missed {selector!r} (not on screen / not hittable)"
@@ -1481,14 +1478,13 @@ async def test_section_header_toggles_via_real_click_and_persists_across_rebuild
     but through `pilot.click` instead of `.press()`.
 
     Collapse and expand are each driven from a freshly rebuilt tray rather
-    than chained back-to-back on one instance: `ConsoleWorkspaceContextTray.
-    _fit_height_to_content` settles its own auto-height over several
-    deferred passes, and re-toggling within a couple hundred milliseconds
-    of the previous toggle's own settle can catch it mid-flight (a
-    real, pre-existing race in that unrelated fit-pass machinery, not a
-    click-routing defect and out of this task's scope) -- the rail-rebuild
-    seam this test already needs for persistence conveniently also gives
-    every click a fresh, from-scratch layout to click into.
+    than chained back-to-back on one instance -- not required for
+    correctness since TASK-1191 (`ConsoleWorkspaceContextTray.
+    _fit_height_to_content` now fits in a single deferred pass instead of
+    several, so there is no settle window left to catch re-toggling
+    mid-flight), but kept as-is because the rail-rebuild seam this test
+    already needs for persistence conveniently also gives every click a
+    fresh, from-scratch layout to click into.
     """
     app = _build_test_app()
     service = app.workspace_registry_service

@@ -478,7 +478,32 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         *,
         restore_scroll_y: int | None = None,
     ) -> None:
-        """Schedule bounded fit passes after recomposing tray content.
+        """Schedule a single fit pass after recomposing tray content.
+
+        TASK-1191: this used to fan out into two `call_later` hops plus a
+        0.01s scroll-restore timer on every sync, theorized (commit
+        1115fa624) as compensating for recompose settling child layout over
+        "more than one message turn" in scrolled rails. TASK-1142 investigated
+        that theory twice (looking for a click-eating race) and could not
+        reproduce it under 15 rapid sync cycles. What TASK-1142 round 1/2
+        *did* find, twice, was an actual bug in this area: the grouped
+        browser's own auto-height ESTIMATE
+        (`_conversation_browser_list_height`) undercounting wrapped
+        empty-copy/row lines, silently clipping later siblings out of the
+        tray's box. That is a height-computation bug, not a layout-timing
+        one, and it is now fixed with wrap-aware, budget-based estimators
+        (`_empty_copy_line_count`, `_marker_prefixed_name_lines`) so the
+        conversation list's height is set explicitly at compose time
+        (`_compose_conversation_browser`) rather than discovered from
+        settled geometry.
+        `call_after_refresh` -- the same primitive `on_mount`/`on_resize`
+        already use for this exact job -- defers the callback until Textual
+        has processed the pending refresh (recompose + layout), so
+        `virtual_region` is current when `_fit_height_to_content` reads it.
+        One deferred pass is sufficient; a second pass is still scheduled by
+        `_maybe_relabel_for_width` itself, but only on the rare occasions a
+        relabel is actually needed (first real width measurement, or a
+        multi-cell width change) -- not unconditionally on every sync.
 
         Args:
             restore_scroll_y: Parent rail scroll offset to restore after fitting.
@@ -491,16 +516,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             self._fit_height_to_content()
             self._restore_parent_scroll(restore_scroll_y)
 
-        # Recompose settles child layout over more than one message turn in
-        # scrolled rails; a fixed follow-up pass avoids a layout feedback loop.
-        self.call_later(fit_and_restore_scroll)
-        self.call_later(lambda: self.call_later(fit_and_restore_scroll))
-        if restore_scroll_y is not None:
-            self.set_timer(
-                0.01,
-                lambda: self._restore_parent_scroll(restore_scroll_y),
-                name="console-workspace-context-scroll-restore",
-            )
+        self.call_after_refresh(fit_and_restore_scroll)
 
     def _restore_parent_scroll(self, scroll_y: int | None) -> None:
         """Restore the parent rail scroll position after a deferred fit pass.
