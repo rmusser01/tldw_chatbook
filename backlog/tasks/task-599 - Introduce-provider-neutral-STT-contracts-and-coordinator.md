@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:03'
-updated_date: '2026-07-28 14:27'
+updated_date: '2026-07-28 17:30'
 labels:
   - stt
   - architecture
@@ -27,13 +27,13 @@ Separate provider discovery, capability-aware routing, request and result normal
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Typed request, result, segment, provenance, progress, cancellation, provider metadata, and stable error contracts are defined without importing native runtimes.
-- [ ] #2 A sealed provider registry distinguishes declared from runtime-observed capabilities and fails closed on mismatches, duplicate IDs, and unsupported composed pipelines.
-- [ ] #3 Semantic default routing resolves omitted language to en, explicit en to Parakeet v2, validated non-English to Parakeet v3, and auto, unsupported languages, or translation to faster-whisper.
-- [ ] #4 Parakeet v3 metadata declares routing-only caller assertion rather than an enforced language hint; exact manual providers are honored only when compatible.
-- [ ] #5 Cross-engine fallback is never automatic, while the one same-provider accelerator-to-CPU initialization retry remains representable as policy.
-- [ ] #6 TranscriptionService remains a thin compatibility facade and retained providers can use an isolated temporary bridge.
-- [ ] #7 Dependency-free contract and routing tests cover every policy row, language field, warning, error code, and action eligibility.
+- [x] #1 Typed request, result, segment, provenance, progress, cancellation, provider metadata, and stable error contracts are defined without importing native runtimes.
+- [x] #2 A sealed provider registry distinguishes declared from runtime-observed capabilities and fails closed on mismatches, duplicate IDs, and unsupported composed pipelines.
+- [x] #3 Semantic default routing resolves omitted language to en, explicit en to Parakeet v2, validated non-English to Parakeet v3, and auto, unsupported languages, or translation to faster-whisper.
+- [x] #4 Parakeet v3 metadata declares routing-only caller assertion rather than an enforced language hint; exact manual providers are honored only when compatible.
+- [x] #5 Cross-engine fallback is never automatic, while the one same-provider accelerator-to-CPU initialization retry remains representable as policy.
+- [x] #6 TranscriptionService remains a thin compatibility facade and retained providers can use an isolated temporary bridge.
+- [x] #7 Dependency-free contract and routing tests cover every policy row, language field, warning, error code, and action eligibility.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,3 +52,15 @@ Reason: ADR-025 already governs the provider boundary, language routing, explici
 
 Detailed plan: Docs/superpowers/plans/2026-07-28-provider-neutral-stt-coordinator.md
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented provider-neutral STT contracts, sealed exact-ID registry, deterministic language routing, explicit coordinator failure/action policy, synchronized cancellation/progress handling, retained-provider bridge, and an explicit TranscriptionService compatibility facade. Production defaults remain unchanged; semantic default promotion remains gated to TASK-605. The facade preserves the zero-argument constructor, public signatures, mutable config compatibility, exact provider arguments, and legacy results/exceptions.
+
+ADR check: ADR-025 applies; no new ADR was required. The faster-whisper base declaration conservatively omits float16 because independent device/precision sets cannot truthfully express CPU rejection; exact model declarations may add it when safe.
+
+Acceptance evidence: AC1 Tests/STT/test_contracts.py and test_boundaries.py; AC2 test_registry.py and coordinator composed-capability cases; AC3-AC4 test_routing.py semantic/manual matrices; AC5 test_coordinator.py action/device-retry/cancellation cases; AC6 test_legacy_bridge.py and test_transcription_service_facade.py; AC7 the dependency-free STT policy suites. Post-rebase focused evidence: 548 STT/routing/vertical tests passed; 44 faster-whisper tests passed and 2 skipped; 65 Audio/Dictation/Diarization tests passed, 3 skipped, with one live uncached model-download case deselected. Ruff format/check, mypy tldw_chatbook/STT, and git diff --check passed.
+
+Task status remains In Progress because the mandatory repository-wide suite is not green on current dev: two unrelated collection tests import removed StreamDone/TabState names; the checked diagnostic inventory is already stale on origin/dev; and the live diarization test requires an uncached Hugging Face download. These base/environment failures were reproduced or directly compared against origin/dev and are outside TASK-599 scope.
+<!-- SECTION:NOTES:END -->
