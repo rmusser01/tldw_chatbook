@@ -1,9 +1,30 @@
 # ADR-019: Migrate watchlist checks to the unified Scheduling scheduler
 
-Status: Accepted — **partially implemented; see the status note below before relying on this**
+Status: Accepted — **amended; the dual-run below was never implemented. Read the amendment first.**
 Date: 2026-07-19
 Related Task: TASK-299
 Supersedes: N/A
+
+## Amendment (2026-07-27, TASK-1210)
+
+**The promotion gate this ADR defines was unsatisfiable, so the migration is promoted directly.**
+
+The ADR gates promotion on dual-run parity metrics between the old and new schedulers. Those metrics
+can never be produced: the old scheduler is unreachable, so there is no second path to compare
+against. Waiting for the gate meant waiting forever, with the flag off and nothing checking
+watchlists at all.
+
+What changed:
+
+- `watchlist_checks_enabled` now defaults **true** and `watchlist_checks_shadow` defaults **false**,
+  in the shipped TOML and in `app.py`'s in-code fallbacks. `WatchlistCheckHandler` is the sole and
+  authoritative executor of watchlist checks.
+- Shadow mode remains as an explicit diagnostics opt-in. It fetches and discards, and because it
+  never writes `last_checked` it also ignores each source's cadence — do not leave it on.
+- The rollback lever described below does not exist. Setting `watchlist_checks_enabled = false`
+  disables watchlist checking entirely rather than reverting to the old scheduler.
+
+Removal of the old scheduler — deferred by this ADR — is TASK-1211.
 
 ## Status note (2026-07-27)
 
@@ -22,8 +43,8 @@ Because the flag ships `false` (and `watchlist_checks_shadow` ships `true`, whic
 discards results), the practical effect is that **nothing checks watchlists on a schedule**. Manual
 "Check now" works; automatic checking is unimplemented end to end.
 
-Tracked by TASK-1210 (make scheduled checks run) and TASK-1211 (retire the unreachable scheduler,
-the removal this ADR deferred). This note will be replaced by an amended decision when 1210 lands.
+Tracked by TASK-1210 (make scheduled checks run — landed, see the amendment above) and TASK-1211
+(retire the unreachable scheduler, the removal this ADR deferred).
 
 Full analysis and reproduction:
 `Docs/superpowers/research/2026-07-27-briefing-subsystem-revive-or-retire.md`

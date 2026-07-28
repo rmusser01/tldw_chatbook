@@ -146,6 +146,39 @@ This one looked authoritative, ran green, and proved nothing.
 
 ---
 
+## Full component coverage, zero feature coverage
+
+**TASK-1210, 2026-07-27.** Watchlists never checked on a schedule — not at the
+wrong interval, never at all. Every component involved was tested and green:
+
+- `test_watchlist_projection.py` — rows become `ScheduledTask`s with a `next_run_at`
+- `test_watchlist_check_handler.py` — the handler checks feeds and records results
+- `test_scheduler_loop.py` — the loop dispatches due tasks to their handler
+- `test_config_flags.py` — asserted the flags' defaults, and **asserted the broken
+  values**, pinning the bug in place
+
+Each component was correct. Nothing tested them *joined*, and the join was where
+the feature lived: `app.py` only registered the `watchlist_job` handler when a
+flag was true, and that flag shipped false, so the loop logged "no handler
+registered for task type" and moved on. Silently, forever.
+
+The config test is the sharpest part. It was not absent — it was present,
+passing, and encoding the defect as the expected value. A test that asserts
+current behaviour without asking whether that behaviour is *right* converts a
+bug into a requirement.
+
+**What to do.** For any feature that spans components, own one test that drives
+the real path end to end — here, a real `Subscriptions_DB` row through the real
+projection, the real queue and a real `SchedulerLoop`, asserting the result lands
+back in the database. Component tests tell you the pieces work; only that test
+tells you the feature does.
+
+And when a test asserts a configuration default, make it state *why* that value
+is right, not just what it is. `assert enabled is False` is unfalsifiable
+documentation of whatever was there when it was written.
+
+---
+
 ## Related
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects

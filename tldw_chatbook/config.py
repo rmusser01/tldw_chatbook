@@ -2292,9 +2292,12 @@ sync_retry_max_delay_seconds = 300
 sync_retry_jitter = true
 scheduler_poll_interval_seconds = 30
 reminder_catchup_hours = 24
-# Feature flags for the watchlist-to-unified-scheduler migration (ADR-020).
-watchlist_checks_enabled = false  # Enable unified scheduler watchlist execution
-watchlist_checks_shadow = true    # Run new handler side-by-side without mutating Subscriptions_DB
+# Feature flags for the watchlist-to-unified-scheduler migration (ADR-019).
+# Both were staged for a shadow-mode dual-run against the legacy SubscriptionScheduler.
+# That scheduler is gone, so shadow mode has nothing to compare against and leaving
+# these at their staging values meant nothing ever checked a watchlist (TASK-1210).
+watchlist_checks_enabled = true   # Run watchlist checks on their configured cadence
+watchlist_checks_shadow = false   # Diagnostics only: fetch but DISCARD results, ignoring cadence
 
 [media_cleanup]
 # Media cleanup settings for automatic hard deletion of soft-deleted items
