@@ -1860,3 +1860,187 @@ async def test_navigating_away_with_busy_fleet_confirms_and_records_teardown() -
         assert not [
             n for n in notifications if "cancelled when you left Console" in n
         ]
+
+
+@pytest.mark.asyncio
+async def test_navigation_guard_survives_stay_then_renavigate_then_leave_by_coordinates() -> (
+    None
+):
+    """TASK-1230 (fleet-UX expert review F1, Critical): reproduces the exact
+    scripted human sequence that wedged into a zombie modal soft-lock --
+    busy fleet -> navigate (guard dialog #1) -> click **Stay** at its
+    RENDERED SCREEN COORDINATES -> navigate again (guard dialog #2) ->
+    click **Leave** at ITS rendered coordinates.
+
+    Coordinate-honest per the task-1142 rhyme the report calls out: the
+    sibling test above
+    (``test_navigating_away_with_busy_fleet_confirms_and_records_teardown``)
+    clicks the button WIDGET via ``Button.press()``, which posts
+    ``Button.Pressed`` directly onto the button's own message queue and
+    therefore never proves a REAL mouse click can reach the dialog. This
+    test instead posts raw ``MouseDown``/``MouseUp`` events through
+    ``app.post_message`` -- exactly mirroring
+    ``textual.driver.Driver.send_message`` -- because a real click's
+    events route through ``App.on_event``, and ``pilot.click()`` cannot be
+    used to prove this: it bypasses ``App.on_event`` entirely, calling
+    ``screen._forward_event()`` directly (see ``textual/pilot.py``).
+
+    Verified directly (see this task's Implementation Notes) that against
+    the pre-fix code this test hangs/fails: the App's own single
+    message-processing task is the one suspended awaiting
+    ``ChatScreen.confirm_navigation()``'s dialog result (``@on
+    (NavigateToScreen) handle_screen_navigation`` awaited it inline), so a
+    real click posted through that same task's queue can never be
+    dequeued to resolve the dialog -- for EITHER dialog, not merely the
+    second one. The fix (``TldwCli._dispatch_screen_navigation``) runs the
+    guarded navigation as its own worker instead, freeing that task to
+    keep routing input the moment any confirm dialog opens.
+    """
+    from rich.cells import cell_len
+    from textual import events
+
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    app = _build_test_app()
+    notifications: list[str] = []
+    app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+    def _render_lines() -> list[str]:
+        compositor = app.screen._compositor
+        return [
+            "".join(seg.text for seg in strip._segments)
+            for strip in compositor.render_strips()
+        ]
+
+    def _button_offset(label: str) -> tuple[int, int]:
+        """Rendered (x, y) of the Stay/Leave button LABEL on the dialog's
+        actual button row -- located the way a real user's terminal would
+        show it (scanning rendered text), not via widget introspection.
+        The dialog's own keyboard-hint copy also contains the words
+        "Stay"/"Leave" in prose, so the real button row is specifically
+        the one where nothing but whitespace separates the two labels.
+        """
+        for y, line in enumerate(_render_lines()):
+            idx_stay = line.find("Stay")
+            if idx_stay == -1:
+                continue
+            idx_leave = line.find("Leave", idx_stay)
+            if idx_leave == -1:
+                continue
+            if line[idx_stay + len("Stay") : idx_leave].strip() != "":
+                continue  # a prose row mentioning both words, not the buttons
+            idx = idx_stay if label == "Stay" else idx_leave
+            mid = idx + len(label) // 2
+            return cell_len(line[:mid]), y
+        raise AssertionError(f"button row for {label!r} not rendered")
+
+    async def _real_click(x: int, y: int) -> None:
+        """A REAL mouse click: raw MouseDown+MouseUp through the App's own
+        queue, exactly like ``textual.driver.Driver.send_message`` -- NOT
+        ``pilot.click()`` (see the test's own docstring for why)."""
+        common = dict(
+            widget=None,
+            x=x,
+            y=y,
+            delta_x=0,
+            delta_y=0,
+            button=1,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=x,
+            screen_y=y,
+        )
+        app.post_message(events.MouseDown(**common))
+        await asyncio.sleep(0.02)
+        app.post_message(events.MouseUp(**common))
+        await asyncio.sleep(0.02)
+
+    async def _wait_for_screen(screen_type_name: str, attempts: int = 300):
+        # Plain `asyncio.sleep` polling, NOT `pilot.pause()`/`pilot.click()`
+        # -- see the sibling test above (and this test's own docstring)
+        # for why: both hang while a confirm dialog might still be
+        # resolving, since they route through mechanisms this bug (and
+        # this test) deliberately avoid depending on.
+        for _ in range(attempts):
+            if type(app.screen).__name__ == screen_type_name:
+                return app.screen
+            await asyncio.sleep(0.02)
+        raise AssertionError(
+            f"Never reached {screen_type_name}; "
+            f"current screen: {type(app.screen).__name__}"
+        )
+
+    async with app.run_test(size=(160, 44)) as pilot:
+        for _ in range(150):
+            if type(app.screen).__name__ != "Screen":
+                break
+            await pilot.pause(0.02)
+
+        # This app boots directly into ChatScreen; cycle away and back so
+        # the busy-fleet state set up below lands on a screen this test
+        # actually navigates AWAY from below, not a same-screen
+        # "chat"->"chat" no-op.
+        app.post_message(NavigateToScreen("home"))
+        await _wait_for_screen("HomeScreen")
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen("ChatScreen")
+        controller = console._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "run"),
+            session_id=session_id,
+        )
+        assert controller.busy_fleet_session_count() == 1
+
+        # -- dialog #1: real click at STAY's rendered coordinates. --
+        app.post_message(NavigateToScreen("home"))
+        dialog1 = await _wait_for_screen("ConfirmationDialog")
+        assert isinstance(dialog1, ConfirmationDialog)
+        await asyncio.sleep(0.1)
+        x, y = _button_offset("Stay")
+        await _real_click(x, y)
+
+        await asyncio.wait_for(_wait_for_screen("ChatScreen"), timeout=5)
+        assert app.screen is console, (
+            "Stay must abort the switch, staying on the SAME Console instance"
+        )
+        assert controller.in_flight_run_count() == 1, "Stay must not cancel the run"
+
+        # -- renavigate: dialog #2 must be a FRESH, live instance -- and
+        # remain re-triggerable after Stay. --
+        app.post_message(NavigateToScreen("home"))
+        dialog2 = await _wait_for_screen("ConfirmationDialog")
+        assert dialog2 is not dialog1, "a fresh dialog instance, not a stale one"
+        await asyncio.sleep(0.1)
+
+        # -- click LEAVE at ITS rendered coordinates. --
+        x2, y2 = _button_offset("Leave")
+        await _real_click(x2, y2)
+
+        await asyncio.wait_for(_wait_for_screen("HomeScreen"), timeout=5)
+        # See the sibling test's comment on why this polls for on_unmount
+        # to actually finish rather than racing `app.screen`'s sync update.
+        for _ in range(150):
+            if console._console_chat_controller is None:
+                break
+            await asyncio.sleep(0.02)
+        assert console._console_chat_controller is None, (
+            "Leave must tear the outgoing Console's fleet down"
+        )
+        assert app._console_fleet_teardown_notice == 1
+
+        # -- record-after: the NEXT Console mount toasts the killed run. --
+        app.post_message(NavigateToScreen("chat"))
+        await _wait_for_screen("ChatScreen")
+        for _ in range(150):
+            if app._console_fleet_teardown_notice == 0:
+                break
+            await asyncio.sleep(0.02)
+        assert app._console_fleet_teardown_notice == 0, "slot must clear on consume"
+        teardown_toasts = [
+            n for n in notifications if "cancelled when you left Console" in n
+        ]
+        assert len(teardown_toasts) == 1
+        assert "1 agent run" in teardown_toasts[0]

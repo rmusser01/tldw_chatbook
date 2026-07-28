@@ -10356,7 +10356,9 @@ class ChatScreen(BaseAppScreen):
             title="Leave Console?",
             message=(
                 f"{busy_count} agent {noun} will be cancelled if you "
-                "leave Console. Leave anyway?"
+                "leave Console. Leave anyway?\n\n"
+                "Tab/Shift+Tab selects Stay or Leave, Enter activates the "
+                "selected button, Esc stays."
             ),
             confirm_label="Leave",
             cancel_label="Stay",
@@ -10367,8 +10369,13 @@ class ChatScreen(BaseAppScreen):
         # for a result only a LATER message resolves is exactly the
         # deadlock shape workers exist to make safe. `confirm_navigation`
         # itself runs on `TldwCli.handle_screen_navigation`'s own call
-        # stack (an ordinary message handler, not a worker), so the wait
-        # is delegated to a worker here and its result awaited back out --
+        # stack -- which TASK-1230 made a worker's call stack (see
+        # `TldwCli._dispatch_screen_navigation`), specifically so this
+        # await can never starve the App's own event routing for the
+        # dialog's lifetime -- but the wait is still delegated to its own
+        # worker here (rather than a bare `await push_screen_wait(...)`)
+        # so `confirm_navigation` keeps working correctly even if some
+        # future caller ever invokes it outside that worker context --
         # `exit_on_error=False` so a broken dialog fails this navigation
         # closed (see the caller's except branch) rather than crashing the
         # app.

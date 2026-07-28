@@ -813,15 +813,36 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
                 await pilot.pause(0)
         # Let the queued switches drain, then prove the app still navigates.
         app.post_message(NavigateToScreen("library"))
-        for _ in range(150):
+        zombies: list = []
+        for _ in range(200):
             await pilot.pause(0.02)
             if type(app.screen).__name__ == "LibraryScreen" and app.screen.is_running:
-                break
+                # TASK-1230: `handle_screen_navigation` now runs each
+                # attempt as its own worker (`_dispatch_screen_navigation`)
+                # instead of inline on the App's own message-processing
+                # task, specifically so a busy-fleet confirm dialog can
+                # never starve that task's own input routing (see that
+                # method's docstring). Twelve back-to-back navigations
+                # posted with zero pacing (`pilot.pause(0)` above) now
+                # queue behind `_screen_navigation_lock` with real worker-
+                # scheduling overhead each, so the LAST one's own children
+                # can still be finishing their own mount for a brief beat
+                # after `app.screen` first reports the target screen and
+                # `is_running` -- keep polling for the zombie check itself
+                # to clear rather than asserting on the very first tick;
+                # if the app ever regresses to genuinely stuck/dead
+                # widgets (the historical instance-cache bug this test
+                # guards against), `zombies` never clears and the
+                # assertion below still fails.
+                zombies = [
+                    widget
+                    for widget in app.screen.walk_children()
+                    if not widget.is_running
+                ]
+                if not zombies:
+                    break
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen.is_running
-        zombies = [
-            widget for widget in app.screen.walk_children() if not widget.is_running
-        ]
         assert not zombies, f"zombie widgets on active screen: {zombies[:5]}"
         # One more hop for responsiveness.
         app.post_message(NavigateToScreen("home"))
