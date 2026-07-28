@@ -2196,13 +2196,17 @@ async def test_exact_profile_catalog_lifecycle_failure_projects_but_never_bypass
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("voice_fails", (False, True))
 async def test_fresh_not_configured_catalog_makes_exact_profile_unavailable(
     audio_cpp_playground: FakeTTSService,
+    voice_fails: bool,
 ) -> None:
     service = audio_cpp_playground
     service.catalogs["audio_cpp"] = _audio_catalog(
         health=ProviderHealth(state="not_configured", fresh=True)
     )
+    if voice_fails:
+        service.voice_error = RuntimeError("private voice detail")
     preset = _profile_preset()
     app = _PlaygroundHost(preset=preset)
 
@@ -2566,6 +2570,12 @@ async def test_provider_edit_during_initial_profile_catalog_load_ends_preset(
         assert widget._profile_controls_applied is True
         assert app.query_one("#tts-model-select", Select).value == "profile/model"
         assert app.query_one("#tts-voice-select", Select).value == "profile/voice"
+        banner = app.query_one("#tts-profile-preview-status", Static)
+        banner_copy = str(banner.render()).lower()
+        assert "loading" in banner_copy
+        assert "blocked" not in banner_copy
+        assert "unavailable" not in banner_copy
+        assert banner.has_class("profile-preview-loading")
 
         provider.value = "openai"
         await _wait_until(pilot, lambda: widget._profile_preset is None)

@@ -209,6 +209,10 @@ class TTSPlaygroundWidget(Widget):
         color: $success;
     }
 
+    #tts-profile-preview-status.profile-preview-loading {
+        color: $text-muted;
+    }
+
     #tts-profile-preview-status.profile-preview-unverified {
         color: $warning;
     }
@@ -300,6 +304,7 @@ class TTSPlaygroundWidget(Widget):
         self._profile_effective_availability: ProfileAvailabilityState | None = (
             profile_preset.availability if profile_preset is not None else None
         )
+        self._profile_preview_loading = profile_preset is not None
         self._profile_configuration_revision: int | None = None
         self.current_audio_file = None
         self.current_audio_artifact: STTSGeneratedAudio | None = None
@@ -780,6 +785,10 @@ class TTSPlaygroundWidget(Widget):
     ) -> None:
         """Reserve request identity before starting exclusive catalog work."""
         target = provider_id or self._selected_provider_id
+        preset = self._profile_preset
+        if preset is not None and target == preset.provider_id:
+            self._profile_preview_loading = True
+            self._sync_profile_preview_status()
         request_generation = (
             self._reserve_catalog_request(target) if isinstance(target, str) else None
         )
@@ -820,6 +829,7 @@ class TTSPlaygroundWidget(Widget):
                 descriptors = service.provider_descriptors()
                 options = provider_options(descriptors)
                 if not options:
+                    self._profile_preview_loading = False
                     self._set_provider_status("No TTS providers are registered")
                     return
                 self._provider_ids = frozenset(value for _label, value in options)
@@ -859,6 +869,8 @@ class TTSPlaygroundWidget(Widget):
             if provider_id is None or provider_id not in getattr(
                 self, "_provider_ids", ()
             ):
+                self._profile_preview_loading = False
+                self._sync_profile_preview_status()
                 return
 
             configuration_revision = service.configuration_revision(provider_id)
@@ -885,6 +897,7 @@ class TTSPlaygroundWidget(Widget):
                 )
                 return
 
+            self._profile_preview_loading = False
             previous_catalog = self._catalogs.get(provider_id)
             if (
                 previous_catalog is not None
@@ -1058,12 +1071,12 @@ class TTSPlaygroundWidget(Widget):
             )
             catalog = self._catalogs.get(provider_id)
             preset = self._profile_preset
-            if preset is not None and preset.provider_id == provider_id:
-                self._profile_effective_availability = (
-                    "unavailable"
-                    if preset.availability == "unavailable"
-                    else "unverified"
-                )
+            if (
+                preset is not None
+                and preset.provider_id == provider_id
+                and self._profile_effective_availability != "unavailable"
+            ):
+                self._profile_effective_availability = "unverified"
             if catalog is not None:
                 self._apply_catalog(provider_id, catalog)
             if preset is not None and preset.provider_id == provider_id:
@@ -1139,6 +1152,7 @@ class TTSPlaygroundWidget(Widget):
     def _mark_stale_catalog_result(self, token: CatalogRequestToken) -> None:
         if token.provider_id != self._selected_provider_id:
             return
+        self._profile_preview_loading = False
         self._stale_providers.add(token.provider_id)
         self._catalog_generation_allowed = False
         preset = self._profile_preset
@@ -1658,6 +1672,7 @@ class TTSPlaygroundWidget(Widget):
         logger.warning("TTS catalog discovery failed for {}", provider_id)
         if provider_id != self._selected_provider_id:
             return
+        self._profile_preview_loading = False
         preset = self._profile_preset
         if preset is not None and preset.provider_id == provider_id:
             if preset.availability != "unavailable":
@@ -1695,18 +1710,18 @@ class TTSPlaygroundWidget(Widget):
             banner.add_class("hidden")
             banner.update("")
             return
-        blocked = (
-            None
-            if availability == "unavailable"
-            else self._profile_preview_blocked_presentation(preset)
-        )
         style_state = availability
         if availability == "unavailable":
             copy = (
                 "Profile preview unavailable — return to Voice profiles and "
                 "choose Edit."
             )
-        elif blocked is not None:
+        elif self._profile_preview_loading:
+            copy = "Profile preview loading — checking the exact saved selection."
+            style_state = "loading"
+        elif (
+            blocked := self._profile_preview_blocked_presentation(preset)
+        ) is not None:
             copy, style_state = blocked
         elif availability == "unverified":
             copy = (
@@ -1715,7 +1730,7 @@ class TTSPlaygroundWidget(Widget):
             )
         else:
             copy = "Profile preview — exact saved selection."
-        for state in ("available", "unverified", "unavailable"):
+        for state in ("loading", "available", "unverified", "unavailable"):
             banner.set_class(
                 style_state == state,
                 f"profile-preview-{state}",
@@ -1731,7 +1746,7 @@ class TTSPlaygroundWidget(Widget):
         service = self._tts_service
         if service is None:
             return (
-                "Profile preview blocked — the TTS service is loading or unavailable.",
+                "Profile preview blocked — the TTS service is unavailable.",
                 "unavailable",
             )
         catalog = self._catalogs.get(preset.provider_id)
@@ -1909,6 +1924,7 @@ class TTSPlaygroundWidget(Widget):
             return
         self.app.workers.cancel_group(self, "stts-catalog-discovery")
         self.app.workers.cancel_group(self, "stts-voice-discovery")
+        self._profile_preview_loading = False
         self._catalog_generation_allowed = False
         display_name = self._provider_display_name(provider_id)
         self._set_provider_status(f"{display_name} settings changed; refresh models")
@@ -1922,6 +1938,7 @@ class TTSPlaygroundWidget(Widget):
             return False
         self._profile_preset = None
         self._profile_effective_availability = None
+        self._profile_preview_loading = False
         self._profile_configuration_revision = None
         self._profile_controls_applied = True
         self._sync_profile_preview_status()
