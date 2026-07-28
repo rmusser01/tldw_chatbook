@@ -3,12 +3,65 @@
 
 import asyncio
 import json
-from typing import Dict, List, Optional, Any
+from typing import TYPE_CHECKING, Dict, List, Optional, Any
 from datetime import datetime, timedelta
-import aiohttp
 from loguru import logger
 
 from ..config import load_settings
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime
+    import aiohttp
+
+
+def _require_aiohttp():
+    """Import `aiohttp` on demand, with an actionable message when absent.
+
+    `aiohttp` is an OPTIONAL dependency -- it is declared only in the
+    ``[websearch]``/``[all-tools]`` extras and registered ``"aiohttp": False``
+    in ``Utils/optional_deps.py``. Importing it at module scope put it on the
+    mandatory startup path (this module <- ImageGenerationService <-
+    console_generate_image <- the default chat screen), so a plain install
+    without an extra died on boot with ``RuntimeError: Unable to resolve
+    default chat screen`` -- ``ScreenRoute.load_screen_class()`` swallows the
+    ModuleNotFoundError and returns None. Root-caused 2026-07-27.
+
+    Returns:
+        The imported ``aiohttp`` module.
+
+    Raises:
+        ImportError: If aiohttp is not installed. `ImageGenerationService.
+            initialize()` catches this and reports the service unavailable,
+            so SwarmUI image generation degrades instead of blocking startup.
+    """
+    try:
+        import aiohttp
+    except ImportError as exc:
+        raise ImportError(
+            "SwarmUI image generation requires the optional 'aiohttp' package. "
+            "Install it with: pip install 'tldw_chatbook[websearch]'"
+        ) from exc
+    return aiohttp
+
+
+def _client_error_types() -> tuple:
+    """Return the aiohttp client-error types for use in an `except` clause.
+
+    `except` expressions are evaluated only when an exception is actually
+    raised, so this defers the aiohttp import to error-handling time. When
+    aiohttp is absent it returns an empty tuple, which matches nothing --
+    letting the ImportError raised by `_require_aiohttp()` fall through to
+    each caller's pre-existing generic handler (`health_check` -> False,
+    `generate_image` -> error dict) instead of being shadowed by a NameError
+    on an unbound `aiohttp`.
+
+    Returns:
+        ``(aiohttp.ClientError,)``, or ``()`` when aiohttp is not installed.
+    """
+    try:
+        import aiohttp
+    except ImportError:
+        return ()
+    return (aiohttp.ClientError,)
 
 
 class SwarmUIClient:
@@ -33,7 +86,7 @@ class SwarmUIClient:
         # Session management
         self._session_id: Optional[str] = None
         self._session_expires: Optional[datetime] = None
-        self._http_session: Optional[aiohttp.ClientSession] = None
+        self._http_session: Optional["aiohttp.ClientSession"] = None
 
         # Configuration
         self.timeout = media_config.get("timeout", 60)
@@ -53,6 +106,7 @@ class SwarmUIClient:
     async def connect(self):
         """Initialize HTTP session."""
         if not self._http_session:
+            aiohttp = _require_aiohttp()
             connector = aiohttp.TCPConnector(limit=10)
             timeout = aiohttp.ClientTimeout(total=self.timeout)
             self._http_session = aiohttp.ClientSession(
@@ -88,7 +142,7 @@ class SwarmUIClient:
                     )
                     return False
 
-        except aiohttp.ClientError as e:
+        except _client_error_types() as e:
             logger.error(f"SwarmUI health check failed: {e}")
             return False
         except Exception as e:
@@ -137,7 +191,7 @@ class SwarmUIClient:
                         f"Failed to get session: {response.status} - {error_text}"
                     )
 
-        except aiohttp.ClientError as e:
+        except _client_error_types() as e:
             logger.error(f"Connection error getting session: {e}")
             raise ConnectionError(f"Unable to connect to SwarmUI server: {e}")
 
@@ -284,7 +338,7 @@ class SwarmUIClient:
                             else:
                                 raise RuntimeError(error_msg)
 
-                except aiohttp.ClientError as e:
+                except _client_error_types() as e:
                     if attempt < self.max_retries - 1:
                         logger.warning(
                             f"Connection error on attempt {attempt + 1}: {e}"
