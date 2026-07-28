@@ -26,6 +26,14 @@ class BoundResult:
 
     messages: list[dict[str, Any]]
     dropped_count: int
+    #: How many whole GROUPS (turns, or -- for a caller that supplies its
+    #: own `is_turn_boundary` -- whatever unit that predicate delimits)
+    #: were dropped. Defaults to 0 so every pre-existing positional
+    #: `BoundResult(messages, dropped_count)` construction in this module
+    #: stays valid. `dropped_count` alone (a message count) cannot answer
+    #: "how many turns" for a caller that wants to report that to a user
+    #: or model (task-1272, Phase 3's synthetic eviction note).
+    dropped_turns: int = 0
 
 
 def count_console_messages_tokens(
@@ -79,18 +87,39 @@ def count_console_messages_tokens(
     return count_tokens_messages(flattened, model) + per_image_tokens * image_count
 
 
-def _group_turns(messages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Group middle history into whole turns (a user + its following rows).
+def _group_turns(
+    messages: list[dict[str, Any]],
+    *,
+    is_boundary: Callable[[dict[str, Any]], bool] | None = None,
+) -> list[list[dict[str, Any]]]:
+    """Group middle history into whole turns (a boundary row + its followers).
 
-    Any rows before the first user message (e.g. a leading orphan assistant)
+    Any rows before the first boundary (e.g. a leading orphan assistant)
     form their own first group. Dropping a whole group never splits a
-    user/assistant pair — nor a tool_call/tool_result pair, were tool rows
-    ever present in the payload.
+    user/assistant pair — nor a tool_call/tool_result pair, provided
+    ``is_boundary`` correctly identifies every row that must stay attached
+    to its predecessor rather than start a new group.
+
+    Args:
+        messages: The message slice to group (already sans any leading
+            system prefix and the current turn).
+        is_boundary: Predicate deciding whether a message starts a new
+            turn. Defaults to ``role == "user"`` — correct for Console's
+            own payloads, which never carry tool rows, and this
+            function's original contract. A caller whose payload DOES
+            carry tool rows (e.g. an agent run) must supply a
+            protocol-aware predicate, or a tool_call/tool_result pair can
+            be split across groups — see
+            ``Agents.run_log_eviction._make_round_boundary``.
+
+    Returns:
+        Turns in original order, each a non-empty list of messages.
     """
+    boundary = is_boundary or (lambda message: message.get("role") == "user")
     turns: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     for message in messages:
-        if message.get("role") == "user" and current:
+        if boundary(message) and current:
             turns.append(current)
             current = [message]
         else:
@@ -109,12 +138,13 @@ def bound_messages_to_window(
     per_image_tokens: int = DEFAULT_PER_IMAGE_TOKENS,
     window: int | None = None,
     count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
+    is_turn_boundary: Callable[[dict[str, Any]], bool] | None = None,
 ) -> BoundResult:
     """Drop oldest whole turns until the payload fits the model window.
 
     Always preserves the leading system prefix and the current turn (from the
-    last user message to the end). Returns the trimmed list and how many
-    history messages were removed.
+    last boundary row to the end). Returns the trimmed list and how many
+    history messages/turns were removed.
 
     Args:
         messages: Full provider payload, post dictionaries/skills.
@@ -125,9 +155,17 @@ def bound_messages_to_window(
         window: Explicit context window; ``None`` uses the token_counter lookup.
         count_fn: Injectable counter ``(messages, model) -> int``; ``None``
             uses ``count_console_messages_tokens``.
+        is_turn_boundary: Optional protocol-aware turn-boundary predicate,
+            forwarded to ``_group_turns`` and used to anchor the current
+            turn (scanning from the end for the last row this predicate
+            accepts). ``None`` (every Console call site) keeps the
+            original ``role == "user"`` rule. An agent-run caller passes
+            its own predicate here — see
+            ``Agents.run_log_eviction._make_round_boundary`` — because an
+            agent payload carries tool rows Console's payloads never do.
 
     Returns:
-        ``BoundResult(messages, dropped_count)``.
+        ``BoundResult(messages, dropped_count, dropped_turns)``.
     """
     counter = count_fn or (
         lambda msgs, mdl: count_console_messages_tokens(
@@ -155,18 +193,20 @@ def bound_messages_to_window(
     system_prefix = messages[:sys_end]
     rest = messages[sys_end:]
 
-    # Current turn = from the last user message to the end.
+    boundary = is_turn_boundary or (lambda message: message.get("role") == "user")
+
+    # Current turn = from the last boundary row to the end.
     last_user = None
     for index in range(len(rest) - 1, -1, -1):
-        if rest[index].get("role") == "user":
+        if boundary(rest[index]):
             last_user = index
             break
     if last_user is None:
-        # No user turn to anchor on -- nothing safe to trim.
+        # No turn boundary to anchor on -- nothing safe to trim.
         return BoundResult(messages, 0)
 
     current_turn = rest[last_user:]
-    kept_turns = _group_turns(rest[:last_user])
+    kept_turns = _group_turns(rest[:last_user], is_boundary=boundary)
 
     def assemble(drop: int) -> list[dict[str, Any]]:
         return (
@@ -193,4 +233,4 @@ def bound_messages_to_window(
             lo = mid + 1
 
     dropped = sum(len(turn) for turn in kept_turns[:best])
-    return BoundResult(assemble(best), dropped)
+    return BoundResult(assemble(best), dropped, best)

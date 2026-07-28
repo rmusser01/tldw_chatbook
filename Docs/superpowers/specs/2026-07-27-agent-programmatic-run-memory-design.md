@@ -363,6 +363,7 @@ made loud at the prompt/tool level instead.
 | `run_log_dir_name` | `agent-runs` | Directory name within the workspace |
 | `run_log_max_record_bytes` | `1_000_000` | Per-record ceiling (§8.1) |
 | `run_log_segment_bytes` | `4_000_000` | Segment roll threshold |
+| `run_log_evict_enabled` | `false` | Phase 3 (§10) SEND-payload eviction. Off by default: existing runs stay byte-identical until opted in. |
 
 **Retention: never auto-delete.** Silently pruning files from a user's project
 directory is the wrong default. The Console surfaces total size and offers
@@ -489,6 +490,38 @@ is expensive to retrofit:** the native protocol pairs an assistant `tool_calls`
 echo with its `role="tool"` replies by `tool_call_id`. Eviction that orphans
 either half produces a request strict providers reject. Any eviction policy must
 operate on whole call/result groups.
+
+**Implemented by TASK-1272 (`Agents/run_log_eviction.py`).** Applied at the SEND
+seam only (`agent_service._make_call_model`'s `call_model` closure), immediately
+before the provider call — `run_agent_loop`'s own `messages` list is never
+touched, so cycle detection, retries, and step accounting are unaffected; only
+what is SENT shrinks. Reuses `bound_messages_to_window` (§14.1) rather than
+reimplementing it, extended with an optional `is_turn_boundary` predicate
+(`console_history_budget.py`, default unchanged so every Console call site
+stays byte-identical).
+
+One design decision worth recording because it is not obvious from §14.1's
+"reuse, don't reimplement" framing alone: the reused primitive's unit of
+"turn" is Console's own — anchored on the last human-authored message —
+which, inside a single agent run (only one such message, at the start),
+would collapse the *entire* run's own growth into one undroppable "current
+turn" and evict nothing while a run is actually in progress. That defeats
+goals 1 and 2 (§10.1) for exactly the long-single-run, small-context-model
+case this phase exists to serve. TASK-1272 therefore uses a finer *round*
+boundary instead — every assistant-authored message starts a new round; a
+native `role="tool"` reply or a fence `role="user"` tool-result row is a
+continuation of it, never a boundary — verified to still avoid orphaning any
+call/result pair for both protocols. `console_history_budget`'s own
+Console-facing default is untouched.
+
+Gated on `log_active` (§7's gate on the tool and the prompt section, reused
+verbatim — eviction never runs without a durable log to point the model back
+at) AND the new `[agents] run_log_evict_enabled` flag (§8), off by default.
+When something is dropped, a synthetic `role="user"` note (not `role=
+"system"`, which several local chat templates reject mid-conversation) is
+spliced in where the dropped rounds were, naming a count and
+`search_run_log` — never a specific record number, which the loop cannot
+derive accurately for a dropped round.
 
 ### 10.1 Which goals each phase actually delivers
 
