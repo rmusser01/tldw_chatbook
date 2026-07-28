@@ -2166,11 +2166,6 @@ class ConsoleComposerBar(Horizontal):
                     tooltip="Record one English utterance with local Parakeet v2.",
                 )
                 yield self._bounded_button(
-                    "🎤 Mic",
-                    width=8,
-                    id="console-voice-toggle",
-                )
-                yield self._bounded_button(
                     "Attach",
                     width=10,
                     id="console-attach-context",

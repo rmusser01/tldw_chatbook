@@ -107,11 +107,18 @@ async def test_preparing_and_error_states_render_their_message():
 
 
 @pytest.mark.asyncio
-async def test_mic_button_exists_in_the_actions_row():
+async def test_there_is_exactly_one_microphone_button():
+    """The composer ships #console-dictation; this feature must not add a second."""
     from textual.widgets import Button
 
     app = ComposerApp()
     async with app.run_test():
         composer = app.query_one(ConsoleComposerBar)
-        button = composer.query_one("#console-voice-toggle", Button)
-        assert _visible(button)
+        mic_like = [
+            button
+            for button in composer.query(Button)
+            if "mic" in str(button.label).lower() or "dictat" in (button.id or "")
+        ]
+        assert len(mic_like) == 1
+        assert mic_like[0].id == "console-dictation"
+        assert not composer.query("#console-voice-toggle")
