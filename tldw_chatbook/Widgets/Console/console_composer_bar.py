@@ -134,6 +134,15 @@ class ConsoleComposerBar(Horizontal):
         self._setup_blocked_reason = ""
         self._can_save_chatbook = False
         self._dictation_state: _DictationState = "idle"
+        #: Whether the last availability probe found both a capture backend
+        #: and a transcription provider installed. Only consulted while
+        #: `_dictation_state` is "idle" -- once a capture is underway, the
+        #: probe already ran (inside `ConsoleVoiceInputController.start()`)
+        #: and this flag stays out of the way of the busy-state tooltips.
+        self._dictation_available = True
+        #: Reason + remedy shown in the mic tooltip while unavailable. Empty
+        #: whenever `_dictation_available` is True.
+        self._dictation_unavailable_tooltip = ""
         #: Chip-only display state for the active capture. Reset on every
         #: fresh entry into "recording" (`sync_dictation_state`) and updated
         #: live by `set_voice_partial()` / `tick_voice_elapsed()`; preserved
@@ -490,11 +499,23 @@ class ConsoleComposerBar(Horizontal):
             "recording": "Stop microphone recording and transcribe.",
             "transcribing": "Transcribing locally with Parakeet v2 INT8…",
         }
+        # Unavailability is cosmetic-only, and only shown at idle: the button
+        # stays real-clickable (never Textual `disabled`) so a press can
+        # still reach the screen's activation handler, which re-probes and
+        # is what actually recovers the button without a remount once, say,
+        # the missing extra gets installed mid-run. Real Textual `disabled`
+        # would block the Click event from ever being delivered at all --
+        # including on a later retry -- which is exactly the dead-end this
+        # exists to avoid.
+        unavailable = state == "idle" and not self._dictation_available
         button.label = labels[state]
-        button.tooltip = tooltips[state]
+        button.tooltip = (
+            self._dictation_unavailable_tooltip if unavailable else tooltips[state]
+        )
         button.disabled = state in {"starting", "transcribing"}
         button.variant = "warning" if state == "recording" else "default"
         button.set_class(state == "recording", "console-dictation-recording")
+        button.set_class(unavailable, "console-dictation-unavailable")
 
         # Mirror the lifecycle into the inline voice chip. The chip has its
         # own vocabulary (STATE_* from console_voice_input), so map the
@@ -518,6 +539,22 @@ class ConsoleComposerBar(Horizontal):
             )
         elif state == "transcribing":
             self.set_voice_status(STATE_FINISHING, message="◌ Transcribing…")
+
+    def set_dictation_availability(
+        self, *, available: bool, tooltip: str = ""
+    ) -> None:
+        """Record the last dictation availability probe and refresh the mic button.
+
+        Args:
+            available: Whether a probe found both a capture backend and a
+                transcription provider installed.
+            tooltip: Reason and remedy to show in the mic tooltip while
+                unavailable (e.g. naming the missing extra to install).
+                Ignored when ``available`` is True.
+        """
+        self._dictation_available = bool(available)
+        self._dictation_unavailable_tooltip = "" if available else tooltip
+        self.sync_dictation_state(self._dictation_state)
 
     def set_voice_partial(self, text: str) -> None:
         """Render live recognizer text into the chip while recording.

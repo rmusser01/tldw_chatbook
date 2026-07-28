@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from Tests.UI.test_console_dictation import (
     _mounted_console,
@@ -694,3 +694,248 @@ async def test_elapsed_timer_stops_when_the_screen_unmounts_mid_capture(monkeypa
 
         assert elapsed_timer.stop.called
         assert console._console_dictation_elapsed_timer is None
+
+
+# --- Task 15: the mic button explains itself when it cannot run ------------
+
+
+async def _wait_for_mic_tooltip_containing(
+    composer, pilot, expected: str, timeout: float = 2.0
+):
+    """Wait for the mic tooltip to contain ``expected`` (mount-time probe is async)."""
+    deadline = time.monotonic() + timeout
+    button = composer.query_one("#console-dictation", Button)
+    await pilot.pause()
+    while time.monotonic() < deadline:
+        if expected in str(button.tooltip):
+            return button
+        await pilot.pause(0.01)
+    assert expected in str(button.tooltip)
+    return button
+
+
+@pytest.mark.asyncio
+async def test_dictation_tooltip_names_the_missing_capture_extra_only(monkeypatch):
+    """Missing capture must read distinctly from missing provider (Task 15)."""
+    _patch_availability(
+        monkeypatch,
+        availability=voice_module.Availability(
+            ok=False,
+            kind="missing-capture",
+            reason=voice_module.CAPTURE_REASON,
+            remedy=voice_module.CAPTURE_REMEDY,
+        ),
+    )
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        mic = await _wait_for_mic_tooltip_containing(composer, pilot, "speech_recording")
+
+        tooltip = str(mic.tooltip)
+        assert "speech_recording" in tooltip
+        assert "transcription_faster_whisper" not in tooltip
+        # Never hidden, whatever the availability.
+        assert mic.styles.display != "none"
+        assert str(mic.label) == "Mic"
+
+
+@pytest.mark.asyncio
+async def test_dictation_tooltip_names_the_missing_provider_extra_only(monkeypatch):
+    """Missing provider must read distinctly from missing capture (Task 15)."""
+    _patch_availability(
+        monkeypatch,
+        availability=voice_module.Availability(
+            ok=False,
+            kind="missing-provider",
+            reason=voice_module.PROVIDER_REASON,
+            remedy=voice_module.PROVIDER_REMEDY,
+        ),
+    )
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        mic = await _wait_for_mic_tooltip_containing(
+            composer, pilot, "transcription_faster_whisper"
+        )
+
+        tooltip = str(mic.tooltip)
+        assert "transcription_faster_whisper" in tooltip
+        assert "speech_recording" not in tooltip
+        assert mic.styles.display != "none"
+
+
+@pytest.mark.asyncio
+async def test_pressing_unavailable_mic_surfaces_remedy_beyond_the_tooltip(monkeypatch):
+    """The remedy must not live only in a hover (Task 15)."""
+    service = FakeDictationService()
+    _patch_availability(
+        monkeypatch,
+        availability=voice_module.Availability(
+            ok=False,
+            kind="missing-provider",
+            reason=voice_module.PROVIDER_REASON,
+            remedy=voice_module.PROVIDER_REMEDY,
+        ),
+    )
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        mic = await _wait_for_mic_tooltip_containing(
+            composer, pilot, "transcription_faster_whisper"
+        )
+        # It is already in the tooltip before any press...
+        assert "transcription_faster_whisper" in str(mic.tooltip)
+
+        # ...and pressing surfaces it again somewhere the user will see
+        # without hovering: a toast, via the controller's own probe-and-fail
+        # path (`ConsoleVoiceInputController.start()` -> `_notify_console_
+        # dictation_error`), which this button press still reaches because
+        # the mic is never made Textual-`disabled` for unavailability alone.
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        matching = [
+            call
+            for call in notify.call_args_list
+            if "transcription_faster_whisper" in str(call.args[0])
+        ]
+        assert len(matching) == 1
+        assert matching[0].kwargs.get("severity") == "error"
+        # No real dictation was attempted; the service was never reached.
+        assert service.start_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_dictation_reprobes_on_activation_and_recovers_without_a_remount(
+    monkeypatch,
+):
+    """Installing the missing extra mid-run must not require a remount (Task 15)."""
+    service = FakeDictationService()
+    _patch_availability(
+        monkeypatch,
+        availability=voice_module.Availability(
+            ok=False,
+            kind="missing-capture",
+            reason=voice_module.CAPTURE_REASON,
+            remedy=voice_module.CAPTURE_REMEDY,
+        ),
+    )
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    app.notify = Mock()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        mic = await _wait_for_mic_tooltip_containing(composer, pilot, "speech_recording")
+        assert "speech_recording" in str(mic.tooltip)
+
+        # The extra gets installed mid-run: the next probe succeeds.
+        _patch_availability(monkeypatch)
+
+        # The chip collapsing on `idle` reflows the action row, so a stale
+        # click coordinate can silently miss; assert the click itself lands.
+        assert await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        assert service.start_calls == 1
+
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        # Recovered without a remount: the idle tooltip is the ordinary one,
+        # not the stale unavailable-capture message.
+        assert "speech_recording" not in str(mic.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_voice_provider_overridden_notifies_once_per_app_run(monkeypatch):
+    """`was_overridden` is once-per-run guidance, not once-per-capture noise (Task 15)."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    monkeypatch.setattr(
+        voice_module,
+        "resolve",
+        lambda: voice_module.EffectiveConfig(
+            provider="faster-whisper",
+            model=None,
+            language="en",
+            configured_provider="parakeet-mlx",
+            was_overridden=True,
+        ),
+    )
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    def _override_calls():
+        return [
+            call
+            for call in notify.call_args_list
+            if "parakeet-mlx" in str(call.args[0]) and "faster-whisper" in str(call.args[0])
+        ]
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        first_capture_calls = _override_calls()
+        assert len(first_capture_calls) == 1
+        assert first_capture_calls[0].kwargs.get("severity") == "warning"
+        notify.reset_mock()
+
+        # Force a brand-new controller instance for the second capture, the
+        # same as a failure (or a fresh screen mount -- ChatScreen is rebuilt,
+        # never a persistent singleton) would: this exercises the app-run
+        # guard in `ChatScreen._handle_console_dictation_event`, not the
+        # controller's own once-per-instance `_override_announced` latch,
+        # which would already suppress a same-instance repeat on its own.
+        console._console_dictation_session = None
+
+        await pilot.pause(0.5)
+        assert await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert _override_calls() == []
+
+
+@pytest.mark.asyncio
+async def test_a_probe_crash_at_mount_does_not_brick_the_button(monkeypatch):
+    """A bug in the (find_spec-only) probe must fail open, not disable forever."""
+
+    def _boom():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(voice_module, "probe", _boom)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        mic = composer.query_one("#console-dictation", Button)
+        for _ in range(5):
+            await pilot.pause(0.02)
+
+        assert str(mic.label) == "Mic"
+        assert "boom" not in str(mic.tooltip)
+        assert "Record one English utterance" in str(mic.tooltip)
+        assert mic.styles.display != "none"

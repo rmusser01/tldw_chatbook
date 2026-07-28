@@ -166,12 +166,23 @@ from ...Chat.console_provider_endpoints import first_configured_endpoint
 # speech stack only through `importlib.util.find_spec` and a function-body
 # import inside `default_service_factory`, so nothing here drags
 # `tldw_chatbook.Audio` (and with it faster-whisper and NeMo) into app start.
+#
+# The module itself is imported (not just the names below) so
+# `_sync_console_dictation_availability` can call `console_voice_input.probe()`
+# through the module's own namespace at call time -- the same target tests
+# already monkeypatch (`_patch_availability` in
+# `Tests/UI/test_console_dictation_streaming.py`) to make the controller's own
+# internal `probe()` call deterministic. Binding `probe` as a bare name here
+# instead would capture the unpatched function at import time and silently
+# stop tracking that monkeypatch.
+from ...Chat import console_voice_input
 from ...Chat.console_voice_input import (
     STATE_LISTENING,
     ConsoleVoiceInputController,
     VoiceFailed,
     VoiceFinal,
     VoicePartial,
+    VoiceProviderOverridden,
     default_service_factory,
 )
 from ...Chat.console_display_state import (
@@ -4422,6 +4433,51 @@ class ChatScreen(BaseAppScreen):
         if composer is not None:
             composer.sync_dictation_state(state)
 
+    def _sync_console_dictation_availability(self) -> None:
+        """Refresh the mic button's tooltip from a fresh availability probe.
+
+        Called once after mount, so the button's initial tooltip is accurate
+        without waiting for a first press, and again at the top of every
+        activation attempt (`_request_console_dictation_start`), so installing
+        the missing extra or plugging in a microphone mid-run is picked up
+        without a screen remount. `probe()` only calls
+        `importlib.util.find_spec`, so it is cheap and safe to call
+        repeatedly.
+
+        This is the cosmetic half only -- it never blocks starting dictation.
+        A real attempt still goes through `ConsoleVoiceInputController.start()`,
+        which re-probes on its own and fails visibly
+        (`_notify_console_dictation_error`) if unavailable. Gating here too
+        would double-report the same failure, and -- because a genuinely
+        Textual-`disabled` button can never be pressed again afterward
+        (Click is never delivered to a disabled widget, so pressing could
+        never recover it) -- this stays purely cosmetic by design; see
+        `ConsoleComposerBar.sync_dictation_state`.
+
+        A probe crash is swallowed and treated as available, so a bug in the
+        probe cannot brick the button in a permanently unavailable-looking
+        state with no way to recover.
+        """
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        try:
+            availability = console_voice_input.probe()
+        except Exception:  # noqa: BLE001 - a probe crash must not disable the button
+            logger.opt(exception=True).warning(
+                "Console dictation availability probe crashed"
+            )
+            composer.set_dictation_availability(available=True)
+            return
+        composer.set_dictation_availability(
+            available=availability.ok,
+            tooltip=(
+                ""
+                if availability.ok
+                else f"{availability.reason} {availability.remedy}".strip()
+            ),
+        )
+
     def _cancel_console_dictation_timer(self) -> None:
         timer = self._console_dictation_timer
         self._console_dictation_timer = None
@@ -4512,6 +4568,26 @@ class ChatScreen(BaseAppScreen):
             # before anything else can run.
             reason = f"{event.reason} {event.remedy}".strip()
             self._notify_console_dictation_error(RuntimeError(reason))
+            return
+        if isinstance(event, VoiceProviderOverridden):
+            # The controller (`ConsoleVoiceInputController._override_announced`)
+            # already latches this to once per controller instance, but a
+            # fresh controller is built on every new dictation session (e.g.
+            # after any failure discards the old one, or on a fresh screen
+            # mount -- ChatScreen itself is rebuilt on every Console
+            # navigation, never a persistent singleton). The user only needs
+            # telling once per app run, not once per capture, so the flag
+            # lives on `self.app_instance`, the one object that actually
+            # persists for the app's whole run.
+            if not getattr(
+                self.app_instance, "_console_dictation_override_notified", False
+            ):
+                self.app_instance._console_dictation_override_notified = True
+                self.app_instance.notify(
+                    f"Configured dictation provider '{event.configured}' isn't "
+                    f"available; using '{event.effective}' instead.",
+                    severity="warning",
+                )
 
     def _on_console_dictation_buffer_limit(self) -> None:
         """Marshal a recorder-thread memory-limit signal onto the UI thread."""
@@ -4679,6 +4755,12 @@ class ChatScreen(BaseAppScreen):
     def _request_console_dictation_start(self) -> None:
         if self._console_dictation_state != "idle":
             return
+        # Re-probe on every activation attempt (TASK-15): refreshes the mic
+        # tooltip so an extra installed or a microphone plugged in mid-run is
+        # reflected without a remount. Cosmetic only -- see
+        # `_sync_console_dictation_availability`'s docstring for why this
+        # never blocks the attempt below.
+        self._sync_console_dictation_availability()
         store = self._ensure_console_chat_store()
         self._console_dictation_origin_session_id = store.active_session_id
         self._console_dictation_partial = ""
@@ -11072,6 +11154,7 @@ class ChatScreen(BaseAppScreen):
         # existing resume/user-triggered retry paths.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.set_timer(0.15, self.consume_pending_console_provider_intent)
+        self.call_after_refresh(self._sync_console_dictation_availability)
         self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
