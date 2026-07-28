@@ -2,7 +2,7 @@
 id: TASK-1300
 title: >-
   Escape does not dismiss the watchlist dialogs — only clicking Cancel does
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-28 04:00'
 labels:
@@ -37,3 +37,22 @@ So a keyboard user cannot back out of a modal, and — because it is modal — c
 - [ ] #3 Dismissing by `Escape` leaves the watchlist untouched, exactly as `Cancel` does
 - [ ] #4 A test presses `Escape` on each dialog and asserts it closed, proven to fail against current code
 <!-- AC:END -->
+
+## Implementation Notes
+
+All five watchlist dialogs declared `BINDINGS = []`, so none had an Escape binding. They now use the
+app's existing convention — `BINDINGS = [("escape", "cancel", "Cancel")]` with an `action_cancel`,
+as in `Widgets/embedding_template_selector.py`.
+
+**Escape dismisses with the same value the Cancel button uses, which is not `None` everywhere.**
+`ConfirmDeleteDialog` cancels with `False`: a caller asking "should I delete this?" must get the
+same answer from Escape that it gets from Cancel, and `None` is a different answer. That equivalence
+is asserted per dialog and mutation-checked — making Escape dismiss `None` there fails the test.
+
+Ten tests, all failing against pre-change code: five for "the dialog closes", five for "it closes
+with the cancel value". Verified live as well, reproducing the UAT's own check inverted — dialog
+present after Escape: 0.
+
+Modified: `tldw_chatbook/UI/Watchlists_Modules/opml_dialogs.py`.
+Added: `Tests/Watchlists/test_watchlist_dialogs_escape.py`.
+

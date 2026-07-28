@@ -23,7 +23,11 @@ from ...Utils.input_validation import sanitize_string, validate_text_input
 class OpmlImportDialog(ModalScreen[str | None]):
     """Modal dialog that prompts the user for OPML XML to import."""
 
-    BINDINGS = []
+    # Escape dismisses, exactly as Cancel does (TASK-1300). These dialogs are
+    # modal, so without it a keyboard user can neither back out nor do anything
+    # else -- during the third Watchlists UAT a `Delete` click was silently
+    # swallowed by a Rename dialog that would not close.
+    BINDINGS = [("escape", "cancel", "Cancel")]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="opml-import-dialog", classes="opml-dialog"):
@@ -32,6 +36,11 @@ class OpmlImportDialog(ModalScreen[str | None]):
             with Horizontal(classes="dialog-buttons"):
                 yield Button("Import", id="opml-import-confirm", variant="success")
                 yield Button("Cancel", id="opml-import-cancel", variant="default")
+
+    def action_cancel(self) -> None:
+        """Back out without applying anything.
+        """
+        self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)
@@ -46,7 +55,11 @@ class OpmlImportDialog(ModalScreen[str | None]):
 class OpmlExportDialog(ModalScreen[None]):
     """Modal dialog that displays OPML XML exported from watchlist sources."""
 
-    BINDINGS = []
+    # Escape dismisses, exactly as Cancel does (TASK-1300). These dialogs are
+    # modal, so without it a keyboard user can neither back out nor do anything
+    # else -- during the third Watchlists UAT a `Delete` click was silently
+    # swallowed by a Rename dialog that would not close.
+    BINDINGS = [("escape", "cancel", "Cancel")]
 
     def __init__(self, xml_text: str) -> None:
         super().__init__()
@@ -59,6 +72,11 @@ class OpmlExportDialog(ModalScreen[None]):
             with Horizontal(classes="dialog-buttons"):
                 yield Button("Close", id="opml-export-close", variant="primary")
 
+    def action_cancel(self) -> None:
+        """Back out without applying anything.
+        """
+        self.dismiss(None)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if str(event.button.id) == "opml-export-close":
             self.dismiss(None)
@@ -68,7 +86,11 @@ class OpmlExportDialog(ModalScreen[None]):
 class ConfirmDeleteDialog(ModalScreen[bool]):
     """Modal dialog that asks the user to confirm deletion of an entity."""
 
-    BINDINGS = []
+    # Escape dismisses, exactly as Cancel does (TASK-1300). These dialogs are
+    # modal, so without it a keyboard user can neither back out nor do anything
+    # else -- during the third Watchlists UAT a `Delete` click was silently
+    # swallowed by a Rename dialog that would not close.
+    BINDINGS = [("escape", "cancel", "Cancel")]
 
     def __init__(self, item_name: str) -> None:
         super().__init__()
@@ -81,6 +103,14 @@ class ConfirmDeleteDialog(ModalScreen[bool]):
             with Horizontal(classes="dialog-buttons"):
                 yield Button("Delete", id="confirm-delete-confirm", variant="error")
                 yield Button("Cancel", id="confirm-delete-cancel", variant="default")
+
+    def action_cancel(self) -> None:
+        """Back out without applying anything.
+
+        Dismisses `False`, not `None`: the caller is asking
+        "should I delete this?" and must get the same answer Cancel gives.
+        """
+        self.dismiss(False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = str(event.button.id)
@@ -117,7 +147,11 @@ class WatchlistNameDialog(ModalScreen[str | None]):
             re-submitting it unchanged is not reported as a collision.
     """
 
-    BINDINGS = []
+    # Escape dismisses, exactly as Cancel does (TASK-1300). These dialogs are
+    # modal, so without it a keyboard user can neither back out nor do anything
+    # else -- during the third Watchlists UAT a `Delete` click was silently
+    # swallowed by a Rename dialog that would not close.
+    BINDINGS = [("escape", "cancel", "Cancel")]
 
     def __init__(
         self,
@@ -156,6 +190,11 @@ class WatchlistNameDialog(ModalScreen[str | None]):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         self._submit()
+
+    def action_cancel(self) -> None:
+        """Back out without applying anything.
+        """
+        self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -212,7 +251,11 @@ class WatchlistSourcePickerDialog(ModalScreen[int | None]):
             with the confirming affordance absent rather than dead.
     """
 
-    BINDINGS = []
+    # Escape dismisses, exactly as Cancel does (TASK-1300). These dialogs are
+    # modal, so without it a keyboard user can neither back out nor do anything
+    # else -- during the third Watchlists UAT a `Delete` click was silently
+    # swallowed by a Rename dialog that would not close.
+    BINDINGS = [("escape", "cancel", "Cancel")]
 
     def __init__(
         self, watchlist_name: str, candidates: Sequence[Mapping[str, Any]]
@@ -248,6 +291,11 @@ class WatchlistSourcePickerDialog(ModalScreen[int | None]):
                 )
             with Horizontal(classes="dialog-buttons"):
                 yield Button("Cancel", id="watchlist-add-source-cancel")
+
+    def action_cancel(self) -> None:
+        """Back out without applying anything.
+        """
+        self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()

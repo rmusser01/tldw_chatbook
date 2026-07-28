@@ -2,7 +2,7 @@
 id: TASK-1091
 title: >-
   Watchlist names keep leading whitespace, and the delete copy says "1 source are"
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-28 04:00'
 labels:
@@ -42,3 +42,40 @@ Should be "is" for one. The rest of that copy is genuinely good — it explains 
 - [ ] #3 The delete confirmation reads correctly for one source and for several
 - [ ] #4 Tests cover the whitespace-only name and the single-source wording, proven to fail against current code
 <!-- AC:END -->
+
+## Implementation Notes
+
+One of the two reported defects was real. The other was a misdiagnosis, and the underlying visual
+had a different cause — which is fixed too.
+
+**Real: the delete copy.** With one source attached it read *"Its 1 source are not deleted. They
+stay in..."*. The noun was already pluralised; the verb and pronoun were not. Split into
+`watchlist_delete_consequence()` so the wording is testable without driving a modal, with both
+branches asserted — including that each keeps the Unassigned explanation, which is the part a user
+actually needs and the easiest thing to lose while fixing grammar.
+
+**Not real: name trimming.** `WatchlistBundleService.create` and `rename` both strip before storing,
+and a whitespace-only name already raises. Verified directly against the service before changing
+anything: `"  Daily  "` stores as `Daily`, `"   "` is rejected. AC#1 and #2 were already satisfied.
+
+Note the near-miss: both methods *validate* on `name.strip()` while passing the unstripped `name`
+onward, which reads like the classic "checks the stripped value, stores the raw one" bug. It is not
+— `_unique_name()` strips again and returns that. Worth stating because the shape invites a fix that
+is not needed.
+
+**What the UAT actually saw.** Every tree node is a `Button`, and Textual centres a Button's label,
+so a short name sits further right than a long one:
+
+    ▸     Daily  0
+    ▸  Security Watch  0
+
+That is label centring, not stored whitespace. Fixed by left-aligning the tree labels in
+`features/_watchlists.tcss`.
+
+This is the second UAT finding in the programme that did not reproduce (after TASK-996's byte-offset
+click). The trimming behaviour is now asserted so it is not filed a third time.
+
+Modified: `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`,
+`tldw_chatbook/css/features/_watchlists.tcss` (+ regenerated bundle).
+Added: `Tests/Watchlists/test_watchlist_name_and_copy.py`.
+
