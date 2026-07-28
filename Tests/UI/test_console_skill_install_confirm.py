@@ -311,7 +311,13 @@ def test_resolve_pending_skill_install_with_no_request_id_is_dropped():
     assert result["allowed"] is True
 
 
-def test_task_resume_state_pending_skill_install_roundtrip():
+def test_task_resume_state_pending_skill_install_serializes_while_live():
+    """``to_dict`` stays a faithful snapshot of a live in-session install card.
+
+    ``pending_skill_install`` is a normal dataclass field while a real
+    ``ConsoleChatController`` round is armed in THIS screen instance -- only
+    the ``from_dict`` direction of the round-trip drops it (see below).
+    """
     s = TaskResumeState()
     assert s.has_pending_skill_install() is False
     s2 = replace(
@@ -323,11 +329,43 @@ def test_task_resume_state_pending_skill_install_roundtrip():
         },
     )
     assert s2.has_pending_skill_install() is True
-    assert TaskResumeState.from_dict(s2.to_dict()).pending_skill_install == {
+    assert s2.to_dict()["pending_skill_install"] == {
         "url": "https://x/y",
         "timeout_seconds": 120.0,
         "request_id": "r1",
     }
+
+
+def test_restored_state_drops_the_pending_install_so_no_dead_card_appears():
+    """A restored pending install must never come back as an actionable card.
+
+    TASK-1130: mirrors ``test_skill_script_confirm_card.py::
+    test_restored_state_drops_the_pending_script_so_no_dead_card_appears``.
+    The confirm it belongs to is a live, blocked worker round keyed by
+    ``request_id``, and ``ConsoleChatController.resolve_pending_skill_install``
+    strict-matches that id against the currently-armed round. A round that
+    survived a save/restore cannot still be armed (a fresh
+    ``ConsoleChatController`` is built on every navigation, and TASK-1143's
+    navigation guard denies any busy round on teardown besides), so a
+    restored card's buttons would all be silently dropped -- a dead card the
+    user could click forever while it misrepresents an abandoned request as
+    awaiting them. This was TASK-910's round-trip fidelity contract before
+    TASK-1130 flipped it to pin the drop instead, mirroring TASK-1051's
+    identical script-side decision.
+    """
+    state = TaskResumeState(
+        summary="Keep me",
+        pending_skill_install={
+            "url": "https://x/y",
+            "timeout_seconds": 120.0,
+            "request_id": "r1",
+        },
+    )
+    restored = TaskResumeState.from_dict(state.to_dict())
+    assert restored.pending_skill_install is None
+    assert restored.has_pending_skill_install() is False
+    # ...and only the skill-confirm fields are affected.
+    assert restored.summary == "Keep me"
 
 
 @pytest.mark.asyncio
