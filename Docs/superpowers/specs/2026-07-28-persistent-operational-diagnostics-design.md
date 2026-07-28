@@ -67,14 +67,31 @@ def persist_event(component: str, event: str, *, level: int = logging.INFO, **fi
     Uses stdlib logging deliberately: the persistent marker does not survive the
     Loguru forwarder, and must not — see module docstring.
     """
+    if "component" in fields:
+        raise TypeError("component is passed positionally, not as a field")
     log_persistent_metadata(
-        logging.getLogger(f"tldw_chatbook.{component}"), level, event,
-        component=component, **fields,
+        logging.getLogger(f"tldw_chatbook.diagnostics.{component}"),
+        level, event, component=component, **fields,
     )
 ```
 
 Call sites never choose between logging libraries, and the one place that can get it wrong is a
 single function with a test on it.
+
+Two details in that signature are deliberate:
+
+- **A `tldw_chatbook.diagnostics.*` namespace, not the caller's module logger.** Naming the
+  logger `tldw_chatbook.app` would collide with the real module's records, interleaving persisted
+  events with descriptive ones and exposing them to any per-logger level configuration aimed at
+  that module. The distinct namespace keeps persisted events greppable and independently
+  configurable, and still satisfies `_is_chatbook_record`, which requires the `tldw_chatbook.`
+  prefix.
+- **`component` is positional and rejected as a field**, so a caller cannot pass it twice and get
+  a confusing `TypeError` from the inner call.
+
+**These records also reach the terminal and the in-app Logs screen**, because they go through the
+root logger like everything else. That is intended — a persisted event is worth seeing live — but
+it means the event set is a UI surface too, which is a further reason to keep it small.
 
 ### 2. One new schema field: `component`
 
@@ -100,6 +117,21 @@ the schema apart from `component`.
 No message text, no traceback, no paths. `exception_type` is a class name, which is a code-side
 identifier.
 
+**Emission points.** The listed events are not scattered across the codebase; each has one
+defined home, and the two that could have sprawled do not:
+
+| Event | Emitted from |
+| --- | --- |
+| `app_started`, `app_stopping` | `TldwCli.on_mount` / `on_unmount` |
+| `persistent_sink_installed` | `Logging_Config._configure_private_file_logging`, after `addHandler` |
+| `worker_started`, `worker_failed` | `TldwCli.on_worker_state_changed` — **one existing hook** that already sees every worker transition; `WorkerState.ERROR` carries the exception on `event.worker.error` |
+| `scheduler_configured` | `SchedulerLoop.report_configuration` (added in TASK-1212) |
+| `unhandled_exception` | `App._handle_exception` override |
+
+The worker pair is the load-bearing one: without a central hook it would have meant editing every
+`run_worker` call site, which is the kind of sprawl that made this area expensive in the first
+place.
+
 Deliberately excluded for now: provider/model call outcomes (they serve the unrealized
 support-bundle goal), and an app `version` field (would need an eighth schema field; add it with
 the bundle work, when there is a consumer).
@@ -117,6 +149,11 @@ nothing else has happened; an empty file means the sink did not install.
 - **The guard that would have caught this.** Install the real sink into a `tmp_path` via
   `_configure_private_file_logging`, run the startup emitter, assert the file is **non-empty**.
   Asserting a handler is attached is what passes today against an empty log.
+- **…and that guard must not be satisfiable by its own install line.** `persistent_sink_installed`
+  is written the moment the sink installs, so "non-empty" alone would pass even if every other
+  event were broken — the same vacuous shape this repo keeps paying for. The assertion is
+  therefore on **named events**: the file must contain `event=app_started` *and* at least one
+  event that is not `persistent_sink_installed`.
 - **The boundary still holds.** An ordinary `logger.info` on the same logger is rejected; a
   Loguru-routed record carrying the marker is rejected. Both asserted, because both are
   security properties rather than incidental behaviour.
