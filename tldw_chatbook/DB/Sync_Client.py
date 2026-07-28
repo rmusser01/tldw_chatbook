@@ -23,6 +23,10 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import (
     dispatch_media_post_ingest,
 )
 from tldw_chatbook.DB.sql_logging import preview_params
+from tldw_chatbook.STT.persistence import (
+    dump_transcription_provenance_document,
+    load_transcription_provenance_document,
+)
 from tldw_chatbook.Utils.private_paths import secure_private_directory
 #
 #######################################################################################################################
@@ -571,6 +575,22 @@ class ClientSyncEngine:
         logger.debug(
             f"Executing SQL for: Op='{operation}', Entity='{entity}', UUID='{uuid}', RemoteVer='{remote_version}', Force='{force_apply}'"
         )
+
+        if entity == "Media" and "transcription_provenance_json" in payload:
+            raw_provenance = payload["transcription_provenance_json"]
+            if raw_provenance is not None:
+                if type(raw_provenance) is not str:
+                    raise TypeError(
+                        "Media transcription_provenance_json must be a string"
+                    )
+                payload = {
+                    **payload,
+                    "transcription_provenance_json": (
+                        dump_transcription_provenance_document(
+                            load_transcription_provenance_document(raw_provenance)
+                        )
+                    ),
+                }
 
         # --- Special handling for MediaKeywords junction table ---
         if entity == "MediaKeywords":

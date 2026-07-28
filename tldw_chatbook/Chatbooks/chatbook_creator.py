@@ -37,6 +37,7 @@ from ..Chat.citation_service_factory import (
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
+from ..STT.persistence import load_transcription_provenance_document
 from ..Utils.input_validation import sanitize_string
 from ..Utils.path_validation import validate_filename
 from ..Utils.private_paths import secure_private_directory
@@ -1171,6 +1172,12 @@ class ChatbookCreator:
                 if not media_item:
                     logger.warning(f"Media item not found: {media_id}")
                     continue
+                provenance_json = media_item.get("transcription_provenance_json")
+                transcription_provenance = (
+                    load_transcription_provenance_document(provenance_json)
+                    if provenance_json
+                    else None
+                )
 
                 # Create media data structure.
                 # NOTE: the Media table's real columns are ``type``,
@@ -1194,6 +1201,7 @@ class ChatbookCreator:
                         "prompt": media_item.get("prompt"),
                         "summary": media_item.get("summary"),
                         "transcription_model": media_item.get("transcription_model"),
+                        "transcription_provenance": transcription_provenance,
                     },
                 }
 

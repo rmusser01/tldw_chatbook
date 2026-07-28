@@ -24,6 +24,37 @@ _SPEC.loader.exec_module(_MODULE)
 LocalMediaReadingService = _MODULE.LocalMediaReadingService
 
 
+def _transcription_provenance() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "attempt_id": "attempt-1",
+        "batch_id": None,
+        "job_id": None,
+        "retry_of_attempt_id": None,
+        "retry_of_job_id": None,
+        "provider_id": "parakeet-onnx",
+        "model_id": "parakeet-v2",
+        "artifact_root": None,
+        "artifact_dependencies": [],
+        "precision": "int8",
+        "requested_device": "auto",
+        "effective_device": "cpu",
+        "requested_language": "en",
+        "effective_language": "en",
+        "detected_language": None,
+        "task": "transcribe",
+        "produced_capabilities": {
+            "timestamps": "none",
+            "punctuation": True,
+            "capitalization": True,
+            "vad": False,
+            "diarization": False,
+        },
+        "warnings": [],
+        "failed_attempt": None,
+    }
+
+
 @pytest.fixture
 def memory_db_factory():
     created_dbs = []
@@ -214,6 +245,28 @@ def test_local_service_get_media_detail_enriches_saved_state(memory_db_factory):
     assert detail["id"] == media_id
     assert detail["is_read_it_later"] is True
     assert detail["saved_at"] is not None
+
+
+def test_local_service_decodes_provenance_for_detail_and_search(memory_db_factory):
+    db = memory_db_factory()
+    document = _transcription_provenance()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Transcribed",
+        content="hello",
+        media_type="audio",
+        keywords=[],
+        transcription_model="parakeet-v2",
+        transcription_provenance=document,
+    )
+    service = LocalMediaReadingService(db)
+
+    detail = service.get_media_detail(media_id)
+    search_item = service.search_media(media_ids_filter=[media_id])["items"][0]
+
+    assert detail["transcription_provenance"] == document
+    assert search_item["transcription_provenance"] == document
+    assert "transcription_provenance_json" not in detail
+    assert "transcription_provenance_json" not in search_item
 
 
 def test_local_service_direct_media_management_round_trips(memory_db_factory):

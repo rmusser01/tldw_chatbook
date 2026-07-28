@@ -18,6 +18,10 @@ from typing import Any, Mapping, Optional
 from urllib.parse import quote, unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from tldw_chatbook.STT.persistence import (
+    load_transcription_provenance_document,
+)
+
 
 class LocalMediaReadingService:
     """Thin wrapper around the local media DB methods used by the media seam."""
@@ -72,6 +76,13 @@ class LocalMediaReadingService:
         self, row: Mapping[str, Any]
     ) -> dict[str, Any]:
         enriched = dict(row)
+        if "transcription_provenance_json" in enriched:
+            raw_provenance = enriched.pop("transcription_provenance_json")
+            enriched["transcription_provenance"] = (
+                load_transcription_provenance_document(raw_provenance)
+                if raw_provenance
+                else None
+            )
         state = self._require_db().get_media_read_it_later_state(
             self._coerce_media_id(row["id"])
         )

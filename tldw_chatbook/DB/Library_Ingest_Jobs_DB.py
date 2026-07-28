@@ -15,12 +15,19 @@ from typing import Iterator, Union
 
 from loguru import logger
 
+from tldw_chatbook.STT.persistence import dump_failed_transcription_attempt
+
 from .base_db import BaseDB
 from .private_sqlite import connect_private_sqlite
 
 
 class LibraryIngestJobsDB(BaseDB):
-    _CURRENT_SCHEMA_VERSION = 4
+    _CURRENT_SCHEMA_VERSION = 5
+    _STT_LINEAGE_COLUMNS = (
+        ("retry_of_job_id", "TEXT DEFAULT NULL"),
+        ("stt_failure_provenance_json", "TEXT DEFAULT NULL"),
+        ("retry_source_failure_provenance_json", "TEXT DEFAULT NULL"),
+    )
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         self._conn: sqlite3.Connection | None = None
@@ -184,7 +191,10 @@ class LibraryIngestJobsDB(BaseDB):
                 origin TEXT NOT NULL DEFAULT 'local' CHECK (origin IN ('local','server')),
                 remote_job_id TEXT DEFAULT NULL,
                 batch_id TEXT DEFAULT NULL,
-                remote_media_id TEXT DEFAULT NULL
+                remote_media_id TEXT DEFAULT NULL,
+                retry_of_job_id TEXT DEFAULT NULL,
+                stt_failure_provenance_json TEXT DEFAULT NULL,
+                retry_source_failure_provenance_json TEXT DEFAULT NULL
             );
             """
         )
@@ -200,7 +210,9 @@ class LibraryIngestJobsDB(BaseDB):
             current_version = 3
         if current_version < 4:
             self._migrate_v3_to_v4()
-
+            current_version = 4
+        if current_version < 5:
+            self._migrate_v4_to_v5()
 
     def _migrate_v3_to_v4(self) -> None:
         """Record the id of the media row the SERVER created.
@@ -225,6 +237,15 @@ class LibraryIngestJobsDB(BaseDB):
             conn.execute("DELETE FROM schema_version")
             conn.execute("INSERT INTO schema_version (version) VALUES (4)")
 
+    def _migrate_v4_to_v5(self) -> None:
+        """Add nullable STT failure and retry-lineage fields."""
+
+        with self.transaction() as conn:
+            for name, dtype in self._STT_LINEAGE_COLUMNS:
+                conn.execute(f"ALTER TABLE ingest_jobs ADD COLUMN {name} {dtype}")
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version (version) VALUES (5)")
+
     @staticmethod
     def _seq_of(job_id: str) -> int:
         # "ingest-job-{n}" -> n
@@ -239,8 +260,10 @@ class LibraryIngestJobsDB(BaseDB):
                chunk_enabled, chunk_size, state, retry_count, detected_type, error,
                finished_at_wall, media_id, superseded, dismissed, permanent,
                ingest_options, error_detail, progress, content_hash,
-               origin, remote_job_id, batch_id, remote_media_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               origin, remote_job_id, batch_id, remote_media_id,
+               retry_of_job_id, stt_failure_provenance_json,
+               retry_source_failure_provenance_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(job_id) DO UPDATE SET
               source_path=excluded.source_path, title=excluded.title, author=excluded.author,
               keywords=excluded.keywords, perform_analysis=excluded.perform_analysis,
@@ -252,7 +275,13 @@ class LibraryIngestJobsDB(BaseDB):
               ingest_options=excluded.ingest_options, error_detail=excluded.error_detail,
               progress=excluded.progress, content_hash=excluded.content_hash,
               origin=excluded.origin, remote_job_id=excluded.remote_job_id,
-              batch_id=excluded.batch_id, remote_media_id=excluded.remote_media_id
+              batch_id=excluded.batch_id, remote_media_id=excluded.remote_media_id,
+              retry_of_job_id=COALESCE(ingest_jobs.retry_of_job_id, excluded.retry_of_job_id),
+              stt_failure_provenance_json=excluded.stt_failure_provenance_json,
+              retry_source_failure_provenance_json=COALESCE(
+                ingest_jobs.retry_source_failure_provenance_json,
+                excluded.retry_source_failure_provenance_json
+              )
             """,
             (
                 self._seq_of(job.job_id),
@@ -281,6 +310,19 @@ class LibraryIngestJobsDB(BaseDB):
                 job.remote_job_id,
                 job.batch_id,
                 job.remote_media_id,
+                job.retry_of_job_id,
+                (
+                    dump_failed_transcription_attempt(job.stt_failure_provenance)
+                    if job.stt_failure_provenance is not None
+                    else None
+                ),
+                (
+                    dump_failed_transcription_attempt(
+                        job.retry_source_failure_provenance
+                    )
+                    if job.retry_source_failure_provenance is not None
+                    else None
+                ),
             ),
         )
         conn.commit()

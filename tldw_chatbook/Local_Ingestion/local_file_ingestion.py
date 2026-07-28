@@ -933,6 +933,8 @@ def persist_parsed_media(
             url=payload["url"],
             analysis_content=payload["analysis_content"],
             author=payload["author"],
+            transcription_model=payload.get("transcription_model"),
+            transcription_provenance=payload.get("transcription_provenance"),
             ingestion_date=datetime.now().strftime("%Y-%m-%d"),
             chunks=payload["chunks"],
             chunk_options=payload["chunk_options"],

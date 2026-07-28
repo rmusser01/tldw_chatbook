@@ -63,12 +63,19 @@ from __future__ import annotations
 
 import json
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Protocol
 
 from loguru import logger
+
+from tldw_chatbook.STT.persistence import (
+    FailedTranscriptionAttempt,
+    dump_failed_transcription_attempt,
+    load_failed_transcription_attempt,
+)
 
 # The default chunk size (in words) used whenever a caller doesn't supply
 # one -- the lowest-level pure module in the Library ingest stack, so
@@ -195,6 +202,11 @@ class LibraryIngestJob:
             install hints) set on failure.
         content_hash: Optional content hash recorded on success for
             deduplication-aware "Open in Library" lookups.
+        retry_of_job_id: The immediately preceding Library job, when this job
+            is a retry.
+        stt_failure_provenance: This job's own sanitized failed STT attempt.
+        retry_source_failure_provenance: Immutable failed-attempt snapshot
+            carried into this retry.
     """
 
     job_id: str
@@ -234,6 +246,21 @@ class LibraryIngestJob:
     #: row. Kept separate so a server-origin job can offer its own affordance
     #: (task-700) without weakening what ``media_id`` means.
     remote_media_id: str | None = None
+    retry_of_job_id: str | None = None
+    stt_failure_provenance: dict[str, Any] | None = None
+    retry_source_failure_provenance: dict[str, Any] | None = None
+
+
+def _copy_job(job: LibraryIngestJob) -> LibraryIngestJob:
+    """Return a job whose persisted STT snapshots share no mutable state."""
+
+    return replace(
+        job,
+        stt_failure_provenance=deepcopy(job.stt_failure_provenance),
+        retry_source_failure_provenance=deepcopy(
+            job.retry_source_failure_provenance
+        ),
+    )
 
 
 class IngestJobStore(Protocol):
@@ -338,7 +365,7 @@ class LibraryIngestJobRegistry:
         jobs (see ``plan_restore``) do so explicitly via the store before
         calling this method.
         """
-        self._jobs = list(jobs)
+        self._jobs = [_copy_job(job) for job in jobs]
         self._next_id = next_id
         self._notify_listeners()
 
@@ -454,7 +481,7 @@ class LibraryIngestJobRegistry:
         self._jobs.append(job)
         self._notify_listeners()
         self._persist(job)
-        return replace(job)
+        return _copy_job(job)
 
     def next_queued(
         self, *, skip_types: frozenset[str] = frozenset()
@@ -477,7 +504,7 @@ class LibraryIngestJobRegistry:
                 job.state == IngestJobState.QUEUED
                 and job.detected_type not in skip_types
             ):
-                return replace(job)
+                return _copy_job(job)
         return None
 
     def _find_index(self, job_id: str) -> int | None:
@@ -519,7 +546,7 @@ class LibraryIngestJobRegistry:
             job.batch_id = str(batch_id)
         self._notify_listeners()
         self._persist(job)
-        return replace(job)
+        return _copy_job(job)
 
     def mark_parsing(
         self, job_id: str, *, detected_type: str = ""
@@ -564,7 +591,7 @@ class LibraryIngestJobRegistry:
         self._jobs[index] = updated
         self._notify_listeners()
         self._persist(updated)
-        return replace(updated)
+        return _copy_job(updated)
 
     def mark_writing(self, job_id: str) -> LibraryIngestJob | None:
         """Transition a ``PARSING`` job to ``WRITING``.
@@ -596,7 +623,7 @@ class LibraryIngestJobRegistry:
         self._jobs[index] = updated
         self._notify_listeners()
         self._persist(updated)
-        return replace(updated)
+        return _copy_job(updated)
 
     def mark_done(
         self,
@@ -645,7 +672,7 @@ class LibraryIngestJobRegistry:
         self._jobs[index] = updated
         self._notify_listeners()
         self._persist(updated)
-        return replace(updated)
+        return _copy_job(updated)
 
     def mark_failed(
         self,
@@ -655,6 +682,9 @@ class LibraryIngestJobRegistry:
         permanent: bool = False,
         error_detail: dict[str, Any] | None = None,
         progress: dict[str, Any] | None = None,
+        stt_failure_provenance: (
+            FailedTranscriptionAttempt | dict[str, Any] | None
+        ) = None,
     ) -> LibraryIngestJob | None:
         """Transition a job to ``FAILED`` and stamp ``finished_at``/``finished_at_wall``.
 
@@ -669,6 +699,8 @@ class LibraryIngestJobRegistry:
             error_detail: Optional structured error payload.
             progress: Optional structured progress payload captured at
                 failure time.
+            stt_failure_provenance: Complete sanitized context for this
+                job's failed STT attempt.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
@@ -690,6 +722,13 @@ class LibraryIngestJobRegistry:
         current = self._jobs[index]
         if current.superseded or current.dismissed:
             return None
+        normalized_stt_failure = (
+            load_failed_transcription_attempt(
+                dump_failed_transcription_attempt(stt_failure_provenance)
+            )
+            if stt_failure_provenance is not None
+            else None
+        )
         updated = replace(
             current,
             state=IngestJobState.FAILED,
@@ -697,13 +736,14 @@ class LibraryIngestJobRegistry:
             permanent=permanent,
             error_detail=error_detail,
             progress=progress,
+            stt_failure_provenance=normalized_stt_failure,
             finished_at=time.monotonic(),
             finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[index] = updated
         self._notify_listeners()
         self._persist(updated)
-        return replace(updated)
+        return _copy_job(updated)
 
     def mark_remote_done(
         self, job_id: str, *, remote_media_id: str | None = None
@@ -766,7 +806,7 @@ class LibraryIngestJobRegistry:
         self._jobs[index] = updated
         self._notify_listeners()
         self._persist(updated)
-        return replace(updated)
+        return _copy_job(updated)
 
     def update_progress(
         self, job_id: str, *, progress: dict[str, Any] | None
@@ -798,7 +838,7 @@ class LibraryIngestJobRegistry:
         self._jobs[index] = updated
         self._notify_listeners()
         self._persist(updated)
-        return replace(updated)
+        return _copy_job(updated)
 
     def mark_cancelled(
         self, job_id: str, *, reason: str = ""
@@ -840,7 +880,7 @@ class LibraryIngestJobRegistry:
         self._jobs[index] = updated
         self._notify_listeners()
         self._persist(updated)
-        return replace(updated)
+        return _copy_job(updated)
 
     def requeue(self, job_id: str) -> LibraryIngestJob | None:
         """Append a fresh ``QUEUED`` copy of a ``FAILED`` job, superseding it.
@@ -908,6 +948,10 @@ class LibraryIngestJobRegistry:
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
             retry_count=source.retry_count + 1,
+            retry_of_job_id=source.job_id,
+            retry_source_failure_provenance=deepcopy(
+                source.stt_failure_provenance
+            ),
         )
         superseded_source = replace(source, superseded=True)
         self._jobs[index] = superseded_source
@@ -915,7 +959,7 @@ class LibraryIngestJobRegistry:
         self._notify_listeners()
         self._persist(superseded_source)
         self._persist(new_job)
-        return replace(new_job)
+        return _copy_job(new_job)
 
     def dismiss(self, job_id: str) -> LibraryIngestJob | None:
         """Hide a ``FAILED`` or ``CANCELLED`` job from ``jobs()``/``counts()``.
@@ -955,7 +999,7 @@ class LibraryIngestJobRegistry:
         self._jobs[index] = updated
         self._notify_listeners()
         self._persist(updated)
-        return replace(updated)
+        return _copy_job(updated)
 
     def clear_finished(self) -> int:
         """Remove every ``DONE``/``FAILED`` job (visible or already hidden).
@@ -995,7 +1039,7 @@ class LibraryIngestJobRegistry:
             registry state (see the module docstring).
         """
         return tuple(
-            replace(job)
+            _copy_job(job)
             for job in reversed(self._jobs)
             if not (job.superseded or job.dismissed)
         )
@@ -1057,7 +1101,7 @@ class LibraryIngestJobRegistry:
         """
         for job in self._jobs:
             if job.job_id == job_id:
-                return replace(job)
+                return _copy_job(job)
         return None
 
 
@@ -1128,13 +1172,28 @@ def _job_from_row(row: dict) -> "LibraryIngestJob":
         permanent=bool(row["permanent"]),
         retry_count=int(row["retry_count"]),
         ingest_options=json.loads(row.get("ingest_options") or "{}"),
-        error_detail=json.loads(row["error_detail"]) if row.get("error_detail") else None,
+        error_detail=json.loads(row["error_detail"])
+        if row.get("error_detail")
+        else None,
         progress=json.loads(row["progress"]) if row.get("progress") else None,
         content_hash=row.get("content_hash"),
         origin=row.get("origin") or "local",
         remote_job_id=row.get("remote_job_id"),
         batch_id=row.get("batch_id"),
         remote_media_id=row.get("remote_media_id"),
+        retry_of_job_id=row.get("retry_of_job_id"),
+        stt_failure_provenance=(
+            load_failed_transcription_attempt(row["stt_failure_provenance_json"])
+            if row.get("stt_failure_provenance_json")
+            else None
+        ),
+        retry_source_failure_provenance=(
+            load_failed_transcription_attempt(
+                row["retry_source_failure_provenance_json"]
+            )
+            if row.get("retry_source_failure_provenance_json")
+            else None
+        ),
         # monotonic fields are not round-trippable -- leave defaults.
         submitted_at=0.0,
         started_at=None,
