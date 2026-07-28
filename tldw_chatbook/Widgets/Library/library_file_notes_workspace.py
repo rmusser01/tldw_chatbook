@@ -247,6 +247,11 @@ class LibraryFileNotesWorkspace(Vertical):
     }
 
     LibraryFileNotesWorkspace.-stack-editor-actions
+    .file-notes-toolbar.-confirm-delete Button {
+        padding: 0;
+    }
+
+    LibraryFileNotesWorkspace.-stack-editor-actions
     #file-notes-delete.-confirm-delete {
         column-span: 2;
     }

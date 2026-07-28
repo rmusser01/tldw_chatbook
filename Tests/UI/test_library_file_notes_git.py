@@ -536,14 +536,19 @@ def _assert_visible_editor_actions_fit(
     pane = workspace.query_one("#file-notes-editor-pane")
     visible_actions = tuple(button for button in pane.query(Button) if button.display)
     assert visible_actions
+    clipped_labels: dict[str | None, tuple[str, str]] = {}
     for button in visible_actions:
         label = str(button.label)
+        rendered_label = button.render_line(0).text.strip()
+        if rendered_label != label:
+            clipped_labels[button.id] = (label, rendered_label)
         assert button.render().plain == label
         assert cell_len(label) <= button.content_region.width
         assert button.region.x >= pane.region.x
         assert button.region.right <= pane.region.right
         assert button.region.y >= pane.region.y
         assert button.region.bottom <= pane.region.bottom
+    assert not clipped_labels, f"clipped editor action labels: {clipped_labels}"
 
 
 async def _assert_visible_panel_buttons_fit(panel, pilot) -> None:
