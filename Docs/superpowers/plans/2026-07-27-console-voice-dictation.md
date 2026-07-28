@@ -269,7 +269,10 @@ def test_resolve_keeps_configured_provider_when_installed(monkeypatch):
         {
             "transcription.default_provider": "faster-whisper",
             "transcription.default_model": "base",
-            "transcription.default_language": "en",
+            # Deliberately not "en": DEFAULT_LANGUAGE is also "en", so an "en"
+            # stub can't tell a correct `default_language` read apart from a
+            # mutated `language` read silently falling back to the default.
+            "transcription.default_language": "fr",
         },
     )
 
@@ -278,6 +281,31 @@ def test_resolve_keeps_configured_provider_when_installed(monkeypatch):
     assert effective is not None
     assert effective.provider == "faster-whisper"
     assert effective.model == "base"
+    assert effective.language == "fr"
+    assert effective.was_overridden is False
+
+
+def test_resolve_falls_back_to_stt_settings_section_name(monkeypatch):
+    """Pins the STT_settings key name specifically, not just default_provider.
+
+    `test_resolve_reads_the_real_config_key_names` always stubs
+    `transcription.default_provider`, so the `or get_cli_setting("STT_settings", ...)`
+    fallback branch is never reached there and a `STT_settings` -> `STTSettings`
+    mutation would pass unnoticed. This test leaves `transcription.default_provider`
+    unset so only the fallback section name can produce the expected result.
+    """
+    monkeypatch.setattr(
+        cvi, "installed_local_providers", lambda: ("parakeet-mlx", "faster-whisper")
+    )
+    _stub_settings(
+        monkeypatch, {"STT_settings.default_stt_provider": "faster-whisper"}
+    )
+
+    effective = cvi.resolve()
+
+    assert effective is not None
+    assert effective.configured_provider == "faster-whisper"
+    assert effective.provider == "faster-whisper"
     assert effective.was_overridden is False
 
 
