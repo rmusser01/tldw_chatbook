@@ -27,59 +27,49 @@ _ENV_PREFIX = "TLDW_AGENTS_"
 _ENV_TRUE = {"1", "true", "yes", "on"}
 _ENV_FALSE = {"0", "false", "no", "off"}
 
-#: Directory created inside the resolved root. Deliberately UNDOTTED when the
-#: run's log lands in a bound workspace folder: a dotted directory is
-#: excluded by `_is_hidden_within`, which would hide the log from the very
-#: tools meant to read it there. `bind()` dots this name instead when the
-#: root came from the SANDBOX FALLBACK -- see its own comment (final-review
-#: CRITICAL 2).
+#: Directory created inside the resolved root, in BOTH the sandbox-fallback
+#: and the bound-workspace case: `bind()` always dots this name
+#: (`.agent-runs`) before creating it. `_is_hidden_within`
+#: (`Tools/file_operation_tools.py`) excludes any dot-prefixed path
+#: component from `glob_files`/`grep_files`/`read_file`, so a sub-agent --
+#: which inherits its parent's tool allow-list -- can never reach the
+#: parent's run log through those tools, regardless of which root (the
+#: sandbox, or a bound workspace folder) the log happened to land under.
 #:
-#: KNOWN OPEN VULNERABILITY -- TASK-1270 (2026-07-28, not yet fixed): the
-#: undotted-for-workspace choice above rests on the premise that
-#: `glob_files`/`grep_files` cannot reach a workspace folder root. TASK-850
-#: made that premise FALSE -- both tools now resolve every root
-#: `allowed_file_roots()` returns (sandbox + every bound workspace folder;
-#: see `Tools/file_operation_tools.py`'s `GlobFiles.execute`/
-#: `GrepFiles.execute`), so the undotted directory in a bound workspace
-#: folder is reachable by a sub-agent through them today -- the exact
-#: disclosure `bind()`'s sandbox-fallback dotting exists to prevent,
-#: reopened for the workspace case. Reproduced with a planted secret in
-#: `Tests/Agents/test_run_log_workspace_isolation.py` (both tests there are
-#: `xfail(strict=True)`, i.e. confirmed still broken). The designed fix --
-#: dot the name unconditionally in `bind()` below, deleting the
-#: sandbox-fallback-only conditional and the `_root_kind` machinery it
-#: depends on entirely -- is BLOCKED: it also flips the directory-name
-#: string asserted by ~22 pre-existing tests in `Tests/Agents/
-#: test_run_log_writer.py` / `Tests/Agents/test_run_log_service_wiring.py`,
-#: which a routine security-defect pass was not authorized to edit. DO NOT
-#: treat the surrounding comments (here and in `bind()`) as a correct
-#: threat model -- they describe the premise this note just disproved. See
-#: `task-1270-report.md` at the repository root for the ready-to-apply
-#: diff and full accounting before touching this again.
+#: History (TASK-1270, 2026-07-28): this was originally a conditional --
+#: dotted only under the sandbox fallback, undotted for a bound workspace
+#: folder. The sandbox-only dotting was a real, reviewed fix for a
+#: sub-agent log-disclosure bug (a child could `grep_files` its parent's
+#: log and extract secrets). Staying undotted for a bound workspace folder
+#: was CORRECT when that decision was made: at the time,
+#: `glob_files`/`grep_files` globbed `_tool_sandbox_root()` alone and could
+#: not reach a workspace folder root at all, so undotted there cost
+#: nothing and bought the log user-visibility inside the user's own
+#: project. TASK-850 ("Scope glob_files and grep_files to workspace folder
+#: roots") invalidated that premise: both tools now resolve every root
+#: `allowed_file_roots()` returns, so an undotted workspace-folder log
+#: became reachable by a sub-agent through them -- the exact disclosure
+#: the sandbox-fallback dotting was meant to prevent, reopened for the
+#: workspace case by an unrelated change. TASK-1270 reproduced this with a
+#: planted secret (`Tests/Agents/test_run_log_workspace_isolation.py`) and
+#: closed it by dotting the name unconditionally, deleting the
+#: sandbox-vs-workspace conditional (and the `_root_kind` side channel it
+#: depended on) entirely: the security property must not depend on which
+#: root was chosen, nor on what the generic file tools happen to search
+#: this month -- a uniform rule cannot rot the way that conditional did.
+#:
+#: What this does NOT give up: a dotted directory is still an ORDINARY
+#: directory to the user -- `ls -a` lists it, editors show it, it is fully
+#: diffable and keepable in the user's own repository. It is hidden only
+#: from this app's own sandboxed file tools, which is precisely the
+#: point. `search_run_log`'s own reader (`run_log_search.load_records`) is
+#: unaffected either way: it globs `log_dir` directly and never routes
+#: through `validate_path`/`_is_hidden_within`, which is what rejects a
+#: hidden path component.
 DEFAULT_DIR_NAME = "agent-runs"
 DEFAULT_SEGMENT_BYTES = 4_000_000
 DEFAULT_MAX_RECORD_BYTES = 1_000_000
 MANIFEST_NAME = "MANIFEST"
-
-#: Side channel from `resolve_log_root()` to `bind()`: whether the last
-#: real call resolved via the sandbox fallback (no read-write workspace
-#: folder bound) rather than a bound workspace folder. Thread-local so
-#: concurrent binds on different writers/threads can never cross-contaminate
-#: each other's naming choice.
-#:
-#: This exists ONLY because `resolve_log_root()`'s return value itself must
-#: stay a bare `Path | None` -- it is pinned by
-#: `test_real_resolve_log_root_prefers_workspace_over_sandbox` and its
-#: sandbox-fallback sibling in Tests/Agents/test_run_log_writer.py, which
-#: assert plain `Path` equality against the real function's result -- and
-#: because many pre-existing tests across several files monkeypatch
-#: `resolve_log_root` wholesale with a bare `lambda: some_path`, which never
-#: touches this side channel. `bind()` resets it to `False` immediately
-#: before calling `resolve_log_root()`, so those doubles (and any stale
-#: value from an earlier call in this thread) always read back as "not the
-#: sandbox fallback" -- the safe, pre-existing-behaviour-preserving default.
-#: Only the REAL `resolve_log_root()` ever sets it to `True`.
-_root_kind = threading.local()
 
 
 def _env_override(key: str) -> str | None:
@@ -181,13 +171,14 @@ def _coerce_dir_name(value, default: str) -> str:
     Deliberately NOT routed through ``Utils/path_validation.validate_path``:
     that function raises "Access to hidden files/directories is not
     allowed" on any hidden (dotted) path component, and ``bind()``
-    intentionally dots this directory under the sandbox fallback -- a real,
-    reviewed fix for a sub-agent log-disclosure bug (a child could
-    ``grep_files`` its parent's log and extract secrets; see ``bind()``'s
-    own "Final-review CRITICAL 2" comment and the F8 sandbox-containment
-    check below it). Routing through ``validate_path`` would reject
-    ``.agent-runs`` outright and disable logging in the DEFAULT
-    configuration -- do not "fix" this by reaching for that function.
+    intentionally dots this directory UNCONDITIONALLY (TASK-1270: both
+    under the sandbox fallback and for a bound workspace folder) -- a
+    real, reviewed fix for a sub-agent log-disclosure bug (a child could
+    ``grep_files``/``glob_files`` its parent's log and extract secrets;
+    see the module-level comment above ``DEFAULT_DIR_NAME``). Routing
+    through ``validate_path`` would reject ``.agent-runs`` outright and
+    disable logging in the DEFAULT configuration -- do not "fix" this by
+    reaching for that function.
 
     Args:
         value: Value to coerce (from explicit arg or config).
@@ -243,17 +234,17 @@ def resolve_log_root() -> Path | None:
     such folder is bound. Any failure resolves to ``None`` (logging off)
     rather than to a wider or unvalidated location.
 
-    As a side effect, records into the thread-local ``_root_kind`` whether
-    THIS call resolved via the sandbox fallback rather than a bound
-    workspace folder -- ``bind()`` reads it back to choose the log
-    directory's name (see CRITICAL 2, final review). The return value
-    itself is unchanged by this: still a bare ``Path | None``, exactly as
-    before.
+    TASK-1270: this used to also report, via a thread-local side channel,
+    whether the call resolved via the sandbox fallback -- ``bind()`` read
+    that back to decide whether to dot the log directory name. Since
+    ``bind()`` now dots the name unconditionally regardless of which root
+    this function chose (see the comment above ``DEFAULT_DIR_NAME``), that
+    side channel had no remaining purpose and was removed. The return
+    value is a bare ``Path | None``, exactly as before.
 
     Returns:
         The chosen root directory, or ``None`` when none is usable.
     """
-    _root_kind.is_sandbox_fallback = False
     try:
         from tldw_chatbook.Tools.file_operation_tools import _tool_sandbox_root
         from tldw_chatbook.Tools.workspace_file_roots import allowed_file_roots
@@ -267,11 +258,10 @@ def resolve_log_root() -> Path | None:
         return None
     # allowed_file_roots returns (sandbox, *workspace_folders); prefer a
     # bound workspace folder, fall back to the sandbox. Which branch fires
-    # IS the fallback signal, reported structurally via the flag above --
-    # never guessed afterward by inspecting the resolved path's name.
+    # no longer affects the log directory's NAME (TASK-1270) -- only which
+    # root it is created under.
     for candidate in roots[1:]:
         return candidate
-    _root_kind.is_sandbox_fallback = True
     return roots[0]
 
 
@@ -390,86 +380,28 @@ class RunLogWriter:
         if not _setting("run_log_enabled", True):
             self._active = False
             return
-        # Reset the side channel immediately before calling resolve_log_root()
-        # -- see `_root_kind`'s own docstring. Only a call to the REAL
-        # function can flip it back to True; a monkeypatched double (many
-        # pre-existing test fixtures) or a stale value from an earlier bind
-        # in this thread both read back as False, which is the
-        # backward-compatible, previously-shipped naming choice (undotted).
-        _root_kind.is_sandbox_fallback = False
         root = resolve_log_root()
         if root is None:
             self._active = False
             return
-        is_sandbox_fallback = getattr(_root_kind, "is_sandbox_fallback", False)
-        # TASK-1270 (2026-07-28, open/blocked): everything from here down to
-        # `dir_name = self._dir_name` decides WHICH root counts as "the
-        # sandbox" so only THAT case gets dotted. That premise -- that a
-        # bound workspace folder is otherwise safe undotted because
-        # grep_files/glob_files cannot reach it -- is false as of TASK-850
-        # (see the module-level note above `DEFAULT_DIR_NAME`). The correct
-        # fix is to delete this whole `is_sandbox_fallback` branch (and the
-        # F8 containment check it guards) and dot `dir_name` unconditionally
-        # a few lines down -- not implemented yet because it also flips ~22
-        # pre-existing tests outside this pass's authorization. See
-        # `task-1270-report.md`.
-        # F8 (Qodo #8, task-1251): the fallback FLAG only reports which
-        # BRANCH resolve_log_root() took internally -- but what the dotted
-        # name actually protects against is reachability from the
-        # sandbox-rooted file tools (grep_files/glob_files glob
-        # `_tool_sandbox_root()` directly and never consult
-        # `allowed_file_roots`, §9.4). A bound WORKSPACE folder can itself
-        # resolve inside (or equal to) the sandbox root -- e.g. a user (or a
-        # test/misconfiguration) binds a folder that lives under the tool
-        # sandbox -- in which case resolve_log_root() takes the "workspace"
-        # branch, `is_sandbox_fallback` stays False, and the log would get
-        # the undotted name while still being fully reachable by a
-        # sub-agent's grep_files/glob_files: exactly the disclosure the
-        # dotting exists to prevent. Checking actual containment against
-        # the sandbox root here, independent of which branch produced
-        # `root`, closes that gap -- and also covers a caller that
-        # monkeypatches `resolve_log_root` wholesale (many existing test
-        # fixtures do), which never touches the side-channel flag at all.
-        if not is_sandbox_fallback:
-            try:
-                from tldw_chatbook.Tools.file_operation_tools import (
-                    _tool_sandbox_root,
-                )
-
-                sandbox_root = _tool_sandbox_root().resolve()
-                resolved_root = root.resolve()
-                is_sandbox_fallback = (
-                    resolved_root == sandbox_root
-                    or sandbox_root in resolved_root.parents
-                )
-            except Exception:
-                # Cannot verify containment -- fail CLOSED (dot the name)
-                # rather than risk a workspace-folder root silently
-                # aliasing the sandbox and re-exposing the log.
-                logger.opt(exception=True).warning(
-                    "run log: cannot verify sandbox containment; dotting "
-                    "the log directory defensively"
-                )
-                is_sandbox_fallback = True
         dir_name = self._dir_name
-        if is_sandbox_fallback and not dir_name.startswith("."):
-            # Final-review CRITICAL 2: the undotted name exists so the log
-            # is a user-visible artifact inside the user's OWN workspace
-            # folder -- that rationale holds only when the log actually
-            # lands there. Under the sandbox fallback (confirmed the real
-            # default: no rw workspace folder bound), `_tool_sandbox_root()`
-            # is EXACTLY the root `glob_files`/`grep_files` are rooted at,
-            # and those tools never consult `allowed_file_roots` (§9.4) --
-            # so an undotted "agent-runs" there is a live directory a
-            # sub-agent (which inherits the parent's allow-list) can read
-            # via grep_files/glob_files, handing it its PARENT's entire log
-            # and breaking spawn_subagent's "sees only the task text"
-            # promise. Dotting it here does NOT break OUR OWN reader --
-            # `search_run_log` -> `run_log_search.load_records` globs this
-            # directory directly and never routes through
-            # `validate_path`/`_is_hidden_within` -- it only removes the
-            # directory from what glob_files/grep_files/read_file can see,
-            # which in the app-internal sandbox case is exactly the intent.
+        if not dir_name.startswith("."):
+            # TASK-1270: dotted UNCONDITIONALLY -- in both the
+            # sandbox-fallback and the bound-workspace case. See the
+            # module-level comment above `DEFAULT_DIR_NAME` for the full
+            # history: this used to depend on WHICH root `resolve_log_root`
+            # picked (a conditional that was correct when written and
+            # silently stopped being true when TASK-850 changed
+            # `glob_files`/`grep_files`'s reach). The security property
+            # must not depend on which root was chosen, nor on what the
+            # generic file tools happen to search this month -- a uniform
+            # rule cannot rot the way that conditional did. Dotting here
+            # does not break OUR OWN reader: `search_run_log` ->
+            # `run_log_search.load_records` globs this directory directly
+            # and never routes through `validate_path`/`_is_hidden_within`
+            # -- it only removes the directory from what
+            # `glob_files`/`grep_files`/`read_file` can see, which is
+            # exactly the intent.
             dir_name = f".{dir_name}"
         try:
             from tldw_chatbook.Tools.file_operation_tools import is_within

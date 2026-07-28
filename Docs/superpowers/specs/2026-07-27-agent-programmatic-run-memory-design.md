@@ -393,42 +393,44 @@ fetches, MCP responses. Today that material lives only in memory and in a
 2,000-character DB field. Writing it into a workspace folder, which is very
 likely a git repository, is a new disclosure path. Mitigations:
 
-- `agent-runs/.gitignore` containing `*`, created **only if absent**, never
+- `.agent-runs/.gitignore` containing `*`, created **only if absent**, never
   overwritten — creating files in a user's repository is itself a mutation.
-- **Corrected by TASK-1270 (2026-07-28), superseding the paragraph below as
-  originally written.** This section originally said the directory was
-  undotted *deliberately* everywhere, on the premise that `glob_files`/
-  `grep_files` glob `_tool_sandbox_root()` alone and could never reach a
-  workspace folder root — so dotting there would only ever hide the log
-  from `read_file`/`write_file`/`list_directory`, tools that were never
-  going to see it anyway. **TASK-850 made that premise false**: both
-  `glob_files` and `grep_files` now resolve every root
+- **Corrected by TASK-1270 (2026-07-28, shipped), superseding the paragraph
+  below as originally written.** This section originally said the
+  directory was undotted *deliberately* everywhere, on the premise that
+  `glob_files`/`grep_files` glob `_tool_sandbox_root()` alone and could
+  never reach a workspace folder root — so dotting there would only ever
+  hide the log from `read_file`/`write_file`/`list_directory`, tools that
+  were never going to see it anyway. **TASK-850 made that premise false**:
+  both `glob_files` and `grep_files` now resolve every root
   `allowed_file_roots()` returns — the sandbox root *and* every bound
   workspace folder (`Tools/file_operation_tools.py`,
   `GlobFiles.execute`/`GrepFiles.execute` via
   `_iter_candidates_across_roots`) — so an undotted log directory landing
-  in a bound workspace folder is now a root those two tools search
+  in a bound workspace folder became a root those two tools search
   directly. A spawned sub-agent, which inherits its parent's tool
-  allow-list, can therefore `grep_files`/`glob_files` its way to the
+  allow-list, could therefore `grep_files`/`glob_files` its way to the
   parent's entire log — the exact disclosure the sandbox-fallback dotting
   (below) was introduced to prevent, reopened for the workspace case by an
   unrelated change. TASK-1270 reproduced this with a planted secret
-  (`Tests/Agents/test_run_log_workspace_isolation.py`) and designed the
-  fix: dot the directory name **unconditionally**, in both the
-  sandbox-fallback and the bound-workspace case, deleting the
-  sandbox-fallback-only conditional in `RunLogWriter.bind()` entirely — a
-  dotted directory stays a fully visible, ordinary directory to the
-  *user* (`ls -a`, editors, git), it is only excluded from this app's own
-  sandboxed file tools, which is exactly the intent regardless of which
-  root the log happened to land under. **Landing that fix is currently
-  BLOCKED**: it flips the literal directory-name string asserted by
-  roughly two dozen pre-existing tests in `Tests/Agents/
-  test_run_log_writer.py` / `Tests/Agents/test_run_log_service_wiring.py`
-  (all of which exercise the writer through a bare `resolve_log_root`
-  monkeypatch that reads as "not the sandbox fallback" under the current
-  conditional), which a routine security-defect pass was not authorized to
-  edit. See `task-1270-report.md` at the repository root for the
-  ready-to-apply diff and the full list of affected tests.
+  (`Tests/Agents/test_run_log_workspace_isolation.py`,
+  `Tests/Agents/test_run_log_sandbox_isolation.py::
+  test_bound_workspace_folder_also_gets_dotted_and_hidden_from_grep`,
+  `Tests/Agents/test_run_log_writer.py::
+  test_workspace_folder_outside_the_sandbox_also_gets_dotted_and_hidden`)
+  and **shipped the fix**: `RunLogWriter.bind()` now dots the directory
+  name **unconditionally**, in both the sandbox-fallback and the
+  bound-workspace case, with the sandbox-fallback-only conditional (and
+  the `_root_kind` side channel it depended on) deleted entirely. The
+  directory is `.agent-runs` in every configuration. This costs nothing
+  for the log's original purpose: a dotted directory stays a fully
+  visible, ordinary directory to the *user* — `ls -a` lists it, editors
+  show it, it is fully diffable and keepable in the user's own repository.
+  It is hidden only from this app's own sandboxed file tools, which is
+  exactly the intent regardless of which root the log happened to land
+  under. `search_run_log`/`load_records` are unaffected either way: they
+  glob `log_dir` directly and never route through
+  `validate_path`/`_is_hidden_within`.
 - Sensitive paths remain refused at the writer via `is_sensitive_path`.
 
 ### 9.2 Path validation
@@ -462,8 +464,9 @@ That closed the original gap for legitimate use, but reopened the
 sub-agent run-log disclosure the sandbox-fallback directory dotting was
 meant to prevent, for the bound-workspace case specifically — this
 design's premise that a workspace-folder log is "not searchable" is what
-made an undotted directory name seem safe there. See §9.1 and
-TASK-1270 (currently open/blocked) for the follow-up.
+made an undotted directory name seem safe there. See §9.1 for TASK-1270,
+which closed that follow-up by dotting the directory name
+unconditionally, in every configuration.
 
 Ripgrep-as-search-backend, the other half of this section, remains
 out of scope for the reasons originally given: it would remove every cap

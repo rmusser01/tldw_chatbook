@@ -29,16 +29,26 @@ def test_unbound_writer_writes_nothing(root):
 
 
 def test_bind_creates_the_run_directory_and_gitignore(root):
+    # TASK-1270: the writer now dots the directory name unconditionally.
+    # Naming detail only -- not a security assertion (see
+    # test_run_log_sandbox_isolation.py / test_run_log_workspace_isolation.py
+    # for those).
     make(root)
-    assert (root / "agent-runs" / "run-abc").is_dir()
-    assert (root / "agent-runs" / ".gitignore").read_text() == "*\n"
+    assert (root / ".agent-runs" / "run-abc").is_dir()
+    assert (root / ".agent-runs" / ".gitignore").read_text() == "*\n"
 
 
 def test_existing_gitignore_is_never_overwritten(root):
-    (root / "agent-runs").mkdir()
-    (root / "agent-runs" / ".gitignore").write_text("keep me\n")
+    # TASK-1270: pre-create the directory the writer will ACTUALLY bind to
+    # (now dotted unconditionally). Before this fix this test pre-created
+    # the undotted path, which `bind()` no longer touches at all -- the
+    # assertion below still passed, but vacuously, no longer exercising the
+    # never-overwrite behavior it claims to. Fixed here rather than left
+    # silently exercising the wrong path.
+    (root / ".agent-runs").mkdir()
+    (root / ".agent-runs" / ".gitignore").write_text("keep me\n")
     make(root)
-    assert (root / "agent-runs" / ".gitignore").read_text() == "keep me\n"
+    assert (root / ".agent-runs" / ".gitignore").read_text() == "keep me\n"
 
 
 def test_records_are_numbered_monotonically_from_one(root):
@@ -54,7 +64,7 @@ def test_a_child_run_shares_the_parent_counter(root):
     writer = make(root)
     writer.append(run_id="parent", kind="primary", type="model", content="a")
     writer.append(run_id="child", kind="subagent", type="model", content="b")
-    data = (root / "agent-runs" / "run-abc" / "logs.0001.txt").read_bytes()
+    data = (root / ".agent-runs" / "run-abc" / "logs.0001.txt").read_bytes()
     parsed = list(iter_records(data))
     assert [(p.number, p.run_id) for p in parsed] == [(1, "parent"), (2, "child")]
 
@@ -69,7 +79,7 @@ def test_segment_rolls_and_no_record_spans_a_boundary(root):
     writer = make(root, segment_bytes=400)
     for _ in range(6):
         writer.append(run_id="r", kind="primary", type="model", content="x" * 100)
-    run_dir = root / "agent-runs" / "run-abc"
+    run_dir = root / ".agent-runs" / "run-abc"
     segments = sorted(run_dir.glob("logs.*.txt"))
     assert len(segments) > 1
     # Every segment parses standalone: no record straddles a boundary.
@@ -84,7 +94,7 @@ def test_segment_rolls_and_no_record_spans_a_boundary(root):
 def test_oversized_record_is_capped_and_marked(root):
     writer = make(root, max_record_bytes=50)
     writer.append(run_id="r", kind="primary", type="tool_result", content="y" * 500)
-    data = (root / "agent-runs" / "run-abc" / "logs.0001.txt").read_bytes()
+    data = (root / ".agent-runs" / "run-abc" / "logs.0001.txt").read_bytes()
     (parsed,) = list(iter_records(data))
     assert len(parsed.content.encode()) <= 50
     assert parsed.truncated_from == 500
@@ -121,6 +131,9 @@ def test_config_can_disable_logging_entirely(root, monkeypatch):
 
 
 def test_config_overrides_the_directory_name(root, monkeypatch):
+    """TASK-1270: a configured custom name is dotted too, same as the
+    default -- `bind()`'s dotting is unconditional on WHICH name was
+    chosen, only on whether it already starts with `.`."""
     monkeypatch.setattr(
         run_log_module,
         "_setting",
@@ -128,7 +141,7 @@ def test_config_overrides_the_directory_name(root, monkeypatch):
     )
     writer = RunLogWriter()
     writer.bind("run-abc")
-    assert (root / "my-logs" / "run-abc").is_dir()
+    assert (root / ".my-logs" / "run-abc").is_dir()
 
 
 def test_write_manifest_emits_readable_json(root):
@@ -136,7 +149,7 @@ def test_write_manifest_emits_readable_json(root):
     writer.write_manifest({"run_id": "run-abc", "status": "done"})
     import json
 
-    manifest = json.loads((root / "agent-runs" / "run-abc" / "MANIFEST").read_text())
+    manifest = json.loads((root / ".agent-runs" / "run-abc" / "MANIFEST").read_text())
     assert manifest["status"] == "done"
     assert manifest["segments"] == []  # nothing appended yet
 
@@ -148,7 +161,7 @@ def test_manifest_records_segments_after_appends(root):
     writer.write_manifest({"status": "done"})
     import json
 
-    manifest = json.loads((root / "agent-runs" / "run-abc" / "MANIFEST").read_text())
+    manifest = json.loads((root / ".agent-runs" / "run-abc" / "MANIFEST").read_text())
     assert len(manifest["segments"]) > 1
     assert manifest["record_count"] == 6
 
@@ -183,7 +196,7 @@ def test_concurrent_appends_produce_unique_numbers_and_no_corruption(root):
     for thread in threads:
         thread.join()
     records = []
-    for segment in sorted((root / "agent-runs" / "run-abc").glob("logs.*.txt")):
+    for segment in sorted((root / ".agent-runs" / "run-abc").glob("logs.*.txt")):
         records.extend(iter_records(segment.read_bytes()))
     numbers = sorted(r.number for r in records)
     assert numbers == list(range(1, 81))
@@ -244,7 +257,8 @@ def test_path_traversal_with_dotdot_falls_back_to_the_default_dir_name(root, mon
     should not be able to silently kill a crash-durability feature. The
     security property this test guards -- `..` can NEVER walk the log
     outside its root -- still holds; only the AVAILABILITY outcome changed,
-    from "logging disabled" to "logging continues under 'agent-runs'".
+    from "logging disabled" to "logging continues under '.agent-runs'"
+    (TASK-1270: dotted unconditionally, same as every other configuration).
     `bind()`'s `is_within` check remains as defense in depth underneath.
     """
     monkeypatch.setattr(
@@ -255,7 +269,7 @@ def test_path_traversal_with_dotdot_falls_back_to_the_default_dir_name(root, mon
     writer = RunLogWriter()
     writer.bind("run-abc")
     assert writer.is_active is True
-    assert writer.log_dir == root / "agent-runs" / "run-abc"
+    assert writer.log_dir == root / ".agent-runs" / "run-abc"
     assert not (root / "escape").exists()
     assert not (root.parent / "escape").exists()
 
@@ -273,7 +287,7 @@ def test_dir_name_with_a_separator_falls_back_to_the_default(root, monkeypatch):
     writer = RunLogWriter()
     writer.bind("run-abc")
     assert writer.is_active is True
-    assert writer.log_dir == root / "agent-runs" / "run-abc"
+    assert writer.log_dir == root / ".agent-runs" / "run-abc"
     assert not (root / "sub").exists()
 
 
@@ -290,7 +304,7 @@ def test_dir_name_absolute_falls_back_to_the_default(root, monkeypatch):
     writer = RunLogWriter()
     writer.bind("run-abc")
     assert writer.is_active is True
-    assert writer.log_dir == root / "agent-runs" / "run-abc"
+    assert writer.log_dir == root / ".agent-runs" / "run-abc"
 
 
 def test_dir_name_whitespace_only_falls_back_to_the_default(root, monkeypatch):
@@ -302,7 +316,7 @@ def test_dir_name_whitespace_only_falls_back_to_the_default(root, monkeypatch):
     writer = RunLogWriter()
     writer.bind("run-abc")
     assert writer.is_active is True
-    assert writer.log_dir == root / "agent-runs" / "run-abc"
+    assert writer.log_dir == root / ".agent-runs" / "run-abc"
 
 
 def test_dir_name_bare_dotdot_falls_back_to_the_default(root, monkeypatch):
@@ -314,7 +328,7 @@ def test_dir_name_bare_dotdot_falls_back_to_the_default(root, monkeypatch):
     writer = RunLogWriter()
     writer.bind("run-abc")
     assert writer.is_active is True
-    assert writer.log_dir == root / "agent-runs" / "run-abc"
+    assert writer.log_dir == root / ".agent-runs" / "run-abc"
 
 
 def test_dir_name_explicit_constructor_arg_is_validated_too(root):
@@ -323,13 +337,16 @@ def test_dir_name_explicit_constructor_arg_is_validated_too(root):
     writer = RunLogWriter(dir_name="../escape")
     writer.bind("run-abc")
     assert writer.is_active is True
-    assert writer.log_dir == root / "agent-runs" / "run-abc"
+    assert writer.log_dir == root / ".agent-runs" / "run-abc"
 
 
 def test_legitimate_custom_dir_name_is_not_rejected(root, monkeypatch):
     """A safe, single-component custom name (no separators, no traversal,
-    not absolute) must pass through unchanged -- the validation must not
-    be so aggressive it breaks the existing `run_log_dir_name` override."""
+    not absolute) must pass validation unchanged -- the validation must not
+    be so aggressive it breaks the existing `run_log_dir_name` override.
+    (TASK-1270: `bind()` still dots the validated name, same as the
+    default -- validation and dotting are separate steps; this test covers
+    the former.)"""
     monkeypatch.setattr(
         run_log_module,
         "_setting",
@@ -338,7 +355,7 @@ def test_legitimate_custom_dir_name_is_not_rejected(root, monkeypatch):
     writer = RunLogWriter()
     writer.bind("run-abc")
     assert writer.is_active is True
-    assert writer.log_dir == root / "my-logs" / "run-abc"
+    assert writer.log_dir == root / ".my-logs" / "run-abc"
 
 
 def test_non_numeric_segment_bytes_explicit_arg_uses_default():
@@ -634,15 +651,32 @@ def test_workspace_folder_equal_to_the_sandbox_root_gets_dotted_name(
     assert writer.log_dir == sandbox_root / ".agent-runs" / "run-abc"
 
 
-def test_workspace_folder_outside_the_sandbox_keeps_the_undotted_name(
+def test_workspace_folder_outside_the_sandbox_also_gets_dotted_and_hidden(
     tmp_path, monkeypatch
 ):
-    """Regression guard for the fix above: a GENUINE workspace folder
-    (outside the sandbox entirely) must still get the user-visible,
-    undotted name -- the F8 fix narrows the dotting decision, it must not
-    widen it to dot every workspace folder."""
+    """TASK-1270 (2026-07-28): formerly
+    `test_workspace_folder_outside_the_sandbox_keeps_the_undotted_name`,
+    a "regression guard for the fix above" asserting that a GENUINE
+    workspace folder (outside the sandbox entirely) must stay undotted --
+    "the F8 fix narrows the dotting decision, it must not widen it to dot
+    every workspace folder". That was CORRECT when written: at the time,
+    `glob_files`/`grep_files` globbed `_tool_sandbox_root()` alone and
+    could not reach a workspace folder root at all (spec §9.4, pre
+    TASK-850), so undotted here cost nothing. TASK-850 invalidated that
+    premise -- both tools now resolve every `allowed_file_roots()` entry --
+    so this exact case (a genuine, non-nested bound workspace folder) is
+    reproduced with a planted secret in
+    `Tests/Agents/test_run_log_workspace_isolation.py`. This test now pins
+    the CURRENT invariant (the log is unreachable via `grep_files`
+    regardless of which root it lands under), not the superseded naming
+    choice, so a future change cannot silently widen the dotting decision
+    back down to "only the sandbox" without this test catching it.
+    """
+    import asyncio
+
     import tldw_chatbook.Tools.file_operation_tools as file_tools
     import tldw_chatbook.Tools.workspace_file_roots as ws_roots
+    from tldw_chatbook.Tools.file_operation_tools import GrepFiles
 
     sandbox_root = tmp_path / "sandbox"
     sandbox_root.mkdir()
@@ -650,14 +684,48 @@ def test_workspace_folder_outside_the_sandbox_keeps_the_undotted_name(
     workspace_folder.mkdir()
 
     monkeypatch.setattr(file_tools, "_tool_sandbox_root", lambda: sandbox_root)
-    monkeypatch.setattr(
-        ws_roots,
-        "allowed_file_roots",
-        lambda write=False, sandbox_root=None: (sandbox_root, workspace_folder),
+    # GrepFiles resolves `allowed_file_roots` via a name bound at
+    # `file_operation_tools` IMPORT time, a separate binding from
+    # `workspace_file_roots.allowed_file_roots` -- both must be patched for
+    # the positive control below to genuinely exercise the workspace root
+    # (see Tests/Agents/test_run_log_workspace_isolation.py's
+    # `_workspace_seams` docstring for the full explanation).
+    fake_roots = lambda write=False, sandbox_root=None: (sandbox_root, workspace_folder)
+    monkeypatch.setattr(ws_roots, "allowed_file_roots", fake_roots)
+    monkeypatch.setattr(file_tools, "allowed_file_roots", fake_roots)
+
+    def grep(pattern: str) -> list:
+        result = asyncio.run(GrepFiles().execute(pattern=pattern))
+        return result.get("matches", [])
+
+    # Positive control FIRST: prove grep_files genuinely scans this
+    # workspace folder before trusting a "no matches" result below.
+    (workspace_folder / "control.txt").write_text(
+        "CONTROL_MARKER_9c3f\n", encoding="utf-8"
+    )
+    assert grep("CONTROL_MARKER_9c3f"), (
+        "positive control failed: grep_files must find visible workspace content"
     )
 
     writer = RunLogWriter()
     writer.bind("run-abc")
 
     assert writer.is_active is True
-    assert writer.log_dir == workspace_folder / "agent-runs" / "run-abc"
+    assert writer.log_dir == workspace_folder / ".agent-runs" / "run-abc", (
+        f"a genuine, non-nested bound workspace folder must now get the "
+        f"DOTTED name too; got parent {writer.log_dir.parent.name!r}"
+    )
+    assert not (workspace_folder / "agent-runs").exists(), (
+        "the undotted name must never have been created at all"
+    )
+
+    writer.append(
+        run_id="run-abc",
+        kind="primary",
+        type="model",
+        content="PARENT_SECRET_API_KEY=sk-live-writertest456",
+    )
+    assert grep("PARENT_SECRET_API_KEY") == [], (
+        "grep_files must not be able to read the run log through a "
+        "genuine, non-nested bound workspace folder"
+    )

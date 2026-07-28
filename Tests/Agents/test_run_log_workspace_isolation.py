@@ -1,53 +1,35 @@
 # Tests/Agents/test_run_log_workspace_isolation.py
-"""TASK-1270: the run log in a BOUND WORKSPACE folder is readable by
-sub-agents through `glob_files`/`grep_files`.
+"""TASK-1270: the run log in a BOUND WORKSPACE folder must be unreadable by
+sub-agents through `glob_files`/`grep_files`, exactly like the
+sandbox-fallback case covered by `test_run_log_sandbox_isolation.py`.
 
-`RunLogWriter.bind()` only dots the log directory name (`.agent-runs`,
-excluded from `glob_files`/`grep_files` by `_is_hidden_within`) when
-`resolve_log_root()` resolved via the SANDBOX FALLBACK -- see
-`test_run_log_sandbox_isolation.py`. When a read-write workspace folder is
-bound instead, the directory stays undotted (`agent-runs`), on the premise
-recorded in the design spec §9.4 and in `run_log.py`'s own comments that
-`glob_files`/`grep_files` glob `_tool_sandbox_root()` alone and can never
-reach a workspace folder root.
+`RunLogWriter.bind()` used to dot the log directory name (`.agent-runs`,
+excluded from `glob_files`/`grep_files` by `_is_hidden_within`) ONLY when
+`resolve_log_root()` resolved via the SANDBOX FALLBACK. When a read-write
+workspace folder was bound instead, the directory stayed undotted
+(`agent-runs`), on a premise recorded in the design spec §9.4 and in
+`run_log.py`'s own comments that was CORRECT when it was written:
+`glob_files`/`grep_files` globbed `_tool_sandbox_root()` alone and could not
+reach a workspace folder root at all.
 
-**That premise is false as of TASK-850** ("Scope glob_files and grep_files
-to workspace folder roots"): both tools now resolve every root
+TASK-850 ("Scope glob_files and grep_files to workspace folder roots")
+invalidated that premise: both tools now resolve every root
 `allowed_file_roots()` returns -- the sandbox AND every bound workspace
 folder -- via `_iter_candidates_across_roots`
 (`tldw_chatbook/Tools/file_operation_tools.py`, `GlobFiles.execute`/
-`GrepFiles.execute`). A workspace-folder log is therefore undotted inside
-a root those tools now search, and a sub-agent (which inherits its
-parent's tool allow-list, `spawn`'s default in `agent_service.py`) can
-`grep_files`/`glob_files` its way to the parent's entire log -- the exact
-disclosure the sandbox-fallback dotting was introduced to prevent,
-reopened for the workspace case by an unrelated change landing on `dev`.
+`GrepFiles.execute`). An undotted workspace-folder log became reachable by
+a sub-agent (which inherits its parent's tool allow-list, `spawn`'s default
+in `agent_service.py`) through them -- the exact disclosure the
+sandbox-fallback dotting was introduced to prevent, reopened for the
+workspace case by an unrelated change landing on `dev`.
 
-STATUS: reproduced below, NOT YET FIXED. The designed remedy -- dot the
-directory name unconditionally in `bind()`, deleting the
-sandbox-fallback-only conditional entirely -- also flips the literal
-directory-name string asserted by roughly two dozen PRE-EXISTING tests
-across `Tests/Agents/test_run_log_writer.py` and
-`Tests/Agents/test_run_log_service_wiring.py` (every one of them drives
-the writer through a bare `resolve_log_root` monkeypatch, which reads back
-as "not the sandbox fallback" i.e. undotted under the CURRENT
-conditional), plus `test_bound_workspace_folder_keeps_the_undotted_name`
-and `test_workspace_folder_outside_the_sandbox_keeps_the_undotted_name`
-in this file's sibling suites -- both of which explicitly frame themselves
-as a "regression guard" against dotting every workspace folder. Landing
-the fix therefore requires updating that whole pre-existing set, which
-this pass is not authorized to do (pre-existing tests must not be edited
-to make something pass; a test that fails as a result of the change must
-be reported, not silently rewritten). See `task-1270-report.md` at the
-repository root for the ready-to-apply diff, the full list of tests it
-flips, and the recommended next step.
-
-The tests below are marked `xfail(strict=True)` rather than left as bare
-failures so the suite stays green while the gap remains open, and so
-these tests loudly XPASS (itself a failure under `strict=True`) the
-moment someone applies a fix without also revisiting this file --
-catching exactly the "quietly stopped being true" failure mode this task
-exists to close.
+FIX (TASK-1270, 2026-07-28): `bind()` now dots the directory name
+UNCONDITIONALLY -- in both the sandbox-fallback and the bound-workspace
+case -- deleting the sandbox-vs-workspace conditional entirely, so the
+tests below assert the invariant as ordinary (non-`xfail`) tests. See the
+module-level comment above `DEFAULT_DIR_NAME` in `run_log.py` for the full
+history, and `task-1270-report.md` at the repository root for the record
+of the blocked interim state this superseded.
 """
 
 from __future__ import annotations
@@ -55,8 +37,6 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-
-import pytest
 
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
@@ -70,13 +50,6 @@ from tldw_chatbook.Agents.run_log_search import load_records
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Tools.file_operation_tools import GlobFiles, GrepFiles
-
-_XFAIL_REASON = (
-    "TASK-1270: designed fix (dot the log directory name unconditionally) "
-    "is blocked -- it flips ~22 pre-existing assertions in "
-    "test_run_log_writer.py/test_run_log_service_wiring.py that this pass "
-    "is not authorized to edit. See task-1270-report.md."
-)
 
 
 class _AllowGate:
@@ -139,7 +112,6 @@ def _fence(name: str, args: dict) -> str:
     return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_bound_workspace_folder_log_is_hidden_from_grep_and_glob(tmp_path, monkeypatch):
     """AC #1 / AC #6: a sub-agent must not be able to reach its parent's
     run log via `grep_files` (content) or `glob_files` (path) once the log
@@ -182,7 +154,6 @@ def test_bound_workspace_folder_log_is_hidden_from_grep_and_glob(tmp_path, monke
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_XFAIL_REASON)
 def test_spawned_subagent_cannot_read_parents_log_via_grep_files_in_bound_workspace(
     tmp_path, monkeypatch
 ):

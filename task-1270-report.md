@@ -1,6 +1,9 @@
 # TASK-1270 — Run log in a bound workspace folder is readable by sub-agents
 
-Status: **BLOCKED** on Step 2 (the code fix). Steps 1 and 3 are complete and committed.
+Status: **DONE** (2026-07-28). Everything below "## RESOLUTION" was written after
+the coordinator reviewed this report and the blocker below, and explicitly ruled
+on it. The original BLOCKED report is preserved as-written underneath for the
+record — it is what the ruling was based on.
 
 ## TL;DR
 
@@ -206,3 +209,159 @@ Someone needs to choose one of:
 See `git log` on `fix/run-log-workspace-disclosure` for the commit SHA(s) — one
 commit containing the new test file, the spec corrections, and the comment-only
 `run_log.py` changes. No behavior change is included.
+
+---
+
+## RESOLUTION (2026-07-28)
+
+The coordinator reviewed the BLOCKED report above and ruled: **dot the log
+directory in both cases. Apply the prototype fix and delete the conditional
+entirely. Updating the 22 affected tests — including the two "must not dot
+every workspace folder" PR #1066 guards — is authorized.** Rationale given:
+those guards pinned a decision that was *correct when made* (glob_files/
+grep_files genuinely could not reach a workspace folder root at the time);
+TASK-850 invalidated the premise, not the guards' intent, so they were to be
+rewritten to assert the current security invariant, not deleted.
+
+### What changed
+
+1. **`tldw_chatbook/Agents/run_log.py`** — applied the prototype fix, then
+   also deleted the plumbing that existed solely to report which branch
+   `resolve_log_root()` took:
+   - `RunLogWriter.bind()`: `dir_name` is now dotted unconditionally
+     (`if not dir_name.startswith("."): dir_name = f".{dir_name}"`), no
+     branch check.
+   - Deleted the `_root_kind` thread-local entirely (its docstring said it
+     existed *only* to carry the branch signal into `bind()`; nothing else
+     referenced it — confirmed by a repo-wide grep before deleting).
+   - Deleted the F8 sandbox-containment re-check block in `bind()` (it
+     existed only to correct `is_sandbox_fallback` when a workspace folder
+     happened to resolve inside the sandbox — moot once naming no longer
+     depends on that distinction at all).
+   - `resolve_log_root()` no longer sets the side channel; docstring and
+     comments updated to state the current (TASK-850-changed, TASK-1270-shipped)
+     premise, with a rewritten history/rationale block above `DEFAULT_DIR_NAME`
+     covering: why it's dotted unconditionally now, what the original
+     undotted choice bought (nothing lost — a dotted directory is still an
+     ordinary, user-visible directory via `ls -a`/editors/git; only this
+     app's own sandboxed tools are blind to it), and that `search_run_log`/
+     `load_records` are unaffected either way.
+
+2. **Un-xfailed both reproduction tests** in
+   `Tests/Agents/test_run_log_workspace_isolation.py` — removed the
+   `@pytest.mark.xfail` decorators and the `_XFAIL_REASON` constant; both now
+   run and pass as ordinary tests. Rewrote the module docstring to describe
+   the shipped fix instead of the blocked state.
+
+3. **Updated the 22 flipped tests**, split by what they were actually
+   asserting:
+
+   - **Naming-only (20 tests)** — mechanical: `root / "agent-runs"` →
+     `root / ".agent-runs"`, and `writer.log_dir == root / "agent-runs" /
+     "run-abc"` → `.agent-runs`, across `test_run_log_writer.py` (16 tests,
+     including `test_config_overrides_the_directory_name` and
+     `test_legitimate_custom_dir_name_is_not_rejected`, where a *configured
+     custom* name — `"my-logs"` — is now also dotted to `.my-logs`, since
+     `bind()`'s dotting no longer distinguishes the default name from a
+     configured one) and `test_run_log_service_wiring.py` (5 tests, via the
+     shared `read_all()` fixture helper plus three inline checks). Stale
+     docstring prose referencing the old "logging continues under
+     'agent-runs'" outcome was corrected alongside.
+     - Along the way, found and fixed a **latent test-quality gap** outside
+       the 22, in `test_existing_gitignore_is_never_overwritten`: it
+       pre-created the *old* undotted path and asserted against it. Once
+       `bind()` stopped touching that path at all, the assertion kept
+       passing — but vacuously, no longer exercising the "existing
+       `.gitignore` is preserved" behavior it claims to test. This test was
+       not in the 22 (it never failed), so touching it was a judgment call
+       — I fixed it rather than leave a test that always passes regardless
+       of whether the real behavior holds, and flagged it explicitly here
+       rather than silently folding it into the mechanical batch.
+   - **Security guards, rewritten (2 tests)**:
+     - `test_run_log_sandbox_isolation.py::test_bound_workspace_folder_keeps_the_undotted_name`
+       → renamed `test_bound_workspace_folder_also_gets_dotted_and_hidden_from_grep`.
+       Now plants `PARENT_SECRET_API_KEY` and asserts `grep_files` cannot
+       recover it (plus the dotted-name check), with a positive control
+       first.
+     - `test_run_log_writer.py::test_workspace_folder_outside_the_sandbox_keeps_the_undotted_name`
+       → renamed `test_workspace_folder_outside_the_sandbox_also_gets_dotted_and_hidden`.
+       Same treatment, added `GrepFiles` import and an inline `grep()` helper
+       local to the test.
+     - Both docstrings rewritten to explain the history explicitly: the
+       guard's original intent was correct when written; TASK-850 changed
+       the premise it depended on, not the guard's goal, so it was rewritten
+       to keep pinning that goal (a sub-agent cannot read the log) rather
+       than deleted.
+   - **Positive-control bug found while rewriting these two**: patching only
+     `workspace_file_roots.allowed_file_roots` (the existing convention in
+     this test family) does not actually redirect `GlobFiles`/`GrepFiles`,
+     because `file_operation_tools.py` imports that name via `from
+     .workspace_file_roots import allowed_file_roots` at module-load time —
+     a separate, early-bound reference. Confirmed empirically
+     (`file_tools.allowed_file_roots is ws_roots.allowed_file_roots` is
+     `True` before patching, `False` after). Existing sandbox-case tests
+     never hit this because their workspace folder is absent or nested
+     *inside* the already-patched sandbox root, so the real (unpatched)
+     resolution reaches it anyway by coincidence. Both rewritten guards (and
+     `test_run_log_workspace_isolation.py`) now patch
+     `file_operation_tools.allowed_file_roots` directly as well, with a
+     comment explaining why, so their positive controls genuinely exercise
+     the redirected root before the security assertion is trusted.
+
+4. **AC #4 proof** (`search_run_log`/`load_records` read the log in both
+   configurations) — the two tests added during the BLOCKED phase already
+   covered this and needed no changes; both still pass.
+
+5. **Design spec** — §9.1 rewritten to state TASK-1270 shipped (not blocked):
+   the directory is `.agent-runs` in every configuration, with the
+   preserved-visibility rationale spelled out. §9.4's pointer to TASK-1270
+   changed from "currently open/blocked" to "closed that follow-up by
+   dotting the directory name unconditionally, in every configuration." §11's
+   already-corrected deferred-item entry needed no further change (it never
+   claimed TASK-1270 was still open).
+
+6. **`task-1270-prototype-fix.diff`** deleted (`git rm`) — superseded now
+   that the fix is actually applied; the diff and full pre-fix failure
+   enumeration remain above in this same file for the historical record.
+
+7. **`backlog/tasks/task-1270-*.md`** — all 6 ACs checked, status set to
+   Done via `backlog task edit 1270 -s Done`, with Implementation Notes
+   summarizing this resolution.
+
+### Verification
+
+- Both un-xfailed reproduction tests pass as ordinary tests (confirmed via
+  `pytest -v`, no `XFAIL`/`XPASS` markers remain in the file).
+- `Tests/Agents/test_run_log_sandbox_isolation.py`,
+  `Tests/Agents/test_run_log_service_wiring.py`,
+  `Tests/Agents/test_run_log_writer.py` — every test passes, run individually
+  and as part of the full suite.
+- Ran the full `Tests/Agents/` suite before touching any of the 22: **exactly**
+  the predicted 22 failed, nothing outside that list — confirming the earlier
+  blast-radius analysis was complete, not an undercount.
+- Full suite after all fixes: **533 passed, 0 failed, 0 xfailed** (baseline
+  529 → 533: +4 from the workspace-isolation file added during the BLOCKED
+  phase, net zero further change in count since the 22 rewrites replace
+  existing tests rather than add new ones — two of the 22 gained new
+  assertions, not new test functions).
+- Repo-wide grep confirmed no remaining code references to `_root_kind` or
+  `is_sandbox_fallback` (only historical prose in comments/docstrings); no
+  remaining literal `"agent-runs"` (undotted) assertions outside deliberate
+  "must never have been created" checks.
+
+### Tests/Agents numbers (final)
+
+- **Before this task** (session baseline, clean checkout): `529 passed`.
+- **After Step 1 (reproduction, BLOCKED phase)**: `531 passed, 2 xfailed`.
+- **After the authorized fix + all 22 rewrites**: `533 passed, 0 failed, 0 xfailed`.
+
+### Still open
+
+Nothing related to this task. The `~/.local/share/tldw_cli/default_user/
+tldw_chatbook_workspaces.db` real-registry dependency noted in Step 1 (real,
+unpatched `allowed_file_roots` calls hit the actual on-disk workspace
+registry unless both `file_operation_tools.allowed_file_roots` and
+`workspace_file_roots.allowed_file_roots` are patched) is a pre-existing
+property of how these tests are written, not something this task introduced;
+worth a maintainer's attention if it ever causes flakiness on a machine with
+real workspace folders bound, but out of scope here.

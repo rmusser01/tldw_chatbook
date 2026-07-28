@@ -19,15 +19,29 @@ only the task text you pass") and bypassing `search_run_log`'s own
 primary-only gate (Task 6) entirely -- through a completely different pair
 of tools.
 
-Fix: `bind()` dots the directory name (`.agent-runs`) specifically in the
-sandbox-fallback case, reported by `resolve_log_root()` itself via a
-thread-local side channel (see `run_log._root_kind`) rather than guessed by
-inspecting the resolved path's name. Dotting does not break
+Original fix: `bind()` dotted the directory name (`.agent-runs`)
+specifically in the sandbox-fallback case, reported by `resolve_log_root()`
+itself via a thread-local side channel (`run_log._root_kind`) rather than
+guessed by inspecting the resolved path's name.
+
+TASK-1270 (2026-07-28): that sandbox-only conditional was correct when
+written but rested on a premise -- that a BOUND WORKSPACE folder is safe
+undotted because `glob_files`/`grep_files` cannot reach it -- that TASK-850
+made false (both tools now resolve every `allowed_file_roots()` entry, not
+just the sandbox). `bind()` now dots the directory name
+UNCONDITIONALLY -- in both the sandbox-fallback and the bound-workspace
+case -- and the `_root_kind` side channel referenced above was deleted as
+part of that fix; it existed only to report which branch naming should
+follow, which stopped mattering once naming stopped depending on the
+branch. See `test_bound_workspace_folder_also_gets_dotted_and_hidden_from_
+grep` below and `Tests/Agents/test_run_log_workspace_isolation.py` for the
+workspace-case coverage this added. Dotting still does not break
 `search_run_log`'s own reader (`run_log_search.load_records` globs the
 directory directly, never through `validate_path`/`_is_hidden_within`) --
 it only removes the directory from what `glob_files`/`grep_files`/
-`read_file` can see, which in the app-internal sandbox case is exactly the
-intent.
+`read_file` can see, which is exactly the intent. A dotted directory
+remains fully visible to the *user* (`ls -a`, editors, git) regardless of
+which root it lands under.
 """
 
 from __future__ import annotations
@@ -189,11 +203,25 @@ def test_workspace_folder_inside_the_sandbox_is_dotted_and_hidden_from_grep(
     )
 
 
-def test_bound_workspace_folder_keeps_the_undotted_name(tmp_path, monkeypatch):
-    """Sibling case: when `resolve_log_root()` reports a bound workspace
-    folder (not the fallback), the directory must stay undotted -- it is
-    meant to be a user-visible artifact there (spec §3.3), and the fix must
-    not regress that by dotting unconditionally.
+def test_bound_workspace_folder_also_gets_dotted_and_hidden_from_grep(
+    tmp_path, monkeypatch
+):
+    """TASK-1270 (2026-07-28): formerly
+    `test_bound_workspace_folder_keeps_the_undotted_name`, which pinned the
+    directory staying UNDOTTED for a bound workspace folder (not the
+    sandbox fallback) as "the fix must not regress ... by dotting
+    unconditionally". That was CORRECT when written: at the time,
+    `glob_files`/`grep_files` globbed `_tool_sandbox_root()` alone and
+    could not reach a workspace folder root at all, so undotted there cost
+    nothing. TASK-850 invalidated that premise (both tools now resolve
+    every `allowed_file_roots()` entry), which is exactly what this file's
+    other tests reproduce for a nested-in-sandbox workspace folder above.
+    This is the plain, NOT-nested case -- a genuine sibling-of-sandbox
+    workspace folder, the common real-world binding -- and it must now get
+    the SAME dotted, hidden-from-grep treatment: the security property
+    (a sub-agent cannot reach the parent's log) must hold regardless of
+    which root the log landed under, so this test now pins THAT invariant
+    rather than the superseded naming choice.
     """
     import tldw_chatbook.Tools.file_operation_tools as file_tools
     import tldw_chatbook.Tools.workspace_file_roots as ws_roots
@@ -203,17 +231,42 @@ def test_bound_workspace_folder_keeps_the_undotted_name(tmp_path, monkeypatch):
     sandbox.mkdir()
     workspace.mkdir()
     monkeypatch.setattr(file_tools, "_tool_sandbox_root", lambda: sandbox)
-    monkeypatch.setattr(
-        ws_roots,
-        "allowed_file_roots",
-        lambda write=False, sandbox_root=None: (sandbox, workspace),
+    # GrepFiles/GlobFiles resolve `allowed_file_roots` via a name bound at
+    # `file_operation_tools` IMPORT time, a separate binding from
+    # `workspace_file_roots.allowed_file_roots` -- both must be patched for
+    # the positive control below to genuinely exercise the workspace root
+    # (see Tests/Agents/test_run_log_workspace_isolation.py's
+    # `_workspace_seams` docstring for the full explanation).
+    fake_roots = lambda write=False, sandbox_root=None: (sandbox, workspace)
+    monkeypatch.setattr(ws_roots, "allowed_file_roots", fake_roots)
+    monkeypatch.setattr(file_tools, "allowed_file_roots", fake_roots)
+
+    # Positive control FIRST: prove grep_files genuinely scans this
+    # workspace folder before trusting a "no matches" result below.
+    (workspace / "control.txt").write_text("CONTROL_MARKER_b4e1\n", encoding="utf-8")
+    assert _grep("CONTROL_MARKER_b4e1"), (
+        "positive control failed: grep_files must find visible workspace content"
     )
 
     writer = RunLogWriter()
     writer.bind("run-1")
     assert writer.is_active
-    assert writer.log_dir.parent.name == "agent-runs"
+    assert writer.log_dir.parent.name == ".agent-runs", (
+        f"a genuinely bound workspace folder must now get the DOTTED name "
+        f"too; got {writer.log_dir.parent.name!r}"
+    )
     assert writer.log_dir.parent.parent == workspace
+
+    writer.append(
+        run_id="run-1",
+        kind="primary",
+        type="model",
+        content="PARENT_SECRET_API_KEY=sk-live-bound123",
+    )
+    assert _grep("PARENT_SECRET_API_KEY") == [], (
+        "grep_files must not be able to read the run log through a "
+        "genuinely bound (non-nested) workspace folder"
+    )
 
 
 def _fence(name, args):
