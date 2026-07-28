@@ -2576,6 +2576,138 @@ def _publish_actionable_status(
     return status
 
 
+class _ObservedMismatchThenFailureRunner(_DelayedStatusRunner):
+    def __init__(self, scenario: str) -> None:
+        super().__init__()
+        self.release_first_index.set()
+        self.scenario = scenario
+        self.mismatch_observed = False
+        self.later_failure_observed = False
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        text = tuple(os.fsdecode(argument) for argument in argv)
+        if (
+            self.scenario == "head_then_index_failure"
+            and "HEAD^{commit}" in text
+        ):
+            self.calls.append(tuple(argv))
+            self.mismatch_observed = True
+            return GitCommandResult(0, OID_C.encode("ascii") + b"\n", b"")
+        if "ls-files" in text:
+            self.calls.append(tuple(argv))
+            if self.scenario == "head_then_index_failure":
+                self.later_failure_observed = True
+                return GitCommandResult(1, b"", b"index unavailable")
+            self.mismatch_observed = True
+            return GitCommandResult(
+                0,
+                b"H 100644 " + OID_C.encode("ascii") + b" 0\tnote.md\0",
+                b"",
+            )
+        if (
+            self.scenario == "index_then_status_parse_failure"
+            and "status" in text
+        ):
+            self.calls.append(tuple(argv))
+            self.later_failure_observed = True
+            return GitCommandResult(0, b"? note.md", b"")
+        return await super().run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+        )
+
+
+def _status_service_with_owned_note(
+    tmp_path: Path,
+    runner: _ObservedMismatchThenFailureRunner,
+) -> tuple[
+    FileNotesSessionOwner,
+    SessionBinding,
+    FileNotesGitService,
+]:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("note\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    assert owner.record_change(binding, SessionChange("modified", "note.md"))
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    group = _single_group("note.md")
+    assert owner.publish_ownership(
+        binding,
+        {
+            group.group_id: StagingOwnership(
+                repository=repository,
+                head=HeadIdentity.attached("refs/heads/main", OID_A),
+                approved_endpoint_topology=group.endpoints,
+                approved_move_edges=group.move_edges,
+                approved_current_path=group.current_path,
+                original_baselines={"note.md": IndexBaseline(None)},
+                post_stage_entries={
+                    "note.md": _entry("note.md", object_id=OID_B)
+                },
+            )
+        },
+    )
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+    return owner, binding, service
+
+
+@pytest.mark.asyncio
+async def test_observed_head_mismatch_revokes_before_later_index_failure(
+    tmp_path: Path,
+) -> None:
+    runner = _ObservedMismatchThenFailureRunner("head_then_index_failure")
+    owner, binding, service = _status_service_with_owned_note(tmp_path, runner)
+
+    result = await service.start_status(
+        binding,
+        owner.snapshot(binding).changes,
+    )
+
+    assert runner.mismatch_observed
+    assert runner.later_failure_observed
+    assert result.state == "stale"
+    assert not owner.snapshot(binding).staging_ownership
+
+
+@pytest.mark.asyncio
+async def test_observed_index_mismatch_revokes_before_later_status_parse_failure(
+    tmp_path: Path,
+) -> None:
+    runner = _ObservedMismatchThenFailureRunner(
+        "index_then_status_parse_failure"
+    )
+    owner, binding, service = _status_service_with_owned_note(tmp_path, runner)
+
+    result = await service.start_status(
+        binding,
+        owner.snapshot(binding).changes,
+    )
+
+    assert runner.mismatch_observed
+    assert runner.later_failure_observed
+    assert result.state == "error"
+    assert not owner.snapshot(binding).staging_ownership
+
+
 @pytest.mark.asyncio
 async def test_head_uncertainty_retains_disabled_rows_and_clears_ownership(
     tmp_path: Path,
@@ -3392,6 +3524,44 @@ class _PreAddEndpointRaceRunner(_DelayedStatusRunner):
         )
 
 
+class _PreAddOwnedEndpointRaceRunner(_PreAddEndpointRaceRunner):
+    def __init__(self, *, root: Path) -> None:
+        super().__init__(
+            root=root,
+            relative_path="note.md",
+            replacement="directory",
+        )
+        self.add_seen = True
+        self.add_calls = 0
+
+    async def run(
+        self,
+        argv: tuple[str | bytes, ...],
+        *,
+        cwd: str,
+        environment: Mapping[str, str],
+        stdin: bytes | None = None,
+        timeout: float | None = None,
+    ) -> GitCommandResult:
+        text = tuple(os.fsdecode(argument) for argument in argv)
+        if "add" in text:
+            self.add_calls += 1
+        if "status" in text:
+            self.calls.append(tuple(argv))
+            payload = (
+                f"1 .M N... 100644 100644 100644 {OID_B} {OID_B} "
+                "note.md\0"
+            ).encode()
+            return GitCommandResult(0, payload, b"")
+        return await super().run(
+            argv,
+            cwd=cwd,
+            environment=environment,
+            stdin=stdin,
+            timeout=timeout,
+        )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("replacement", "relative_path"),
@@ -3434,6 +3604,49 @@ async def test_stage_rechecks_endpoint_safety_after_final_repository_revalidatio
     assert result.blocked_group_ids == (1,)
     assert not runner.add_seen
     assert not owner.snapshot(binding).staging_ownership
+
+
+@pytest.mark.asyncio
+async def test_blocked_pre_add_stage_update_retains_existing_ownership(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "note.md").write_text("newer session edit\n", encoding="utf-8")
+    owner = FileNotesSessionOwner()
+    binding = owner.select_root(root)
+    assert owner.record_change(binding, SessionChange("modified", "note.md"))
+    repository = _repository_at(root)
+    assert owner.publish_trust(binding, repository)
+    group = _single_group("note.md")
+    saved_ownership = StagingOwnership(
+        repository=repository,
+        head=HeadIdentity.attached("refs/heads/main", OID_A),
+        approved_endpoint_topology=group.endpoints,
+        approved_move_edges=group.move_edges,
+        approved_current_path=group.current_path,
+        original_baselines={
+            "note.md": IndexBaseline(_entry("note.md", object_id=OID_A))
+        },
+        post_stage_entries={
+            "note.md": _entry("note.md", object_id=OID_B)
+        },
+    )
+    assert owner.publish_ownership(binding, {1: saved_ownership})
+    runner = _PreAddOwnedEndpointRaceRunner(root=root)
+    service = FileNotesGitService(
+        owner,
+        runner=runner,
+        git_executable="git",
+        environment={},
+    )
+
+    result = await service.start_stage(binding, (1,))
+
+    assert result.state == "blocked"
+    assert result.blocked_group_ids == (1,)
+    assert runner.add_calls == 0
+    assert owner.snapshot(binding).staging_ownership == {1: saved_ownership}
 
 
 class _PostflightStageRaceRunner(_DelayedStatusRunner):

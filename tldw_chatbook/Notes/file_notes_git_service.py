@@ -1519,6 +1519,7 @@ class FileNotesGitService:
             original_groups[group.group_id] = group
 
         raw = await self._read_raw_git_inspection(
+            binding,
             root,
             repository,
             repository_groups,
@@ -1602,6 +1603,7 @@ class FileNotesGitService:
 
     async def _read_raw_git_inspection(
         self,
+        binding: SessionBinding,
         root: Path,
         repository: RepositoryIdentity,
         groups: Sequence[SessionChangeGroup],
@@ -1618,6 +1620,18 @@ class FileNotesGitService:
                 head_result.message,
                 revoke_ownership=True,
             )
+        current_ownership = self._owner.snapshot(binding).staging_ownership
+        retained_ownership = {
+            group_id: ownership
+            for group_id, ownership in current_ownership.items()
+            if (
+                ownership.repository == repository
+                and ownership.head == head_result
+            )
+        }
+        if len(retained_ownership) != len(current_ownership):
+            self._owner.publish_ownership(binding, retained_ownership)
+
         index_result = await self._run_status_command(
             repository,
             build_index_argv(self._git_executable_or_raise()),
@@ -1642,6 +1656,23 @@ class FileNotesGitService:
                 head=head_result,
                 revoke_ownership=True,
             )
+
+        index_by_path = _stage_zero_index(index_entries)
+        conflicted_paths = {
+            entry.path for entry in index_entries if entry.stage != 0
+        }
+        current_ownership = self._owner.snapshot(binding).staging_ownership
+        retained_ownership = {
+            group_id: ownership
+            for group_id, ownership in current_ownership.items()
+            if all(
+                path not in conflicted_paths
+                and index_by_path.get(path) == expected
+                for path, expected in ownership.post_stage_entries.items()
+            )
+        }
+        if len(retained_ownership) != len(current_ownership):
+            self._owner.publish_ownership(binding, retained_ownership)
 
         status_records: tuple[PorcelainRecord, ...] = ()
         repository_paths = tuple(
@@ -1741,6 +1772,7 @@ class FileNotesGitService:
                 repository_groups[group.group_id] = mapped
 
         raw = await self._read_raw_git_inspection(
+            binding,
             root,
             repository,
             tuple(repository_groups.values()),
@@ -1842,6 +1874,7 @@ class FileNotesGitService:
                 repository_groups[group.group_id] = mapped
 
         raw = await self._read_raw_git_inspection(
+            binding,
             root,
             repository,
             tuple(repository_groups.values()),
@@ -2019,16 +2052,6 @@ class FileNotesGitService:
                     endpoint_safety_changed = True
                     break
         if endpoint_safety_changed:
-            ownership_revoked = False
-            for group_id in staged:
-                if ownership.pop(group_id, None) is not None:
-                    ownership_revoked = True
-            if ownership_revoked:
-                self._owner.publish_stage_result(
-                    binding,
-                    inspection.repository,
-                    ownership,
-                )
             return GitActionResult(
                 "stage",
                 "blocked",
