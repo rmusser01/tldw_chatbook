@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-27 18:05'
-updated_date: '2026-07-28 01:35'
+updated_date: '2026-07-28 01:53'
 labels:
   - console
   - approvals
@@ -112,4 +112,46 @@ failures: test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
 (CSS-geometry batch-row) and
 test_request_mcp_approvals_cancellation_records_denied_decision_to_execution_log
 (mcp cancellation execution-log). No regressions introduced.
+
+--- Review round 1 (approved-with-note) ---
+
+Reviewer reproduced live on HEAD: the round-identity guard above only
+consulted the three LIVE `_parked_*_payloads` maps via
+`_current_park_round_ids`. A re-invocation of the shared park seam
+arriving AFTER a round's own bridge `finally` teardown (which pops the
+round from those maps once resolved) found everything empty and fell
+through to the "no identity to key on" unconditional-toast fallback --
+re-firing the toast for a round with no card left, despite its id
+already sitting in the never-pruned `_console_toasted_park_round_ids`
+set. Since the organic production trigger for the original F2 finding
+was never definitively isolated, this post-teardown window is at least
+as plausible an explanation as the still-live race the first fix
+covered.
+
+Fix: added `ChatScreen._console_last_parked_round_ids`, remembering the
+most recent NON-empty `_current_park_round_ids` snapshot per session.
+When the live lookup returns empty, `_park_console_approval` now falls
+back to that remembered snapshot -- if every id in it is already in
+`_console_toasted_park_round_ids`, the re-invocation is absorbed. Only a
+session this screen has genuinely never seen a live round for (no
+snapshot ever recorded) still falls through to the unconditional toast,
+preserving the standalone test-seam behavior existing direct-call tests
+rely on. A genuinely new round (different id) arriving after a full
+teardown still toasts.
+
+Tests added:
+- test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round
+  -- the reviewer's exact repro: park round-1, toast, tear down
+  (discard_pending_round + pop payload, mirroring the bridge's own
+  finally), re-invoke for the same session, assert no second toast.
+  Verified to FAIL against the prior commit (e81bca5ff) and pass with
+  this fix.
+- test_park_toast_fires_once_for_a_new_round_arriving_after_teardown --
+  a genuinely new round after full teardown still toasts once.
+
+Gate suite (same three files, one foreground call): 78 passed, 2 failed
+-- the same two pre-existing HEAD failures as before (CSS-geometry
+batch-row, mcp cancellation execution-log). No regressions.
+
+New HEAD: 5c6be2a33.
 <!-- SECTION:NOTES:END -->
