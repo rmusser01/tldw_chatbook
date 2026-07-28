@@ -1835,6 +1835,20 @@ def test_faster_whisper_action_is_removed_when_it_cannot_satisfy_original_constr
     assert decision.actions == ()
 
 
+def test_faster_whisper_action_is_removed_for_diarization_without_timestamps() -> None:
+    coordinator = _action_coordinator(pipeline=PipelineCapabilities(diarization=True))
+
+    decision = coordinator.failure_decision(
+        _request(
+            timestamps=TimestampGranularity.NONE,
+            diarization=True,
+        ),
+        _failure(TranscriptionFailureCode.UNSUPPORTED_CAPABILITY),
+    )
+
+    assert decision.actions == ()
+
+
 def test_faster_whisper_failure_never_offers_faster_whisper_again() -> None:
     coordinator = TranscriptionCoordinator(
         build_builtin_registry(POLICY),

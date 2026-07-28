@@ -511,6 +511,8 @@ class TranscriptionCoordinator:
         self,
         request: TranscriptionRequest,
     ) -> bool:
+        if request.diarization and request.timestamps is TimestampGranularity.NONE:
+            return False
         provider = self.registry.provider(self.router.policy.faster_whisper_provider_id)
         model = self.registry.model(
             self.router.policy.faster_whisper_provider_id,
