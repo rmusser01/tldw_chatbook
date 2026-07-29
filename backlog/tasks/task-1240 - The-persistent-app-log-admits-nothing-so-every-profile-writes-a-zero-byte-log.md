@@ -134,20 +134,34 @@ are fixed on this branch:
   the guard removed the file reads `tldw_chatbook.diagnostics.<caller text>:… event=app_started
   component=invalid` — the field reports a rejection while the logger name carries the payload.
   `persist_event` now rejects a non-token `component` with `ValueError` (substituting `invalid`
-  would hide a caller who misunderstood the contract). **Because it now raises, all five call sites
+  would hide a caller who misunderstood the contract). **Because it now raises, all six call sites
   are wrapped in `try/except Exception: pass`** — `on_unmount`'s in particular sits *above* the
-  entire shutdown sequence (DB closes, worker cancellation, ingest pool teardown).
+  entire shutdown sequence (DB closes, worker cancellation, ingest pool teardown). (The re-review
+  caught that this said "five": `Scheduling/scheduler/loop.py`'s emit in `report_configuration()`,
+  on `Scheduler.run()`'s path, was still bare. Its component is the literal `"scheduling"` so the
+  new `raise` could not fire there, but the invariant was unmet and the claim was false. Now
+  wrapped; enumerated rather than recalled — `grep -rn "persist_event(" tldw_chatbook/` returns six
+  emit sites, each immediately preceded by `try:`.)
 - **Important — `unhandled_exception` recorded textual's useless `WorkerFailed` wrapper.** With
   `exit_on_error` true (the default) `Worker._run` calls `_handle_exception(WorkerFailed(...))`
   *synchronously* while `StateChanged` is only *queued*, so this override fires first and
   `_fatal_error()` -> `_close_messages_no_wait()` can race the `worker_failed` event that carries
   the real type and `operation`. Every worker crash in the app persisted the identical
   `exception_type=WorkerFailed`. Now unwrapped via `WorkerFailed.error`.
-- **Important — "an empty log means the sink did not install" was false.** The install event was
-  emitted at INFO while the handler is set to `file_log_level`, whose shipped config comment offers
-  `WARNING, ERROR, CRITICAL`. On that config the install line is dropped by the very handler it
-  proves installed. Now emitted at `file_log_level`, and moved *outside* the `try` whose `except`
-  returns `False` so a failure there cannot report "install failed" on a working sink.
+- **Important — "an empty log means the sink did not install" was false, at *both* ends of the
+  level range.** Two independent gates stand in front of the install event. The *handler* gate:
+  emitted at INFO while the handler sits at `file_log_level`, whose shipped config comment offers
+  `WARNING, ERROR, CRITICAL`, the line is dropped by the very handler it proves installed. The
+  *logger* gate: `configure_application_logging` lowers root to match the most verbose handler only
+  *after* calling `_configure_private_file_logging`, so at install time root still sits at
+  `general.log_level` — and `file_log_level = "DEBUG"` with `general.log_level = "INFO"` discards
+  the line before the handler is consulted. (A first fix addressed only the handler gate and
+  thereby *newly broke* the DEBUG config, which had worked while the line was hardcoded to INFO;
+  the re-review caught it, and the test could not see it because it pinned `root` to `DEBUG` —
+  pinning away the very gate that fails.) Now emitted at
+  `max(file_log_level, root.getEffectiveLevel())`, and moved *outside* the `try` whose `except`
+  returns `False` so a failure there cannot report "install failed" on a working sink. The guard is
+  parametrized over four realistic `(file_log_level, general.log_level)` pairs covering both gates.
 - **Important — test defects.** `test_successful_worker_records_nothing` asserted no `worker_failed`
   existed *anywhere* in the recorder, which its own sibling twelve lines earlier documents as
   unsafe (real background workers route through the same hook during `pilot.pause()`); it now
@@ -174,11 +188,11 @@ are fixed on this branch:
   (The review recorded the assignment order the other way round; the conclusion is unchanged.)
 
 New guards, each mutation-checked by reverting its fix and confirming a red test: the `component`
-guard (8 parametrized cases), the `WorkerFailed` unwrap, the install event's level, and the
-forwarder's marker drop.
+guard (8 parametrized cases), the `WorkerFailed` unwrap, the install event's emit level (the
+mutation reddens exactly the DEBUG/INFO case and nothing else), and the forwarder's marker drop.
 
 Full affected suite (`Tests/Utils/ Tests/Scheduling/ Tests/App/ Tests/Architecture/` plus the two
-persistent-diagnostics test files) — **822 passed, 1 failed**. The single failure is
+persistent-diagnostics test files) — **825 passed, 1 failed**. The single failure is
 `Tests/Architecture/test_persistent_diagnostic_inventory.py`, which is **pre-existing**: the
 checker exits `1` on `origin/dev` and at this branch's merge-base (`d36bfae0b`), verified by
 running it in a detached worktree. See the ADR-029 amendment note for the branch's own (unwritten)

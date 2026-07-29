@@ -82,12 +82,21 @@ class SchedulerLoop:
         # TASK-1240. The same fact the log line above states, put on disk:
         # discovering that watchlist checks never ran (TASK-1210) took a runtime
         # import trace and a seeded database probe, and should have taken this.
-        persist_event(
-            "scheduling",
-            "scheduler_configured",
-            item_count=len(registered),
-            status="unhandled_types" if orphaned else "ok",
-        )
+        #
+        # Wrapped like the five sites in app.py/Logging_Config.py. The component
+        # here is the literal "scheduling", so `persist_event`'s token guard
+        # cannot fire today -- but this call sits on `Scheduler.run()`'s path,
+        # before the poll loop starts, and the invariant is the same everywhere:
+        # diagnostics must never break the thing they observe.
+        try:
+            persist_event(
+                "scheduling",
+                "scheduler_configured",
+                item_count=len(registered),
+                status="unhandled_types" if orphaned else "ok",
+            )
+        except Exception:
+            pass
 
     async def run(self) -> None:
         """Run the scheduler until :meth:`stop` is called."""

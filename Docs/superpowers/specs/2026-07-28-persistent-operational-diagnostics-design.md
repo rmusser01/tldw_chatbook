@@ -183,14 +183,24 @@ nothing else has been admitted; an empty file means the sink did not install.
 
 Two details make that reading actually true, both added by the whole-branch review:
 
-- **The event is emitted at `file_log_level`, not at INFO.** The handler's own level is
-  user-configurable and the shipped `config.py` comment offers `WARNING, ERROR, CRITICAL`. At any
-  of those, an INFO install line is dropped *by the very handler it exists to prove installed* —
-  every other INFO event in this design goes with it, the user sends a zero-byte log, and the
-  paragraph above tells the maintainer to read that as "the sink did not install". Logging it at
-  the handler's own level means it always clears its own gate, whatever that gate is set to.
-  Corollary, which the code comment states too: the other events remain level-gated, so a log
-  containing only this line means "installed, and everything below the configured level was
+- **The event is emitted above *both* level gates — `max(file_log_level, root.getEffectiveLevel())`
+  — not at INFO.** Two independent gates stand in front of the record, and they fail at opposite
+  ends of the configured range:
+  - *Handler gate.* `file_log_level` is user-configurable and the shipped `config.py` comment
+    offers `WARNING, ERROR, CRITICAL`. At any of those, an INFO install line is dropped *by the
+    very handler it exists to prove installed*.
+  - *Logger gate.* `configure_application_logging` lowers the root logger to match the most verbose
+    handler only **after** calling `_configure_private_file_logging`, so at install time root still
+    sits at `general.log_level`. With `file_log_level = "DEBUG"` and `general.log_level = "INFO"` —
+    a perfectly ordinary "verbose file, quiet terminal" setup — a DEBUG install line is discarded
+    by the root logger before the handler is ever consulted. A first attempt at this fix used the
+    handler level alone and *newly broke* this combination, which had worked while the line was
+    hardcoded to INFO; the re-review caught it.
+
+  Either gate dropping the line produces the same zero-byte log the paragraph above tells the
+  maintainer to read as "the sink did not install". `max()` of the two clears whichever is higher.
+  Corollary, which the code comment states too: the other events remain level-gated normally, so a
+  log containing only this line means "installed, and everything below the configured level was
   filtered" — not "nothing happened".
 - **It is emitted outside the `try` that reports install failure.** Inside it, a future failure in
   the emit itself would be caught by the `except Exception` that warns and returns `False` —

@@ -334,21 +334,37 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
     # after the handler is built, filtered and attached -- would misreport a
     # working sink as a broken one.
     #
-    # Emitted at the handler's OWN level, not INFO (I3). `file_log_level` is
-    # user-configurable and the shipped config comment offers WARNING/ERROR/
-    # CRITICAL; at any of those an INFO install line is dropped by the very
-    # handler it is meant to prove installed, and the user sends a zero-byte
-    # log -- which the paragraph above tells a maintainer to read as "the sink
-    # did not install". Logging it at `file_log_level` means it always clears
-    # its own gate. Note the corollary: the *other* events in this design are
-    # still level-gated, so under `file_log_level = "WARNING"` a log containing
-    # only this line means "installed, and everything below WARNING was
-    # filtered" -- not "nothing happened".
+    # Emitted above BOTH gates in front of it, not at INFO (I3). A record must
+    # clear the *logger's* effective level before `logging` will even build it,
+    # and then the *handler's* level. The two fail at opposite ends of the
+    # configured range, and the install line has to survive both:
+    #
+    #   - Handler gate. `file_log_level` is user-configurable and the shipped
+    #     `config.py` comment offers WARNING/ERROR/CRITICAL. At any of those an
+    #     INFO install line is dropped by the very handler it is meant to prove
+    #     installed.
+    #   - Logger gate. `configure_application_logging` only lowers the root
+    #     logger to match the most verbose handler *after* calling this
+    #     function, so at this moment root still sits at `general.log_level`.
+    #     With `file_log_level = "DEBUG"` and `general.log_level = "INFO"`, a
+    #     DEBUG install line is discarded by the root logger before the handler
+    #     ever sees it.
+    #
+    # Either way the user sends a zero-byte log -- which the paragraph above
+    # tells a maintainer to read as "the sink did not install". `max()` of the
+    # two clears whichever is higher, so the line survives every combination.
+    #
+    # Corollary, worth stating because it looks like a bug otherwise: the
+    # *other* events in this design are still level-gated normally, so under
+    # `file_log_level = "WARNING"` a log containing only this line means
+    # "installed, and everything below WARNING was filtered" -- not "nothing
+    # happened".
+    emit_level = max(installed_level, root_logger.getEffectiveLevel())
     try:
         persist_event(
             "logging",
             "persistent_sink_installed",
-            level=installed_level,
+            level=emit_level,
             status="ok",
         )
     except Exception:

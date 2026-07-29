@@ -167,18 +167,42 @@ def test_no_message_text_reaches_the_persistent_log(tmp_path, monkeypatch):
     assert "PRIVATE-SENTINEL-VALUE" not in written
 
 
-def test_the_install_event_clears_its_own_gate_at_a_raised_file_log_level(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("file_log_level", "root_level", "binding_gate"),
+    [
+        # Baseline: the shipped default, where neither gate bites.
+        ("INFO", logging.INFO, "neither"),
+        # Handler gate. `config.py`'s own comment offers WARNING/ERROR/CRITICAL;
+        # at any of those an INFO install line is dropped by the very handler it
+        # is meant to prove installed.
+        ("WARNING", logging.WARNING, "handler"),
+        ("CRITICAL", logging.INFO, "handler"),
+        # Logger gate -- the opposite end, and the one a handler-level-only fix
+        # newly breaks. `configure_application_logging` lowers root to match the
+        # most verbose handler only *after* calling
+        # `_configure_private_file_logging`, so at install time root still sits
+        # at `general.log_level`. A DEBUG install line is then discarded by the
+        # root logger before the handler is ever consulted -- and this
+        # combination used to work, back when the line was hardcoded to INFO.
+        ("DEBUG", logging.INFO, "logger"),
+    ],
+)
+def test_the_install_event_clears_both_level_gates(
+    tmp_path, monkeypatch, file_log_level, root_level, binding_gate
 ):
-    """`persistent_sink_installed` must survive whatever `file_log_level` is.
+    """`persistent_sink_installed` must survive every level combination.
 
     The whole point of the event is that an empty persistent log means "the
-    sink did not install". Emitted at INFO, it is dropped by its own handler
-    whenever the user sets `file_log_level` to any of the values the shipped
-    `config.py` comment offers -- `WARNING, ERROR, CRITICAL` -- so a user on
-    that config sends a zero-byte log and the maintainer reads it as a failed
-    install. Emitting at the handler's own level makes the claim true at every
-    setting. This test pins the highest of them.
+    sink did not install". Two independent gates stand in front of it -- the
+    logger's effective level, then the handler's -- and they fail at *opposite*
+    ends of the configured range. If either drops the line, the user sends a
+    zero-byte log and the maintainer reads it as a failed install, which is the
+    exact false reading this event exists to eliminate.
+
+    Note what this test deliberately does NOT do: pin `root` to `DEBUG`. An
+    earlier version did, which pinned away the logger gate entirely and so
+    could not see the DEBUG-config regression below. `root_level` is set to a
+    realistic `general.log_level` per case instead.
     """
     from tldw_chatbook.Logging_Config import _configure_private_file_logging
 
@@ -186,15 +210,15 @@ def test_the_install_event_clears_its_own_gate_at_a_raised_file_log_level(
     monkeypatch.setattr(
         "tldw_chatbook.Logging_Config.get_cli_log_file_path", lambda: log_path
     )
-    _pin_file_log_level(monkeypatch, "CRITICAL")
+    _pin_file_log_level(monkeypatch, file_log_level)
     root = logging.getLogger()
     previous_level = root.level
-    root.setLevel(logging.DEBUG)
+    root.setLevel(root_level)
     handler = None
     try:
         assert _configure_private_file_logging(root) is True
         handler = _installed_handler(root, log_path)
-        assert handler.level == logging.CRITICAL
+        assert handler.level == getattr(logging, file_log_level)
         handler.flush()
         written = log_path.read_text()
     finally:
@@ -203,6 +227,11 @@ def test_the_install_event_clears_its_own_gate_at_a_raised_file_log_level(
             handler.close()
         root.setLevel(previous_level)
 
+    assert written, (
+        f"zero-byte log with the sink installed: the {binding_gate} gate "
+        f"dropped the install event at file_log_level={file_log_level}, "
+        f"root={logging.getLevelName(root_level)}"
+    )
     assert "event=persistent_sink_installed" in written, (
-        "the install event was filtered out by the handler it proves installed"
+        f"the install event was filtered out by the {binding_gate} gate"
     )
