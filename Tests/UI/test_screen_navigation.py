@@ -2689,3 +2689,61 @@ async def test_navigation_survives_screen_mount_failure(monkeypatch):
     await app.handle_screen_navigation(NavigateToScreen("mcp"))
 
     assert notifications, "the user must be told the destination failed to open"
+
+
+@pytest.mark.asyncio
+async def test_navigation_flush_that_never_returns_does_not_freeze_the_app(monkeypatch):
+    """A hung outgoing flush must not freeze the whole app forever.
+
+    ``handle_screen_navigation`` is an ``@on`` handler on the App, so while
+    it awaits, the App's own message pump processes nothing -- no clicks, no
+    bindings, no further navigation. The outgoing flush reaches unbounded
+    awaits (``library_screen``'s ``await worker.wait()`` with no timeout, and
+    ``_run_library_service_call``'s uncancellable ``asyncio.to_thread``), so a
+    save that never completes used to leave the app permanently frozen and
+    unkillable rather than merely slow.
+
+    The flush must therefore be bounded: on timeout the app fails closed
+    (stays put, pending edits intact) and stays responsive.
+    """
+    app = _build_test_app()
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def fake_resolve(target):
+        return "chat", "chat", FakeTargetScreen
+
+    switched_screens = []
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    class HungOutgoingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            await asyncio.Event().wait()  # never completes
+
+    notifications = []
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: HungOutgoingScreen())
+    )
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notifications.append(message)
+    )
+    monkeypatch.setattr(app, "NAVIGATION_FLUSH_TIMEOUT_SECONDS", 0.2, raising=False)
+
+    # If the flush is unbounded this never returns and the suite hangs, so
+    # bound the assertion itself rather than wedging CI.
+    await asyncio.wait_for(
+        app.handle_screen_navigation(NavigateToScreen("chat")), timeout=10
+    )
+
+    assert switched_screens == [], "a timed-out flush must fail closed, not switch"
+    assert notifications, "the user must be told the switch was abandoned"

@@ -5949,6 +5949,21 @@ class TldwCli(
         "customize": {"category": "theme"},
     }
 
+    # How long the outgoing screen gets to flush pending work before the app
+    # gives up on the transition.
+    #
+    # `handle_screen_navigation` is an `@on` handler on the App itself, so
+    # everything it awaits is awaited ON the App's message pump -- while it
+    # blocks, the app processes no clicks, no bindings and no further
+    # navigation. The flush path reaches genuinely unbounded awaits
+    # (`library_screen`'s `await worker.wait()`, and `_run_library_service_call`'s
+    # `asyncio.to_thread`, which cannot be cancelled at all), so a save that
+    # never completed left the app permanently frozen AND unkillable.
+    #
+    # Generous enough that a real save is never cut short, small enough that a
+    # wedged one costs a few seconds instead of the session.
+    NAVIGATION_FLUSH_TIMEOUT_SECONDS: float = 5.0
+
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.
 
@@ -6115,13 +6130,36 @@ class TldwCli(
             try:
                 flush_result = flush()
                 if inspect.isawaitable(flush_result):
-                    flush_result = await flush_result
+                    flush_result = await asyncio.wait_for(
+                        flush_result,
+                        timeout=self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
+                    )
                 if flush_result is False:
                     logger.info(
                         f"Navigation to {screen_name} vetoed by the outgoing "
                         "screen's pending-work flush"
                     )
                     return
+            except asyncio.TimeoutError:
+                # Fail closed, exactly like a flush that raised: the pending
+                # edits may exist ONLY in the outgoing screen, so keep it
+                # mounted rather than discarding it on a save we can't
+                # confirm. Abandoning the wait does not abandon the save --
+                # the note-save worker is a separate task and keeps running.
+                logger.warning(
+                    "Screen flush timed out after {}s; staying put (route={}).",
+                    self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
+                    screen_name,
+                )
+                try:
+                    self.notify(
+                        "Still saving pending changes; staying on this screen. "
+                        "Try again in a moment.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
+                return
             except Exception as exc:
                 # The outgoing instance may be the only place pending edits
                 # still exist, so a failed flush must abort the transition.

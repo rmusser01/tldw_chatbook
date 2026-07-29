@@ -1042,13 +1042,39 @@ class ChatQueueActivityResponse(BaseModel):
 
 
 class TLDWAPIClient:
+    # Ceiling on how long a *connection* may take to establish.
+    #
+    # `timeout` is the budget for a whole operation, and some are legitimately
+    # long (uploads, transcription, batch jobs), so it defaults to 300s. httpx
+    # applies a bare float to connect/read/write/pool alike, which meant an
+    # unreachable-but-configured server -- a blackholing firewall, a downed
+    # VPN, a stale host -- spent five minutes in the connect phase.
+    #
+    # That is worse than slow: screens fetch during mount, and Textual awaits a
+    # screen's mount inside the App's own NavigateToScreen handler, so the
+    # App's message pump is blocked for the entire call and the whole app stops
+    # responding to input. A long read is sometimes right; a five-minute
+    # connect never is.
+    DEFAULT_CONNECT_TIMEOUT_SECONDS: float = 15.0
+
     def __init__(
-        self, base_url: str, token: Optional[str] = None, timeout: float = 300.0
+        self,
+        base_url: str,
+        token: Optional[str] = None,
+        timeout: float = 300.0,
+        connect_timeout: Optional[float] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.bearer_token = None
         self.timeout = timeout
+        # A ceiling, never an extension: a caller who asked for a short overall
+        # timeout keeps it rather than having connect widened to the cap.
+        self.connect_timeout = (
+            connect_timeout
+            if connect_timeout is not None
+            else min(timeout, self.DEFAULT_CONNECT_TIMEOUT_SECONDS)
+        )
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -1063,7 +1089,7 @@ class TLDWAPIClient:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers=headers,
-                timeout=self.timeout,
+                timeout=httpx.Timeout(self.timeout, connect=self.connect_timeout),
                 follow_redirects=True,
             )
         return self._client
