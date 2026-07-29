@@ -194,8 +194,6 @@ def persist_event(
     `_is_chatbook_record`.
     """
 
-    if "component" in fields:
-        raise TypeError("component is passed positionally, not as a field")
     log_persistent_metadata(
         logging.getLogger(f"tldw_chatbook.diagnostics.{component}"),
         level,

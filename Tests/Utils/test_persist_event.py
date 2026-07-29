@@ -52,11 +52,6 @@ def test_ordinary_logging_is_still_rejected(sink):
     assert path.read_text() == ""
 
 
-def test_component_cannot_be_passed_twice(sink):
-    with pytest.raises(TypeError):
-        persist_event("app", "app_started", component="somewhere_else")
-
-
 def test_unknown_fields_are_still_rejected(sink):
     """The schema is the guarantee; persist_event must not bypass it."""
     with pytest.raises(ValueError):
