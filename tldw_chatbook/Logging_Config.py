@@ -27,7 +27,10 @@ from tldw_chatbook.Utils.private_paths import (
     open_private_text_append_stream,
     secure_private_directory,
 )
-from tldw_chatbook.Utils.persistent_diagnostics import PersistentDiagnosticFilter
+from tldw_chatbook.Utils.persistent_diagnostics import (
+    PersistentDiagnosticFilter,
+    persist_event,
+)
 #
 ########################################################################################################################
 #
@@ -280,45 +283,88 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
             ):
                 existing_handler.addFilter(PersistentDiagnosticFilter())
             root_logger.info("Private rotating file logging is already installed.")
-            return True
-
-        max_bytes = int(get_cli_setting("logging", "log_max_bytes", 10485760))
-        backup_count = int(get_cli_setting("logging", "log_backup_count", 5))
-        file_log_level_name = str(
-            get_cli_setting("logging", "file_log_level", "INFO")
-        ).upper()
-        file_log_level = getattr(logging, file_log_level_name, logging.INFO)
-        file_handler = PrivateRotatingFileHandler(
-            log_file_path,
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding="utf-8",
-        )
-        file_handler.setLevel(file_log_level)
-        file_handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
+            # TASK-1240 (M8). This path returns True exactly like the install
+            # path below, so it has to emit exactly like it too. An earlier
+            # revision returned here directly, which let a caller be told the
+            # sink is live while the log stayed empty -- the one state this
+            # design instructs a maintainer to read as "the sink did not
+            # install".
+        else:
+            max_bytes = int(get_cli_setting("logging", "log_max_bytes", 10485760))
+            backup_count = int(get_cli_setting("logging", "log_backup_count", 5))
+            file_log_level_name = str(
+                get_cli_setting("logging", "file_log_level", "INFO")
+            ).upper()
+            file_log_level = getattr(logging, file_log_level_name, logging.INFO)
+            file_handler = PrivateRotatingFileHandler(
+                log_file_path,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8",
             )
-        )
-        file_handler.addFilter(PersistentDiagnosticFilter())
-        root_logger.addHandler(file_handler)
-        root_logger.info(
-            "Private rotating file logging installed at level %s.",
-            logging.getLevelName(file_log_level),
-        )
-        return True
+            file_handler.setLevel(file_log_level)
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+            )
+            file_handler.addFilter(PersistentDiagnosticFilter())
+            root_logger.addHandler(file_handler)
+            root_logger.info(
+                "Private rotating file logging installed at level %s.",
+                logging.getLevelName(file_log_level),
+            )
     except PrivatePathError as exc:
         root_logger.warning(
             "File logging disabled: unsafe persistent target (%s).",
             exc.result.status.value,
         )
+        return False
     except Exception as exc:
         root_logger.warning(
             "File logging disabled: persistent sink setup failed (%s).",
             type(exc).__name__,
         )
-    return False
+        return False
+
+    # TASK-1240. Written the moment the sink is live, so at the *default*
+    # `file_log_level` an empty file means "the sink did not install" rather
+    # than "nothing has happened yet". This function swallows install failures
+    # (it warns and returns False), so without this line those two states are
+    # indistinguishable.
+    #
+    # That reading is scoped to the default. Under a raised `file_log_level`,
+    # or a raised `general.log_level` (root still sits at that value here --
+    # `configure_application_logging` lowers root to match the most verbose
+    # handler only *after* calling this function), this INFO record is filtered
+    # like any other. An empty log there means "configured to be quiet", not
+    # "failed".
+    #
+    # Severity is deliberately NOT inflated to force the line past those gates.
+    # An earlier revision emitted at max(handler level, root level), which made
+    # a *successful install* render as WARNING or CRITICAL. These records
+    # propagate to every root handler -- the terminal and the in-app Logs
+    # screen included -- so a normal startup would read as a critical event and
+    # could trip alerting integrations. Severity is semantic; it is not a
+    # transport for defeating a level gate. INFO is the honest severity for a
+    # success, and a configuration that filters it is working as asked.
+    #
+    # Emitted OUTSIDE the try above (M7): that try's handlers report "install
+    # failed" and return False, so a future failure originating in this call --
+    # after the handler is built, filtered and attached -- would misreport a
+    # working sink as a broken one.
+    try:
+        persist_event(
+            "logging",
+            "persistent_sink_installed",
+            level=logging.INFO,
+            status="ok",
+        )
+    except Exception:
+        # Diagnostics must never be the reason the sink reports failure.
+        pass
+    return True
 
 
 def _forward_loguru_to_standard(message) -> None:

@@ -9,6 +9,7 @@ from typing import Any, Callable, Coroutine, Optional
 from loguru import logger
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter
+from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
@@ -77,6 +78,25 @@ class SchedulerLoop:
                 "poll and their schedules will never fire.",
                 types=", ".join(orphaned),
             )
+
+        # TASK-1240. The same fact the log line above states, put on disk:
+        # discovering that watchlist checks never ran (TASK-1210) took a runtime
+        # import trace and a seeded database probe, and should have taken this.
+        #
+        # Wrapped like the five sites in app.py/Logging_Config.py. The component
+        # here is the literal "scheduling", so `persist_event`'s token guard
+        # cannot fire today -- but this call sits on `Scheduler.run()`'s path,
+        # before the poll loop starts, and the invariant is the same everywhere:
+        # diagnostics must never break the thing they observe.
+        try:
+            persist_event(
+                "scheduling",
+                "scheduler_configured",
+                item_count=len(registered),
+                status="unhandled_types" if orphaned else "ok",
+            )
+        except Exception:
+            pass
 
     async def run(self) -> None:
         """Run the scheduler until :meth:`stop` is called."""

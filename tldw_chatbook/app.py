@@ -43,7 +43,7 @@ from textual.app import App, ComposeResult, ScreenStackError
 from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
-from textual.worker import Worker
+from textual.worker import Worker, WorkerState
 from textual.binding import Binding
 from textual.message import Message
 from textual.timer import Timer
@@ -205,6 +205,7 @@ from tldw_chatbook.Utils.Emoji_Handling import (
 )
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
+from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.TTS import TTSProfileService
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
@@ -525,6 +526,13 @@ API_IMPORTS_SUCCESSFUL = True
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
+
+# TASK-1240. The `component` this module passes to `persist_event`. It is a
+# bounded metadata token (`persist_event` raises `ValueError` otherwise) and is
+# used raw to build the diagnostics logger name, so the four emit sites in this
+# file must agree on one spelling. Private to `app.py`: every event emitted
+# here belongs to the application lifecycle.
+_DIAGNOSTICS_COMPONENT_APP = "app"
 #
 #######################################################################################################################
 #
@@ -6682,6 +6690,15 @@ class TldwCli(
         self._bind_tts_service()
         mount_start = time.perf_counter()
 
+        # TASK-1240. Anchors a session in the persistent log; its absence dates
+        # a crash to before this point. Wrapped: `persist_event` raises on a
+        # malformed component and its sink can fail; diagnostics must never be
+        # the reason mount does not complete.
+        try:
+            persist_event(_DIAGNOSTICS_COMPONENT_APP, "app_started")
+        except Exception:
+            pass
+
         # Restore persisted Library ingest job history (self.library_ingest_jobs
         # already exists -- constructed store-less in __init__). Never raises:
         # a corrupt/unreadable store falls back to starting empty.
@@ -7677,11 +7694,58 @@ class TldwCli(
         if cancellation is not None:
             raise cancellation
 
+    def _handle_exception(self, error: Exception) -> None:
+        """Record the crash type, then let Textual do what it always did.
+
+        TASK-1240. Names the exception class only -- never the message, which is
+        caller-supplied text and may quote user or model content. Calls super()
+        unconditionally: Textual sets the return code here, and swallowing that
+        would turn a crash into a hang.
+
+        `WorkerFailed` is unwrapped. When a worker raises and `exit_on_error` is
+        true (the default), `Worker._run` sets `WorkerState.ERROR` -- posting
+        `StateChanged` *asynchronously* -- and then calls this method
+        *synchronously* with `WorkerFailed(self._error)`. So this override fires
+        first and, without unwrapping, would persist
+        `exception_type=WorkerFailed` for every worker crash in the app, while
+        `_fatal_error()` -> `_close_messages_no_wait()` races the queued
+        `StateChanged` so the `worker_failed` event that carries the real type
+        and `operation` may never be delivered. A crashed session's log would
+        then read `event=unhandled_exception exception_type=WorkerFailed` and
+        nothing else. `WorkerFailed.error` holds the real exception.
+        """
+        from textual.worker import WorkerFailed
+
+        underlying = getattr(error, "error", None) if isinstance(error, WorkerFailed) else None
+        try:
+            persist_event(
+                _DIAGNOSTICS_COMPONENT_APP,
+                "unhandled_exception",
+                level=logging.ERROR,
+                exception_type=type(
+                    underlying if underlying is not None else error
+                ).__name__,
+            )
+        except Exception:
+            # Diagnostics must never be the reason a crash handler fails.
+            pass
+        super()._handle_exception(error)
+
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
         import asyncio
 
         logging.info("--- App Unmounting ---")
+        # TASK-1240. Distinguishes a clean exit from a kill: a log whose last
+        # line is app_started ended abruptly. Wrapped, and deliberately so:
+        # this line sits ABOVE the entire shutdown sequence -- DB closes,
+        # worker cancellation, ingest pool teardown. An exception escaping here
+        # would skip all of it. Diagnostics must never break the thing they
+        # observe.
+        try:
+            persist_event(_DIAGNOSTICS_COMPONENT_APP, "app_stopping")
+        except Exception:
+            pass
         try:
             await self._shutdown_file_notes_session_owner()
         except Exception as error:
@@ -8080,6 +8144,42 @@ class TldwCli(
             f"on_worker_state_changed: Worker '{worker_name}' "
             f"(Group: {worker_group}, State: {event.state})"
         )
+
+        # TASK-1240. One hook already sees every worker transition, so failures
+        # are recorded without touching any of the 398 run_worker call sites.
+        # Only ERROR persists: a start or success event here would emit a line
+        # per keystroke-triggered search and per timer tick.
+        if event.state is WorkerState.ERROR:
+            error = getattr(event.worker, "error", None)
+            # DO NOT "improve" `operation` to `event.worker.description`.
+            # `Worker.name` is code-side -- the method or literal name given at
+            # the `run_worker`/`@work` site. `Worker.description` is built by
+            # textual's `_work_decorator` as `f"{name}={value!r}"` over the
+            # worker's *actual arguments*, so for a chat, tool or provider
+            # worker it contains prompts, API keys and tool values verbatim.
+            # Persisting it would put exactly what ADR-029 excludes on disk.
+            #
+            # `else "unknown"` stays. `Worker._run` assigns `self.state =
+            # WorkerState.ERROR` -- whose setter posts `StateChanged` -- one
+            # line *before* `self._error = error`. Delivery is via the message
+            # queue, so `_error` has landed by the time this handler runs in
+            # every real interleaving; the branch is a total-function guard for
+            # the ordering itself and for duck-typed workers, and it costs one
+            # comparison on a path that only runs when something already broke.
+            try:
+                persist_event(
+                    _DIAGNOSTICS_COMPONENT_APP,
+                    "worker_failed",
+                    level=logging.ERROR,
+                    operation=str(worker_name or "unknown"),
+                    exception_type=(
+                        type(error).__name__ if error is not None else "unknown"
+                    ),
+                )
+            except Exception:
+                # Diagnostics must never break the worker hook every worker
+                # transition in the app passes through.
+                pass
 
         # Delegate to the handler registry
         handled = await self.worker_handler_registry.handle_event(event)

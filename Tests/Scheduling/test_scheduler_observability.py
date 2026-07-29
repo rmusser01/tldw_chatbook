@@ -153,3 +153,37 @@ async def test_dropped_task_is_counted_distinctly_from_a_task_that_ran():
     assert any("unhandled" in name or "dropped" in name for name in names), (
         f"no drop-specific metric emitted, got {names!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_configuration_is_recorded_in_the_persistent_log(monkeypatch):
+    """TASK-1240: the wiring that TASK-1210 needed an import trace to discover
+    is now one line on disk."""
+    from tldw_chatbook.Scheduling.scheduler import loop as loop_module
+
+    recorded: list[dict] = []
+    monkeypatch.setattr(
+        loop_module,
+        "persist_event",
+        lambda component, event, **fields: recorded.append(
+            {"component": component, "event": event, **fields}
+        ),
+    )
+
+    # Two handlers registered, one task queued, one orphaned type: the three
+    # candidate quantities deliberately diverge so item_count == 2 can only be
+    # explained by len(registered) -- not queue depth (1) or len(orphaned) (1).
+    # Do not "simplify" these back to matching numbers.
+    loop = SchedulerLoop(
+        _tasks_db(),
+        handlers={"reminder": AsyncMock(), "other_job": AsyncMock()},
+        poll_interval=0,
+    )
+    loop.queue.push(_due_watchlist_task())
+    loop.report_configuration()
+
+    events = [r for r in recorded if r["event"] == "scheduler_configured"]
+    assert events, f"no scheduler_configured recorded, got {recorded}"
+    assert events[-1]["component"] == "scheduling"
+    assert events[-1]["item_count"] == 2  # handlers, not queue depth (1) or orphaned (1)
+    assert events[-1]["status"] == "unhandled_types"
