@@ -32,7 +32,7 @@ from .agent_models import (
     ToolResult,
     ToolSchema,
 )
-from .run_log_search import MAX_SLICE_RECORDS, STATS_GROUP_BY_FIELDS
+from .run_log_search import MAX_SLICE_RECORDS, MAX_STATS_GROUPS, STATS_GROUP_BY_FIELDS
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
     id="runtime:spawn_subagent",
@@ -238,7 +238,12 @@ RUN_LOG_STATS_TOOL_SCHEMA = ToolSchema(
         "status, or agent kind (primary vs. sub-agent). Use this to answer "
         "'which tool have I called most, and how often did it fail?' "
         "Output is one line per distinct group value, never one line per "
-        "record, so it stays small no matter how long this run gets. "
+        "record, so it stays small no matter how long this run gets. At "
+        f"most {MAX_STATS_GROUPS} groups are shown per call, ranked by "
+        "count (the most frequent survive); if more distinct values "
+        "exist, the response says so explicitly with a count of how many "
+        "were omitted -- narrow with tool=/type=/status=/kind= or a "
+        "record range to see the rest. "
         "Per-record token counts are not tracked in this run's log -- only "
         "the whole run's total token spend is recorded once the run "
         "finishes -- so this tool cannot report a live token total; "

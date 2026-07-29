@@ -37,7 +37,6 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-
 from Tests.Agents.test_agent_runtime import make_deps
 
 
@@ -386,7 +385,9 @@ def test_multi_segment_log_stats_and_slice_see_every_record(tmp_path, monkeypatc
     assert [r.number for r in records] == list(range(1, total + 1))
 
     # compute_stats sees records from every segment, not just one.
-    groups = compute_stats(records, group_by="tool")
+    groups, total_matched, omitted = compute_stats(records, group_by="tool")
+    assert omitted == 0  # only 2 distinct tool names, nowhere near MAX_STATS_GROUPS
+    assert total_matched == total
     by_key = {g.key: g for g in groups}
     assert by_key["alpha"].count + by_key["beta"].count == total
     assert sum(g.error_count for g in groups) == len([i for i in range(total) if i % 5 == 0])
@@ -409,6 +410,14 @@ def test_multi_segment_log_stats_and_slice_see_every_record(tmp_path, monkeypatc
 # the type-mismatched cases below.
 
 
+# C (Qodo review, PR #1078): `int(...)` on from_record/to_record is wrapped
+# in `except (TypeError, ValueError, OverflowError)`. `float('inf')`/
+# `float('-inf')` raise OverflowError specifically (NOT TypeError/
+# ValueError) -- `float('nan')` above already raises ValueError, already
+# covered pre-fix; inf/-inf were the actual gap. Both directions included
+# since nothing about the coercion path treats them differently.
+
+
 @pytest.mark.parametrize(
     "bad_args",
     [
@@ -419,6 +428,10 @@ def test_multi_segment_log_stats_and_slice_see_every_record(tmp_path, monkeypatc
         {"from_record": [1, 2, 3]},
         {"to_record": [1, 2, 3]},
         {"from_record": float("nan")},
+        {"from_record": float("inf")},
+        {"to_record": float("inf")},
+        {"from_record": float("-inf")},
+        {"to_record": float("-inf")},
     ],
 )
 def test_run_log_stats_unparseable_numeric_args_return_a_clean_error(real_closures, bad_args):
@@ -438,6 +451,10 @@ def test_run_log_stats_unparseable_numeric_args_return_a_clean_error(real_closur
         {"from_record": [1, 2, 3]},
         {"to_record": [1, 2, 3]},
         {"from_record": float("nan")},
+        {"from_record": float("inf")},
+        {"to_record": float("inf")},
+        {"from_record": float("-inf")},
+        {"to_record": float("-inf")},
     ],
 )
 def test_run_log_slice_unparseable_numeric_args_return_a_clean_error(real_closures, bad_args):
@@ -452,8 +469,12 @@ def test_run_log_slice_unparseable_numeric_args_return_a_clean_error(real_closur
     [
         {"from_record": None},
         {"to_record": None},
-        {"from_record": 10 ** 18},  # huge
-        {"to_record": 10 ** 18},  # huge
+        {"from_record": 10 ** 18},  # huge int
+        {"to_record": 10 ** 18},  # huge int
+        {"from_record": 10 ** 30},  # enormous int, well past int64 range
+        {"to_record": 10 ** 30},
+        {"from_record": 1e300},  # enormous float, still finite -- int() succeeds
+        {"to_record": 1e300},
         {"from_record": -5},  # negative
         {"to_record": -5},  # negative
         {},
@@ -471,8 +492,12 @@ def test_run_log_stats_null_huge_and_negative_args_never_raise(real_closures, ok
     [
         {"from_record": None},
         {"to_record": None},
-        {"from_record": 10 ** 18},  # huge -- resolves to an empty-but-clean slice
+        {"from_record": 10 ** 18},  # huge int -- resolves to an empty-but-clean slice
         {"to_record": 10 ** 18},
+        {"from_record": 10 ** 30},  # enormous int, well past int64 range
+        {"to_record": 10 ** 30},
+        {"from_record": 1e300},  # enormous float, still finite -- int() succeeds
+        {"to_record": 1e300},
         {"from_record": -5},  # negative -- clamped to record 1
         {"to_record": -5},
         {},
@@ -579,3 +604,166 @@ def test_real_run_log_stats_and_slice_stay_bounded_on_a_large_log(tmp_path, monk
     # would otherwise collide with a naive "record 0" search.
     header_count = len(re.findall(r"record \d{6} \[", slice_result.content))
     assert header_count == MAX_SLICE_RECORDS
+
+
+def test_real_run_log_stats_caps_groups_when_tool_names_far_exceed_the_cap(
+    tmp_path, monkeypatch
+):
+    """A (Qodo review, PR #1078), end-to-end: `compute_stats`' own group cap
+    (pinned directly against the pure function in test_run_log_search.py)
+    must also hold through the REAL `run_log_stats` closure the loop
+    actually calls -- tool names are attacker/model/MCP-server controlled,
+    so nothing bounds their distinct count except this cap.
+    """
+    from tldw_chatbook.Agents import run_log as run_log_module
+    from tldw_chatbook.Agents import agent_service as agent_service_module
+    from tldw_chatbook.Agents.run_log_search import MAX_STATS_GROUPS
+
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = ToolCatalogRegistry()
+    reg.register_provider(BuiltinToolProvider())
+
+    captured: dict = {}
+    real_run_agent_loop = agent_service_module.run_agent_loop
+
+    def spy(config, messages, active, deps):
+        captured["deps"] = deps
+        return real_run_agent_loop(config, messages, active, deps)
+
+    monkeypatch.setattr(agent_service_module, "run_agent_loop", spy)
+
+    service = AgentService(
+        db, reg, chat_call=lambda **kw: {"choices": [{"message": {"content": "ok"}}]}
+    )
+    service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(model="m", system_prompt="s", budget=RunBudget()),
+        api_endpoint="openai",
+    )
+    writer = service.run_log_writer
+    assert writer.is_active
+
+    # Far more distinct tool names than MAX_STATS_GROUPS -- exactly the
+    # shape a model calling many differently-named MCP tools would produce.
+    distinct_tool_count = MAX_STATS_GROUPS + 60
+    for i in range(distinct_tool_count):
+        writer.append(
+            run_id=writer.log_dir.name,
+            kind="primary",
+            type="tool_result",
+            content=f"call to tool {i}",
+            tool=f"mcp_tool_{i}",
+            status="ok",
+        )
+
+    run_log_stats = captured["deps"].run_log_stats
+    result = run_log_stats({"group_by": "tool", "type": "tool_result"})
+    assert result.ok is True
+    # Bounded: 1 header line + MAX_STATS_GROUPS group lines + 1 omission
+    # trailer line = MAX_STATS_GROUPS + 1 newlines -- never one line per
+    # distinct tool name (which would be distinct_tool_count + 1 lines,
+    # far more than this).
+    assert result.content.count("\n") == MAX_STATS_GROUPS + 1
+    # The omission is NAMED, not silently dropped: the exact remainder
+    # count appears, and the word "omitted" appears -- a model reading this
+    # must be able to tell the result is partial, not "the whole picture is
+    # exactly the top group and nothing else exists".
+    omitted_count = distinct_tool_count - MAX_STATS_GROUPS
+    assert str(omitted_count) in result.content
+    assert "omitted" in result.content
+
+
+# -- B (Qodo review, PR #1078): an unsupported group_by must not be --------
+# -- rendered under its own (wrong) label -----------------------------------
+#
+# `compute_stats` itself already falls back an unrecognised `group_by` to
+# "tool" -- that part was never broken. The bug was in THIS closure: it
+# passed the caller's ORIGINAL string through to `format_stats`' `group_by=`
+# label regardless of what `compute_stats` actually grouped by, so an
+# unsupported value produced tool counts confidently mislabelled as
+# whatever the model asked for. Fixed by normalising `group_by` here,
+# before calling `compute_stats`, so the same (already-fallen-back) value
+# feeds both the aggregation and the label.
+
+
+def test_run_log_stats_unsupported_group_by_is_labelled_as_tool_not_echoed(real_closures):
+    run_log_stats, _slice = real_closures
+    result = run_log_stats({"group_by": "not_a_real_dimension"})
+    assert result.ok is True
+    assert "grouped by tool" in result.content
+    assert "grouped by not_a_real_dimension" not in result.content
+
+
+@pytest.mark.parametrize("group_by", ["tool", "type", "status", "kind"])
+def test_run_log_stats_every_supported_group_by_is_labelled_correctly(real_closures, group_by):
+    run_log_stats, _slice = real_closures
+    result = run_log_stats({"group_by": group_by})
+    assert result.ok is True
+    assert f"grouped by {group_by}" in result.content
+
+
+# -- E/F (Qodo review, PR #1078, DECLINED with a ruling): raw-dict-plus- ----
+# -- defensive-cast is kept, but every argument slot of BOTH tools must be --
+# -- proven safe against the full JSON-decodable value space ---------------
+#
+# The review wanted model-supplied tool arguments routed through a Pydantic
+# model instead of the defensive str()/int() coercion this closure (and
+# every sibling runtime-tool closure -- install_skill, run_skill_script,
+# skill_file, search_run_log) already uses. Declined for consistency (see
+# run_log_stats'/run_log_slice's own docstrings in agent_service.py) --
+# but declining a validation LAYER does not excuse skipping proof that the
+# coercion actually holds. This drives every argument BOTH tools accept,
+# one at a time, through EVERY value type a JSON-decoded `ToolCall.args`
+# could put there (str, int, float, bool, None, list, dict) -- covering
+# "a string where an int belongs", None, a nested object, a list, a
+# boolean, a negative, and an out-of-range value, per-argument, through the
+# REAL service closures (not a fake) -- and confirms every single
+# combination returns a clean ToolResult, never an exception escaping the
+# call.
+
+_HOSTILE_JSON_VALUES = [
+    pytest.param("not-a-number", id="string-where-int-belongs"),
+    pytest.param(None, id="none"),
+    pytest.param({"nested": "object"}, id="nested-object"),
+    pytest.param([1, 2, 3], id="list"),
+    pytest.param(True, id="boolean"),
+    pytest.param(-5, id="negative"),
+    pytest.param(10 ** 30, id="out-of-range"),
+]
+
+RUN_LOG_STATS_ARG_NAMES = (
+    "group_by",
+    "tool",
+    "type",
+    "status",
+    "kind",
+    "from_record",
+    "to_record",
+)
+RUN_LOG_SLICE_ARG_NAMES = ("from_record", "to_record")
+
+
+@pytest.mark.parametrize("value", _HOSTILE_JSON_VALUES)
+@pytest.mark.parametrize("arg_name", RUN_LOG_STATS_ARG_NAMES)
+def test_run_log_stats_every_argument_survives_every_hostile_json_value(
+    real_closures, arg_name, value
+):
+    run_log_stats, _slice = real_closures
+    # The call itself is the assertion: if any argument slot's coercion is
+    # unsafe for this value, this raises and the test fails with that
+    # exception's traceback -- exactly the "never raise into the run"
+    # contract this proves.
+    result = run_log_stats({arg_name: value})
+    assert isinstance(result, ToolResult)
+
+
+@pytest.mark.parametrize("value", _HOSTILE_JSON_VALUES)
+@pytest.mark.parametrize("arg_name", RUN_LOG_SLICE_ARG_NAMES)
+def test_run_log_slice_every_argument_survives_every_hostile_json_value(
+    real_closures, arg_name, value
+):
+    _stats, run_log_slice = real_closures
+    result = run_log_slice({arg_name: value})
+    assert isinstance(result, ToolResult)

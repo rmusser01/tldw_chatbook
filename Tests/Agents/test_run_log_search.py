@@ -10,6 +10,7 @@ from tldw_chatbook.Agents.run_log_search import (
     DEFAULT_SLICE_WIDTH,
     MAX_REGEX_SCAN_CHARS,
     MAX_SLICE_RECORDS,
+    MAX_STATS_GROUPS,
     RunLogSearchPatternRejected,
     RunLogSearchTimeout,
     compute_stats,
@@ -309,66 +310,77 @@ def test_format_results_says_nothing_extra_for_an_uncapped_record():
 
 
 def test_compute_stats_groups_by_tool_by_default():
-    by_key = {g.key: g for g in compute_stats(CORPUS)}
+    groups, total_matched, omitted = compute_stats(CORPUS)
+    by_key = {g.key: g for g in groups}
     # CORPUS: read_file(ok), web_search(error), model turn (tool=""), write_file(ok).
     assert by_key["read_file"].count == 1
     assert by_key["read_file"].error_count == 0
     assert by_key["web_search"].count == 1
     assert by_key["web_search"].error_count == 1
     assert by_key["write_file"].count == 1
+    assert total_matched == len(CORPUS)
+    assert omitted == 0
 
 
 def test_compute_stats_unrecognised_group_by_falls_back_to_tool():
-    default_groups = compute_stats(CORPUS, group_by="tool")
-    junk_groups = compute_stats(CORPUS, group_by="not_a_real_field")
+    default_groups, default_total, default_omitted = compute_stats(CORPUS, group_by="tool")
+    junk_groups, junk_total, junk_omitted = compute_stats(CORPUS, group_by="not_a_real_field")
     assert junk_groups == default_groups
+    assert junk_total == default_total
+    assert junk_omitted == default_omitted
 
 
 def test_compute_stats_group_by_status_and_type():
-    by_status = {g.key: g.count for g in compute_stats(CORPUS, group_by="status")}
+    by_status = {g.key: g.count for g in compute_stats(CORPUS, group_by="status")[0]}
     assert by_status.get("ok") == 2
     assert by_status.get("error") == 1
-    by_type = {g.key: g.count for g in compute_stats(CORPUS, group_by="type")}
+    by_type = {g.key: g.count for g in compute_stats(CORPUS, group_by="type")[0]}
     assert by_type.get("model") == 1
     assert by_type.get("tool_result") == 3
 
 
 def test_compute_stats_pre_filters_compose_before_grouping():
-    groups = compute_stats(CORPUS, group_by="tool", status="ok")
+    groups, total_matched, _omitted = compute_stats(CORPUS, group_by="tool", status="ok")
     assert {g.key for g in groups} == {"read_file", "write_file"}
+    assert total_matched == 2
 
 
 def test_compute_stats_from_to_record_bounds_compose_with_group_by():
-    groups = compute_stats(CORPUS, group_by="tool", from_record=2, to_record=3)
+    groups, total_matched, _omitted = compute_stats(
+        CORPUS, group_by="tool", from_record=2, to_record=3
+    )
     # Only records 2 (web_search) and 3 (model, tool="") fall in range.
     assert {g.key for g in groups} == {"web_search", "-"}
+    assert total_matched == 2
 
 
 def test_compute_stats_content_bytes_sums_utf8_length_not_char_count():
     # A multi-byte character makes UTF-8 byte length diverge from len().
     single = [rec(1, "héllo", tool="x")]
-    groups = compute_stats(single, group_by="tool")
+    groups, _total, _omitted = compute_stats(single, group_by="tool")
     assert groups[0].content_bytes == len("héllo".encode("utf-8"))
     assert groups[0].content_bytes != len("héllo")
 
 
 def test_compute_stats_sorted_by_descending_count_then_key():
     many = [rec(i, "x", tool="a") for i in range(1, 4)] + [rec(4, "x", tool="b")]
-    groups = compute_stats(many, group_by="tool")
+    groups, _total, _omitted = compute_stats(many, group_by="tool")
     assert [g.key for g in groups] == ["a", "b"]
     assert groups[0].count == 3 and groups[1].count == 1
 
 
 def test_compute_stats_empty_log_returns_no_groups():
-    assert compute_stats([]) == []
-    assert format_stats(compute_stats([]), group_by="tool", total_records=0) == (
+    assert compute_stats([]) == ([], 0, 0)
+    groups, total, omitted = compute_stats([])
+    assert format_stats(groups, group_by="tool", total_records=total, omitted_groups=omitted) == (
         "No records matched."
     )
 
 
 def test_compute_stats_output_is_bounded_by_distinct_groups_not_record_count():
     # A log "large enough that an unbounded implementation would blow up":
-    # thousands of records collapsing into a handful of tool names.
+    # thousands of records collapsing into a handful of tool names -- well
+    # under MAX_STATS_GROUPS, so nothing here is expected to be capped.
     tools = ["alpha", "beta", "gamma", "delta", "epsilon"]
     huge = [
         rec(
@@ -379,12 +391,82 @@ def test_compute_stats_output_is_bounded_by_distinct_groups_not_record_count():
         )
         for i in range(1, 5001)
     ]
-    groups = compute_stats(huge, group_by="tool")
+    groups, total_matched, omitted = compute_stats(huge, group_by="tool")
     assert len(groups) == len(tools)  # bounded by distinct tools, not 5000
-    assert sum(g.count for g in groups) == 5000
-    rendered = format_stats(groups, group_by="tool", total_records=5000)
+    assert total_matched == 5000
+    assert omitted == 0
+    rendered = format_stats(groups, group_by="tool", total_records=total_matched)
     assert rendered.count("\n") == len(tools)  # one header + one line/group
     assert len(rendered) < 2000  # nowhere near what a 5000-record dump would be
+
+
+# -- A (Qodo review, PR #1078): group cap must be enforced, not just the -----
+# -- record-vs-group distinction above ---------------------------------------
+#
+# `compute_stats`' own boundedness claim ("output scales with distinct
+# GROUPS, never records") is false for `group_by="tool"` unless the number
+# of distinct groups is ITSELF capped -- tool names come from the model or
+# an MCP server, a set this module does not control. This drives many more
+# distinct tool names through `compute_stats` than `MAX_STATS_GROUPS`
+# allows, and confirms: (a) the returned group list is capped at
+# `MAX_STATS_GROUPS`; (b) the highest-count groups survive, never an
+# arbitrary subset; (c) the omitted count is exact; (d) `format_stats`
+# reports the omission explicitly rather than silently rendering a partial
+# list as if it were the whole picture.
+
+
+def test_compute_stats_caps_group_count_when_distinct_tool_names_exceed_the_limit():
+    # MAX_STATS_GROUPS + 37 distinct tool names, each called a DIFFERENT
+    # number of times so "highest count survives" is unambiguous to assert:
+    # tool_0 called (n) times, tool_1 called (n-1) times, ... -- strictly
+    # descending, no ties to worry about.
+    distinct_tool_count = MAX_STATS_GROUPS + 37
+    records = []
+    number = 1
+    for i in range(distinct_tool_count):
+        calls = distinct_tool_count - i  # tool_0 most frequent, last least
+        for _ in range(calls):
+            records.append(rec(number, "x", tool=f"tool_{i}"))
+            number += 1
+
+    groups, total_matched, omitted = compute_stats(records, group_by="tool")
+
+    assert total_matched == len(records)  # every record still counted
+    assert len(groups) == MAX_STATS_GROUPS  # rendered list IS capped
+    assert omitted == distinct_tool_count - MAX_STATS_GROUPS  # exact remainder
+    # The surviving groups are exactly the MAX_STATS_GROUPS highest-count
+    # ones (tool_0 .. tool_{MAX_STATS_GROUPS - 1}), in descending order.
+    assert [g.key for g in groups] == [f"tool_{i}" for i in range(MAX_STATS_GROUPS)]
+    assert all(
+        groups[i].count >= groups[i + 1].count for i in range(len(groups) - 1)
+    )
+
+    rendered = format_stats(
+        groups, group_by="tool", total_records=total_matched, omitted_groups=omitted
+    )
+    # Rendered output stays bounded: 1 header line + MAX_STATS_GROUPS group
+    # lines + 1 trailer line = MAX_STATS_GROUPS + 2 lines (MAX_STATS_GROUPS
+    # + 1 newlines) -- never one line per distinct tool name (that would be
+    # distinct_tool_count + 1 lines), and the omission is stated, not
+    # silently cut.
+    assert rendered.count("\n") == MAX_STATS_GROUPS + 1
+    assert f"{omitted}" in rendered
+    assert "omitted" in rendered
+
+
+def test_compute_stats_zero_max_groups_still_reports_the_exact_total_matched():
+    # max_groups=0 is an edge case (not exercised by the real closure, which
+    # always uses the module default) -- confirm the cap logic degrades
+    # sanely rather than treating 0 as "no cap" by accident.
+    records = [rec(i, "x", tool=f"tool_{i}") for i in range(1, 6)]
+    groups, total_matched, omitted = compute_stats(records, group_by="tool", max_groups=0)
+    assert total_matched == 5
+    # max_groups=0 is falsy -> the `max_groups > 0` guard treats it as
+    # "no cap requested" (consistent with from_record/to_record's own
+    # falsy-means-unset convention elsewhere in this module) rather than
+    # "cap at zero groups".
+    assert len(groups) == 5
+    assert omitted == 0
 
 
 # == Phase 2 (task-1271): slice_records / format_slice (run_log_slice) ======

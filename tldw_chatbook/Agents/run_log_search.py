@@ -441,12 +441,15 @@ def _window_start(*, total: int, max_chars: int, offset: int, match_pos: int | N
 # ceiling, exactly like it already does for `search_run_log`.
 
 #: `run_log_stats`' `group_by` is restricted to these four metadata fields
-#: ON PURPOSE: each has a small, LOG-INDEPENDENT number of distinct values
-#: (a handful of tool names, four record types, a few statuses, two
-#: kinds). Grouping by anything per-record-unique -- a record number, a
-#: `call_id` -- would turn an aggregation tool into an unbounded per-record
-#: dump wearing a different schema; that is exactly the shape task-1271
-#: forbids ("no call may return output that scales with log size").
+#: ON PURPOSE: `type`/`status`/`kind` each have a small, LOG-INDEPENDENT
+#: number of distinct values (four record types, a few statuses, two
+#: kinds) -- `tool` does NOT (tool names come from the model and from MCP
+#: servers, a set this module neither defines nor controls; see
+#: `MAX_STATS_GROUPS` below for how THAT case stays bounded). Grouping by
+#: anything per-record-unique -- a record number, a `call_id` -- would turn
+#: an aggregation tool into an unbounded per-record dump wearing a
+#: different schema; that is exactly the shape task-1271 forbids ("no call
+#: may return output that scales with log size").
 STATS_GROUP_BY_FIELDS = ("tool", "type", "status", "kind")
 
 #: `run_log_slice`'s default window width when the caller omits `to_record`.
@@ -457,6 +460,21 @@ DEFAULT_SLICE_WIDTH = 20
 #: Matches `search_records`' own default `limit` so the two tools' worst-
 #: case per-call cost stays comparable.
 MAX_SLICE_RECORDS = 50
+
+#: `run_log_stats`' hard cap on the number of GROUPS rendered by ONE call.
+#: `STATS_GROUP_BY_FIELDS`' own comment above claims each field has a
+#: "small, LOG-INDEPENDENT number of distinct values" -- true for `type`/
+#: `status`/`kind` (fixed, finite vocabularies this module defines), but
+#: NOT true for `tool`: tool names come from whatever the model or an MCP
+#: server calls something, a set this module does not control and cannot
+#: bound. Without this cap, `compute_stats`' whole justification --
+#: "output scales with distinct GROUPS, never with record count" -- breaks
+#: exactly when grouping by `tool` on a run that has touched many
+#: differently-named tools: the output would again scale with something
+#: unbounded, right back to the shape `run_log_stats` exists to avoid.
+#: Matches `search_records`' own default `limit` and `MAX_SLICE_RECORDS`
+#: so all three run-log tools share one per-call worst-case size ceiling.
+MAX_STATS_GROUPS = 50
 
 
 @dataclass(frozen=True)
@@ -479,17 +497,24 @@ def compute_stats(
     kind: str = "",
     from_record: int = 0,
     to_record: int = 0,
-) -> list[RunLogGroupStats]:
+    max_groups: int = MAX_STATS_GROUPS,
+) -> tuple[list[RunLogGroupStats], int, int]:
     """Aggregate ``records`` into per-group counts, error counts, and bytes.
 
-    Bounded by construction: the result has exactly one entry per DISTINCT
-    value of ``group_by`` present in the (optionally pre-filtered) records
-    -- never one entry per record. This is what lets ``run_log_stats``
-    answer "which tool have I called most, and how often did it fail?"
-    without paging the log itself through the model's context: the whole
-    log is scanned here (same O(records) cost ``search_records`` already
-    pays), but the RETURNED value is O(distinct group values), a quantity
-    that does not grow as the run gets longer.
+    The result is O(distinct group values) RENDERED, never O(records) --
+    but distinct group values are only bounded by construction for
+    ``type``/``status``/``kind`` (small, fixed vocabularies this module
+    defines). Grouping by ``tool`` has no such bound: tool names come from
+    whatever the model or an MCP server calls something. ``max_groups``
+    is what actually keeps the RETURNED value bounded in that case -- the
+    top ``max_groups`` groups by count are kept, and the rest are counted
+    but not rendered (see ``omitted_group_count`` below). This is what
+    lets ``run_log_stats`` answer "which tool have I called most, and how
+    often did it fail?" without paging the log itself through the model's
+    context: the whole log is scanned here (same O(records) cost
+    ``search_records`` already pays), but what comes BACK is capped
+    regardless of how many distinct tool names -- or records -- the run
+    has accumulated.
 
     No token totals are computed here. `RunLogRecord` does not carry a
     per-record token count -- ``agent_runtime.run_agent_loop`` tracks a
@@ -519,18 +544,38 @@ def compute_stats(
             much of my log came from sub-agents".
         from_record: Optional inclusive lower bound on record number.
         to_record: Optional inclusive upper bound on record number.
+        max_groups: Hard cap on how many groups are RETURNED, regardless of
+            how many distinct ``group_by`` values the (filtered) records
+            actually contain. This is the boundedness guarantee for the
+            unbounded case (``group_by="tool"``): a run that has called
+            hundreds of differently-named tools still gets at most
+            ``max_groups`` rows back, not one row per tool name.
 
     Returns:
-        One ``RunLogGroupStats`` per distinct group value present after
-        filtering, sorted by descending ``count`` (ties broken
-        alphabetically by ``key``) so "which tool have I called most" is
-        always the first row. Empty when no record matches.
+        A 3-tuple ``(groups, total_matched, omitted_group_count)``:
+
+        - ``groups``: at most ``max_groups`` ``RunLogGroupStats``, one per
+          distinct group value present after filtering, sorted by
+          descending ``count`` (ties broken alphabetically by ``key``) so
+          "which tool have I called most" is always the first row AND
+          always survives the cap. Empty when no record matches.
+        - ``total_matched``: how many records matched the pre-filters,
+          across ALL groups -- including any cut by ``max_groups`` -- so a
+          caller can report an accurate record total independent of the
+          group cap.
+        - ``omitted_group_count``: how many additional distinct groups
+          existed but were cut to enforce ``max_groups`` -- 0 when every
+          group fit. A caller MUST report this explicitly rather than
+          silently dropping it: a truncated statistic presented as
+          complete is worse than no statistic, because the reader has no
+          way to tell the two apart.
     """
     if group_by not in STATS_GROUP_BY_FIELDS:
         group_by = "tool"
     # key -> [count, error_count, content_bytes]; a plain dict of lists
     # avoids importing collections.Counter/defaultdict for three counters.
     groups: dict[str, list[int]] = {}
+    total_matched = 0
     for record in records:
         if from_record and record.number < from_record:
             continue
@@ -544,39 +589,58 @@ def compute_stats(
             continue
         if kind and record.kind != kind:
             continue
+        total_matched += 1
         key = getattr(record, group_by) or "-"
         bucket = groups.setdefault(key, [0, 0, 0])
         bucket[0] += 1
         if record.status == "error":
             bucket[1] += 1
         bucket[2] += len(record.content.encode("utf-8"))
-    return sorted(
+    all_groups = sorted(
         (
             RunLogGroupStats(key=key, count=c, error_count=e, content_bytes=b)
             for key, (c, e, b) in groups.items()
         ),
         key=lambda g: (-g.count, g.key),
     )
+    if max_groups > 0 and len(all_groups) > max_groups:
+        return all_groups[:max_groups], total_matched, len(all_groups) - max_groups
+    return all_groups, total_matched, 0
 
 
 def format_stats(
-    groups: list[RunLogGroupStats], *, group_by: str, total_records: int
+    groups: list[RunLogGroupStats],
+    *,
+    group_by: str,
+    total_records: int,
+    omitted_groups: int = 0,
 ) -> str:
     """Render ``compute_stats``' result for the model.
 
     Args:
-        groups: ``compute_stats``'s return value.
+        groups: ``compute_stats``'s (already ``max_groups``-capped) group
+            list.
         group_by: The dimension grouped on (after its own fallback), named
             in the header line.
         total_records: Count of records considered after any pre-filters,
-            before grouping -- always equal to ``sum(g.count for g in
-            groups)``; reported separately so the model does not have to
-            sum the rows itself to sanity-check nothing was dropped.
+            before grouping -- ``compute_stats``'s own ``total_matched``.
+            Reported separately, and independent of any group cap, so the
+            model always sees an accurate record count even when
+            ``omitted_groups`` is nonzero (it is NOT guaranteed to equal
+            ``sum(g.count for g in groups)`` in that case, precisely
+            because some groups' counts are not in ``groups`` at all).
+        omitted_groups: ``compute_stats``'s own ``omitted_group_count``.
+            When nonzero, an explicit trailer line reports how many
+            further distinct ``group_by`` values exist beyond the ones
+            rendered -- a capped result MUST say so rather than silently
+            presenting a partial group list as if it were complete.
 
     Returns:
-        A header line plus one line per group -- bounded by the number of
-        DISTINCT ``group_by`` values, never by the number of records --
-        or a plain "No records matched." line when ``groups`` is empty.
+        A header line, one line per (capped) group, and -- only when
+        ``omitted_groups`` is nonzero -- one trailer line naming the
+        omitted count. Bounded by ``max_groups``, never by the number of
+        records. A plain "No records matched." line when ``groups`` is
+        empty.
     """
     if not groups:
         return "No records matched."
@@ -585,6 +649,13 @@ def format_stats(
         lines.append(
             f"  {g.key}: count={g.count} errors={g.error_count} "
             f"content_bytes={g.content_bytes}"
+        )
+    if omitted_groups:
+        lines.append(
+            f"  ... and {omitted_groups} further distinct {group_by} value(s) "
+            "omitted (showing the most frequent groups only; narrow with "
+            "tool=/type=/status=/kind= or from_record=/to_record= to see "
+            "the rest)."
         )
     return "\n".join(lines)
 

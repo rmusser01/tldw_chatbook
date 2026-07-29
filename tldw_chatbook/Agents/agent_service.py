@@ -929,8 +929,31 @@ class AgentService:
             Phase 2 (task-1271) sibling of ``search_run_log`` immediately
             above -- same coercion discipline (F2: raw-dict-plus-defensive-
             cast, declined Pydantic for the same reason every other
-            runtime-tool closure in this module uses that shape), same
-            "never raise into the run" contract.
+            runtime-tool closure in this module uses that shape --
+            ``install_skill``, ``run_skill_script``, ``skill_file``,
+            ``search_run_log`` all take a raw ``dict`` through this exact
+            seam and coerce defensively rather than raising). Giving these
+            two tools alone a bespoke validation model would make them the
+            odd ones out without changing observable behaviour -- every
+            argument below is coerced the same way and proven safe against
+            the full space of JSON-decodable value types (str, int, float,
+            bool, None, list, dict) in every argument slot by
+            ``Tests/Agents/test_run_log_stats_slice_runtime_tools.py``'s
+            "every argument, every hostile JSON value" matrix -- so this
+            does not need re-litigating on the next review. Same "never
+            raise into the run" contract.
+
+            ``group_by`` is normalised HERE, before calling
+            ``compute_stats``, rather than left to that function's own
+            (still-present, defense-in-depth) fallback: ``compute_stats``
+            silently substitutes ``"tool"`` for an unrecognised value, and
+            if this closure echoed the caller's ORIGINAL (unrecognised)
+            string back into ``format_stats``' header line, the rendered
+            output would claim to be grouped by something it is not --
+            confidently mislabelled data. Normalising here keeps the label
+            passed to ``format_stats`` in sync with what ``compute_stats``
+            actually grouped by, for every input, not just the recognised
+            ones.
 
             Args:
                 args: The model-supplied call arguments, straight off
@@ -940,7 +963,7 @@ class AgentService:
                     ``run_log_search.compute_stats``'s parameters:
                     ``group_by`` (``tool``/``type``/``status``/``kind``,
                     default ``"tool"``; an unrecognised value falls back
-                    to ``"tool"`` inside ``compute_stats`` itself, never
+                    to ``"tool"`` and is reported as ``"tool"``, never
                     raises here), and the same structured pre-filters
                     ``search_run_log`` accepts (``tool``, ``type``,
                     ``status``, ``kind``, ``from_record``, ``to_record``)
@@ -949,20 +972,31 @@ class AgentService:
 
             Returns:
                 ``ToolResult(ok=True, content=...)`` with one line per
-                distinct group value -- bounded by the number of groups,
-                never by the number of records (``run_log_search.
-                compute_stats``'s own guarantee) -- or ``ok=False`` for a
-                missing log or a malformed numeric argument. Never raises.
+                (capped) distinct group value plus, when the cap trimmed
+                anything, an explicit "N further ... omitted" trailer --
+                bounded by ``run_log_search.MAX_STATS_GROUPS``, never by
+                the number of records or the number of distinct groups a
+                long run could accumulate -- or ``ok=False`` for a missing
+                log or a malformed numeric argument (including a value
+                that overflows ``int()``, e.g. ``float('inf')``). Never
+                raises.
             """
-            from .run_log_search import compute_stats, format_stats, load_records
+            from .run_log_search import (
+                STATS_GROUP_BY_FIELDS,
+                compute_stats,
+                format_stats,
+                load_records,
+            )
 
             log_dir = self.run_log_writer.log_dir
             if log_dir is None:
                 return ToolResult(ok=False, error="No run log is available.")
             group_by = str(args.get("group_by") or "tool")
+            if group_by not in STATS_GROUP_BY_FIELDS:
+                group_by = "tool"
             try:
                 records = load_records(log_dir)
-                groups = compute_stats(
+                groups, total, omitted = compute_stats(
                     records,
                     group_by=group_by,
                     tool=str(args.get("tool", "")),
@@ -972,25 +1006,39 @@ class AgentService:
                     from_record=int(args.get("from_record") or 0),
                     to_record=int(args.get("to_record") or 0),
                 )
-            except (TypeError, ValueError) as exc:
+            except (TypeError, ValueError, OverflowError) as exc:
+                # OverflowError: a model can send `float('inf')` (or a
+                # literal large enough to parse as one) for from_record/
+                # to_record -- `int(float('inf'))` raises OverflowError,
+                # NOT TypeError/ValueError, so it must be caught here too
+                # or it escapes uncaught into the run. `float('nan')`
+                # already raises ValueError, already covered.
                 return ToolResult(ok=False, error=f"Invalid stats arguments: {exc}")
-            total = sum(g.count for g in groups)
             return ToolResult(
                 ok=True,
-                content=format_stats(groups, group_by=group_by, total_records=total),
+                content=format_stats(
+                    groups, group_by=group_by, total_records=total, omitted_groups=omitted
+                ),
             )
 
         def run_log_slice(args: dict) -> ToolResult:
             """Retrieve a contiguous range of THIS run's log as one unit.
 
             Phase 2 (task-1271) sibling of ``search_run_log``/
-            ``run_log_stats`` above -- same coercion discipline, same
-            "never raise into the run" contract. Bounded the same way
-            ``search_run_log`` bounds its own output: this run's own
-            ``max_tool_result_chars`` ceiling per record (identical
-            ``render_max_chars`` computation, reused verbatim below), and
-            ``run_log_search.MAX_SLICE_RECORDS`` records per call
-            regardless of how wide the requested range is.
+            ``run_log_stats`` above -- same coercion discipline (raw-dict-
+            plus-defensive-cast, deliberately NOT a Pydantic model, for the
+            same reason as every other runtime-tool closure in this module
+            -- ``install_skill``, ``run_skill_script``, ``skill_file``,
+            ``search_run_log``; see ``run_log_stats``'s own docstring
+            immediately above for the full rationale and the test that
+            proves every argument slot here is safe against the full
+            JSON-decodable value space), same "never raise into the run"
+            contract. Bounded the same way ``search_run_log`` bounds its
+            own output: this run's own ``max_tool_result_chars`` ceiling
+            per record (identical ``render_max_chars`` computation, reused
+            verbatim below), and ``run_log_search.MAX_SLICE_RECORDS``
+            records per call regardless of how wide the requested range
+            is.
 
             Args:
                 args: The model-supplied call arguments, straight off
@@ -1006,7 +1054,8 @@ class AgentService:
                 selected records via ``run_log_search.format_slice``
                 (which itself reuses ``format_results`` -- no second
                 renderer), or ``ok=False`` for a missing log or a
-                malformed numeric argument. Never raises.
+                malformed numeric argument (including a value that
+                overflows ``int()``, e.g. ``float('inf')``). Never raises.
             """
             from .run_log_search import format_slice, load_records, slice_records
 
@@ -1016,7 +1065,11 @@ class AgentService:
             try:
                 from_record = int(args.get("from_record") or 0)
                 to_record = int(args.get("to_record") or 0)
-            except (TypeError, ValueError) as exc:
+            except (TypeError, ValueError, OverflowError) as exc:
+                # OverflowError: see run_log_stats' identical except clause
+                # immediately above -- `int(float('inf'))` raises
+                # OverflowError, not TypeError/ValueError, and a model can
+                # send that for from_record/to_record just as easily.
                 return ToolResult(ok=False, error=f"Invalid slice arguments: {exc}")
             records = load_records(log_dir)
             selected, total_matched, resolved_from, resolved_to = slice_records(
