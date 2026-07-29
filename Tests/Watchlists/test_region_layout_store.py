@@ -137,6 +137,102 @@ def test_load_migrates_a_pre_phase_d_content_collapse_away_on_first_run(monkeypa
     )
 
 
+def test_migration_does_not_mark_done_when_the_correcting_write_raises(monkeypatch):
+    """Fix round 3 (coordinator review, Critical, carried from round 2):
+    marking the migration done regardless of whether the corrected
+    `collapsed_regions` write actually landed reproduces round 2's exact bug
+    THROUGH the failure path -- disk stays stub-era (`["content", ...]`),
+    the marker is now `True`, and the migration can never retry, so CONTENT
+    is hidden forever for exactly the returning users this migration exists
+    to help.
+
+    This is the "raises" failure mode: `save_setting_to_cli_config` throws.
+    `load_region_layout` must not let that escape (a raise here would exit
+    the whole app from `on_mount`), must leave the marker unset so the next
+    load retries, and must leave disk untouched.
+    """
+    saved = {"collapsed_regions": ["content", "right_rail"]}
+
+    def fake_get(section, key, default=None):
+        return saved.get(key, default)
+
+    def fake_save(section, key, value):
+        if key == "collapsed_regions":
+            raise OSError("disk full")
+        saved[key] = value
+        return True
+
+    monkeypatch.setattr(region_layout_store, "get_cli_setting", fake_get)
+    monkeypatch.setattr(region_layout_store, "save_setting_to_cli_config", fake_save)
+
+    loaded = region_layout_store.load_region_layout()  # must not raise
+
+    assert loaded.collapsed == frozenset({Region.RIGHT_RAIL}), (
+        "the in-memory correction for THIS call must still apply even "
+        "though persisting it failed"
+    )
+    assert "content_reader_migrated" not in saved, (
+        "the marker must NOT be set when the correcting write failed -- "
+        "setting it anyway stops the migration from ever retrying"
+    )
+    assert saved["collapsed_regions"] == ["content", "right_rail"], (
+        "disk must be unchanged since the write raised"
+    )
+
+    # The retry, exercised for real: a second load against the same
+    # (still-failing) fake store must still self-correct in memory, not
+    # honor the stale disk value now that the marker was correctly left
+    # unset.
+    reloaded = region_layout_store.load_region_layout()
+    assert reloaded.collapsed == frozenset({Region.RIGHT_RAIL}), (
+        f"a second load must retry the migration -- got {reloaded.collapsed}"
+    )
+    assert "content_reader_migrated" not in saved
+
+
+def test_migration_does_not_mark_done_when_the_correcting_write_returns_false(monkeypatch):
+    """The failure mode a raise-only guard misses entirely, and the
+    important one: `save_setting_to_cli_config` signals failure by
+    RETURNING `False`, not only by raising (see `config.py`). A bare
+    `try`/`except Exception` around the write -- exactly what shipped after
+    round 2's fix -- does not observe this path at all, so it marked the
+    migration done here even though nothing was actually written.
+    """
+    saved = {"collapsed_regions": ["content", "right_rail"]}
+
+    def fake_get(section, key, default=None):
+        return saved.get(key, default)
+
+    def fake_save(section, key, value):
+        if key == "collapsed_regions":
+            return False  # signals failure WITHOUT raising
+        saved[key] = value
+        return True
+
+    monkeypatch.setattr(region_layout_store, "get_cli_setting", fake_get)
+    monkeypatch.setattr(region_layout_store, "save_setting_to_cli_config", fake_save)
+
+    loaded = region_layout_store.load_region_layout()
+
+    assert loaded.collapsed == frozenset({Region.RIGHT_RAIL}), (
+        "the in-memory correction for THIS call must still apply even "
+        "though persisting it failed"
+    )
+    assert "content_reader_migrated" not in saved, (
+        "the marker must NOT be set when the correcting write returned "
+        "False -- a raise-only guard would wrongly set it here"
+    )
+    assert saved["collapsed_regions"] == ["content", "right_rail"], (
+        "disk must be unchanged since the write reported failure"
+    )
+
+    reloaded = region_layout_store.load_region_layout()
+    assert reloaded.collapsed == frozenset({Region.RIGHT_RAIL}), (
+        f"a second load must retry the migration -- got {reloaded.collapsed}"
+    )
+    assert "content_reader_migrated" not in saved
+
+
 def test_load_honors_a_deliberate_content_collapse_once_migrated(monkeypatch):
     """After the one-time migration has run (marker already `True`), a
     CONTENT collapse the user set AFTERWARD — a genuine choice about the

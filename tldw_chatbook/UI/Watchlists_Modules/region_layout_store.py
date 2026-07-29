@@ -129,11 +129,26 @@ def load_region_layout() -> RegionLayout:
         # whatever THIS function returns, which is the very value that was
         # never written. This function must make its own correction durable
         # itself, not depend on a caller noticing the discrepancy.
+        #
+        # Fix round 3 (coordinator review): the write above can fail two
+        # ways -- `save_setting_to_cli_config` can raise, but it can also
+        # just return `False` (see `config.py`), and a bare
+        # `except Exception` guard around the call catches neither the
+        # `False` case nor tells the caller which one happened. Marking the
+        # migration done regardless reproduces round 2's exact bug through
+        # the failure path: disk stays `["content", ...]`, the marker is now
+        # `True`, and the next load skips the discard forever. So the marker
+        # is now gated on `save_region_layout`'s own success return (which
+        # propagates BOTH failure modes -- see that function) -- if the
+        # correction could not be written, the migration must retry on the
+        # next load, not be marked done.
         had_content = Region.CONTENT in collapsed
         collapsed.discard(Region.CONTENT)
+        write_ok = True
         if had_content:
-            save_region_layout(RegionLayout(collapsed=frozenset(collapsed)))
-        _mark_content_reader_migrated()
+            write_ok = save_region_layout(RegionLayout(collapsed=frozenset(collapsed)))
+        if write_ok:
+            _mark_content_reader_migrated()
 
     return RegionLayout(collapsed=frozenset(collapsed))
 
@@ -153,7 +168,7 @@ def _mark_content_reader_migrated() -> None:
         )
 
 
-def save_region_layout(layout: RegionLayout) -> None:
+def save_region_layout(layout: RegionLayout) -> bool:
     """Write collapse state to config. Solo state is not persisted.
 
     Args:
@@ -161,9 +176,19 @@ def save_region_layout(layout: RegionLayout) -> None:
             set is written — see `RegionLayout.collapsed_for_persistence`;
             `solo_region` and the pre-solo baseline itself never round-trip
             through config.
+
+    Returns:
+        Whether the write actually succeeded. `save_setting_to_cli_config`
+        signals failure two ways -- raising, or returning `False` without
+        raising at all (see `config.py`) -- so a caller that needs to know
+        whether the write is genuinely durable (see `load_region_layout`'s
+        migration, fix round 3) must check this return value; catching an
+        exception around the call is not sufficient on its own, since the
+        `False`-return failure mode raises nothing to catch.
     """
     values = sorted(region.value for region in layout.collapsed_for_persistence())
     try:
-        save_setting_to_cli_config(_SECTION, _KEY, values)
+        return bool(save_setting_to_cli_config(_SECTION, _KEY, values))
     except Exception:
         logger.opt(exception=True).debug("Failed to persist watchlists collapse state.")
+        return False
