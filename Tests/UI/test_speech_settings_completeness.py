@@ -16,6 +16,7 @@ from textual.app import App, ComposeResult
 
 from tldw_chatbook.UI.Speech.speech_settings_model import (
     ALL_SETTINGS_CONTROLS,
+    NON_SETTING_IDS,
     PROVIDER_SETTINGS,
     SETTINGS_ACTIONS,
     SETTINGS_STATUS,
@@ -34,8 +35,6 @@ NOT_REBUILT: dict[str, str] = {
     "audio-cpp-settings": "container, replaced by the provider group",
     "audio-cpp-mode-value": "static readout folded into the group header",
     "audio-cpp-privacy-notice": "one-line notice, per the spec",
-    "kokoro-voice-blends-list": "blend list owned by the blend actions",
-    "audio-cpp-discovery-status": "status readout, mounted by the wiring task",
 }
 
 
@@ -84,7 +83,10 @@ async def test_what_is_not_rebuilt_is_declared():
     """Every legacy id is either mounted or named with a reason -- there is
     no third category."""
     accounted = (
-        await _mounted_ids() | set(NOT_REBUILT) | set(SETTINGS_ACTIONS)
+        await _mounted_ids()
+        | set(NOT_REBUILT)
+        | set(NON_SETTING_IDS)
+        | set(SETTINGS_ACTIONS)
         | set(SETTINGS_STATUS)
     )
     unaccounted = ALL_SETTINGS_CONTROLS - accounted

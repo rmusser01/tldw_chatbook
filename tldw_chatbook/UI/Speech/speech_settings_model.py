@@ -9,10 +9,15 @@ meant opening each in turn. The spec's rule for this view -- one block per
 provider, only the configured ones expanded -- is not implementable without
 it.
 
-"Configured" is defined as **holding a non-blank value**, not as differing
-from a default. `TTSSettingsWidget.compose()` declares no default values at
-all: every control is filled from config at runtime, so there is no literal
-to compare against, and inventing one would make the state a guess.
+"Configured" means **differing from the shipped default**.
+
+An earlier version defined it as merely holding a non-blank value, on the
+grounds that `compose()` declares no literal defaults. That was half right:
+the defaults are real, they are just the third argument to each control's
+`get_cli_setting(section, key, default)` call -- recorded here as
+:data:`SETTING_CONFIG_SOURCES`. Once the pane seeded its controls from config
+the way the legacy screen did, the non-blank rule marked every provider
+configured and opened all eight groups.
 
 Measured on the shipped screen: every control costs 4 rows (median 4, min 4,
 max 4) and `save-settings-btn` sits at y=102 in a 26-row viewport.
@@ -36,9 +41,6 @@ PROVIDER_SETTINGS: dict[str, tuple[str, ...]] = {   'defaults': (   'default-for
                      'audio-cpp-max-metadata-bytes-input',
                      'audio-cpp-max-response-bytes-input',
                      'audio-cpp-max-voices-per-model-input',
-                     'audio-cpp-mode-value',
-                     'audio-cpp-privacy-notice',
-                     'audio-cpp-settings',
                      'audio-cpp-synthesis-timeout-input'),
     'openai': (   'openai-api-key-input',
                   'openai-base-url-input',
@@ -54,8 +56,7 @@ PROVIDER_SETTINGS: dict[str, tuple[str, ...]] = {   'defaults': (   'default-for
                   'kokoro-max-tokens-input',
                   'kokoro-performance-switch',
                   'kokoro-use-onnx-switch',
-                  'kokoro-voice-blends-list',
-                  'kokoro-voice-mixing-switch'),
+                                'kokoro-voice-mixing-switch'),
     'chatterbox': (   'chatterbox-candidates-input',
                       'chatterbox-cfg-weight-input',
                       'chatterbox-chunk-size-input',
@@ -127,7 +128,23 @@ SETTINGS_ACTIONS: tuple[str, ...] = (   'add-voice-blend-btn',
     'save-settings-btn')
 
 #: Read-only readouts the pane must still mount.
-SETTINGS_STATUS: tuple[str, ...] = ('audio-cpp-discovery-status',)
+#: Read-only readouts, not editable settings. `kokoro-voice-blends-list` is
+#: here because `_load_kokoro_voice_blends` does
+#: `query_one("#kokoro-voice-blends-list", Static).update(...)` -- rendering
+#: it as an Input made that raise, leaving a local unbound and taking the
+#: whole of `_set_initial_values` down with it.
+SETTINGS_STATUS: tuple[str, ...] = (
+    'audio-cpp-discovery-status',
+    'kokoro-voice-blends-list',
+)
+
+#: Structural leftovers, not settings: a container, a static mode readout and
+#: a privacy notice. Filed as settings they rendered as three empty labelled
+#: rows -- "External", "Privacy notice", "Settings" -- with nothing in them,
+#: which is what driving the screen showed.
+NON_SETTING_IDS: frozenset[str] = frozenset(
+    {"audio-cpp-settings", "audio-cpp-mode-value", "audio-cpp-privacy-notice"}
+)
 
 #: Every id `TTSSettingsWidget` composed, frozen as the yardstick a
 #: completeness check measures against.
@@ -243,6 +260,28 @@ def _is_set(value: Any) -> bool:
     return bool(str(value).strip())
 
 
+def _differs_from_default(setting: str, values: Mapping[str, Any]) -> bool:
+    """Return whether a setting has been changed from its shipped default.
+
+    Args:
+        setting: The control id.
+        values: Current value per setting id.
+
+    Returns:
+        True when the setting holds a value that is both set and different
+        from the default recorded in :data:`SETTING_CONFIG_SOURCES`.
+    """
+    if setting not in values:
+        return False
+    value = values[setting]
+    if not _is_set(value):
+        return False
+    source = SETTING_CONFIG_SOURCES.get(setting)
+    if source is None:
+        return True
+    return str(value).strip() != str(source[2]).strip()
+
+
 def configured_state(provider: str, values: Mapping[str, Any]) -> str:
     """Return whether a provider is set up, partly set up, or untouched.
 
@@ -260,10 +299,113 @@ def configured_state(provider: str, values: Mapping[str, Any]) -> str:
     if not owned:
         return "default"
 
-    if not any(_is_set(values.get(setting)) for setting in owned):
+    if not any(_differs_from_default(setting, values) for setting in owned):
         return "default"
 
     required = REQUIRED_SETTINGS.get(provider, ())
     if any(not _is_set(values.get(setting)) for setting in required):
         return "incomplete"
     return "configured"
+
+#: Control id -> the ``(section, key, default)`` the legacy screen read it
+#: from. Every control was seeded this way in `compose()`, not from
+#: literals -- which is why a rebuild that skipped it flipped 13 saved
+#: values and dropped 4 keys entirely.
+SETTING_CONFIG_SOURCES: dict[str, tuple[str, str, object]] = {   'alltalk-url-input': (   'app_tts',
+                             'ALLTALK_TTS_URL_DEFAULT',
+                             'http://127.0.0.1:7851'),
+    'alltalk-voice-input': (   'app_tts',
+                               'ALLTALK_TTS_VOICE_DEFAULT',
+                               'female_01.wav'),
+    'chatterbox-candidates-input': (   'app_tts',
+                                       'CHATTERBOX_NUM_CANDIDATES',
+                                       '1'),
+    'chatterbox-cfg-weight-input': (   'app_tts',
+                                       'CHATTERBOX_CFG_WEIGHT',
+                                       '0.5'),
+    'chatterbox-chunk-size-input': (   'app_tts',
+                                       'CHATTERBOX_CHUNK_SIZE',
+                                       '1024'),
+    'chatterbox-crossfade-ms-input': (   'app_tts',
+                                         'CHATTERBOX_CROSSFADE_MS',
+                                         '50'),
+    'chatterbox-crossfade-switch': (   'app_tts',
+                                       'CHATTERBOX_ENABLE_CROSSFADE',
+                                       True),
+    'chatterbox-exaggeration-input': (   'app_tts',
+                                         'CHATTERBOX_EXAGGERATION',
+                                         '0.5'),
+    'chatterbox-max-chunk-input': (   'app_tts',
+                                      'CHATTERBOX_MAX_CHUNK_SIZE',
+                                      '500'),
+    'chatterbox-normalize-switch': (   'app_tts',
+                                       'CHATTERBOX_NORMALIZE_AUDIO',
+                                       True),
+    'chatterbox-preprocess-switch': (   'app_tts',
+                                        'CHATTERBOX_PREPROCESS_TEXT',
+                                        True),
+    'chatterbox-seed-input': ('app_tts', 'CHATTERBOX_RANDOM_SEED', ''),
+    'chatterbox-stream-chunk-input': (   'app_tts',
+                                         'CHATTERBOX_STREAM_CHUNK_SIZE',
+                                         '4096'),
+    'chatterbox-streaming-switch': (   'app_tts',
+                                       'CHATTERBOX_STREAMING',
+                                       True),
+    'chatterbox-target-db-input': (   'app_tts',
+                                      'CHATTERBOX_TARGET_DB',
+                                      '-20.0'),
+    'chatterbox-temperature-input': (   'app_tts',
+                                        'CHATTERBOX_TEMPERATURE',
+                                        '0.5'),
+    'chatterbox-whisper-switch': (   'app_tts',
+                                     'CHATTERBOX_VALIDATE_WHISPER',
+                                     False),
+    'default-speed-input': ('app_tts', 'default_speed', 1.0),
+    'elevenlabs-similarity-input': (   'app_tts',
+                                       'ELEVENLABS_SIMILARITY_BOOST',
+                                       '0.8'),
+    'elevenlabs-speaker-boost-switch': (   'app_tts',
+                                           'ELEVENLABS_USE_SPEAKER_BOOST',
+                                           True),
+    'elevenlabs-stability-input': (   'app_tts',
+                                      'ELEVENLABS_VOICE_STABILITY',
+                                      '0.5'),
+    'elevenlabs-style-input': ('app_tts', 'ELEVENLABS_STYLE', '0.0'),
+    'higgs-delimiter-input': ('HiggsSettings', 'speaker_delimiter', '|||'),
+    'higgs-flash-attn-switch': ('HiggsSettings', 'enable_flash_attn', True),
+    'higgs-max-ref-duration-input': (   'HiggsSettings',
+                                        'max_reference_duration',
+                                        '30'),
+    'higgs-max-tokens-input': ('HiggsSettings', 'max_new_tokens', '4096'),
+    'higgs-model-path-input': (   'HiggsSettings',
+                                  'model_path',
+                                  'bosonai/higgs-audio-v2-generation-3B-base'),
+    'higgs-multi-speaker-switch': (   'HiggsSettings',
+                                      'enable_multi_speaker',
+                                      True),
+    'higgs-repetition-penalty-input': (   'HiggsSettings',
+                                          'repetition_penalty',
+                                          '1.1'),
+    'higgs-temperature-input': ('HiggsSettings', 'temperature', '0.7'),
+    'higgs-top-p-input': ('HiggsSettings', 'top_p', '0.9'),
+    'higgs-track-performance-switch': (   'HiggsSettings',
+                                          'track_performance',
+                                          True),
+    'higgs-voice-cloning-switch': (   'HiggsSettings',
+                                      'enable_voice_cloning',
+                                      True),
+    'higgs-voices-dir-input': (   'HiggsSettings',
+                                  'voice_samples_dir',
+                                  '~/.config/tldw_cli/higgs_voices'),
+    'kokoro-max-tokens-input': ('app_tts', 'KOKORO_MAX_TOKENS', '500'),
+    'kokoro-performance-switch': (   'app_tts',
+                                     'KOKORO_TRACK_PERFORMANCE',
+                                     True),
+    'kokoro-use-onnx-switch': ('app_tts', 'KOKORO_USE_ONNX', True),
+    'kokoro-voice-mixing-switch': (   'app_tts',
+                                      'KOKORO_ENABLE_VOICE_MIXING',
+                                      False),
+    'openai-base-url-input': (   'app_tts',
+                                 'OPENAI_BASE_URL',
+                                 'https://api.openai.com/v1/audio/speech'),
+    'openai-org-id-input': ('app_tts', 'OPENAI_ORG_ID', '')}

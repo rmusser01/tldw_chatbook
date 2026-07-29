@@ -13,6 +13,7 @@ import pytest
 from tldw_chatbook.UI.Speech.speech_settings_model import (
     ALL_SETTINGS_CONTROLS,
     PROVIDER_SETTINGS,
+    NON_SETTING_IDS,
     SETTINGS_ACTIONS,
     SETTINGS_STATUS,
     SETTINGS_PROVIDER_ORDER,
@@ -123,6 +124,7 @@ def test_the_inventory_covers_every_legacy_id():
         {c for controls in PROVIDER_SETTINGS.values() for c in controls}
         | set(SETTINGS_ACTIONS)
         | set(SETTINGS_STATUS)
+        | set(NON_SETTING_IDS)
     )
     assert classified <= ALL_SETTINGS_CONTROLS
     unclassified = ALL_SETTINGS_CONTROLS - classified

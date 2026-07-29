@@ -59,6 +59,13 @@ from tldw_chatbook.UI.stts_playground_catalog import (
 class SpeechSettingsMixin:
     """Settings load/save behaviour, independent of the layout."""
 
+    #: Class constants travel with the methods that read them. This one did
+    #: not at first, and `_normalize_openai_base_url` -- a @classmethod --
+    #: failed with "type object 'SpeechSettingsPane' has no attribute
+    #: 'OPENAI_TTS_DEFAULT_URL'" on the rebuilt host only, since the legacy
+    #: widget still had its own copy.
+    OPENAI_TTS_DEFAULT_URL = "https://api.openai.com/v1/audio/speech"
+
     def _tts_service_factory(self):
         """Return the TTS service, awaitable.
 
@@ -964,6 +971,11 @@ class SpeechSettingsMixin:
             )
 
         except Exception:
+            # Deliberately terse, and NOT `opt(exception=True)`. These values
+            # include API keys and endpoints, and
+            # `test_settings_widget_does_not_echo_collection_error_details`
+            # exists to keep them out of the log. I widened this while
+            # debugging and that test caught it.
             logger.error("Failed to collect TTS settings")
             self.app.notify("Failed to save settings", severity="error")
 

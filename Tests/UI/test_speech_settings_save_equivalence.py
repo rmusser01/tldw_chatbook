@@ -61,22 +61,25 @@ async def _settings_posted_by(widget_factory) -> dict[str, str]:
     return {k: repr(v) for k, v in dict(app.saved[-1].settings).items()}
 
 
-class _LegacyFactory:
-    from tldw_chatbook.UI.STTS_Window import TTSSettingsWidget as target
+class _RebuiltFactory:
+    from tldw_chatbook.UI.Speech.speech_settings_pane import (
+        SpeechSettingsPane as target,
+    )
 
     def __call__(self):
-        return self.target()
+        return self.target(id="speech-settings-pane")
 
 
 @pytest.mark.asyncio
 async def test_save_still_posts_every_baseline_key():
-    """The guard for the rebuild: 47 keys, captured off the legacy widget.
+    """The guard for the rebuild: 47 keys, captured off the legacy widget
+    before any code moved, now asserted against the REBUILT pane.
 
     A missing key is a setting that silently stopped being saved -- the user
     changes it, presses Save, sees no error, and it does not stick.
     """
     baseline = json.loads(BASELINE.read_text())
-    posted = await _settings_posted_by(_LegacyFactory())
+    posted = await _settings_posted_by(_RebuiltFactory())
 
     missing = sorted(set(baseline) - set(posted))
     assert not missing, f"no longer saved: {missing}"
@@ -90,7 +93,7 @@ async def test_save_posts_the_same_values_as_the_baseline():
     vanishes: it writes something wrong and says nothing.
     """
     baseline = json.loads(BASELINE.read_text())
-    posted = await _settings_posted_by(_LegacyFactory())
+    posted = await _settings_posted_by(_RebuiltFactory())
 
     changed = {
         key: (baseline[key], posted[key])
