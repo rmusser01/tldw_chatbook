@@ -270,6 +270,44 @@ def _join_segments(segments: list[str]) -> str:
 
 ---
 
+### Task 3b: Capture-generation token (stale-event hardening)
+
+A production-reachable path delivers capture 1's events into capture 2: when
+`stop_dictation()`'s join expires (`transcription_complete=False`), the
+processing thread is orphaned but alive; its tail flush still runs and the
+callbacks are still bound, so a late `VoiceCommand("discard")` can cancel the
+user's LIVE next capture, a `send` can auto-ship it, a stale `VoiceFailed`
+(which has NO state guard at all) can tear it down, and a stale partial can
+paint into its chip. The session object is reused, so identity guards pass.
+
+**Fix at the source, not the screen:** stamp a monotonically increasing
+`capture_generation` where `start()` resets `_segments`/`commands_consumed`
+(the session adapter), carry it into the controller's callbacks for that
+capture, and drop any event whose generation is not current in
+`ConsoleStreamingDictationSession._handle_event` **before it mutates
+anything** (a stale inline break otherwise appends to capture 2's `_segments`
+and bumps its `commands_consumed`). The screen-side protection falls out for
+free. One token closes all four variants: command, final, partial, failed.
+
+**Files:** `tldw_chatbook/UI/Screens/chat_screen.py` (session adapter),
+`tldw_chatbook/Chat/console_voice_input.py` (callback binding);
+Test: `Tests/UI/test_console_dictation_streaming.py` (append).
+
+- [ ] **Step 1: Failing tests** — a stale `VoiceCommand("discard")` delivered with an old
+  generation while capture 2 records: capture 2 keeps recording; stale `VoiceFinal` adds
+  nothing to `_segments`; stale `VoiceFailed` does not tear capture 2 down; stale partial
+  never reaches the chip; current-generation events all still work (the benign
+  transcribing-window consumption from Task 3's tests must keep passing).
+- [ ] **Step 2: Verify failure.**
+- [ ] **Step 3: Implement** per the shape above — generation bumped in `start()`, compared
+  first thing in `_handle_event`.
+- [ ] **Step 4: Run** the streaming + contract files; contract untouched.
+- [ ] **Step 5: Mutation-check** (drop the generation compare → stale-discard test fails)
+  **and commit** `fix(console): drop dictation events from a previous capture generation`.
+
+
+---
+
 ### Task 4: Opt-in spoken feedback with microphone/speaker mutual exclusion
 
 **Files:**
