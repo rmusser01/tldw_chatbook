@@ -105,6 +105,33 @@ setup should fail the way the real broken environment fails.
 
 ---
 
+## A bare interpreter call is not an isolated test
+
+**What happened (TASK-1264/Task 5, first-run wizard skeleton).** After the
+required Pilot tests passed, extra ad hoc verification of the real
+Next-button click path was run via `python3 -c "..."` directly against the
+venv interpreter — not through `pytest`. `Tests/conftest.py`'s
+`isolate_test_environment` autouse fixture (which redirects `HOME`,
+`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `TLDW_CONFIG_PATH` to a temp directory)
+only runs inside a pytest session; a bare script gets none of it. The
+wizard's `on_mount()` fired a `@work(thread=True)` worker that called the
+real `save_settings_to_cli_config()`, which wrote
+`[first_run]\nsetup_started = true` into the actual
+`~/.config/tldw_cli/config.toml` — a real user's live config file, mutated
+by a "just checking" verification script. It was caught immediately from
+the write in the log output, diffed, and the exact three added lines were
+removed to restore the file; no other content had changed.
+
+**What to do.** Before running any ad hoc script (not just `pytest`) against
+code that can reach `save_settings_to_cli_config()` or any other real I/O
+path, set the same isolation env vars the test suite's autouse fixture
+uses — `TLDW_TEST_MODE=1`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `HOME`,
+`TLDW_CONFIG_PATH`, all pointed at a scratch directory — *before* importing
+anything from `tldw_chatbook`. "It's just a quick check outside the test
+suite" is exactly when the suite's isolation fixture is absent.
+
+---
+
 ## Credentials in a live run
 
 A live credential pasted into a session is a real secret. Keep it in an env var for the
