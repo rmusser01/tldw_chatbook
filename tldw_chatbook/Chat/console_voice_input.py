@@ -1074,6 +1074,15 @@ class ConsoleVoiceInputController:
         won the race, and by `stop()` when no worker will ever run
         `_finish()`.
 
+        Beyond the audio stream, this must also tell the service's
+        `DictationProcessor` daemon thread (`LazyLiveDictationService.
+        _processing_loop`) to exit. That thread only ever gets stopped from
+        inside `stop_dictation()`'s `stop_processing.set()` -- exactly the
+        blocking join path `abandon()` exists to skip -- so without this the
+        thread (and the service instance it holds a reference to) survives
+        forever after every abandoned or mid-session-failed capture. No join
+        here: `abandon()`'s entire point is that it never blocks.
+
         Args:
             service: The dictation service instance to release.
         """
@@ -1083,3 +1092,11 @@ class ConsoleVoiceInputController:
                 audio.stop_recording()
         except Exception:  # noqa: BLE001 - teardown must never raise
             logger.opt(exception=True).debug("Console dictation abandon failed")
+        try:
+            stop_processing = getattr(service, "stop_processing", None)
+            if stop_processing is not None and hasattr(stop_processing, "set"):
+                stop_processing.set()
+        except Exception:  # noqa: BLE001 - teardown must never raise
+            logger.opt(exception=True).debug(
+                "Console dictation abandon failed to stop the processing thread"
+            )

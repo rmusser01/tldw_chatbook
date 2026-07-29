@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import queue
 import subprocess
 import sys
 import threading
@@ -871,6 +872,44 @@ def test_abandon_swallows_a_raising_release(monkeypatch):
     controller.abandon()  # must not raise
 
     assert controller.state == cvi.STATE_IDLE
+
+
+def test_release_stops_the_real_processing_thread(monkeypatch):
+    """`_release()` must stop the `DictationProcessor` daemon thread, not
+    just the microphone.
+
+    `LazyLiveDictationService._processing_loop` only ever gets told to exit
+    via `stop_processing.set()`, which today only happens inside
+    `stop_dictation()`'s blocking 2s-join path -- exactly what `_release()`
+    exists to skip. Without setting the event here, the thread (and the
+    service instance it holds a bound-method reference to) survives every
+    abandoned or mid-session-failed capture forever. Drives a *real*
+    `_processing_loop` thread (no fakes for the loop itself) so a fix that
+    merely no-ops instead of actually stopping it would be caught.
+    """
+    from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
+
+    service = LazyLiveDictationService.__new__(LazyLiveDictationService)
+    service._audio_service = FakeAudioService()
+    service.state_lock = threading.Lock()
+    service.stop_processing = threading.Event()
+    service.processing_queue = queue.Queue()
+    service.buffer_lock = threading.Lock()
+    service.audio_buffer = []
+    service.buffer_duration_ms = 500
+    service.last_speech_time = 0
+    service.privacy_settings = {"auto_clear_buffer": True, "save_history": False}
+    service.processing_thread = threading.Thread(
+        target=service._processing_loop, daemon=True, name="DictationProcessor"
+    )
+    service.processing_thread.start()
+    assert service.processing_thread.is_alive()
+
+    controller, _events, _ = _controller(monkeypatch)
+    controller._release(service)  # must not join, must not raise
+
+    service.processing_thread.join(timeout=2.0)
+    assert not service.processing_thread.is_alive()
 
 
 # -- Fix round 2: cascading double-VoiceFailed, ghost-listening race, --------
