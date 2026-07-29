@@ -996,7 +996,27 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
     )
 
 
-def _build_test_app(configured_default: str | None = None) -> TldwCli:
+def _build_test_app(
+    configured_default: str | None = None,
+    *,
+    first_run_setup_completed: bool = True,
+) -> TldwCli:
+    """Build a TldwCli instance with every real I/O seam faked out.
+
+    ``first_run_setup_completed`` defaults to True: task-11 added a
+    first-run setup wizard that FirstRunSetupWizard.first_run_setup_state.
+    should_offer_wizard() auto-offers (pushed on top of whatever the initial
+    screen is) whenever it sees no configured provider and no wizard state
+    -- which the synthetic config below otherwise looks exactly like. Every
+    pre-existing caller of this builder predates the wizard and asserts
+    against its target screen/route appearing directly, not a modal pushed
+    on top of it, so setup is marked already-completed by default here --
+    mirroring how a real, already-configured user opts out of the offer.
+    Pass ``first_run_setup_completed=False`` for a test that specifically
+    wants to exercise the auto-offer itself (see
+    test_product_maturity_phase1_first_run.py's
+    test_fresh_config_auto_offers_wizard_over_initial_screen).
+    """
     user_data_dir = Path(
         tempfile.mkdtemp(prefix="tldw-chatbook-test-")
         # `.resolve(strict=True)` is load-bearing, not tidiness: on macOS
@@ -1024,9 +1044,13 @@ def _build_test_app(configured_default: str | None = None) -> TldwCli:
             return configured_default
         return default
 
+    fake_app_config: dict = {"tldw_api": {"base_url": "http://localhost:8000"}}
+    if first_run_setup_completed:
+        fake_app_config["first_run"] = {"setup_completed": True}
+
     with patch(
         "tldw_chatbook.app.load_settings",
-        return_value={"tldw_api": {"base_url": "http://localhost:8000"}},
+        return_value=fake_app_config,
     ):
         with patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting):
             with patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None):
