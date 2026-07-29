@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from rich.markup import escape as escape_markup
+from rich.console import Group, RenderableType
+from rich.markdown import Markdown
 from rich.text import Text
 from textual.containers import Vertical
 from textual.message import Message
@@ -36,35 +37,66 @@ _GLOBAL_STATUS_NOTE = (
 )
 
 
-def render_article(item: dict[str, Any]) -> Text:
+def _is_markdown(item: dict[str, Any]) -> bool:
+    """Whether this item's body was captured as markdown source.
+
+    `content_format` is written by the ingest path (`item_persist.py` validates
+    the `content_kind`/`content_format` pairing) and, until this fix, nothing
+    read it back -- so a markdown body was shown to the user as raw `##` /
+    `[text](url)` / `*emphasis*` source (whole-branch review, Minor).
+    """
+    return str(item.get("content_format") or "").strip().lower() == "markdown"
+
+
+def render_article(item: dict[str, Any]) -> RenderableType:
     """Render a feed item: title, source, date, word count, body.
 
     Remote feed/site content is untrusted and reaches this Rich renderable
-    verbatim -- every field pulled from the item is passed through
-    `rich.markup.escape` before being appended, so it can never be
-    interpreted as Rich/Textual markup. This repo has shipped markup
-    injection through tooltips and button labels before; escape at the
-    boundary rather than trusting the source.
+    verbatim, and that is safe *because* it is appended to a `Text` rather
+    than parsed: `Text.append` never interprets Rich markup, and
+    `Static(Text)` does not re-parse it either -- verified directly, a body of
+    `[bold red]x[/]` renders as those literal characters.
+
+    An earlier revision routed every field through `rich.markup.escape`
+    "defensively". That protected nothing (there was no markup parser on this
+    path to protect from) and actively corrupted ordinary content, since
+    `escape` prefixes a backslash on anything bracket-shaped: every markdown
+    link `[docs](url)`, every `[sic]`, every `[citation needed]` in a real
+    feed grew a stray backslash for real users on the common path. It is
+    gone. Do not reintroduce it here -- if a genuinely markup-parsing sink is
+    ever added (a `DataTable` `str` cell, a tooltip, a `Button` label), escape
+    at THAT boundary, where the parser actually is.
+
+    Returns:
+        A `Text` for a plain-text body, or a `Group` whose body half is a
+        `rich.markdown.Markdown` when `content_format` says markdown.
     """
     body = item.get("content")
     out = Text()
-    out.append(escape_markup(str(item.get("title") or "Untitled")), style="bold")
+    out.append(str(item.get("title") or "Untitled"), style="bold")
     out.append("\n")
     meta = [str(item.get("source_name") or "unknown source")]
     if item.get("published_date"):
         meta.append(str(item["published_date"]))
     if body:
         meta.append(f"{len(str(body).split())} words")
-    out.append(escape_markup(" · ".join(meta)), style="dim")
-    out.append("\n\n")
-    out.append(escape_markup(str(body)) if body else _NO_BODY)
+    out.append(" · ".join(meta), style="dim")
+    out.append("\n")
+    if body and _is_markdown(item):
+        # `Markdown` is a block renderable, so it cannot be appended into the
+        # `Text` above -- group the two instead. `Markdown` does not evaluate
+        # Rich markup either; it parses CommonMark, and `[bold red]x[/]` is
+        # just link-shaped text to it.
+        return Group(out, Markdown(str(body)))
+    out.append("\n")
+    out.append(str(body) if body else _NO_BODY)
     return out
 
 
 def render_change(item: dict[str, Any]) -> Text:
     """Render a site item: what changed, by how much, and the diff lines."""
     out = Text()
-    out.append(escape_markup(str(item.get("title") or "Untitled")), style="bold")
+    out.append(str(item.get("title") or "Untitled"), style="bold")
     out.append("\n")
 
     headline: list[str] = []
@@ -82,7 +114,13 @@ def render_change(item: dict[str, Any]) -> Text:
             pass
     if item.get("change_type"):
         headline.append(str(item["change_type"]))
-    out.append(escape_markup(" · ".join(headline) or "changed"), style="dim")
+    if item.get("diff_summary"):
+        # Whole-branch review (Minor): `diff_summary` was carried through
+        # normalization with no consumer at all. It is the monitoring
+        # engine's own one-line account of the change ("2 lines changed"),
+        # which is exactly what this headline is for.
+        headline.append(str(item["diff_summary"]))
+    out.append(" · ".join(headline) or "changed", style="dim")
     out.append("\n\n")
 
     body = item.get("content")
@@ -90,11 +128,12 @@ def render_change(item: dict[str, Any]) -> Text:
         out.append(_NO_BODY)
         return out
 
-    # Colour the diff, but escape each line first: these lines are remote
-    # content, and styling them must not mean interpreting them as markup.
+    # Colour the diff. These lines are remote content appended to a `Text`,
+    # which never parses markup -- see `render_article` on why the former
+    # `escape_markup` call here was corruption without protection.
     for line in str(body).splitlines():
         style = "green" if line.startswith("+") else "red" if line.startswith("-") else None
-        out.append(escape_markup(line), style=style)
+        out.append(line, style=style)
         out.append("\n")
     return out
 
@@ -102,7 +141,7 @@ def render_change(item: dict[str, Any]) -> Text:
 _RENDERERS = {"article": render_article, "change": render_change}
 
 
-def render_for(item: dict[str, Any]) -> Text:
+def render_for(item: dict[str, Any]) -> RenderableType:
     """Dispatch on `content_kind`, falling back rather than raising.
 
     An exception escaping `compose()` exits the application, so an unexpected
@@ -153,8 +192,15 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
         # rows (max-height 12, minus the border and heading), leaving the
         # actual article only 4 of 14 rows -- the note earned its point
         # once, not on every single line of every item read afterward.
+        # `compact=True` (whole-branch review, Minor): a default `Button` is
+        # three rows tall (top border, label, bottom border) and CONTENT has
+        # only about nine usable ones -- the same third of the pane the
+        # tooltip fix above just reclaimed, spent again on a button's chrome.
         yield Button(
-            "Mark unread", id="content-mark-unread-button", tooltip=_GLOBAL_STATUS_NOTE
+            "Mark unread",
+            id="content-mark-unread-button",
+            tooltip=_GLOBAL_STATUS_NOTE,
+            compact=True,
         )
         yield Static(render_for(self.item), id="content-body")
 
