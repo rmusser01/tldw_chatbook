@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
+from textual.css.query import NoMatches
 from textual.widgets import Button, Input, TextArea, Tree
 
 # Avoid importing the unrelated optional MLX stack during focused UI tests.
@@ -31,6 +32,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
 from tldw_chatbook.Notes.file_notes_service import (  # noqa: E402
     FileNotesService,
     OperationResult,
+    ReconcileResult,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen  # noqa: E402
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
@@ -111,6 +113,27 @@ def test_workspace_transition_admission_is_exact_binding_and_idempotent(
     assert mutation is not None
     assert workspace.acquire_transition("screen") is False
     mutation.release()
+
+
+def test_reconcile_tolerates_projection_disappearing_during_unmount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = LibraryFileNotesWorkspace(root=None, replica=None)
+
+    def missing_root_surface(*, offline: bool | None = None) -> None:
+        del offline
+        raise NoMatches("root surface was removed during unmount")
+
+    monkeypatch.setattr(workspace, "_update_root_surface", missing_root_surface)
+
+    applied = workspace._apply_reconcile(
+        ReconcileResult(status="ok"),
+        ("deleted.md",),
+    )
+
+    assert applied is False
+    assert workspace.entries == {}
+    assert workspace._deleted_paths == ("deleted.md",)
 
 
 async def _wait_until(

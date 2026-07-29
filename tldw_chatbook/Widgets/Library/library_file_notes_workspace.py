@@ -855,7 +855,8 @@ class LibraryFileNotesWorkspace(Vertical):
                 or service is not self._service
             ):
                 return
-            self._apply_reconcile(result, deleted)
+            if not self._apply_reconcile(result, deleted):
+                return
             await self._handle_open_external_change(result, resuming=True)
             if (
                 self._active
@@ -1072,9 +1073,9 @@ class LibraryFileNotesWorkspace(Vertical):
         self,
         result: ScanResult,
         deleted: tuple[str, ...],
-    ) -> None:
+    ) -> bool:
         self._adopt_scan_state(result, deleted)
-        self._render_scan_state()
+        return self._render_scan_state()
 
     def _adopt_scan_state(
         self,
@@ -1088,21 +1089,41 @@ class LibraryFileNotesWorkspace(Vertical):
         if result.replica_warning:
             self._runtime_warning = result.replica_warning
 
-    def _render_scan_state(self) -> None:
-        """Render the installed scan projection when the widget tree is live."""
+    def _render_projection(
+        self,
+        *,
+        offline: bool | None,
+        rebuild_tree: bool,
+    ) -> bool:
+        """Best-effort render after state adoption across widget teardown."""
         if not self._active or not self.is_mounted or not self.children:
-            return
-        self._update_root_surface(offline=self._root_offline)
-        self._rebuild_tree()
-        self._refresh_active_search()
-        self._refresh_session_changes()
-        self._update_controls()
+            return False
+        try:
+            self._update_root_surface(offline=offline)
+            if rebuild_tree:
+                self._rebuild_tree()
+            self._refresh_active_search()
+            self._refresh_session_changes()
+            self._update_controls()
+        except NoMatches:
+            # Textual removes descendants before this widget's ``on_unmount``
+            # flips ``_active``. A polling/scan worker may therefore pass its
+            # lifecycle guard just before the projection nodes disappear.
+            return False
+        return True
+
+    def _render_scan_state(self) -> bool:
+        """Render the installed scan projection when the widget tree is live."""
+        return self._render_projection(
+            offline=self._root_offline,
+            rebuild_tree=True,
+        )
 
     def _apply_reconcile(
         self,
         result: ReconcileResult,
         deleted: tuple[str, ...],
-    ) -> None:
+    ) -> bool:
         new_entries = {entry.relative_path: entry for entry in result.entries}
         navigator_changed = (
             new_entries != self._entries or deleted != self._deleted_paths
@@ -1112,12 +1133,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_offline = result.offline
         if result.replica_warning:
             self._runtime_warning = result.replica_warning
-        self._update_root_surface(offline=result.offline)
-        if navigator_changed:
-            self._rebuild_tree()
-        self._refresh_active_search()
-        self._refresh_session_changes()
-        self._update_controls()
+        return self._render_projection(
+            offline=result.offline,
+            rebuild_tree=navigator_changed,
+        )
 
     def _update_root_surface(self, *, offline: bool | None = None) -> None:
         if not self._active or not self.is_mounted or not self.children:
@@ -2511,7 +2530,8 @@ class LibraryFileNotesWorkspace(Vertical):
                 or service is not self._service
             ):
                 return False
-            self._apply_reconcile(result, deleted)
+            if not self._apply_reconcile(result, deleted):
+                return False
             await self._handle_open_external_change(result)
         return True
 
@@ -2699,8 +2719,7 @@ class LibraryFileNotesWorkspace(Vertical):
         )
         if self._path_result_is_stale(service, generation):
             return False
-        self._apply_scan(result, deleted)
-        return True
+        return self._apply_scan(result, deleted)
 
     def _operation_error(self, action: str, result: OperationResult) -> None:
         detail = result.message or result.status
