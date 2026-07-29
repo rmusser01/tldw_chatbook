@@ -224,7 +224,7 @@ class DictationWindow(Widget):
                                 ("Auto", "auto"),
                                 ("Parakeet MLX", "parakeet-mlx"),
                                 ("Faster Whisper", "faster-whisper"),
-                                ("Lightning Whisper", "lightning-whisper"),
+                                ("Lightning Whisper", "lightning-whisper-mlx"),
                             ],
                             value=self.settings.get("provider", "auto"),
                             id="provider-select",

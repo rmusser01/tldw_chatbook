@@ -348,7 +348,7 @@ class ImprovedDictationWindow(Widget):
                 ("Auto (Local)", "auto"),
                 ("Parakeet MLX", "parakeet-mlx"),
                 ("Faster Whisper", "faster-whisper"),
-                ("Lightning Whisper", "lightning-whisper"),
+                ("Lightning Whisper", "lightning-whisper-mlx"),
             ]
         else:
             # All providers available
@@ -356,7 +356,7 @@ class ImprovedDictationWindow(Widget):
                 ("Auto", "auto"),
                 ("Parakeet MLX", "parakeet-mlx"),
                 ("Faster Whisper", "faster-whisper"),
-                ("Lightning Whisper", "lightning-whisper"),
+                ("Lightning Whisper", "lightning-whisper-mlx"),
                 ("OpenAI Whisper", "openai-whisper"),
                 ("Google Speech", "google-speech"),
             ]
