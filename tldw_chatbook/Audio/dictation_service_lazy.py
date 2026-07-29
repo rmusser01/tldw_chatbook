@@ -27,6 +27,21 @@ except ImportError:
         "NumPy not available. Audio level monitoring will use fallback method. Install with: pip install numpy"
     )
 
+# Import WebRTC VAD if available. Optional and imported defensively -- a
+# missing dependency must degrade `_chunk_has_speech` to "always speech"
+# (today's finals-at-stop-only behavior), never crash a live capture.
+try:
+    import webrtcvad
+
+    WEBRTCVAD_AVAILABLE = True
+except ImportError:
+    webrtcvad = None
+    WEBRTCVAD_AVAILABLE = False
+    logger.warning(
+        "WebRTC VAD not available. Mid-capture segment finalization will only "
+        "happen when capture stops. Install with: pip install webrtcvad"
+    )
+
 # Local imports
 from ..config import get_cli_setting, save_setting_to_cli_config
 
@@ -108,13 +123,24 @@ class LazyLiveDictationService:
     #: `dictation.stop_join_timeout_seconds`.
     STOP_JOIN_TIMEOUT_SECONDS = 30.0
 
+    #: How long a mid-capture pause in speech must last before
+    #: `_processing_loop` finalizes the segment in progress. Only takes
+    #: effect when a VAD is available -- see `_chunk_has_speech`. Configurable
+    #: as `dictation.silence_threshold_seconds`.
+    SILENCE_THRESHOLD_SECONDS = 2.0
+
     #: Instance defaults, declared on the class so a service built with
     #: `__new__` (teardown-path tests do exactly that) still stops cleanly
     #: instead of raising AttributeError while releasing the microphone.
     stop_join_timeout_seconds = STOP_JOIN_TIMEOUT_SECONDS
+    silence_threshold_seconds = SILENCE_THRESHOLD_SECONDS
     captured_bytes = 0
     max_buffer_bytes: Optional[int] = None
     on_buffer_limit: Optional[Callable[[], None]] = None
+    #: Per-capture voice activity detector, built fresh in `start_dictation`.
+    #: `None` here (and for any `__new__`-built test double that never calls
+    #: it) makes `_chunk_has_speech` degrade to "always speech".
+    _vad: Optional[Any] = None
 
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
@@ -209,6 +235,11 @@ class LazyLiveDictationService:
             "dictation.buffer_duration_ms", self.BUFFER_DURATION_MS
         )
         self.stop_join_timeout_seconds = self._resolve_stop_join_timeout()
+        self.silence_threshold_seconds = self._resolve_silence_threshold()
+
+        # Per-capture VAD, built in `start_dictation` (needs a fresh instance
+        # per capture; `webrtcvad.Vad` carries no state worth reusing).
+        self._vad = None
 
         # Bytes the recorder has handed us this session. The one fact that
         # separates "the microphone produced nothing" from "the transcriber
@@ -253,6 +284,40 @@ class LazyLiveDictationService:
             )
             return cls.STOP_JOIN_TIMEOUT_SECONDS
         return timeout
+
+    @classmethod
+    def _resolve_silence_threshold(cls) -> float:
+        """Read `dictation.silence_threshold_seconds`, falling back to the default.
+
+        Returns:
+            A positive number of seconds of silence `_processing_loop` waits
+            for before finalizing the segment in progress.
+        """
+        raw = get_cli_setting(
+            "dictation.silence_threshold_seconds", cls.SILENCE_THRESHOLD_SECONDS
+        )
+        try:
+            threshold = float(raw)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid dictation.silence_threshold_seconds {!r}; using {}s",
+                raw,
+                cls.SILENCE_THRESHOLD_SECONDS,
+            )
+            return cls.SILENCE_THRESHOLD_SECONDS
+        # Same trap as the stop-join timeout: `nan`/`inf` are valid TOML
+        # floats that survive `float()`. `nan <= 0` is False, so a bare
+        # positivity check waves `nan` through to a silence check that never
+        # fires; `inf` would have the same effect.
+        if not math.isfinite(threshold) or threshold <= 0:
+            logger.warning(
+                "dictation.silence_threshold_seconds must be a positive, finite "
+                "number (got {!r}); using {}s",
+                raw,
+                cls.SILENCE_THRESHOLD_SECONDS,
+            )
+            return cls.SILENCE_THRESHOLD_SECONDS
+        return threshold
 
     def _load_privacy_settings(self):
         """Load privacy settings from configuration."""
@@ -408,6 +473,24 @@ class LazyLiveDictationService:
             self.start_time = time.time()
             self.save_audio = save_audio and not self.privacy_settings["local_only"]
 
+            # Build a VAD for this capture so `_audio_callback` can gate
+            # per-chunk queuing and finalization on real speech instead of
+            # every delivered chunk. Rebuilt every capture -- a `webrtcvad.Vad`
+            # carries no cross-session state worth keeping. Aggressiveness 2
+            # matches the recorder's own (stored but otherwise unused) VAD
+            # setting. Any failure here must not abort the capture; it simply
+            # degrades to today's finals-at-stop-only behavior.
+            self._vad = None
+            if WEBRTCVAD_AVAILABLE:
+                try:
+                    self._vad = webrtcvad.Vad(2)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to initialize VAD; segment finalization will "
+                        f"only occur when capture stops: {e}"
+                    )
+                    self._vad = None
+
             # Initialize streaming transcriber
             self._initialize_streaming_transcriber()
 
@@ -532,14 +615,45 @@ class LazyLiveDictationService:
                 self.audio_buffer.append(audio_chunk)
                 self.captured_bytes += len(audio_chunk)
 
-            # Queue for processing
-            self.processing_queue.put(("audio", audio_chunk))
+            # A fully-silent chunk must not be queued (Whisper hallucinates on
+            # silence) and must not push the finalize deadline out (which
+            # would starve mid-capture finals forever, since every delivered
+            # chunk -- silent or not -- used to refresh it). Soft/partial
+            # speech is never dropped: `_chunk_has_speech` only excludes a
+            # chunk when *every* frame is silent, and degrades to "always
+            # speech" when no VAD is available, preserving today's
+            # finals-at-stop-only behavior in that case.
+            if self._chunk_has_speech(audio_chunk):
+                # Queue for processing
+                self.processing_queue.put(("audio", audio_chunk))
 
-            # Update last speech time
-            self.last_speech_time = time.time()
+                # Update last speech time
+                self.last_speech_time = time.time()
 
         except Exception as e:
             logger.error(f"Audio callback error: {e}")
+
+    def _chunk_has_speech(self, audio_chunk: bytes) -> bool:
+        """Return True when any 30 ms frame of the chunk contains speech.
+
+        Args:
+            audio_chunk: 16-bit mono PCM at the recorder's sample rate.
+
+        Returns:
+            True if the VAD marks any complete frame as speech, or when no
+            VAD is available (degrading to today's always-speech behavior).
+        """
+        vad = self._vad
+        if vad is None:
+            return True
+        frame_bytes = 960  # 30 ms of 16-bit mono at 16 kHz
+        for start in range(0, len(audio_chunk) - frame_bytes + 1, frame_bytes):
+            try:
+                if vad.is_speech(audio_chunk[start : start + frame_bytes], 16000):
+                    return True
+            except Exception:  # noqa: BLE001 - a VAD failure must never kill capture
+                return True
+        return False
 
     def _processing_loop(self):
         """Simplified processing loop for single-user app."""
@@ -580,12 +694,17 @@ class LazyLiveDictationService:
                             if len(self.audio_buffer) > 10:
                                 self.audio_buffer = self.audio_buffer[-5:]
 
-                # Check for silence timeout
+                # Check for silence timeout. Runs every ~0.1s iteration
+                # independent of chunk arrival -- deliberately not derived
+                # from queue activity, which is exactly why gating
+                # `_audio_callback` on VAD (skipping silent chunks) cannot
+                # starve this check.
                 if (
                     self.last_speech_time
-                    and (current_time - self.last_speech_time) > 2.0
+                    and (current_time - self.last_speech_time)
+                    > self.silence_threshold_seconds
                 ):
-                    # Finalize current segment after 2 seconds of silence
+                    # Finalize current segment after a threshold pause.
                     self._finalize_current_segment()
                     self.last_speech_time = 0
 
