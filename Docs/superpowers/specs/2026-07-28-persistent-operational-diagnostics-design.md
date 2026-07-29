@@ -67,8 +67,6 @@ def persist_event(component: str, event: str, *, level: int = logging.INFO, **fi
     Uses stdlib logging deliberately: the persistent marker does not survive the
     Loguru forwarder, and must not — see module docstring.
     """
-    if "component" in fields:
-        raise TypeError("component is passed positionally, not as a field")
     log_persistent_metadata(
         logging.getLogger(f"tldw_chatbook.diagnostics.{component}"),
         level, event, component=component, **fields,
@@ -86,8 +84,10 @@ Two details in that signature are deliberate:
   that module. The distinct namespace keeps persisted events greppable and independently
   configurable, and still satisfies `_is_chatbook_record`, which requires the `tldw_chatbook.`
   prefix.
-- **`component` is positional and rejected as a field**, so a caller cannot pass it twice and get
-  a confusing `TypeError` from the inner call.
+- **`component` is positional**, so passing it twice is already a `TypeError` from Python itself
+  ("got multiple values for argument 'component'"). An explicit guard would be unreachable — the
+  interpreter raises before the function body runs. A first draft specified one, and the Task 1
+  review caught that both it and its test were dead.
 
 **These records also reach the terminal and the in-app Logs screen**, because they go through the
 root logger like everything else. That is intended — a persisted event is worth seeing live — but
