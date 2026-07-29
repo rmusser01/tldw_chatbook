@@ -5443,13 +5443,39 @@ class ChatScreen(BaseAppScreen):
         cursor: int,
         transcript: str,
     ) -> str:
-        """Return transcript text padded only where adjacent text needs spacing."""
+        """Return transcript text padded only where adjacent text needs spacing.
+
+        Trims only `" "` and `"\\t"` from the ends, not a full `.strip()`: the
+        recognizer never produces a leading/trailing newline on its own, so
+        an ordinary dictated transcript behaves identically either way -- but
+        an inline `new-paragraph`/`new-line` command at the very start or end
+        of a capture (`_join_segments`) does produce one, and a full strip
+        used to discard it silently, along with everything after it looking
+        like the command was never spoken.
+
+        For the same reason, the caret-context padding below never adds a
+        space next to a leading or trailing newline: the break is already
+        the separator the padding exists to provide.
+
+        Args:
+            draft: The composer's current text.
+            cursor: The insertion point, an offset into `draft`.
+            transcript: The capture's transcript, as returned by
+                `ConsoleStreamingDictationSession.stop_and_transcribe`.
+
+        Returns:
+            `transcript` trimmed of edge spaces/tabs (edge newlines kept),
+            padded with a single space on whichever side abuts non-space
+            text in `draft` and does not itself start or end with a newline.
+        """
         cursor = max(0, min(cursor, len(draft)))
-        insertion = transcript.strip()
-        if cursor and not draft[cursor - 1].isspace():
-            insertion = " " + insertion
-        if cursor < len(draft) and not draft[cursor].isspace():
-            insertion += " "
+        insertion = transcript.strip(" \t")
+        if not insertion.startswith("\n"):
+            if cursor and not draft[cursor - 1].isspace():
+                insertion = " " + insertion
+        if not insertion.endswith("\n"):
+            if cursor < len(draft) and not draft[cursor].isspace():
+                insertion += " "
         return insertion
 
     def _insert_console_dictation(

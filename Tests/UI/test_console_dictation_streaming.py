@@ -1490,3 +1490,127 @@ async def test_genuinely_empty_capture_with_no_commands_still_raises(monkeypatch
             if "No audio was captured from the microphone." in str(call.args[0])
             and call.kwargs.get("severity") == "error"
         ]
+
+
+# --- Task 2 fix round 1: edge breaks must survive insertion ----------------
+
+
+@pytest.mark.asyncio
+async def test_a_trailing_inline_break_survives_insertion_into_an_empty_draft(
+    monkeypatch,
+):
+    """"one." + "Console, new paragraph." must not silently drop the break.
+
+    `_join_segments` keeps the trailing "\\n\\n", but the pre-existing
+    `_dictation_insertion` used to `.strip()` it back off on the way into the
+    draft -- the user's explicit command vanished with no error.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        service.emit_final("one.")
+        service.emit_final("Console, new paragraph.")
+        await pilot.pause()
+
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert composer.draft_text() == "one.\n\n"
+
+
+@pytest.mark.asyncio
+async def test_a_leading_inline_break_lands_a_new_capture_on_a_fresh_paragraph(
+    monkeypatch,
+):
+    """A capture that opens with "Console, new paragraph." must not fuse into
+    the existing draft's last sentence with a single space.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("Point one.")
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        service.emit_final("Console, new paragraph.")
+        service.emit_final("Point two.")
+        await pilot.pause()
+
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert composer.draft_text() == "Point one.\n\nPoint two."
+
+
+# --- Task 2 fix round 1: commands_consumed resets across captures ----------
+
+
+@pytest.mark.asyncio
+async def test_commands_consumed_resets_so_a_later_silent_capture_still_raises(
+    monkeypatch,
+):
+    """A command-only capture must not leave `commands_consumed` armed for
+    whatever capture comes after it -- a genuinely silent second capture must
+    still raise the V1 message, not silently return "".
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+
+        # Capture 1: command-only, must not raise.
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        service.emit_final("Console, new paragraph.")
+        await pilot.pause()
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        assert [
+            call
+            for call in notify.call_args_list
+            if call.kwargs.get("severity") == "error"
+        ] == []
+
+        # Capture 2: the recognizer says nothing at all. `commands_consumed`
+        # from capture 1 must not still be armed on this session's reset.
+        await pilot.pause(0.5)
+        assert await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        session = console._console_dictation_session
+        assert session.commands_consumed == 0
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert composer.draft_text() == "keep this draft"
+        assert [
+            call
+            for call in notify.call_args_list
+            if "No audio was captured from the microphone." in str(call.args[0])
+            and call.kwargs.get("severity") == "error"
+        ]
