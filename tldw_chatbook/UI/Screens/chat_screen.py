@@ -5042,14 +5042,38 @@ class ChatScreen(BaseAppScreen):
                 composer.set_voice_partial("")
             return
         if isinstance(event, VoiceCommand):
-            # Only a capture-ending command name ever reaches here --
-            # `new-paragraph`/`new-line` are the adapter's own to act on
-            # (Task 2's `_INLINE_BREAK_COMMANDS`) and never leave it as a
-            # `VoiceCommand`. Same as `VoiceFinal` above: the command is
-            # itself a finalized segment, so its own utterance ("console
-            # send") can be the last thing sitting in the chip -- clear it
-            # here, before dispatch below changes the dictation state out
-            # from under `set_voice_partial`'s own recording-only guard.
+            # `new-paragraph`/`new-line` DO reach here too -- the adapter's
+            # `forward` default is True for every `VoiceCommand`, inline or
+            # capture-ending alike; `_INLINE_BREAK_COMMANDS` only keeps them
+            # out of `_segments` (Task 2), it does not stop them being
+            # forwarded. The `if`/`elif` chain below stays an explicit
+            # allowlist rather than a dict lookup or a trailing `else` --
+            # deliberately, so an inline name (or any future, not-yet-routed
+            # command name) falls through as a no-op instead of a future
+            # maintainer's catch-all accidentally acting on it.
+            #
+            # Review fix round 1 (Finding 1): a command draining after ITS
+            # OWN capture already returned to `idle` is NOT caught by the
+            # session-identity check above -- `_start_console_dictation`
+            # reuses `self._console_dictation_session` whenever it is still
+            # set, which it is after every ordinary successful stop (only a
+            # failure or an explicit cancel nulls it). A late command from
+            # capture 1 therefore carries the exact same session object as a
+            # live capture 2, and would otherwise queue an action (or fire
+            # stop/discard) against whichever capture is live NOW, not the
+            # one that actually spoke it. `transcribing` stays admitted
+            # alongside `recording`: a genuinely-current command that only
+            # finalizes once ITS OWN capture's stop-and-transcribe is
+            # already running (e.g. the wall timer beat the recognizer to
+            # it) is not stale, and must still reach `_stop_console_dictation`'s
+            # success tail.
+            if self._console_dictation_state not in ("recording", "transcribing"):
+                return
+            # Same as `VoiceFinal` above: the command is itself a finalized
+            # segment, so its own utterance ("console send") can be the last
+            # thing sitting in the chip -- clear it here, before dispatch
+            # below changes the dictation state out from under
+            # `set_voice_partial`'s own recording-only guard.
             self._console_dictation_partial = ""
             composer = self._console_composer_or_none()
             if composer is not None:
@@ -5722,7 +5746,18 @@ class ChatScreen(BaseAppScreen):
         reaches this method for `recording` (it routes there to
         `_request_console_dictation_stop`, which inserts); only the spoken
         command does.
+
+        Review fix round 1 (Finding 1): a spoken "discard" can also arrive
+        while `transcribing` -- the `VoiceCommand` branch admits that state
+        so a genuinely-current trailing command is not mistaken for a stale
+        one. This method cannot itself abort an in-flight stop-and-transcribe
+        (nothing here is cancelable at that point, so the guard below still
+        refuses), but the clear immediately below still applies regardless:
+        "Console, send." then "Console, discard." inside that same window
+        must drop the queued `send` even though the capture finishes normally.
         """
+        # Unconditional, ahead of the guard below, for exactly that reason.
+        self._console_pending_voice_action = None
         if self._console_dictation_state not in ("starting", "recording"):
             return
         session = self._console_dictation_session
@@ -5752,6 +5787,12 @@ class ChatScreen(BaseAppScreen):
         store = self._ensure_console_chat_store()
         self._console_dictation_origin_session_id = store.active_session_id
         self._console_dictation_partial = ""
+        # Defensive (review fix round 1, Finding 1): the `VoiceCommand`
+        # branch's own state guard is what actually stops a stale command
+        # from queuing here, but a fresh capture starting with nothing
+        # pending is the correct state regardless of how one might have
+        # leaked in, so it is reset again on this end too.
+        self._console_pending_voice_action = None
         self._set_console_dictation_state("starting")
         self.run_worker(
             self._start_console_dictation(),

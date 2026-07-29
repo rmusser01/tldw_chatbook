@@ -2155,3 +2155,211 @@ async def test_read_that_back_speaks_the_last_completed_assistant_reply(monkeypa
             assert console._console_speaking_message_id == message.id
     finally:
         service.stop_gate.set()
+
+
+# --- Task 3 review fix round 1: stale commands across a reused session -----
+#
+# `_start_console_dictation` reuses `self._console_dictation_session` when it
+# is still set -- true after every ORDINARY successful stop, since only a
+# failure or an explicit cancel nulls it. A command that finalizes late (the
+# recognizer's own flush) can therefore carry the exact same session object
+# whether it belongs to the capture that just ended or the one that just
+# started, which is why the `VoiceCommand` branch needs its own dictation-
+# state guard on top of the session-identity check above it.
+
+
+@pytest.mark.asyncio
+async def test_a_command_draining_after_its_capture_ended_is_not_queued_for_the_next(
+    monkeypatch,
+):
+    """A capture-ending command whose event drains AFTER its own capture
+    already returned to `idle` must not queue an action for a LATER,
+    unrelated capture that happens to reuse the same session object.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    sessions = _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    send_calls: list[str] = []
+
+    async def _fake_send(self, event) -> None:
+        composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        send_calls.append(composer.draft_text())
+        event.stop()
+
+    monkeypatch.setattr(
+        chat_screen_module.ChatScreen, "handle_console_send_message", _fake_send
+    )
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        # Capture 1: dictate and stop normally (mouse) -- nothing voice-queued.
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        service.emit_final("first words")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        session = console._console_dictation_session
+        assert session is not None
+        # Confirms the reuse this bug depends on -- a freshly built session
+        # per capture would let the identity guard catch this on its own.
+        assert len(sessions) == 1
+
+        # A "Console, send." segment from capture 1 finalizes only now, after
+        # capture 1 is already idle (the same session object throughout).
+        console._handle_console_dictation_event(
+            chat_screen_module.ConsoleDictationEvent(session, VoiceCommand("send"))
+        )
+        assert console._console_pending_voice_action is None
+        assert send_calls == []
+
+        # Capture 2: unrelated words, stopped normally. Must not auto-send.
+        # The 0.5s settle matches the established pattern for a second click
+        # right after a first capture ends (see
+        # test_commands_consumed_resets_so_a_later_silent_capture_still_raises
+        # above) -- without it, the second click is flaky.
+        await pilot.pause(0.5)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        assert console._console_dictation_session is session
+        service.emit_final("second words")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert send_calls == []
+        assert composer.draft_text() == "first words second words"
+
+
+@pytest.mark.asyncio
+async def test_discard_after_send_within_the_transcribe_window_ships_nothing(
+    monkeypatch,
+):
+    """"Console, send." then "Console, discard." inside the SAME capture's
+    transcribe window must ship nothing -- the discard cannot itself abort
+    an in-flight stop-and-transcribe (nothing is cancelable at that point),
+    but it must still drop whatever "send" already queued.
+    """
+    service = FakeDictationService()
+    service.stop_gate = threading.Event()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    send_calls: list[bool] = []
+
+    async def _fake_send(self, event) -> None:
+        send_calls.append(True)
+        event.stop()
+
+    monkeypatch.setattr(
+        chat_screen_module.ChatScreen, "handle_console_send_message", _fake_send
+    )
+
+    try:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one(
+                "#console-native-composer", ConsoleComposerBar
+            )
+
+            await pilot.click("#console-dictation")
+            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            session = console._console_dictation_session
+
+            service.emit_final("Console, send.")
+            await pilot.pause()
+            assert console._console_pending_voice_action == "send"
+
+            deadline = time.monotonic() + 4
+            while time.monotonic() < deadline and not service.stop_entered.is_set():
+                await pilot.pause(0.01)
+            assert console._console_dictation_state == "transcribing"
+
+            # "Console, discard." finalizes while the stop worker is blocked
+            # mid-flight -- the guard admits `transcribing`, so this reaches
+            # the dispatch table instead of being dropped as stale.
+            console._handle_console_dictation_event(
+                chat_screen_module.ConsoleDictationEvent(
+                    session, VoiceCommand("discard")
+                )
+            )
+            assert console._console_pending_voice_action is None
+
+            service.stop_gate.set()
+            await _wait_for_mic_label(composer, pilot, "Mic")
+            for _ in range(5):
+                await pilot.pause(0.01)
+
+            assert send_calls == []
+    finally:
+        service.stop_gate.set()
+
+
+@pytest.mark.asyncio
+async def test_a_command_finalizing_during_its_own_transcribe_window_still_queues(
+    monkeypatch,
+):
+    """The benign interleaving the `transcribing` admission exists for: a
+    capture-ending command that finalizes only after ITS OWN capture's stop
+    has already begun (e.g. the wall timer beat the recognizer to it) must
+    still be honored -- it is late, not stale.
+    """
+    service = FakeDictationService()
+    service.stop_gate = threading.Event()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    send_calls: list[str] = []
+
+    async def _fake_send(self, event) -> None:
+        composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        send_calls.append(composer.draft_text())
+        event.stop()
+
+    monkeypatch.setattr(
+        chat_screen_module.ChatScreen, "handle_console_send_message", _fake_send
+    )
+
+    try:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one(
+                "#console-native-composer", ConsoleComposerBar
+            )
+
+            await pilot.click("#console-dictation")
+            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            session = console._console_dictation_session
+
+            service.emit_final("dictated words")
+            await pilot.pause()
+
+            # Something else (the wall timer, in production) stops the
+            # capture before the trailing "send" is recognized.
+            console._request_console_dictation_stop()
+            deadline = time.monotonic() + 4
+            while time.monotonic() < deadline and not service.stop_entered.is_set():
+                await pilot.pause(0.01)
+            assert console._console_dictation_state == "transcribing"
+
+            console._handle_console_dictation_event(
+                chat_screen_module.ConsoleDictationEvent(
+                    session, VoiceCommand("send")
+                )
+            )
+            assert console._console_pending_voice_action == "send"
+
+            service.stop_gate.set()
+            deadline = time.monotonic() + 4
+            while time.monotonic() < deadline and not send_calls:
+                await pilot.pause(0.01)
+
+            assert send_calls == ["dictated words"]
+    finally:
+        service.stop_gate.set()
