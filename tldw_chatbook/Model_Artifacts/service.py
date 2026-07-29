@@ -791,24 +791,6 @@ class ReconcileReport:
     corrupt_artifacts: tuple[Path, ...]
     abandoned_staging: tuple[Path, ...]
 
-    def __post_init__(self) -> None:
-        """Validate count and deterministic path ordering invariants."""
-
-        if (
-            type(self.readiness_created) is not int
-            or self.readiness_created < 0
-            or type(self.state_removed) is not int
-            or self.state_removed < 0
-        ):
-            raise ValueError("reconciliation counts must be nonnegative integers")
-        for paths in (self.corrupt_artifacts, self.abandoned_staging):
-            if type(paths) is not tuple or any(
-                not isinstance(path, Path) for path in paths
-            ):
-                raise ValueError("reconciliation paths must be tuples of Path values")
-            if paths != tuple(sorted(paths, key=lambda path: path.as_posix())):
-                raise ValueError("reconciliation paths must be sorted")
-
 
 @dataclass(frozen=True)
 class ArtifactHandle:
@@ -1186,7 +1168,7 @@ class ModelArtifactService:
         readiness_created = 0
         preserved_readiness: set[ArtifactRef] = set()
         invalid_readiness: list[Path] = []
-        for path in self._state_files(self._ready_path):
+        for path in self._state_files(self._ready_path, 3):
             reference = self._readiness_ref_from_path(path)
             expected = (
                 expected_readiness.get(reference) if reference is not None else None
@@ -1220,7 +1202,7 @@ class ModelArtifactService:
             self._write_readiness(record)
             readiness_created += 1
 
-        for path in self._state_files(self._active_path):
+        for path in self._state_files(self._active_path, 1):
             artifact_id = self._active_id_from_path(path)
             try:
                 selected = (
@@ -1255,7 +1237,7 @@ class ModelArtifactService:
         own_readiness = self.readiness_path(reference)
         if self._state_path_exists(own_readiness):
             invalidated_paths.add(own_readiness)
-        for path in self._state_files(self._ready_path):
+        for path in self._state_files(self._ready_path, 3):
             readiness_ref = self._readiness_ref_from_path(path)
             if readiness_ref is None:
                 continue
@@ -1299,12 +1281,12 @@ class ModelArtifactService:
             except OSError:
                 break
 
-    def _state_files(self, root: Path) -> tuple[Path, ...]:
+    def _state_files(self, root: Path, record_depth: int) -> tuple[Path, ...]:
         self._assert_managed_path(root)
         before = _path_snapshot(root.stat(follow_symlinks=False))
         files: list[Path] = []
 
-        def scan(directory: Path) -> None:
+        def scan(directory: Path, depth: int) -> None:
             try:
                 entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
             except OSError as error:
@@ -1317,12 +1299,17 @@ class ModelArtifactService:
                         "failed to inspect derived state"
                     ) from error
                 path = Path(entry.path)
-                if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
-                    scan(path)
+                entry_depth = depth + 1
+                if (
+                    stat.S_ISDIR(mode)
+                    and not stat.S_ISLNK(mode)
+                    and entry_depth < record_depth
+                ):
+                    scan(path, entry_depth)
                 else:
                     files.append(path)
 
-        scan(root)
+        scan(root, 0)
         self._assert_managed_path(root)
         if _path_snapshot(root.stat(follow_symlinks=False)) != before:
             raise ArtifactPathError("derived state changed during traversal")

@@ -166,12 +166,6 @@ def test_delete_and_reconcile_expose_stable_frozen_contracts() -> None:
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         report.state_removed = 1  # type: ignore[misc]
-    with pytest.raises(ValueError):
-        service_module.ReconcileReport(-1, 0, (), ())
-    with pytest.raises(ValueError):
-        service_module.ReconcileReport(0, -1, (), ())
-    with pytest.raises(ValueError):
-        service_module.ReconcileReport(0, 0, (Path("/b"), Path("/a")), ())
 
 
 def test_loaded_root_blocks_delete_without_mutation_then_closes_cleanly(
@@ -667,6 +661,42 @@ def test_reconcile_reports_corrupt_root_variants_and_keeps_installed_bytes(
     assert service.readiness_path(item.reference).exists() is False
     assert service.active_path(item.reference.artifact_id).exists() is False
     assert external.read_bytes() == b"external"
+
+
+def test_reconcile_removes_exact_depth_state_directories_once_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    service, item, _source, target = installed_artifact(tmp_path)
+    service.activate(item.reference)
+    ready_directory = service._ready_path / "ghost" / "revision" / "int8.json"
+    ready_directory.mkdir(parents=True)
+    active_directory = service._active_path / "ghost.json"
+    active_directory.mkdir()
+    external = tmp_path / "external-state-target"
+    external.mkdir()
+    keep = external / "keep"
+    keep.write_bytes(b"keep")
+    try:
+        (ready_directory / "external-link").symlink_to(
+            external,
+            target_is_directory=True,
+        )
+    except OSError:
+        pass
+    payload = target / item.files[0].path
+    payload_bytes = payload.read_bytes()
+
+    first = service.reconcile()
+
+    assert first == service_module.ReconcileReport(0, 2, (), ())
+    assert ready_directory.exists() is False
+    assert active_directory.exists() is False
+    assert payload.read_bytes() == payload_bytes
+    assert keep.read_bytes() == b"keep"
+
+    second = service.reconcile()
+
+    assert second == service_module.ReconcileReport(0, 0, (), ())
 
 
 def test_reconcile_removes_all_malformed_derived_files_and_rebuilds_valid_root(
