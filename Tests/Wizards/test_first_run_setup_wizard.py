@@ -979,3 +979,147 @@ async def test_appearance_step_commits_theme_and_card():
         committed = wizard.commit_config.call_args.args[0]
         assert committed["general"] == {"default_theme": "textual-light"}
         assert committed["splash_screen"] == {"card_selection": "matrix"}
+
+
+@pytest.mark.asyncio
+async def test_appearance_step_rerun_preselects_configured_theme():
+    """Added scope (Task-11 controller decision): re-run must prefill every
+    step from current config. AppearanceStep previously always rendered its
+    theme RadioSet with nothing pressed, even when general.default_theme was
+    already set -- pre-select the RadioButton matching it, when the theme is
+    in the rendered list."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={"general": {"default_theme": "nord"}}),
+        commit_config=AsyncMock(return_value=True), rerun=True,
+    )
+    step = AppearanceStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one("#setup-theme-choice", RadioSet)
+        pressed = radio_set.pressed_button
+        assert pressed is not None
+        assert str(pressed.label) == "nord"
+
+
+@pytest.mark.asyncio
+async def test_appearance_step_no_config_theme_preselects_nothing():
+    """First-run behavior must stay unchanged: with no general.default_theme,
+    no RadioButton is pre-pressed."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = AppearanceStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one("#setup-theme-choice", RadioSet)
+        assert radio_set.pressed_button is None
+
+
+@pytest.mark.asyncio
+async def test_tools_step_rerun_prefills_switches_from_config():
+    """Added scope: ToolsStep previously always initialized every Switch to
+    False, even on re-run with gates already enabled in config -- initialize
+    each Switch from prefill.tool_gates instead. First-run behavior (no
+    "tools" section, or a section with everything off) is unchanged since
+    tool_gates comes back empty/False in that case."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(
+            app_config={"tools": {"read_file_enabled": True}}
+        ),
+        commit_config=AsyncMock(return_value=True), rerun=True,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=5),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        enabled_switch = step.query_one("#setup-tool-read_file", Switch)
+        assert enabled_switch.value is True
+        other_switches = [
+            sw for sw in step.query(Switch) if sw.id != "setup-tool-read_file"
+        ]
+        assert other_switches, "expect more than one gateable tool"
+        assert all(sw.value is False for sw in other_switches)
+
+
+@pytest.mark.asyncio
+async def test_model_step_rerun_prefills_from_config_when_no_provider_entry_yet():
+    """Added scope: a re-run user who reaches Model before wizard_data has a
+    "provider" entry this session (e.g. jumping forward) must see the
+    persisted chat_defaults.model resurface as the initial selection and in
+    the custom-model Input, rather than a blank slate."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={"chat_defaults": {"model": "gpt-4o"}}),
+        wizard_data={},  # no "provider" key yet
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
+    )
+    step = _model_step(wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        assert step.selected_model_id == "gpt-4o"
+        assert step.query_one("#setup-model-custom", Input).value == "gpt-4o"
+
+
+@pytest.mark.asyncio
+async def test_model_step_with_provider_entry_present_does_not_prefill_stale_model():
+    """Guards the boundary of the added scope above: once a "provider" entry
+    exists in wizard_data (the normal sequential path, and a real
+    Back-and-switch), the existing reset-to-blank behavior must still apply
+    -- the prefill path is only for the "no entry yet" case."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={"chat_defaults": {"model": "gpt-4o"}}),
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
+    )
+    step = _model_step(wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        assert step.selected_model_id == ""
+        assert step.query_one("#setup-model-custom", Input).value == ""
+
+
+class TestAppOfferGating:
+    """The app hook is thin; assert the state functions drive it correctly."""
+
+    def test_fresh_config_offers_and_upgrader_does_not(self):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import should_offer_wizard
+
+        assert should_offer_wizard({}, {}) is True
+        upgrader = {"api_settings": {"openai": {"api_key": "sk-x"}}}
+        assert should_offer_wizard(upgrader, {}) is False
+
+    def test_rerun_flag_reaches_container(self):
+        wizard = _make_wizard(rerun=True)
+        assert wizard.rerun is True

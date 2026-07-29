@@ -10951,6 +10951,11 @@ class SettingsScreen(BaseAppScreen):
                         id="settings-reload-config",
                         tooltip="Reload the current Settings config into the running app.",
                     )
+                    yield Button(
+                        "Run Setup Wizard",
+                        id="settings-run-setup-wizard",
+                        tooltip="Re-run the guided first-run setup with current values.",
+                    )
                 yield Static(
                     self._diagnostics_validation_result,
                     id="settings-diagnostics-validation-result",
@@ -13775,6 +13780,13 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._run_diagnostics_reload()
 
+    @on(Button.Pressed, "#settings-run-setup-wizard")
+    def handle_run_setup_wizard(self, event: Button.Pressed) -> None:
+        event.stop()
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
+
+        self.app.push_screen(FirstRunSetupWizard(self.app_instance, rerun=True))
+
     @on(Button.Pressed, "#settings-advanced-validate-config")
     def handle_advanced_validate_config(self, event: Button.Pressed) -> None:
         event.stop()
@@ -15211,6 +15223,7 @@ class SettingsScreen(BaseAppScreen):
                 "settings-check-storage",
                 "settings-validate-config",
                 "settings-reload-config",
+                "settings-run-setup-wizard",
                 "settings-advanced-validate-config",
                 "settings-advanced-save-config",
             }:

@@ -408,10 +408,26 @@ class ModelStep(SetupStep):
             # chat_defaults.model) already happened in ProviderStep.commit()
             # via invalidate_model_for_provider_change. This just keeps the
             # step's own in-memory selection from surviving a Back-and-switch.
-            self.selected_model_id = ""
+            #
+            # Re-run prefill: a "provider" entry is written to wizard_data
+            # only once ProviderStep has been visited and advanced past this
+            # session. A re-run user jumping forward before that has no
+            # in-session choice to reset to -- resurface the persisted
+            # default model (chat_defaults.model) instead of blanking it.
+            # Once a provider entry exists (even a real Back-and-switch),
+            # the reset-to-blank behavior is unchanged.
+            has_provider_entry = wizard_state.STEP_PROVIDER in (
+                self.wizard.wizard_data or {}
+            )
+            prefill_model_id = ""
+            if not has_provider_entry:
+                prefill_model_id = wizard_state.read_wizard_prefill(
+                    getattr(self.wizard.app_instance, "app_config", {}) or {}
+                ).model_id
+            self.selected_model_id = prefill_model_id
             self._shown_for_provider = provider_key
             try:
-                self.query_one("#setup-model-custom", Input).value = ""
+                self.query_one("#setup-model-custom", Input).value = prefill_model_id
             except Exception:
                 pass
         try:
@@ -583,6 +599,13 @@ class ToolsStep(SetupStep):
         from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
 
         self._entries = list(gateable_builtin_tools())
+        # Re-run prefill: resurface whatever gates are already on instead of
+        # always showing OFF. First-run behavior is unchanged, since a fresh
+        # app_config has no "tools" section and tool_gates comes back empty.
+        prefill = wizard_state.read_wizard_prefill(
+            getattr(self.wizard.app_instance, "app_config", {}) or {}
+        )
+        gate_values = dict(prefill.tool_gates)
         with Vertical(classes="setup-tools"):
             yield Static("Built-in tools", classes="setup-title")
             yield Static(
@@ -592,7 +615,10 @@ class ToolsStep(SetupStep):
             )
             for entry in self._entries:
                 with Horizontal(classes="setup-tool-row"):
-                    yield Switch(value=False, id=f"setup-tool-{entry.tool_name}")
+                    yield Switch(
+                        value=gate_values.get(entry.gate_key, False),
+                        id=f"setup-tool-{entry.tool_name}",
+                    )
                     yield Label(entry.tool_name.replace("_", " "))
             yield Static("", classes="setup-step-error")
 
@@ -673,12 +699,21 @@ class AppearanceStep(SetupStep):
     selected_splash_card: str = ""
 
     def compose(self) -> ComposeResult:
+        # Re-run prefill: pre-select the theme RadioButton matching the
+        # persisted default_theme, when it's in the rendered list. First-run
+        # has no general.default_theme, so prefill.default_theme is "" and
+        # nothing matches -- identical to the old always-unselected render.
+        prefill = wizard_state.read_wizard_prefill(
+            getattr(self.wizard.app_instance, "app_config", {}) or {}
+        )
         with Vertical(classes="setup-appearance"):
             yield Static("Appearance", classes="setup-title")
             yield Label("Theme", classes="setup-field-label")
             with RadioSet(id="setup-theme-choice"):
                 for theme_name in self._theme_names():
-                    yield RadioButton(theme_name)
+                    yield RadioButton(
+                        theme_name, value=(theme_name == prefill.default_theme)
+                    )
             yield Label("Splash screen card", classes="setup-field-label")
             with RadioSet(id="setup-splash-choice"):
                 yield RadioButton("Surprise me (random)", value=True)
