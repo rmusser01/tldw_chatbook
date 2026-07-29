@@ -196,7 +196,7 @@ def scoped_local_stack(tmp_path):
     chachanotes_db = CharactersRAGDB(tmp_path / "chacha.db", client_id="scope-stack")
     media_db = MediaDatabase(tmp_path / "media.db", client_id="scope-stack")
     notes_base = tmp_path / "notes_base"
-    notes_base.mkdir()
+    notes_base.mkdir(mode=0o700)
     notes_interop = NotesInteropService(
         base_db_directory=notes_base,
         api_client_id="scope-stack",
@@ -215,6 +215,7 @@ def scoped_local_stack(tmp_path):
     try:
         yield app, chachanotes_db, media_db, notes_interop
     finally:
+        notes_interop.close_all_user_connections()
         media_db.close_connection()
         chachanotes_db.close_connection()
 
@@ -344,7 +345,7 @@ async def test_media_reading_scope_service_id_allowlist_restricts_real_query(
 def real_notes_stack(tmp_path):
     chachanotes_db = CharactersRAGDB(tmp_path / "notes_scope.db", client_id="scope-notes")
     notes_base = tmp_path / "notes_base"
-    notes_base.mkdir()
+    notes_base.mkdir(mode=0o700)
     interop = NotesInteropService(
         base_db_directory=notes_base,
         api_client_id="scope-notes",
@@ -354,6 +355,7 @@ def real_notes_stack(tmp_path):
     try:
         yield chachanotes_db, interop, service
     finally:
+        interop.close_all_user_connections()
         chachanotes_db.close_connection()
 
 
