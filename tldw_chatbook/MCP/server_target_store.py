@@ -4,11 +4,25 @@ import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 from typing import Any, Mapping, Sequence
+from uuid import UUID, uuid4
 
 from .unified_control_models import ConfiguredServerTarget, TargetStatusMetadata
 
 _SERVER_TARGETS_FILENAME = "mcp_server_targets.json"
+_AUTHORITY_SCOPE_UNAVAILABLE_MESSAGE = (
+    "Configured server authority scope is unavailable."
+)
+
+
+class AuthorityScopeUnavailable(RuntimeError):
+    """Raised when a durable configured-target authority scope is unavailable."""
+
+    reason_code = "authority_scope_unavailable"
+
+    def __init__(self) -> None:
+        super().__init__(_AUTHORITY_SCOPE_UNAVAILABLE_MESSAGE)
 
 
 def _default_server_targets_path() -> Path:
@@ -29,6 +43,8 @@ def _default_server_targets_path() -> Path:
 
 
 class ConfiguredServerTargetStore:
+    _authority_scope_lock = RLock()
+
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else _default_server_targets_path()
 
@@ -161,6 +177,78 @@ class ConfiguredServerTargetStore:
         self.save_targets(updated_targets)
         return updated_target
 
+    def ensure_authority_scope_id(self, server_id: str) -> str:
+        """Return a validated, durably persisted authority scope for a target.
+
+        Legacy targets without a scope are upgraded under a same-process lock.
+        The generated value is returned only after an atomic save and exact
+        reload verification.
+
+        Args:
+            server_id: Existing configured target routing identifier.
+
+        Returns:
+            The target's canonical lowercase hyphenated UUIDv4 scope.
+
+        Raises:
+            AuthorityScopeUnavailable: If target authority cannot be safely
+                validated, persisted, or reloaded.
+        """
+        normalized_server_id = str(server_id or "").strip()
+        if not normalized_server_id:
+            raise AuthorityScopeUnavailable()
+
+        with self._authority_scope_lock:
+            try:
+                targets = self.list_targets()
+                _validate_authority_scopes(targets)
+                target_indexes = [
+                    index
+                    for index, target in enumerate(targets)
+                    if target.server_id == normalized_server_id
+                ]
+                if len(target_indexes) != 1:
+                    raise AuthorityScopeUnavailable()
+
+                target_index = target_indexes[0]
+                target = targets[target_index]
+                if target.authority_scope_id is not None:
+                    return target.authority_scope_id
+
+                existing_scopes = {
+                    candidate.authority_scope_id
+                    for candidate in targets
+                    if candidate.authority_scope_id is not None
+                }
+                generated_scope = str(uuid4())
+                while generated_scope in existing_scopes:
+                    generated_scope = str(uuid4())
+
+                upgraded_targets = list(targets)
+                upgraded_targets[target_index] = replace(
+                    target,
+                    authority_scope_id=generated_scope,
+                )
+                self.save_targets(upgraded_targets)
+
+                reloaded_targets = self.list_targets()
+                _validate_authority_scopes(reloaded_targets)
+                reloaded_matches = [
+                    candidate
+                    for candidate in reloaded_targets
+                    if candidate.server_id == normalized_server_id
+                ]
+                if (
+                    len(reloaded_matches) != 1
+                    or reloaded_matches[0].authority_scope_id != generated_scope
+                ):
+                    raise AuthorityScopeUnavailable()
+                return generated_scope
+            except AuthorityScopeUnavailable:
+                raise
+            except Exception:
+                raise AuthorityScopeUnavailable() from None
+
     def save_targets(self, targets: Sequence[ConfiguredServerTarget]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
@@ -209,6 +297,7 @@ class ConfiguredServerTargetStore:
             synced_target = replace(
                 legacy_target,
                 is_default=True,
+                authority_scope_id=target.authority_scope_id,
                 last_known_server_label=target.last_known_server_label
                 or legacy_target.last_known_server_label,
                 last_known_reachability=target.last_known_reachability
@@ -263,3 +352,26 @@ def _normalize_optional_text(value: str | None) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _validate_authority_scopes(
+    targets: Sequence[ConfiguredServerTarget],
+) -> None:
+    seen: set[str] = set()
+    for target in targets:
+        scope = target.authority_scope_id
+        if scope is None:
+            continue
+        if not _is_canonical_uuid4(scope) or scope in seen:
+            raise AuthorityScopeUnavailable()
+        seen.add(scope)
+
+
+def _is_canonical_uuid4(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = UUID(value)
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return parsed.version == 4 and str(parsed) == value
