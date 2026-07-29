@@ -45,20 +45,16 @@ REGION_TITLES: dict[Region, str] = {
 #: *collapsed* header still read "▸ Watchlists". Membership here means
 #: "the pane supplies its own heading", which is the actual rule.
 #:
-#: Phase D wires a real reader pane into CONTENT; whoever does that must add
-#: `Region.CONTENT` here *if and only if* that pane draws its own heading.
+#: Task 4 wired `ContentPane` into CONTENT (`watchlists_collections_screen.py`
+#: `_build_content_pane`) and deliberately did NOT add `Region.CONTENT` here:
+#: `ContentPane.compose()` yields only a bare `Static` (the placeholder or the
+#: rendered item), no heading widget of its own -- the same shape as
+#: LEFT_RAIL's `WatchlistTree` above, which is excluded for the identical
+#: reason. CONTENT gets the generic "Content" title like LEFT_RAIL gets
+#: "Watchlists".
 SELF_HEADED_REGIONS: frozenset[Region] = frozenset(
     {Region.FEEDS, Region.ITEMS, Region.RIGHT_RAIL}
 )
-
-#: Placeholder body copy. Phase C and D replace these with real panes.
-REGION_PLACEHOLDERS: dict[Region, str] = {
-    Region.LEFT_RAIL: "Watchlist tree arrives in the next slice.",
-    Region.FEEDS: "Feeds table arrives in the next slice.",
-    Region.ITEMS: "Items table arrives in the next slice.",
-    Region.CONTENT: "Reader arrives in the next slice.",
-    Region.RIGHT_RAIL: "Inspector arrives in the next slice.",
-}
 
 
 class RegionToggled(Message):
@@ -202,13 +198,13 @@ class WatchlistsWorkbench(Horizontal):
             children.append(
                 Static(REGION_TITLES[region], classes="watchlists-region-title")
             )
-        if supplied is None:
-            children.append(
-                Static(
-                    REGION_PLACEHOLDERS[region], classes="watchlists-region-placeholder"
-                )
-            )
-        else:
+        # Whole-branch review (Minor): there used to be a `REGION_PLACEHOLDERS`
+        # branch here ("Reader arrives in the next slice.") for a region with
+        # no factory. Task 4 wired the last unwired region, so every region the
+        # screen builds supplies content; the branch could only ever be reached
+        # by a test that constructed a workbench with no content at all, which
+        # made a "coming soon" string look like live product copy to a grep.
+        if supplied is not None:
             children.append(supplied)
         classes = ["watchlists-region", f"watchlists-region-{region.value}"]
         if self._is_sole_expanded_centre_region(region):

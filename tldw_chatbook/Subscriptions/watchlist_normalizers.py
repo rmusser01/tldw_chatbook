@@ -245,4 +245,23 @@ def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, A
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "published_date": row.get("published_date"),
+        # Phase D reader fields. `get_new_items` is `SELECT i.*`, so these are
+        # already on the row -- this dict was simply not carrying them, which
+        # made every item title-only downstream regardless of what Phase A
+        # persisted.
+        "content": row.get("content"),
+        "content_kind": row.get("content_kind"),
+        # Read by `content_pane.render_article` to decide whether the body is
+        # markdown source or plain text.
+        "content_format": row.get("content_format"),
+        # `change`-kind items render from these three
+        # (`content_pane.render_change`).
+        "change_percentage": row.get("change_percentage"),
+        "change_type": row.get("change_type"),
+        "diff_summary": row.get("diff_summary"),
+        # `canonical_url` is deliberately NOT re-exported as its own key: it
+        # is already folded into `url` two lines above (`row.get("url") or
+        # row.get("canonical_url")`), and a second copy under a second name
+        # had no consumer, so it was one more thing for a reader to have to
+        # rule out.
     }

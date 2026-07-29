@@ -629,3 +629,49 @@ async def test_execute_run_stores_content_alert_matches(tmp_path):
     matches = json.loads(row["alert_matches"])
     assert len(matches) == 1
     assert matches[0]["rule_name"] == "AI alert"
+
+
+@pytest.mark.asyncio
+async def test_get_item_status_reads_one_row_and_refuses_a_missing_one(tmp_path):
+    """PR #1091 review, F1: the new authoritative single-item status read.
+
+    The reader's `Mark unread` guard used to infer an item's status from a
+    paged `list_items` call per candidate status, so an item past the page
+    depth looked exactly like an item that did not hold the status at all,
+    and the guard let a destructive write through. This method exists so the
+    guard reads the item's own row instead.
+
+    A missing row raises rather than returning a falsy status: the guard's
+    caller treats an exception as a refusal, and "the item is gone" is an
+    unanswered question, not permission to overwrite.
+    """
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://example.com/feed.xml"
+    )
+    with db.transaction() as conn:
+        item_id = persist_subscription_item(
+            conn,
+            source_id,
+            {
+                "url": "https://example.com/one/",
+                "title": "One",
+                "content_hash": "hash-status-read",
+            },
+            run_id=None,
+            now="2026-07-29T09:00:00+00:00",
+        )
+
+    assert await service.get_item_status(item_id) == "new"
+    await service.update_item(item_id=item_id, status="ingested")
+    assert await service.get_item_status(item_id) == "ingested"
+    # Namespaced ids are the screen's currency; the scope service strips the
+    # namespace, so the service itself takes the bare id -- and rejects a
+    # value it cannot read as one rather than guessing.
+    with pytest.raises(ValueError):
+        await service.get_item_status("local:watchlist_item:1")
+    with pytest.raises(KeyError):
+        await service.get_item_status(item_id + 10_000)

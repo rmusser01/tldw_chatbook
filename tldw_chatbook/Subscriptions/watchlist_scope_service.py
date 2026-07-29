@@ -246,6 +246,46 @@ class WatchlistScopeService:
             service.list_items(source_id=source_id, status=status, limit=limit, offset=offset)
         )
 
+    async def get_item_status(
+        self,
+        *,
+        runtime_backend: WatchlistBackend | str | None = None,
+        item_id: Any,
+    ) -> str:
+        """Read one content item's current status.
+
+        Routed as `items.detail` rather than `items.list`: this is a
+        single-item read, and `watchlists.items` already registers DETAIL
+        (see `runtime_policy/registry.py`).
+
+        Args:
+            runtime_backend: Target backend (``local`` or ``server``).
+            item_id: Item identifier, namespaced (``local:watchlist_item:2``)
+                or bare.
+
+        Returns:
+            The item's current status.
+
+        Raises:
+            ValueError: If the server backend is requested; item status is
+                local-only, exactly as `list_items` and `update_item` are --
+                the server API carries no item-status route.
+            KeyError: If no item has that id.
+        """
+        backend = self._normalize_backend(runtime_backend)
+        self._enforce_policy(backend, "items.detail")
+        if backend == WatchlistBackend.SERVER:
+            raise ValueError(
+                "Item status reads are only supported for the local backend "
+                "in this slice."
+            )
+        service = self._service_for_backend(backend)
+        return str(
+            await self._maybe_await(
+                service.get_item_status(self._source_id_from_item_id(item_id))
+            )
+        )
+
     async def update_item(
         self,
         *,

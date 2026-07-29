@@ -85,7 +85,7 @@ async def test_every_centre_region_may_be_collapsed_at_once():
 
 
 @pytest.mark.asyncio
-async def test_supplied_content_replaces_the_stub_placeholder():
+async def test_supplied_content_is_mounted_into_its_region():
     from textual.widgets import Label
 
     # `content` holds FACTORIES, not instances — see the empirical finding
@@ -102,22 +102,31 @@ async def test_supplied_content_replaces_the_stub_placeholder():
     app = _App()
     async with app.run_test():
         assert app.query("#my-real-feeds"), "supplied content should be mounted"
-        # The stub placeholder for that region must be gone.
-        placeholders = [
-            str(node.renderable) for node in app.query(".watchlists-region-placeholder")
-        ]
-        assert not any("Feeds table arrives" in text for text in placeholders)
+        region = app.query_one("#wl-region-feeds")
+        assert app.query_one("#my-real-feeds") in region.walk_children()
 
 
 @pytest.mark.asyncio
-async def test_regions_without_supplied_content_keep_their_stubs():
+async def test_a_region_without_supplied_content_renders_no_stub_copy():
+    """Whole-branch review: `REGION_PLACEHOLDERS` is gone.
+
+    Every region the screen builds supplies a factory, so the only thing the
+    "... arrives in the next slice." stubs still did was read, to anyone
+    grepping the module, like shipped product copy for an unfinished feature.
+    A region with no factory now renders its title and nothing else.
+    """
     class _App(App):
         def compose(self) -> ComposeResult:
             yield WatchlistsWorkbench(RegionLayout(), content={}, id="wl-workbench")
 
     app = _App()
     async with app.run_test():
-        assert app.query(".watchlists-region-placeholder")
+        assert app.query("#wl-region-content"), "the region body still renders"
+        assert not app.query(".watchlists-region-placeholder")
+        rendered = " ".join(
+            str(getattr(node, "renderable", "")) for node in app.query("Static")
+        )
+        assert "arrives in the next slice" not in rendered
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from loguru import logger
@@ -21,7 +22,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Button, Select, Static
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from ...Constants import (
     WATCHLISTS_NAV_CONTEXT_BACKEND,
@@ -46,11 +47,16 @@ from ..Watchlists_Modules.inspector_pane import (
     IgnoreRequested,
     IngestRequested,
     InspectorPane,
-    MarkReviewedRequested,
     PreviewRequested,
     StageInConsoleRequested,
 )
-from ..Watchlists_Modules.items_pane import ItemSelected, ItemsPane, RefreshItemsRequested
+from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
+from ..Watchlists_Modules.items_pane import (
+    ItemSelected,
+    ItemsFilterChanged,
+    ItemsPane,
+    RefreshItemsRequested,
+)
 from ..Watchlists_Modules.notifications_pane import (
     DismissNotificationRequested,
     MarkNotificationReadRequested,
@@ -109,6 +115,18 @@ WC_LOCAL_PAGE_SIZE = 5
 WC_SERVICE_ERROR_COPY = "Watchlists services unavailable; retry Watchlists later."
 WC_SERVICE_UNAVAILABLE_COPY = "Watchlists services are unavailable in this runtime."
 WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
+
+#: Worker group for the two item read/unread status writes. They must
+#: supersede each other (a fast `j` run should not queue up one write per key)
+#: but must NOT supersede unrelated work -- see the note at
+#: `_mark_item_read_on_open`'s `run_worker` call.
+_ITEM_STATUS_WORKER_GROUP = "wl-item-status"
+
+#: Item statuses the reader's "Mark unread" button must never overwrite: they
+#: are not read/unread states at all, and `new` would destroy the record.
+#: A frozenset, since `_blocking_status_for` now asks the backend for the
+#: item's one status and only has to decide whether it is in this set.
+_NON_READ_STATE_STATUSES: frozenset[str] = frozenset({"ingested", "ignored", "error"})
 
 
 def watchlist_delete_consequence(source_count: int) -> str:
@@ -180,6 +198,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("d", "delete_selected", "Delete"),
         ("c", "check_now_selected", "Check now"),
         ("p", "preview_selected", "Preview"),
+        ("j", "next_item", "Next item"),
+        ("k", "previous_item", "Previous item"),
         ("z", "toggle_region", "Collapse"),
         ("Z", "solo_region", "Solo"),
         ("left_square_bracket", "toggle_left_rail", "Left rail"),
@@ -194,10 +214,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     selected_entity = reactive(None)
     recovery_state = reactive(None)
     overview_data = reactive({}, recompose=True)
-    # CONTENT hosts the Phase D reader stub, so it starts collapsed to avoid
-    # spending screen space on a placeholder. `on_mount` overlays whatever is
-    # actually persisted (see `region_layout_store`) on top of this default.
-    region_layout = reactive(RegionLayout(collapsed=frozenset({Region.CONTENT})))
+    # Through Phase C, CONTENT held only a placeholder stub and started
+    # collapsed to avoid spending screen space on it. Phase D wires a real
+    # reader (`ContentPane`) into CONTENT, so it now starts expanded like
+    # every other region. `on_mount` overlays whatever is actually persisted
+    # (see `region_layout_store.load_region_layout`) on top of this default —
+    # including a one-time migration that drops any CONTENT collapse a user
+    # saved before this change, since that could only be a leftover of the
+    # old stub-era default, never a deliberate choice about the real reader.
+    region_layout = reactive(RegionLayout())
     focused_region = reactive(Region.FEEDS)
     # Two scopes, deliberately: they answer different questions and they
     # diverge (fix round 1, Finding 2).
@@ -269,6 +294,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._loaded_sources: list[dict[str, Any]] = []
         self._loaded_items: list[dict[str, Any]] = []
         self._loaded_rules: list[dict[str, Any]] = []
+        # The item currently open in the CONTENT reader (Task 4). Held here
+        # for the identical reason as `_loaded_items` above: `_build_content_pane`
+        # is a factory the workbench calls on every region rebuild, and a
+        # freshly built `ContentPane`'s `item` reactive would otherwise start
+        # back at `None` on every collapse/solo/rail toggle, clearing the
+        # reader out from under a user who hadn't touched Items at all.
+        self._selected_content_item: dict[str, Any] | None = None
         # Left-rail tree inputs (Task 4): loaded together by `_load_tree_data`
         # in exactly two queries (`list_watchlists` + `get_watchlist_item_counts`),
         # never one per node -- see that method's docstring.
@@ -317,6 +349,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # when the open form is for a brand new rule.
         self._rule_form_open = False
         self._rule_form_editing: dict[str, Any] | None = None
+        # Mirrors ItemsPane's filter/search state, for exactly the reason
+        # above (whole-branch review, Important). Any workbench rebuild
+        # constructs a brand new `ItemsPane` via `_build_detail_pane`, and
+        # without these the user's status filter reset to "all", their search
+        # box emptied and their selection cleared -- from a `z`/`[`/`]`
+        # keypress or a chevron click that had nothing to do with Items, or
+        # from the `overview_data` recompose an item-status refresh
+        # ("Mark unread", Ingest, Ignore) triggers whenever the overview
+        # counts actually change value.
+        self._items_status_filter = "all"
+        self._items_search_query = ""
         # Layout-persistence bookkeeping (PR #926 review, Bug 2): avoids
         # writing to config on every `_apply_layout` call — `on_mount`'s
         # initial push-back of the just-loaded layout, and every no-op
@@ -1129,6 +1172,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # note on `sources_pane.sources` above; same rebuild, same gap.
             items_pane = ItemsPane(id="watchlists-items-pane")
             items_pane.items = self._loaded_items
+            # Seed the filter, the search box and the selection too
+            # (whole-branch review, Important) -- the sibling Sources/Runs/
+            # Notifications panes above and below already re-seed their
+            # selection, and this one seeded only `.items`, so every rebuild
+            # silently reset the user's filtered view to "all items, nothing
+            # selected". See `_items_status_filter` in `__init__`.
+            items_pane.status_filter = self._items_status_filter
+            items_pane.search_query = self._items_search_query
+            items_pane.selected_item = self._selected_content_item
             children.append(items_pane)
         elif self.active_section == "rules":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
@@ -1156,6 +1208,31 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             id="watchlists-detail-pane",
             classes="destination-workbench-pane",
         )
+
+    def _build_content_pane(self) -> ContentPane:
+        """Build the CONTENT-region content: the reader for the last
+        selected item (Task 4).
+
+        Called fresh on every region rebuild, like every other region
+        builder here -- see the factory note on `WatchlistsWorkbench.__init__`.
+        Seeded from `_selected_content_item` (Finding pattern established by
+        `_build_inspector_pane`'s `selected_entity` seeding above): without
+        this, a collapse/solo/rail toggle would construct a brand new
+        `ContentPane` whose `item` reactive starts back at its class default
+        of `None`, silently clearing the reader.
+
+        Deliberately not gated on `active_section`: unlike `_build_detail_pane`,
+        which swaps in a different pane per tab, the reader is a persistent
+        cross-cutting surface for whatever item was last opened, regardless
+        of which section the user is currently viewing.
+
+        `ContentPane` does not draw its own heading (see `SELF_HEADED_REGIONS`
+        in `watchlists_workbench.py`), so `WatchlistsWorkbench` prepends the
+        generic "Content" title above whatever this returns.
+        """
+        pane = ContentPane(id="watchlists-content-pane")
+        pane.item = self._selected_content_item
+        return pane
 
     def _watchlists_are_empty(self) -> bool:
         """Whether this profile has nothing in Watchlists yet (TASK-998).
@@ -1330,7 +1407,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
             attach_disabled, attach_tooltip = self._wc_attach_state()
             yield WatchlistsWorkbench(
-                self.region_layout,
+                self._visible_region_layout(),
                 content={
                     # Factories, not instances: `region_layout` is
                     # `recompose=True`, so any collapse/solo/rail toggle
@@ -1342,12 +1419,79 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     Region.LEFT_RAIL: self._build_tree_pane,
                     Region.FEEDS: self._build_list_pane,
                     Region.ITEMS: self._build_detail_pane,
+                    Region.CONTENT: self._build_content_pane,
                     Region.RIGHT_RAIL: lambda: self._build_inspector_pane(
                         latest_console_item, attach_disabled, attach_tooltip
                     ),
                 },
                 id="wl-workbench",
             )
+
+    def _visible_region_layout(self) -> RegionLayout:
+        """The layout actually rendered — `region_layout` with CONTENT
+        gated to the Read tab (fix round 1, Task 4).
+
+        Per the approved design spec (`### Tabs`): "Only Read uses the
+        three-pane split. Sources, Runs, Rules, and Artifacts take the full
+        centre width — they have no collection→feed→item relationship."
+        `active_section == "items"` is this implementation's Read tab (the
+        spec's five sections don't literally match today's six — Overview
+        and Notifications aren't in the spec's list either — but Items is
+        unambiguously the one with an items-to-read relationship, and the
+        only section `ContentPane` is ever fed from; see
+        `handle_item_selected`). On every OTHER section, CONTENT force-
+        collapses regardless of what the user has expanded/collapsed it to,
+        because the reader has nothing to show there and, before this fix,
+        its mere presence (even idle) taxed the Sources create-form's
+        already-zero-slack layout at 160x42.
+
+        This is a DERIVED view layered on top of `self.region_layout`, the
+        same shape `RegionLayout.solo` already establishes for its own
+        collapsed-view-vs-pre-solo-baseline split: the override must never
+        reach `_schedule_layout_persist` (only `_apply_layout`'s own
+        `layout` argument — the real, un-derived preference — does), or a
+        user's real "CONTENT expanded" choice would be silently overwritten
+        on disk just because they happened to be looking at Sources when
+        some unrelated toggle fired a save.
+
+        A CONTENT solo is derived from the PRE-SOLO baseline, not from the
+        solo view (PR #1091 review, F2). Soloing CONTENT sets `collapsed` to
+        `{FEEDS, ITEMS}`; adding CONTENT to that off the Read tab collapsed
+        all three centre regions at once, and the workbench mounted three
+        header buttons with no expanded centre at all -- recoverable only by
+        clicking a chevron the user has no reason to suspect. Deriving from
+        `collapsed_for_persistence()` (which is exactly "the collapsed set
+        before the solo") with solo cleared for the rendered view leaves
+        whatever the user had expanded before soloing, and leaves
+        `self.region_layout` itself untouched -- so returning to Read
+        restores the solo they set.
+
+        `FEEDS` has the identical spec violation -- it is unconditionally
+        built by `_build_list_pane` regardless of `active_section`, so it
+        also occupies space on every tab the spec says should be full-width.
+        That predates this change (Phase C) and is NOT fixed here (TASK-1344
+        AC#1); scoping this fix to CONTENT only, since that is what Task 4
+        introduced.
+
+        Returns:
+            The layout to render: `region_layout` verbatim on the Read tab,
+            otherwise a derived copy with CONTENT collapsed -- rebased onto
+            the pre-solo baseline when CONTENT is the soloed region.
+        """
+        if self.active_section == "items":
+            return self.region_layout
+        if self.region_layout.solo_region is Region.CONTENT:
+            # Solo is dropped from the DERIVED view only: `self.region_layout`
+            # keeps `solo_region`, so the user's solo comes back on Read.
+            return RegionLayout(
+                collapsed=frozenset(
+                    self.region_layout.collapsed_for_persistence() | {Region.CONTENT}
+                )
+            )
+        return replace(
+            self.region_layout,
+            collapsed=frozenset(self.region_layout.collapsed | {Region.CONTENT}),
+        )
 
     def _apply_layout(self, layout: RegionLayout) -> None:
         """Set the layout, push it to the workbench, and persist any change.
@@ -1365,7 +1509,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # `Widget.layout` is an existing read-only Textual property the
             # compositor calls `.arrange()` on every render, so shadowing it
             # breaks rendering outright. Verified empirically in Task 3.
-            self.query_one(WatchlistsWorkbench).region_layout = layout
+            #
+            # Pushes the VISIBLE (tab-gated) layout, not the raw `layout`
+            # argument -- see `_visible_region_layout`. Persistence just
+            # below still persists the real, un-derived `layout`.
+            self.query_one(WatchlistsWorkbench).region_layout = self._visible_region_layout()
         except Exception:
             logger.debug("Workbench not mounted yet; layout applies on compose.")
         self._schedule_layout_persist(layout)
@@ -1421,14 +1569,63 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 return
             save_region_layout(layout)
 
+    def _content_toggle_is_blocked(self, region: Region) -> bool:
+        """Whether a CONTENT layout change must be refused right now.
+
+        Whole-branch review (Important): off the Read (Items) tab,
+        `_visible_region_layout` force-collapses CONTENT, which renders a
+        real, focusable `▸ Content` header button. Clicking it -- or pressing
+        `z` with it focused -- ran the toggle against the REAL
+        `region_layout`, not the derived view the user was actually looking
+        at. So the click did nothing visible, silently flipped the user's
+        genuine preference to collapsed, and `_schedule_layout_persist` wrote
+        `"content"` into `[watchlists].collapsed_regions` on disk. With the
+        Phase D migration marker already set, that is then honoured forever
+        -- permanently recreating the exact broken state the migration exists
+        to repair, from a control that appeared to be inert.
+
+        The header stays focusable (a collapsed region must be), so refusing
+        the toggle here, with an explanation, is the fix rather than removing
+        the affordance.
+
+        Also gates SOLO (PR #1091 review, F2 / TASK-1344 AC#2). `Z` on the
+        same focused header collapsed FEEDS and ITEMS around a region the
+        user cannot see on this tab, so the centre went empty -- the same
+        class of harm as the chevron, through the one route that was still
+        open.
+
+        Args:
+            region: The region the user's gesture targets.
+
+        Returns:
+            `True` when the gesture must be refused (and the user has been
+            told why), `False` when it may proceed.
+        """
+        if region is not Region.CONTENT or self.active_section == "items":
+            return False
+        self.notify(
+            "The reader is only shown on the Read tab. Switch to Read to "
+            "change its layout."
+        )
+        return True
+
     def action_toggle_region(self) -> None:
         """Collapse or expand whichever region currently has focus."""
-        self._apply_layout(self.region_layout.toggle(self.focused_region))
+        region = self.focused_region
+        if self._content_toggle_is_blocked(region):
+            return
+        self._apply_layout(self.region_layout.toggle(region))
 
     def action_solo_region(self) -> None:
-        """Isolate the focused centre pane; press again to restore."""
+        """Isolate the focused centre pane; press again to restore.
+
+        Refused for CONTENT off the Read tab, exactly as the chevron and `z`
+        already are -- see `_content_toggle_is_blocked`.
+        """
         if self.focused_region not in CENTRE_REGIONS:
             self.notify("Solo applies to the Feeds, Items, or Content panes.")
+            return
+        if self._content_toggle_is_blocked(self.focused_region):
             return
         self._apply_layout(self.region_layout.solo(self.focused_region))
 
@@ -1441,6 +1638,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(RegionToggled)
     def _on_region_toggled(self, event: RegionToggled) -> None:
         event.stop()
+        if self._content_toggle_is_blocked(event.region):
+            return
         self._apply_layout(self.region_layout.toggle(event.region))
 
     def _apply_tree_scope(self, scope: TreeScope) -> None:
@@ -2722,6 +2921,222 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_item_selected(self, event: ItemSelected) -> None:
         event.stop()
         self._select_entity(event.item)
+        # Route to the reader (Task 4), independent of `_select_entity`'s
+        # generic Inspector reconciliation above: Sources/Runs/Rules also
+        # flow through `_select_entity`, and none of those dicts carry
+        # `content_kind`/`content` -- pushing them into `ContentPane` would
+        # render `render_for`'s article-fallback over the WRONG entity's
+        # fields instead of leaving the reader showing the last real item.
+        # Held on the screen (`_selected_content_item`), not just pushed to
+        # the mounted pane, so `_build_content_pane` can re-seed a rebuilt
+        # `ContentPane` the same way `_build_inspector_pane` re-seeds
+        # `selected_entity` — see that seeding note above.
+        self._selected_content_item = event.item
+        try:
+            self.query_one("#watchlists-content-pane", ContentPane).item = event.item
+        except NoMatches:
+            pass
+        self._mark_item_read_on_open(event.item)
+
+    def _mark_item_read_on_open(self, item: dict[str, Any] | None) -> None:
+        """Opening an item in the reader marks it read (Task 5).
+
+        Only fires the "new" -> "reviewed" transition: an item already at
+        "reviewed"/"ingested"/"ignored"/"error" left the unread bucket
+        through some other deliberate action already, and re-opening it here
+        must not clobber that back down to a bare "reviewed". Silent
+        (`notify_toast=False`) because this fires on every selection, not on
+        a deliberate user request for a status change -- a toast per click
+        would be noise, unlike the explicit unread toggle.
+
+        `refresh=False` + `patch_item=item` (Task 5 fix round 1, CRITICAL):
+        this fires on every single item SELECTION, not just a deliberate
+        button click. `_update_item_status`'s default refresh reloads
+        `ItemsPane.items` and calls `_refresh_overview_data()`, and
+        `overview_data` is `reactive({}, recompose=True)` -- a SCREEN-level
+        recompose, which rebuilds every region via its factory
+        (`_build_list_pane`/`_build_content_pane`/etc.), replacing the live
+        `ItemsPane`/`DataTable` instances wholesale. Proven live: with the
+        default refresh, one item selection detached the old `ItemsPane`,
+        reset the table cursor to 0, cleared screen focus, and a SECOND
+        arrow-key press did nothing at all. `patch_item` mutates the same
+        dict object already held by `ItemsPane.items`/
+        `_selected_content_item`/`ContentPane.item` in place instead, so a
+        later status check sees "reviewed" without forcing a rebuild.
+
+        This reuses the exact status column `_update_item_status` already
+        writes for the deliberate item-status actions (Ingest/Ignore, the
+        unread toggle) -- `SubscriptionsDB.mark_item_status`, keyed by the
+        item's own row id, not by any (watchlist, item) pair -- so it is
+        global by construction: the same article read from "All sources" is
+        read in every watchlist whose sources include it.
+        """
+        if item is None:
+            return
+        if str(item.get("status") or "").strip().lower() != "new":
+            return
+        item_id = item.get("id")
+        if item_id is None:
+            return
+        self.run_worker(
+            self._update_item_status(
+                item_id,
+                "reviewed",
+                notify_toast=False,
+                refresh=False,
+                patch_item=item,
+            ),
+            exclusive=True,
+            # Whole-branch review (Important): `exclusive=True` with no
+            # `group=` lands in the DEFAULT group, which ~25 call sites on
+            # this screen share -- including `_check_now_source`. Since Phase
+            # D this worker fires on every item selection and every `j`/`k`,
+            # so opening an item cancelled an in-flight "Check now" network
+            # fetch the user had just been toasted about. Give both
+            # item-status writes their own group so they only ever supersede
+            # each other.
+            group=_ITEM_STATUS_WORKER_GROUP,
+        )
+
+    @on(UnreadToggleRequested)
+    def handle_unread_toggle_requested(self, event: UnreadToggleRequested) -> None:
+        """The explicit way back (Task 5): marking read is otherwise
+        irreversible from the reader, since it drops the item out of the
+        unread list. Reuses the same global status column, just the other
+        direction.
+
+        Refuses to downgrade a status that is not a read/unread state at all
+        (whole-branch review, Minor -- data loss). `_mark_item_read_on_open`
+        already declines to touch anything but `new`, for the same reason:
+        `ingested`, `ignored` and `error` are terminal records of something
+        that happened to the item, and this button would overwrite them with
+        `new`, losing the fact of an ingest and dropping the item out of the
+        Ingested filter that was the only way to find it again.
+
+        The refusal is decided in `_mark_item_unread`, by asking the backend,
+        NOT from `event.item` (re-review, Important). `event.item` is
+        `ContentPane.item` -- the dict the screen has held since the item was
+        selected -- and `handle_ingest_requested`/`handle_ignore_requested`
+        call `_update_item_status` with no `patch_item=`, so that dict is
+        never updated when they run. `patch_item=` is passed by exactly one
+        caller in the whole app (`_mark_item_read_on_open`) and by neither of
+        those two. Ingest an open item and the reader's dict still says
+        `reviewed`, so a guard reading `event.item` never fires and the button
+        destroys the ingest anyway -- reproduced end to end.
+        """
+        event.stop()
+        item = event.item
+        if item is None:
+            return
+        item_id = item.get("id")
+        if item_id is None:
+            return
+        self.run_worker(
+            self._mark_item_unread(item_id),
+            exclusive=True,
+            group=_ITEM_STATUS_WORKER_GROUP,
+        )
+
+    async def _mark_item_unread(self, item_id: Any) -> None:
+        """Ask the backend for the item's real status, then refuse or write.
+
+        Deciding here, from a live query, rather than keeping the screen's
+        cached dicts patched at every status writer (re-review, Important).
+        Both were on the table; this leaves strictly fewer places able to
+        drift:
+
+        * Patching would have to keep the reader's dict in step for every
+          present and future writer of an item status, and it structurally
+          cannot cover a status this screen did not write at all -- a
+          scheduled run marking an item `error`, the server backend, or a
+          second screen.
+        * Asking has exactly one decision point, and it asks the system of
+          record, so it is right no matter who moved the item or when.
+
+        `_loaded_items` is NOT the system of record and cannot be used here:
+        `local_watchlists_service.list_items` collapses `status=None` to
+        `status="new"` (verified), so an ingested item is not merely stale in
+        that cache -- it is absent from it entirely, along with every other
+        non-`new` item. An earlier version of this fix read `_loaded_items`
+        after an awaited `_load_items()` and still wrote `new` over a live
+        ingest, for exactly that reason.
+
+        Fails CLOSED. If the backend cannot be asked, the write is refused
+        and the user is told to retry: marking unread is a convenience the
+        user can repeat, whereas overwriting an ingest is not recoverable, so
+        an unanswered question must not resolve in favour of the destructive
+        branch.
+
+        Args:
+            item_id: Normalized id of the item to mark unread.
+        """
+        try:
+            blocking = await self._blocking_status_for(item_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not confirm an item's status before marking it unread."
+            )
+            self.notify(
+                "Could not confirm this item's current status, so it was left "
+                "unchanged. Try again.",
+                severity="warning",
+            )
+            return
+        if blocking is not None:
+            self.notify(
+                f"This item is marked {blocking}; leaving it as it is rather "
+                "than overwriting that with unread.",
+                severity="warning",
+            )
+            return
+        await self._update_item_status(item_id, "new")
+
+    async def _blocking_status_for(self, item_id: Any) -> str | None:
+        """Which `_NON_READ_STATE_STATUSES` value the backend holds for this item.
+
+        One authoritative single-item read
+        (`WatchlistsBackendController.get_item_status`, down to
+        `SubscriptionsDB.get_item_status`), not an inference from a listing.
+
+        An earlier version asked `list_items` once per candidate status with
+        `limit=500` and looked for the item in each result (PR #1091 review,
+        F1). `LocalWatchlistsService.list_items` slices to the requested
+        window, so an `ingested`/`ignored`/`error` item outside the first page
+        was simply absent from the answer -- and absence from a truncated page
+        is not proof of absence. The guard returned `None`, and `Mark unread`
+        overwrote the ingest: exactly the data loss the guard exists to
+        prevent, for any source with more than 500 items in a blocking
+        status. Adding pagination would only have moved the boundary; reading
+        the item's own row removes the boundary.
+
+        Args:
+            item_id: Normalized id of the item to check.
+
+        Returns:
+            The blocking status the backend holds for this item, or `None`
+            when its status is a read/unread state (`new`/`reviewed`) that
+            `Mark unread` may legitimately overwrite.
+
+        Raises:
+            Exception: Whatever the controller raises -- including `KeyError`
+                for an item that is no longer there, and
+                `NotImplementedError` for a backend with no single-item read.
+                The caller treats an unanswerable question as a refusal, not
+                as a green light.
+        """
+        status = await self._controller.get_item_status(
+            runtime_backend=self.runtime_backend,
+            item_id=item_id,
+        )
+        normalized = str(status or "").strip().lower()
+        return normalized if normalized in _NON_READ_STATE_STATUSES else None
+
+    @on(ItemsFilterChanged)
+    def handle_items_filter_changed(self, event: ItemsFilterChanged) -> None:
+        """Mirror the Items filter/search so a workbench rebuild can restore it."""
+        event.stop()
+        self._items_status_filter = event.status_filter
+        self._items_search_query = event.search_query
 
     @on(RefreshItemsRequested)
     def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:
@@ -2809,14 +3224,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         self.set_timer(0.05, open_edit_form)
 
-    @on(MarkReviewedRequested)
-    def handle_mark_reviewed_requested(self, event: MarkReviewedRequested) -> None:
-        event.stop()
-        entity = event.entity
-        if entity is None:
-            return
-        self.run_worker(self._update_item_status(entity.get("id"), "reviewed"), exclusive=True)
-
     @on(IngestRequested)
     def handle_ingest_requested(self, event: IngestRequested) -> None:
         event.stop()
@@ -2833,7 +3240,40 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self.run_worker(self._update_item_status(entity.get("id"), "ignored"), exclusive=True)
 
-    async def _update_item_status(self, item_id: Any, status: str) -> None:
+    async def _update_item_status(
+        self,
+        item_id: Any,
+        status: str,
+        *,
+        notify_toast: bool = True,
+        refresh: bool = True,
+        patch_item: dict[str, Any] | None = None,
+    ) -> None:
+        """Move one item to `status` through the shared item-status API.
+
+        `notify_toast` is False only for the Task 5 auto-mark-read-on-open
+        path -- every other caller (Ingest/Ignore, the unread toggle) is a
+        deliberate user action and keeps the toast. The failure toast is
+        gated on `notify_toast` too (fix round 1, Minor): "Failed to mark
+        item reviewed" for a write the user never asked for reads as an
+        alarming report about nothing they did; the failure is still logged
+        unconditionally via `logger.opt(exception=True).warning` just below,
+        so it is not silent, just not toasted on the automatic path.
+
+        `refresh=False` (fix round 1, CRITICAL) skips the reload of
+        `ItemsPane.items` and `_refresh_overview_data()`. The latter sets
+        `overview_data`, `reactive({}, recompose=True)` on the screen, so
+        calling it after EVERY item selection forced a full screen
+        recompose -- proven live to detach the mounted `ItemsPane`, reset
+        the `DataTable` cursor, and drop keyboard focus, so a second arrow
+        key did nothing. Used only by the silent auto-mark-read-on-open
+        path; every deliberate action (Ingest/Ignore, the unread toggle)
+        keeps refreshing as before. When `refresh` is False and the write
+        succeeds, `patch_item` -- the same dict object already held by
+        `ItemsPane.items`/`_selected_content_item`/`ContentPane.item` -- is
+        mutated in place instead, so a later status check already sees the
+        new value without forcing a rebuild.
+        """
         notify = getattr(self.app_instance, "notify", None)
         try:
             await self._controller.update_item_status(
@@ -2841,14 +3281,32 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 item_id=item_id,
                 status=status,
             )
-            if callable(notify):
-                notify(f"Item marked {status}.", severity="information")
+            if patch_item is not None:
+                patch_item["status"] = status
+                # Whole-branch review (Important): the in-place patch is
+                # invisible -- rows are built once in `ItemsPane.compose()`
+                # and this path deliberately never recomposes, so the Status
+                # column read "new" for every item the user had opened until
+                # they left the tab. Repaint the one cell instead.
+                self._repaint_item_status_cell(patch_item.get("id"), status)
+            if notify_toast and callable(notify):
+                label = "unread" if status == "new" else status
+                notify(f"Item marked {label}.", severity="information")
         except Exception:
             logger.opt(exception=True).warning(f"Failed to mark item {status}.")
-            if callable(notify):
+            if notify_toast and callable(notify):
                 notify(f"Failed to mark item {status}.", severity="error")
-        self.run_worker(self._load_items(), exclusive=True)
-        self._refresh_overview_data()
+        if refresh:
+            self.run_worker(self._load_items(), exclusive=True)
+            self._refresh_overview_data()
+
+    def _repaint_item_status_cell(self, item_id: Any, status: str) -> None:
+        """Push a patched status into the mounted Items table's Status cell."""
+        try:
+            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+        except NoMatches:
+            return
+        pane.update_item_status_cell(item_id, status)
 
     async def _save_rule(self, payload: dict[str, Any]) -> None:
         notify = getattr(self.app_instance, "notify", None)
@@ -3046,3 +3504,111 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             return
         self.handle_preview_requested(PreviewRequested(entity))
+
+    def action_next_item(self) -> None:
+        """`j`: move the reader to the next item in the list (Task 6)."""
+        self._navigate_item(1)
+
+    def action_previous_item(self) -> None:
+        """`k`: move the reader to the previous item in the list (Task 6)."""
+        self._navigate_item(-1)
+
+    def _navigate_item(self, delta: int) -> None:
+        """Shared `j`/`k` implementation.
+
+        Guarded against a focused `Input`, or a focused *editable*
+        `TextArea` -- both already consume and stop a printable key
+        themselves (`Input._on_key`, `TextArea._on_key` when
+        `read_only` is False), so this guard is not what protects typing
+        today (confirmed by mutation test:
+        `test_typing_j_in_the_search_input_does_not_navigate` does not
+        redden when this check is deleted, because that test drives a real
+        keypress and `Input` already stopped it before this method could
+        ever run). It is kept anyway because this repo already binds a bare
+        letter with `priority=True` elsewhere
+        (`SearchRAGWindow.BINDINGS`'s `Binding("f", "focus_search", ...,
+        priority=True)`) -- `App.on_event` resolves priority bindings
+        BEFORE forwarding the key to the focused widget at all, bypassing
+        `Input`'s own consumption entirely. If `j`/`k` on this screen were
+        ever changed to `priority=True` (a one-line, easy-to-miss edit,
+        given the precedent), this guard would become the ONLY thing
+        stopping a keystroke from hijacking a user's typing -- load-bearing
+        overnight rather than merely defensive. Directly exercised by
+        `test_navigate_item_is_a_noop_when_a_text_input_has_focus`, which
+        calls `action_next_item()` directly, bypassing the key-event
+        pipeline (and therefore `Input`'s own protection) entirely, and
+        does go red without this check.
+
+        A *read-only* `TextArea` is deliberately NOT guarded: read-only
+        `TextArea._on_key` returns before calling `event.stop()`, so it
+        does not consume a printable key at all -- and a read-only
+        `TextArea` is exactly the shape a future reader body could take
+        (today `ContentPane` renders into a `Static`, not a `TextArea`).
+        Guarding it out unconditionally would block `j`/`k` precisely where
+        navigating away from the currently-open item is the whole point.
+
+        Scoped to the Items ("Read") tab, where `ContentPane` is actually
+        mounted (Task 4 gates CONTENT to that tab) -- firing elsewhere would
+        silently write a read-status change to the database, through
+        `_mark_item_read_on_open` below, for an item the user cannot even
+        see.
+
+        Walks `ItemsPane.displayed_items()` -- the SAME filtered/searched
+        sequence the table renders (Task 6 fix round 1, Important #1) --
+        not the screen's unfiltered `_loaded_items`. Otherwise, with a
+        search query or status filter active, `j`/`k` could open, and
+        silently mark read, an item that is not on screen at all.
+
+        Hands the chosen item to `ItemsPane.select_and_reveal` (Task 6 fix
+        round 1, Important #2) rather than calling `handle_item_selected`
+        directly: that keeps `ItemsPane.selected_item`, the table's cursor
+        row, and its scroll position all pointing at the same item as the
+        reader, through the exact same `selected_item` ->
+        `watch_selected_item` -> `ItemSelected` -> `handle_item_selected`
+        path a mouse click or an arrow-key highlight already uses -- so
+        this still inherits the Task 5 fix for free
+        (`_mark_item_read_on_open` calls `_update_item_status(...,
+        refresh=False, patch_item=item)`, patching the item dict in place
+        instead of forcing the `overview_data` `reactive(recompose=True)`
+        full-screen rebuild that once dropped focus and broke a second
+        keypress).
+
+        Boundaries do not raise: an out-of-range index is simply a no-op.
+        """
+        focused = self.focused
+        if isinstance(focused, Input) or (
+            isinstance(focused, TextArea) and not focused.read_only
+        ):
+            return
+        if self.active_section != "items":
+            return
+        try:
+            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+        except NoMatches:
+            return
+        items = pane.displayed_items()
+        if not items:
+            return
+        current = self._selected_content_item
+        current_id = current.get("id") if current else None
+        index: int | None = None
+        if current_id is not None:
+            for position, candidate in enumerate(items):
+                if candidate.get("id") == current_id:
+                    index = position
+                    break
+        if index is None:
+            # "Nothing open, or the open item is not in the displayed list"
+            # is its own case, not index -1 (whole-branch review, CRITICAL).
+            # Falling through on -1 computed `new_index = -1 + delta`, so
+            # `j` opened `items[0]` -- visibly BACKWARDS from wherever the
+            # reader was -- and `k` computed -2 and silently no-opped, for
+            # the rest of the session. Start from the near end of the list
+            # instead, which is what "next"/"previous" mean when there is no
+            # current position.
+            pane.select_and_reveal(items[0] if delta > 0 else items[-1])
+            return
+        new_index = index + delta
+        if new_index < 0 or new_index >= len(items):
+            return
+        pane.select_and_reveal(items[new_index])
