@@ -4,6 +4,7 @@ title: Build shared model artifact descriptors and lifecycle
 status: To Do
 assignee: []
 created_date: '2026-07-24 01:02'
+updated_date: '2026-07-29 01:13'
 labels:
   - stt
   - artifacts
@@ -14,6 +15,7 @@ references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:
   - Docs/superpowers/specs/2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md
+  - Docs/superpowers/specs/2026-07-28-shared-model-artifact-core-design.md
 priority: high
 ---
 

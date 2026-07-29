@@ -4,6 +4,7 @@ title: Renovate the local model artifact browser
 status: To Do
 assignee: []
 created_date: '2026-07-24 01:02'
+updated_date: '2026-07-29 00:30'
 labels:
   - stt
   - artifacts
@@ -31,4 +32,6 @@ Replace the existing downloader-oriented GGUF browser with a provider-neutral ar
 - [ ] #4 Installed inventory shows active and retained revisions, dependencies, installed versus staging space, and deletion blockers including idle resident models.
 - [ ] #5 Deletion can request an idle heavy-worker recycle but cannot bypass an active lease or silently cancel an active job.
 - [ ] #6 Remote search, inventory refresh, install progress, and deletion run off the Textual event loop with bounded results and focused UI tests.
+- [ ] #7 Users can select and persist the active installed artifact revision and precision; unavailable or unverified versions cannot be selected.
+- [ ] #8 The model picker, install confirmation, progress, activation, and installed-state controls are reusable by Settings and onboarding without duplicating artifact or download logic.
 <!-- AC:END -->
