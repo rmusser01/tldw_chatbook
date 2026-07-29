@@ -292,7 +292,7 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
         model_row="Model: model-a",
         context_row="Context: 12 / 4k",
         sampling_row="Sampling: T 0.70, P 0.95",
-        identity_row="As: General",
+        identity_row="Assistant: General",
         readiness_label="Ready",
     )
 
@@ -306,7 +306,7 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
         assert "Model: model-a" in text
         assert "Context: 12 / 4k" in text
         assert "Sampling: T 0.70, P 0.95" in text
-        assert "As: General" in text
+        assert "Assistant: General" in text
         header = app.query_one("#console-settings-header", Horizontal)
         title = app.query_one("#console-settings-title", Static)
         button = app.query_one("#console-settings-open", Button)
@@ -326,7 +326,7 @@ async def test_console_settings_summary_uses_direct_choose_model_action_when_set
         model_row="Model: Missing",
         context_row="Context: unavailable",
         sampling_row="Sampling: T 0.70, P 0.95",
-        identity_row="As: General",
+        identity_row="Assistant: General",
         readiness_label="Missing model",
         action_label="Choose Model",
         action_tooltip="Choose a model for this Console session",
@@ -351,7 +351,7 @@ async def test_console_settings_summary_treats_missing_provider_row_as_blank() -
         model_row="Model: model-a",
         context_row="Context: 12 / 4k",
         sampling_row="Sampling: T 0.70, P 0.95",
-        identity_row="As: General",
+        identity_row="Assistant: General",
         readiness_label="Ready",
     )
 
@@ -368,7 +368,7 @@ async def test_console_settings_summary_treats_missing_provider_row_as_blank() -
             model_row="Model: model-b",
             context_row="Context: 20 / 4k",
             sampling_row="Sampling: T 0.20, P 0.90",
-            identity_row="As: Analyst",
+            identity_row="Persona: Analyst",
             readiness_label="Ready",
         )
         app.query_one(ConsoleSettingsSummary).sync_state(updated_state)
@@ -798,12 +798,11 @@ def test_summary_state_normalizes_unknown_context_label() -> None:
     assert state.context_row == "Context: unavailable"
 
 
-def test_summary_state_prefers_character_label_over_user_profile_label() -> None:
+def test_summary_state_renders_character_or_generic_assistant_identity() -> None:
     character = build_console_settings_summary_state(
         ConsoleSessionSettings(
             provider="llama_cpp",
             model="model-a",
-            user_profile_label="General",
             character_label="Ada",
         ),
         ConsoleSettingsContextEstimate(
@@ -813,19 +812,8 @@ def test_summary_state_prefers_character_label_over_user_profile_label() -> None
             label="Ready", detail="Ready.", native_send_supported=True
         ),
     )
-    persona = build_console_settings_summary_state(
-        ConsoleSessionSettings(
-            provider="llama_cpp", model="model-a", user_profile_label="Mentor"
-        ),
-        ConsoleSettingsContextEstimate(
-            used_tokens=12, token_limit=4096, label="12 / 4k"
-        ),
-        ConsoleSettingsReadiness(
-            label="Ready", detail="Ready.", native_send_supported=True
-        ),
-    )
-    fallback = build_console_settings_summary_state(
-        ConsoleSessionSettings(provider="llama_cpp", model="model-a", user_profile_label=""),
+    generic = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
         ConsoleSettingsContextEstimate(
             used_tokens=12, token_limit=4096, label="12 / 4k"
         ),
@@ -835,8 +823,27 @@ def test_summary_state_prefers_character_label_over_user_profile_label() -> None
     )
 
     assert character.identity_row == "Character: Ada"
-    assert persona.identity_row == "As: Mentor"
-    assert fallback.identity_row == "As: General"
+    assert generic.identity_row == "Assistant: General"
+
+
+def test_legacy_identity_settings_helper_ignores_unknown_keys_without_mutation() -> (
+    None
+):
+    source = {
+        "provider": "llama_cpp",
+        "model": "model-a",
+        "persona_label": "Legacy A",
+        "user_profile_label": "Legacy B",
+    }
+    source_before = dict(source)
+    restored = ChatScreen._restore_console_settings(source)
+
+    assert restored is not None
+    assert source == source_before
+    assert not hasattr(restored, "user_profile_label")
+    serialized = ChatScreen._serialize_console_settings(restored)
+    assert serialized is not None
+    assert {"persona_label", "user_profile_label"}.isdisjoint(serialized)
 
 
 def test_choose_model_action_label_normalization() -> None:
@@ -1803,14 +1810,13 @@ async def test_console_settings_modal_inputs_keep_visible_content_row_when_unfoc
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_renders_context_and_identity_read_only_rows() -> (
+async def test_console_settings_modal_renders_context_and_single_identity_row() -> (
     None
 ):
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
         model="model-a",
-        user_profile_label="Planner",
         character_label="Ada",
     )
 
@@ -1843,21 +1849,15 @@ async def test_console_settings_modal_renders_context_and_identity_read_only_row
         assert "Estimate only; no truncation changes in this version." in str(
             app.screen.query_one("#console-settings-context-note", Static).renderable
         )
-        assert "Planner / Ada" in str(
+        assert "Character: Ada" in str(
             app.screen.query_one(
                 "#console-settings-identity-current", Static
             ).renderable
         )
-        assert "Planner [read-only]" in str(
-            app.screen.query_one(
-                "#console-settings-persona-readonly", Static
-            ).renderable
-        )
-        assert "Ada [read-only]" in str(
-            app.screen.query_one(
-                "#console-settings-character-readonly", Static
-            ).renderable
-        )
+        assert not app.screen.query("#console-settings-persona-readonly")
+        assert not app.screen.query("#console-settings-character-readonly")
+        assert "User Profile" not in text
+        assert "As:" not in text
         assert not app.screen.query("#console-settings-persona-input")
         assert not app.screen.query("#console-settings-character-input")
 
@@ -3573,6 +3573,31 @@ def test_console_readiness_uses_saved_session_settings_over_stale_global_provide
     assert control_state.model_label == "Model: local-model"
     assert provider_row.value == "ready"
     assert provider_row.recovery == ""
+
+
+def test_console_control_state_reads_existing_persona_presentation_from_active_session(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    screen = ChatScreen(app)
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session()
+    monkeypatch.setattr(
+        screen,
+        "_active_native_console_session",
+        lambda: SimpleNamespace(
+            assistant_kind="persona",
+            assistant_name="Guide",
+            assistant_id="persona-7",
+        ),
+    )
+
+    state = screen._build_console_control_state(None)
+
+    assert state.assistant_label == "Persona: Guide"
+    assert "assistant_kind" not in session.__dataclass_fields__
+    assert "assistant_name" not in session.__dataclass_fields__
+    assert "assistant_id" not in session.__dataclass_fields__
 
 
 def test_console_saved_openai_with_key_shows_ready_readiness() -> None:

@@ -352,7 +352,7 @@ async def test_console_mode_bar_groups_location_mode_and_readiness():
         # count falls back to the same dash for any non-numeric label.
         assert (
             mode_plain
-            == "Chat/RAG/Follow | General | Sources 0 | Tools — | Approvals 0"
+            == "Chat/RAG/Follow | Assistant: General | Sources 0 | Tools — | Approvals 0"
         )
 
 

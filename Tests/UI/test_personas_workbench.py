@@ -5391,7 +5391,6 @@ class TestPersonaHumanIdentityRemoval:
         baseline = ConsoleSessionSettings(
             provider="anthropic",
             model="claude-3-haiku",
-            user_profile_label="General",
         )
 
         monkeypatch.setattr(
@@ -5429,7 +5428,7 @@ class TestPersonaHumanIdentityRemoval:
 
         assert await screen._start_character_console_session(payload) is True
         assert store.session is not None
-        assert store.session.settings.user_profile_label == "General"
+        assert not hasattr(store.session.settings, "user_profile_label")
         assert [message["content"] for message in store.messages] == [
             "Hello User, I am Elara."
         ]

@@ -543,18 +543,6 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         classes="console-settings-modal-row",
                         markup=False,
                     )
-                    yield Static(
-                        f"User Profile    {self._user_profile_label()} [read-only]",
-                        id="console-settings-persona-readonly",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                    yield Static(
-                        f"Character       {self._character_label()} [read-only]",
-                        id="console-settings-character-readonly",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
 
             with Horizontal(
                 id="console-settings-actions",
@@ -1023,7 +1011,6 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 "console-settings-thinking-budget-tokens"
             ),
             streaming=self._streaming_draft,
-            user_profile_label=self._settings.user_profile_label,
             character_label=self._settings.character_label,
         )
 
@@ -1395,15 +1382,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         return "None"
 
     def _identity_current_label(self) -> str:
-        persona = self._user_profile_label()
         character = self._settings.character_label.strip()
-        return f"{persona} / {character}" if character else persona
-
-    def _user_profile_label(self) -> str:
-        return self._settings.user_profile_label.strip() or "General"
-
-    def _character_label(self) -> str:
-        return self._settings.character_label.strip() or "None"
+        return f"Character: {character}" if character else "Assistant: General"
 
     @staticmethod
     def _format_value(value: object) -> str:

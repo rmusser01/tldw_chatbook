@@ -5180,6 +5180,7 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleControlState:
         """Build Console-owned control/readiness labels."""
         provider, model, settings = self._active_console_provider_model_display()
+        active_session = self._active_native_console_session()
         source = pending_launch.source if pending_launch else None
         return ConsoleControlState.from_values(
             provider=provider,
@@ -5192,7 +5193,9 @@ class ChatScreen(BaseAppScreen):
                 getattr(settings, "character_label", None)
                 or self._current_console_rail_character_name()
             ),
-            persona=getattr(settings, "user_profile_label", None),
+            assistant_kind=getattr(active_session, "assistant_kind", None),
+            assistant_name=getattr(active_session, "assistant_name", None),
+            assistant_id=getattr(active_session, "assistant_id", None),
             rag_enabled=_source_mentions_rag(source),
             staged_source_count=1 if pending_launch else 0,
             tool_count=self._console_tool_count(),
@@ -9854,14 +9857,10 @@ class ChatScreen(BaseAppScreen):
             # rather than a truncated word fragment.
             return first_token if first_token.isdigit() else "—"
 
-        # The mode summary names the AI side: in a roleplay session that is the
-        # character, which is what the user is actually tracking.
-        character = str(control_state.character_label or "")
-        if character.startswith("Character: "):
-            character = character.removeprefix("Character: ").strip()
+        assistant = str(control_state.assistant_label or "Assistant: General")
         return (
             "Chat/RAG/Follow"
-            f" | {character or 'no character'}"
+            f" | {assistant}"
             f" | Sources {readiness_count(control_state.sources_label)}"
             f" | Tools {readiness_count(control_state.tools_label)}"
             f" | Approvals {readiness_count(control_state.approvals_label)}"
@@ -11553,10 +11552,8 @@ class ChatScreen(BaseAppScreen):
         if not isinstance(payload, dict):
             return None
         values = dict(payload)
-        if "persona_label" in values and "user_profile_label" not in values:
-            # Pre-task-442 blobs serialized the old field name.
-            values["user_profile_label"] = values.pop("persona_label")
         values.pop("persona_label", None)
+        values.pop("user_profile_label", None)
         valid_fields = set(ConsoleSessionSettings.__dataclass_fields__)
         values = {key: value for key, value in values.items() if key in valid_fields}
         provider = str(values.get("provider") or "").strip()
@@ -16981,7 +16978,6 @@ class ChatScreen(BaseAppScreen):
                 next_settings = replace(
                     next_settings,
                     **override_fields,
-                    user_profile_label=settings.user_profile_label,
                     character_label=settings.character_label,
                 )
             if temperature is not None:

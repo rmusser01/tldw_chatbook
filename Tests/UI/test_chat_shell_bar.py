@@ -11,7 +11,6 @@ from textual.widgets import Button, Input, Select
 from textual.widgets import Static
 
 from tldw_chatbook.Chat.chat_models import ChatSessionData
-from tldw_chatbook.UI.Screens.chat_screen_state import TabState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import (
     ChatShellBar,
     ChatShellContext,
@@ -24,6 +23,21 @@ from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 class _ShellBarFixture:
     session_data: object
     resolver: ChatShellLabelResolver | None = None
+
+
+@dataclass
+class _SessionFixture:
+    """Lightweight shell input for exercising session-like presentation values."""
+
+    title: str = "New chat"
+    runtime_backend: str = "local"
+    scope_type: str | None = None
+    workspace_id: str | None = None
+    assistant_kind: str | None = None
+    assistant_name: str | None = None
+    assistant_id: str | None = None
+    character_name: str | None = None
+    character_id: int | None = None
 
 
 class ShellBarTestApp(App):
@@ -76,20 +90,19 @@ def test_chat_shell_context_defaults_from_none() -> None:
     assert context.session_label == "Session: New chat"
 
 
-def test_chat_shell_context_supports_tab_state_and_chat_session_data() -> None:
+def test_chat_shell_context_supports_session_fixture_and_chat_session_data() -> None:
     resolver = ChatShellLabelResolver(
         workspace_name="Research Lab",
-        user_profile_label="Priya",
         character_label="Vox",
     )
 
-    tab_state = TabState(
-        tab_id="tab-a",
+    tab_state = _SessionFixture(
         title="A Very Long Session Name",
         runtime_backend="server",
         scope_type="workspace",
         workspace_id="ws-123",
         assistant_kind="persona",
+        assistant_name="Guide",
         assistant_id="persona-9",
     )
     session_data = ChatSessionData(
@@ -110,7 +123,7 @@ def test_chat_shell_context_supports_tab_state_and_chat_session_data() -> None:
 
     assert tab_context.backend_label == "Server"
     assert tab_context.scope_label == "Workspace: Research Lab"
-    assert tab_context.assistant_label == "As: Priya"
+    assert tab_context.assistant_label == "Character: Vox"
     assert tab_context.session_label == "Session: A Very Long Session Name"
 
     assert session_context.backend_label == "Server"
@@ -119,11 +132,61 @@ def test_chat_shell_context_supports_tab_state_and_chat_session_data() -> None:
     assert session_context.session_label == "Session: Chat Session"
 
 
+@pytest.mark.parametrize(
+    ("session_data", "resolver", "expected"),
+    [
+        (
+            _SessionFixture(
+                assistant_kind=" Persona ",
+                assistant_name=" Guide ",
+            ),
+            None,
+            "Persona: Guide",
+        ),
+        (
+            _SessionFixture(
+                assistant_kind="persona",
+                assistant_name=" \t ",
+                assistant_id=" persona-9 ",
+            ),
+            None,
+            "Persona: persona-9",
+        ),
+        (
+            _SessionFixture(
+                assistant_kind="persona",
+                assistant_name="Guide",
+                character_name="Ada",
+            ),
+            None,
+            "Character: Ada",
+        ),
+        (
+            _SessionFixture(
+                assistant_kind="persona",
+                assistant_name="Guide",
+                character_name="Ignored",
+            ),
+            ChatShellLabelResolver(character_label=" Vox "),
+            "Character: Vox",
+        ),
+    ],
+)
+def test_chat_shell_context_normalizes_identity_and_keeps_character_precedence(
+    session_data: _SessionFixture,
+    resolver: ChatShellLabelResolver | None,
+    expected: str,
+) -> None:
+    context = ChatShellContext.from_session_data(session_data, resolver=resolver)
+
+    assert context.assistant_label == expected
+
+
 def test_chat_shell_context_truncates_session_label_last() -> None:
     context = ChatShellContext(
         backend_label="Server",
         scope_label="Workspace: Research Lab",
-        assistant_label="As: Priya",
+        assistant_label="Persona: Guide",
         session_label="Session: A very long session title that should be shortened",
     )
 
@@ -132,7 +195,7 @@ def test_chat_shell_context_truncates_session_label_last() -> None:
     assert segments[:3] == [
         "Server",
         "Workspace: Research Lab",
-        "As: Priya",
+        "Persona: Guide",
     ]
     assert segments[-1].startswith("Session:")
     assert len(" | ".join(segments)) <= 80
@@ -275,6 +338,77 @@ async def test_chat_shell_bar_refreshes_label_on_session_sync_and_resize() -> No
 
 
 @pytest.mark.asyncio
+async def test_chat_shell_bar_sync_normalizes_identity_and_keeps_character_precedence() -> (
+    None
+):
+    fixture = _ShellBarFixture(session_data=_SessionFixture())
+    app = ShellBarTestApp(fixture)
+
+    with patch(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+        return_value={"openai": ["gpt-4o-mini", "gpt-4o"]},
+    ):
+        async with app.run_test(size=(400, 20)) as pilot:
+            shell_bar = app.query_one(ChatShellBar)
+            label = app.query_one("#chat-shell-context", Static)
+
+            shell_bar.sync_from_session_data(
+                _SessionFixture(
+                    assistant_kind=" Persona ",
+                    assistant_name=" Guide ",
+                )
+            )
+            await pilot.pause()
+            assert "Persona: Guide" in _static_text(label)
+
+            shell_bar.sync_from_session_data(
+                _SessionFixture(
+                    assistant_kind="persona",
+                    assistant_name=" \t ",
+                    assistant_id=" persona-9 ",
+                )
+            )
+            await pilot.pause()
+            assert "Persona: persona-9" in _static_text(label)
+
+            shell_bar.sync_from_session_data(
+                _SessionFixture(
+                    assistant_kind="persona",
+                    assistant_name="Guide",
+                    character_name="Ada",
+                )
+            )
+            await pilot.pause()
+            rendered = _static_text(label)
+            assert "Character: Ada" in rendered
+            assert "Persona: Guide" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_chat_shell_bar_sync_renders_malformed_markup_as_literal_text() -> None:
+    fixture = _ShellBarFixture(session_data=_SessionFixture())
+    app = ShellBarTestApp(fixture)
+
+    with patch(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+        return_value={"openai": ["gpt-4o-mini", "gpt-4o"]},
+    ):
+        async with app.run_test(size=(400, 20)) as pilot:
+            shell_bar = app.query_one(ChatShellBar)
+            label = app.query_one("#chat-shell-context", Static)
+
+            shell_bar.sync_from_session_data(
+                _SessionFixture(
+                    assistant_kind="persona",
+                    assistant_name="[bold]Guide[/red]",
+                )
+            )
+            await pilot.pause()
+
+            assert "[bold]Guide[/red]" in _static_text(label)
+
+
+@pytest.mark.asyncio
 async def test_chat_shell_bar_clears_resolver_labels_when_syncing_without_resolver() -> (
     None
 ):
@@ -290,7 +424,6 @@ async def test_chat_shell_bar_clears_resolver_labels_when_syncing_without_resolv
         ),
         resolver=ChatShellLabelResolver(
             workspace_name="Workspace One",
-            user_profile_label="Coach One",
         ),
     )
     app = ShellBarTestApp(fixture)
@@ -318,6 +451,6 @@ async def test_chat_shell_bar_clears_resolver_labels_when_syncing_without_resolv
 
             synced_text = _static_text(label)
             assert "Workspace: ws-2" in synced_text
-            assert "As: persona-2" in synced_text
+            assert "Persona: persona-2" in synced_text
+            assert "As:" not in synced_text
             assert "Workspace One" not in synced_text
-            assert "Coach One" not in synced_text

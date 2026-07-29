@@ -22,8 +22,7 @@ def _ready_control_state() -> ConsoleControlState:
     return ConsoleControlState(
         provider_label="Provider: llama_cpp",
         model_label="Model: local-gemma",
-        character_label="Character: none",
-        user_profile_label="You: default",
+        assistant_label="Assistant: General",
         rag_label="RAG: off",
         sources_label="Sources: 0",
         tools_label="Tools: 0",

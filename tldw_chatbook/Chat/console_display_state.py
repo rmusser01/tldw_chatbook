@@ -33,6 +33,37 @@ def _safe_display_text(value: Any, fallback: str = "") -> str:
     return html_escape(_clean(value, fallback), quote=False)
 
 
+def resolve_assistant_identity_label(
+    *,
+    character: Any = None,
+    assistant_kind: Any = None,
+    assistant_name: Any = None,
+    assistant_id: Any = None,
+) -> str:
+    """Resolve the shared assistant identity label for Console and Chat.
+
+    Args:
+        character: Existing character display value, which always takes
+            precedence when nonblank.
+        assistant_kind: Optional presentation-only assistant kind.
+        assistant_name: Optional presentation-only assistant display name.
+        assistant_id: Optional presentation-only assistant identifier.
+
+    Returns:
+        ``Character: <value>``, ``Persona: <value>``, or the generic
+        ``Assistant: General`` fallback.
+    """
+    character_text = _clean(character, "")
+    if character_text:
+        return f"Character: {character_text}"
+
+    assistant_kind_text = _clean(assistant_kind, "").lower()
+    persona_text = _clean(assistant_name, "") or _clean(assistant_id, "")
+    if assistant_kind_text == "persona" and persona_text:
+        return f"Persona: {persona_text}"
+    return "Assistant: General"
+
+
 def coerce_non_negative_int(value: Any) -> int:
     """Coerce a loose seam value into a non-negative integer.
 
@@ -289,8 +320,7 @@ class ConsoleControlState:
 
     provider_label: str
     model_label: str
-    character_label: str
-    user_profile_label: str
+    assistant_label: str
     rag_label: str
     sources_label: str
     tools_label: str
@@ -305,8 +335,10 @@ class ConsoleControlState:
         *,
         provider: Any = None,
         model: Any = None,
-        persona: Any = None,
         character: Any = None,
+        assistant_kind: Any = None,
+        assistant_name: Any = None,
+        assistant_id: Any = None,
         rag_enabled: bool = False,
         staged_source_count: int = 0,
         tool_count: int = 0,
@@ -318,10 +350,11 @@ class ConsoleControlState:
         Args:
             provider: Active provider name, or falsy for "not selected".
             model: Active model name, or falsy for "not selected".
-            persona: The user's own profile label (the human side of the
-                conversation); falsy renders as "You: default".
-            character: Active character driving replies (the AI side);
-                falsy renders as "Character: none".
+            character: Existing character presentation value; when present,
+                renders as ``Character: <name>``.
+            assistant_kind: Optional presentation-only assistant kind.
+            assistant_name: Optional presentation-only assistant display name.
+            assistant_id: Optional presentation-only assistant identifier.
             rag_enabled: Whether RAG is on for this send.
             staged_source_count: Number of staged context sources.
             tool_count: Built-in tools that can run.
@@ -336,14 +369,12 @@ class ConsoleControlState:
             app never distinguishes "definitely zero" from "not counted yet")
             -- and whose ``*_active`` flags drive chip emphasis.
         """
-        # Two distinct facts, two chips. The old single chip rendered
-        # "Assistant: General" from the USER-PROFILE value, which Console always
-        # passed as None -- so it was a constant that named neither side of the
-        # conversation. `{{user}}` is the human; the character is the AI side.
-        character_text = _clean(character, "")
-        character_label = f"Character: {character_text or 'none'}"
-        persona_text = _clean(persona, "")
-        user_profile_label = f"You: {persona_text or 'default'}"
+        assistant_label = resolve_assistant_identity_label(
+            character=character,
+            assistant_kind=assistant_kind,
+            assistant_name=assistant_name,
+            assistant_id=assistant_id,
+        )
         # TASK-350: the chip must reflect the tools that can ACTUALLY run — built-in
         # AND MCP. Counting only built-in read "Tools: 0 ready" while the inspector
         # showed "MCP: 10 tools ready". `mcp_tool_count is None` means no MCP seam
@@ -371,8 +402,7 @@ class ConsoleControlState:
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
-            character_label=character_label,
-            user_profile_label=user_profile_label,
+            assistant_label=assistant_label,
             rag_label=f"RAG: {'on' if rag_enabled else 'off'}",
             sources_label=f"Sources: {staged_source_count} staged",
             tools_label=tools_label,
