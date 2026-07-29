@@ -40,6 +40,9 @@ The failures reproduce on an exact `origin/dev` checkout:
 - Four `Tests/LLM/test_local_llm_provider_config.py` cases repeat the deleted
   `settings` pattern for the local-LLM adapter, which also resolves the
   immutable runtime snapshot at each request boundary.
+- `Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py`
+  patches the snapshot seam but supplies local-LLM configuration at the retired
+  top level instead of `api_settings.local-llm`.
 - Three real-seam Notes fixtures pass a nonexistent `tmp_path/notes_base` to
   `NotesInteropService`. ADR-029's trusted-directory boundary correctly
   rejects missing directories instead of creating them implicitly.
@@ -88,8 +91,8 @@ Update the tests to describe current behavior:
    mocked recorder in `finally` before asserting that audio was queued.
 6. Update the stale Llama.cpp, DeepSeek, and local-LLM request tests to patch
    `get_runtime_config_snapshot()` with a `RuntimeConfigSnapshot` containing
-   their test configuration. Do not restore or emulate mutable module-level
-   settings.
+   their test configuration under the live `api_settings` shape. Do not restore
+   or emulate mutable module-level settings.
 7. Create each fixture-owned temporary Notes base directory with mode `0700`
    before constructing `NotesInteropService`, and close all per-user Notes
    connections before the template DB during fixture teardown. Do not weaken

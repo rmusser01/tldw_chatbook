@@ -40,6 +40,8 @@ regenerate the inventory before reviewing its changed owners and sink topology.
   snapshot seam instead of deleted module-level settings.
 - Modify `Tests/LLM/test_local_llm_provider_config.py`: patch the same live
   runtime-config snapshot seam for local-LLM provider configuration.
+- Modify `Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py`:
+  place its local-LLM fixture under the live `api_settings` snapshot shape.
 - Modify `Tests/Chat/test_scope_picker_listers.py`: create its fixture-owned
   trusted Notes base before service construction.
 - Modify `Tests/Library/test_library_rag_scope.py`: create both fixture-owned
@@ -330,6 +332,7 @@ git commit -m "test(chat): patch runtime config snapshots"
 
 **Files:**
 - Modify: `Tests/LLM/test_local_llm_provider_config.py`
+- Modify: `Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py`
 
 - [ ] **Step 1: Reproduce RED**
 
@@ -341,18 +344,25 @@ the deleted `LLM_API_Calls_Local.settings` object.
 Import `RuntimeConfigSnapshot`. Replace the settings helper with a snapshot
 helper and monkeypatch `local_calls.get_runtime_config_snapshot` in each case.
 Preserve the documented `api_url`, legacy `api_ip`, precedence, and missing-URL
-assertions. Do not change production.
+assertions. In the provider-name regression, move the existing local-LLM
+fixture beneath `api_settings` while preserving its string provider-name
+assertion. Do not change production.
 
 - [ ] **Step 3: Verify and commit**
 
 ```bash
 ../../.venv/bin/python -m pytest \
-  Tests/LLM/test_local_llm_provider_config.py -q
+  Tests/LLM/test_local_llm_provider_config.py \
+  Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py -q
 ../../.venv/bin/python -m ruff check \
-  Tests/LLM/test_local_llm_provider_config.py
+  Tests/LLM/test_local_llm_provider_config.py \
+  Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py
 ../../.venv/bin/python -m ruff format --check \
-  Tests/LLM/test_local_llm_provider_config.py
-git add Tests/LLM/test_local_llm_provider_config.py
+  Tests/LLM/test_local_llm_provider_config.py \
+  Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py
+git add \
+  Tests/LLM/test_local_llm_provider_config.py \
+  Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py
 git commit -m "test(llm): patch local runtime config snapshot"
 ```
 
@@ -526,6 +536,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
   Tests/LLM/test_local_llm_provider_config.py \
+  Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py \
@@ -544,6 +555,7 @@ Expected: all affected tests pass.
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
   Tests/LLM/test_local_llm_provider_config.py \
+  Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py
@@ -554,6 +566,7 @@ Expected: all affected tests pass.
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
   Tests/LLM/test_local_llm_provider_config.py \
+  Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py
