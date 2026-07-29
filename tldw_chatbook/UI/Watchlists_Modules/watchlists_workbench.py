@@ -56,18 +56,6 @@ SELF_HEADED_REGIONS: frozenset[Region] = frozenset(
     {Region.FEEDS, Region.ITEMS, Region.RIGHT_RAIL}
 )
 
-#: Placeholder body copy, shown only if a region's content factory is
-#: missing or returns `None`. Every region now has a factory (Task 4 was the
-#: last -- CONTENT), so this dict is a defensive fallback rather than
-#: something any region currently renders in practice.
-REGION_PLACEHOLDERS: dict[Region, str] = {
-    Region.LEFT_RAIL: "Watchlist tree arrives in the next slice.",
-    Region.FEEDS: "Feeds table arrives in the next slice.",
-    Region.ITEMS: "Items table arrives in the next slice.",
-    Region.CONTENT: "Reader arrives in the next slice.",
-    Region.RIGHT_RAIL: "Inspector arrives in the next slice.",
-}
-
 
 class RegionToggled(Message):
     """A collapsed region's header or rail handle was activated."""
@@ -210,13 +198,13 @@ class WatchlistsWorkbench(Horizontal):
             children.append(
                 Static(REGION_TITLES[region], classes="watchlists-region-title")
             )
-        if supplied is None:
-            children.append(
-                Static(
-                    REGION_PLACEHOLDERS[region], classes="watchlists-region-placeholder"
-                )
-            )
-        else:
+        # Whole-branch review (Minor): there used to be a `REGION_PLACEHOLDERS`
+        # branch here ("Reader arrives in the next slice.") for a region with
+        # no factory. Task 4 wired the last unwired region, so every region the
+        # screen builds supplies content; the branch could only ever be reached
+        # by a test that constructed a workbench with no content at all, which
+        # made a "coming soon" string look like live product copy to a grep.
+        if supplied is not None:
             children.append(supplied)
         classes = ["watchlists-region", f"watchlists-region-{region.value}"]
         if self._is_sole_expanded_centre_region(region):
