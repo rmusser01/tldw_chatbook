@@ -18,7 +18,6 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from Tests.UI.app_factory import _build_test_app
-from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunState,
@@ -35,6 +34,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
 from tldw_chatbook.Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     ConsoleWorkspaceACPHandoffState,
@@ -103,6 +103,21 @@ async def _wait_for_condition(pilot, predicate, *, timeout: float = 1.0) -> None
             return
         await pilot.pause(0.05)
     assert predicate()
+
+
+async def _wait_for_production_chat_screen(
+    app, pilot, *, timeout: float = 6.0
+) -> ChatScreen:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, ChatScreen) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for production ChatScreen; active={type(app.screen).__name__}"
+    )
 
 
 def _assert_status_row(
@@ -2655,8 +2670,8 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
     (2) a667ffbd added the grouped conversation browser, which renders a
     *second*, independently-selected native-session placeholder row
     alongside the workspace-membership row. Driving the marker purely
-    through a ``ChatSessionData`` that is not bound to any real native
-    session (as the old test did, via the now-retired
+    through detached legacy session data that is not bound to any real
+    native session (as the old test did, via the now-retired
     ``sync_shell_bar_from_session_data``) leaves that placeholder stuck
     showing the active glyph too, producing two "active" rows for one
     conversation -- not a genuine product regression, since
@@ -2694,10 +2709,8 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
         role="workspace-thread",
         title="Planning thread",
     )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 44)) as pilot:
-        console = host.screen_stack[-1]
+    async with app.run_test(size=(160, 44)) as pilot:
+        console = await _wait_for_production_chat_screen(app, pilot)
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
         store = console._ensure_console_chat_store()
@@ -2709,9 +2722,7 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
             active_leaf_persisted_id=None,
         )
 
-        console._sync_console_workspace_context(
-            ChatSessionData(tab_id="tab-1", conversation_id="conv-1")
-        )
+        console._sync_console_workspace_context()
         await pilot.pause()
 
         active_row_texts = [
