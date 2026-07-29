@@ -210,3 +210,74 @@ class TestSectionAllowlist:
 
     def test_foreign_section_rejected(self):
         assert commit_sections_allowed({"database": {"x": 1}}) is False
+
+
+from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+    build_summary_rows,
+    read_provider_secret_presence,
+    read_wizard_prefill,
+)
+
+
+class TestSecretPresence:
+    def test_inline_key_is_configured_without_value(self):
+        cfg = {"api_settings": {"openai": {"api_key": "sk-secret"}}}
+        presence = read_provider_secret_presence(cfg, {}, provider_key="openai")
+        assert presence.configured is True
+        assert "sk-secret" not in repr(presence)
+
+    def test_env_var_reported(self):
+        cfg = {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}}
+        presence = read_provider_secret_presence(
+            cfg, {"OPENAI_API_KEY": "sk-x"}, provider_key="openai"
+        )
+        assert presence.env_var == "OPENAI_API_KEY"
+        assert presence.env_var_set is True
+        assert presence.configured is True
+
+    def test_unconfigured(self):
+        presence = read_provider_secret_presence({}, {}, provider_key="openai")
+        assert presence.configured is False
+
+
+class TestWizardPrefill:
+    def test_reads_current_values(self):
+        cfg = {
+            "chat_defaults": {"provider": "Anthropic", "model": "claude-opus-5"},
+            "notes": {"sync_directory": "~/N", "auto_sync_enabled": True},
+            "general": {"default_theme": "textual-light"},
+            "tools": {"read_file_enabled": True},
+        }
+        prefill = read_wizard_prefill(cfg)
+        assert prefill.provider_value == "Anthropic"
+        assert prefill.model_id == "claude-opus-5"
+        assert prefill.sync_directory == "~/N"
+        assert prefill.auto_sync_enabled is True
+        assert prefill.default_theme == "textual-light"
+        assert ("read_file_enabled", True) in prefill.tool_gates
+
+    def test_empty_config_yields_empty_strings(self):
+        prefill = read_wizard_prefill({})
+        assert prefill.provider_value == ""
+        assert prefill.model_id == ""
+
+
+class TestSummaryRows:
+    def test_rows_reflect_persisted_state(self):
+        cfg = {
+            "api_settings": {"openai": {"api_key": "sk-x"}},
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
+            "encryption": {"enabled": True},
+        }
+        rows = {row.label: row for row in build_summary_rows(cfg, {}, rag_deps_installed=False)}
+        assert rows["Provider"].ok is True
+        assert rows["Default model"].ok is True
+        assert rows["RAG"].ok is False
+        assert "not installed" in rows["RAG"].detail
+        assert rows["Key encryption"].ok is True
+
+    def test_empty_config_all_missing(self):
+        rows = build_summary_rows({}, {}, rag_deps_installed=True)
+        by_label = {row.label: row for row in rows}
+        assert by_label["Provider"].ok is False
+        assert by_label["Tools"].ok is False  # no gates on => off is reported honestly

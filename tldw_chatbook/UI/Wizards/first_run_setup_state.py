@@ -7,6 +7,7 @@ Screen owns rendering and persistence; this module owns every decision.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 WIZARD_STATE_SECTION = "first_run"
@@ -217,3 +218,117 @@ def commit_sections_allowed(section_values: Mapping[str, Mapping[Any, Any]]) -> 
             continue
         return False
     return True
+
+
+@dataclass(frozen=True)
+class SecretPresence:
+    """Whether a provider secret exists — never the secret itself."""
+
+    configured: bool
+    env_var: str | None = None
+    env_var_set: bool = False
+
+
+@dataclass(frozen=True)
+class WizardPrefill:
+    """Current config values for re-run prefill (no secrets)."""
+
+    provider_value: str = ""
+    model_id: str = ""
+    sync_directory: str = ""
+    auto_sync_enabled: bool = False
+    default_theme: str = ""
+    tool_gates: tuple[tuple[str, bool], ...] = ()
+
+
+@dataclass(frozen=True)
+class SummaryRow:
+    """One ✓/✗ line of the final summary matrix."""
+
+    label: str
+    ok: bool
+    detail: str = ""
+
+
+def _section(app_config: Mapping[str, object], name: str) -> Mapping[str, object]:
+    section = app_config.get(name)
+    return section if isinstance(section, Mapping) else {}
+
+
+def read_provider_secret_presence(
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str],
+    *,
+    provider_key: str,
+) -> SecretPresence:
+    settings = _section(_section(app_config, "api_settings"), provider_key)
+    env_var_raw = settings.get("api_key_env_var")
+    env_var = env_var_raw.strip() if isinstance(env_var_raw, str) and env_var_raw.strip() else None
+    env_var_set = bool(env_var and environ.get(env_var))
+    inline = _is_real_secret(settings.get("api_key"))
+    return SecretPresence(
+        configured=inline or env_var_set, env_var=env_var, env_var_set=env_var_set
+    )
+
+
+def read_wizard_prefill(app_config: Mapping[str, object]) -> WizardPrefill:
+    chat_defaults = _section(app_config, "chat_defaults")
+    notes = _section(app_config, "notes")
+    general = _section(app_config, "general")
+    tools = _section(app_config, "tools")
+    return WizardPrefill(
+        provider_value=str(chat_defaults.get("provider") or ""),
+        model_id=str(chat_defaults.get("model") or ""),
+        sync_directory=str(notes.get("sync_directory") or ""),
+        auto_sync_enabled=coerce_wizard_flag(notes.get("auto_sync_enabled")),
+        default_theme=str(general.get("default_theme") or ""),
+        tool_gates=tuple(
+            (str(key), coerce_wizard_flag(value)) for key, value in tools.items()
+        ),
+    )
+
+
+def build_summary_rows(
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str],
+    *,
+    rag_deps_installed: bool,
+) -> tuple[SummaryRow, ...]:
+    """Build the ✓/✗ matrix strictly from persisted config (never step memory)."""
+    prefill = read_wizard_prefill(app_config)
+    provider_ok = any_provider_configured(app_config, environ)
+    tools_on = [key for key, value in prefill.tool_gates if value]
+    notes_on = prefill.auto_sync_enabled and bool(prefill.sync_directory)
+    encryption_on = coerce_wizard_flag(_section(app_config, "encryption").get("enabled"))
+    rag_model = str(_section(app_config, "embedding_config").get("default_model_id") or "")
+    if not rag_deps_installed:
+        rag_row = SummaryRow("RAG", False, "embeddings deps not installed")
+    elif rag_model:
+        rag_row = SummaryRow("RAG", True, f"embedding model: {rag_model}")
+    else:
+        rag_row = SummaryRow("RAG", False, "no embedding model selected")
+    return (
+        SummaryRow("Provider", provider_ok, "" if provider_ok else "no credentials or endpoint"),
+        SummaryRow(
+            "Default model",
+            bool(prefill.model_id),
+            prefill.model_id or "not selected",
+        ),
+        rag_row,
+        SummaryRow(
+            "Tools",
+            bool(tools_on),
+            f"{len(tools_on)} enabled" if tools_on else "all off (default)",
+        ),
+        SummaryRow(
+            "Notes sync",
+            notes_on,
+            prefill.sync_directory if notes_on else "off",
+        ),
+        SummaryRow(
+            "Theme", bool(prefill.default_theme), prefill.default_theme or "default"
+        ),
+        SummaryRow(
+            "Key encryption", encryption_on, "" if encryption_on else "off"
+        ),
+    )
