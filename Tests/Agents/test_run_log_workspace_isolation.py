@@ -46,6 +46,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.run_log import RunLogWriter
+from tldw_chatbook.Agents.run_log_format import RunLogRecord, encode_record
 from tldw_chatbook.Agents.run_log_search import load_records
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -112,14 +113,48 @@ def _fence(name: str, args: dict) -> str:
     return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
 
 
+def _plant_legacy_record(run_dir: Path, run_id: str, content: str) -> None:
+    """Write one on-disk segment, in the writer's own wire format.
+
+    Simulates what an EARLIER version of `RunLogWriter` (pre-migration,
+    undotted directory) already left on disk -- a single-segment run
+    directory with one record -- without going through `RunLogWriter`
+    itself, so the fixture stays independent of the code under test.
+
+    Args:
+        run_dir: The run's log directory to create (e.g.
+            ``<root>/agent-runs/<run_id>``).
+        run_id: The run id recorded in the planted record's header.
+        content: The record's full content (e.g. a planted secret).
+    """
+    run_dir.mkdir(parents=True, exist_ok=True)
+    record = RunLogRecord(
+        number=1,
+        run_id=run_id,
+        kind="primary",
+        type="model",
+        ts="2026-01-01T00:00:00.000000Z",
+        content=content,
+    )
+    (run_dir / "logs.0001.txt").write_bytes(encode_record(record))
+
+
 def test_bound_workspace_folder_log_is_hidden_from_grep_and_glob(tmp_path, monkeypatch):
     """AC #1 / AC #6: a sub-agent must not be able to reach its parent's
     run log via `grep_files` (content) or `glob_files` (path) once the log
-    lands in a genuinely bound workspace folder. The assertions below
-    check only the tools' OUTCOME (can the secret/path be recovered), not
-    any internal detail of how `resolve_log_root`/`bind` picked the
-    directory name -- so this keeps pinning the invariant even if root
-    resolution is reimplemented entirely.
+    lands in a genuinely bound workspace folder.
+
+    The assertions below check only the tools' OUTCOME (can the
+    secret/path be recovered), not any internal detail of how
+    `resolve_log_root`/`bind` picked the directory name -- so this keeps
+    pinning the invariant even if root resolution is reimplemented
+    entirely.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory, used as the parent
+            of the fake sandbox and workspace roots.
+        monkeypatch: Pytest fixture used to redirect root resolution to
+            those fake roots.
     """
     sandbox = tmp_path / "sandbox"
     workspace = tmp_path / "genuine-workspace"
@@ -160,12 +195,19 @@ def test_spawned_subagent_cannot_read_parents_log_via_grep_files_in_bound_worksp
     """AC #1: reproduces the disclosure through a live run, mirroring
     `test_run_log_sandbox_isolation.py::test_spawned_subagent_cannot_read_
     parents_log_via_grep_files` but through a genuinely bound WORKSPACE
-    folder instead of the sandbox fallback. The PARENT's own turn embeds a
-    secret (captured verbatim into its "model" log record before any tool
-    dispatch), it spawns a child, and the child tries to read the secret
-    back out through `grep_files` -- a tool it inherits through the
-    ordinary allow-list, independent of `search_run_log`'s own
-    primary-only gate.
+    folder instead of the sandbox fallback.
+
+    The PARENT's own turn embeds a secret (captured verbatim into its
+    "model" log record before any tool dispatch), it spawns a child, and
+    the child tries to read the secret back out through `grep_files` -- a
+    tool it inherits through the ordinary allow-list, independent of
+    `search_run_log`'s own primary-only gate.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory, used as the parent
+            of the fake sandbox and workspace roots.
+        monkeypatch: Pytest fixture used to redirect root resolution to
+            those fake roots and to stub `grep_files`'s config gate.
     """
     sandbox = tmp_path / "sandbox"
     workspace = tmp_path / "genuine-workspace"
@@ -244,11 +286,18 @@ def test_search_run_log_reads_the_log_in_bound_workspace_configuration(
     tmp_path, monkeypatch
 ):
     """AC #4: `search_run_log`'s own reader (`run_log_search.load_records`)
-    must keep reading the log when it lands in a bound workspace folder --
-    it globs `writer.log_dir` directly and never routes through
+    must keep reading the log when it lands in a bound workspace folder.
+
+    It globs `writer.log_dir` directly and never routes through
     `validate_path`/`_is_hidden_within`, so it is unaffected by whichever
     way the directory-naming question above is eventually resolved. This
     passes today and must keep passing after any fix.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory, used as the parent
+            of the fake sandbox and workspace roots.
+        monkeypatch: Pytest fixture used to redirect root resolution to
+            those fake roots.
     """
     sandbox = tmp_path / "sandbox"
     workspace = tmp_path / "genuine-workspace"
@@ -266,7 +315,14 @@ def test_search_run_log_reads_the_log_in_bound_workspace_configuration(
 def test_search_run_log_reads_the_log_in_sandbox_fallback_configuration(
     tmp_path, monkeypatch
 ):
-    """AC #4, sandbox-fallback sibling of the test above."""
+    """AC #4, sandbox-fallback sibling of the test above.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory, used as the parent
+            of the fake sandbox root.
+        monkeypatch: Pytest fixture used to redirect root resolution to
+            that fake root.
+    """
     import tldw_chatbook.Tools.file_operation_tools as file_tools
     import tldw_chatbook.Tools.workspace_file_roots as ws_roots
 
@@ -286,3 +342,150 @@ def test_search_run_log_reads_the_log_in_sandbox_fallback_configuration(
 
     records = load_records(writer.log_dir)
     assert [r.content for r in records] == ["hello"]
+
+
+def test_legacy_undotted_log_directory_is_migrated_and_hidden_on_bind(
+    tmp_path, monkeypatch
+):
+    """Upgrade-safety regression: a pre-existing UNDOTTED ``agent-runs``
+    tree (left behind by a version predating the unconditional-dotting
+    fix) must be migrated under the dotted name the first time `bind()`
+    runs against it -- otherwise every historical run log an install has
+    ever written stays reachable through `grep_files`/`glob_files` even
+    after upgrading to the fixed code.
+
+    Covers the "only the legacy directory exists" shape: `bind()` should
+    move it wholesale (a single rename), so the planted secret becomes (a)
+    still readable through the app's own reader (`load_records`, which
+    globs `log_dir` directly and never consults `_is_hidden_within`), and
+    (b) unreachable through `grep_files`, exactly like a freshly-written
+    record.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory, used as the parent
+            of the fake sandbox and workspace roots.
+        monkeypatch: Pytest fixture used to redirect root resolution to
+            those fake roots.
+    """
+    sandbox = tmp_path / "sandbox"
+    workspace = tmp_path / "genuine-workspace"
+    _workspace_seams(monkeypatch, sandbox, workspace)
+
+    legacy_root = workspace / "agent-runs"
+    secret = "LEGACY_SECRET_API_KEY=sk-live-legacy111"
+    _plant_legacy_record(legacy_root / "legacy-run-1", "legacy-run-1", secret)
+
+    writer = RunLogWriter()
+    writer.bind("run-new")
+    assert writer.is_active, "writer must still activate for the new run"
+
+    # The undotted tree is gone -- moved, not copied and not left behind.
+    assert not legacy_root.exists()
+    migrated_dir = workspace / ".agent-runs" / "legacy-run-1"
+    assert migrated_dir.is_dir()
+
+    # (a) still readable through the app's own reader.
+    records = load_records(migrated_dir)
+    assert [r.content for r in records] == [secret]
+
+    # (b) unreachable through the generic file tools available to a
+    # sub-agent.
+    assert _grep("LEGACY_SECRET_API_KEY") == [], (
+        "grep_files must not recover a migrated legacy secret"
+    )
+    leaked_paths = [m for m in _glob("**/*") if "legacy-run-1" in m]
+    assert leaked_paths == [], (
+        f"glob_files must not enumerate the migrated legacy run directory; "
+        f"got {leaked_paths!r}"
+    )
+
+
+def test_legacy_and_dotted_log_directories_both_merge_without_clobbering(
+    tmp_path, monkeypatch
+):
+    """Upgrade-safety regression, "both exist" shape: an install that has
+    run both an old (undotted) and a new (dotted) version has BOTH
+    `agent-runs` and `.agent-runs` on disk. `bind()` must merge the legacy
+    entries into the dotted tree without touching anything already there,
+    and the planted legacy secret must end up just as unreachable as in
+    the "only legacy exists" case.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory, used as the parent
+            of the fake sandbox and workspace roots.
+        monkeypatch: Pytest fixture used to redirect root resolution to
+            those fake roots.
+    """
+    sandbox = tmp_path / "sandbox"
+    workspace = tmp_path / "genuine-workspace"
+    _workspace_seams(monkeypatch, sandbox, workspace)
+
+    legacy_root = workspace / "agent-runs"
+    dotted_root = workspace / ".agent-runs"
+    secret = "LEGACY_SECRET_API_KEY=sk-live-legacy222"
+    _plant_legacy_record(legacy_root / "legacy-run-2", "legacy-run-2", secret)
+    _plant_legacy_record(dotted_root / "existing-run", "existing-run", "EXISTING_DOTTED_CONTENT")
+
+    writer = RunLogWriter()
+    writer.bind("run-new")
+    assert writer.is_active
+
+    # Legacy tree fully merged away (no collision in this fixture).
+    assert not legacy_root.exists()
+
+    # Pre-existing dotted content is untouched.
+    existing_records = load_records(dotted_root / "existing-run")
+    assert [r.content for r in existing_records] == ["EXISTING_DOTTED_CONTENT"]
+
+    # (a) migrated legacy content still readable through the app's reader.
+    migrated_records = load_records(dotted_root / "legacy-run-2")
+    assert [r.content for r in migrated_records] == [secret]
+
+    # (b) unreachable through the generic file tools.
+    assert _grep("LEGACY_SECRET_API_KEY") == [], (
+        "grep_files must not recover a merged legacy secret"
+    )
+    leaked_paths = [m for m in _glob("**/*") if "legacy-run-2" in m]
+    assert leaked_paths == [], (
+        f"glob_files must not enumerate the merged legacy run directory; "
+        f"got {leaked_paths!r}"
+    )
+
+
+def test_legacy_migration_skips_a_colliding_run_id_without_overwriting(
+    tmp_path, monkeypatch
+):
+    """A same-named run directory on both sides (a `uuid4` collision, not
+    expected in practice) must never be silently merged or overwritten --
+    `_migrate_legacy_dir` skips it and leaves BOTH copies exactly as they
+    were, prioritising "never lose or clobber user data" over fully
+    closing the disclosure for this one pathological case.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory, used as the parent
+            of the fake sandbox and workspace roots.
+        monkeypatch: Pytest fixture used to redirect root resolution to
+            those fake roots.
+    """
+    sandbox = tmp_path / "sandbox"
+    workspace = tmp_path / "genuine-workspace"
+    _workspace_seams(monkeypatch, sandbox, workspace)
+
+    legacy_root = workspace / "agent-runs"
+    dotted_root = workspace / ".agent-runs"
+    _plant_legacy_record(legacy_root / "same-id", "same-id", "LEGACY_COLLIDING_CONTENT")
+    _plant_legacy_record(dotted_root / "same-id", "same-id", "DOTTED_ORIGINAL_CONTENT")
+
+    writer = RunLogWriter()
+    writer.bind("run-new")
+    assert writer.is_active, "a collision during migration must not abort bind()"
+
+    # Neither copy was overwritten or deleted.
+    dotted_records = load_records(dotted_root / "same-id")
+    assert [r.content for r in dotted_records] == ["DOTTED_ORIGINAL_CONTENT"]
+    legacy_records = load_records(legacy_root / "same-id")
+    assert [r.content for r in legacy_records] == ["LEGACY_COLLIDING_CONTENT"]
+
+    # The new run's own logging still works despite the collision.
+    writer.append(run_id="run-new", kind="primary", type="model", content="hello")
+    assert [r.content for r in load_records(writer.log_dir)] == ["hello"]

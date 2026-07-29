@@ -385,6 +385,7 @@ class RunLogWriter:
             self._active = False
             return
         dir_name = self._dir_name
+        legacy_dir_name: str | None = None
         if not dir_name.startswith("."):
             # TASK-1270: dotted UNCONDITIONALLY -- in both the
             # sandbox-fallback and the bound-workspace case. See the
@@ -402,6 +403,13 @@ class RunLogWriter:
             # -- it only removes the directory from what
             # `glob_files`/`grep_files`/`read_file` can see, which is
             # exactly the intent.
+            #
+            # The dotting above only governs FUTURE writes. An install that
+            # ran an earlier version already has an UNDOTTED
+            # `<root>/<dir_name>` tree of historical run logs on disk --
+            # remember the pre-dot name so it can be migrated below, once
+            # `base` (the dotted target) is known.
+            legacy_dir_name = dir_name
             dir_name = f".{dir_name}"
         try:
             from tldw_chatbook.Tools.file_operation_tools import is_within
@@ -414,6 +422,10 @@ class RunLogWriter:
                 )
                 self._active = False
                 return
+            if legacy_dir_name is not None:
+                # Best-effort, self-contained (never raises): see
+                # `_migrate_legacy_dir` for the full upgrade-safety policy.
+                self._migrate_legacy_dir(root, legacy_dir_name, base)
             base.mkdir(parents=True, exist_ok=True)
             gitignore = base / ".gitignore"
             if not gitignore.exists():
@@ -437,6 +449,110 @@ class RunLogWriter:
             return
         self.log_dir = run_dir
         self._active = True
+
+    def _migrate_legacy_dir(self, root: Path, legacy_name: str, dotted: Path) -> None:
+        """Move a pre-TASK-1270 undotted log tree under its dotted name.
+
+        TASK-1270 stopped the disclosure for FUTURE writes by dotting the
+        log directory unconditionally, but an install that ran an earlier
+        version already has an UNDOTTED ``root / legacy_name`` tree full of
+        historical run logs on disk. After upgrading, a sub-agent with
+        inherited ``glob_files``/``grep_files`` access could still read
+        every one of them, since ``_is_hidden_within`` only excludes
+        dot-prefixed components -- the vulnerability would otherwise persist
+        for exactly the users who have the most history. This runs once per
+        ``bind()`` (itself idempotent per writer via ``_bind_attempted``,
+        called once per run) and is cheap on every call after the first: an
+        install migrates at most once per (root, dir_name) pair -- once the
+        legacy directory is gone (the common case, a single rename), every
+        later bind pays only one ``Path.is_dir()`` check and returns
+        immediately. Nothing here scans or re-walks on ``append()``.
+
+        Policy, in priority order (matches the module's own failure-mode
+        conventions):
+
+        1. Never destroys user data. This moves records; it never deletes
+           one. The one ``rmdir`` below only ever removes an already-EMPTY
+           legacy directory husk, never its contents.
+        2. Whichever legacy records get moved stop being reachable through
+           the generic file tools, because they land under ``dotted`` and
+           ``_is_hidden_within`` then excludes them, exactly like a
+           freshly-written record.
+        3. Two shapes are handled explicitly:
+           - Only the legacy directory exists (``dotted`` absent): a single
+             atomic ``rename`` moves the whole tree -- including any stray
+             top-level file such as the legacy ``.gitignore`` -- in one
+             step.
+           - Both exist (an install that has run both before and after this
+             fix): merge entry-by-entry. Run directories are keyed by
+             ``uuid4`` run ids, so a same-name collision is not expected in
+             practice, but this NEVER overwrites -- a colliding entry is
+             skipped and logged, and both copies are left exactly as they
+             were, deliberately preferring "one entry stays reachable via
+             the legacy tools" over any risk of silently merging two
+             unrelated runs' logs or losing either one.
+        4. Never raises into an agent run. Any failure -- permissions, a
+           partial move, a locked file -- is caught here, logged once at
+           warning, and left for a later bind to retry; the caller (bind())
+           proceeds to create/use ``dotted`` regardless, so THIS run's own
+           logging keeps working even when the historical migration did
+           not complete.
+
+        Args:
+            root: The resolved log root (sandbox or bound workspace folder)
+                that both ``legacy`` and ``dotted`` live directly under.
+            legacy_name: The pre-dot directory name (e.g. ``"agent-runs"``).
+            dotted: The dotted target directory (e.g. ``root / ".agent-runs"``).
+        """
+        legacy = root / legacy_name
+        try:
+            if not legacy.is_dir():
+                return
+            from tldw_chatbook.Tools.file_operation_tools import is_within
+
+            if not is_within(legacy, root):
+                # Refuse to touch anything outside root -- matches bind()'s
+                # own containment discipline for `base`/`run_dir` above.
+                return
+            if not dotted.exists():
+                # Nothing to collide with: one atomic rename moves the
+                # whole tree, including any stray files, in a single step.
+                legacy.rename(dotted)
+                logger.info(
+                    f"run log: migrated legacy log directory {legacy} -> {dotted}"
+                )
+                return
+            # Both exist: merge entry-by-entry, never overwriting.
+            moved = 0
+            skipped = 0
+            for entry in list(legacy.iterdir()):
+                target = dotted / entry.name
+                if target.exists():
+                    skipped += 1
+                    logger.warning(
+                        f"run log: legacy migration skipped {entry.name!r} "
+                        f"-- {target} already exists; leaving the legacy "
+                        f"copy at {entry} in place rather than overwriting"
+                    )
+                    continue
+                entry.rename(target)
+                moved += 1
+            logger.info(
+                f"run log: merged legacy log directory {legacy} into "
+                f"{dotted} ({moved} moved, {skipped} skipped)"
+            )
+            # Remove the legacy directory only once it is genuinely empty --
+            # a skipped entry deliberately leaves it non-empty, and `rmdir`
+            # only ever removes an empty directory, never contents.
+            try:
+                legacy.rmdir()
+            except OSError:
+                pass
+        except Exception:
+            logger.opt(exception=True).warning(
+                "run log: legacy directory migration failed; historical "
+                "logs may remain reachable until a future run retries"
+            )
 
     def _segment_path(self) -> Path:
         assert self.log_dir is not None
