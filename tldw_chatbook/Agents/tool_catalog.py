@@ -32,7 +32,12 @@ from .agent_models import (
     ToolResult,
     ToolSchema,
 )
-from .run_log_search import MAX_SLICE_RECORDS, MAX_STATS_GROUPS, STATS_GROUP_BY_FIELDS
+from .run_log_search import (
+    MAX_CROSS_RUN_RUNS,
+    MAX_SLICE_RECORDS,
+    MAX_STATS_GROUPS,
+    STATS_GROUP_BY_FIELDS,
+)
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
     id="runtime:spawn_subagent",
@@ -176,11 +181,29 @@ SEARCH_RUN_LOG_TOOL_SCHEMA = ToolSchema(
         "the window is centred on that record's first match; otherwise it "
         "starts at the beginning. When a record is shown only partially, "
         "the render states the character range and total size, and the "
-        "'offset' to pass next to keep reading."
+        "'offset' to pass next to keep reading. By default this searches "
+        "only THIS run; set 'scope' to also search this conversation's "
+        "earlier runs."
     ),
     parameters={
         "type": "object",
         "properties": {
+            "scope": {
+                "type": "string",
+                "description": (
+                    "Which run(s) to search. 'run' (default): only this "
+                    "run's own log, exactly as before. 'conversation': "
+                    "also search this conversation's earlier runs, newest "
+                    f"first, up to {MAX_CROSS_RUN_RUNS} runs per call -- "
+                    "each hit is labelled with which run it came from and "
+                    "whether it is this run. A run whose log cannot be "
+                    "found under the current root (e.g. the workspace "
+                    "folder was bound, rebound, or unbound since) is "
+                    "reported as unavailable rather than silently omitted "
+                    "-- the response always states how many runs were "
+                    "actually searched vs. could not be located."
+                ),
+            },
             "contains": {
                 "type": "string",
                 "description": "Literal substring to find in a record's content "

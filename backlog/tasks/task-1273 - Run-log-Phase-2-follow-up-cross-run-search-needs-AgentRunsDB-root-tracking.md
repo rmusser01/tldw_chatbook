@@ -1,9 +1,11 @@
 ---
 id: TASK-1273
 title: 'Run log Phase 2 follow-up: cross-run search needs AgentRunsDB root tracking'
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-29 00:20'
+updated_date: '2026-07-29 17:01'
 labels:
   - agents
   - run-log
@@ -20,50 +22,77 @@ task-1271 (run-log Phase 2: aggregation, slicing, cross-run search) investigated
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 agent_runs gains a column recording the resolved log root (or full log_dir path) at the point RunLogWriter.bind() creates a run's directory, so a later run can locate an earlier run's log deterministically
-- [ ] #2 A cross-run search tool (or an extension to search_run_log) lets the primary agent search a named set of a conversation's earlier runs (e.g. its immediately preceding run, or all runs for the conversation) using the same bounded literal/regex search already implemented in run_log_search.py
-- [ ] #3 Runs written before this migration (no recorded root) degrade gracefully -- reported as unlocatable rather than raising or silently skipped without explanation
-- [ ] #4 Cross-run search remains primary-agent only, mirroring search_run_log/run_log_stats/run_log_slice's own isolation gate
+- [x] #1 Cross-run search remains primary-agent only, mirroring search_run_log/run_log_stats/run_log_slice's own isolation gate
+- [x] #2 search_run_log gains a scope argument (default "run", byte-identical to prior behaviour; "conversation" also searches the conversation's earlier runs) that composes AgentRunsDB.list_runs with run_log.resolve_existing_log_dir, per the task's Revised analysis option (a) -- no agent_runs schema column or migration added
+- [x] #3 A run whose log cannot be located under the current root (workspace folder bound/rebound/unbound since, or predates run-log) degrades gracefully -- reported as unresolved/not-attempted with an explicit count, never raising and never silently indistinguishable from "no matches"
+- [x] #4 Cross-run search output stays bounded regardless of how many runs are searched -- one shared hit limit and one shared wall-clock deadline across the whole call, mirroring MAX_STATS_GROUPS/MAX_SLICE_RECORDS' own bounded-output guarantee
 <!-- AC:END -->
 
-## Revised analysis (2026-07-28, after TASK-870 landed)
+## Implementation Plan
 
-The original deferral said locating a historical run's log "needs either an unsafe
-assumption or a schema change". That was more pessimistic than the code warrants.
-Two pieces that already exist close most of the gap:
+<!-- SECTION:PLAN:BEGIN -->
+1. Read run_log_search.py, run_log.py (resolve_existing_log_dir), agent_service.py's search_run_log closure + three-part gate, and AgentRunsDB.list_runs.
+2. Implement option (a), best-effort, no schema change: add MAX_CROSS_RUN_RUNS, CrossRunHit/CrossRunSearchResult, search_across_runs(), format_cross_run_results() to run_log_search.py -- pure functions taking already-resolved (run_id, log_dir|None) pairs, sharing ONE hit `limit` and ONE wall-clock `deadline_seconds` across every run searched (not reset per run).
+3. Extend search_run_log's args with `scope` ("run" default / "conversation") in agent_service.py: scope="conversation" enumerates the conversation's PRIMARY runs via self.db.list_runs (capped at MAX_CROSS_RUN_RUNS), resolves each via run_log.resolve_existing_log_dir (current run's own log_dir reused directly, never re-resolved), and renders via format_cross_run_results. The scope="run" code path is left byte-for-byte untouched below an early branch.
+4. Add `scope` to SEARCH_RUN_LOG_TOOL_SCHEMA in tool_catalog.py.
+5. New test file Tests/Agents/test_run_log_cross_run_search.py: default-scope byte-identical proof, older-run hit attribution, unresolved-run reporting, mixed resolvable/unresolvable, zero-prior-runs, junk scope values, sub-agent gating (incl. a temporary gate-removal mutation to confirm the gating test actually fails), plus direct unit tests of search_across_runs/format_cross_run_results for the shared-limit and shared-deadline bounds.
+6. Update task-1273's ACs to match the actually-agreed scope (best-effort, no schema column -- see the task's own "Revised analysis" section), run both Tests/Agents and Tests/Chat, mark Done.
+<!-- SECTION:PLAN:END -->
 
-1. **Runs ARE queryable by conversation.** `agent_runs` carries an indexed
-   `conversation_id` column, and `AgentRunsDB.list_runs(conversation_id, ...)`
-   already returns a conversation's runs newest-first. So enumerating which runs
-   belong to a conversation needs no new schema at all.
-2. **A run's log directory is already resolvable by id.** TASK-870 added
-   `run_log.resolve_existing_log_dir(run_id)`, the read-only counterpart to
-   `RunLogWriter.bind()`: it resolves the current root and returns that run's log
-   directory if it exists, without creating anything.
+## Implementation Notes
 
-Composing those two gives working cross-run search today:
-`list_runs(conversation_id)` -> `resolve_existing_log_dir(run_id)` ->
-`load_records` -> `search_records`.
+<!-- SECTION:NOTES:BEGIN -->
+Implemented option (a) from the Revised analysis: best-effort cross-run search, no
+AgentRunsDB schema change. `search_run_log` gained a `scope` arg ("run" default /
+"conversation") rather than a new tool -- the model already knows this tool and the
+per-run gate/schema-disclosure logic is reused unchanged.
 
-**The one real gap** is narrower than "we cannot find the logs": nothing records
-which ROOT a given run's log was written under. So if the log root changed between
-runs — the user bound, rebound or unbound a workspace folder — older logs are not
-under the current root and will not be found. That is a graceful degradation (those
-runs report as unavailable), not a correctness hazard: a run whose log IS found is
-always genuinely that run's log, because the directory is keyed by run id.
+run_log_search.py (pure, no DB/root resolution of its own -- mirrors load_records'
+explicit-Path contract): MAX_CROSS_RUN_RUNS=10, CrossRunHit/CrossRunSearchResult,
+search_across_runs() and format_cross_run_results(). Both the hit `limit` and the
+wall-clock `deadline_seconds` are SHARED across every run scanned in one call, not
+reset per run -- resetting per run would let a scope="conversation" call cost
+N_runs * MAX_SEARCH_SECONDS in the worst case, defeating the single-run "cheap,
+in-process" guarantee (F6). CrossRunSearchResult carries three distinct buckets
+that must never be conflated: searched (log found and scanned, even if 0 of its
+hits made the cut), unresolved (log not locatable under the current root -- the
+one honest limitation), and not_searched (log may well exist; there was no room
+in this call's run-count cap or its shared deadline to check it).
 
-So there are two honest options rather than one blocker:
+agent_service.py: search_run_log's closure branches on `scope` immediately after
+computing log_dir/contains/pattern; the scope=="run" code below the branch is the
+literal untouched original block (proven byte-identical by a new test comparing
+"no scope" vs. explicit scope="run" output, plus the full pre-existing test suite
+passing unmodified). scope=="conversation" lists the conversation's PRIMARY runs
+via self.db.list_runs (capped at MAX_CROSS_RUN_RUNS), resolves each via
+run_log.resolve_existing_log_dir (the current run's own log_dir is reused
+directly, never re-resolved), and never raises -- a DB/resolution failure
+degrades to a ToolResult like every other failure mode in this closure.
+Primary-agent isolation needed no new gate: scope is just an argument on a tool
+still wired under the existing agent_kind==AGENT_KIND_PRIMARY LoopDeps gate.
+Verified behaviourally, not just by inspection: temporarily changed that gate to
+`search_run_log if True else None`, confirmed both the new
+test_subagent_cannot_call_search_run_log_with_conversation_scope AND the
+pre-existing test_subagent_cannot_call_search_run_log failed, then restored the
+gate exactly (git diff empty on that hunk afterward).
 
-- **(a) Best-effort, no schema change.** Search every run whose log resolves under
-  the current root; report the rest as unavailable rather than silently omitting
-  them. Ships now, correct for the common case where the root is stable.
-- **(b) Exact, with a migration.** Record the resolved log path (or root) on the
-  run record at write time, so a run's log is locatable regardless of later
-  workspace changes. Completes the feature; costs a schema version bump.
+tool_catalog.py: SEARCH_RUN_LOG_TOOL_SCHEMA gained a `scope` property describing
+both values and the coverage-reporting contract.
 
-(a) does not preclude (b) — a stored path can be preferred when present and the
-current-root probe kept as the fallback for runs predating the column.
+Tests: Tests/Agents/test_run_log_cross_run_search.py (19 new tests) -- default-
+scope byte-identical proof, an older run's hit found and attributed by run id,
+an unresolvable older run counted and reported (not silently skipped), a mixed
+resolvable/unresolvable scenario, zero-prior-runs graceful degradation, junk
+scope values (7 parametrized cases) never raising, sub-agent gating (schema-
+disclosure half + dispatch-refusal half, scope="conversation" explicitly
+requested), and direct unit tests of search_across_runs/format_cross_run_results
+proving the shared limit and shared deadline bounds.
 
-**Dependency worth noting:** this builds on `resolve_existing_log_dir`, which is on
-the TASK-870 branch (PR #1082), and on the Phase 2 query tools (PR #1078). Both must
-land before this can be implemented.
+Full suite: Tests/Agents/ 767 passed (748 baseline + 19 new), zero regressions.
+Tests/Chat/ unaffected (not touched): 4 failed / 13 errors, matching this
+programme's documented pre-existing baseline exactly.
+
+Files changed: tldw_chatbook/Agents/run_log_search.py,
+tldw_chatbook/Agents/agent_service.py, tldw_chatbook/Agents/tool_catalog.py,
+Tests/Agents/test_run_log_cross_run_search.py (new).
+<!-- SECTION:NOTES:END -->

@@ -839,7 +839,9 @@ class AgentService:
             return ToolResult(ok=True, content=str(content))
 
         def search_run_log(args: dict) -> ToolResult:
-            """Query THIS run's log. Reads only what this agent produced.
+            """Query THIS run's log, or (``scope="conversation"``) this
+            conversation's earlier runs too. Reads only what this agent --
+            and, in conversation scope, its own earlier runs -- produced.
 
             F2 (Qodo #2, PR #1066 review -- DECLINED): Qodo's finding wanted
             these raw ``dict`` args routed through a Pydantic model before
@@ -857,6 +859,21 @@ class AgentService:
             coverage confirming every argument is safely coerced (string
             where an int is expected, null, a nested object, a list).
 
+            task-1273 (``scope``): ``scope="run"`` (the default, and the
+            only value every call before this task could send) is handled
+            by the UNCHANGED code path below -- byte-identical output.
+            ``scope="conversation"`` branches out early into a separate,
+            best-effort cross-run path built on ``run_log_search.
+            search_across_runs``: it enumerates this conversation's own
+            PRIMARY runs via ``self.db.list_runs`` (capped at
+            ``MAX_CROSS_RUN_RUNS``), resolves each one's log directory via
+            ``run_log.resolve_existing_log_dir`` (the current run's own
+            directory is already known -- ``log_dir`` below -- and is never
+            re-resolved), and reports which runs could not be located
+            rather than silently omitting them. Any other ``scope`` value
+            falls back to ``"run"``, the same defensive-coercion convention
+            as every other argument here.
+
             Args:
                 args: The model-supplied call arguments, straight off
                     ``ToolCall.args`` (always a ``dict`` -- both parsing
@@ -865,21 +882,28 @@ class AgentService:
                     Recognised keys mirror ``search_records``'/
                     ``format_results``' own parameters: ``contains``,
                     ``pattern``, ``tool``, ``type``, ``status``, ``kind``,
-                    ``from_record``, ``to_record``, ``context``, ``offset``.
+                    ``from_record``, ``to_record``, ``context``, ``offset``
+                    -- plus ``scope`` (``"run"`` default or
+                    ``"conversation"``).
 
             Returns:
                 ``ToolResult(ok=True, content=...)`` with the rendered hits
                 (or "No matching records."), or ``ok=False`` with a
                 human-readable error -- for a missing log, malformed
                 numeric arguments, a rejected catastrophic-looking
-                ``pattern``, or a search that exceeded its wall-clock
-                budget (F6). Never raises.
+                ``pattern``, a search that exceeded its wall-clock budget
+                (F6), or (``scope="conversation"`` only) a failure to list
+                this conversation's runs. Never raises.
             """
+            from .run_log import resolve_existing_log_dir
             from .run_log_search import (
+                MAX_CROSS_RUN_RUNS,
                 RunLogSearchPatternRejected,
                 RunLogSearchTimeout,
+                format_cross_run_results,
                 format_results,
                 load_records,
+                search_across_runs,
                 search_records,
             )
 
@@ -888,6 +912,89 @@ class AgentService:
                 return ToolResult(ok=False, error="No run log is available.")
             contains = str(args.get("contains", ""))
             pattern = str(args.get("pattern", ""))
+            # task-1273: defensively coerced like every other argument here
+            # -- an unrecognised value falls back to "run", the byte-
+            # identical default every call before this task already got.
+            scope = str(args.get("scope") or "run").strip().lower()
+            if scope == "conversation":
+                try:
+                    offset = int(args.get("offset") or 0)
+                    candidates = self.db.list_runs(
+                        conversation_id, include_superseded=True
+                    )
+                    primary_runs = [
+                        r
+                        for r in candidates
+                        if r.get("agent_kind") == AGENT_KIND_PRIMARY
+                    ]
+                    windowed = primary_runs[:MAX_CROSS_RUN_RUNS]
+                    omitted_ids = [
+                        r.get("id") for r in primary_runs[len(windowed):]
+                    ]
+                    resolved_runs: list = []
+                    for run in windowed:
+                        candidate_id = run.get("id")
+                        if candidate_id == run_id:
+                            # This run's own directory is already known --
+                            # never re-resolved (avoids a redundant glob and
+                            # any race with THIS run's still-open writer).
+                            resolved_runs.append((candidate_id, log_dir))
+                        else:
+                            resolved_runs.append(
+                                (candidate_id, resolve_existing_log_dir(candidate_id))
+                            )
+                    cross_result = search_across_runs(
+                        resolved_runs,
+                        current_run_id=run_id,
+                        contains=contains,
+                        pattern=pattern,
+                        tool=str(args.get("tool", "")),
+                        type=str(args.get("type", "")),
+                        status=str(args.get("status", "")),
+                        kind=str(args.get("kind", "")),
+                        from_record=int(args.get("from_record") or 0),
+                        to_record=int(args.get("to_record") or 0),
+                        context=int(args.get("context") or 0),
+                    )
+                except (TypeError, ValueError, OverflowError) as exc:
+                    return ToolResult(
+                        ok=False, error=f"Invalid search arguments: {exc}"
+                    )
+                except (RunLogSearchPatternRejected, RunLogSearchTimeout) as exc:
+                    return ToolResult(ok=False, error=str(exc))
+                except Exception as exc:  # noqa: BLE001 — a run listing/
+                    # resolution failure (a missing DB file, a locked
+                    # connection, an unreadable directory) must degrade to a
+                    # ToolResult like every other failure mode here, never
+                    # raise into the run.
+                    return ToolResult(
+                        ok=False, error=f"Cross-run search failed: {exc}"
+                    )
+                if omitted_ids:
+                    # `dataclasses` is already imported at module scope
+                    # (used by `_persist` above) -- reused here rather than
+                    # re-imported.
+                    cross_result = dataclasses.replace(
+                        cross_result,
+                        not_searched_run_ids=(
+                            cross_result.not_searched_run_ids + omitted_ids
+                        ),
+                    )
+                ceiling = config.budget.max_tool_result_chars
+                render_max_chars = ceiling if ceiling > 0 else sys.maxsize
+                return ToolResult(
+                    ok=True,
+                    content=format_cross_run_results(
+                        cross_result,
+                        max_chars=render_max_chars,
+                        contains=contains,
+                        pattern=pattern,
+                        offset=offset,
+                    ),
+                )
+            # scope == "run" (the default, and any unrecognised value):
+            # UNCHANGED below -- byte-identical to every call before
+            # task-1273.
             try:
                 records = load_records(log_dir)
                 hits = search_records(

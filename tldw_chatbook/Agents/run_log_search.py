@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .run_log_format import RunLogRecord, iter_records
@@ -767,3 +767,298 @@ def format_slice(
             f"with from_record={hi + 1} for the rest)"
         )
     return f"{header}:\n\n{format_results(records, max_chars=max_chars)}"
+
+
+# == Cross-run search (task-1273) =============================================
+#
+# task-1271 deferred this rather than build it against a guess; the deferral
+# (task-1273) found the gap narrower than first thought: `AgentRunsDB.
+# list_runs(conversation_id)` already enumerates a conversation's runs, and
+# `run_log.resolve_existing_log_dir(run_id)` (TASK-870) already locates an
+# arbitrary run's log directory by id, read-only. Composing those two gives
+# best-effort cross-run search without a schema change -- option (a) of the
+# task's two honest choices; option (b) (recording a run's resolved root at
+# write time, for the runs this can never find) is a separate, later
+# decision that does not block this one.
+#
+# THE ONE HONEST LIMITATION: nothing records which ROOT an older run's log
+# was written under, so a run whose log is not reachable under the CURRENT
+# root (the workspace folder was bound, rebound, or unbound since) cannot be
+# found here -- `resolve_existing_log_dir` correctly returns `None` for it.
+# That must never read as "there is nothing there": `CrossRunSearchResult`
+# and `format_cross_run_results` below report coverage explicitly --
+# searched vs. unresolved vs. never attempted -- rather than only surfacing
+# whatever hits happened to be found. Silently dropping that count is
+# exactly the "no matches in 3 earlier runs when 8 exist" failure mode this
+# task exists to avoid.
+#
+# This section stays a pure, filesystem-explicit sibling of `load_records`/
+# `search_records` above: it is handed already-resolved `(run_id, log_dir)`
+# pairs (or `None` for an unresolved log) rather than resolving roots or
+# querying a DB itself -- `agent_service.py`'s `search_run_log` closure
+# (the only impure caller) does that resolution, exactly like it already
+# resolves ONE `log_dir` today before calling `load_records`.
+
+#: `search_run_log`'s `scope="conversation"` mode hard cap on how many of a
+#: conversation's PRIMARY runs (the current run included) are scanned in
+#: ONE call, regardless of how many runs the conversation has accumulated.
+#: Mirrors `MAX_STATS_GROUPS`/`MAX_SLICE_RECORDS`: bounds this call's own
+#: work, and -- together with the shared hit `limit` and shared wall-clock
+#: `deadline_seconds` `search_across_runs` applies below -- its OUTPUT,
+#: never the conversation's run count.
+MAX_CROSS_RUN_RUNS = 10
+
+
+@dataclass(frozen=True)
+class CrossRunHit:
+    """One `scope="conversation"` search hit, tagged with its source run.
+
+    `record.run_id` (see `run_log_format.RunLogRecord`) already names
+    whichever run actually WROTE the record -- a primary run's own turn, or
+    one of its sub-agents' (a child run never gets a log directory of its
+    own; its records land in its PARENT's directory -- see
+    `RunLogWriter.bind`'s docstring). `source_run_id` instead names the
+    PRIMARY run whose log DIRECTORY this hit was found under -- the
+    granularity `AgentRunsDB.list_runs` enumerates and this module reports
+    coverage at. The two coincide for a primary run's own record and differ
+    only for a record written by one of that primary run's sub-agents.
+    """
+
+    record: RunLogRecord
+    source_run_id: str
+    is_current_run: bool
+
+
+@dataclass(frozen=True)
+class CrossRunSearchResult:
+    """`search_across_runs`'s return value: hits plus an honest coverage report.
+
+    A caller (`format_cross_run_results`) MUST report `unresolved_run_ids`
+    and `not_searched_run_ids` explicitly rather than only rendering `hits`
+    -- an empty `hits` list must never be presented as "searched and found
+    nothing" when some of the runs it was supposed to cover were never
+    actually scanned. See the module section header above for why.
+    """
+
+    hits: list[CrossRunHit]
+    #: Runs whose log was located and scanned (even one that contributed no
+    #: hits, e.g. because the shared `limit` was already spent by an
+    #: earlier, newer run -- "searched" means scanned, not "produced a hit").
+    searched_run_ids: list[str]
+    #: Runs whose log could NOT be located under the current root -- the
+    #: one honest limitation this module cannot paper over (see above).
+    unresolved_run_ids: list[str]
+    #: Runs that were never attempted at all: this call's shared wall-clock
+    #: `deadline_seconds` ran out before reaching them (`search_across_runs`
+    #: itself), or the `MAX_CROSS_RUN_RUNS` cap excluded them before this
+    #: function ever saw them (`agent_service.py`'s caller adds those in).
+    #: Distinct from `unresolved_run_ids`: these runs' logs may well exist
+    #: and be perfectly reachable -- there simply was no room in this call's
+    #: bounded budget to check.
+    not_searched_run_ids: list[str] = field(default_factory=list)
+
+
+def search_across_runs(
+    resolved_runs: list[tuple[str, Path | None]],
+    *,
+    current_run_id: str,
+    contains: str = "",
+    pattern: str = "",
+    tool: str = "",
+    type: str = "",
+    status: str = "",
+    kind: str = "",
+    from_record: int = 0,
+    to_record: int = 0,
+    context: int = 0,
+    limit: int = 50,
+    deadline_seconds: float = MAX_SEARCH_SECONDS,
+) -> CrossRunSearchResult:
+    """Search every already-resolved run's log as ONE bounded call.
+
+    Applies `search_records`'s own filters identically to each run in
+    `resolved_runs`, in order -- but both bounds it shares with
+    `search_records` (`limit`, `deadline_seconds`) are SHARED BUDGETS across
+    every run combined, not reset per run:
+
+    - `limit`: once enough hits have accumulated across the runs searched
+      so far, later runs are still scanned (so `searched_run_ids` stays
+      accurate) but contribute no further hits -- the RENDERED output
+      cannot grow with the number of runs searched, only with `limit`.
+    - `deadline_seconds`: resetting this per run would let one
+      `scope="conversation"` call cost `len(resolved_runs) *
+      deadline_seconds` in the worst case (a genuinely slow regex against
+      every run's log), defeating the "cheap, in-process log search"
+      guarantee `MAX_SEARCH_SECONDS` exists for in the single-run case --
+      see the module docstring's F6 section. Once the shared budget is
+      spent, remaining runs with a locatable log are reported via
+      `CrossRunSearchResult.not_searched_run_ids` rather than scanned.
+
+    Args:
+        resolved_runs: `(run_id, log_dir)` pairs, newest run first,
+            already capped by the caller to at most `MAX_CROSS_RUN_RUNS`
+            entries (`agent_service.py` resolves `AgentRunsDB.list_runs`'
+            own newest-first order through `run_log.resolve_existing_log_dir`
+            before calling this -- this function does no DB or root
+            resolution of its own, mirroring `load_records`'s own
+            explicit-path contract). `log_dir` is `None` for a run whose
+            log could not be located under the current root.
+        current_run_id: The run this call is executing in, so each hit can
+            be labelled "this run" vs. an earlier one.
+        contains, pattern, tool, type, status, kind, from_record, to_record,
+            context: Forwarded to `search_records` unchanged, applied to
+            each run's own records in turn.
+        limit: Shared hit budget across every run combined (see above).
+        deadline_seconds: Shared wall-clock budget across every run
+            combined (see above).
+
+    Returns:
+        A `CrossRunSearchResult` naming which runs were actually searched
+        (found and scanned, regardless of whether the shared `limit` left
+        room for any of their hits), which could not be located, and which
+        were never attempted because the shared time budget ran out first.
+
+    Raises:
+        RunLogSearchPatternRejected: `pattern` matches a known
+            catastrophic-backtracking shape (raised by the first `run_id`'s
+            `search_records` call, exactly like the single-run case).
+        RunLogSearchTimeout: a single run's own scan exceeded its share of
+            `deadline_seconds` -- exactly like the single-run case, this is
+            NOT caught here; a caller degrading gracefully must catch it
+            the same way it already catches it for `scope="run"`.
+    """
+    hits: list[CrossRunHit] = []
+    searched: list[str] = []
+    unresolved: list[str] = []
+    not_searched: list[str] = []
+    started = time.monotonic()
+    remaining_limit = limit
+    for run_id, log_dir in resolved_runs:
+        if log_dir is None:
+            unresolved.append(run_id)
+            continue
+        remaining_deadline = deadline_seconds - (time.monotonic() - started)
+        if remaining_deadline <= 0:
+            # Shared wall-clock budget already spent by earlier runs in
+            # this same call -- this run's log IS locatable, there was
+            # simply no time left to scan it. Never conflated with
+            # `unresolved` (see `CrossRunSearchResult`'s own field docs).
+            not_searched.append(run_id)
+            continue
+        records = load_records(log_dir)
+        per_run_limit = remaining_limit if remaining_limit > 0 else 0
+        found = search_records(
+            records,
+            contains=contains,
+            pattern=pattern,
+            tool=tool,
+            type=type,
+            status=status,
+            kind=kind,
+            from_record=from_record,
+            to_record=to_record,
+            context=context,
+            limit=per_run_limit,
+            deadline_seconds=remaining_deadline,
+        )
+        searched.append(run_id)
+        for record in found:
+            hits.append(
+                CrossRunHit(
+                    record=record,
+                    source_run_id=run_id,
+                    is_current_run=(run_id == current_run_id),
+                )
+            )
+        if limit > 0:
+            remaining_limit = limit - len(hits)
+    return CrossRunSearchResult(
+        hits=hits,
+        searched_run_ids=searched,
+        unresolved_run_ids=unresolved,
+        not_searched_run_ids=not_searched,
+    )
+
+
+def format_cross_run_results(
+    result: CrossRunSearchResult,
+    *,
+    max_chars: int = 400,
+    contains: str = "",
+    pattern: str = "",
+    offset: int = 0,
+) -> str:
+    """Render `search_across_runs`' result: coverage, then attributed hits.
+
+    ALWAYS leads with an explicit coverage line -- how many runs were
+    actually searched, vs. could not be located, vs. never attempted --
+    rather than only rendering `hits`. See `CrossRunSearchResult`'s own
+    docstring for why this line is not optional: a caller told "no matches"
+    when several of the conversation's runs were never actually searched
+    would draw a confident wrong conclusion (task-1273).
+
+    Args:
+        result: `search_across_runs`'s return value (a caller may first
+            `dataclasses.replace` in additional `not_searched_run_ids`,
+            e.g. runs excluded by the `MAX_CROSS_RUN_RUNS` cap before this
+            function ever saw them -- `agent_service.py`'s closure does
+            this).
+        max_chars: Forwarded to `format_results`, applied per hit.
+        contains: The literal substring searched for, forwarded to
+            `format_results` to centre each hit's rendered window.
+        pattern: The opt-in regex searched for, same purpose.
+        offset: Forwarded to `format_results`, applied to every hit's
+            rendered content identically -- same semantics as the
+            single-run case.
+
+    Returns:
+        A coverage line, then one attributed block per hit (labelled "this
+        run" or "an earlier run (<run_id>)"), or the coverage line plus
+        "No matching records." when there were no hits.
+    """
+    total = (
+        len(result.searched_run_ids)
+        + len(result.unresolved_run_ids)
+        + len(result.not_searched_run_ids)
+    )
+    coverage = (
+        f"Searched {len(result.searched_run_ids)} of {total} run(s) "
+        "in this conversation"
+    )
+    notes = []
+    if result.unresolved_run_ids:
+        notes.append(
+            f"{len(result.unresolved_run_ids)} could not be located under "
+            "the current root and were NOT searched (their log directory "
+            "is not reachable -- e.g. the workspace folder was bound, "
+            "rebound, or unbound since)"
+        )
+    if result.not_searched_run_ids:
+        notes.append(
+            f"{len(result.not_searched_run_ids)} not attempted this call "
+            "(this call's run or time budget was reached first)"
+        )
+    if notes:
+        coverage += ": " + "; ".join(notes)
+    coverage += "."
+    lines = [coverage]
+    if not result.hits:
+        lines.append("No matching records.")
+        return "\n".join(lines)
+    for hit in result.hits:
+        label = (
+            "this run"
+            if hit.is_current_run
+            else f"an earlier run ({hit.source_run_id})"
+        )
+        lines.append(
+            f"[{label}]\n"
+            + format_results(
+                [hit.record],
+                max_chars=max_chars,
+                contains=contains,
+                pattern=pattern,
+                offset=offset,
+            )
+        )
+    return "\n\n".join(lines)
