@@ -85,6 +85,10 @@ class FakeDictationService:
         # `ConsoleVoiceInputController._release` reaches for this to guarantee
         # the microphone is freed even when `stop_dictation()` forgets.
         self._audio_service = SimpleNamespace(stop_recording=self._record_release)
+        # `ConsoleVoiceInputController._release` also reaches for this to stop
+        # the (real) processing thread's loop; a test asserts it stays unset
+        # to prove a stale error never bypassed the capture it was not for.
+        self.stop_processing = threading.Event()
 
     def _record_release(self) -> None:
         self.release_calls += 1
@@ -2496,6 +2500,17 @@ async def test_a_stale_failure_does_not_tear_down_the_live_next_capture(
     orphaned capture-1 thread reporting an error after capture 2 has started
     would otherwise tear capture 2 down with a spurious "Dictation failed"
     for an error capture 2 never had.
+
+    Fix round 1 (Finding, HIGH): tagging the `VoiceFailed` emit with a stale
+    generation is not enough on its own -- swallowing only the
+    *notification* still let `_report_service_error()` claim and release
+    whatever service is CURRENTLY live (capture 2's real microphone and
+    processing thread) and flip the controller's own state machine to
+    `idle`, with nothing on screen to show for it: `Rec ●` over a dead
+    microphone. So this asserts at the layer that actually broke --
+    `ConsoleVoiceInputController.state` and the fake service's
+    `release_calls`/`stop_processing` -- not just the screen-level proxies
+    the rest of this module already covers.
     """
     service = FakeDictationService()
     _patch_availability(monkeypatch)
@@ -2516,15 +2531,32 @@ async def test_a_stale_failure_does_not_tear_down_the_live_next_capture(
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Mic")
         assert len(sessions) == 1
+        controller = sessions[0]._controller
+
+        # Capture 1's own legitimate stop already released the microphone and
+        # signalled its processing loop once -- reset both markers so what
+        # follows can attribute any NEW signal to the stale error, not to
+        # capture 1's own teardown.
+        release_calls_after_capture_one = service.release_calls
+        service.stop_processing.clear()
 
         await pilot.pause(0.5)
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Rec ●")
         service.emit_final("live words")
         await pilot.pause()
+        assert controller.state == voice_module.STATE_LISTENING
 
         stale_on_error(RuntimeError("Microphone was disconnected"))
         await pilot.pause()
+
+        # The controller-layer assertions the fix round 1 finding demanded:
+        # capture 2's real microphone/processing thread must never have been
+        # touched, and the FSM must never have moved.
+        assert controller.state == voice_module.STATE_LISTENING
+        assert service.release_calls == release_calls_after_capture_one
+        assert not service.stop_processing.is_set()
+        assert service.stop_calls == 1  # capture 1's own stop only
 
         assert console._console_dictation_state == "recording"
         # Capture 1's own words were already inserted when IT stopped; a torn
@@ -2539,6 +2571,7 @@ async def test_a_stale_failure_does_not_tear_down_the_live_next_capture(
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Mic")
         assert composer.draft_text() == "first words live words"
+        assert service.stop_calls == 2  # capture 2's own real stop now ran
 
 
 @pytest.mark.asyncio

@@ -1099,17 +1099,36 @@ class ConsoleVoiceInputController:
 
         This is also the path an orphaned processing thread uses to report a
         recognizer error long after its own capture's `stop_dictation()` join
-        gave up -- `on_error` binds `generation` from `_run_begin()` at wiring
-        time (see its docstring), and this passes it straight through to
-        `_fail()` so a stale report cannot tear down whatever capture is live
-        by the time it actually arrives.
+        gave up. Fix round 1 (Finding, HIGH): tagging the eventual `VoiceFailed`
+        emit with `generation` is not enough on its own -- `_claim_service()`/
+        `_release()` below reach for `self._service`, i.e. whatever capture is
+        CURRENTLY live, not the one that produced this report, and `_fail()`
+        unconditionally flips the FSM to `idle`. Left unchecked, a stale call
+        would rip the microphone out from under a live capture 2 and silently
+        idle the controller, while the session's own generation gate in
+        `ConsoleStreamingDictationSession._handle_event` only swallows the
+        *notification* -- the screen would show "Rec ●" over a dead
+        microphone with no toast at all, worse than doing nothing. So the
+        check happens here, first, before the latch, before any claim/release,
+        before `_fail()` ever runs: a stale call is a no-op start to finish.
 
         Args:
             error: The exception the service reported.
             generation: This attempt's capture-generation token, bound at
                 `on_error`'s creation time in `_run_begin()`. `None` when the
-                caller does not distinguish captures.
+                caller does not distinguish captures. Compared against
+                `self._pending_capture_generation` -- the token the most
+                recent `start()` recorded -- which is exactly what changed if
+                a newer capture has begun since this callback was wired.
         """
+        if generation is not None and generation != self._pending_capture_generation:
+            logger.debug(
+                "Console dictation ignoring a stale service error (generation "
+                "{}, current generation {})",
+                generation,
+                self._pending_capture_generation,
+            )
+            return
         # Set before `_fail()`, which emits and can therefore raise: the
         # report has happened either way, and the service's own
         # `_notify_error()` only logs whatever escapes this callback.
