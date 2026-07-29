@@ -11,6 +11,8 @@ import json
 from tldw_chatbook.Agents.agent_models import (
     INSTALL_SKILL_TOOL_NAME,
     RUNTIME_TOOL_NAMES,
+    RUN_LOG_SLICE_TOOL_NAME,
+    RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     SEARCH_RUN_LOG_TOOL_NAME,
     SPAWN_TOOL_NAME,
@@ -39,6 +41,8 @@ def test_install_skill_name_in_runtime_tool_names():
         INSTALL_SKILL_TOOL_NAME,
         RUN_SKILL_SCRIPT_TOOL_NAME,
         SEARCH_RUN_LOG_TOOL_NAME,
+        RUN_LOG_STATS_TOOL_NAME,
+        RUN_LOG_SLICE_TOOL_NAME,
     }
 
 
