@@ -56,7 +56,16 @@ def render_change(item: dict[str, Any]) -> Text:
     headline: list[str] = []
     pct = item.get("change_percentage")
     if pct is not None:
-        headline.append(f"{float(pct):.0f}% changed")
+        # `change_percentage` is always written as a Python float by
+        # `baseline_manager.py`/`monitoring_engine.py`, never parsed from raw
+        # remote text, so this cast is not currently reachable with a
+        # non-numeric value. Guard it anyway: a raise here would escape
+        # `compose()` and exit the whole application over a single headline
+        # field, so degrade by omitting the percent rather than raising.
+        try:
+            headline.append(f"{float(pct):.0f}% changed")
+        except (TypeError, ValueError):
+            pass
     if item.get("change_type"):
         headline.append(str(item["change_type"]))
     out.append(escape_markup(" · ".join(headline) or "changed"), style="dim")

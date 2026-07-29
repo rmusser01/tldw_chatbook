@@ -125,11 +125,26 @@ def test_dispatch_selects_the_renderer_by_kind():
 
 
 def test_unknown_kind_falls_back_to_article_without_raising():
-    """An escaping exception in compose() exits the whole app."""
+    """An escaping exception in compose() exits the whole app.
+
+    Asserting only `"odd" in out` does not pin the fallback to the article
+    arm specifically: with no `change_percentage`/`change_type` on this
+    item, `render_change`'s headline falls back to the bare word "changed"
+    (no "%" at all) and its diff loop happily emits an unprefixed "x" line
+    too, so a fallback-to-`render_change` default would satisfy that
+    assertion just as well -- confirmed empirically while fixing this test:
+    `"%" not in out` stays green either way for *this* input, since
+    `render_change` only emits "%" when `change_percentage` is present.
+    Assert the article-only word-count marker instead
+    (`f"{len(body.split())} words"` from `render_article`'s meta line):
+    `render_change` never emits "words" under any input, so this is the
+    discriminator that actually goes red under the wrong default.
+    """
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_for
 
     out = str(render_for({"title": "odd", "content": "x", "content_kind": "wat"}))
     assert "odd" in out
+    assert "words" in out
 
 
 def test_change_with_no_body_explains_why():
