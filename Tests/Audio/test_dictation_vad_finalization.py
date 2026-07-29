@@ -13,14 +13,21 @@ queued for transcription. `_processing_loop`'s existing silence-timeout check
 chunk arrival) then fires `on_final_transcript` mid-capture once a real pause
 exceeds `silence_threshold_seconds`, instead of only at `stop_dictation()`.
 
-No hardware, no real `webrtcvad.Vad`: a fake stands in so these tests assert
-the gating logic, not any particular VAD library's classification of a given
-waveform.
+Most of these tests use a fake VAD, so they assert the gating logic rather
+than any particular VAD library's classification of a given waveform. That
+alone would leave real `webrtcvad` never exercised through `_chunk_has_speech`
+on any path this test tree actually runs -- the same shape that let a
+bytes-vs-path API mismatch ship undetected in a prior version, and precisely
+what a broad `except Exception: return True` (correct for capture safety) can
+hide forever. The "Real webrtcvad coverage" section below drives the real
+library, skipped only when it truly is not installed.
 """
 
 from __future__ import annotations
 
 import queue
+import random
+import struct
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -56,6 +63,30 @@ class _FakeVad:
         return bool(self._speech)
 
 
+class _RaiseSpyVad:
+    """Wraps a real `webrtcvad.Vad`, recording whether `is_speech` ever raised.
+
+    `_chunk_has_speech`'s `except Exception: return True` is deliberate -- a
+    VAD failure must never kill a live capture -- but that same broad catch
+    would silently swallow a genuine frame-contract violation (wrong frame
+    size, wrong sample width) and make it indistinguishable from a clean "no
+    speech here" result. This spy sits between the frame loop and the real
+    VAD so a test can tell those two cases apart, instead of only observing
+    the identical `True` return value either way.
+    """
+
+    def __init__(self, real_vad: Any) -> None:
+        self._real = real_vad
+        self.raised: List[Exception] = []
+
+    def is_speech(self, frame_bytes: bytes, sample_rate: int) -> bool:
+        try:
+            return self._real.is_speech(frame_bytes, sample_rate)
+        except Exception as exc:
+            self.raised.append(exc)
+            raise
+
+
 class _FakeTranscriptionService:
     """Real `TranscriptionService.transcribe_buffer` signature, one canned reply."""
 
@@ -88,7 +119,23 @@ def _chunk() -> bytes:
     return bytes(16000)
 
 
-def _service(vad: Optional[_FakeVad]):
+def _deterministic_noise_chunk() -> bytes:
+    """16000 bytes of broadband, alternating-sign noise, fixed seed.
+
+    A real `Vad(2)` classifies this as speech in every 30ms frame (verified
+    directly against `webrtcvad`, not asserted on faith). Built once from a
+    seeded `random.Random` -- deterministic and reproducible across runs and
+    machines, never drawn from OS entropy at test time.
+    """
+    rng = random.Random(1234)
+    samples = [
+        rng.randint(8000, 32000) * (1 if rng.random() < 0.5 else -1)
+        for _ in range(8000)  # 16000 bytes / 2 bytes-per-sample
+    ]
+    return struct.pack(f"<{len(samples)}h", *samples)
+
+
+def _service(vad: Optional[Any]):
     """Build a `LazyLiveDictationService` without touching hardware.
 
     Mirrors `Tests/Audio/test_dictation_capture_release.py`'s `_service_with`:
@@ -244,3 +291,66 @@ def test_pause_finalizes_a_segment_mid_capture():
     # The segment was committed and cleared -- not left dangling for
     # `stop_dictation()` to finalize a second time.
     assert service.current_transcript == ""
+
+
+# --------------------------------------------------------------------------
+# Real webrtcvad coverage
+#
+# Every test above replaces the VAD with a fake. These two drive the real
+# library through the real `_chunk_has_speech` frame loop (never a
+# reimplementation of it) so a genuine frame-contract violation -- wrong
+# frame size, wrong sample-rate assumption -- fails here instead of only on
+# a live capture. Skipped, not xfailed, when `webrtcvad` truly is not
+# installed: that is `_chunk_has_speech`'s own documented degrade path, not
+# a test failure.
+# --------------------------------------------------------------------------
+
+
+def test_real_webrtcvad_classifies_noise_as_speech_and_silence_as_silence():
+    """The real library, not a fake, must actually distinguish the two.
+
+    Each assertion gets its own freshly constructed `Vad(2)`. `webrtcvad`
+    keeps hangover state across calls on one instance (verified directly:
+    running the noise chunk and then a silent chunk through the *same*
+    `Vad` instance leaked speech-positive frames into the silent chunk's
+    result), so sharing one instance between the noise and silence checks
+    below would contaminate the second assertion with the first's state.
+    """
+    webrtcvad = pytest.importorskip("webrtcvad")
+
+    noise_service = _service(vad=webrtcvad.Vad(2))
+    assert noise_service._chunk_has_speech(_deterministic_noise_chunk()) is True
+
+    # All-zero, not the neighbour fixtures' constant-DC `\x00\x01` pattern:
+    # a real `Vad` needs a genuinely flat signal for a definitive negative.
+    silence_service = _service(vad=webrtcvad.Vad(2))
+    assert silence_service._chunk_has_speech(bytes(16000)) is False
+
+
+def test_real_webrtcvad_frame_contract_does_not_raise():
+    """A chunk length that is not a multiple of 960 bytes must never reach
+    the real VAD as a malformed frame.
+
+    `_chunk_has_speech`'s frame loop bounds `range()` at
+    `len(audio_chunk) - frame_bytes + 1`, so every slice handed to
+    `is_speech()` should be exactly 960 bytes regardless of the chunk's
+    total length -- the remainder is dropped, not truncated into a short
+    frame. Asserting only the return value would not catch a regression
+    here: `except Exception: return True` makes a masked frame-contract
+    violation look identical to a clean "no speech" `True`/`False` result.
+    `_RaiseSpyVad` observes the real VAD directly so the test can tell the
+    two apart.
+    """
+    webrtcvad = pytest.importorskip("webrtcvad")
+
+    spy = _RaiseSpyVad(webrtcvad.Vad(2))
+    service = _service(vad=spy)
+
+    odd_length_chunk = bytes(16001)  # not a multiple of 960
+    result = service._chunk_has_speech(odd_length_chunk)
+
+    assert isinstance(result, bool)
+    assert spy.raised == [], (
+        f"the real VAD raised on a frame `_chunk_has_speech` handed it, and "
+        f"the method's own except-clause silently masked it: {spy.raised!r}"
+    )
