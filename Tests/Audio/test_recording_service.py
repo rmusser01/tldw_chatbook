@@ -450,12 +450,11 @@ class TestAudioRecordingIntegration:
                 # subject.
                 service = AudioRecordingService(backend="pyaudio", use_vad=False)
 
-                # Record for a short time
                 chunks_received = []
 
                 def callback(chunk):
                     chunks_received.append(chunk)
-                    if len(chunks_received) >= 3:
+                    if len(chunks_received) == 3:
                         service.is_recording = False
 
                 # Belt and braces: bound the loop at the read() source too, so
@@ -474,8 +473,11 @@ class TestAudioRecordingIntegration:
                 service.is_recording = True
                 service._pyaudio_recording_loop()
 
-                assert len(chunks_received) >= 3
-                assert all(chunk == test_audio for chunk in chunks_received)
+                assert chunks_received == [test_audio] * 3
+                assert service.is_recording is False
+                mock_stream.stop_stream.assert_called_once_with()
+                mock_stream.close.assert_called_once_with()
+                assert service.stream is None
 
     def test_sounddevice_recording_flow(self):
         """Test complete recording flow with sounddevice backend."""
