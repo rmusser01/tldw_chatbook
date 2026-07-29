@@ -14,6 +14,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Static
@@ -75,8 +76,12 @@ class ConsoleScopeChip(ConsoleChip):
     """
 
     BINDINGS = [
-        Binding("enter", "open_scope_picker", "Open retrieval scope picker", show=False),
-        Binding("space", "open_scope_picker", "Open retrieval scope picker", show=False),
+        Binding(
+            "enter", "open_scope_picker", "Open retrieval scope picker", show=False
+        ),
+        Binding(
+            "space", "open_scope_picker", "Open retrieval scope picker", show=False
+        ),
     ]
 
     class OpenRequested(Message):
@@ -144,7 +149,7 @@ class ConsoleStatusChips(Horizontal):
         # ids). A name containing `[red]...[/]` would otherwise
         # restyle the chip strip, or raise MarkupError when unbalanced.
         chip = chip_class(label, id=id, classes=classes, markup=False)
-        chip.tooltip = label
+        chip.tooltip = Content(label)
         return chip
 
     def compose(self) -> ComposeResult:
@@ -281,7 +286,7 @@ class ConsoleStatusChips(Horizontal):
             except NoMatches:
                 continue
             chip.update(label)
-            chip.tooltip = label
+            chip.tooltip = Content(label)
         chip_emphasis = {
             "#console-sources-chip": state.sources_active,
             "#console-tools-chip": state.tools_active,

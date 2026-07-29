@@ -2,6 +2,7 @@
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Tooltip
 
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.Widgets.Console.console_status_chips import (
@@ -28,6 +29,8 @@ def _state(**overrides) -> ConsoleControlState:
 
 
 class _ChipsApp(App):
+    CSS = ".console-control-chip { width: auto; }"
+
     def __init__(self, state: ConsoleControlState) -> None:
         super().__init__()
         self._state = state
@@ -93,9 +96,7 @@ async def test_approvals_chip_posts_review_requested():
             # Restore before teardown — Textual's prune cascade calls
             # post_message(Prune()) on exit and a swallowing stub hangs it.
             chip.post_message = original_post_message
-        assert any(
-            isinstance(m, ConsoleApprovalsChip.ReviewRequested) for m in posted
-        )
+        assert any(isinstance(m, ConsoleApprovalsChip.ReviewRequested) for m in posted)
 
 
 @pytest.mark.asyncio
@@ -145,3 +146,33 @@ async def test_status_chips_do_not_parse_markup_in_assistant_names():
 
         assert "[bold]Guide[/]" in str(assistant_chip.render())
         assert "Persona:" in str(assistant_chip.render())
+
+
+@pytest.mark.parametrize("after_sync", [False, True], ids=["compose", "sync"])
+@pytest.mark.asyncio
+async def test_assistant_tooltip_renders_malformed_markup_literally(after_sync):
+    """Textual's separate Tooltip widget must not parse assistant names."""
+    malformed_state = ConsoleControlState.from_values(
+        provider="llama_cpp",
+        model="m",
+        assistant_kind="persona",
+        assistant_name="[bold]Guide[/red]",
+        assistant_id="persona-7",
+    )
+    app = _ChipsApp(_state() if after_sync else malformed_state)
+    app.TOOLTIP_DELAY = 0.01
+
+    async with app.run_test(size=(200, 6), tooltips=True) as pilot:
+        await pilot.pause()
+        if after_sync:
+            app.query_one("#console-status-chips", ConsoleStatusChips).sync_state(
+                malformed_state
+            )
+            await pilot.pause()
+
+        assert await pilot.hover("#console-assistant-chip")
+        await pilot.pause(0.05)
+
+        tooltip = app.screen.get_child_by_type(Tooltip)
+        assert tooltip.display is True
+        assert "Persona: [bold]Guide[/red]" in str(tooltip.render())
