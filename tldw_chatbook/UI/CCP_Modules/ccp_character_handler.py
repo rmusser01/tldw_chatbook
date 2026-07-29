@@ -1,5 +1,5 @@
 """Handler for character-related operations in the Personas screen."""
-
+import asyncio
 from functools import partial
 from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
 
@@ -355,7 +355,11 @@ class CCPCharacterHandler:
     async def refresh_character_list(self) -> None:
         """Refresh the character select dropdown."""
         try:
-            self.character_list = fetch_all_characters()
+            # Off the loop (TASK-1320): `fetch_all_characters()` is a blocking
+            # read of the entire character library. Awaited from a screen mount
+            # it froze the whole app; every other caller of this method was
+            # stalling the loop for the same read.
+            self.character_list = await asyncio.to_thread(fetch_all_characters)
             options = [
                 (char.get("name", "Unnamed"), str(char.get("id")))
                 for char in self.character_list

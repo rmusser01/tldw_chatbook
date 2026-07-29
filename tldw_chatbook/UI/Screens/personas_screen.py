@@ -929,17 +929,43 @@ class PersonasScreen(BaseAppScreen):
             self._show_center(None)
             self._sync_title_and_console_actions()
 
-    async def on_mount(self) -> None:
+    def on_mount(self) -> None:
+        """Paint the shell now, load the library after (TASK-1320).
+
+        Synchronous by design. Mounting is awaited by the app's own navigation
+        handler, so awaiting the character read here ran it on the App's message
+        pump -- and `refresh_character_list()` reads every character through the
+        blocking `fetch_all_characters()`, so the app stopped responding
+        entirely until the library came back.
+
+        Everything that only arranges already-composed widgets stays here, so
+        the screen is laid out and readable immediately. Only the library read
+        and what genuinely depends on it is deferred, in its original order.
+        """
         super().on_mount()
-        loading_manager = getattr(self, "loading_manager", None)
-        setup_loading = getattr(loading_manager, "setup", None)
-        if callable(setup_loading):
-            await setup_loading()
         self._sync_responsive_workbench()
         self._sync_personas_rails()
         self._set_persona_editor_runtime_source(self.persona_handler.current_mode())
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
         self._show_center(None)
+        # Reflect a "my name" pointer persisted from a previous session
+        # immediately, before any selection happens (task-442 T3) -- now
+        # genuinely immediate, rather than behind the library read.
+        self.query_one(PersonasInspectorPane).set_active_profile_name(
+            get_active_user_profile_pointer()
+        )
+        self.run_worker(
+            self._load_after_mount(),
+            group="personas_initial_load",
+            exclusive=True,
+        )
+
+    async def _load_after_mount(self) -> None:
+        """Load the character library once the screen is already on screen."""
+        loading_manager = getattr(self, "loading_manager", None)
+        setup_loading = getattr(loading_manager, "setup", None)
+        if callable(setup_loading):
+            await setup_loading()
         await self.character_handler.refresh_character_list()
         self._sync_title_and_console_actions()
         await self._apply_pending_restore()

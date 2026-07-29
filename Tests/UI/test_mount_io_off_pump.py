@@ -254,3 +254,46 @@ async def test_chatbooks_scan_does_not_block_the_event_loop(monkeypatch):
             f"(blocking work takes {SERVICE_DELAY}s): the scan is running on "
             "the loop, so the whole app is frozen for its duration"
         )
+
+
+# ---------------------------------------------------------------------------
+# Personas: `on_mount` awaited `refresh_character_list()`, whose own body calls
+# the synchronous `fetch_all_characters()` -- a full read of every character in
+# the library, on the event loop, while the app awaits the mount.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_personas_mount_does_not_block_on_the_character_library(monkeypatch):
+    """Opening Personas must not freeze the app while characters load."""
+    import sys
+
+    sys.path.insert(0, "Tests/UI")
+    from test_destination_shells import DestinationHarness, _build_test_app
+
+    import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as handler_module
+
+    def blocking_fetch_all_characters():
+        # Stands in for a large character library or a server-backed scope.
+        time.sleep(SERVICE_DELAY)
+        return []
+
+    monkeypatch.setattr(
+        handler_module, "fetch_all_characters", blocking_fetch_all_characters
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "personas")
+
+    async def mount_personas() -> None:
+        async with host.run_test(size=(180, 50)) as pilot:
+            await pilot.pause()
+            await asyncio.sleep(0.2)
+
+    stall = await _max_event_loop_stall(mount_personas)
+
+    assert stall < SERVICE_DELAY / 2, (
+        f"event loop stalled {stall:.2f}s while Personas mounted (character "
+        f"read takes {SERVICE_DELAY}s): the library read is on the loop, so the "
+        "app is frozen for its duration"
+    )
