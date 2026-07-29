@@ -209,6 +209,16 @@ Update the tests to describe current behavior:
     assertion to expect no segment when its mocked model also returns empty
     text and no sentences. This is a direct correction to the established
     cross-provider empty-transcription contract, not a new service boundary.
+24. Before loading a Parakeet MLX model, inspect available sound-file metadata.
+    When a valid audio container reports zero frames or exactly zero duration,
+    return the normal provider result with empty text and segments, resolved
+    model/precision/attention metadata, chunk settings, sample rate, duration
+    `0.0`, and a terminal progress update. Do not invoke the model loader or
+    inference. Metadata-probe failures must continue into normal validation and
+    decoding so invalid files still fail clearly; non-empty input behavior is
+    unchanged. The mocked zero-frame test must prove the loader was not called,
+    while the separate 10 ms empty-model test retains post-inference
+    normalization coverage.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -278,6 +288,11 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   produces a meaningless addressable record and contradicts faster-whisper and
   MLX Whisper empty-result behavior. Keying the fallback on non-empty text
   preserves useful untimed transcripts without manufacturing empty content.
+- Passing a valid zero-frame buffer into Parakeet MLX underflows its internal
+  sequence length and can request an impossible Metal allocation. Recognizing
+  the empty container before model load is deterministic, avoids needless
+  downloads/resources, and returns the same empty transcription contract
+  already expected by callers.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

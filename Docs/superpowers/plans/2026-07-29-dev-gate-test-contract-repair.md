@@ -985,6 +985,57 @@ git add \
 git commit -m "fix(stt): omit empty Parakeet MLX segment"
 ```
 
+### Task 4u: Short-circuit zero-frame Parakeet MLX input
+
+**Files:**
+- Modify: `tldw_chatbook/Local_Ingestion/transcription_service.py`
+- Modify: `Tests/Transcription/test_mlx_parakeet_integration.py`
+- Modify: `Tests/Transcription/test_mlx_parakeet_transcription.py`
+
+- [ ] **Step 1: Preserve real-input RED**
+
+Run
+`TestMLXParakeetIntegration::test_real_transcription_empty_file` from
+`test_mlx_parakeet_transcription.py`. On a Mac with Parakeet MLX installed,
+expected RED is a Metal allocation error caused by inference on a zero-frame
+tensor. Confirm the mocked zero-frame integration currently invokes its loader,
+while the 10 ms edge case remains available to test empty post-model output.
+
+- [ ] **Step 2: Return an empty result before model load**
+
+After resolving model/precision/attention settings but before acquiring the
+model-load lock, inspect `sf.info()` when available. If the valid container
+reports zero frames or exactly zero duration, return an empty Parakeet MLX
+result with standard provider metadata, normalized default/request chunk
+settings, sample rate, duration `0.0`, and a final progress update. Do not load
+or invoke the model. If probing raises, continue through the existing path so
+invalid files still fail normally. Simplify the mocked zero-frame test to
+assert empty text/segments and that the model loader was not called; strengthen
+the real integration to assert no segments. Do not alter non-empty decoding,
+chunking, routing, or fallback behavior.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Transcription/test_mlx_parakeet_integration.py \
+  Tests/Transcription/test_mlx_parakeet_edge_cases.py \
+  Tests/Transcription/test_mlx_parakeet_transcription.py -q
+../../.venv/bin/python -m ruff check \
+  tldw_chatbook/Local_Ingestion/transcription_service.py \
+  Tests/Transcription/test_mlx_parakeet_integration.py \
+  Tests/Transcription/test_mlx_parakeet_transcription.py
+../../.venv/bin/python -m ruff format --check \
+  tldw_chatbook/Local_Ingestion/transcription_service.py \
+  Tests/Transcription/test_mlx_parakeet_integration.py \
+  Tests/Transcription/test_mlx_parakeet_transcription.py
+git add \
+  tldw_chatbook/Local_Ingestion/transcription_service.py \
+  Tests/Transcription/test_mlx_parakeet_integration.py \
+  Tests/Transcription/test_mlx_parakeet_transcription.py
+git commit -m "fix(stt): short-circuit empty Parakeet MLX input"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1065,6 +1116,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/TTS/test_tts_preferences.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
+  Tests/Transcription/test_mlx_parakeet_transcription.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -1095,6 +1147,7 @@ Expected: all affected tests pass.
   Tests/TTS/test_tts_preferences.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
+  Tests/Transcription/test_mlx_parakeet_transcription.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -1120,6 +1173,7 @@ Expected: all affected tests pass.
   Tests/TTS/test_tts_preferences.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
+  Tests/Transcription/test_mlx_parakeet_transcription.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
