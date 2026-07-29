@@ -2799,13 +2799,21 @@ async def test_mcp_destination_mode_chip_syncs_to_restored_mode():
         screen = _active_destination_screen(host)
         workbench = screen.query_one(MCPWorkbench)
 
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        servers_chip = screen.query_one("#mcp-mode-servers", Button)
+
+        # Wait on the chip, not just on `active_mode`. The mode is applied by
+        # the workbench and the chip is synced by the screen's `ModeChanged`
+        # handler, so the highlight necessarily lands one pump cycle after the
+        # mode itself. Polling the mode and asserting the chip made the test
+        # depend on the load happening to finish before the test body resumed
+        # (TASK-1320 moved that load into a worker). The end state asserted is
+        # unchanged -- this still fails if the chip never syncs.
         deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline and workbench.active_mode != "tools":
+        while time.monotonic() < deadline and not tools_chip.has_class("is-active"):
             await pilot.pause(0.01)
 
         assert workbench.active_mode == "tools"
-        tools_chip = screen.query_one("#mcp-mode-tools", Button)
-        servers_chip = screen.query_one("#mcp-mode-servers", Button)
         assert tools_chip.has_class("is-active")
         assert not servers_chip.has_class("is-active")
 

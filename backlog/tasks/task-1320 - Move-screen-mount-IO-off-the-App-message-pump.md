@@ -1,7 +1,7 @@
 ---
 id: TASK-1320
 title: Move screen mount I/O off the App message pump
-status: To Do
+status: In Progress
 assignee: []
 labels:
   - performance
@@ -49,3 +49,29 @@ depend on.
 - [ ] #4 Mount-path fetch failures surface in the destination as a recoverable error, not a silent empty view
 - [ ] #5 An inventory records every `on_mount` that still awaits I/O, with each either converted or explicitly justified
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Inventory every `on_mount` awaiting I/O and classify by navigation reachability
+   (AC #5). Result: 10 handlers await I/O-shaped work; 4 are reachable while a
+   destination mounts -- `mcp_workbench`, `personas_screen`, `study_screen`,
+   `Chatbooks_Window_Improved`. The rest are modals/on-demand `push_screen`
+   surfaces or have no Screen mounting them at all; `Chatbooks_Window.py` (the
+   pre-"Improved" copy) has no importers and is dead.
+2. Write the load-bearing regression test first (AC #3): a destination whose
+   backing service is slow must not stop the App pump handling messages. Prove
+   it fails against current code.
+3. Convert `MCPWorkbench` (AC #2): `on_mount` becomes synchronous and schedules
+   `reload()` in a worker; the canvas mounts immediately in a loading state.
+   Follow the three-state precedent set by TASK-1020 (loading / empty /
+   populated) so an in-flight load is never rendered as "empty".
+4. Convert the remaining three navigation-reachable handlers the same way.
+5. Make mount-path fetch failures resolve to a visible, recoverable error rather
+   than a silent empty view (AC #4).
+6. Record the inventory and the justification for each unconverted handler.
+
+ADR required: no
+Reason: no policy, framework or storage contract changes -- this moves existing
+work off the message pump behind the existing worker seam.
+<!-- SECTION:PLAN:END -->
