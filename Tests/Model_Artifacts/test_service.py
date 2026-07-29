@@ -928,6 +928,65 @@ def test_failed_install_removes_only_operation_owned_staging(
     assert service.artifact_path(item.reference).exists() is False
 
 
+def test_idempotent_install_reports_operation_staging_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, source, final = installed_artifact(tmp_path)
+    abandoned = service.staging_path / "abandoned"
+    abandoned.mkdir()
+    cleanup_calls: list[Path] = []
+    cleanup_error = OSError("injected cleanup failure")
+
+    def fail_cleanup(path: Path) -> None:
+        cleanup_calls.append(Path(path))
+        raise cleanup_error
+
+    monkeypatch.setattr(service_module.shutil, "rmtree", fail_cleanup)
+
+    with pytest.raises(service_module.ArtifactStateError) as caught:
+        service.install(item, source)
+
+    assert caught.value.__cause__ is cleanup_error
+    assert len(cleanup_calls) == 1
+    assert cleanup_calls[0].parent == service.staging_path
+    assert cleanup_calls[0] != abandoned
+    assert abandoned.is_dir()
+    assert final.is_dir()
+
+
+def test_primary_install_error_preserves_cleanup_failure_note(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, source = install_inputs(tmp_path)
+    abandoned = service.staging_path / "abandoned"
+    abandoned.mkdir()
+    primary = service_module.ArtifactIntegrityError("primary install failure")
+    cleanup_error = OSError("injected cleanup failure")
+
+    def fail_copy(*_args: object, **_kwargs: object) -> None:
+        raise primary
+
+    def fail_cleanup(_path: Path) -> None:
+        raise cleanup_error
+
+    monkeypatch.setattr(service, "_copy_payload", fail_copy)
+    monkeypatch.setattr(service_module.shutil, "rmtree", fail_cleanup)
+
+    with pytest.raises(service_module.ArtifactIntegrityError) as caught:
+        service.install(item, source)
+
+    assert caught.value is primary
+    assert any(
+        "operation staging cleanup failed" in note
+        and "injected cleanup failure" in note
+        for note in getattr(primary, "__notes__", ())
+    )
+    assert abandoned.is_dir()
+    assert service.artifact_path(item.reference).exists() is False
+
+
 @pytest.mark.parametrize("blocked_key", ("lifecycle", "target"))
 def test_services_contend_on_lifecycle_and_target_writer_leases(
     tmp_path: Path,
@@ -1102,6 +1161,37 @@ def test_inventory_rejects_replaced_artifacts_root_before_traversal(
     assert scan_calls == []
     assert len(installed) == 1
     assert installed[0].path == service.artifacts_path
+    assert installed[0].descriptor is None
+    assert installed[0].ready is False
+    assert installed[0].active is False
+    assert installed[0].error
+
+
+def test_inventory_reports_deeply_nested_manifest_as_invalid(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    final = service.artifact_path(ref())
+    final.mkdir(parents=True)
+    depth = 1_000
+    while depth <= 65_536:
+        nested = "[" * depth + "0" + "]" * depth
+        try:
+            json.loads(nested)
+        except RecursionError:
+            break
+        depth *= 2
+    else:
+        pytest.fail("JSON decoder accepted the bounded nesting probe")
+    (final / "manifest.json").write_text(
+        '{"schema_version":1,"descriptor":' + nested + "}",
+        encoding="utf-8",
+    )
+
+    installed = service.list_installed()
+
+    assert len(installed) == 1
+    assert installed[0].path == final
     assert installed[0].descriptor is None
     assert installed[0].ready is False
     assert installed[0].active is False

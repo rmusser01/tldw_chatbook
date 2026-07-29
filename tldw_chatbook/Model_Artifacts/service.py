@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import stat
+import sys
 import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -1058,12 +1059,19 @@ class ModelArtifactService:
             raise ArtifactStateError("artifact installation I/O failed") from error
         finally:
             if staging is not None:
+                primary_error = sys.exception()
                 try:
                     shutil.rmtree(staging)
                 except FileNotFoundError:
                     pass
-                except OSError:
-                    pass
+                except OSError as cleanup_error:
+                    if primary_error is None:
+                        raise ArtifactStateError(
+                            "failed to clean operation-owned artifact staging"
+                        ) from cleanup_error
+                    primary_error.add_note(
+                        f"operation staging cleanup failed: {cleanup_error!r}"
+                    )
 
     def _ensure_owned_directory(self, path: Path) -> None:
         try:
@@ -1355,6 +1363,7 @@ class ModelArtifactService:
             FileNotFoundError,
             NotADirectoryError,
             OSError,
+            RecursionError,
             UnicodeError,
             json.JSONDecodeError,
             ValueError,
