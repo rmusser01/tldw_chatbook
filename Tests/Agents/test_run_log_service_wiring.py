@@ -59,7 +59,13 @@ def all_records(run_dir: Path):
 
 
 def read_all(root: Path):
-    run_dirs = list((root / "agent-runs").iterdir())
+    # TASK-1270: the writer now dots the directory name unconditionally
+    # (both the sandbox-fallback and bound-workspace case), so this
+    # fixture-path helper follows suit -- this is a location detail for
+    # the test harness, not a security assertion (the security invariant
+    # itself lives in test_run_log_sandbox_isolation.py /
+    # test_run_log_workspace_isolation.py).
+    run_dirs = list((root / ".agent-runs").iterdir())
     run_dirs = [d for d in run_dirs if d.is_dir()]
     assert len(run_dirs) == 1
     records = []
@@ -146,7 +152,7 @@ def test_a_real_spawn_shares_the_parent_log_directory_and_counter(wired):
     )
     assert outcome.status == RUN_DONE and outcome.subagents_spawned == 1
 
-    run_dirs = [d for d in (root / "agent-runs").iterdir() if d.is_dir()]
+    run_dirs = [d for d in (root / ".agent-runs").iterdir() if d.is_dir()]
     assert len(run_dirs) == 1, "parent and child must share ONE log directory"
     records = all_records(run_dirs[0])
 
@@ -197,7 +203,7 @@ def test_parent_spawn_tool_call_record_precedes_the_childs_own_records(wired):
     )
     assert outcome.status == RUN_DONE and outcome.subagents_spawned == 1
 
-    run_dirs = [d for d in (root / "agent-runs").iterdir() if d.is_dir()]
+    run_dirs = [d for d in (root / ".agent-runs").iterdir() if d.is_dir()]
     assert len(run_dirs) == 1
     records = all_records(run_dirs[0])
 
@@ -274,7 +280,7 @@ def test_run_turn_called_twice_on_one_service_gets_two_separate_logs(wired):
         config=config,
         api_endpoint="openai",
     )
-    run_dirs = [d for d in (root / "agent-runs").iterdir() if d.is_dir()]
+    run_dirs = [d for d in (root / ".agent-runs").iterdir() if d.is_dir()]
     assert len(run_dirs) == 2, "each run_turn call must get its own log directory"
     for run_dir in run_dirs:
         manifest = json.loads((run_dir / "MANIFEST").read_text())
