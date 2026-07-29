@@ -1008,8 +1008,14 @@ class ModelArtifactService:
                             self._verify_installed(reference, expected_role)
                         self._write_readiness(expected)
                     try:
+                        active_path = self.active_path(root_reference.artifact_id)
+                        self._assert_managed_path(
+                            active_path,
+                            allow_missing=True,
+                            target_must_be_directory=False,
+                        )
                         atomic_write_json(
-                            self.active_path(root_reference.artifact_id),
+                            active_path,
                             {
                                 "schema_version": _ACTIVE_SCHEMA_VERSION,
                                 "root": root_reference.to_dict(),
@@ -1102,7 +1108,10 @@ class ModelArtifactService:
 
         def state_flags(
             reference: ArtifactRef,
+            role: ArtifactRole,
         ) -> tuple[bool, bool, str | None]:
+            if role is not ArtifactRole.ROOT:
+                return False, False, None
             ready = False
             active = False
             errors: list[str] = []
@@ -1149,7 +1158,10 @@ class ModelArtifactService:
                 ) as error:
                     invalid(path, str(error))
                     return
-                ready, active, state_error = state_flags(reference)
+                ready, active, state_error = state_flags(
+                    reference,
+                    descriptor.role,
+                )
                 installed.append(
                     InstalledArtifact(
                         path=path,

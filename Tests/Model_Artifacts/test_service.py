@@ -1739,6 +1739,34 @@ def test_active_atomic_write_failure_preserves_prior_selector_bytes(
     assert service.readiness_path(replacement_ref).exists()
 
 
+@pytest.mark.parametrize("replacement", ("symlink", "new-directory"))
+def test_activate_rejects_replaced_active_root_before_state_write(
+    tmp_path: Path,
+    replacement: str,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    active_path = service.active_path(root.reference.artifact_id)
+    previous_bytes = active_path.read_bytes()
+    active_root = active_path.parent
+    previous_root = tmp_path / "previous-active"
+    active_root.rename(previous_root)
+    external = tmp_path / "external-active"
+    external.mkdir()
+    if replacement == "symlink":
+        symlink_or_skip(active_root, external, target_is_directory=True)
+    else:
+        active_root.mkdir()
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service.activate(root.reference)
+
+    assert (previous_root / active_path.name).read_bytes() == previous_bytes
+    assert tuple(external.iterdir()) == ()
+    if replacement == "new-directory":
+        assert tuple(active_root.iterdir()) == ()
+
+
 def test_activate_acquires_lifecycle_before_shared_canonical_closure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2009,6 +2037,39 @@ def test_inventory_reports_exact_ready_and_active_revision_flags(
 def test_inventory_dependency_is_not_root_ready_or_active(tmp_path: Path) -> None:
     service, root, dependency = installed_root_and_dependency(tmp_path)
     service.activate(root.reference)
+
+    installed = {
+        entry.descriptor.reference: entry
+        for entry in service.list_installed()
+        if entry.descriptor is not None
+    }
+
+    assert installed[root.reference].ready is True
+    assert installed[root.reference].active is True
+    assert installed[dependency.reference].ready is False
+    assert installed[dependency.reference].active is False
+
+
+def test_inventory_ignores_forged_valid_state_for_dependency_role(
+    tmp_path: Path,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    dependency_readiness = service.readiness_path(dependency.reference)
+    dependency_readiness.parent.mkdir(parents=True)
+    dependency_readiness.write_text(
+        json.dumps(readiness_state(dependency.reference, (dependency.reference,))),
+        encoding="utf-8",
+    )
+    service.active_path(dependency.reference.artifact_id).write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "root": dependency.reference.to_dict(),
+            }
+        ),
+        encoding="utf-8",
+    )
 
     installed = {
         entry.descriptor.reference: entry
