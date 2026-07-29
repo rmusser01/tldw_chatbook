@@ -25,6 +25,7 @@ from .leases import (
     ArtifactLeaseError,
     ArtifactLeaseKey,
     ArtifactOperationLease,
+    ArtifactOperationLeaseSet,
     LeaseMode,
 )
 
@@ -100,6 +101,12 @@ _DESCRIPTOR_KEYS = frozenset(
 )
 _MANIFEST_SCHEMA_VERSION = 1
 _MANIFEST_KEYS = frozenset({"schema_version", "descriptor"})
+_READINESS_SCHEMA_VERSION = 1
+_READINESS_KEYS = frozenset(
+    {"schema_version", "root", "closure", "closure_fingerprint"}
+)
+_ACTIVE_SCHEMA_VERSION = 1
+_ACTIVE_KEYS = frozenset({"schema_version", "root"})
 _LIFECYCLE_LEASE_KEY = ArtifactLeaseKey("!lifecycle", "1", "writer")
 _PathSnapshot = tuple[int, int, int, int, int, int]
 _NodeIdentity = tuple[int, int, int]
@@ -150,6 +157,14 @@ class ArtifactConflictError(ArtifactError):
 
 class ArtifactStateError(ArtifactError):
     """Raised when a managed-store operation cannot complete safely."""
+
+
+class ArtifactDependencyError(ArtifactStateError):
+    """Raised when an exact installed dependency closure is invalid."""
+
+
+class ArtifactNotReadyError(ArtifactStateError):
+    """Raised when no valid readiness record exists for an artifact."""
 
 
 class ArtifactRole(str, Enum):
@@ -762,6 +777,85 @@ class ArtifactDiskUsage:
     free_bytes: int
 
 
+@dataclass(frozen=True)
+class ArtifactHandle:
+    """A verified exact artifact closure and its managed payload paths."""
+
+    root: ArtifactRef
+    closure: tuple[ArtifactRef, ...]
+    closure_fingerprint: str
+    paths: tuple[tuple[ArtifactRef, Path], ...]
+
+    @property
+    def lease_keys(self) -> tuple[ArtifactLeaseKey, ...]:
+        """Return exact closure lease keys in canonical order."""
+
+        return tuple(reference.lease_key() for reference in self.closure)
+
+    @property
+    def resident_identity(self) -> tuple[ArtifactRef, str]:
+        """Return the cache-safe identity of this resident closure."""
+
+        return (self.root, self.closure_fingerprint)
+
+
+@dataclass(frozen=True)
+class _ReadinessRecord:
+    root: ArtifactRef
+    closure: tuple[ArtifactRef, ...]
+    closure_fingerprint: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": _READINESS_SCHEMA_VERSION,
+            "root": self.root.to_dict(),
+            "closure": [reference.to_dict() for reference in self.closure],
+            "closure_fingerprint": self.closure_fingerprint,
+        }
+
+
+class LeasedArtifactHandle:
+    """Own shared operation leases for an already acquired artifact handle."""
+
+    def __init__(
+        self,
+        handle: ArtifactHandle,
+        lease_set: ArtifactOperationLeaseSet,
+    ) -> None:
+        self.handle = handle
+        self._lease_set: ArtifactOperationLeaseSet | None = lease_set
+
+    def close(self) -> None:
+        """Release the exact shared closure lease set idempotently."""
+
+        lease_set = self._lease_set
+        self._lease_set = None
+        if lease_set is not None:
+            lease_set.release()
+
+    def __enter__(self) -> LeasedArtifactHandle:
+        """Return this already acquired handle without reacquiring leases."""
+
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> None:
+        """Release leases, preserving a body exception over cleanup failure."""
+
+        try:
+            self.close()
+        except BaseException as cleanup_error:
+            if exc is None:
+                raise
+            exc.add_note(f"lease context cleanup failed: {cleanup_error!r}")
+            for note in getattr(cleanup_error, "__notes__", ()):
+                exc.add_note(note)
+
+
 class ModelArtifactService:
     """Own verified immutable artifacts beneath one resolved local root."""
 
@@ -852,6 +946,144 @@ class ModelArtifactService:
             / reference.variant
         )
 
+    def readiness_path(self, reference: ArtifactRef) -> Path:
+        """Return the contained readiness-record path for one exact reference."""
+
+        if type(reference) is not ArtifactRef:
+            raise TypeError("reference must be an ArtifactRef")
+        return (
+            self._ready_path
+            / reference.artifact_id
+            / reference.revision
+            / f"{reference.variant}.json"
+        )
+
+    def active_path(self, artifact_id: str) -> Path:
+        """Return the contained active-selector path for one artifact identity."""
+
+        _validate_canonical_component("artifact_id", artifact_id)
+        return self._active_path / f"{artifact_id}.json"
+
+    def activate(self, root_reference: ArtifactRef) -> ArtifactRef:
+        """Verify or reuse one exact dependency closure, then select its root."""
+
+        if type(root_reference) is not ArtifactRef:
+            raise TypeError("root_reference must be an ArtifactRef")
+        try:
+            with ArtifactOperationLease(
+                self._locks_path,
+                _LIFECYCLE_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                closure = self._resolve_closure(root_reference)
+                keys = tuple(reference.lease_key() for reference in closure)
+                with ArtifactOperationLeaseSet(
+                    self._locks_path,
+                    keys,
+                    LeaseMode.SHARED,
+                    timeout_seconds=self._lease_timeout_seconds,
+                ):
+                    if self._resolve_closure(root_reference) != closure:
+                        raise ArtifactDependencyError(
+                            "dependency closure changed during activation"
+                        )
+                    expected = _ReadinessRecord(
+                        root=root_reference,
+                        closure=closure,
+                        closure_fingerprint=closure_fingerprint(
+                            root_reference,
+                            closure,
+                        ),
+                    )
+                    existing = self._try_read_readiness(root_reference)
+                    if existing != expected:
+                        self._remove_readiness(root_reference)
+                        for reference in closure:
+                            expected_role = (
+                                ArtifactRole.ROOT
+                                if reference == root_reference
+                                else ArtifactRole.DEPENDENCY
+                            )
+                            self._verify_installed(reference, expected_role)
+                        self._write_readiness(expected)
+                    try:
+                        atomic_write_json(
+                            self.active_path(root_reference.artifact_id),
+                            {
+                                "schema_version": _ACTIVE_SCHEMA_VERSION,
+                                "root": root_reference.to_dict(),
+                            },
+                        )
+                    except OSError as error:
+                        raise ArtifactStateError(
+                            "failed to write active artifact selector"
+                        ) from error
+            return root_reference
+        except ArtifactError:
+            raise
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire artifact activation leases"
+            ) from error
+        except OSError as error:
+            raise ArtifactStateError("artifact activation I/O failed") from error
+
+    def acquire(self, root_reference: ArtifactRef) -> LeasedArtifactHandle:
+        """Acquire shared leases for one unchanged strict readiness record."""
+
+        if type(root_reference) is not ArtifactRef:
+            raise TypeError("root_reference must be an ArtifactRef")
+        record = self._read_readiness(root_reference)
+        if record.root != root_reference:
+            raise ArtifactNotReadyError(
+                "readiness record does not select the requested root"
+            )
+        lease_set = ArtifactOperationLeaseSet(
+            self._locks_path,
+            tuple(reference.lease_key() for reference in record.closure),
+            LeaseMode.SHARED,
+            timeout_seconds=self._lease_timeout_seconds,
+        )
+        try:
+            lease_set.acquire()
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire artifact closure leases"
+            ) from error
+        try:
+            try:
+                current = self._read_readiness(root_reference)
+            except ArtifactStateError as error:
+                raise ArtifactStateError(
+                    "readiness record changed during artifact acquisition"
+                ) from error
+            if current != record:
+                raise ArtifactStateError(
+                    "readiness record changed during artifact acquisition"
+                )
+            paths = tuple(
+                (reference, self.artifact_path(reference))
+                for reference in record.closure
+            )
+            for _reference, path in paths:
+                self._assert_managed_path(path)
+            handle = ArtifactHandle(
+                root=record.root,
+                closure=record.closure,
+                closure_fingerprint=record.closure_fingerprint,
+                paths=paths,
+            )
+            return LeasedArtifactHandle(handle, lease_set)
+        except BaseException as error:
+            try:
+                lease_set.release()
+            except BaseException as cleanup_error:
+                error.add_note(f"lease rollback cleanup failed: {cleanup_error!r}")
+                for note in getattr(cleanup_error, "__notes__", ()):
+                    error.add_note(note)
+            raise
+
     def list_installed(self) -> tuple[InstalledArtifact, ...]:
         """Return a deterministic manifest-only installed inventory."""
 
@@ -867,6 +1099,26 @@ class ModelArtifactService:
                     error=message,
                 )
             )
+
+        def state_flags(
+            reference: ArtifactRef,
+        ) -> tuple[bool, bool, str | None]:
+            ready = False
+            active = False
+            errors: list[str] = []
+            try:
+                ready = self._read_readiness(reference).root == reference
+            except ArtifactNotReadyError:
+                pass
+            except ArtifactStateError as error:
+                errors.append(f"readiness: {error}")
+            try:
+                active = self._read_active(reference.artifact_id) == reference
+            except ArtifactNotReadyError:
+                pass
+            except ArtifactStateError as error:
+                errors.append(f"active: {error}")
+            return ready, active, "; ".join(errors) or None
 
         def visit(path: Path, depth: int) -> None:
             try:
@@ -897,12 +1149,14 @@ class ModelArtifactService:
                 ) as error:
                     invalid(path, str(error))
                     return
+                ready, active, state_error = state_flags(reference)
                 installed.append(
                     InstalledArtifact(
                         path=path,
                         descriptor=descriptor,
-                        ready=False,
-                        active=False,
+                        ready=ready,
+                        active=active,
+                        error=state_error,
                     )
                 )
                 return
@@ -1072,6 +1326,257 @@ class ModelArtifactService:
                     primary_error.add_note(
                         f"operation staging cleanup failed: {cleanup_error!r}"
                     )
+
+    def _resolve_closure(
+        self,
+        root_reference: ArtifactRef,
+    ) -> tuple[ArtifactRef, ...]:
+        descriptors: dict[ArtifactRef, ArtifactDescriptor] = {}
+        references_by_id = {root_reference.artifact_id: root_reference}
+        visiting: set[ArtifactRef] = set()
+        visited: set[ArtifactRef] = set()
+
+        def visit(reference: ArtifactRef, role: ArtifactRole) -> None:
+            if reference in visiting:
+                raise ArtifactDependencyError(
+                    "dependency cycle detected in exact artifact closure"
+                )
+            if reference in visited:
+                return
+            descriptor = self._load_installed_descriptor(reference, role)
+            descriptors[reference] = descriptor
+            visiting.add(reference)
+            try:
+                for dependency in descriptor.dependencies:
+                    if dependency == root_reference:
+                        raise ArtifactDependencyError(
+                            "root artifact cannot appear as a dependency"
+                        )
+                    existing = references_by_id.get(dependency.artifact_id)
+                    if existing is not None and existing != dependency:
+                        raise ArtifactDependencyError(
+                            "dependency closure contains conflicting exact "
+                            f"references for {dependency.artifact_id}"
+                        )
+                    references_by_id[dependency.artifact_id] = dependency
+                    visit(dependency, ArtifactRole.DEPENDENCY)
+            finally:
+                visiting.remove(reference)
+            visited.add(reference)
+
+        visit(root_reference, ArtifactRole.ROOT)
+        return tuple(sorted(descriptors))
+
+    def _load_installed_descriptor(
+        self,
+        reference: ArtifactRef,
+        expected_role: ArtifactRole,
+    ) -> ArtifactDescriptor:
+        try:
+            descriptor = self._read_manifest(self.artifact_path(reference))
+        except ArtifactError as error:
+            raise ArtifactDependencyError(
+                "missing or invalid exact installed artifact "
+                f"{reference.artifact_id}@{reference.revision}/{reference.variant}"
+            ) from error
+        if descriptor.reference != reference:
+            raise ArtifactDependencyError(
+                "installed manifest reference does not match its exact directory"
+            )
+        if descriptor.role is not expected_role:
+            raise ArtifactDependencyError(
+                f"installed artifact {reference.artifact_id} has role "
+                f"{descriptor.role.value}, expected {expected_role.value}"
+            )
+        return descriptor
+
+    def _verify_installed(
+        self,
+        reference: ArtifactRef,
+        expected_role: ArtifactRole,
+    ) -> None:
+        descriptor = self._load_installed_descriptor(reference, expected_role)
+        try:
+            self._verify_payload(
+                self.artifact_path(reference),
+                descriptor.files,
+                allowed_files=frozenset({"manifest.json"}),
+            )
+        except ArtifactPathError as error:
+            raise ArtifactIntegrityError(
+                "installed artifact payload tree is invalid"
+            ) from error
+
+    def _read_readiness(self, reference: ArtifactRef) -> _ReadinessRecord:
+        path = self.readiness_path(reference)
+        try:
+            self._assert_managed_path(
+                path,
+                allow_missing=True,
+                target_must_be_directory=False,
+            )
+            mode = path.stat(follow_symlinks=False).st_mode
+            if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+                raise ArtifactStateError(
+                    "readiness record must be a regular non-symlink file"
+                )
+            with path.open("r", encoding="utf-8") as handle:
+                raw = json.load(handle, object_pairs_hook=_reject_duplicate_json_keys)
+            _require_exact_keys(raw, _READINESS_KEYS, "readiness")
+            assert isinstance(raw, Mapping)
+            schema_version = raw["schema_version"]
+            if (
+                type(schema_version) is not int
+                or schema_version != _READINESS_SCHEMA_VERSION
+            ):
+                raise ArtifactDescriptorParseError(
+                    "readiness schema_version must be the integer 1"
+                )
+            root = _parse_reference(raw["root"], "readiness.root")
+            if root != reference:
+                raise ArtifactDescriptorParseError(
+                    "readiness root does not match its state path"
+                )
+            closure = tuple(
+                _parse_reference(item, f"readiness.closure[{index}]")
+                for index, item in enumerate(
+                    _require_list(raw["closure"], "readiness.closure")
+                )
+            )
+            if not closure:
+                raise ArtifactDescriptorParseError(
+                    "readiness closure must not be empty"
+                )
+            if closure != tuple(sorted(set(closure))):
+                raise ArtifactDescriptorParseError(
+                    "readiness closure must be sorted and unique"
+                )
+            if root not in closure:
+                raise ArtifactDescriptorParseError(
+                    "readiness closure must contain its root"
+                )
+            fingerprint = _require_string(
+                raw["closure_fingerprint"],
+                "readiness.closure_fingerprint",
+            )
+            if _LOWERCASE_SHA256.fullmatch(
+                fingerprint
+            ) is None or fingerprint != closure_fingerprint(root, closure):
+                raise ArtifactDescriptorParseError(
+                    "readiness closure fingerprint does not match"
+                )
+            return _ReadinessRecord(
+                root=root,
+                closure=closure,
+                closure_fingerprint=fingerprint,
+            )
+        except FileNotFoundError as error:
+            raise ArtifactNotReadyError("artifact has no readiness record") from error
+        except ArtifactNotReadyError:
+            raise
+        except ArtifactStateError:
+            raise
+        except (
+            ArtifactDescriptorError,
+            ArtifactPathError,
+            NotADirectoryError,
+            OSError,
+            RecursionError,
+            UnicodeError,
+            json.JSONDecodeError,
+            ValueError,
+        ) as error:
+            raise ArtifactStateError("artifact readiness record is invalid") from error
+
+    def _read_active(self, artifact_id: str) -> ArtifactRef:
+        path = self.active_path(artifact_id)
+        try:
+            self._assert_managed_path(
+                path,
+                allow_missing=True,
+                target_must_be_directory=False,
+            )
+            mode = path.stat(follow_symlinks=False).st_mode
+            if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+                raise ArtifactStateError(
+                    "active selector must be a regular non-symlink file"
+                )
+            with path.open("r", encoding="utf-8") as handle:
+                raw = json.load(handle, object_pairs_hook=_reject_duplicate_json_keys)
+            _require_exact_keys(raw, _ACTIVE_KEYS, "active")
+            assert isinstance(raw, Mapping)
+            schema_version = raw["schema_version"]
+            if (
+                type(schema_version) is not int
+                or schema_version != _ACTIVE_SCHEMA_VERSION
+            ):
+                raise ArtifactDescriptorParseError(
+                    "active schema_version must be the integer 1"
+                )
+            root = _parse_reference(raw["root"], "active.root")
+            if root.artifact_id != artifact_id:
+                raise ArtifactDescriptorParseError(
+                    "active root does not match its selector path"
+                )
+            return root
+        except FileNotFoundError as error:
+            raise ArtifactNotReadyError(
+                "artifact identity has no active selector"
+            ) from error
+        except ArtifactNotReadyError:
+            raise
+        except ArtifactStateError:
+            raise
+        except (
+            ArtifactDescriptorError,
+            ArtifactPathError,
+            NotADirectoryError,
+            OSError,
+            RecursionError,
+            UnicodeError,
+            json.JSONDecodeError,
+            ValueError,
+        ) as error:
+            raise ArtifactStateError("artifact active selector is invalid") from error
+
+    def _try_read_readiness(
+        self,
+        reference: ArtifactRef,
+    ) -> _ReadinessRecord | None:
+        try:
+            return self._read_readiness(reference)
+        except (ArtifactNotReadyError, ArtifactStateError):
+            return None
+
+    def _remove_readiness(self, reference: ArtifactRef) -> None:
+        path = self.readiness_path(reference)
+        try:
+            self._assert_managed_path(path.parent, allow_missing=True)
+            path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            raise ArtifactStateError(
+                "failed to remove invalid readiness record"
+            ) from error
+
+    def _write_readiness(self, record: _ReadinessRecord) -> None:
+        path = self.readiness_path(record.root)
+        self._ensure_state_parent(self._ready_path, path.parent)
+        self._assert_managed_path(path.parent)
+        try:
+            atomic_write_json(path, record.to_dict())
+        except OSError as error:
+            raise ArtifactStateError("failed to write artifact readiness") from error
+
+    def _ensure_state_parent(self, base: Path, parent: Path) -> None:
+        relative = parent.relative_to(base)
+        current = base
+        for component in relative.parts:
+            current = current / component
+            self._assert_managed_path(current, allow_missing=True)
+            self._ensure_owned_directory(current)
+            self._assert_managed_path(current)
 
     def _ensure_owned_directory(self, path: Path) -> None:
         try:

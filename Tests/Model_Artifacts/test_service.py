@@ -147,6 +147,82 @@ def regular_tree_size(root: Path) -> int:
     return total
 
 
+def install_descriptor_payload(
+    service: object,
+    tmp_path: Path,
+    item: ArtifactDescriptor,
+    content: bytes,
+) -> None:
+    """Install one single-file descriptor from an isolated source directory."""
+
+    source = (
+        tmp_path
+        / "sources"
+        / item.reference.artifact_id
+        / item.reference.revision
+        / item.reference.variant
+    )
+    source.mkdir(parents=True)
+    (source / item.files[0].path).write_bytes(content)
+    service.install(item, source)  # type: ignore[attr-defined]
+
+
+def installed_root_and_dependency(
+    tmp_path: Path,
+) -> tuple[object, ArtifactDescriptor, ArtifactDescriptor]:
+    """Install one root and its exact dependency."""
+
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    dependency_reference = ref("silero-vad", "vad-revision", "int8")
+    dependency = descriptor(
+        reference=dependency_reference,
+        role=ArtifactRole.DEPENDENCY,
+        precision=dependency_reference.variant,
+        files=(artifact_file(b"dependency"),),
+        model_id="snakers4/silero-vad",
+    )
+    root = descriptor(
+        dependencies=(dependency.reference,),
+        files=(artifact_file(b"root"),),
+    )
+    install_descriptor_payload(service, tmp_path, dependency, b"dependency")
+    install_descriptor_payload(service, tmp_path, root, b"root")
+    return service, root, dependency
+
+
+def single_file_descriptor(
+    reference: ArtifactRef,
+    role: ArtifactRole,
+    content: bytes,
+    *,
+    dependencies: tuple[ArtifactRef, ...] = (),
+) -> ArtifactDescriptor:
+    """Build a descriptor for dependency-graph tests."""
+
+    return descriptor(
+        reference=reference,
+        role=role,
+        precision=reference.variant,
+        files=(artifact_file(content),),
+        dependencies=dependencies,
+        model_id=f"example/{reference.artifact_id}",
+    )
+
+
+def readiness_state(
+    root: ArtifactRef,
+    closure: tuple[ArtifactRef, ...],
+) -> dict[str, object]:
+    """Build the exact version 1 readiness JSON value."""
+
+    return {
+        "schema_version": 1,
+        "root": root.to_dict(),
+        "closure": [reference.to_dict() for reference in closure],
+        "closure_fingerprint": closure_fingerprint(root, closure),
+    }
+
+
 def test_ref_requires_canonical_portable_components() -> None:
     assert ArtifactRef("parakeet-v2", "a" * 40, "int8").variant == "int8"
 
@@ -1281,3 +1357,751 @@ def test_disk_usage_rejects_directory_identity_change_during_scan(
         service.disk_usage()
 
     assert swapped is True
+
+
+def test_activate_writes_exact_state_and_returns_canonical_leased_handle(
+    tmp_path: Path,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    expected_closure = tuple(sorted((root.reference, dependency.reference)))
+    expected_fingerprint = closure_fingerprint(
+        root.reference,
+        (dependency.reference,),
+    )
+
+    assert service.activate(root.reference) == root.reference
+    assert json.loads(
+        service.readiness_path(root.reference).read_text(encoding="utf-8")
+    ) == {
+        "schema_version": 1,
+        "root": root.reference.to_dict(),
+        "closure": [reference.to_dict() for reference in expected_closure],
+        "closure_fingerprint": expected_fingerprint,
+    }
+    assert json.loads(
+        service.active_path(root.reference.artifact_id).read_text(encoding="utf-8")
+    ) == {
+        "schema_version": 1,
+        "root": root.reference.to_dict(),
+    }
+
+    leased = service.acquire(root.reference)
+    with leased as entered:
+        assert entered is leased
+        assert leased.handle.root == root.reference
+        assert leased.handle.closure == expected_closure
+        assert leased.handle.closure_fingerprint == expected_fingerprint
+        assert leased.handle.paths == tuple(
+            (reference, service.artifact_path(reference))
+            for reference in expected_closure
+        )
+        assert leased.handle.lease_keys == tuple(
+            reference.lease_key() for reference in expected_closure
+        )
+        assert leased.handle.resident_identity == (
+            root.reference,
+            expected_fingerprint,
+        )
+
+
+def test_activate_resolves_transitive_closure_in_canonical_order(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    leaf_ref = ref("aaa-tokenizer", "leaf-revision", "int8")
+    middle_ref = ref("zzz-vad", "middle-revision", "int8")
+    leaf = single_file_descriptor(
+        leaf_ref,
+        ArtifactRole.DEPENDENCY,
+        b"leaf",
+    )
+    middle = single_file_descriptor(
+        middle_ref,
+        ArtifactRole.DEPENDENCY,
+        b"middle",
+        dependencies=(leaf_ref,),
+    )
+    root = descriptor(
+        files=(artifact_file(b"root"),),
+        dependencies=(middle_ref,),
+    )
+    for item, content in (
+        (leaf, b"leaf"),
+        (middle, b"middle"),
+        (root, b"root"),
+    ):
+        install_descriptor_payload(service, tmp_path, item, content)
+
+    service.activate(root.reference)
+
+    state = json.loads(
+        service.readiness_path(root.reference).read_text(encoding="utf-8")
+    )
+    assert state["closure"] == [
+        reference.to_dict()
+        for reference in sorted((leaf_ref, root.reference, middle_ref))
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        "missing",
+        "dependency-role",
+        "root-role",
+        "cycle",
+        "root-as-dependency",
+        "conflict",
+    ),
+)
+def test_activate_rejects_invalid_exact_dependency_graph(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    child_ref = ref("child", "child-revision", "int8")
+    root_ref = ref()
+
+    if failure == "missing":
+        root = single_file_descriptor(
+            root_ref,
+            ArtifactRole.ROOT,
+            b"root",
+            dependencies=(child_ref,),
+        )
+        install_descriptor_payload(service, tmp_path, root, b"root")
+    elif failure == "dependency-role":
+        child = single_file_descriptor(child_ref, ArtifactRole.ROOT, b"child")
+        root = single_file_descriptor(
+            root_ref,
+            ArtifactRole.ROOT,
+            b"root",
+            dependencies=(child_ref,),
+        )
+        install_descriptor_payload(service, tmp_path, child, b"child")
+        install_descriptor_payload(service, tmp_path, root, b"root")
+    elif failure == "root-role":
+        root = single_file_descriptor(
+            root_ref,
+            ArtifactRole.DEPENDENCY,
+            b"root",
+        )
+        install_descriptor_payload(service, tmp_path, root, b"root")
+    elif failure == "cycle":
+        second_ref = ref("second", "second-revision", "int8")
+        child = single_file_descriptor(
+            child_ref,
+            ArtifactRole.DEPENDENCY,
+            b"child",
+            dependencies=(second_ref,),
+        )
+        second = single_file_descriptor(
+            second_ref,
+            ArtifactRole.DEPENDENCY,
+            b"second",
+            dependencies=(child_ref,),
+        )
+        root = single_file_descriptor(
+            root_ref,
+            ArtifactRole.ROOT,
+            b"root",
+            dependencies=(child_ref,),
+        )
+        for item, content in (
+            (child, b"child"),
+            (second, b"second"),
+            (root, b"root"),
+        ):
+            install_descriptor_payload(service, tmp_path, item, content)
+    elif failure == "root-as-dependency":
+        child = single_file_descriptor(
+            child_ref,
+            ArtifactRole.DEPENDENCY,
+            b"child",
+            dependencies=(root_ref,),
+        )
+        root = single_file_descriptor(
+            root_ref,
+            ArtifactRole.ROOT,
+            b"root",
+            dependencies=(child_ref,),
+        )
+        install_descriptor_payload(service, tmp_path, child, b"child")
+        install_descriptor_payload(service, tmp_path, root, b"root")
+    else:
+        left_ref = ref("left", "left-revision", "int8")
+        right_ref = ref("right", "right-revision", "int8")
+        shared_v1_ref = ref("shared", "revision-one", "int8")
+        shared_v2_ref = ref("shared", "revision-two", "int8")
+        graph = (
+            single_file_descriptor(
+                shared_v1_ref,
+                ArtifactRole.DEPENDENCY,
+                b"shared-one",
+            ),
+            single_file_descriptor(
+                shared_v2_ref,
+                ArtifactRole.DEPENDENCY,
+                b"shared-two",
+            ),
+            single_file_descriptor(
+                left_ref,
+                ArtifactRole.DEPENDENCY,
+                b"left",
+                dependencies=(shared_v1_ref,),
+            ),
+            single_file_descriptor(
+                right_ref,
+                ArtifactRole.DEPENDENCY,
+                b"right",
+                dependencies=(shared_v2_ref,),
+            ),
+        )
+        root = single_file_descriptor(
+            root_ref,
+            ArtifactRole.ROOT,
+            b"root",
+            dependencies=(left_ref, right_ref),
+        )
+        for item, content in zip(
+            graph,
+            (b"shared-one", b"shared-two", b"left", b"right"),
+            strict=True,
+        ):
+            install_descriptor_payload(service, tmp_path, item, content)
+        install_descriptor_payload(service, tmp_path, root, b"root")
+
+    with pytest.raises(service_module.ArtifactDependencyError):
+        service.activate(root.reference)
+
+    assert service.readiness_path(root.reference).exists() is False
+
+
+def test_activate_verification_failure_leaves_no_loadable_readiness(
+    tmp_path: Path,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    ready_path = service.readiness_path(root.reference)
+    ready_path.parent.mkdir(parents=True, exist_ok=True)
+    ready_path.write_text('{"schema_version":2}', encoding="utf-8")
+    (service.artifact_path(dependency.reference) / "model.onnx").write_bytes(
+        b"x" * dependency.files[0].size_bytes
+    )
+
+    with pytest.raises(service_module.ArtifactIntegrityError):
+        service.activate(root.reference)
+
+    assert ready_path.exists() is False
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "malformed",
+        "duplicate-key",
+        "extra-key",
+        "missing-key",
+        "unsupported-schema",
+        "bool-schema",
+        "mistyped-root",
+        "wrong-root",
+        "mistyped-closure",
+        "empty-closure",
+        "unsorted-closure",
+        "duplicate-closure",
+        "wrong-closure",
+        "wrong-fingerprint",
+        "mistyped-fingerprint",
+    ),
+)
+def test_activate_rebuilds_every_invalid_readiness_variant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    path = service.readiness_path(root.reference)
+    closure = tuple(sorted((root.reference, dependency.reference)))
+    raw = readiness_state(root.reference, closure)
+
+    if mutation == "malformed":
+        path.write_text("{", encoding="utf-8")
+    elif mutation == "duplicate-key":
+        path.write_text(
+            json.dumps(raw)[:-1] + ',"schema_version":1}',
+            encoding="utf-8",
+        )
+    else:
+        if mutation == "extra-key":
+            raw["extra"] = "value"
+        elif mutation == "missing-key":
+            raw.pop("closure_fingerprint")
+        elif mutation == "unsupported-schema":
+            raw["schema_version"] = 2
+        elif mutation == "bool-schema":
+            raw["schema_version"] = True
+        elif mutation == "mistyped-root":
+            raw["root"] = "root"
+        elif mutation == "wrong-root":
+            raw["root"] = ref("other", "revision", "int8").to_dict()
+        elif mutation == "mistyped-closure":
+            raw["closure"] = "closure"
+        elif mutation == "empty-closure":
+            raw["closure"] = []
+        elif mutation == "unsorted-closure":
+            raw["closure"] = [reference.to_dict() for reference in reversed(closure)]
+        elif mutation == "duplicate-closure":
+            raw["closure"] = [
+                root.reference.to_dict(),
+                root.reference.to_dict(),
+            ]
+        elif mutation == "wrong-closure":
+            raw["closure"] = [root.reference.to_dict()]
+            raw["closure_fingerprint"] = closure_fingerprint(root.reference, ())
+        elif mutation == "wrong-fingerprint":
+            raw["closure_fingerprint"] = "0" * 64
+        else:
+            raw["closure_fingerprint"] = 1
+        path.write_text(json.dumps(raw), encoding="utf-8")
+
+    calls: list[ArtifactRef] = []
+    original = service._verify_installed
+
+    def count_verification(
+        reference: ArtifactRef,
+        expected_role: ArtifactRole,
+    ) -> None:
+        calls.append(reference)
+        original(reference, expected_role)
+
+    monkeypatch.setattr(service, "_verify_installed", count_verification)
+
+    service.activate(root.reference)
+
+    assert calls == list(closure)
+    assert json.loads(path.read_text(encoding="utf-8")) == readiness_state(
+        root.reference,
+        closure,
+    )
+
+
+def test_activate_reuses_fresh_matching_readiness_without_payload_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+
+    def reject_verification(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("matching readiness must bypass payload verification")
+
+    monkeypatch.setattr(service, "_verify_installed", reject_verification)
+
+    assert service.activate(root.reference) == root.reference
+
+
+def test_active_atomic_write_failure_preserves_prior_selector_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    previous_ref = ref("shared-root", "revision-one", "int8")
+    replacement_ref = ref("shared-root", "revision-two", "int8")
+    previous = single_file_descriptor(
+        previous_ref,
+        ArtifactRole.ROOT,
+        b"previous",
+    )
+    replacement = single_file_descriptor(
+        replacement_ref,
+        ArtifactRole.ROOT,
+        b"replacement",
+    )
+    install_descriptor_payload(service, tmp_path, previous, b"previous")
+    install_descriptor_payload(service, tmp_path, replacement, b"replacement")
+    service.activate(previous_ref)
+    active_path = service.active_path(previous_ref.artifact_id)
+    previous_bytes = active_path.read_bytes()
+    original = service_module.atomic_write_json
+
+    def fail_active(path: Path, value: dict[str, object]) -> None:
+        if Path(path) == active_path:
+            raise OSError("injected active write failure")
+        original(path, value)
+
+    monkeypatch.setattr(service_module, "atomic_write_json", fail_active)
+
+    with pytest.raises(service_module.ArtifactStateError):
+        service.activate(replacement_ref)
+
+    assert active_path.read_bytes() == previous_bytes
+    assert service.readiness_path(replacement_ref).exists()
+
+
+def test_activate_acquires_lifecycle_before_shared_canonical_closure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    events: list[tuple[str, object]] = []
+
+    class RecordingLifecycleLease:
+        def __init__(
+            self,
+            _lock_root: Path,
+            key: ArtifactLeaseKey,
+            mode: object,
+            **_kwargs: object,
+        ) -> None:
+            events.append(("lifecycle-constructed", (key, mode)))
+
+        def __enter__(self) -> RecordingLifecycleLease:
+            events.append(("lifecycle-acquired", None))
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            events.append(("lifecycle-released", None))
+
+    class RecordingLeaseSet:
+        def __init__(
+            self,
+            _lock_root: Path,
+            keys: tuple[ArtifactLeaseKey, ...],
+            mode: object,
+            **_kwargs: object,
+        ) -> None:
+            events.append(("set-constructed", (tuple(keys), mode)))
+
+        def __enter__(self) -> RecordingLeaseSet:
+            events.append(("set-acquired", None))
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            events.append(("set-released", None))
+
+    monkeypatch.setattr(
+        service_module,
+        "ArtifactOperationLease",
+        RecordingLifecycleLease,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "ArtifactOperationLeaseSet",
+        RecordingLeaseSet,
+    )
+
+    service.activate(root.reference)
+
+    assert events == [
+        (
+            "lifecycle-constructed",
+            (
+                ArtifactLeaseKey("!lifecycle", "1", "writer"),
+                service_module.LeaseMode.EXCLUSIVE,
+            ),
+        ),
+        ("lifecycle-acquired", None),
+        (
+            "set-constructed",
+            (
+                tuple(
+                    reference.lease_key()
+                    for reference in sorted((root.reference, dependency.reference))
+                ),
+                service_module.LeaseMode.SHARED,
+            ),
+        ),
+        ("set-acquired", None),
+        ("set-released", None),
+        ("lifecycle-released", None),
+    ]
+
+
+def test_acquire_holds_exact_shared_closure_until_idempotent_close(
+    tmp_path: Path,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    leased = service.acquire(root.reference)
+    keys = tuple(
+        reference.lease_key()
+        for reference in sorted((root.reference, dependency.reference))
+    )
+
+    with pytest.raises(service_module.ArtifactLeaseError):
+        service_module.ArtifactOperationLeaseSet(
+            tmp_path / "store" / "locks",
+            keys,
+            service_module.LeaseMode.EXCLUSIVE,
+            timeout_seconds=0.01,
+        ).acquire()
+
+    lease_set = leased._lease_set
+    assert lease_set is not None
+
+    def reject_reacquire() -> None:
+        raise AssertionError("context entry must not reacquire")
+
+    lease_set.acquire = reject_reacquire  # type: ignore[method-assign]
+    with leased as entered:
+        assert entered is leased
+
+    leased.close()
+    with service_module.ArtifactOperationLeaseSet(
+        tmp_path / "store" / "locks",
+        keys,
+        service_module.LeaseMode.EXCLUSIVE,
+        timeout_seconds=0.1,
+    ):
+        pass
+
+
+@pytest.mark.parametrize("mutation", ("changed", "removed"))
+def test_acquire_reread_failure_releases_every_shared_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    path = service.readiness_path(root.reference)
+    original = service._read_readiness
+    reads = 0
+
+    def mutate_after_first_read(reference: ArtifactRef) -> object:
+        nonlocal reads
+        record = original(reference)
+        reads += 1
+        if reads == 1:
+            if mutation == "removed":
+                path.unlink()
+            else:
+                extra = ref("other", "other-revision", "int8")
+                closure = tuple(sorted((*record.closure, extra)))
+                path.write_text(
+                    json.dumps(readiness_state(root.reference, closure)),
+                    encoding="utf-8",
+                )
+        return record
+
+    monkeypatch.setattr(service, "_read_readiness", mutate_after_first_read)
+
+    with pytest.raises(service_module.ArtifactStateError, match="changed"):
+        service.acquire(root.reference)
+
+    keys = tuple(
+        reference.lease_key()
+        for reference in sorted((root.reference, dependency.reference))
+    )
+    with service_module.ArtifactOperationLeaseSet(
+        tmp_path / "store" / "locks",
+        keys,
+        service_module.LeaseMode.EXCLUSIVE,
+        timeout_seconds=0.1,
+    ):
+        pass
+
+
+def test_acquire_missing_or_invalid_readiness_uses_stable_errors_without_leases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+
+    def reject_lease_construction(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("invalid readiness must not construct leases")
+
+    monkeypatch.setattr(
+        service_module,
+        "ArtifactOperationLeaseSet",
+        reject_lease_construction,
+    )
+
+    with pytest.raises(service_module.ArtifactNotReadyError):
+        service.acquire(root.reference)
+
+    path = service.readiness_path(root.reference)
+    path.parent.mkdir(parents=True)
+    path.write_text("{", encoding="utf-8")
+    with pytest.raises(service_module.ArtifactStateError):
+        service.acquire(root.reference)
+
+
+def test_acquire_does_not_verify_payload_or_read_active_selector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+
+    def reject_expensive_work(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("acquire must trust strict readiness under leases")
+
+    monkeypatch.setattr(service, "_verify_payload", reject_expensive_work)
+    monkeypatch.setattr(service, "_read_manifest", reject_expensive_work)
+    service.active_path(root.reference.artifact_id).write_text("{", encoding="utf-8")
+
+    leased = service.acquire(root.reference)
+    leased.close()
+
+
+def test_leased_handle_release_error_preserves_body_exception() -> None:
+    root = ref()
+    handle = service_module.ArtifactHandle(
+        root=root,
+        closure=(root,),
+        closure_fingerprint=closure_fingerprint(root, ()),
+        paths=((root, Path("/managed/root")),),
+    )
+
+    class FailingLeaseSet:
+        def release(self) -> None:
+            raise service_module.ArtifactLeaseError("injected release failure")
+
+    leased = service_module.LeasedArtifactHandle(handle, FailingLeaseSet())
+    body_error = ValueError("body failure")
+
+    with pytest.raises(ValueError) as caught:
+        with leased:
+            raise body_error
+
+    assert caught.value is body_error
+    assert any(
+        "lease context cleanup failed" in note and "release failure" in note
+        for note in getattr(body_error, "__notes__", ())
+    )
+    leased.close()
+
+    cleanup_only = service_module.LeasedArtifactHandle(handle, FailingLeaseSet())
+    with pytest.raises(service_module.ArtifactLeaseError, match="release failure"):
+        with cleanup_only:
+            pass
+
+
+def test_inventory_reports_exact_ready_and_active_revision_flags(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    first_ref = ref("shared-root", "revision-one", "int8")
+    second_ref = ref("shared-root", "revision-two", "int8")
+    first = single_file_descriptor(first_ref, ArtifactRole.ROOT, b"first")
+    second = single_file_descriptor(second_ref, ArtifactRole.ROOT, b"second")
+    install_descriptor_payload(service, tmp_path, first, b"first")
+    install_descriptor_payload(service, tmp_path, second, b"second")
+    service.activate(first_ref)
+    service.activate(second_ref)
+
+    installed = {
+        entry.descriptor.reference: entry
+        for entry in service.list_installed()
+        if entry.descriptor is not None
+    }
+
+    assert installed[first_ref].ready is True
+    assert installed[first_ref].active is False
+    assert installed[first_ref].error is None
+    assert installed[second_ref].ready is True
+    assert installed[second_ref].active is True
+    assert installed[second_ref].error is None
+
+
+def test_inventory_dependency_is_not_root_ready_or_active(tmp_path: Path) -> None:
+    service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+
+    installed = {
+        entry.descriptor.reference: entry
+        for entry in service.list_installed()
+        if entry.descriptor is not None
+    }
+
+    assert installed[root.reference].ready is True
+    assert installed[root.reference].active is True
+    assert installed[dependency.reference].ready is False
+    assert installed[dependency.reference].active is False
+
+
+def test_inventory_malformed_state_is_nonfatal_and_does_not_resolve_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, root, _dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
+    service.readiness_path(root.reference).write_text("{", encoding="utf-8")
+    service.active_path(root.reference.artifact_id).write_text("{", encoding="utf-8")
+
+    def reject_graph_or_payload_work(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("inventory must not resolve or verify dependency payloads")
+
+    monkeypatch.setattr(service, "_resolve_closure", reject_graph_or_payload_work)
+    monkeypatch.setattr(service, "_verify_payload", reject_graph_or_payload_work)
+
+    installed = {
+        entry.descriptor.reference: entry
+        for entry in service.list_installed()
+        if entry.descriptor is not None
+    }
+    root_entry = installed[root.reference]
+
+    assert root_entry.ready is False
+    assert root_entry.active is False
+    assert root_entry.error
+    assert "readiness" in root_entry.error
+    assert "active" in root_entry.error
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "duplicate-key",
+        "extra-key",
+        "missing-key",
+        "unsupported-schema",
+        "bool-schema",
+        "mistyped-root",
+        "wrong-artifact-id",
+    ),
+)
+def test_inventory_strict_active_selector_errors_are_nonfatal(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = single_file_descriptor(ref(), ArtifactRole.ROOT, b"root")
+    install_descriptor_payload(service, tmp_path, item, b"root")
+    service.activate(item.reference)
+    path = service.active_path(item.reference.artifact_id)
+    raw: dict[str, object] = {
+        "schema_version": 1,
+        "root": item.reference.to_dict(),
+    }
+    if mutation == "duplicate-key":
+        path.write_text(
+            json.dumps(raw)[:-1] + ',"schema_version":1}',
+            encoding="utf-8",
+        )
+    else:
+        if mutation == "extra-key":
+            raw["extra"] = "value"
+        elif mutation == "missing-key":
+            raw.pop("root")
+        elif mutation == "unsupported-schema":
+            raw["schema_version"] = 2
+        elif mutation == "bool-schema":
+            raw["schema_version"] = True
+        elif mutation == "mistyped-root":
+            raw["root"] = "root"
+        else:
+            raw["root"] = ref("other", "revision", "int8").to_dict()
+        path.write_text(json.dumps(raw), encoding="utf-8")
+
+    entries = [
+        entry for entry in service.list_installed() if entry.descriptor is not None
+    ]
+
+    assert len(entries) == 1
+    assert entries[0].ready is True
+    assert entries[0].active is False
+    assert entries[0].error
+    assert "active" in entries[0].error
