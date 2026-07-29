@@ -66,6 +66,9 @@ from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 
 DEFAULT_RUNTIME_BACKEND = "local"
 DEFAULT_DISCOVERY_OWNER = "general_chat"
+_CONVERSATION_IDENTITY_TEXT_MAX_BYTES = 256
+_SQLITE_POSITIVE_INTEGER_MAX = (1 << 63) - 1
+_UNSET = object()
 
 # Sentinel scope for conversation listing that spans every persisted scope
 # ('global' and all workspaces). This is a QUERY-only scope: conversations are
@@ -159,7 +162,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 27  # Adds local-only canonical RAG citation provenance.
+    _CURRENT_SCHEMA_VERSION = 28  # Adds local conversation character authority.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2710,6 +2713,50 @@ UPDATE db_schema_version
         """
         return self._get_thread_connection()
 
+    @staticmethod
+    def _local_authority_from_rows(rows: Sequence[sqlite3.Row]) -> str:
+        """Validate the singleton local authority without exposing bad state."""
+
+        if len(rows) != 1:
+            raise CharactersRAGDBError(
+                "Local authority identity is unavailable or invalid."
+            )
+        value = rows[0]["local_authority_id"]
+        if (
+            not isinstance(value, str)
+            or value != value.strip()
+            or not 1
+            <= len(value.encode("utf-8"))
+            <= _CONVERSATION_IDENTITY_TEXT_MAX_BYTES
+        ):
+            raise CharactersRAGDBError(
+                "Local authority identity is unavailable or invalid."
+            )
+        return value
+
+    def get_local_authority_id(self) -> str:
+        """Return this database's stable, bounded local character authority.
+
+        Raises:
+            CharactersRAGDBError: If the default identity is absent, ambiguous,
+                malformed, or cannot be read.
+        """
+
+        try:
+            rows = self.get_connection().execute(
+                """
+                SELECT local_authority_id
+                FROM rag_identity_context
+                WHERE context_name = 'default'
+                LIMIT 2
+                """
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise CharactersRAGDBError(
+                "Local authority identity is unavailable or invalid."
+            ) from exc
+        return self._local_authority_from_rows(rows)
+
     def close_connection(self):
         """
         Closes the current thread's database connection.
@@ -4018,6 +4065,101 @@ UPDATE db_schema_version
                 f"Migration from V26 to V27 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _execute_character_authority_migration_statement(
+        self,
+        cursor: sqlite3.Cursor,
+        statement: str,
+    ) -> None:
+        """Execute one complete v27→v28 DDL statement."""
+
+        cursor.execute(statement)
+
+    def _backfill_conversation_character_authority(
+        self,
+        cursor: sqlite3.Cursor,
+        local_authority_id: str,
+    ) -> None:
+        """Backfill only legacy rows whose local identity is already provable."""
+
+        cursor.execute(
+            """
+            UPDATE conversations
+               SET assistant_authority_id = ?
+             WHERE runtime_backend = 'local'
+               AND assistant_kind = 'character'
+               AND typeof(character_id) = 'integer'
+               AND character_id > 0
+               AND assistant_id = CAST(character_id AS TEXT)
+            """,
+            (local_authority_id,),
+        )
+
+    def _update_character_authority_schema_version(
+        self,
+        cursor: sqlite3.Cursor,
+    ) -> None:
+        """Advance v27→v28 only after DDL and local backfill succeed."""
+
+        cursor.execute(
+            """
+            UPDATE db_schema_version
+               SET version = 28
+             WHERE schema_name = ?
+               AND version = 27
+            """,
+            (self._SCHEMA_NAME,),
+        )
+        if cursor.rowcount != 1:
+            raise SchemaError(
+                "Character authority schema version update was not applied"
+            )
+
+    def _migrate_from_v27_to_v28(self, conn: sqlite3.Connection) -> None:
+        """Add local conversation authority through one rollback-safe transaction."""
+
+        if self._get_db_version(conn) != 27:
+            raise SchemaError("Character authority migration requires schema version 27")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v27_to_v28_character_authority.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                local_authority_id = self.get_local_authority_id()
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if sqlite3.complete_statement(pending):
+                        self._execute_character_authority_migration_statement(
+                            cursor,
+                            pending,
+                        )
+                        pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Character authority migration contains incomplete SQL"
+                    )
+                self._backfill_conversation_character_authority(
+                    cursor,
+                    local_authority_id,
+                )
+                self._update_character_authority_schema_version(cursor)
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 28:
+                    raise SchemaError(
+                        "Character authority schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
+            raise SchemaError(
+                f"Migration from V27 to V28 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4175,6 +4317,7 @@ UPDATE db_schema_version
                     24: self._migrate_from_v24_to_v25,
                     25: self._migrate_from_v25_to_v26,
                     26: self._migrate_from_v26_to_v27,
+                    27: self._migrate_from_v27_to_v28,
                 }
 
                 if current_db_version == 0:
@@ -5712,63 +5855,248 @@ UPDATE db_schema_version
             return normalized_scope, normalized_workspace_id
         return "global", None
 
-    def _normalize_conversation_assistant_identity(
+    def _normalize_conversation_identity_text(
+        self,
+        value: Any,
+        *,
+        field_name: str,
+    ) -> Optional[str]:
+        normalized = self._normalize_nullable_text(value)
+        if normalized is None:
+            return None
+        if (
+            len(normalized.encode("utf-8"))
+            > _CONVERSATION_IDENTITY_TEXT_MAX_BYTES
+        ):
+            raise InputError(
+                f"{field_name} must not exceed "
+                f"{_CONVERSATION_IDENTITY_TEXT_MAX_BYTES} UTF-8 bytes."
+            )
+        return normalized
+
+    def _normalize_conversation_authority(self, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise InputError("assistant_authority_id must be text or null.")
+        normalized = value.strip()
+        if not normalized:
+            raise InputError(
+                "assistant_authority_id must be non-empty when provided."
+            )
+        if (
+            len(normalized.encode("utf-8"))
+            > _CONVERSATION_IDENTITY_TEXT_MAX_BYTES
+        ):
+            raise InputError(
+                "assistant_authority_id must not exceed "
+                f"{_CONVERSATION_IDENTITY_TEXT_MAX_BYTES} UTF-8 bytes."
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_positive_character_id(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise InputError("character_id must be a positive integer.")
+        if isinstance(value, int):
+            normalized = value
+        elif isinstance(value, str) and re.fullmatch(r"[0-9]+", value.strip()):
+            normalized = int(value.strip())
+        else:
+            raise InputError("character_id must be a positive integer.")
+        if not 1 <= normalized <= _SQLITE_POSITIVE_INTEGER_MAX:
+            raise InputError("character_id must be a positive integer.")
+        return normalized
+
+    @staticmethod
+    def _normalize_runtime_backend(runtime_backend: Any) -> str:
+        normalized = CharactersRAGDB._normalize_nullable_text(runtime_backend)
+        runtime_value = (normalized or DEFAULT_RUNTIME_BACKEND).lower()
+        if runtime_value not in {"local", "server"}:
+            return DEFAULT_RUNTIME_BACKEND
+        return runtime_value
+
+    def _normalize_conversation_identity(
         self,
         *,
-        character_id: Any,
-        assistant_kind: Any,
-        assistant_id: Any,
-        persona_memory_mode: Any,
-    ) -> Tuple[Optional[str], Optional[str], Optional[int], Optional[str]]:
-        normalized_kind = self._normalize_nullable_text(assistant_kind)
-        normalized_assistant_id = self._normalize_nullable_text(assistant_id)
-        normalized_memory_mode = self._normalize_nullable_text(persona_memory_mode)
+        character_id: Any = _UNSET,
+        assistant_kind: Any = _UNSET,
+        assistant_id: Any = _UNSET,
+        assistant_authority_id: Any = _UNSET,
+        persona_memory_mode: Any = _UNSET,
+        runtime_backend: Any = _UNSET,
+        existing_character_id: Any = None,
+        existing_assistant_kind: Any = None,
+        existing_assistant_id: Any = None,
+        existing_assistant_authority_id: Any = None,
+        existing_persona_memory_mode: Any = None,
+        existing_runtime_backend: Any = None,
+    ) -> Tuple[
+        str,
+        Optional[str],
+        Optional[str],
+        Optional[int],
+        Optional[str],
+        Optional[str],
+    ]:
+        """Normalize source and assistant provenance as one persisted identity."""
+
+        raw_kind = (
+            existing_assistant_kind
+            if assistant_kind is _UNSET
+            else assistant_kind
+        )
+        raw_assistant_id = (
+            existing_assistant_id if assistant_id is _UNSET else assistant_id
+        )
+        raw_character_id = (
+            existing_character_id if character_id is _UNSET else character_id
+        )
+        raw_memory_mode = (
+            existing_persona_memory_mode
+            if persona_memory_mode is _UNSET
+            else persona_memory_mode
+        )
+        raw_runtime = (
+            existing_runtime_backend
+            if runtime_backend is _UNSET
+            else runtime_backend
+        )
+
+        normalized_runtime = self._normalize_runtime_backend(raw_runtime)
+        normalized_kind = self._normalize_nullable_text(raw_kind)
+        normalized_assistant_id = self._normalize_conversation_identity_text(
+            raw_assistant_id,
+            field_name="assistant_id",
+        )
+        normalized_memory_mode = self._normalize_nullable_text(raw_memory_mode)
 
         if normalized_kind is not None:
             normalized_kind = normalized_kind.lower()
             if normalized_kind not in self._ALLOWED_CONVERSATION_ASSISTANT_KINDS:
                 raise InputError(
-                    f"Invalid assistant_kind '{assistant_kind}'. Allowed: {', '.join(self._ALLOWED_CONVERSATION_ASSISTANT_KINDS)}"
+                    f"Invalid assistant_kind '{raw_kind}'. Allowed: "
+                    f"{', '.join(self._ALLOWED_CONVERSATION_ASSISTANT_KINDS)}"
                 )
-
-        normalized_character_id: Optional[int] = None
-        if character_id is not None:
-            try:
-                normalized_character_id = int(character_id)
-            except (TypeError, ValueError) as exc:
-                raise InputError(
-                    f"character_id must be numeric. Got: {character_id}"
-                ) from exc
-
-        if normalized_kind is None and normalized_character_id is not None:
+        if normalized_kind is None and raw_character_id is not None:
             normalized_kind = "character"
+
+        authority_was_supplied = assistant_authority_id is not _UNSET
+        supplied_authority = (
+            self._normalize_conversation_authority(assistant_authority_id)
+            if authority_was_supplied
+            else None
+        )
 
         if normalized_kind is None:
             if normalized_memory_mode is not None:
                 raise InputError(
                     "persona_memory_mode is only valid for persona-backed conversations."
                 )
-            return None, None, None, None
+            if supplied_authority is not None:
+                raise InputError(
+                    "Generic conversations cannot carry character authority."
+                )
+            return normalized_runtime, None, None, None, None, None
 
         if normalized_kind == "character":
-            if normalized_character_id is None:
-                if normalized_assistant_id is None:
-                    raise InputError(
-                        "Character conversations require 'character_id' or 'assistant_id'."
-                    )
-                try:
-                    normalized_character_id = int(normalized_assistant_id)
-                except (TypeError, ValueError) as exc:
-                    raise InputError(
-                        "Character conversations require 'character_id' when assistant_id is non-numeric."
-                    ) from exc
-            if normalized_assistant_id is None:
-                normalized_assistant_id = str(normalized_character_id)
             if normalized_memory_mode is not None:
                 raise InputError(
                     "persona_memory_mode is only valid for persona-backed conversations."
                 )
-            return "character", normalized_assistant_id, normalized_character_id, None
+
+            if normalized_runtime == "local":
+                normalized_character_id = self._normalize_positive_character_id(
+                    raw_character_id
+                )
+                if normalized_character_id is None:
+                    normalized_character_id = self._normalize_positive_character_id(
+                        normalized_assistant_id
+                    )
+                if normalized_character_id is None:
+                    raise InputError(
+                        "Local character conversations require a positive character_id."
+                    )
+                canonical_assistant_id = str(normalized_character_id)
+                if (
+                    assistant_id is _UNSET
+                    and (
+                        character_id is not _UNSET
+                        or self._normalize_runtime_backend(
+                            existing_runtime_backend
+                        )
+                        != "local"
+                        or self._normalize_nullable_text(existing_assistant_kind)
+                        != "character"
+                    )
+                ):
+                    normalized_assistant_id = canonical_assistant_id
+                elif normalized_assistant_id is None:
+                    normalized_assistant_id = canonical_assistant_id
+                if normalized_assistant_id != canonical_assistant_id:
+                    raise InputError(
+                        "Local character assistant_id must equal the "
+                        "character_id canonical decimal form."
+                    )
+
+                if authority_was_supplied and supplied_authority is None:
+                    normalized_authority = None
+                else:
+                    local_authority = self.get_local_authority_id()
+                    if (
+                        authority_was_supplied
+                        and supplied_authority != local_authority
+                    ):
+                        raise InputError(
+                            "Local character authority must match this "
+                            "database's local authority."
+                        )
+                    normalized_authority = local_authority
+                return (
+                    normalized_runtime,
+                    "character",
+                    normalized_assistant_id,
+                    normalized_character_id,
+                    None,
+                    normalized_authority,
+                )
+
+            if normalized_assistant_id is None and raw_character_id is not None:
+                normalized_assistant_id = str(
+                    self._normalize_positive_character_id(raw_character_id)
+                )
+            if normalized_assistant_id is None:
+                raise InputError(
+                    "Server character conversations require a non-empty assistant_id."
+                )
+            if authority_was_supplied:
+                normalized_authority = supplied_authority
+            elif (
+                self._normalize_runtime_backend(existing_runtime_backend) == "server"
+                and self._normalize_nullable_text(existing_assistant_kind)
+                == "character"
+            ):
+                normalized_authority = self._normalize_conversation_authority(
+                    existing_assistant_authority_id
+                )
+            else:
+                normalized_authority = None
+            return (
+                normalized_runtime,
+                "character",
+                normalized_assistant_id,
+                None,
+                None,
+                normalized_authority,
+            )
+
+        if supplied_authority is not None:
+            raise InputError(
+                f"{normalized_kind.capitalize()} conversations cannot carry "
+                "character authority."
+            )
 
         if normalized_kind == "persona":
             if normalized_assistant_id is None:
@@ -5779,15 +6107,30 @@ UPDATE db_schema_version
                 normalized_memory_mode = normalized_memory_mode.lower()
                 if normalized_memory_mode not in self._ALLOWED_PERSONA_MEMORY_MODES:
                     raise InputError(
-                        f"Invalid persona_memory_mode '{persona_memory_mode}'. Allowed: {', '.join(self._ALLOWED_PERSONA_MEMORY_MODES)}"
+                        f"Invalid persona_memory_mode '{raw_memory_mode}'. Allowed: "
+                        f"{', '.join(self._ALLOWED_PERSONA_MEMORY_MODES)}"
                     )
-            return "persona", normalized_assistant_id, None, normalized_memory_mode
+            return (
+                normalized_runtime,
+                "persona",
+                normalized_assistant_id,
+                None,
+                normalized_memory_mode,
+                None,
+            )
 
         if normalized_memory_mode is not None:
             raise InputError(
                 "persona_memory_mode is only valid for persona-backed conversations."
             )
-        return "generic", normalized_assistant_id, None, None
+        return (
+            normalized_runtime,
+            "generic",
+            normalized_assistant_id,
+            None,
+            None,
+            None,
+        )
 
     def _normalize_conversation_runtime_visibility(
         self,
@@ -5796,13 +6139,10 @@ UPDATE db_schema_version
         discovery_owner: Any,
         discovery_entity_id: Any,
     ) -> Tuple[str, str, Optional[str]]:
-        normalized_runtime = self._normalize_nullable_text(runtime_backend)
         normalized_owner = self._normalize_nullable_text(discovery_owner)
         normalized_entity_id = self._normalize_nullable_text(discovery_entity_id)
 
-        runtime_value = (normalized_runtime or DEFAULT_RUNTIME_BACKEND).strip().lower()
-        if runtime_value not in {"local", "server"}:
-            runtime_value = DEFAULT_RUNTIME_BACKEND
+        runtime_value = self._normalize_runtime_backend(runtime_backend)
 
         owner_value = (normalized_owner or DEFAULT_DISCOVERY_OWNER).strip().lower()
         if owner_value not in {"general_chat", "ccp_character", "ccp_persona"}:
@@ -5850,13 +6190,30 @@ UPDATE db_schema_version
                 "Client ID is required for conversation (either in conv_data or DB instance)."
             )
 
-        assistant_kind, assistant_id, character_id, persona_memory_mode = (
-            self._normalize_conversation_assistant_identity(
-                character_id=conv_data.get("character_id"),
-                assistant_kind=conv_data.get("assistant_kind"),
-                assistant_id=conv_data.get("assistant_id"),
-                persona_memory_mode=conv_data.get("persona_memory_mode"),
+        runtime_backend, discovery_owner, discovery_entity_id = (
+            self._normalize_conversation_runtime_visibility(
+                runtime_backend=conv_data.get("runtime_backend"),
+                discovery_owner=conv_data.get("discovery_owner"),
+                discovery_entity_id=conv_data.get("discovery_entity_id"),
             )
+        )
+        (
+            runtime_backend,
+            assistant_kind,
+            assistant_id,
+            character_id,
+            persona_memory_mode,
+            assistant_authority_id,
+        ) = self._normalize_conversation_identity(
+            character_id=conv_data.get("character_id", _UNSET),
+            assistant_kind=conv_data.get("assistant_kind", _UNSET),
+            assistant_id=conv_data.get("assistant_id", _UNSET),
+            assistant_authority_id=conv_data.get(
+                "assistant_authority_id",
+                _UNSET,
+            ),
+            persona_memory_mode=conv_data.get("persona_memory_mode", _UNSET),
+            runtime_backend=runtime_backend,
         )
         scope_type, workspace_id = self._normalize_scope(
             conv_data.get("scope_type"),
@@ -5876,24 +6233,17 @@ UPDATE db_schema_version
         cluster_id = self._normalize_nullable_text(conv_data.get("cluster_id"))
         source = self._normalize_nullable_text(conv_data.get("source"))
         external_ref = self._normalize_nullable_text(conv_data.get("external_ref"))
-        runtime_backend, discovery_owner, discovery_entity_id = (
-            self._normalize_conversation_runtime_visibility(
-                runtime_backend=conv_data.get("runtime_backend"),
-                discovery_owner=conv_data.get("discovery_owner"),
-                discovery_entity_id=conv_data.get("discovery_entity_id"),
-            )
-        )
         system_prompt = self._normalize_nullable_text(conv_data.get("system_prompt"))
 
         now = self._get_current_utc_timestamp_iso()
         query = """
                 INSERT INTO conversations (id, root_id, forked_from_message_id, parent_conversation_id, \
-                                           character_id, assistant_kind, assistant_id, persona_memory_mode, \
+                                           character_id, assistant_kind, assistant_id, assistant_authority_id, persona_memory_mode, \
                                            scope_type, workspace_id, state, topic_label, topic_label_source, \
                                            topic_last_tagged_at, topic_last_tagged_message_id, cluster_id, source, external_ref, \
                                            runtime_backend, discovery_owner, discovery_entity_id, system_prompt, \
                                            title, rating, created_at, last_modified, client_id, version, deleted) \
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0) \
                 """  # created_at added
         params = (
             conv_id,
@@ -5903,6 +6253,7 @@ UPDATE db_schema_version
             character_id,
             assistant_kind,
             assistant_id,
+            assistant_authority_id,
             persona_memory_mode,
             scope_type,
             workspace_id,
@@ -6038,6 +6389,7 @@ UPDATE db_schema_version
                        character_id, \
                        assistant_kind, \
                        assistant_id, \
+                       assistant_authority_id, \
                        runtime_backend, \
                        discovery_owner, \
                        discovery_entity_id, \
@@ -6626,6 +6978,7 @@ UPDATE db_schema_version
                 current_state = conn.execute(
                     """
                     SELECT rowid, title, version, deleted, character_id, assistant_kind, assistant_id,
+                           assistant_authority_id,
                            persona_memory_mode, scope_type, workspace_id, state, topic_label,
                            topic_label_source, topic_last_tagged_at, topic_last_tagged_message_id,
                            cluster_id, source, external_ref,
@@ -6655,19 +7008,21 @@ UPDATE db_schema_version
                         entity_id=conversation_id,
                     )
 
-                assistant_update_requested = any(
+                identity_update_requested = any(
                     field in update_data
                     for field in (
                         "assistant_kind",
                         "assistant_id",
+                        "assistant_authority_id",
                         "character_id",
                         "persona_memory_mode",
+                        "runtime_backend",
                     )
                 )
                 scope_update_requested = (
                     "scope_type" in update_data or "workspace_id" in update_data
                 )
-                runtime_update_requested = any(
+                runtime_visibility_update_requested = any(
                     field in update_data
                     for field in (
                         "runtime_backend",
@@ -6676,27 +7031,66 @@ UPDATE db_schema_version
                     )
                 )
 
-                if assistant_update_requested:
-                    assistant_kind, assistant_id, character_id, persona_memory_mode = (
-                        self._normalize_conversation_assistant_identity(
-                            character_id=update_data.get(
-                                "character_id", current_state["character_id"]
+                if runtime_visibility_update_requested:
+                    runtime_backend, discovery_owner, discovery_entity_id = (
+                        self._normalize_conversation_runtime_visibility(
+                            runtime_backend=update_data.get(
+                                "runtime_backend",
+                                current_state["runtime_backend"],
                             ),
-                            assistant_kind=update_data.get(
-                                "assistant_kind", current_state["assistant_kind"]
+                            discovery_owner=update_data.get(
+                                "discovery_owner",
+                                current_state["discovery_owner"],
                             ),
-                            assistant_id=update_data.get(
-                                "assistant_id", current_state["assistant_id"]
-                            ),
-                            persona_memory_mode=update_data.get(
-                                "persona_memory_mode",
-                                current_state["persona_memory_mode"],
+                            discovery_entity_id=update_data.get(
+                                "discovery_entity_id",
+                                current_state["discovery_entity_id"],
                             ),
                         )
                     )
                 else:
+                    runtime_backend = current_state["runtime_backend"]
+                    discovery_owner = current_state["discovery_owner"]
+                    discovery_entity_id = current_state["discovery_entity_id"]
+
+                if identity_update_requested:
+                    (
+                        runtime_backend,
+                        assistant_kind,
+                        assistant_id,
+                        character_id,
+                        persona_memory_mode,
+                        assistant_authority_id,
+                    ) = self._normalize_conversation_identity(
+                        character_id=update_data.get("character_id", _UNSET),
+                        assistant_kind=update_data.get("assistant_kind", _UNSET),
+                        assistant_id=update_data.get("assistant_id", _UNSET),
+                        assistant_authority_id=update_data.get(
+                            "assistant_authority_id",
+                            _UNSET,
+                        ),
+                        persona_memory_mode=update_data.get(
+                            "persona_memory_mode",
+                            _UNSET,
+                        ),
+                        runtime_backend=runtime_backend,
+                        existing_character_id=current_state["character_id"],
+                        existing_assistant_kind=current_state["assistant_kind"],
+                        existing_assistant_id=current_state["assistant_id"],
+                        existing_assistant_authority_id=current_state[
+                            "assistant_authority_id"
+                        ],
+                        existing_persona_memory_mode=current_state[
+                            "persona_memory_mode"
+                        ],
+                        existing_runtime_backend=current_state["runtime_backend"],
+                    )
+                else:
                     assistant_kind = current_state["assistant_kind"]
                     assistant_id = current_state["assistant_id"]
+                    assistant_authority_id = current_state[
+                        "assistant_authority_id"
+                    ]
                     character_id = current_state["character_id"]
                     persona_memory_mode = current_state["persona_memory_mode"]
 
@@ -6761,26 +7155,6 @@ UPDATE db_schema_version
                         update_data.get("system_prompt")
                     )
 
-                if runtime_update_requested:
-                    runtime_backend, discovery_owner, discovery_entity_id = (
-                        self._normalize_conversation_runtime_visibility(
-                            runtime_backend=update_data.get(
-                                "runtime_backend", current_state["runtime_backend"]
-                            ),
-                            discovery_owner=update_data.get(
-                                "discovery_owner", current_state["discovery_owner"]
-                            ),
-                            discovery_entity_id=update_data.get(
-                                "discovery_entity_id",
-                                current_state["discovery_entity_id"],
-                            ),
-                        )
-                    )
-                else:
-                    runtime_backend = current_state["runtime_backend"]
-                    discovery_owner = current_state["discovery_owner"]
-                    discovery_entity_id = current_state["discovery_entity_id"]
-
                 fields_to_update_sql = []
                 params_for_set_clause = []
 
@@ -6793,11 +7167,12 @@ UPDATE db_schema_version
                 if "metadata" in update_data:  # ADDED (P1e)
                     fields_to_update_sql.append("metadata = ?")  # ADDED
                     params_for_set_clause.append(update_data.get("metadata"))  # ADDED
-                if assistant_update_requested:
+                if identity_update_requested:
                     fields_to_update_sql.extend(
                         [
                             "assistant_kind = ?",
                             "assistant_id = ?",
+                            "assistant_authority_id = ?",
                             "character_id = ?",
                             "persona_memory_mode = ?",
                         ]
@@ -6806,6 +7181,7 @@ UPDATE db_schema_version
                         [
                             assistant_kind,
                             assistant_id,
+                            assistant_authority_id,
                             character_id,
                             persona_memory_mode,
                         ]
@@ -6840,7 +7216,7 @@ UPDATE db_schema_version
                 if "system_prompt" in update_data:
                     fields_to_update_sql.append("system_prompt = ?")
                     params_for_set_clause.append(system_prompt)
-                if runtime_update_requested:
+                if runtime_visibility_update_requested:
                     fields_to_update_sql.extend(
                         [
                             "runtime_backend = ?",

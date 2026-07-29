@@ -1656,15 +1656,15 @@ class TestChatHistorySaving:
             == before_messages["msg-assistant-1"]["total_variants"]
         )
 
-    def test_resave_chat_history_preserves_backend_while_normalizing_stale_identity_metadata(
+    def test_resave_server_character_does_not_rebind_to_local_character_context(
         self, db_instance: CharactersRAGDB
     ):
-        char_id = db_instance.add_character_card({"name": "Resaver"})
+        db_instance.add_character_card({"name": "Resaver"})
         conversation_id = db_instance.add_conversation(
             {
-                "character_id": char_id,
                 "assistant_kind": "character",
-                "assistant_id": "Resaver",
+                "assistant_id": "server-character:Resaver",
+                "assistant_authority_id": None,
                 "runtime_backend": "server",
                 "discovery_owner": "general_chat",
                 "discovery_entity_id": "legacy.display.name",
@@ -1684,16 +1684,18 @@ class TestChatHistorySaving:
             "Resaver",
         )
 
-        assert "success" in status.lower()
+        assert "mismatch" in status.lower()
         assert resave_id == conversation_id
 
-        updated_conversation = db_instance.get_conversation_by_id(conversation_id)
-        assert updated_conversation["assistant_kind"] == "character"
-        assert updated_conversation["assistant_id"] == str(char_id)
-        assert updated_conversation["runtime_backend"] == "server"
-        assert updated_conversation["discovery_owner"] == "ccp_character"
-        assert updated_conversation["discovery_entity_id"] == str(char_id)
-        assert updated_conversation["title"] == "Chat with Resaver"
+        unchanged = db_instance.get_conversation_by_id(conversation_id)
+        assert unchanged["assistant_kind"] == "character"
+        assert unchanged["assistant_id"] == "server-character:Resaver"
+        assert unchanged["assistant_authority_id"] is None
+        assert unchanged["character_id"] is None
+        assert unchanged["runtime_backend"] == "server"
+        assert unchanged["discovery_owner"] == "general_chat"
+        assert unchanged["discovery_entity_id"] == "legacy.display.name"
+        assert unchanged["title"] == "Chat with Resaver"
 
     def test_resave_chat_history_rejects_generic_context_for_character_conversation(
         self, db_instance: CharactersRAGDB

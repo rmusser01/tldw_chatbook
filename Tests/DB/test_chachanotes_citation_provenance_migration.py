@@ -314,7 +314,13 @@ def _minimal_v24(path: Path) -> None:
                 version INTEGER NOT NULL
             );
             INSERT INTO db_schema_version VALUES ('{SCHEMA_NAME}', 24);
-            CREATE TABLE conversations(id TEXT PRIMARY KEY);
+            CREATE TABLE conversations(
+                id TEXT PRIMARY KEY,
+                character_id INTEGER,
+                assistant_kind TEXT,
+                assistant_id TEXT,
+                runtime_backend TEXT NOT NULL DEFAULT 'local'
+            );
             CREATE TABLE messages(
                 id TEXT PRIMARY KEY,
                 conversation_id TEXT NOT NULL
@@ -391,14 +397,14 @@ def _insert_local_trace_and_snapshot(connection: sqlite3.Connection) -> str:
     return profile_id
 
 
-def test_fresh_database_reaches_v27_with_stable_identity_context(
+def test_fresh_database_reaches_v28_with_stable_identity_context(
     tmp_path: Path,
 ) -> None:
     db = _fresh_db(tmp_path / "fresh.sqlite")
     connection = db.get_connection()
 
-    assert db._CURRENT_SCHEMA_VERSION == 27
-    assert _version(connection) == 27
+    assert db._CURRENT_SCHEMA_VERSION == 28
+    assert _version(connection) == 28
     assert PROVENANCE_TABLES <= _table_names(connection)
     row = connection.execute("SELECT * FROM rag_identity_context").fetchone()
     assert row["context_name"] == "default"
@@ -408,7 +414,7 @@ def test_fresh_database_reaches_v27_with_stable_identity_context(
     assert row["created_at"]
 
 
-def test_v24_upgrade_reaches_v27_and_uses_exact_citation_sql_schema(
+def test_v24_upgrade_reaches_v28_and_uses_exact_citation_sql_schema(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "upgrade.sqlite"
@@ -417,7 +423,7 @@ def test_v24_upgrade_reaches_v27_and_uses_exact_citation_sql_schema(
     db = _fresh_db(path)
     connection = db.get_connection()
 
-    assert _version(connection) == 27
+    assert _version(connection) == 28
     assert PROVENANCE_TABLES <= _table_names(connection)
     assert "message_generation_metadata" in _table_names(connection)
     conversation_columns = {
