@@ -1,10 +1,11 @@
 ---
 id: TASK-594
 title: Build shared model artifact descriptors and lifecycle
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-24 01:02'
-updated_date: '2026-07-29 01:13'
+updated_date: '2026-07-29 01:34'
 labels:
   - stt
   - artifacts
@@ -35,3 +36,21 @@ Create the provider-neutral artifact foundation for immutable GGUF and ONNX mode
 - [ ] #6 Crash reconciliation, rollback, path containment, disk accounting primitives, and dependency-free lifecycle tests pass without network access.
 - [ ] #7 Content-addressed deduplication and LLM artifact migration are not introduced.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Plan: Docs/superpowers/plans/2026-07-28-shared-model-artifact-core.md
+
+ADR required: no
+ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
+Reason: TASK-594 directly implements the accepted provider-neutral artifact boundary without changing it.
+
+1. Add typed immutable descriptor contracts and canonical closure fingerprints with strict portable validation.
+2. Add verified same-filesystem promotion, fast inventory, and exact disk accounting under lifecycle/target leases.
+3. Add strict versioned readiness and active records, dependency closure activation, and leased handles.
+4. Add lease-safe deletion and crash reconciliation without deleting corrupt payload or abandoned staging.
+5. Verify runtime-import boundaries, update lease documentation, run focused tests/static checks, and complete task hygiene.
+
+Implementation remains one production module and explicitly excludes download clients, UI, inference runtimes, catalogs, deduplication, LLM migration, and first-run-wizard work.
+<!-- SECTION:PLAN:END -->

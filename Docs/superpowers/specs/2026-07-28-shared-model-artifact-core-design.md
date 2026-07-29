@@ -1,7 +1,7 @@
 # Shared Model Artifact Core — Focused Design
 
 **Date:** 2026-07-28
-**Status:** Draft; direction approved, written design awaiting review
+**Status:** Approved
 **Task:** TASK-594
 **ADR:** `backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md`
 
@@ -176,7 +176,8 @@ Deletion then acquires the target artifact's exclusive TASK-505 lease before
 changing metadata. If a worker holds a shared root or dependency lease, deletion
 fails clearly and changes nothing. After the exclusive lease is acquired, the
 service removes readiness records that reference the target, clears an active
-selector only when it selects the target, and deletes the immutable directory.
+selector when it selects the target or any root whose readiness was invalidated,
+and deletes the immutable directory.
 
 The fixed order is lifecycle lease, then sorted artifact leases. Readers acquire
 only sorted artifact leases, so there is no lock cycle.
