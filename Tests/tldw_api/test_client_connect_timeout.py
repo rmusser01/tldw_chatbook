@@ -67,3 +67,36 @@ async def test_short_overall_timeout_is_not_lengthened_by_the_cap():
         assert httpx_client.timeout.read == 2.0
     finally:
         await client.close()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"timeout": -1.0},
+        {"timeout": 0.0},
+        {"timeout": float("nan")},
+        {"timeout": float("inf")},
+        {"timeout": "abc"},
+        {"connect_timeout": -1.0},
+        {"connect_timeout": 0.0},
+        {"connect_timeout": float("nan")},
+        {"connect_timeout": float("inf")},
+        {"connect_timeout": "abc"},
+    ],
+)
+def test_nonsense_timeouts_are_rejected_at_the_boundary(kwargs):
+    """Bad timeouts must fail loudly at construction, not silently at request time.
+
+    httpx validates none of this: `httpx.Timeout(300.0, connect=-5)`,
+    `connect=nan` and even `connect="abc"` are all accepted, so an invalid
+    value crosses the public client boundary and only misbehaves later, at
+    the request, far from the call that caused it.
+
+    NaN is the sharp one: `min(nan, DEFAULT_CONNECT_TIMEOUT_SECONDS)` is
+    `nan`, so a NaN overall timeout silently defeats the connect ceiling
+    that exists specifically to stop the app freezing on an unreachable
+    host.
+    """
+    with pytest.raises((ValueError, TypeError)):
+        TLDWAPIClient(base_url="http://example.invalid", **kwargs)
