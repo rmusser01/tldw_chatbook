@@ -1123,3 +1123,36 @@ class TestAppOfferGating:
     def test_rerun_flag_reaches_container(self):
         wizard = _make_wizard(rerun=True)
         assert wizard.rerun is True
+
+
+class TestCommandPaletteReentry:
+    """AC #4 (task-1264): "re-runnable from Settings and the command
+    palette". The Settings re-entry button is covered app-level in
+    Tests/UI/test_first_run_wizard_live_contract.py; a Task 12 audit found
+    NOTHING anywhere exercised SetupWizardProvider (app.py), the command
+    palette's entire bridge to the wizard -- this closes that gap.
+    """
+
+    def test_run_setup_wizard_action_pushes_rerun_wizard(self):
+        from tldw_chatbook.app import SetupWizardProvider
+        from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
+
+        screen = MagicMock()
+        provider = SetupWizardProvider(screen)
+
+        provider.handle_setup_wizard_action("run_setup_wizard")
+
+        screen.app.push_screen.assert_called_once()
+        (pushed_wizard,), _kwargs = screen.app.push_screen.call_args
+        assert isinstance(pushed_wizard, FirstRunSetupWizard)
+        assert pushed_wizard.rerun is True
+
+    def test_unknown_action_id_is_a_no_op(self):
+        from tldw_chatbook.app import SetupWizardProvider
+
+        screen = MagicMock()
+        provider = SetupWizardProvider(screen)
+
+        provider.handle_setup_wizard_action("something_else")
+
+        screen.app.push_screen.assert_not_called()

@@ -225,6 +225,52 @@ Terminal art is a hint about where to look, never a finding.
 
 ---
 
+## `pilot.click()` can silently miss and no one tells you
+
+**TASK-1264/Task 12, 2026-07-29.** An app-level Pilot test drove the
+first-run wizard's Summary step to completion after a burst of rapid,
+unsettled Back/Next clicks, then clicked its "Start chatting" exit button.
+The click reported no error, but the wizard never dismissed — `current_step`
+was unchanged 0.3s and then 10s later. `container._advancing` was `False`
+and `can_proceed` was `True` the whole time, so nothing about the
+container's own state explained it.
+
+`Button.query_one(...).region` reported a plausible, non-empty, on-screen
+rectangle, and `button.visible` was `True` — every pre-paint fact available
+said the click should have landed. It was resolved only by asking the
+compositor directly what widget actually owns that pixel:
+
+```python
+widget_at, _ = app.get_widget_at(*button.region.center)
+assert widget_at is button  # was SummaryStep (the parent), not the Button
+```
+
+`pilot.click(selector)` computes its target coordinate from the selected
+widget's own **cached** `region` attribute, then dispatches a mouse event at
+that screen position — it does **not** verify the region still matches
+reality. `Pilot.click()`'s own docstring says exactly this and is easy to
+miss: it returns `True` only "if ... the selected widget was under the
+mouse when the click was initiated" and `False` otherwise, with **no
+exception** either way. A test that does not check the return value (every
+test in this suite up to this point did not) cannot tell "clicked
+successfully" from "silently missed."
+
+**What to do.** For any Pilot test that drives a control through a **state
+machine** (a wizard step, not a one-shot visual check), prefer driving the
+widget directly over a pixel-coordinate click: `Button.press()` posts the
+identical `Button.Pressed` message a click ultimately posts, and setting
+`RadioButton.value = True` posts the identical `Changed` message a click's
+`toggle()` would. Both still honor `disabled`/`display` correctly, so they
+do not mask a genuinely un-interactable control — they only remove the
+irrelevant risk of stale-region hit-testing. Reserve pixel-coordinate
+`pilot.click()` for tests that are actually verifying the click surface
+itself (hit-region size/placement, obscured-widget detection); check its
+return value there, and cross-check with `app.get_widget_at()` or
+`Screen._compositor.render_strips()` (see the entry above) rather than
+trusting `region` alone.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md` — why the green suite was not evidence
