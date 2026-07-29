@@ -1561,6 +1561,22 @@ def test_install_validates_argument_types_before_staging_mutation(
     assert tuple(service.staging_path.iterdir()) == ()
 
 
+def test_install_rejects_source_paths_blocked_by_central_validation(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    source = tmp_path / "source;unsafe"
+    source.mkdir()
+    (source / "model.onnx").write_bytes(b"model")
+    item = descriptor(files=(artifact_file(b"model"),))
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service.install(item, source)
+
+    assert service.artifact_path(item.reference).exists() is False
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
 @pytest.mark.parametrize(
     "expected_file",
     (
@@ -2462,8 +2478,8 @@ def test_activate_verification_failure_leaves_no_loadable_readiness(
     tmp_path: Path,
 ) -> None:
     service, root, dependency = installed_root_and_dependency(tmp_path)
+    service.activate(root.reference)
     ready_path = service.readiness_path(root.reference)
-    ready_path.parent.mkdir(parents=True, exist_ok=True)
     ready_path.write_text('{"schema_version":2}', encoding="utf-8")
     (service.artifact_path(dependency.reference) / "model.onnx").write_bytes(
         b"x" * dependency.files[0].size_bytes
@@ -2473,6 +2489,29 @@ def test_activate_verification_failure_leaves_no_loadable_readiness(
         service.activate(root.reference)
 
     assert ready_path.exists() is False
+    assert service.active_path(root.reference.artifact_id).exists() is False
+
+
+def test_failed_activation_preserves_another_active_revision(
+    tmp_path: Path,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    first_ref = ref("shared-root", "revision-one", "int8")
+    second_ref = ref("shared-root", "revision-two", "int8")
+    first = single_file_descriptor(first_ref, ArtifactRole.ROOT, b"first")
+    second = single_file_descriptor(second_ref, ArtifactRole.ROOT, b"second")
+    install_descriptor_payload(service, tmp_path, first, b"first")
+    install_descriptor_payload(service, tmp_path, second, b"second")
+    service.activate(second_ref)
+    active_path = service.active_path(first_ref.artifact_id)
+    active_bytes = active_path.read_bytes()
+    (service.artifact_path(first_ref) / "model.onnx").write_bytes(b"wrong")
+
+    with pytest.raises(service_module.ArtifactIntegrityError):
+        service.activate(first_ref)
+
+    assert active_path.read_bytes() == active_bytes
+    assert service._read_active(first_ref.artifact_id) == second_ref
 
 
 @pytest.mark.parametrize(

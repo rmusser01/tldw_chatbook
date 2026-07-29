@@ -20,7 +20,7 @@ from typing import TypeVar
 from urllib.parse import urlsplit
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
-
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 from .leases import (
     ArtifactLeaseError,
     ArtifactLeaseKey,
@@ -1437,14 +1437,18 @@ class ModelArtifactService:
                     existing = self._try_read_readiness(root_reference)
                     if existing != expected:
                         self._remove_readiness(root_reference)
-                        for reference in closure:
-                            expected_role = (
-                                ArtifactRole.ROOT
-                                if reference == root_reference
-                                else ArtifactRole.DEPENDENCY
-                            )
-                            self._verify_installed(reference, expected_role)
-                        self._write_readiness(expected)
+                        try:
+                            for reference in closure:
+                                expected_role = (
+                                    ArtifactRole.ROOT
+                                    if reference == root_reference
+                                    else ArtifactRole.DEPENDENCY
+                                )
+                                self._verify_installed(reference, expected_role)
+                            self._write_readiness(expected)
+                        except ArtifactError:
+                            self._remove_active_if_selects(root_reference)
+                            raise
                     try:
                         active_path = self.active_path(root_reference.artifact_id)
                         self._assert_managed_path(
@@ -1678,12 +1682,34 @@ class ModelArtifactService:
         descriptor: ArtifactDescriptor,
         source_directory: Path,
     ) -> ArtifactRef:
-        """Verify and promote one local source directory immutably."""
+        """Verify and promote one local source directory immutably.
+
+        Args:
+            descriptor: Strict descriptor for the artifact being installed.
+            source_directory: Existing local directory containing its payload.
+
+        Returns:
+            The installed artifact's immutable reference.
+
+        Raises:
+            TypeError: An argument has the wrong public API type.
+            ArtifactPathError: The source or managed destination is unsafe.
+            ArtifactIntegrityError: A declared file fails size or digest checks.
+            ArtifactConflictError: The immutable destination conflicts.
+            ArtifactStateError: Artifact storage or lease operations fail.
+        """
 
         if type(descriptor) is not ArtifactDescriptor:
             raise TypeError("descriptor must be an ArtifactDescriptor")
         if not isinstance(source_directory, Path):
             raise TypeError("source_directory must be a Path")
+        try:
+            source_directory = validate_path_simple(
+                source_directory,
+                probe_existing=False,
+            )
+        except ValueError as error:
+            raise ArtifactPathError("source directory path is invalid") from error
         source_directory = Path(os.path.abspath(source_directory))
         source_snapshot = self._validate_payload_tree(
             source_directory,
@@ -1984,6 +2010,20 @@ class ModelArtifactService:
             ValueError,
         ) as error:
             raise ArtifactStateError("artifact active selector is invalid") from error
+
+    def _remove_active_if_selects(self, reference: ArtifactRef) -> None:
+        path = self.active_path(reference.artifact_id)
+        if not self._state_path_exists(path):
+            return
+        try:
+            selected = self._read_active(reference.artifact_id)
+        except ArtifactStateError:
+            selected = reference
+        if selected == reference:
+            self._remove_state_path(
+                path,
+                "failed to remove invalid active selector",
+            )
 
     def _try_read_readiness(
         self,

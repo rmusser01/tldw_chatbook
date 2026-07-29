@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:02'
-updated_date: '2026-07-29 04:13'
+updated_date: '2026-07-29 06:13'
 labels:
   - stt
   - artifacts
@@ -71,4 +71,6 @@ ADR required: no. ADR path: backlog/decisions/025-shared-stt-artifacts-and-runti
 Files modified or added across TASK-594 at a high level: shared artifact service and package exports; focused descriptor/lifecycle/process tests; artifact-core design and implementation plan; operation-lease documentation; and linked Backlog task metadata.
 
 Retained gate caveat: evidence is local/macOS only and is not cross-platform proof. TASK-505 remains open for native Windows/Linux and final matrix qualification.
+
+PR review follow-up: routed local-import paths through the central validator before the artifact core’s stricter no-follow tree checks; documented the public install contract; and removed a stale active selector when readiness revalidation fails while preserving a different active revision. Focused verification now covers 280 offline Model_Artifacts tests.
 <!-- SECTION:NOTES:END -->
