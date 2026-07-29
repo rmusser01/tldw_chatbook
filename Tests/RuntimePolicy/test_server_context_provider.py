@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
+from typing import get_args
 
 import pytest
 
@@ -30,6 +31,7 @@ from tldw_chatbook.runtime_policy.server_context import (
 from tldw_chatbook.runtime_policy.types import (
     RuntimeSourceState,
     SERVER_CONTEXT_FAILURE_REASON_CODES,
+    ServerContextFailureReason,
 )
 from tldw_chatbook.tldw_api.auth_user_schemas import UserProfileResponse
 
@@ -785,7 +787,7 @@ def test_rejects_server_mode_without_active_server(tmp_path):
 
 
 def test_server_context_failure_reason_codes_include_stable_contract_values():
-    assert {
+    expected_reason_codes = {
         "server_not_configured",
         "server_profile_missing",
         "server_unavailable",
@@ -794,7 +796,28 @@ def test_server_context_failure_reason_codes_include_stable_contract_values():
         "server_credentials_unavailable",
         "stale_authorization",
         "profile_no_longer_authorized",
-    } <= SERVER_CONTEXT_FAILURE_REASON_CODES
+        "server_identity_unavailable",
+    }
+
+    assert set(get_args(ServerContextFailureReason)) == expected_reason_codes
+    assert SERVER_CONTEXT_FAILURE_REASON_CODES == expected_reason_codes
+
+
+def test_runtime_policy_package_exports_character_authority_apis():
+    import tldw_chatbook.runtime_policy as runtime_policy
+
+    assert (
+        runtime_policy.ServerIdentityUnavailable
+        is server_context_module.ServerIdentityUnavailable
+    )
+    assert (
+        runtime_policy.encode_server_user_character_authority
+        is server_context_module.encode_server_user_character_authority
+    )
+    assert {
+        "ServerIdentityUnavailable",
+        "encode_server_user_character_authority",
+    } <= set(runtime_policy.__all__)
 
 
 def test_context_unavailable_error_exposes_reason_code_and_safe_payload(tmp_path):
