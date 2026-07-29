@@ -589,18 +589,66 @@ SAME existing "drop the most allowed" fallback governs — an over-budget send
 rather than ever shrinking below the floor. No new degenerate-case code was
 needed; both fixes reuse the one fallback the primitive already had.
 
+**Third live-verified finding, same day, with both fixes above in place:
+Phase 3's mechanism is correct, but its OUTCOME is model-dependent — this is
+a characterisation, not a defect, and is recorded here in full rather than
+softened, because a future reader deciding whether to enable this needs the
+failure mode, not just the feature description.** A further live run (same
+model, 10-file sequential task, declared window 6000) compared eviction off
+against eviction on:
+
+- **Eviction OFF:** payload grows `1426..6909`, OVERFLOWS the declared 6000
+  window, answer CORRECT.
+- **Eviction ON:** payload grows `1426..4501` then PLATEAUS, correctly
+  staying under the window, but the run ends `status=stuck` with an EMPTY
+  answer — the log shows the agent re-reading files it had already read.
+
+Raising `max_tokens` 700→2500 did not change the outcome (20 calls, a flat
+plateau around 4500 across 13 consecutive turns, still stuck), ruling out a
+completion-budget artifact. Raising the recent-rounds floor delays where the
+wall is hit; it does not remove it.
+
+The plateau is the mechanism working exactly as designed — the payload stays
+bounded, provably, per the fixes above. The gap is in the premise, not the
+implementation: PRO-LONG (and this design, §1–§2) assumes the agent
+*compensates* for evicted history by actively querying `search_run_log`. A
+26B local model on the fence protocol does not reliably do this — strip its
+recent turns and it re-attempts completed work rather than searching for
+what it already learned, until the cycle detector kills the run. The paper's
+own headline results are measured on frontier models, which are the ones
+actually capable of driving that recovery loop; nothing here contradicts
+those results, but they do not transfer unconditionally to a weak local
+model.
+
+There is a real irony worth stating plainly rather than glossing over: small-
+context local models were one of this phase's two motivating goals (§2.1),
+and they are the class of model LEAST likely to have the reasoning strength
+the recovery mechanism assumes. A frontier model behind a small declared
+window is the case most likely to benefit from eviction; a weak local model
+behind a small NATIVE window — the headline scenario this phase was framed
+around — is the case most likely to plateau into `stuck` instead of
+completing. This is precisely why `run_log_evict_enabled` defaults to
+`false` (§8): turning it on is a judgment call about the specific model in
+use, not a strict improvement to enable universally.
+
 ### 10.1 Which goals each phase actually delivers
 
 | Goal (§2.1) | Phase 1 | Phase 2 | Phase 3 |
 | --- | --- | --- | --- |
-| 1. Long-horizon runs unbounded by context | — | — | **Yes** |
-| 2. Small-context local models | — | — | **Yes** |
+| 1. Long-horizon runs unbounded by context | — | — | **Mechanism: yes. Outcome: model-dependent — see the finding above.** |
+| 2. Small-context local models | — | — | **Mechanism: yes. Outcome: model-dependent, and this is the class LEAST likely to benefit — see the finding above.** |
 | 3. Queryable, crash-durable run history | **Durability + per-run search** | Console reader, aggregation, cross-run search | — |
 | 4. 1:1 PRO-LONG reachable as config | Format and seams built for it | — | **Delivered** |
 
 Stated plainly so nobody mistakes Phase 1 for the whole thing: **Phase 1 does not
 reduce context usage.** It makes truncated content *recoverable* and run history
-*durable*. Goals 1 and 2 are delivered by Phase 3.
+*durable*. Phase 3 delivers the MECHANISM for goals 1 and 2 — the payload is
+correctly and provably bounded — but, per the finding above, whether that
+mechanism translates into completing more work than eviction-off depends on
+the model being strong enough to recover from the log rather than repeat
+itself. Do not read "Phase 3 ships" as "goals 1 and 2 are unconditionally
+achieved" for every model; they are achieved for models capable enough to use
+`search_run_log` the way the mechanism assumes.
 
 ### 10.2 A known Phase 1 failure mode
 
@@ -631,6 +679,18 @@ for not treating Phase 1 as the finished feature.
   reopened.
 - **Cross-run search.** The log is per-run; searching *across* runs is a natural
   Phase 2+ extension.
+- **A stronger nudge in the synthetic eviction note for weaker models.**
+  Recorded, not implemented, per the model-dependence finding in §10: the
+  note (`run_log_eviction._synthetic_note`) currently states a round count
+  and names `search_run_log` once. A weak model that does not reliably act
+  on that single mention re-attempts completed work instead (§10's live
+  finding). A more directive phrasing — e.g. naming the SPECIFIC tool
+  name(s) it already used in the dropped rounds, or an imperative
+  "before repeating a tool call, search for it first" — might raise the
+  odds of it querying the log instead of repeating itself, but this is
+  speculative and untested; it is not a substitute for the strength gap
+  §10 documents, only a possible mitigation worth trying live before
+  committing to any specific wording.
 
 ## 12. Testing
 

@@ -24,6 +24,27 @@ preservation are solved there and are reused, not reimplemented -- the
 only addition this module makes is a protocol-aware turn-boundary
 predicate (see ``_make_round_boundary``) and the synthetic placeholder
 that replaces whatever got dropped.
+
+**Live-verified model-dependence (2026-07-28), read before enabling this
+in production:** the payload bound here is correct and provably bounded --
+that part is verified and not in question. Whether bounding it also lets a
+run COMPLETE more work than sending the full history depends on the model.
+PRO-LONG's premise is that the agent compensates for evicted rounds by
+actively querying ``search_run_log``; a capable (frontier-class) model does
+this reliably. A 26B local model on the fence protocol, live-tested against
+a 10-file sequential task, did not: with eviction on, its payload correctly
+plateaued under the declared window (eviction doing exactly its job), but
+the run ended ``status=stuck`` with an empty answer -- the model re-read
+files it had already read instead of searching the log for them, until the
+loop's cycle detector killed the run. The SAME task with eviction off
+overflowed the window but answered correctly. See the design spec
+(Docs/superpowers/specs/2026-07-27-agent-programmatic-run-memory-design.md
+§10) for the full numbers and reasoning. This is precisely why
+``RUN_LOG_EVICT_ENABLED_KEY`` defaults to off: enabling it is a bet on the
+configured model's ability to recover from the log, not a strict
+improvement to turn on universally -- and the irony is that small-context
+local models, one of this feature's own motivating cases, are the class of
+model least likely to win that bet.
 """
 
 from __future__ import annotations
@@ -42,6 +63,19 @@ from .agent_models import FENCE_TOOL_RESULT_PREFIX, SEARCH_RUN_LOG_TOOL_NAME
 #: `[agents]` config key (see `run_log._setting`'s env-var/TOML/default
 #: tiering). Off by default (task-1272 AC #5): existing runs must stay
 #: byte-identical to today's payload until a user opts in.
+#:
+#: MODEL-DEPENDENT, live-verified 2026-07-28 (see this module's docstring
+#: and the design spec §10 for the full evidence): this suits a model
+#: capable of actively using `search_run_log` to recover evicted context --
+#: verified against frontier-class models per the design spec's cited
+#: paper. A weaker model (live-tested: a 26B local model, fence protocol)
+#: may not query the log reliably when its recent turns are trimmed, and
+#: will instead re-attempt work it already completed, potentially running
+#: the loop into its cycle detector and a `stuck` status with no answer --
+#: worse than simply overflowing the window would have been. This is WHY
+#: the default is off: turning it on should be a deliberate choice for a
+#: model known to search its log, not a blanket "trim more, always
+#: better" setting.
 RUN_LOG_EVICT_ENABLED_KEY = "run_log_evict_enabled"
 
 #: `[agents]` config key for the minimum-recent-rounds floor (live-verified

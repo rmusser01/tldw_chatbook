@@ -1,11 +1,11 @@
 ---
 id: TASK-1272
 title: 'Run log Phase 3 — evict history from context (the 1:1 PRO-LONG mode)'
-status: Done
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-28 00:00'
-updated_date: '2026-07-28 23:20'
+updated_date: '2026-07-29 00:01'
 labels:
   - agents
   - run-log
@@ -244,4 +244,73 @@ repeat completed steps. Any reuse of a "keep whatever fits" trimmer for an
 agentic (not conversational) history needs an explicit minimum-recent-units
 floor from the start, not as an afterthought once cycle detection starts
 firing.
+
+--- FINAL FINDING (2026-07-28, same day): AC #6 attempted live, NOT met -- Phase 3's value is model-dependent ---
+
+Status deliberately kept at "In Progress", not "Done": AC #6 ("a live run
+against a local small-context model demonstrates a task completing that
+does not complete with eviction disabled") was attempted live by the
+coordinator with both fixes above in place, and the outcome did NOT satisfy
+it. This backlog has only To Do / In Progress / Done as statuses -- there is
+no dedicated "shipped with a documented limitation" state, so "In Progress"
+is being used as the closest honest fit; this note is the explicit record
+of that choice, per the coordinator's instruction not to mark Done with an
+unmet AC.
+
+The live evidence (coordinator, llama.cpp gemma-4-26B, fence protocol,
+10-file sequential task, declared window 6000):
+  eviction OFF -> payload 1426..6909, OVERFLOWS the 6000 window, answer CORRECT
+  eviction ON  -> payload 1426..4501 then PLATEAUS under the window (the
+                  mechanism working exactly as designed), but the run ends
+                  status=stuck with an EMPTY answer -- the log shows the
+                  agent re-reading files it had already read.
+Raising max_tokens 700->2500 did not change the outcome (20 calls, a flat
+plateau around 4500 across 13 consecutive turns, still stuck) -- ruling out
+a completion-budget artifact. Raising the recent-rounds floor delays where
+the wall is hit; it does not remove it.
+
+This is NOT a defect in the implementation -- the payload bound is correct
+and provably bounded, exactly per the two fixes already recorded above. The
+gap is in the PREMISE: PRO-LONG (and this design) assumes the agent
+compensates for evicted history by actively querying search_run_log. A 26B
+local model on the fence protocol does not reliably do this -- strip its
+recent turns and it re-attempts completed work instead of searching for
+what it already learned, until the cycle detector kills the run. The
+paper's own headline numbers are measured on frontier models, which are the
+ones actually capable of driving that recovery loop.
+
+Conclusion, recorded plainly rather than softened: Phase 3's MECHANISM is
+verified (bounded payload, no orphaned pairs, task pinned, floor honored --
+all of that holds). Whether the mechanism translates into completing MORE
+work than eviction-off depends on the model being strong enough to recover
+from the log by searching it, rather than repeating itself. There is a real
+irony worth stating directly: small-context local models were one of this
+phase's two motivating goals, and they are the class of model LEAST likely
+to have the reasoning strength the mechanism assumes. A frontier model
+behind an artificially small declared window is the case most likely to
+benefit; a weak local model behind a small NATIVE window -- the headline
+scenario this phase was framed around -- is the case most likely to
+plateau into stuck instead of completing.
+
+No code, test, or default changed for this finding -- documentation only,
+per the coordinator's explicit instruction. Recorded in three places so it
+cannot be missed by a future reader at any of the natural entry points:
+  - Design spec §10 (full narrative + evidence) and §10.1 (goal/phase
+    matrix no longer claims Phase 3 delivers goals 1/2 outright -- it now
+    reads "Mechanism: yes. Outcome: model-dependent").
+  - Agents/run_log_eviction.py's module docstring AND
+    RUN_LOG_EVICT_ENABLED_KEY's own comment -- whoever turns the flag on
+    reads it right there, not just in a design doc.
+  - This task's Implementation Notes (here).
+
+Future idea, NOT implemented, per the coordinator's "say so, don't build
+it" instruction: the synthetic eviction note (_synthetic_note) currently
+states a round count and names search_run_log once. A more directive
+wording -- e.g. explicitly naming the tool(s) already used in the dropped
+rounds, or an imperative "before repeating a tool call, search the log for
+it first" -- might raise the odds of a weaker model querying the log
+instead of repeating itself. This is speculative and untested (recorded
+also in the design spec §11 Deferred); it does not close the strength gap
+this finding documents, only a possible mitigation worth live-testing
+before committing to specific wording.
 <!-- SECTION:NOTES:END -->
