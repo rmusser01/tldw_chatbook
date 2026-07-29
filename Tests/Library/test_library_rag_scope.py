@@ -132,7 +132,9 @@ class _SpyPromptScopeService:
         self.rows = rows if rows is not None else []
         self.call_count = 0
 
-    async def search_prompts(self, *, mode=None, query=None, limit=10, fts_match_query=None):
+    async def search_prompts(
+        self, *, mode=None, query=None, limit=10, fts_match_query=None
+    ):
         self.call_count += 1
         return self.rows
 
@@ -287,7 +289,9 @@ async def test_unscoped_keyword_search_real_seams_returns_everything(
     media_db.add_media_with_keywords(
         title="A", media_type="document", content=_SCOPED_CONTENT
     )
-    notes_interop.add_note(user_id="scope-stack-user", title="A", content=_SCOPED_CONTENT)
+    notes_interop.add_note(
+        user_id="scope-stack-user", title="A", content=_SCOPED_CONTENT
+    )
     conv_id = chachanotes_db.add_conversation({"title": "Roadmap thread"})
     chachanotes_db.add_message(
         {
@@ -343,7 +347,9 @@ async def test_media_reading_scope_service_id_allowlist_restricts_real_query(
 
 @pytest.fixture
 def real_notes_stack(tmp_path):
-    chachanotes_db = CharactersRAGDB(tmp_path / "notes_scope.db", client_id="scope-notes")
+    chachanotes_db = CharactersRAGDB(
+        tmp_path / "notes_scope.db", client_id="scope-notes"
+    )
     notes_base = tmp_path / "notes_base"
     notes_base.mkdir(mode=0o700)
     interop = NotesInteropService(
@@ -390,8 +396,12 @@ async def test_notes_scope_service_id_allowlist_restricts_real_query(real_notes_
 
 @pytest.mark.asyncio
 async def test_scoped_keyword_search_excludes_conversations_and_diagnoses():
-    conv_db = _SpyConversationsDB(rows=[{"id": "c1", "title": "Conv", "message_count": 2}])
-    notes_service = _SpyNotesScopeService(rows=[{"id": "n1", "title": "N1", "content": "c"}])
+    conv_db = _SpyConversationsDB(
+        rows=[{"id": "c1", "title": "Conv", "message_count": 2}]
+    )
+    notes_service = _SpyNotesScopeService(
+        rows=[{"id": "n1", "title": "N1", "content": "c"}]
+    )
     app = SimpleNamespace(
         chachanotes_db=conv_db,
         notes_scope_service=notes_service,
@@ -416,9 +426,13 @@ async def test_scoped_keyword_search_excludes_conversations_and_diagnoses():
 
 @pytest.mark.asyncio
 async def test_unscoped_keyword_search_includes_conversations_no_diagnostics():
-    conv_db = _SpyConversationsDB(rows=[{"id": "c1", "title": "Conv", "message_count": 2}])
+    conv_db = _SpyConversationsDB(
+        rows=[{"id": "c1", "title": "Conv", "message_count": 2}]
+    )
     app = SimpleNamespace(
-        chachanotes_db=conv_db, notes_scope_service=None, media_reading_scope_service=None
+        chachanotes_db=conv_db,
+        notes_scope_service=None,
+        media_reading_scope_service=None,
     )
     service = LibraryLocalRagSearchService(app)
 
@@ -437,7 +451,9 @@ async def test_scoped_keyword_search_excludes_prompts_and_diagnoses():
     prompts_service = _SpyPromptScopeService(
         rows=[{"local_id": "p1", "name": "P1", "user_prompt": "c"}]
     )
-    notes_service = _SpyNotesScopeService(rows=[{"id": "n1", "title": "N1", "content": "c"}])
+    notes_service = _SpyNotesScopeService(
+        rows=[{"id": "n1", "title": "N1", "content": "c"}]
+    )
     app = SimpleNamespace(
         prompt_scope_service=prompts_service,
         notes_scope_service=notes_service,
@@ -467,11 +483,15 @@ async def test_scoped_keyword_search_excludes_conversations_and_prompts_together
     BOTH conversations and prompts must record BOTH exclusion diagnostics --
     the previous single-dict-slot implementation let the second assignment
     silently clobber the first."""
-    conv_db = _SpyConversationsDB(rows=[{"id": "c1", "title": "Conv", "message_count": 2}])
+    conv_db = _SpyConversationsDB(
+        rows=[{"id": "c1", "title": "Conv", "message_count": 2}]
+    )
     prompts_service = _SpyPromptScopeService(
         rows=[{"local_id": "p1", "name": "P1", "user_prompt": "c"}]
     )
-    notes_service = _SpyNotesScopeService(rows=[{"id": "n1", "title": "N1", "content": "c"}])
+    notes_service = _SpyNotesScopeService(
+        rows=[{"id": "n1", "title": "N1", "content": "c"}]
+    )
     app = SimpleNamespace(
         chachanotes_db=conv_db,
         prompt_scope_service=prompts_service,
@@ -515,9 +535,7 @@ async def test_scoped_zero_results_count_covers_only_searched_source_types():
     service = LibraryLocalRagSearchService(app)
     # Scope carries BOTH media and note allowlists, but this call only
     # searches "notes" -- the count must be 1 (notes), not 4 (media+notes).
-    scope = _scoped(
-        **{SOURCE_TYPE_MEDIA: {"m1", "m2", "m3"}, SOURCE_TYPE_NOTE: {"n1"}}
-    )
+    scope = _scoped(**{SOURCE_TYPE_MEDIA: {"m1", "m2", "m3"}, SOURCE_TYPE_NOTE: {"n1"}})
 
     result = await service.search("q", ("notes",), "search", top_k=5, scope=scope)
 
@@ -548,7 +566,9 @@ async def test_unscoped_keyword_search_includes_prompts_no_diagnostics():
 async def test_unscoped_call_without_scope_kwarg_is_byte_identical_to_explicit_none():
     """D2 guard: the service called with NO `scope` kwarg behaves
     identically to an explicit `scope=None` -- both mean "unrestricted"."""
-    notes_service = _SpyNotesScopeService(rows=[{"id": "n1", "title": "N1", "content": "c"}])
+    notes_service = _SpyNotesScopeService(
+        rows=[{"id": "n1", "title": "N1", "content": "c"}]
+    )
     app = SimpleNamespace(
         notes_scope_service=notes_service,
         media_reading_scope_service=None,
@@ -670,7 +690,9 @@ async def test_scoped_semantic_search_zero_results_marker():
 
 
 @pytest.mark.asyncio
-async def test_console_scope_resolution_scopes_request_for_scoped_conversation(tmp_path):
+async def test_console_scope_resolution_scopes_request_for_scoped_conversation(
+    tmp_path,
+):
     # File-backed, not `:memory:`: scope resolution offloads the DB read to
     # a worker thread (`asyncio.to_thread`), and in-memory SQLite
     # connections are thread-local -- only the thread that created the `:memory:`
