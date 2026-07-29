@@ -2162,3 +2162,29 @@ def test_controller_emits_voice_command_for_command_segment(monkeypatch):
     commands = [e for e in events if isinstance(e, cvi.VoiceCommand)]
     finals = [e for e in events if isinstance(e, cvi.VoiceFinal)]
     assert [c.name for c in commands] == ["stop"] and finals == []
+
+
+def test_ellipsis_does_not_block_the_match(monkeypatch):
+    """A hesitant "Console… send" must still match -- U+2026 is punctuation
+    too, not just ASCII `string.punctuation`.
+    """
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console… send")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "send"
+
+
+def test_curly_quotes_do_not_block_the_match(monkeypatch):
+    """Right single quote U+2019 is common recognizer output around emphasis."""
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console, ’send’")
+    assert isinstance(result, cvi.VoiceCommand) and result.name == "send"
+
+
+def test_digits_survive_normalization_and_still_fail_open(monkeypatch):
+    """Digits are not punctuation: normalization must not eat them, and the
+    whole-segment rule must still reject the extra token.
+    """
+    _stub_settings(monkeypatch, {})
+    result = cvi.classify_segment("Console, send 2")
+    assert isinstance(result, cvi.VoiceFinal)
+    assert result.text == "Console, send 2"

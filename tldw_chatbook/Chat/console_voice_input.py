@@ -17,6 +17,7 @@ import importlib.util  # noqa: F401 - patched seam; see comment above
 import string
 import sys  # noqa: F401 - patched seam; see comment above
 import threading
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -396,20 +397,38 @@ COMMAND_PHRASES: dict[str, str] = {
 def normalize_spoken(text: str) -> str:
     """Fold recognizer output down to the shape the grammar matches against.
 
-    Lowercases, removes every character in `string.punctuation`, and
-    collapses whitespace. Punctuation is stripped entirely rather than just
-    trimmed from the ends: recognizers commonly emit an internal comma after
-    the command prefix ("Console, send."), and preserving it would mean that
-    -- the single most natural phrasing -- could never match.
+    Lowercases, removes ALL punctuation, and collapses whitespace.
+    Punctuation is stripped entirely rather than just trimmed from the ends:
+    recognizers commonly emit an internal comma after the command prefix
+    ("Console, send."), and preserving it would mean that -- the single most
+    natural phrasing -- could never match.
+
+    "All punctuation" means every character whose `unicodedata.category`
+    starts with `"P"` (the Unicode punctuation categories: Po, Pc, Pd, Ps,
+    Pe, Pi, Pf), plus everything in ASCII `string.punctuation` as a belt.
+    The two are not the same set: several ASCII punctuation characters
+    (`$+<=>^`|~`) are Unicode Symbol characters (category `S`), not
+    Punctuation, so `unicodedata` alone would miss them. Conversely, plain
+    `string.punctuation` alone would miss the Unicode marks Whisper-family
+    recognizers actually emit -- right single quote U+2019, em dash U+2014,
+    ellipsis U+2026 -- so a hesitant "Console… send" or a curly-quoted
+    "Console, 'send'" would fail open to text and the command would silently
+    never fire.
 
     Args:
         text: Raw recognizer output for one finalized segment.
 
     Returns:
-        The normalized text, e.g. `"Console, send."` -> `"console send"`.
+        The normalized text, e.g. `"Console, send."` -> `"console send"`,
+        `"Console… send"` -> `"console send"`.
     """
-    stripped = text.lower().translate(str.maketrans("", "", string.punctuation))
-    return " ".join(stripped.split())
+    lowered = text.lower()
+    kept = [
+        ch
+        for ch in lowered
+        if not (unicodedata.category(ch).startswith("P") or ch in string.punctuation)
+    ]
+    return " ".join("".join(kept).split())
 
 
 def command_prefix() -> str:
