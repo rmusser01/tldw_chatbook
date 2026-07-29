@@ -177,10 +177,16 @@ from ...Chat.console_provider_endpoints import first_configured_endpoint
 # stop tracking that monkeypatch.
 from ...Chat import console_voice_input
 from ...Chat.console_voice_input import (
+    NO_CAPTURE_MESSAGE,
+    NO_SPEECH_MESSAGE,
     STATE_LISTENING,
+    STATE_PREPARING,
+    TRANSCRIPTION_INCOMPLETE_REASON,
+    TRANSCRIPTION_INCOMPLETE_REMEDY,
     ConsoleVoiceInputController,
     VoiceFailed,
     VoiceFinal,
+    VoiceModelPreparing,
     VoicePartial,
     VoiceProviderOverridden,
     default_service_factory,
@@ -700,15 +706,31 @@ class ConsoleStreamingDictationSession:
         replaced (`Audio/console_dictation.py`): it raised rather than hand
         back nothing, and the screen's insertion has no empty case -- an empty
         transcript still pads to a stray space at the caret, silently, and gets
-        persisted to the session draft. The two messages are that backend's,
-        verbatim, so a silent capture reads exactly as it always did.
+        persisted to the session draft.
+
+        An empty transcript has three genuinely different causes, and this
+        reports each as itself rather than blaming the microphone for all
+        three:
+
+        1. The recorder delivered no bytes -- a real capture or permission
+           problem. Keeps the one-shot backend's wording verbatim.
+        2. Bytes arrived but nothing was recognized -- also that backend's
+           wording, verbatim.
+        3. The service's processing thread was still transcribing when its
+           join expired, so audio was dropped unread. Nothing here is a
+           statement about the microphone, which worked fine.
+
+        The recorder's byte count comes from the service
+        (`CaptureOutcome.captured_bytes`), not from guessing at the transcript.
+        When a service does not report it -- test fakes, older services -- the
+        recognizer-output flag is the fallback, exactly as before.
 
         Returns:
             The accumulated segments, space-joined. Never empty.
 
         Raises:
-            RuntimeError: The controller failed while finishing, or nothing
-                was transcribed.
+            RuntimeError: The controller failed while finishing, nothing was
+                transcribed, or the transcription never completed.
         """
         with self._blocking_call():
             self._controller.stop()
@@ -720,11 +742,13 @@ class ConsoleStreamingDictationSession:
             heard = self._heard_recognizer_output
         if transcript:
             return transcript
-        raise RuntimeError(
-            "Transcription returned no speech."
-            if heard
-            else "No audio was captured from the microphone."
-        )
+        outcome = self._controller.last_capture_outcome
+        if not outcome.transcription_complete:
+            raise RuntimeError(
+                f"{TRANSCRIPTION_INCOMPLETE_REASON} {TRANSCRIPTION_INCOMPLETE_REMEDY}"
+            )
+        heard = heard or bool(outcome.captured_bytes)
+        raise RuntimeError(NO_SPEECH_MESSAGE if heard else NO_CAPTURE_MESSAGE)
 
     def discard(self) -> None:
         """Release the microphone without the blocking join.
@@ -4560,6 +4584,19 @@ class ChatScreen(BaseAppScreen):
             composer = self._console_composer_or_none()
             if composer is not None:
                 composer.set_voice_partial("")
+            return
+        if isinstance(event, VoiceModelPreparing):
+            # The speech model is loading, before the microphone opens. On a
+            # fresh machine that is a multi-gigabyte download, and the button
+            # sitting on "Mic…" with no explanation is indistinguishable from
+            # a hang. Only meaningful while the screen is still starting: a
+            # notice that drains late must not repaint a live capture's chip.
+            if self._console_dictation_state == "starting":
+                composer = self._console_composer_or_none()
+                if composer is not None:
+                    composer.set_voice_status(
+                        STATE_PREPARING, message=f"◌ {event.message}"
+                    )
             return
         if isinstance(event, VoiceFailed):
             # Only ever a mid-capture failure: the session forwards a

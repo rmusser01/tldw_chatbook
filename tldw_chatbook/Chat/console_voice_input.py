@@ -71,6 +71,55 @@ PROVIDER_REMEDY = (
     "Install with: pip install 'tldw_chatbook[transcription_faster_whisper]'"
 )
 
+# --- Model preparation (warm-up) ------------------------------------------
+#
+# `TranscriptionService` has no preload API: the *only* way to make it load a
+# model is to transcribe something. It also keeps `_model_cache` per instance
+# (`transcription_service.py`), and the Console builds a fresh service on every
+# press, so every capture pays a model load -- a 1.4 GB download on a fresh
+# machine, ~1 s from disk afterwards. Doing that lazily on the first audio
+# chunk means the load happens *while the user is already speaking* and behind
+# the stop-side thread join, which is how a perfect capture came back as "No
+# audio was captured from the microphone." Warming here moves the whole cost
+# into `preparing`, before the microphone is ever opened.
+WARMUP_SAMPLE_RATE = 16_000
+WARMUP_CHANNELS = 1
+WARMUP_SAMPLE_WIDTH = 2
+WARMUP_DURATION_MS = 500
+#: Half a second of digital silence: long enough that every provider's own
+#: framing accepts it, short enough that a warm load stays imperceptible.
+WARMUP_PCM = b"\x00" * (
+    WARMUP_SAMPLE_RATE * WARMUP_CHANNELS * WARMUP_SAMPLE_WIDTH * WARMUP_DURATION_MS
+    // 1000
+)
+#: Shown while the model is loading for the first time in this process, where
+#: the cost can be a multi-gigabyte download. Deliberately open-ended: the real
+#: duration depends on the model and the network, and a hard-coded number would
+#: be a promise this cannot keep.
+WARMUP_MESSAGE_FIRST_RUN = "Preparing speech model (first run may take several minutes)…"
+#: Shown on later presses, where the model is already on disk and only the
+#: per-instance load remains (~1 s measured).
+WARMUP_MESSAGE = "Loading speech model…"
+WARMUP_REASON_TEMPLATE = "The '{provider}' speech model could not be prepared."
+WARMUP_REMEDY = (
+    "Check the transcription provider and model in Settings, and that the "
+    "model can be downloaded or is already on disk."
+)
+
+# --- Stop-side outcomes ----------------------------------------------------
+#
+# The transcription worker was still running when the service's join expired,
+# so the transcript is not empty because the microphone was silent -- it is
+# empty because the work never finished. Saying "no audio was captured" here
+# blames the one component that was demonstrably working.
+TRANSCRIPTION_INCOMPLETE_REASON = "Transcription did not finish before dictation stopped."
+TRANSCRIPTION_INCOMPLETE_REMEDY = (
+    "The speech model was still running. Try a shorter capture or a faster "
+    "model, or raise dictation.stop_join_timeout_seconds."
+)
+NO_CAPTURE_MESSAGE = "No audio was captured from the microphone."
+NO_SPEECH_MESSAGE = "Transcription returned no speech."
+
 
 @dataclass(frozen=True)
 class Availability:
@@ -246,6 +295,139 @@ class VoiceProviderOverridden:
     effective: str
 
 
+@dataclass(frozen=True)
+class VoiceModelPreparing:
+    """The speech model is loading, before the microphone opens.
+
+    Emitted from `preparing`, so the UI can say *why* it is sitting there --
+    a first-run model download is minutes long and looks exactly like a hang
+    otherwise.
+    """
+
+    message: str
+    first_run: bool = False
+
+
+@dataclass(frozen=True)
+class CaptureOutcome:
+    """What the dictation service reported about a finished capture.
+
+    Exists so an empty transcript can be attributed correctly instead of
+    always being blamed on the microphone.
+
+    Attributes:
+        captured_bytes: PCM bytes the recorder actually delivered, or None
+            when the service did not say (older/fake services).
+        transcription_complete: False when the service's processing thread was
+            still working at the moment its join expired, so anything still in
+            flight was dropped.
+    """
+
+    captured_bytes: int | None = None
+    transcription_complete: bool = True
+
+
+#: (provider, model) pairs already warmed *in this process*. Only drives which
+#: preparing message is shown -- the load itself is repeated every press,
+#: because `TranscriptionService._model_cache` is per instance and the Console
+#: builds a fresh service each time.
+_WARMED_MODELS: set[tuple[str, str]] = set()
+_WARMED_MODELS_LOCK = threading.Lock()
+
+
+def _warmup_key(effective: EffectiveConfig) -> tuple[str, str]:
+    return (effective.provider, effective.model or "")
+
+
+def _is_first_warmup(effective: EffectiveConfig) -> bool:
+    """Return True when this provider/model has not been warmed in this run."""
+    with _WARMED_MODELS_LOCK:
+        return _warmup_key(effective) not in _WARMED_MODELS
+
+
+def _mark_warmed(effective: EffectiveConfig) -> None:
+    """Record that this provider/model has now been loaded at least once."""
+    with _WARMED_MODELS_LOCK:
+        _WARMED_MODELS.add(_warmup_key(effective))
+
+
+def reset_model_warmup_state() -> None:
+    """Forget which models have been warmed. For tests only."""
+    with _WARMED_MODELS_LOCK:
+        _WARMED_MODELS.clear()
+
+
+def warmup_target(service: Any) -> Any | None:
+    """Return the transcription service a dictation service will really use.
+
+    Warming a throwaway `TranscriptionService()` would only prime the on-disk
+    HuggingFace cache; the ~1 s per-instance load would still land on the first
+    audio chunk. This reaches the dictation service's *own* lazily built
+    transcriber, which is the identical object `_process_audio_buffer()` uses,
+    so the warmed `_model_cache` entry is the one the capture hits.
+
+    Args:
+        service: The dictation service that is about to start capturing.
+
+    Returns:
+        The transcription service to warm, or None when this service does not
+        expose one (test fakes).
+    """
+    # Checked on the *class* so a fake without the property is skipped without
+    # invoking anything, and so a genuine AttributeError raised inside the real
+    # property is never silently swallowed by a `getattr` default.
+    if not hasattr(type(service), "transcription_service"):
+        return None
+    return service.transcription_service
+
+
+def warm_transcription_model(transcriber: Any, effective: EffectiveConfig) -> None:
+    """Load the speech model by transcribing silence through it.
+
+    There is no preload/warm entry point on `TranscriptionService`; performing
+    a transcription is the only way to populate its model cache. The arguments
+    mirror `LazyLiveDictationService._process_audio_buffer()` exactly so the
+    cache entry this creates is the one the capture will hit.
+
+    Args:
+        transcriber: The transcription service to warm.
+        effective: The provider/model/language the capture will run with.
+
+    Raises:
+        Exception: Whatever the provider raises; the caller reports it as a
+            model/provider failure.
+    """
+    transcriber.transcribe_buffer(
+        audio_data=WARMUP_PCM,
+        sample_rate=WARMUP_SAMPLE_RATE,
+        channels=WARMUP_CHANNELS,
+        sample_width=WARMUP_SAMPLE_WIDTH,
+        provider=effective.provider,
+        model=effective.model,
+        language=effective.language,
+    )
+
+
+def capture_outcome_from(result: Any) -> CaptureOutcome:
+    """Read a `DictationResult` without depending on its exact type.
+
+    Args:
+        result: Whatever `stop_dictation()` returned (services under test
+            return None).
+
+    Returns:
+        The outcome, with unknown fields left as their "not reported" defaults.
+    """
+    if result is None:
+        return CaptureOutcome()
+    captured = getattr(result, "captured_bytes", None)
+    complete = getattr(result, "transcription_complete", True)
+    return CaptureOutcome(
+        captured_bytes=int(captured) if isinstance(captured, int) else None,
+        transcription_complete=bool(complete),
+    )
+
+
 def default_service_factory(**kwargs: Any) -> Any:
     """Build a LazyLiveDictationService, importing it as late as possible.
 
@@ -294,10 +476,19 @@ class ConsoleVoiceInputController:
         # real cause through `on_error`, cleared at the top of every
         # `_run_begin()` so a failed attempt can never silence a later one.
         self._error_reported = False
+        # What the service said about the last finished capture. Reset per
+        # attempt in `start()`; read by the caller to tell a silent microphone
+        # apart from a transcription that never finished.
+        self._last_capture_outcome = CaptureOutcome()
 
     @property
     def state(self) -> str:
         return self._state
+
+    @property
+    def last_capture_outcome(self) -> CaptureOutcome:
+        """What the service reported about the most recently stopped capture."""
+        return self._last_capture_outcome
 
     @property
     def is_active(self) -> bool:
@@ -327,6 +518,7 @@ class ConsoleVoiceInputController:
                     self._state,
                 )
                 return
+            self._last_capture_outcome = CaptureOutcome()
             self._state = STATE_PREPARING
         self._emit(VoiceStateChanged(STATE_PREPARING))
 
@@ -408,6 +600,21 @@ class ConsoleVoiceInputController:
                 language=effective.language,
                 enable_commands=False,  # V2 owns voice commands, not V1
             )
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user verbatim
+            logger.opt(exception=True).warning(
+                "Console dictation service could not be built"
+            )
+            self._fail(str(exc))
+            return
+
+        # Before the microphone opens, never after: a model load that happens
+        # on the first audio chunk runs while the user is already speaking and
+        # behind the stop-side join, which is exactly how a good capture came
+        # back as "No audio was captured from the microphone."
+        if not self._prepare_speech_model(service, effective):
+            return
+
+        try:
             started = service.start_dictation(
                 on_partial_transcript=lambda text: self._emit(VoicePartial(text)),
                 on_final_transcript=lambda text: self._emit(VoiceFinal(text)),
@@ -452,6 +659,74 @@ class ConsoleVoiceInputController:
             return
 
         self._enter_listening()
+
+    def _prepare_speech_model(self, service: Any, effective: EffectiveConfig) -> bool:
+        """Load the speech model while still in `preparing`, before capture.
+
+        The whole point of the `preparing` phase: on a fresh machine this is a
+        1.4 GB download, and it used to happen lazily on the first audio chunk
+        -- recording into a void, then losing the download to the stop-side
+        thread join. Doing it here costs a warm press nothing extra (the load
+        it performs is the one the first chunk would have performed anyway),
+        and it can only fail as what it is: a model/provider problem.
+
+        Args:
+            service: The dictation service that is about to start capturing.
+            effective: The provider/model/language the capture will run with.
+
+        Returns:
+            True when capture may proceed. False when this attempt is over --
+            either the model could not be prepared (already reported through
+            `_fail`) or `abandon()` landed while the model was loading.
+        """
+        if self._abandoned:
+            self._release(service)
+            return False
+        try:
+            transcriber = warmup_target(service)
+        except Exception as exc:  # noqa: BLE001 - reported as a model failure
+            logger.opt(exception=True).warning(
+                "Console dictation transcription service could not be built"
+            )
+            self._release(service)
+            self._fail(self._warmup_failure(effective, exc), WARMUP_REMEDY)
+            return False
+        if transcriber is None:
+            return True
+
+        first_run = _is_first_warmup(effective)
+        try:
+            self._emit(
+                VoiceModelPreparing(
+                    message=WARMUP_MESSAGE_FIRST_RUN if first_run else WARMUP_MESSAGE,
+                    first_run=first_run,
+                )
+            )
+        except Exception:  # noqa: BLE001 - progress copy must never abort a start
+            logger.opt(exception=True).debug(
+                "Console dictation model-preparing notice could not be emitted"
+            )
+
+        try:
+            warm_transcription_model(transcriber, effective)
+        except Exception as exc:  # noqa: BLE001 - reported as a model failure
+            logger.opt(exception=True).warning("Console dictation model warm-up failed")
+            self._release(service)
+            self._fail(self._warmup_failure(effective, exc), WARMUP_REMEDY)
+            return False
+        _mark_warmed(effective)
+
+        # A first-run warm-up runs for minutes; the screen can unmount inside
+        # it. Re-check before handing a live microphone to a torn-down machine.
+        if self._abandoned:
+            self._release(service)
+            return False
+        return True
+
+    @staticmethod
+    def _warmup_failure(effective: EffectiveConfig, exc: Exception) -> str:
+        """Phrase a warm-up failure as a model problem, never a microphone one."""
+        return f"{WARMUP_REASON_TEMPLATE.format(provider=effective.provider)} {exc}".strip()
 
     def _report_service_error(self, error: Any) -> None:
         """Turn a service-reported error into a failure, recording that we did.
@@ -568,12 +843,15 @@ class ConsoleVoiceInputController:
         """The actual work of `_finish()`, shielded from its caller by `_finish()`."""
         service = self._claim_service()
         try:
-            if service is not None:
-                service.stop_dictation()
+            result = service.stop_dictation() if service is not None else None
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=True).warning("Console dictation failed to stop")
             self._fail(str(exc))
             return
+        # How many bytes the recorder delivered, and whether the transcription
+        # thread actually finished. Without this the caller can only guess from
+        # an empty transcript -- and it guessed "microphone", every time.
+        self._last_capture_outcome = capture_outcome_from(result)
         # Belt-and-braces: `LazyLiveDictationService.stop_dictation()` has
         # historically returned successfully without releasing capture, so
         # the Console does not trust the dependency alone. `stop_recording()`

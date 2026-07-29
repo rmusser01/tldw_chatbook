@@ -32,13 +32,29 @@ from ..config import get_cli_setting, save_setting_to_cli_config
 
 @dataclass
 class DictationResult:
-    """Result from a dictation session."""
+    """Result from a dictation session.
+
+    Attributes:
+        transcript: Everything the recognizer finalized, space-joined.
+        segments: The individual finalized segments, with timestamps.
+        duration: Wall-clock seconds the capture ran for.
+        audio_data: Raw PCM, only when the caller asked for it.
+        timestamp: When the result was produced.
+        captured_bytes: PCM bytes the recorder actually delivered. Zero means
+            the microphone produced nothing -- the only case in which an empty
+            transcript is a capture problem.
+        transcription_complete: False when the processing thread was still
+            working when its join expired, so audio was dropped unread. An
+            empty transcript then says nothing about the microphone.
+    """
 
     transcript: str
     segments: List[Dict[str, Any]]
     duration: float
     audio_data: Optional[bytes] = None
     timestamp: datetime = None
+    captured_bytes: int = 0
+    transcription_complete: bool = True
 
     def __post_init__(self):
         if self.timestamp is None:
@@ -73,6 +89,20 @@ class LazyLiveDictationService:
     # Audio buffer settings
     BUFFER_DURATION_MS = 500  # Default, now configurable
     MIN_SPEECH_DURATION_MS = 300
+
+    #: How long `stop_dictation()` waits for the processing thread to drain
+    #: and transcribe what is left. This used to be a hard-coded 2.0s, which
+    #: is shorter than a single warm transcription (~1s) and orders of
+    #: magnitude shorter than a cold one, so a first capture's audio was
+    #: routinely thrown away with no signal at all. Configurable as
+    #: `dictation.stop_join_timeout_seconds`.
+    STOP_JOIN_TIMEOUT_SECONDS = 30.0
+
+    #: Instance defaults, declared on the class so a service built with
+    #: `__new__` (teardown-path tests do exactly that) still stops cleanly
+    #: instead of raising AttributeError while releasing the microphone.
+    stop_join_timeout_seconds = STOP_JOIN_TIMEOUT_SECONDS
+    captured_bytes = 0
 
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
@@ -145,11 +175,44 @@ class LazyLiveDictationService:
         self.buffer_duration_ms = get_cli_setting(
             "dictation.buffer_duration_ms", self.BUFFER_DURATION_MS
         )
+        self.stop_join_timeout_seconds = self._resolve_stop_join_timeout()
+
+        # Bytes the recorder has handed us this session. The one fact that
+        # separates "the microphone produced nothing" from "the transcriber
+        # produced nothing", which callers previously had to guess at.
+        self.captured_bytes = 0
 
         logger.info(
             f"LazyLiveDictationService initialized (services will load on demand) "
             f"provider: {transcription_provider}, privacy: {self.privacy_settings}"
         )
+
+    @classmethod
+    def _resolve_stop_join_timeout(cls) -> float:
+        """Read `dictation.stop_join_timeout_seconds`, falling back to the default.
+
+        Returns:
+            A positive number of seconds to wait for the processing thread.
+        """
+        raw = get_cli_setting(
+            "dictation.stop_join_timeout_seconds", cls.STOP_JOIN_TIMEOUT_SECONDS
+        )
+        try:
+            timeout = float(raw)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid dictation.stop_join_timeout_seconds {!r}; using {}s",
+                raw,
+                cls.STOP_JOIN_TIMEOUT_SECONDS,
+            )
+            return cls.STOP_JOIN_TIMEOUT_SECONDS
+        if timeout <= 0:
+            logger.warning(
+                "dictation.stop_join_timeout_seconds must be positive; using {}s",
+                cls.STOP_JOIN_TIMEOUT_SECONDS,
+            )
+            return cls.STOP_JOIN_TIMEOUT_SECONDS
+        return timeout
 
     def _load_privacy_settings(self):
         """Load privacy settings from configuration."""
@@ -297,6 +360,7 @@ class LazyLiveDictationService:
             self.transcript_segments = []
             self.current_transcript = ""
             self.audio_buffer = []
+            self.captured_bytes = 0
             self.start_time = time.time()
             self.save_audio = save_audio and not self.privacy_settings["local_only"]
 
@@ -401,9 +465,12 @@ class LazyLiveDictationService:
                 logger.debug(f"Could not calculate audio level: {e}")
                 self._current_audio_level = 0.0
 
-            # Add to buffer
+            # Add to buffer. `captured_bytes` is a running total and must not
+            # be derived from `audio_buffer`, which privacy mode trims to the
+            # last few chunks while the capture is still running.
             with self.buffer_lock:
                 self.audio_buffer.append(audio_chunk)
+                self.captured_bytes += len(audio_chunk)
 
             # Queue for processing
             self.processing_queue.put(("audio", audio_chunk))
@@ -721,7 +788,13 @@ class LazyLiveDictationService:
         return None
 
     def stop_dictation(self) -> DictationResult:
-        """Stop dictation and return results."""
+        """Stop dictation and return results.
+
+        Returns:
+            The transcript, plus the two facts a caller needs to explain an
+            empty one honestly: how many bytes the recorder delivered, and
+            whether the processing thread finished before the join expired.
+        """
         logger.info("Stopping dictation...")
 
         # Change state
@@ -735,9 +808,21 @@ class LazyLiveDictationService:
         if self.stop_processing:
             self.stop_processing.set()
 
-        # Wait for processing thread to finish
+        # Wait for the processing thread to drain and transcribe what is left.
+        # The old hard-coded 2.0s was shorter than a single warm transcription,
+        # so on any real capture this expired and the work in flight was thrown
+        # away silently -- indistinguishable, downstream, from a dead
+        # microphone. Report the expiry instead of hiding it.
+        transcription_complete = True
         if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join(timeout=2.0)
+            self.processing_thread.join(timeout=self.stop_join_timeout_seconds)
+            transcription_complete = not self.processing_thread.is_alive()
+            if not transcription_complete:
+                logger.warning(
+                    "Dictation transcription did not finish within {}s; "
+                    "audio still in flight was dropped",
+                    self.stop_join_timeout_seconds,
+                )
 
         # Finalize any remaining transcript
         self._finalize_current_segment()
@@ -753,6 +838,8 @@ class LazyLiveDictationService:
             transcript=final_transcript,
             segments=self.transcript_segments.copy(),
             duration=duration,
+            captured_bytes=self.captured_bytes,
+            transcription_complete=transcription_complete,
         )
 
         # Release capture explicitly. The non-lazy service does this in its own

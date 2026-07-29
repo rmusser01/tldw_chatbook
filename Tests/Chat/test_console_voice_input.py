@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
+import time
 
 import pytest
 
@@ -466,9 +468,6 @@ def test_resolve_returns_none_when_nothing_installed(monkeypatch):
     _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
 
     assert cvi.resolve() is None
-
-
-import threading
 
 
 class FakeDictationService:
@@ -1464,3 +1463,388 @@ def test_mid_session_error_releases_capture(monkeypatch):
 
     assert released == ["stopped"]
     assert controller.state == cvi.STATE_IDLE
+
+
+# --------------------------------------------------------------------------
+# Model preparation happens in `preparing`, before the microphone opens
+#
+# The defect this locks in against, measured on a live capture: the model load
+# happened lazily on the *first audio chunk*, so a fresh machine spent 155s
+# downloading 1.4 GB while the user was already speaking, and then lost the
+# whole capture to the stop-side thread join. The microphone was flawless; the
+# message blamed it anyway.
+# --------------------------------------------------------------------------
+
+
+class _WarmableService:
+    """A dictation service exposing a `transcription_service`, like the real one.
+
+    The property lives on the *class* (as it does on
+    `LazyLiveDictationService`), because that is what `warmup_target()` checks
+    before touching anything.
+    """
+
+    def __init__(self, transcriber=None, gate=None, build_error=None, **kwargs):
+        self.kwargs = kwargs
+        self.calls: list[str] = []
+        self.started = False
+        self.start_result = True
+        self._transcriber = transcriber if transcriber is not None else _Transcriber()
+        self._gate = gate
+        self._build_error = build_error
+        self._audio_service = type(
+            "R", (), {"stop_recording": lambda s: None}
+        )()
+
+    @property
+    def transcription_service(self):
+        self.calls.append("build-transcriber")
+        if self._build_error is not None:
+            raise self._build_error
+        if self._gate is not None:
+            self._gate.wait(timeout=5)
+        return self._transcriber
+
+    def start_dictation(self, **callbacks):
+        self.calls.append("start_dictation")
+        self.started = True
+        return self.start_result
+
+    def stop_dictation(self):
+        return None
+
+
+class _Transcriber:
+    """Records the warm-up transcription the controller performs."""
+
+    def __init__(self, error=None, gate=None, entered=None):
+        self.buffer_calls: list[dict] = []
+        self._error = error
+        self._gate = gate
+        self.entered = entered
+
+    def transcribe_buffer(
+        self,
+        audio_data,
+        sample_rate,
+        channels=1,
+        sample_width=2,
+        provider=None,
+        model=None,
+        language=None,
+        **kwargs,
+    ):
+        self.buffer_calls.append(
+            {
+                "audio_data": audio_data,
+                "sample_rate": sample_rate,
+                "channels": channels,
+                "sample_width": sample_width,
+                "provider": provider,
+                "model": model,
+                "language": language,
+            }
+        )
+        if self.entered is not None:
+            self.entered.set()
+        if self._gate is not None:
+            self._gate.wait(timeout=5)
+        if self._error is not None:
+            raise self._error
+        return {"text": ""}
+
+
+@pytest.fixture(autouse=True)
+def _forget_warmed_models():
+    """Each test starts as if nothing had ever been warmed in this process."""
+    cvi.reset_model_warmup_state()
+    yield
+    cvi.reset_model_warmup_state()
+
+
+def test_the_model_is_warmed_before_the_microphone_opens(monkeypatch):
+    """Order is the whole fix: warm, *then* start capturing."""
+    service = _WarmableService()
+    controller, _events, _ = _controller(monkeypatch, service=service)
+
+    controller.start()
+
+    assert service.calls == ["build-transcriber", "start_dictation"]
+    assert len(service._transcriber.buffer_calls) == 1
+    assert controller.state == cvi.STATE_LISTENING
+
+
+def test_the_warm_up_uses_the_resolved_provider_model_and_language(monkeypatch):
+    """A warm-up against a different model warms the wrong cache entry."""
+    service = _WarmableService()
+    monkeypatch.setattr(
+        cvi,
+        "resolve",
+        lambda: cvi.EffectiveConfig(
+            provider="faster-whisper",
+            model="distil-large-v3",
+            language="fr",
+            configured_provider="faster-whisper",
+            was_overridden=False,
+        ),
+    )
+    controller, _events, _ = _controller(monkeypatch, service=service)
+
+    controller.start()
+
+    call = service._transcriber.buffer_calls[0]
+    assert call["provider"] == "faster-whisper"
+    assert call["model"] == "distil-large-v3"
+    assert call["language"] == "fr"
+    # Silence, at the capture's own PCM format -- never real microphone audio.
+    assert set(call["audio_data"]) == {0}
+    assert call["sample_rate"] == cvi.WARMUP_SAMPLE_RATE
+    assert call["sample_width"] == cvi.WARMUP_SAMPLE_WIDTH
+
+
+def test_the_warm_up_targets_the_service_own_transcriber(monkeypatch):
+    """`_model_cache` is per instance; warming a throwaway helps nothing.
+
+    The object warmed must be the identical one `_process_audio_buffer()` will
+    reach for, or every press still pays a full model load on its first chunk.
+    """
+    transcriber = _Transcriber()
+    service = _WarmableService(transcriber=transcriber)
+    controller, _events, _ = _controller(monkeypatch, service=service)
+
+    controller.start()
+
+    assert service.transcription_service is transcriber
+    assert transcriber.buffer_calls, "the service's own transcriber was never warmed"
+
+
+def test_a_slow_warm_announces_itself_before_it_blocks(monkeypatch):
+    """Minutes of silence with no explanation is indistinguishable from a hang."""
+    gate = threading.Event()
+    entered = threading.Event()
+    transcriber = _Transcriber(gate=gate, entered=entered)
+    service = _WarmableService(transcriber=transcriber)
+    controller, events, _ = _controller(
+        monkeypatch, service=service, spawn=lambda thunk: threading.Thread(
+            target=thunk, daemon=True
+        ).start()
+    )
+
+    controller.start()
+    assert entered.wait(timeout=5), "the warm-up never ran"
+
+    # The notice is already out while the warm-up is still blocked.
+    preparing = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)]
+    assert len(preparing) == 1
+    assert preparing[0].first_run is True
+    assert "speech model" in preparing[0].message.lower()
+    assert service.started is False, "capture started before the model was ready"
+
+    gate.set()
+
+
+def test_the_first_run_message_differs_from_later_presses(monkeypatch):
+    """"May take several minutes" is honest once, then it is just alarming."""
+    service = _WarmableService()
+    controller, events, _ = _controller(monkeypatch, service=service)
+
+    controller.start()
+    controller.stop()
+    first = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)][0]
+
+    events.clear()
+    controller.start()
+    second = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)][0]
+
+    assert first.first_run is True
+    assert second.first_run is False
+    assert first.message != second.message
+    assert first.message == cvi.WARMUP_MESSAGE_FIRST_RUN
+    assert second.message == cvi.WARMUP_MESSAGE
+
+
+def test_a_warm_up_failure_reads_as_a_model_problem_not_a_microphone_one(monkeypatch):
+    """The failure the user sees must name the component that actually failed."""
+    transcriber = _Transcriber(error=RuntimeError("could not download model weights"))
+    service = _WarmableService(transcriber=transcriber)
+    controller, events, _ = _controller(monkeypatch, service=service)
+
+    controller.start()
+
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    text = f"{failures[0].reason} {failures[0].remedy}".lower()
+    assert "model" in text
+    assert "could not download model weights" in text
+    assert "microphone" not in text
+    # And the capture never opened.
+    assert service.started is False
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_a_transcriber_that_cannot_be_built_is_also_a_model_problem(monkeypatch):
+    """`LazyLiveDictationService.transcription_service` raises on missing models."""
+    service = _WarmableService(build_error=RuntimeError("models are not installed"))
+    controller, events, _ = _controller(monkeypatch, service=service)
+
+    controller.start()
+
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1
+    text = f"{failures[0].reason} {failures[0].remedy}".lower()
+    assert "model" in text
+    assert "microphone" not in text
+    assert service.started is False
+
+
+def test_a_warm_up_failure_still_ends_idle_with_failed_first(monkeypatch):
+    """The ordering invariant the UI's deferred send depends on."""
+    transcriber = _Transcriber(error=RuntimeError("boom"))
+    service = _WarmableService(transcriber=transcriber)
+    controller, events, _ = _controller(monkeypatch, service=service)
+
+    controller.start()
+
+    kinds = [
+        type(e).__name__
+        for e in events
+        if isinstance(e, (cvi.VoiceFailed, cvi.VoiceStateChanged))
+    ]
+    assert kinds[-2:] == ["VoiceFailed", "VoiceStateChanged"]
+    assert events[-1].state == cvi.STATE_IDLE
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_a_failed_warm_up_is_still_a_first_run_next_time(monkeypatch):
+    """Only a model that actually loaded may downgrade the first-run message."""
+    transcriber = _Transcriber(error=RuntimeError("boom"))
+    service = _WarmableService(transcriber=transcriber)
+    controller, events, _ = _controller(monkeypatch, service=service)
+
+    controller.start()
+    events.clear()
+    controller.start()
+
+    preparing = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)]
+    assert preparing and preparing[0].first_run is True
+
+
+def test_a_service_without_a_transcriber_is_warmed_silently(monkeypatch):
+    """Services that expose no transcriber (fakes) must still start normally."""
+    controller, events, service = _controller(monkeypatch)
+
+    controller.start()
+
+    assert service.started is True
+    assert [e for e in events if isinstance(e, cvi.VoiceModelPreparing)] == []
+    assert controller.state == cvi.STATE_LISTENING
+
+
+def test_abandon_during_a_long_warm_up_never_opens_the_microphone(monkeypatch):
+    """A minutes-long first run gives unmount plenty of room to land."""
+    gate = threading.Event()
+    entered = threading.Event()
+    transcriber = _Transcriber(gate=gate, entered=entered)
+    service = _WarmableService(transcriber=transcriber)
+    controller, _events, _ = _controller(
+        monkeypatch,
+        service=service,
+        spawn=lambda thunk: threading.Thread(target=thunk, daemon=True).start(),
+    )
+
+    controller.start()
+    assert entered.wait(timeout=5)
+    controller.abandon()
+    gate.set()
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and controller.state != cvi.STATE_IDLE:
+        time.sleep(0.01)
+    time.sleep(0.1)
+
+    assert service.started is False
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_a_raising_preparing_emit_does_not_abort_the_start(monkeypatch):
+    """Progress copy is cosmetic; a plumbing error in it must not cost the capture."""
+    service = _WarmableService()
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(monkeypatch, {"transcription.default_provider": "faster-whisper"})
+
+    def emit(event):
+        if isinstance(event, cvi.VoiceModelPreparing):
+            raise RuntimeError("chip exploded")
+
+    controller = cvi.ConsoleVoiceInputController(
+        emit=emit,
+        spawn=lambda thunk: thunk(),
+        service_factory=lambda **kwargs: service,
+    )
+
+    controller.start()
+
+    assert service.started is True
+    assert controller.state == cvi.STATE_LISTENING
+
+
+# --------------------------------------------------------------------------
+# The stop-side outcome the caller needs to tell three failures apart
+# --------------------------------------------------------------------------
+
+
+class _ReportingService(_WarmableService):
+    """Returns a `DictationResult`-shaped object from `stop_dictation()`."""
+
+    def __init__(self, result=None, **kwargs):
+        super().__init__(**kwargs)
+        self._result = result
+
+    def stop_dictation(self):
+        return self._result
+
+
+def test_capture_outcome_defaults_to_unknown_when_nothing_is_reported(monkeypatch):
+    controller, _events, _ = _controller(monkeypatch, service=_WarmableService())
+
+    controller.start()
+    controller.stop()
+
+    outcome = controller.last_capture_outcome
+    assert outcome.captured_bytes is None
+    assert outcome.transcription_complete is True
+
+
+def test_capture_outcome_carries_the_services_byte_count_and_completion(monkeypatch):
+    from types import SimpleNamespace
+
+    service = _ReportingService(
+        result=SimpleNamespace(captured_bytes=51840, transcription_complete=False)
+    )
+    controller, _events, _ = _controller(monkeypatch, service=service)
+
+    controller.start()
+    controller.stop()
+
+    outcome = controller.last_capture_outcome
+    assert outcome.captured_bytes == 51840
+    assert outcome.transcription_complete is False
+
+
+def test_capture_outcome_is_reset_by_the_next_start(monkeypatch):
+    """A stale "did not finish" must not condemn the following capture."""
+    from types import SimpleNamespace
+
+    service = _ReportingService(
+        result=SimpleNamespace(captured_bytes=10, transcription_complete=False)
+    )
+    controller, _events, _ = _controller(monkeypatch, service=service)
+    controller.start()
+    controller.stop()
+    assert controller.last_capture_outcome.transcription_complete is False
+
+    controller.start()
+
+    assert controller.last_capture_outcome.transcription_complete is True
+    assert controller.last_capture_outcome.captured_bytes is None
