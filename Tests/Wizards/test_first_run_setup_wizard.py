@@ -4,12 +4,13 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     CLOUD_PROBE_TIMEOUT_SECONDS,
     FirstRunSetupWizard,
+    ModelStep,
     ProviderStep,
     SetupWizardContainer,
 )
@@ -378,3 +379,228 @@ async def test_provider_step_probe_budgets_cloud_vs_local():
         await pilot.pause()
         assert probe.call_args.kwargs["timeout"] == 2.5
         assert probe.call_args.kwargs["http_client"] is None
+
+
+def _model_step(wizard, discover_models=None):
+    from unittest.mock import AsyncMock
+
+    return ModelStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="model", title="Model", step_number=3),
+        discover_models=discover_models or AsyncMock(return_value=[]),
+    )
+
+
+@pytest.mark.asyncio
+async def test_model_step_provider_change_resets_selection():
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        step.set_selected_model("gpt-5.6-terra")
+        assert step.selected_model_id == "gpt-5.6-terra"
+        wizard.wizard_data["provider"] = {
+            "provider_key": "anthropic", "provider_value": "Anthropic",
+        }
+        step.on_show()
+        assert step.selected_model_id == ""
+
+
+@pytest.mark.asyncio
+async def test_model_step_commit_writes_chat_defaults():
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        step.set_selected_model("gpt-5.6-terra")
+        ok, error = await step.commit()
+        assert ok, error
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {
+            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"}
+        }
+
+
+@pytest.mark.asyncio
+async def test_model_step_empty_selection_commits_nothing():
+    """Skip-safe: leaving the model step untouched must not touch config."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        ok, error = await step.commit()
+        assert ok, error
+        wizard.commit_config.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_model_step_curated_fallback_bridges_raw_provider_key(monkeypatch):
+    """Task-6/7 finding: ProviderStep persists chat_defaults.provider as the
+    RAW provider_key (e.g. "openai"), but config.toml's curated [providers]
+    table is keyed by display name (e.g. "OpenAI"). A naive
+    ``catalog.get(provider_value)`` would silently return [] for the raw-key
+    form even though a matching curated entry exists -- the fallback must
+    bridge key forms regardless of which form ProviderStep handed it."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(
+        config_module, "get_cli_providers_and_models",
+        lambda: {"OpenAI": ["gpt-curated-1", "gpt-curated-2"]},
+    )
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        # provider_value in the RAW form ProviderStep actually persists.
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "openai"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard, discover_models=AsyncMock(return_value=[]))
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.1)
+        radio_set = step.query_one("#setup-model-choice", RadioSet)
+        labels = [str(button.label) for button in radio_set.query(RadioButton)]
+        assert labels == ["gpt-curated-1", "gpt-curated-2"]
+
+
+@pytest.mark.asyncio
+async def test_model_step_uses_scope_service_when_available():
+    """The scope-service path (no injected discover_models) renders whatever
+    the service reports on a "success" result -- mirrors
+    settings_screen.py:7079's call shape."""
+    from unittest.mock import AsyncMock, MagicMock as Mock
+    from types import SimpleNamespace
+
+    scope_result = SimpleNamespace(status="success", models=("svc-model-a", "svc-model-b"))
+    scope_service = Mock()
+    scope_service.discover_models = AsyncMock(return_value=scope_result)
+    app_instance = MagicMock(app_config={})
+    app_instance.llm_provider_catalog_scope_service = scope_service
+    wizard = SimpleNamespace(
+        app_instance=app_instance,
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = ModelStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="model", title="Model", step_number=3),
+        discover_models=None,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.1)
+        # _StepHost mounts the step directly (no hidden/visible toggling like
+        # the real wizard), so Textual's own Show event fires on top of this
+        # test's explicit on_show() call -- exclusive=True on the worker
+        # group (like ProviderStep._start_discovery) means only the shape of
+        # the *last* call matters here, not the exact invocation count.
+        assert scope_service.discover_models.await_args.kwargs == {
+            "mode": "local", "provider": "openai", "staged_settings": None
+        }
+        radio_set = step.query_one("#setup-model-choice", RadioSet)
+        labels = [str(button.label) for button in radio_set.query(RadioButton)]
+        assert labels == ["svc-model-a", "svc-model-b"]
+
+
+@pytest.mark.asyncio
+async def test_model_step_discovery_timeout_falls_back_to_curated(monkeypatch):
+    """Behavior spec: an 8s guard on model discovery -- a slow/hanging
+    discover() must not block the step forever; it degrades to the curated
+    fallback instead of hanging Next indefinitely."""
+    import asyncio as asyncio_module
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    import tldw_chatbook.config as config_module
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    monkeypatch.setattr(wizard_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        config_module, "get_cli_providers_and_models",
+        lambda: {"OpenAI": ["fallback-model"]},
+    )
+
+    async def _hangs(_provider_key):
+        await asyncio_module.sleep(1.0)
+        return ["too-slow-model"]
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard, discover_models=_hangs)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.3)
+        radio_set = step.query_one("#setup-model-choice", RadioSet)
+        labels = [str(button.label) for button in radio_set.query(RadioButton)]
+        assert labels == ["fallback-model"]
+
+
+def test_model_step_worker_group_is_not_wizard_advance():
+    """Parked Task-5 finding: "setup-wizard-advance" is reserved for the
+    container's own commit-on-Next worker; a step reusing it would race or
+    duplicate with that worker."""
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={"provider": {"provider_key": "openai", "provider_value": "OpenAI"}},
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard)
+    calls = []
+
+    def _fake_run_worker(coro, **kwargs):
+        coro.close()  # never actually scheduled; avoid a "never awaited" warning
+        calls.append(kwargs)
+
+    step.run_worker = _fake_run_worker
+    step.query_one = MagicMock(side_effect=Exception("not mounted"))
+    step.on_show()
+    assert calls, "expected on_show to schedule a model-load worker"
+    assert calls[0]["group"] == "setup-model-load"

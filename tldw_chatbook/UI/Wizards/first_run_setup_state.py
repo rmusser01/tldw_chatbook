@@ -157,6 +157,36 @@ def build_model_commit(*, provider_value: str, model_id: str) -> dict[str, dict[
     return {"chat_defaults": {"provider": provider_value, "model": model_id}}
 
 
+def curated_models_for_provider(
+    catalog: Mapping[str, Any], provider_value: str
+) -> list[str]:
+    """Look up curated fallback models for a provider, in ANY key form.
+
+    ProviderStep persists ``chat_defaults.provider`` as the RAW provider_key
+    (e.g. "llama_cpp", "openai") -- matching chat_screen's detected-server
+    path -- while the curated ``[providers]`` table in config.toml (surfaced
+    via ``config.get_cli_providers_and_models()``) is keyed by human display
+    names (e.g. "OpenAI"). A plain ``catalog.get(provider_value)`` would
+    silently return [] whenever the two forms disagree even though a
+    matching entry exists, so normalize both sides via
+    ``provider_readiness.provider_config_key`` before comparing.
+    """
+    if not provider_value:
+        return []
+    direct = catalog.get(provider_value)
+    if direct:
+        return list(direct)
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
+    target_key = provider_config_key(provider_value)
+    if not target_key:
+        return []
+    for name, models in catalog.items():
+        if provider_config_key(str(name)) == target_key:
+            return list(models)
+    return []
+
+
 def build_rag_commit(*, default_model_id: str) -> dict[str, dict[str, Any]]:
     return {"embedding_config": {"default_model_id": default_model_id}}
 

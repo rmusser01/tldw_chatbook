@@ -296,6 +296,37 @@ class TestWizardPrefill:
         assert prefill.model_id == ""
 
 
+from tldw_chatbook.UI.Wizards.first_run_setup_state import curated_models_for_provider
+
+
+class TestCuratedModelsForProvider:
+    """Task-7 finding: ProviderStep persists chat_defaults.provider as the RAW
+    provider_key (e.g. "openai", "llama_cpp"), matching chat_screen's
+    detected-server path, while the curated [providers] table in config.toml
+    is keyed by human display names (e.g. "OpenAI"). The fallback lookup must
+    bridge both key forms rather than silently returning [] on a case/format
+    mismatch."""
+
+    def test_direct_match(self):
+        catalog = {"OpenAI": ["gpt-a", "gpt-b"]}
+        assert curated_models_for_provider(catalog, "OpenAI") == ["gpt-a", "gpt-b"]
+
+    def test_bridges_raw_key_to_display_name(self):
+        catalog = {"OpenAI": ["gpt-a", "gpt-b"]}
+        assert curated_models_for_provider(catalog, "openai") == ["gpt-a", "gpt-b"]
+
+    def test_bridges_raw_key_form_llama_cpp(self):
+        catalog = {"Llama Cpp": ["local-model-1"]}
+        assert curated_models_for_provider(catalog, "llama_cpp") == ["local-model-1"]
+
+    def test_no_match_returns_empty(self):
+        catalog = {"OpenAI": ["gpt-a"]}
+        assert curated_models_for_provider(catalog, "anthropic") == []
+
+    def test_empty_provider_value_returns_empty(self):
+        assert curated_models_for_provider({"OpenAI": ["gpt-a"]}, "") == []
+
+
 class TestSummaryRows:
     def test_rows_reflect_persisted_state(self):
         cfg = {

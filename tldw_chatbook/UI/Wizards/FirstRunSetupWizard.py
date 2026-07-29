@@ -365,6 +365,154 @@ class ProviderStep(SetupStep):
         }
 
 
+MODEL_DISCOVERY_TIMEOUT_SECONDS = 8.0
+
+
+class ModelStep(SetupStep):
+    """Pick a default model for the chosen provider.
+
+    Model discovery tries the injectable scope service first (an 8s guard
+    keeps a hanging/slow provider from blocking Next), then falls back to
+    the curated ``[providers]`` table from config.toml. Whichever provider
+    key form ProviderStep handed us (raw key or display name; see
+    ``ProviderStep._display_value_for``), the curated lookup bridges both
+    forms via ``first_run_setup_state.curated_models_for_provider`` so a
+    case/format mismatch never silently empties the list.
+    """
+
+    def __init__(self, wizard=None, config=None, *, discover_models=None, **kwargs):
+        super().__init__(wizard=wizard, config=config, **kwargs)
+        self._discover_models = discover_models
+        self._shown_for_provider: Optional[str] = None
+        self.selected_model_id: str = ""
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="setup-model"):
+            yield Static("Pick a default model", classes="setup-title")
+            yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
+            with RadioSet(id="setup-model-choice"):
+                yield RadioButton("(loading models…)", id="setup-model-loading")
+            yield Label("Or enter a model name", classes="setup-field-label")
+            yield Input(id="setup-model-custom", placeholder="model-id")
+            yield Static("", classes="setup-step-error")
+
+    def _current_provider(self) -> tuple[str, str]:
+        data = (self.wizard.wizard_data or {}).get(wizard_state.STEP_PROVIDER, {})
+        return str(data.get("provider_key", "")), str(data.get("provider_value", ""))
+
+    def on_show(self) -> None:
+        super().on_show()
+        provider_key, provider_value = self._current_provider()
+        if provider_key != self._shown_for_provider:
+            # UI half of dependency invalidation: the config half (clearing
+            # chat_defaults.model) already happened in ProviderStep.commit()
+            # via invalidate_model_for_provider_change. This just keeps the
+            # step's own in-memory selection from surviving a Back-and-switch.
+            self.selected_model_id = ""
+            self._shown_for_provider = provider_key
+            try:
+                self.query_one("#setup-model-custom", Input).value = ""
+            except Exception:
+                pass
+        try:
+            self.query_one("#setup-model-provider-line", Static).update(
+                f"Models for {provider_value or 'your provider'}."
+            )
+        except Exception:
+            pass
+        if provider_key:
+            self.run_worker(
+                self._load_models(provider_key, provider_value),
+                exclusive=True,
+                group="setup-model-load",
+            )
+
+    async def _load_models(self, provider_key: str, provider_value: str) -> None:
+        import asyncio
+
+        models: list[str] = []
+        discover = self._discover_models
+        if discover is None:
+            service = getattr(
+                self.wizard.app_instance, "llm_provider_catalog_scope_service", None
+            )
+            if service is not None:
+
+                async def discover(pk=provider_key, svc=service):
+                    result = await svc.discover_models(
+                        mode="local", provider=pk, staged_settings=None
+                    )
+                    if str(getattr(result, "status", "")) == "success":
+                        return list(getattr(result, "models", ()) or ())
+                    return []
+
+        if discover is not None:
+            try:
+                models = list(
+                    await asyncio.wait_for(
+                        discover(provider_key), timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS
+                    )
+                )
+            except Exception:
+                logger.debug("Wizard model discovery failed", exc_info=True)
+        if not models:
+            from tldw_chatbook.config import get_cli_providers_and_models
+
+            models = wizard_state.curated_models_for_provider(
+                get_cli_providers_and_models(), provider_value
+            )
+        await self._render_models(models[:20])
+
+    async def _render_models(self, models: list[str]) -> None:
+        try:
+            radio_set = self.query_one("#setup-model-choice", RadioSet)
+        except Exception:
+            return
+        # remove_children()/mount() are message-queue operations -- both
+        # return awaitables that must be awaited before the DOM change is
+        # actually applied. Without awaiting the removal, a second call (e.g.
+        # a provider switch that fires before the first discovery settles)
+        # can try to mount fresh "setup-model-option-N" ids while the stale
+        # ones are still present, raising DuplicateIds.
+        await radio_set.remove_children()
+        if models:
+            await radio_set.mount_all(
+                RadioButton(model_id, id=f"setup-model-option-{index}")
+                for index, model_id in enumerate(models)
+            )
+        else:
+            await radio_set.mount(
+                RadioButton("(no models found — enter one below)", disabled=True)
+            )
+
+    @on(RadioSet.Changed, "#setup-model-choice")
+    def _on_model_chosen(self, event: RadioSet.Changed) -> None:
+        if event.pressed is not None:
+            self.set_selected_model(str(event.pressed.label))
+
+    @on(Input.Changed, "#setup-model-custom")
+    def _on_custom_model(self, event: Input.Changed) -> None:
+        if event.value.strip():
+            self.selected_model_id = event.value.strip()
+
+    def set_selected_model(self, model_id: str) -> None:
+        self.selected_model_id = model_id
+
+    async def commit(self) -> tuple[bool, str]:
+        _, provider_value = self._current_provider()
+        if not (provider_value and self.selected_model_id):
+            return True, ""  # skip-safe
+        ok = await self.wizard.commit_config(
+            wizard_state.build_model_commit(
+                provider_value=provider_value, model_id=self.selected_model_id
+            )
+        )
+        return (True, "") if ok else (False, "Saving the model choice failed.")
+
+    def get_step_data(self) -> Dict[str, Any]:
+        return {"model_id": self.selected_model_id}
+
+
 class WelcomeStep(SetupStep):
     """Track choice: Quick / Full / Skip."""
 
@@ -433,7 +581,7 @@ class SetupWizardContainer(WizardContainer):
                 config=cfg(wizard_state.STEP_PROVIDER, "Provider", 2),
                 environ=os.environ,
             ),
-            SetupStep(wizard=self, config=cfg(wizard_state.STEP_MODEL, "Model", 3)),
+            ModelStep(wizard=self, config=cfg(wizard_state.STEP_MODEL, "Model", 3)),
             SetupStep(wizard=self, config=cfg(wizard_state.STEP_RAG, "RAG", 4)),
             SetupStep(wizard=self, config=cfg(wizard_state.STEP_TOOLS, "Tools", 5)),
             SetupStep(wizard=self, config=cfg(wizard_state.STEP_NOTES, "Notes sync", 6)),
