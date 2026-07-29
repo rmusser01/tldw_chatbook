@@ -544,7 +544,7 @@ git commit -m "test(ingest): expect canonical media DB fallback"
 
 **Files:**
 - Modify: `Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py`
-- Verify: `Tests/Performance/test_rag_citation_provenance_benchmark.py`
+- Modify: `Tests/Performance/test_rag_citation_provenance_benchmark.py`
 
 - [ ] **Step 1: Reproduce RED**
 
@@ -554,10 +554,12 @@ subprocess exits with `unsafe_parent: missing_parent` because
 
 - [ ] **Step 2: Satisfy the trusted-profile contract**
 
-Create `config_root / "tldw_cli"` with mode `0o700` before building the
-environment overrides, then derive `TLDW_CONFIG_PATH` from that directory. Do
-not change application private-path behavior or the benchmark's environment
-redaction.
+Create `config_root / "tldw_cli"` with `mode=0o700, exist_ok=True` before
+building the environment overrides, then derive `TLDW_CONFIG_PATH` from that
+directory. The context must remain reusable with the same scratch root. Do not
+change application private-path behavior or the benchmark's environment
+redaction. Exercise the existing isolation/restoration assertions twice against
+the same root so reentrancy stays covered.
 
 - [ ] **Step 3: Verify and commit**
 

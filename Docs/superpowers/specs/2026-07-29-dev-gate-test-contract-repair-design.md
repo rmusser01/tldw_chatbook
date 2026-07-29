@@ -130,8 +130,8 @@ Update the tests to describe current behavior:
     media database filename. Preserve configured-path and traversal-rejection
     coverage; do not change production path resolution.
 13. Create the benchmark harness's isolated `config/tldw_cli` directory as
-    owner-only before overriding `TLDW_CONFIG_PATH`. Do not relax private-path
-    verification or expose host environment values.
+    owner-only and idempotently before overriding `TLDW_CONFIG_PATH`. Do not
+    relax private-path verification or expose host environment values.
 
 The only planned production change outside an ADR-029 diagnostic correction is
 the three-name synchronization of the existing Library collision boundary. No
