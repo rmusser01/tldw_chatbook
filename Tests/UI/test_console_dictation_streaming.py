@@ -2363,3 +2363,227 @@ async def test_a_command_finalizing_during_its_own_transcribe_window_still_queue
             assert send_calls == ["dictated words"]
     finally:
         service.stop_gate.set()
+
+
+# --- Task 3b: capture-generation token (stale-event hardening) -------------
+#
+# `stop_dictation()`'s join can time out (`transcription_complete=False`);
+# when it does, the processing thread is orphaned but alive, and its tail
+# flush still calls the exact `on_partial_transcript`/`on_final_transcript`/
+# `on_error` closures `_run_begin()` wired for the capture that started it --
+# not whatever capture is live by the time it finally fires. The session
+# object is reused across captures whenever the first one succeeded (see the
+# reuse-confirming assertion in
+# `test_a_command_draining_after_its_capture_ended_is_not_queued_for_the_next`
+# above), so identity guards on the screen pass right through it. That is why
+# every test below dictates something real in capture 1 before stopping it --
+# a silent capture 1 would raise "No audio was captured", which drops the
+# session and hands capture 2 a brand new one, defeating the very reuse the
+# bug depends on. Each test grabs the callback
+# `FakeDictationService.start_dictation()` recorded for capture 1 -- exactly
+# the reference an orphaned real processing thread would still be holding --
+# before capture 2's own `start_dictation()` call overwrites it, then fires
+# it once capture 2 is already live.
+
+
+@pytest.mark.asyncio
+async def test_a_stale_discard_command_does_not_cancel_the_live_next_capture(
+    monkeypatch,
+):
+    """A `VoiceCommand("discard")` an orphaned capture-1 thread delivers
+    after capture 2 has started must not cancel capture 2 -- capture 2's own
+    `recording` state satisfies the screen's dispatch guard, so nothing but a
+    generation check can tell the two captures apart.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    sessions = _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        # Capture 1: dictates something real, then stops normally.
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        stale_on_final = service.on_final
+        service.emit_final("first words")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        assert len(sessions) == 1  # confirms the session-reuse this bug depends on
+
+        # Capture 2: live and recording, over the same session/controller.
+        await pilot.pause(0.5)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        service.emit_final("live words")
+        await pilot.pause()
+
+        # Capture 1's orphaned callback only now delivers the "discard" it
+        # heard just before its join gave up.
+        stale_on_final("Console, discard.")
+        await pilot.pause()
+
+        assert console._console_dictation_state == "recording"
+        assert not any(
+            "cancel" in str(call.args[0]).lower() for call in notify.call_args_list
+        )
+
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        # Capture 1's own words were already inserted when IT stopped; only
+        # capture 2's own "live words" should have joined them.
+        assert composer.draft_text() == "first words live words"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_final_does_not_join_the_live_next_captures_transcript(
+    monkeypatch,
+):
+    """A per-segment final an orphaned capture-1 thread delivers after
+    capture 2 has started must not land in capture 2's `_segments` -- the
+    adapter mutates `_segments` before the screen ever sees the event, so a
+    screen-side guard alone cannot undo it.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    sessions = _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        stale_on_final = service.on_final
+        service.emit_final("first words")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        assert len(sessions) == 1
+
+        await pilot.pause(0.5)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        service.emit_final("live words")
+        await pilot.pause()
+
+        stale_on_final("stale words from capture one")
+        await pilot.pause()
+
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        # Capture 1's own words were already inserted when IT stopped; the
+        # stale segment must not have joined capture 2's transcript alongside
+        # its own "live words".
+        assert composer.draft_text() == "first words live words"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_failure_does_not_tear_down_the_live_next_capture(
+    monkeypatch,
+):
+    """`VoiceFailed` has no state guard anywhere in the screen's dispatch --
+    it is handled ahead of the guard that admits `VoiceCommand` -- so an
+    orphaned capture-1 thread reporting an error after capture 2 has started
+    would otherwise tear capture 2 down with a spurious "Dictation failed"
+    for an error capture 2 never had.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    sessions = _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        stale_on_error = service.on_error
+        service.emit_final("first words")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        assert len(sessions) == 1
+
+        await pilot.pause(0.5)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        service.emit_final("live words")
+        await pilot.pause()
+
+        stale_on_error(RuntimeError("Microphone was disconnected"))
+        await pilot.pause()
+
+        assert console._console_dictation_state == "recording"
+        # Capture 1's own words were already inserted when IT stopped; a torn
+        # -down capture 2 would additionally clear the draft and go idle --
+        # neither happened.
+        assert composer.draft_text() == "first words"
+        assert not any(
+            "Dictation failed" in str(call.args[0]) for call in notify.call_args_list
+        )
+
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        assert composer.draft_text() == "first words live words"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_partial_never_reaches_the_live_next_captures_chip(
+    monkeypatch,
+):
+    """A partial an orphaned capture-1 thread delivers after capture 2 has
+    started must never paint into capture 2's chip -- and a genuinely
+    current partial delivered right after it must still work normally.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    sessions = _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        stale_on_partial = service.on_partial
+        service.emit_final("first words")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        assert len(sessions) == 1
+
+        await pilot.pause(0.5)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        stale_on_partial("ghost text from capture one")
+        await pilot.pause()
+        assert console._console_dictation_partial == ""
+
+        # Current-generation events must still work, unmodified.
+        service.emit_partial("current text")
+        await pilot.pause()
+        assert console._console_dictation_partial == "current text"
+
+        service.emit_final("current text")
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+        # Capture 1's own words were already inserted when IT stopped; only
+        # capture 2's own "current text" should have joined them.
+        assert composer.draft_text() == "first words current text"

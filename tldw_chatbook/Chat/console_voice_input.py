@@ -626,10 +626,22 @@ class ConsoleVoiceInputController:
     def __init__(
         self,
         *,
-        emit: Callable[[Any], None],
+        emit: Callable[..., None],
         spawn: Callable[[Callable[[], None]], None],
         service_factory: Callable[..., Any] = default_service_factory,
     ) -> None:
+        """Build the controller.
+
+        Args:
+            emit: Called for every controller event. Most calls pass just the
+                event; the three recognizer-driven closures `_run_begin()`
+                wires (`on_partial_transcript`, `on_final_transcript`, and,
+                via `_report_service_error`, `on_error`) also pass this
+                attempt's capture-generation token as a second, optional
+                argument -- see `start()`'s `capture_generation` parameter.
+            spawn: Runs a thunk off the UI thread.
+            service_factory: Builds the dictation service.
+        """
         self._emit = emit
         self._spawn = spawn
         self._service_factory = service_factory
@@ -653,6 +665,15 @@ class ConsoleVoiceInputController:
         # attempt in `start()`; read by the caller to tell a silent microphone
         # apart from a transcription that never finished.
         self._last_capture_outcome = CaptureOutcome()
+        # The caller's opaque capture-generation token for the attempt
+        # `start()` is about to begin, set alongside the other per-attempt
+        # state under `_state_lock`. `_run_begin()` reads it once into a
+        # local before wiring `on_partial_transcript`/`on_final_transcript`/
+        # `on_error`, so those closures bind *this* attempt's token even if a
+        # later `start()` overwrites this attribute before an orphaned
+        # processing thread from THIS attempt finally calls one of them (see
+        # `start()`'s `capture_generation` parameter).
+        self._pending_capture_generation: int | None = None
 
     @property
     def state(self) -> str:
@@ -679,17 +700,74 @@ class ConsoleVoiceInputController:
         self._state = state
         self._emit(VoiceStateChanged(state))
 
-    def _fail(self, reason: str, remedy: str = "") -> None:
+    def _emit_capture_event(self, event: Any, generation: int | None = None) -> None:
+        """Forward a recognizer-driven event, adding the generation only when known.
+
+        `emit` (the caller-supplied callback, e.g.
+        `ConsoleStreamingDictationSession._handle_event`) is called with just
+        the event whenever `generation` is `None` -- preserving the original
+        single-argument contract every non-Console caller and every existing
+        test double still relies on -- and with `(event, generation)` only
+        when a real token is in play (a capture wired through
+        `ConsoleStreamingDictationSession`, whose `start()` always supplies
+        one). This is what lets `on_partial_transcript`/`on_final_transcript`
+        (in `_run_begin()`) and `_fail()`'s `VoiceFailed` emit unconditionally
+        pass whatever `capture_generation` they were bound with, including
+        `None`, without changing `emit`'s call arity for every caller that
+        never opted into generation tracking.
+
+        Args:
+            event: The event to forward.
+            generation: This attempt's capture-generation token, or `None`.
+        """
+        if generation is None:
+            self._emit(event)
+        else:
+            self._emit(event, generation)
+
+    def _fail(
+        self,
+        reason: str,
+        remedy: str = "",
+        *,
+        generation: int | None = None,
+    ) -> None:
         # Mutate first so a throwing `emit` cannot leave the machine wedged,
         # but keep VoiceFailed ahead of VoiceStateChanged(idle): the UI clears
         # its pending-send on the failure and fires it on the idle transition,
         # so reversing these would send the message on a failed dictation.
+        #
+        # `generation` is only ever non-`None` when this came from
+        # `_report_service_error()`'s delayed, capture-bound path (see its
+        # docstring): every other caller is synchronous within the current
+        # attempt's own call chain and passes nothing, which
+        # `ConsoleStreamingDictationSession._handle_event` treats as "always
+        # current" -- there is no orphaned thread to be stale relative to.
+        # The paired `VoiceStateChanged(idle)` never carries one: Task 3's
+        # screen-side session-identity/state guards already cover a stale
+        # idle transition, and `_handle_event` does not gate that event type.
         self._state = STATE_IDLE
-        self._emit(VoiceFailed(reason=reason, remedy=remedy))
+        self._emit_capture_event(VoiceFailed(reason=reason, remedy=remedy), generation)
         self._emit(VoiceStateChanged(STATE_IDLE))
 
-    def start(self) -> None:
-        """Begin capture. Rejected unless currently idle and never abandoned."""
+    def start(self, *, capture_generation: int | None = None) -> None:
+        """Begin capture. Rejected unless currently idle and never abandoned.
+
+        Args:
+            capture_generation: The caller's opaque token for this attempt.
+                Stored so `_run_begin()` can read it once, before wiring
+                `on_partial_transcript`/`on_final_transcript`/`on_error`, and
+                bind it into those specific closures -- the ones a real
+                orphaned processing thread can still call after a *later*
+                capture has already reassigned `self._pending_capture_generation`.
+                Reading `self._pending_capture_generation` dynamically inside
+                those closures instead would report whichever capture is
+                current at call time, not the one that produced the event,
+                defeating the whole point. `None` (the default, and every
+                caller except `ConsoleStreamingDictationSession`) means the
+                caller does not distinguish captures, in which case nothing
+                downstream is gated.
+        """
         with self._state_lock:
             if self._abandoned or self._state != STATE_IDLE:
                 logger.debug(
@@ -700,6 +778,7 @@ class ConsoleVoiceInputController:
                 return
             self._last_capture_outcome = CaptureOutcome()
             self._state = STATE_PREPARING
+            self._pending_capture_generation = capture_generation
         self._emit(VoiceStateChanged(STATE_PREPARING))
 
         # Each `try` below covers only the call that can crash unexpectedly,
@@ -773,6 +852,14 @@ class ConsoleVoiceInputController:
         # `_report_service_error`), and a latch left over from an earlier
         # failed attempt would silence this attempt's fallback report.
         self._error_reported = False
+        # Read once, into a local, before `on_partial_transcript`/
+        # `on_final_transcript`/`on_error` are wired below: those three
+        # closures bind `capture_generation` as an early-evaluated default
+        # argument, so a later `start()` overwriting
+        # `self._pending_capture_generation` cannot change what an already
+        # orphaned processing thread from THIS attempt reports when it
+        # finally calls one of them.
+        capture_generation = self._pending_capture_generation
         try:
             service = self._service_factory(
                 transcription_provider=effective.provider,
@@ -796,10 +883,16 @@ class ConsoleVoiceInputController:
 
         try:
             started = service.start_dictation(
-                on_partial_transcript=lambda text: self._emit(VoicePartial(text)),
-                on_final_transcript=lambda text: self._emit(classify_segment(text)),
+                on_partial_transcript=lambda text, _gen=capture_generation: (
+                    self._emit_capture_event(VoicePartial(text), _gen)
+                ),
+                on_final_transcript=lambda text, _gen=capture_generation: (
+                    self._emit_capture_event(classify_segment(text), _gen)
+                ),
                 on_state_change=lambda _state: None,  # our state machine is authoritative
-                on_error=self._report_service_error,
+                on_error=lambda error, _gen=capture_generation: self._report_service_error(
+                    error, generation=_gen
+                ),
                 save_audio=self.save_audio_requested,
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the user verbatim
@@ -992,7 +1085,7 @@ class ConsoleVoiceInputController:
         """Phrase a warm-up failure as a model problem, never a microphone one."""
         return f"{WARMUP_REASON_TEMPLATE.format(provider=effective.provider)} {exc}".strip()
 
-    def _report_service_error(self, error: Any) -> None:
+    def _report_service_error(self, error: Any, *, generation: int | None = None) -> None:
         """Turn a service-reported error into a failure, recording that we did.
 
         `LazyLiveDictationService` reports through this callback
@@ -1004,8 +1097,18 @@ class ConsoleVoiceInputController:
         cause from here, then `_fail_not_started()`'s generic one, which
         arrives *last* and buries the actionable diagnostic in the UI.
 
+        This is also the path an orphaned processing thread uses to report a
+        recognizer error long after its own capture's `stop_dictation()` join
+        gave up -- `on_error` binds `generation` from `_run_begin()` at wiring
+        time (see its docstring), and this passes it straight through to
+        `_fail()` so a stale report cannot tear down whatever capture is live
+        by the time it actually arrives.
+
         Args:
             error: The exception the service reported.
+            generation: This attempt's capture-generation token, bound at
+                `on_error`'s creation time in `_run_begin()`. `None` when the
+                caller does not distinguish captures.
         """
         # Set before `_fail()`, which emits and can therefore raise: the
         # report has happened either way, and the service's own
@@ -1023,7 +1126,7 @@ class ConsoleVoiceInputController:
         service = self._claim_service()
         if service is not None:
             self._release(service)
-        self._fail(str(error))
+        self._fail(str(error), generation=generation)
 
     def _fail_not_started(self) -> None:
         """Report that `start_dictation()` returned `False`.

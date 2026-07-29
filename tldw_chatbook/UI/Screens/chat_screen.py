@@ -764,6 +764,18 @@ class ConsoleStreamingDictationSession:
         self._failure = ""
         self._in_blocking_call = False
         self._heard_recognizer_output = False
+        # Bumped by every `start()`. This session object is reused across
+        # captures (only a failure or an explicit cancel drops it -- see
+        # `_notify_console_dictation_error`/`_request_console_dictation_cancel`
+        # on the screen), so when `stop_and_transcribe()`'s join times out
+        # (point 3 below) the orphaned processing thread's tail flush is
+        # still bound to the SAME controller and the SAME `_handle_event`.
+        # `_handle_event` compares the generation the event's callback closure
+        # captured at wiring time (see `ConsoleVoiceInputController.start`'s
+        # `capture_generation` parameter) against this counter's CURRENT
+        # value and drops anything that no longer matches, before it can
+        # mutate `_segments`/`commands_consumed` or reach the screen.
+        self._capture_generation: int = 0
         self._service_factory = service_factory
         self._max_buffer_bytes = max_buffer_bytes
         self._on_buffer_limit: Callable[[], None] | None = None
@@ -792,7 +804,7 @@ class ConsoleStreamingDictationSession:
             kwargs.setdefault("on_buffer_limit", self._on_buffer_limit)
         return self._service_factory(**kwargs)
 
-    def _handle_event(self, event: Any) -> None:
+    def _handle_event(self, event: Any, generation: int | None = None) -> None:
         """Record what the screen cannot see, then forward. Never raises.
 
         A raise here would land in the recognizer's callback -- or, for a
@@ -802,8 +814,31 @@ class ConsoleStreamingDictationSession:
 
         Args:
             event: The controller event being emitted.
+            generation: The capture generation `ConsoleVoiceInputController`
+                bound into this event's callback closure at wiring time (see
+                `start()`'s `capture_generation` parameter and `_run_begin()`
+                in `console_voice_input.py`). `None` for events that are
+                always emitted synchronously within the current capture's own
+                blocking call (state changes, advisory notices) and therefore
+                need no check. A mismatch against `self._capture_generation`
+                means an orphaned processing thread from a capture
+                `stop_and_transcribe()` already gave up joining (see its
+                docstring, point 3) has only now delivered its tail flush --
+                after a LATER capture reused this same session object and
+                bumped the generation. The event is dropped before it can
+                mutate `_segments`/`commands_consumed` or reach the screen;
+                this is what closes the race for all four variants a stale
+                delivery can take: command, final, partial, and failed.
         """
         try:
+            if generation is not None and generation != self._capture_generation:
+                logger.debug(
+                    "Dropping stale console dictation event (generation {}, "
+                    "current generation {})",
+                    generation,
+                    self._capture_generation,
+                )
+                return
             forward = True
             if isinstance(event, VoiceFinal):
                 text = event.text.strip()
@@ -889,8 +924,10 @@ class ConsoleStreamingDictationSession:
             self.commands_consumed = 0
             self._failure = ""
             self._heard_recognizer_output = False
+            self._capture_generation += 1
+            generation = self._capture_generation
         with self._blocking_call():
-            self._controller.start()
+            self._controller.start(capture_generation=generation)
         failure = self._take_failure()
         if failure:
             raise RuntimeError(failure)
