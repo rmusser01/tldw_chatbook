@@ -43,7 +43,7 @@ from textual.app import App, ComposeResult, ScreenStackError
 from textual.widgets import RichLog, Markdown
 from textual.containers import Container
 from textual.reactive import reactive
-from textual.worker import Worker
+from textual.worker import Worker, WorkerState
 from textual.binding import Binding
 from textual.message import Message
 from textual.timer import Timer
@@ -8088,6 +8088,20 @@ class TldwCli(
             f"on_worker_state_changed: Worker '{worker_name}' "
             f"(Group: {worker_group}, State: {event.state})"
         )
+
+        # TASK-1240. One hook already sees every worker transition, so failures
+        # are recorded without touching any of the 398 run_worker call sites.
+        # Only ERROR persists: a start or success event here would emit a line
+        # per keystroke-triggered search and per timer tick.
+        if event.state is WorkerState.ERROR:
+            error = getattr(event.worker, "error", None)
+            persist_event(
+                "app",
+                "worker_failed",
+                level=logging.ERROR,
+                operation=str(worker_name or "unknown"),
+                exception_type=type(error).__name__ if error is not None else "unknown",
+            )
 
         # Delegate to the handler registry
         handled = await self.worker_handler_registry.handle_event(event)
