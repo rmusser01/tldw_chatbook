@@ -94,8 +94,9 @@ Update the tests to describe current behavior:
    default functional gate must prove persistence correctness, not benchmark a
    contended workstation.
 10. Create the retargeted profile fixture directory with mode `0700` before
-    selecting its config file. Do not make production config loading create or
-    trust a missing security-sensitive parent.
+    selecting its config file, and explicitly close the test-owned Evals
+    database connection during teardown. Do not make production config loading
+    create or trust a missing security-sensitive parent.
 
 No planned production file changes. No compatibility shims. No broad test
 deletion. A production diagnostic may change only if the required ADR-029

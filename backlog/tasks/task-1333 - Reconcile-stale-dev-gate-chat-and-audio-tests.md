@@ -35,7 +35,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #7 Every real-seam Notes fixture creates its temporary trusted base directory as owner-only before constructing `NotesInteropService` and closes per-user Notes DB connections during teardown, without weakening production path verification.
 - [ ] #8 Every changed diagnostic owner is reviewed against ADR-029, no unsafe payload logging is admitted, persistent sink topology remains unchanged, and the checked inventory matches production.
 - [ ] #9 The large-batch RAG indexing regression retains its 1,000-item persistence and retrieval coverage without host-dependent wall-clock assertions.
-- [ ] #10 The retargeted Evals profile regression creates its temporary trusted profile directory as owner-only before selecting the config path, without weakening production path verification.
+- [ ] #10 The retargeted Evals profile regression creates its temporary trusted profile directory as owner-only before selecting the config path and closes its test-owned database connection, without weakening production path verification.
 - [ ] #11 The affected modules and repository-wide suite collect and run without these baseline failures.
 <!-- AC:END -->
 

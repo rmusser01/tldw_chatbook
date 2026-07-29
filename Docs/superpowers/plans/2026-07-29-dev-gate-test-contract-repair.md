@@ -375,8 +375,10 @@ because the fixture selects `profile-two/config.toml` without creating
 - [ ] **Step 2: Satisfy the trusted-parent contract in the fixture**
 
 Assign the profile directory separately, create it with `mode=0o700`, then
-derive `config.toml` beneath it before setting `TLDW_CONFIG_PATH`. Do not change
-production config or private-path behavior.
+derive `config.toml` beneath it before setting `TLDW_CONFIG_PATH`. Wrap the
+assertions in `try/finally` and close `ops.db` so Windows can remove the
+temporary SQLite/WAL files deterministically. Do not change production config
+or private-path behavior.
 
 - [ ] **Step 3: Verify and commit**
 
