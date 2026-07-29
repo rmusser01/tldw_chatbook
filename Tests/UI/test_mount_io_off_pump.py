@@ -363,3 +363,90 @@ async def test_study_mount_does_not_block_on_scoped_data(monkeypatch):
             f"app handled {host.pings_handled}/5 messages while Study mounted: "
             "the scoped load is holding the App message pump, which is a frozen app"
         )
+
+
+# ---------------------------------------------------------------------------
+# Deferring mount work into a worker introduces a new failure path: Textual's
+# `run_worker` defaults to `exit_on_error=True`, so an exception that used to
+# surface inside `on_mount` now kills the app instead. A destination whose
+# backing service is down must degrade, not take the process with it.
+# ---------------------------------------------------------------------------
+
+
+class FailingHubService(SlowHubService):
+    async def load_context(self):
+        raise RuntimeError("backing service is down")
+
+    async def load_section(self, section=None):
+        raise RuntimeError("backing service is down")
+
+    async def local_external_catalog(self):
+        raise RuntimeError("backing service is down")
+
+
+class FailingWorkbenchApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = FailingHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_a_failing_mount_load_does_not_kill_the_app():
+    """A destination whose service fails must stay open, not exit the app."""
+    app = FailingWorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await asyncio.sleep(0.3)
+        await pilot.pause()
+
+        assert app.is_running, (
+            "the app exited when a deferred mount load raised: run_worker "
+            "defaults to exit_on_error=True, so moving mount I/O into a worker "
+            "turned a recoverable load failure into a dead app"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_failing_mount_load_clears_the_loading_state():
+    """A failed load must not leave the destination spinning forever."""
+    app = FailingWorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await asyncio.sleep(0.3)
+        await pilot.pause()
+
+        workbench = app.query_one(MCPWorkbench)
+        assert not workbench.is_loading, (
+            "the spinner is still showing after the load failed: the user is "
+            "told the destination is loading when nothing is coming"
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_unhandled_deferred_load_error_does_not_kill_the_app(monkeypatch):
+    """The deferred load must be fail-safe, not merely usually-safe.
+
+    Moving mount work into a worker is not free: Textual's `run_worker` defaults
+    to `exit_on_error=True`, so any exception the load does not catch itself now
+    takes the whole app down -- where before it surfaced inside `on_mount`.
+    `reload()` catches the failures it anticipates, which is exactly why this
+    has to be tested against one it does not.
+    """
+
+    async def exploding_reload(self):
+        raise RuntimeError("an error reload() does not anticipate")
+
+    monkeypatch.setattr(MCPWorkbench, "reload", exploding_reload)
+
+    app = SlowWorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await asyncio.sleep(0.3)
+        await pilot.pause()
+
+        assert app.is_running, (
+            "an unhandled error in the deferred mount load exited the app"
+        )

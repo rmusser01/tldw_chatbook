@@ -1233,11 +1233,25 @@ class StudyScreen(BaseAppScreen):
         self.run_worker(
             self._load_after_mount(),
             group="study_initial_load",
+            # A load failure is a broken screen, never a dead app. Textual
+            # defaults this to True, so deferring mount work into a worker would
+            # otherwise turn a failed scoped read into an app exit.
+            exit_on_error=False,
             exclusive=True,
         )
 
     async def _load_after_mount(self) -> None:
         """Apply scope and load scoped study data, off the message pump."""
+        try:
+            await self._load_after_mount_inner()
+        except Exception as exc:
+            logger.opt(exception=True).error(f"Study initial load failed: {exc}")
+            try:
+                self.notify("Couldn't load study data.", severity="error")
+            except Exception:
+                pass
+
+    async def _load_after_mount_inner(self) -> None:
         study_window = self.query_one(StudyWindow)
 
         if not await self._apply_pending_scope_handoff(study_window=study_window):

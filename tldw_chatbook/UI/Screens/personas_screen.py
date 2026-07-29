@@ -957,18 +957,33 @@ class PersonasScreen(BaseAppScreen):
         self.run_worker(
             self._load_after_mount(),
             group="personas_initial_load",
+            # A load failure is a broken screen, never a dead app. Textual
+            # defaults this to True, so deferring mount work into a worker would
+            # otherwise turn a failed library read into an app exit.
+            exit_on_error=False,
             exclusive=True,
         )
 
     async def _load_after_mount(self) -> None:
         """Load the character library once the screen is already on screen."""
-        loading_manager = getattr(self, "loading_manager", None)
-        setup_loading = getattr(loading_manager, "setup", None)
-        if callable(setup_loading):
-            await setup_loading()
-        await self.character_handler.refresh_character_list()
-        self._sync_title_and_console_actions()
-        await self._apply_pending_restore()
+        try:
+            loading_manager = getattr(self, "loading_manager", None)
+            setup_loading = getattr(loading_manager, "setup", None)
+            if callable(setup_loading):
+                await setup_loading()
+            await self.character_handler.refresh_character_list()
+            self._sync_title_and_console_actions()
+            await self._apply_pending_restore()
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Personas initial load failed: {exc}"
+            )
+            try:
+                self.notify(
+                    "Couldn't load the character library.", severity="error"
+                )
+            except Exception:
+                pass
 
     def _set_persona_editor_runtime_source(self, runtime_source: str) -> None:
         """Synchronize the screen state and mounted Persona editor source."""

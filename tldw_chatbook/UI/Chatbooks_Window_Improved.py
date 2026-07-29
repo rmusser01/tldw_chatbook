@@ -486,6 +486,11 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
         self.run_worker(
             self._refresh_chatbooks(),
             group="chatbooks_refresh",
+            # A failed scan is an empty list with an error toast (see
+            # `_refresh_chatbooks`), never a dead app. Textual defaults this to
+            # True, so deferring the scan into a worker would otherwise turn any
+            # error the scan does not catch itself into an app exit.
+            exit_on_error=False,
             exclusive=True,
         )
 

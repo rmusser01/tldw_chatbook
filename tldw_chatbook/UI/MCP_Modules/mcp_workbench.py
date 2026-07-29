@@ -708,10 +708,38 @@ class MCPWorkbench(Container):
     def _start_initial_load(self) -> None:
         """Kick off the mount-time reload once the subtree is mounted."""
         self.run_worker(
-            self.reload(),
+            self._reload_guarded(),
             group="mcp_workbench_reload",
+            # A load failure is a broken destination, never a dead app. Textual
+            # defaults this to True, so moving mount work into a worker would
+            # otherwise turn any error `reload()` does not itself catch into an
+            # app exit -- a failure mode that did not exist while the load ran
+            # inside `on_mount`.
+            exit_on_error=False,
             exclusive=True,
         )
+
+    async def _reload_guarded(self) -> None:
+        """Run the mount-time reload without letting a failure strand the UI."""
+        try:
+            await self.reload()
+        except Exception as exc:
+            # `reload()` clears `is_loading` in its own `finally`, but only for
+            # paths that reach it; anything raised earlier would otherwise leave
+            # the canvas spinning forever, telling the user data is coming when
+            # nothing is.
+            self.is_loading = False
+            self._reloading = False
+            logger.opt(exception=True).error(
+                f"MCP workbench initial load failed: {exc}"
+            )
+            try:
+                self.app.notify(
+                    "Couldn't load MCP data. Use Refresh to try again.",
+                    severity="error",
+                )
+            except Exception:
+                pass
 
     def watch_is_loading(self, loading: bool) -> None:
         """Show the spinner over the canvas only, leaving the rail usable."""
