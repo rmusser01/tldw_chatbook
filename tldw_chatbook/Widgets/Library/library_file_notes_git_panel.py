@@ -740,7 +740,13 @@ class LibraryFileNotesGitPanel(Vertical):
         *,
         retain_rows: bool = False,
     ) -> None:
-        """Render status checking with only explicitly authorized old rows."""
+        """Render status checking with only explicitly authorized old rows.
+
+        Args:
+            repository_path: Worktree path to display while checking status.
+            retain_rows: Whether the caller has proved previously rendered rows
+                still belong to the current trusted repository authority.
+        """
         self._trusted = True
         self._trust_available = False
         self._status_ready = False

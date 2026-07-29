@@ -2439,10 +2439,23 @@ class LibraryFileNotesWorkspace(Vertical):
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            detail = (
+                f"Git action failed: {error}. Inspect the repository "
+                "index outside Chatbook, then Refresh."
+            )
+            if (
+                action_key is not None
+                and self._git_action_key_is_current(action_key)
+            ):
+                self._git_last_action = replace(
+                    action_key,
+                    text=f"Last action: FAILED — {detail}",
+                )
+                if self._git_binding_is_current(binding):
+                    self._sync_git_last_action()
             if self._git_binding_is_current(binding):
                 self._git_panel_widget.mark_stale(
-                    f"Git action failed: {error}. Inspect the repository "
-                    "index outside Chatbook, then Refresh.",
+                    detail,
                     retain_rows=self._git_can_retain_rows(binding),
                     error=True,
                 )

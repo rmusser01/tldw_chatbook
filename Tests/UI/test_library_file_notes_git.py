@@ -162,6 +162,7 @@ class _FakeGitService:
         self.status_release: asyncio.Event | None = None
         self.status_error: Exception | None = None
         self.action_release: asyncio.Event | None = None
+        self.action_error: Exception | None = None
         self._status_binding: SessionBinding | None = None
         self._status_task: asyncio.Task[SessionGitStatus] | None = None
 
@@ -257,11 +258,14 @@ class _FakeGitService:
             self.stage_calls.append(requested)
         else:
             self.unstage_calls.append(requested)
+        error = self.action_error
 
         async def finish() -> GitActionResult:
             try:
                 if self.action_release is not None:
                     await self.action_release.wait()
+                if error is not None:
+                    raise error
                 self.owner.clear_status(binding)
                 return GitActionResult(
                     action,  # type: ignore[arg-type]
@@ -2095,6 +2099,59 @@ async def test_hidden_action_summary_is_presented_after_reopen(
             refreshed_status.status_generation
             > initial_status.status_generation
         )
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_unexpected_action_failure_survives_postflight_refresh(
+    tmp_path: Path,
+) -> None:
+    _root, owner, binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    git_service.action_error = RuntimeError("simulated action failure")
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace.query_one("#file-notes-session-changes", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: len(git_service.status_calls) == 1
+            and len(workspace._git_panel_widget.rows) == 2,
+            "initial status did not finish",
+        )
+        admission = owner.snapshot(binding)
+
+        workspace.query_one("#file-notes-git-stage-selected", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: git_service.stage_calls == [(1,)]
+            and len(git_service.status_calls) == 2
+            and not owner.mutation_active(binding)
+            and "Status: CURRENT · READY"
+            in _text(workspace.query_one("#file-notes-git-status", Static)),
+            "failed Stage did not settle through its postflight refresh",
+        )
+
+        last_action = workspace._git_last_action
+        assert last_action is not None
+        expected = (
+            "Last action: FAILED — Git action failed: simulated action failure. "
+            "Inspect the repository index outside Chatbook, then Refresh."
+        )
+        assert last_action.binding == admission.binding == binding
+        assert last_action.repository == admission.trusted_repository
+        assert last_action.changes == admission.changes
+        assert last_action.text == expected
+        action_status = workspace.query_one(
+            "#file-notes-git-action-status",
+            Static,
+        )
+        assert action_status.display
+        rendered_action = _flat_text(action_status)
+        assert rendered_action.startswith("Last action: FAILED")
+        assert rendered_action.endswith("outside Chatbook, then Refresh.")
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
