@@ -1213,11 +1213,31 @@ class StudyScreen(BaseAppScreen):
         else:
             store.acknowledge(claim)
 
-    async def on_mount(self) -> None:
-        """Initialize Study features when screen is mounted."""
+    def on_mount(self) -> None:
+        """Mount now, load the scoped data after (TASK-1320).
+
+        Synchronous by design: mounting is awaited by the app's own navigation
+        handler, so awaiting the scope refresh here ran it on the App's message
+        pump and the app stopped responding until the scoped study data came
+        back.
+
+        Deferred by `call_after_refresh` rather than started directly, because a
+        screen's `on_mount` fires before the children its `compose()` yielded
+        have finished mounting and the deferred work does `query_one(StudyWindow)`.
+        """
         super().on_mount()
         logger.info("Study screen mounted")
+        self.call_after_refresh(self._start_initial_load)
 
+    def _start_initial_load(self) -> None:
+        self.run_worker(
+            self._load_after_mount(),
+            group="study_initial_load",
+            exclusive=True,
+        )
+
+    async def _load_after_mount(self) -> None:
+        """Apply scope and load scoped study data, off the message pump."""
         study_window = self.query_one(StudyWindow)
 
         if not await self._apply_pending_scope_handoff(study_window=study_window):
@@ -1226,6 +1246,10 @@ class StudyScreen(BaseAppScreen):
                 study_window=study_window,
             )
 
+        # `StudyWindow` defines neither of these, so both guards are dead as
+        # written; they are kept as-is rather than silently dropped, since
+        # removing them is a separate decision from moving the mount off the
+        # pump.
         if hasattr(study_window, "load_saved_sessions"):
             await study_window.load_saved_sessions()
 

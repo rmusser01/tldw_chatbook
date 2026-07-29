@@ -297,3 +297,69 @@ async def test_personas_mount_does_not_block_on_the_character_library(monkeypatc
         f"read takes {SERVICE_DELAY}s): the library read is on the loop, so the "
         "app is frozen for its duration"
     )
+
+
+# ---------------------------------------------------------------------------
+# Study: `on_mount` awaited the scope refresh, which ends in a scoped study-data
+# reload. (Its `load_saved_sessions`/`initialize` awaits are dead: `StudyWindow`
+# defines neither, so those `hasattr` guards never fire.)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_study_mount_does_not_block_on_scoped_data(monkeypatch):
+    """Opening Study must not hold the App pump while its scoped data loads.
+
+    Study's mount work is genuinely awaited (async DB helpers), not synchronous
+    like the chatbook scan, so the failure mode is a held message pump rather
+    than a stalled event loop -- and the right instrument is whether the app
+    still handles messages, not whether the loop ticks on time.
+    """
+    import sys
+
+    sys.path.insert(0, "Tests/UI")
+    from test_destination_shells import _build_test_app
+
+    from tldw_chatbook.UI.Screens.study_screen import StudyScreen
+
+    reached = []
+
+    async def slow_scope_refresh(self, scope_context, **kwargs):
+        # Patched at the seam `on_mount` awaits directly: on a fresh mount
+        # `_apply_scope_context` early-returns before the scoped read (the scope
+        # key is unchanged), so patching the read itself exercises nothing.
+        reached.append("scope_refresh")
+        await asyncio.sleep(SERVICE_DELAY)
+
+    monkeypatch.setattr(
+        StudyScreen, "_apply_scope_context_and_refresh", slow_scope_refresh
+    )
+
+    app_instance = _build_test_app()
+
+    class StudyHost(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.pings_handled = 0
+
+        async def on_navigate(self, _message: Navigate) -> None:
+            await self.push_screen(StudyScreen(app_instance))
+
+        async def on_ping(self, _message: Ping) -> None:
+            self.pings_handled += 1
+
+    host = StudyHost()
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause()
+
+        host.post_message(Navigate())
+        await asyncio.sleep(0.05)
+        for _ in range(5):
+            host.post_message(Ping())
+        await asyncio.sleep(0.3)
+
+        assert reached, "the scope refresh was never awaited; the test proves nothing"
+        assert host.pings_handled == 5, (
+            f"app handled {host.pings_handled}/5 messages while Study mounted: "
+            "the scoped load is holding the App message pump, which is a frozen app"
+        )
