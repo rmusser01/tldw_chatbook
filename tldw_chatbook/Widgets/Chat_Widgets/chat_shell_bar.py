@@ -10,13 +10,16 @@ from textual.containers import Container
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
+from tldw_chatbook.Chat.console_display_state import (
+    resolve_assistant_identity_label,
+)
+
 
 @dataclass
 class ChatShellLabelResolver:
-    """Optional live label overrides for workspace/persona/character names."""
+    """Optional live label overrides for workspace and character names."""
 
     workspace_name: Optional[str] = None
-    user_profile_label: Optional[str] = None
     character_label: Optional[str] = None
 
 
@@ -55,33 +58,25 @@ class ChatShellContext:
         else:
             scope = "Global"
 
-        assistant_kind = getattr(session_data, "assistant_kind", None)
-        if assistant_kind == "character":
-            character_name = (
-                getattr(resolver, "character_label", None) if resolver else None
-            )
-            character_name = (
-                character_name
-                or getattr(session_data, "character_name", None)
-                or getattr(session_data, "character_id", None)
-            )
-            assistant = (
-                f"Character: {character_name}"
-                if character_name
-                else "Assistant: General"
-            )
-        elif assistant_kind == "persona":
-            user_profile_label = (
-                getattr(resolver, "user_profile_label", None) if resolver else None
-            )
-            persona_value = user_profile_label or getattr(
-                session_data, "assistant_id", None
-            )
-            assistant = (
-                f"As: {persona_value}" if persona_value else "Assistant: General"
-            )
-        else:
-            assistant = "Assistant: General"
+        character_candidates = (
+            getattr(resolver, "character_label", None) if resolver else None,
+            getattr(session_data, "character_name", None),
+            getattr(session_data, "character_id", None),
+        )
+        character = next(
+            (
+                candidate
+                for candidate in character_candidates
+                if candidate is not None and str(candidate).strip()
+            ),
+            None,
+        )
+        assistant = resolve_assistant_identity_label(
+            character=character,
+            assistant_kind=getattr(session_data, "assistant_kind", None),
+            assistant_name=getattr(session_data, "assistant_name", None),
+            assistant_id=getattr(session_data, "assistant_id", None),
+        )
 
         title = getattr(session_data, "title", None) or "New chat"
         return cls(backend, scope, assistant, f"Session: {title}")
@@ -155,6 +150,7 @@ class ChatShellBar(Container):
             classes="chat-shell-context",
             expand=True,
             shrink=True,
+            markup=False,
         )
         if not self.show_compact_controls:
             return

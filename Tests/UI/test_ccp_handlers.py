@@ -18,7 +18,12 @@ from tldw_chatbook.UI.CCP_Modules import (
     ViewChangeMessage,
 )
 from tldw_chatbook.UI.CCP_Modules.ccp_character_handler import fetch_all_characters
-from tldw_chatbook.tldw_api import PersonaProfileCreate, PersonaProfileUpdate
+from tldw_chatbook.tldw_api.character_persona_schemas import (
+    LocalPersonaProfileCreate,
+    LocalPersonaProfileUpdate,
+    PersonaProfileCreate,
+    PersonaProfileUpdate,
+)
 
 
 @pytest.fixture
@@ -31,8 +36,8 @@ def mock_window():
         selected_conversation_id="chat.server.alice",
     )
     backend = Mock()
-    backend.list_user_profiles = AsyncMock(return_value=[])
-    backend.get_user_profile = AsyncMock(
+    backend.list_persona_profiles = AsyncMock(return_value=[])
+    backend.get_persona_profile = AsyncMock(
         return_value={
             "id": "persona.local.alice",
             "name": "Alice Persona",
@@ -41,7 +46,7 @@ def mock_window():
             "version": 3,
         }
     )
-    backend.create_user_profile = AsyncMock(
+    backend.create_persona_profile = AsyncMock(
         return_value={
             "id": "persona.local.created",
             "name": "Created Persona",
@@ -50,7 +55,7 @@ def mock_window():
             "version": 1,
         }
     )
-    backend.update_user_profile = AsyncMock(
+    backend.update_persona_profile = AsyncMock(
         return_value={
             "id": "persona.local.alice",
             "name": "Alice Persona Updated",
@@ -267,7 +272,7 @@ class TestCCPPersonaHandler:
     async def test_refresh_persona_list_routes_through_scope_service(self, mock_window):
         handler = CCPPersonaHandler(mock_window)
         service = mock_window.app_instance.character_persona_scope_service
-        service.list_user_profiles = AsyncMock(
+        service.list_persona_profiles = AsyncMock(
             return_value=[
                 {
                     "id": "persona.local.alice",
@@ -284,7 +289,7 @@ class TestCCPPersonaHandler:
 
         personas = await handler.refresh_persona_list()
 
-        service.list_user_profiles.assert_awaited_once()
+        service.list_persona_profiles.assert_awaited_once()
         assert personas[0]["id"] == "persona.local.alice"
         assert handler.persona_list[1]["name"] == "Bob Persona"
 
@@ -294,7 +299,7 @@ class TestCCPPersonaHandler:
 
         await handler.load_persona("persona.local.alice")
 
-        mock_window.app_instance.character_persona_scope_service.get_user_profile.assert_awaited_once_with(
+        mock_window.app_instance.character_persona_scope_service.get_persona_profile.assert_awaited_once_with(
             "persona.local.alice",
             mode="local",
         )
@@ -337,9 +342,9 @@ class TestCCPPersonaHandler:
             }
         )
 
-        create_call = mock_window.app_instance.character_persona_scope_service.create_user_profile.await_args
+        create_call = mock_window.app_instance.character_persona_scope_service.create_persona_profile.await_args
         request_data = create_call.args[0]
-        assert isinstance(request_data, PersonaProfileCreate)
+        assert isinstance(request_data, LocalPersonaProfileCreate)
         assert request_data.name == "Created Persona"
         assert request_data.system_prompt == "Be concise."
         assert create_call.kwargs["mode"] == "local"
@@ -360,13 +365,61 @@ class TestCCPPersonaHandler:
             }
         )
 
-        update_call = mock_window.app_instance.character_persona_scope_service.update_user_profile.await_args
+        update_call = mock_window.app_instance.character_persona_scope_service.update_persona_profile.await_args
         assert update_call.args[0] == "persona.local.alice"
         request_data = update_call.args[1]
-        assert isinstance(request_data, PersonaProfileUpdate)
+        assert isinstance(request_data, LocalPersonaProfileUpdate)
         assert request_data.mode == "persistent_scoped"
         assert update_call.kwargs["expected_version"] == 3
         assert update_call.kwargs["mode"] == "local"
+
+    @pytest.mark.asyncio
+    async def test_save_persona_uses_exact_server_create_contract(self, mock_window):
+        mock_window.state.runtime_backend = "server"
+        handler = CCPPersonaHandler(mock_window)
+
+        await handler.save_persona(
+            {
+                "name": "Server Persona",
+                "description": "Local only",
+                "personality_traits": "local only",
+                "system_prompt": "Be concise.",
+            }
+        )
+
+        create_call = mock_window.app_instance.character_persona_scope_service.create_persona_profile.await_args
+        request_data = create_call.args[0]
+        assert isinstance(request_data, PersonaProfileCreate)
+        assert set(type(request_data).model_fields).isdisjoint(
+            {"description", "personality_traits"}
+        )
+        assert create_call.kwargs["mode"] == "server"
+
+    @pytest.mark.asyncio
+    async def test_save_persona_uses_exact_server_update_contract(self, mock_window):
+        mock_window.state.runtime_backend = "server"
+        handler = CCPPersonaHandler(mock_window)
+        handler.current_persona_id = "persona.server.alice"
+
+        await handler.save_persona(
+            {
+                "name": "Server Persona Updated",
+                "description": "Local only",
+                "personality_traits": "local only",
+                "system_prompt": None,
+                "version": 3,
+            }
+        )
+
+        update_call = mock_window.app_instance.character_persona_scope_service.update_persona_profile.await_args
+        request_data = update_call.args[1]
+        assert isinstance(request_data, PersonaProfileUpdate)
+        assert "system_prompt" in request_data.model_fields_set
+        assert request_data.system_prompt is None
+        assert set(type(request_data).model_fields).isdisjoint(
+            {"description", "personality_traits"}
+        )
+        assert update_call.kwargs["mode"] == "server"
 
     @pytest.mark.asyncio
     async def test_list_chat_presets_routes_via_scope_service(self, mock_window):

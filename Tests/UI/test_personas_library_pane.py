@@ -1,5 +1,7 @@
 """Mounted tests for the Personas library pane."""
 
+from dataclasses import fields
+
 import pytest
 from textual.app import App
 from textual.widgets import Button, Input, ListItem, ListView, Static
@@ -25,6 +27,17 @@ def _row_text(item: ListItem) -> str:
 class LibraryPaneApp(App):
     def compose(self):
         yield PersonasLibraryPane(id="personas-library-pane")
+
+
+async def test_library_row_has_only_selection_and_display_state():
+    """Library rows carry selection state, never the human user's identity."""
+    assert tuple(field.name for field in fields(LibraryRow)) == (
+        "item_id",
+        "kind",
+        "name",
+        "is_unsaved",
+        "meta",
+    )
 
 
 async def test_pane_renders_search_toolbar_and_empty_state():
@@ -241,16 +254,16 @@ async def test_set_mode_toggles_import_button_and_empty_copy():
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasLibraryPane)
         import_button = pilot.app.query_one("#personas-library-import", Button)
-        pane.set_mode("user_profiles")
+        pane.set_mode("personas")
         assert import_button.display is False
         pane.set_mode("characters")
         assert import_button.display is True
-        pane.set_mode("user_profiles")
-        await pane.update_rows((), total=0, noun="user profiles")
+        pane.set_mode("personas")
+        await pane.update_rows((), total=0, noun="personas")
         await pilot.pause()
         empty = pilot.app.query_one("#personas-library-empty", Static)
         copy = str(empty.renderable)
-        assert "No user profiles yet" in copy
+        assert "No personas yet" in copy
         assert "Import" not in copy
 
 

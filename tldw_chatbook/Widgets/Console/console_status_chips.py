@@ -1,4 +1,4 @@
-"""Console status-pill strip (provider/model/user profile/RAG/source/tool/approval)
+"""Console status-pill strip (provider/model/assistant/RAG/source/tool/approval)
 plus the retrieval-scope chip.
 
 Extracted from ConsoleControlBar so the pills can render in their own strip
@@ -14,6 +14,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Static
@@ -75,8 +76,12 @@ class ConsoleScopeChip(ConsoleChip):
     """
 
     BINDINGS = [
-        Binding("enter", "open_scope_picker", "Open retrieval scope picker", show=False),
-        Binding("space", "open_scope_picker", "Open retrieval scope picker", show=False),
+        Binding(
+            "enter", "open_scope_picker", "Open retrieval scope picker", show=False
+        ),
+        Binding(
+            "space", "open_scope_picker", "Open retrieval scope picker", show=False
+        ),
     ]
 
     class OpenRequested(Message):
@@ -90,8 +95,8 @@ class ConsoleScopeChip(ConsoleChip):
 
 
 class ConsoleStatusChips(Horizontal):
-    """Full-width strip of the eight Console readiness pills (provider/model/
-    user profile/RAG/source/tool/approval plus the retrieval-scope chip).
+    """Full-width strip of Console readiness pills (provider/model/assistant/
+    RAG/source/tool/approval plus the retrieval-scope chip).
 
     Exposes ``sync_state`` so ``ChatScreen`` can refresh the pill labels and
     counter emphasis after provider/model/source/tool/approval state changes.
@@ -140,18 +145,17 @@ class ConsoleStatusChips(Horizontal):
             classes += " console-chip-dim"
         elif emphasis is True:
             classes += " console-chip-alert"
-        # markup=False: chip labels carry user data (character and profile
-        # names, model ids). A name containing `[red]...[/]` would otherwise
+        # markup=False: chip labels carry user data (assistant names and model
+        # ids). A name containing `[red]...[/]` would otherwise
         # restyle the chip strip, or raise MarkupError when unbalanced.
         chip = chip_class(label, id=id, classes=classes, markup=False)
-        chip.tooltip = label
+        chip.tooltip = Content(label)
         return chip
 
     def compose(self) -> ComposeResult:
         yield self._chip(self.state.provider_label, id="console-provider-chip")
         yield self._chip(self.state.model_label, id="console-model-chip")
-        yield self._chip(self.state.character_label, id="console-character-chip")
-        yield self._chip(self.state.user_profile_label, id="console-persona-chip")
+        yield self._chip(self.state.assistant_label, id="console-assistant-chip")
         yield self._chip(self.state.rag_label, id="console-rag-chip")
         yield self._chip(
             self.state.sources_label,
@@ -270,8 +274,7 @@ class ConsoleStatusChips(Horizontal):
         label_values = {
             "#console-provider-chip": state.provider_label,
             "#console-model-chip": state.model_label,
-            "#console-character-chip": state.character_label,
-            "#console-persona-chip": state.user_profile_label,
+            "#console-assistant-chip": state.assistant_label,
             "#console-rag-chip": state.rag_label,
             "#console-sources-chip": state.sources_label,
             "#console-tools-chip": state.tools_label,
@@ -283,7 +286,7 @@ class ConsoleStatusChips(Horizontal):
             except NoMatches:
                 continue
             chip.update(label)
-            chip.tooltip = label
+            chip.tooltip = Content(label)
         chip_emphasis = {
             "#console-sources-chip": state.sources_active,
             "#console-tools-chip": state.tools_active,

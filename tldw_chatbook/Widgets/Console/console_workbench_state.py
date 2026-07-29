@@ -108,7 +108,7 @@ def build_console_workbench_state(
             label=control_state.model_label,
             status=provider_status,
         ),
-        WorkbenchMode(id="persona", label=control_state.user_profile_label),
+        WorkbenchMode(id="assistant", label=control_state.assistant_label),
         WorkbenchMode(id="rag", label=control_state.rag_label),
         WorkbenchMode(id="sources", label=control_state.sources_label),
         WorkbenchMode(id="tools", label=control_state.tools_label),

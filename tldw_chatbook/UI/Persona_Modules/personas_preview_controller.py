@@ -8,15 +8,11 @@ through the same Console gateway boundary without writing to local storage.
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping
 
 from loguru import logger
 from textual.css.query import QueryError
 
-from ...Character_Chat.active_user_profile import (
-    resolve_active_user_profile_name,
-    resolve_active_user_profile_name_async,
-)
 from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 from ...Chat.console_chat_models import ConsoleProviderSelection
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
@@ -38,12 +34,6 @@ logger = logger.bind(module="PersonasPreviewController")
 
 # Cap on the preview transcript text staged into a Console handoff body.
 PREVIEW_HANDOFF_TRANSCRIPT_CHAR_LIMIT = 6000
-
-# Sentinel distinguishing "no user_name passed" (fall back to the sync
-# resolver) from an explicit ``None`` (task-551: async callers resolve first
-# and always pass a value, even when that value is ``None``).
-_UNSET: Any = object()
-
 
 class PersonasPreviewController:
     """Owns preview chat state, provider calls, and Console handoff."""
@@ -74,42 +64,6 @@ class PersonasPreviewController:
         self.screen.workers.cancel_group(self.screen, "personas-preview")
         self.history.clear()
 
-    def _active_user_name(self) -> str | None:
-        """The active user profile's name for ``{{user}}``/labels, or ``None``.
-
-        Resolved through the app's LOCAL persona service - the synchronous
-        ``list_user_profiles`` surface the task-442 resolver expects (the
-        scope service's method is async and cannot be consumed by the sync
-        resolver). Any failure reads as no-active, so callers fall back to
-        the historical "User" literal byte-for-byte.
-
-        Returns:
-            The active profile's name, or ``None`` when no profile is active.
-        """
-        service = getattr(
-            self.screen.app_instance, "local_character_persona_service", None
-        )
-        return resolve_active_user_profile_name(service)
-
-    async def _resolve_user_name_async(self) -> Optional[str]:
-        """Resolve the active user profile name against the workbench's backend mode."""
-        mode = "local"
-        handler = getattr(self.screen, "persona_handler", None)
-        current_mode = getattr(handler, "current_mode", None)
-        if callable(current_mode):
-            try:
-                candidate = str(current_mode() or "").strip().lower()
-                if candidate in {"local", "server"}:
-                    mode = candidate
-            except Exception:
-                mode = "local"
-        app_instance = getattr(self.screen, "app_instance", None)
-        return await resolve_active_user_profile_name_async(
-            getattr(app_instance, "character_persona_scope_service", None),
-            mode=mode,
-            local_service=getattr(app_instance, "local_character_persona_service", None),
-        )
-
     async def reset(self, greeting: str, *, seeded_for: str | None = None) -> None:
         """Clear preview state and reseed the preview transcript.
 
@@ -139,7 +93,6 @@ class PersonasPreviewController:
         name: str,
         *,
         keep_index: bool = False,
-        user_name: Any = _UNSET,
     ) -> str:
         """Store the processed greeting list, populate the selector, return the seed.
 
@@ -150,10 +103,6 @@ class PersonasPreviewController:
                 keep the user's chosen greeting (clamped to the new list) instead
                 of resetting to the primary — so Reset/the selector still reflect
                 the choice.
-            user_name: Pre-resolved active user profile name (task-551 async
-                callers resolve against the workbench's backend mode before
-                calling in). Defaults to the sentinel, which falls back to the
-                synchronous local-only resolver for any other caller.
 
         Returns:
             The greeting text for the current index (primary when not keeping).
@@ -164,20 +113,9 @@ class PersonasPreviewController:
             for g in (record.get("alternate_greetings") or [])
             if isinstance(g, str)
         ]
-        # task-442/task-551: {{user}} renders the active user profile's name.
-        # With no active profile the historical "User" literal is preserved
-        # byte-exact and the pane's user speaker label stays untouched.
-        user_name = self._active_user_name() if user_name is _UNSET else user_name
         self._greetings = [
-            replace_placeholders(g, name, user_name or "User") for g in raw
+            replace_placeholders(g, name, "User") for g in raw
         ]
-        if user_name:
-            try:
-                self.screen.query_one(PersonasPreviewPane).set_speakers(
-                    user=user_name
-                )
-            except QueryError:
-                pass
         if keep_index and self._greetings:
             self._current_greeting_index = min(
                 self._current_greeting_index, len(self._greetings) - 1
@@ -211,9 +149,7 @@ class PersonasPreviewController:
         if record is None:
             await self.reset("")
             return
-        greeting = self._load_greetings(
-            record, character_name, user_name=await self._resolve_user_name_async()
-        )
+        greeting = self._load_greetings(record, character_name)
         await self.reset(greeting, seeded_for=character_id)
 
     async def restore_conversation(
@@ -418,13 +354,10 @@ class PersonasPreviewController:
             record,
             name,
             keep_index=preserve,
-            user_name=await self._resolve_user_name_async(),
         )
-        # The speaker label is set once at selection (_select_character, from the
-        # selection's display name) and must NOT be re-set here: set_speakers only
-        # relabels FUTURE lines, so changing it on a same-character reload that
-        # preserves the transcript would leave the existing lines under the old
-        # prefix (mixed/stale prefixes — task-437 review).
+        # Selection/save paths own the character label. A same-character reload
+        # that preserves the transcript only refreshes its greeting seed; greeting
+        # processing must not mutate either speaker label.
         if preserve:
             pane.refresh_greeting_seed(greeting)
             self.refresh_provider_readout()
@@ -482,7 +415,7 @@ class PersonasPreviewController:
                     )
                     or {}
                 )
-        elif screen.state.active_mode == "user_profiles":
+        elif screen.state.active_mode == "personas":
             record = screen._profile_record(screen.state.selected_entity_id) or {}
         parts = [
             str(record.get(key) or "").strip()

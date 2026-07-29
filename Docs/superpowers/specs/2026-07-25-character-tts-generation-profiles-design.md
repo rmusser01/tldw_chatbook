@@ -5,6 +5,8 @@
 **Related design:** [audio.cpp TTS Adapter Registry](2026-07-23-audio-cpp-tts-adapter-registry-design.md)
 **Existing ADR:** [ADR-023 — TTS Adapter Registry and audio.cpp Runtime Boundary](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 **Profile ADR:** [ADR-028 — Character TTS Generation Profile Ownership](../../../backlog/decisions/028-character-tts-generation-profile-ownership.md)
+**Slice 3A design:** [Character Identity and Persona/User Profile Separation](2026-07-28-tts-character-identity-persona-separation-design.md)
+**Slice 3A ADR:** [ADR-037 — Roleplay Assistant Identity and Persona/User Profile Separation](../../../backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md)
 **Slice 1 status:** implemented and live-UAT validated; TASK-710 remains In Progress because the repository-wide DoD suite is not green and no external server was available for a post-rebase live rerun
 **Slice 2A status:** implemented by TASK-763 and merged in PR #977; the versioned profile domain, repository lifecycle, backup/restore, and app-owned lazy repository are available for Slice 2B
 
@@ -323,13 +325,17 @@ process identity is not sufficient because the profile database may survive a
 character-database switch or restore.
 
 The server authority is an opaque stable scope supplied by the source-aware
-runtime. It incorporates the durable server profile and the stable
-authenticated principal or tenant when the same server can expose different
-character namespaces. It is not a display name, normalized origin, or whichever
-server happens to be active later, and it must remain stable across ordinary
-credential rotation. If the runtime cannot establish the required stable
-server authority, Chatbook fails closed rather than creating or resolving that
-assignment.
+runtime. It incorporates a durable random `authority_scope_id` owned by the
+saved configured server target and the stable authenticated principal or
+tenant when the same server can expose different character namespaces. The
+existing routing `server_id` is not authority because production legacy
+targets derive it from their normalized URL. New targets receive a canonical
+UUIDv4 scope at creation; a legacy target must persist one atomically before
+first authority use. It is not a display name, routing ID, normalized origin,
+or whichever server happens to be active later, and it must remain stable
+across ordinary credential rotation and mutable routing-detail changes. If the
+runtime cannot persist or establish the required stable server authority,
+Chatbook fails closed rather than creating or resolving that assignment.
 
 `authority_id` and `character_id` are non-empty canonical text identifiers of
 at most 256 characters. The source-aware character layer supplies the
@@ -338,9 +344,9 @@ from a display label.
 
 Server authority acquisition follows one explicit policy:
 
-1. use a durable Chatbook server-profile ID plus a stable authenticated
-   principal or tenant returned by the server's authenticated identity
-   contract;
+1. use the configured target's persisted `authority_scope_id` plus a stable
+   authenticated principal or tenant returned by the server's authenticated
+   identity contract;
 2. use server-profile-only authority only when that server contract explicitly
    guarantees that character IDs are global across principals;
 3. never use an API key, token, credential source, or credential fingerprint as
@@ -354,10 +360,21 @@ future construction change cannot collide with an older authority. Credential
 rotation must preserve the resulting authority, while different principals on
 the same normalized origin must remain distinct.
 
+An asynchronous identity lookup captures the target scope, bound
+authentication context, and context revision before issuing the request and
+rechecks them before caching or returning. A server, account, or credential-
+context switch makes an in-flight response stale.
+
 A server-backed conversation records its full authority scope when the
 conversation is launched. Existing conversations without that provenance
 cannot receive or use a server-character assignment until they are reopened or
 explicitly repaired.
+
+This provenance is local to application-owned conversation CRUD and
+backup/restore in the initial delivery. Current Sync V2 does not transport it;
+a conversation materialized through sync or import without locally proven
+authority remains authority-null and unassignable rather than inheriting the
+receiver's active target.
 
 A local conversation persists its complete local `CharacterRef`, not only a
 bare character ID. A legacy local conversation containing only
@@ -610,7 +627,11 @@ those checks, the separately stored display spelling remains user-controlled.
   acquires the exclusive lock within a bounded deadline. Another process that
   still has the database open therefore causes restore to fail safely before
   replacement rather than leaving two processes attached to different inodes.
-- Profile creation and assignment mutation are transactional.
+- Profile creation and assignment mutation are transactional. Assignment
+  set/replace additionally compares the selected caller-held profile revision
+  and caller-observed current assignment inside the final transaction. Detach
+  carries the exact observed assigned profile ID: absence is an idempotent
+  success, while a different replacement assignment is a conflict.
 - An update supplies both the lifecycle generation and revision the editor
   loaded. A mismatched generation returns a stale-store conflict; a mismatched
   revision returns an optimistic conflict. Both preserve the stored row and the
@@ -648,11 +669,13 @@ The profile library lists assignment targets by `active`, `inactive`,
 
 Separately, every listed assignment has an always-reachable
 **Detach assignment** action. It identifies the exact source, authority, and
-character, requires explicit confirmation, and may detach an `active`,
-`inactive`, `unverified`, or `missing` target. This user-initiated operation is
-not automatic cleanup and does not delete or modify the character. It works
-without contacting the character authority and guarantees a permanently
-unreachable server cannot lock a shared profile forever.
+character from a caller-held assignment result, requires explicit
+confirmation, and may detach an `active`, `inactive`, `unverified`, or
+`missing` target. This user-initiated operation is not automatic cleanup and
+does not delete or modify the character. It works without contacting the
+character authority, refuses to detach a different concurrently replaced
+assignment, and guarantees a permanently unreachable server cannot lock a
+shared profile forever.
 
 Database corruption, unsupported schema versions, failed migrations, and
 unavailable paths produce a profile-store failure. They do not cause Chatbook
@@ -1315,19 +1338,29 @@ This slice independently fixes the first-time-user UAT failure.
 Together, Slices 2A and 2B deliver reusable local profiles before character
 assignment.
 
-### Slice 3A — Character identity, authorship, and assignment
+### Slice 3A — Character identity, authorship, and Persona boundary
 
-- Persist durable local-database and stable server-profile/principal authority
-  provenance, including safe legacy-local backfill and fail-closed server
-  identity acquisition.
-- Add canonical `CharacterRef` assignment behavior and app-issued immutable
-  Console speech snapshots.
-- Add character-editor assignment controls.
+Deliver four separately planned and reviewed increments:
 
-### Slice 3B — Roleplay resolution and speech runtime
+1. Separate Persona assistant profiles from account/human User Profiles and
+   remove Persona-as-user runtime projection without deleting existing records.
+2. Persist durable local-database and opaque target-scope/principal authority
+   provenance locally, including safe legacy-local backfill, atomic
+   target-scope persistence, stale-context fencing, and fail-closed server
+   assignment identity. Current Sync V2 remains authority-free.
+3. Add app-issued immutable Console speech snapshots while retaining global
+   synthesis selection.
+4. Add canonical `CharacterRef` assignment-service mutations fenced by the
+   caller-held repository generation, selected profile revision, and expected
+   current assignment.
 
-- Add trusted persisted and in-memory authorship resolution through the
-  admission coordinator.
+No increment adds hidden or feature-gated assignment widgets.
+
+### Slice 3B — Character assignment UI and roleplay speech runtime
+
+- Add visible character-editor assignment, repair, and detach controls.
+- Resolve assigned profiles from the trusted persisted/in-memory identity and
+  snapshot authorship already established by Slice 3A.3.
 - Apply assigned profiles to character-authored Console roleplay messages.
 - Add fail-closed recovery and the explicit one-message global override.
 - Preserve assignments through soft delete/restore; add permanent-delete
@@ -1679,7 +1712,12 @@ integration is disabled.
 - amended
   `backlog/decisions/028-character-tts-generation-profile-ownership.md`
   for Slice 2A ownership and Slice 2B's expected repository-generation mutation
-  contract.
+  contract;
+- added
+  `backlog/decisions/037-roleplay-assistant-identity-and-persona-user-profile-separation.md`
+  for Slice 3A's Persona/User Profile boundary, durable authority acquisition,
+  local conversation provenance, trusted message authorship, and assignment
+  compare-and-set contract.
 
 **Reason:** Slice 1 strengthens the existing cross-module TTS service contract
 with atomic request admission/publication, expected configuration revisions,
@@ -1700,6 +1738,10 @@ restore boundary without adding a store, schema, or migration; the adapter
 amendment makes already-required structured capability authority implementable
 at its true failure boundary. Provider configuration and process-runtime
 ownership remain unchanged.
+
+Slice 3A requires ADR-037 because it separates two previously conflated domain
+models, adds target-owned authority and conversation provenance, and defines
+cross-module authorship and assignment mutation boundaries.
 
 ## Acceptance criteria by delivery slice
 
@@ -1759,9 +1801,14 @@ Only the Slice 2B subsection governs the next task.
 - Assignments remain scoped across local database changes and authenticated
   principals sharing one server, remain stable across credential rotation, and
   survive character soft delete/restore.
-- Server assignments require a durable versioned server-profile/principal
-  authority; credential fingerprints and the currently active server are never
-  used as substitutes.
+- Server assignments require a durable versioned opaque
+  target-scope/principal authority; URL-derived routing IDs, credential
+  fingerprints, and the currently active server are never used as substitutes.
+- Current Sync V2 does not transport character assignment authority; a
+  synced/imported conversation without locally proven provenance remains
+  authority-null and unassignable.
+- Assignment set/replace rejects a stale selected profile revision or changed
+  current assignment, and detach cannot remove another process's replacement.
 - Console character speech uses an immutable app-issued
   session/message/content snapshot and rejects stale, deleted,
   variant-switched, spoofed, or mismatched authorship.

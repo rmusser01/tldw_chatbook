@@ -26,6 +26,7 @@ from Tests.Agents.test_mcp_tool_provider import (
 )
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Chat.console_display_state import (
+    ConsoleControlState,
     ConsoleInspectorState,
     ConsoleStagedContextState,
     build_console_evidence_display_state,
@@ -352,8 +353,27 @@ async def test_console_mode_bar_groups_location_mode_and_readiness():
         # count falls back to the same dash for any non-numeric label.
         assert (
             mode_plain
-            == "Chat/RAG/Follow | General | Sources 0 | Tools — | Approvals 0"
+            == "Chat/RAG/Follow | Assistant: General | Sources 0 | Tools — | Approvals 0"
         )
+
+
+def test_console_mode_bar_treats_assistant_label_as_literal_text():
+    control_state = ConsoleControlState(
+        provider_label="Provider: OpenAI",
+        model_label="Model: gpt-5",
+        assistant_label="Persona: [bold]Guide[/bold]",
+        rag_label="RAG: off",
+        sources_label="Sources: 0 staged",
+        tools_label="Tools: 0 ready",
+        approvals_label="Approvals: 0 pending",
+    )
+    summary = ChatScreen._console_mode_summary(control_state)
+
+    mode_bar = ChatScreen._hidden_static(summary, id="console-mode-bar")
+    rendered = mode_bar.render()
+
+    assert mode_bar._render_markup is False
+    assert getattr(rendered, "plain", str(rendered)) == summary
 
 
 @pytest.mark.asyncio

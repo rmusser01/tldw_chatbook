@@ -1,22 +1,24 @@
 # Tests/UI/test_personas_workbench.py
 """Mounted tests for the destination-native Personas workbench."""
 
+from copy import deepcopy
 import inspect
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
-from tldw_chatbook.Character_Chat.active_user_profile import (
-    get_active_user_profile_pointer,
-)
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
@@ -24,7 +26,13 @@ from tldw_chatbook.Constants import (
     TAB_LIBRARY,
 )
 from tldw_chatbook.tldw_api import PersonaProfileCreate
+from tldw_chatbook.tldw_api.character_persona_schemas import (
+    LocalPersonaProfileCreate,
+    LocalPersonaProfileUpdate,
+    PersonaProfileUpdate,
+)
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
@@ -38,8 +46,11 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget impo
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterImageUploadRequested,
-    EditUserProfileRequested,
-    UserProfileSaveRequested,
+    EditPersonaProfileRequested,
+    PersonaProfileSaveRequested,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+    PersonasPreviewPane,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -73,17 +84,17 @@ PROFILE = {
 def stub_scope_service(mock_app_instance):
     """Replace the MagicMock scope service with explicit AsyncMock methods."""
     service = Mock()
-    service.list_user_profiles = AsyncMock(
+    service.list_persona_profiles = AsyncMock(
         return_value={"items": [dict(PROFILE)], "total": 1}
     )
-    service.get_user_profile = AsyncMock(return_value=dict(PROFILE))
-    service.create_user_profile = AsyncMock(
+    service.get_persona_profile = AsyncMock(return_value=dict(PROFILE))
+    service.create_persona_profile = AsyncMock(
         return_value={"id": "p-9", "name": "Mentor"}
     )
-    service.update_user_profile = AsyncMock(
+    service.update_persona_profile = AsyncMock(
         return_value={"id": "p-1", "name": "Archivist 2"}
     )
-    service.delete_user_profile = AsyncMock(
+    service.delete_persona_profile = AsyncMock(
         return_value={"status": "deleted", "persona_id": "p-1"}
     )
     mock_app_instance.character_persona_scope_service = service
@@ -414,11 +425,11 @@ class TestWorkbenchShell:
             status = screen.query_one("#personas-status-row", Static)
             assert "Characters: 2" in str(status.renderable)
             assert str(status.renderable) == "Characters: 2"
-            await pilot.click("#personas-mode-user_profiles")
+            await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert "User Profiles: 1" in str(status.renderable)
+            assert "Personas: 1" in str(status.renderable)
             # "prompts" is retired from the Personas mode strip (Task 7):
             # "dictionaries" is the next still-unwired placeholder mode.
             await pilot.click("#personas-mode-dictionaries")
@@ -505,10 +516,11 @@ class TestWorkbenchShell:
             assert "who the AI plays" in str(
                 purpose.renderable
             )  # characters is the default mode
-            await screen._apply_mode("user_profiles")
+            await screen._apply_mode("personas")
             await pilot.pause()
-            assert "who you are" in str(
-                screen.query_one("#personas-purpose", Static).renderable
+            assert (
+                str(screen.query_one("#personas-purpose", Static).renderable)
+                == "Personas — assistant profiles for roleplay and chat"
             )
 
 
@@ -844,7 +856,7 @@ class TestPersonasMode:
     async def _enter_personas_mode(self, pilot):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-mode-user_profiles")
+        await pilot.click("#personas-mode-personas")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -859,10 +871,46 @@ class TestPersonasMode:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Archivist"]
 
+    async def test_personas_mode_uses_assistant_profile_copy_without_human_actions(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            chip = screen.query_one("#personas-mode-personas", Button)
+            assert str(chip.label) == "Personas"
+
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert (
+                str(screen.query_one("#personas-purpose", Static).renderable)
+                == "Personas — assistant profiles for roleplay and chat"
+            )
+            visible_copy = "\n".join(
+                [
+                    str(widget.label)
+                    if isinstance(widget, Button)
+                    else str(widget.renderable)
+                    for widget in screen.query("Button, Static")
+                    if widget.display
+                ]
+            )
+            for forbidden in (
+                "User" + " Profiles",
+                "Set as my name",
+                "Clear my name",
+                "Chatting as",
+            ):
+                assert forbidden not in visible_copy
+
     async def test_personas_mode_service_failure_shows_recovery_state(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
-        stub_scope_service.list_user_profiles.side_effect = RuntimeError(
+        stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
             "scope offline"
         )
 
@@ -872,7 +920,7 @@ class TestPersonasMode:
 
             recovery = screen.query_one("#personas-service-error", Static)
             copy = str(recovery.renderable)
-            assert "User profiles unavailable" in copy
+            assert "Personas unavailable" in copy
             assert "Unavailable:" in copy
             assert "Recovery:" in copy
             assert "scope offline" in copy
@@ -888,7 +936,7 @@ class TestPersonasMode:
                 "Archivist"
             ]
 
-            stub_scope_service.list_user_profiles.side_effect = RuntimeError(
+            stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
                 "scope offline"
             )
             screen._refresh_profile_rows_worker()
@@ -902,7 +950,7 @@ class TestPersonasMode:
     async def test_personas_mode_empty_state_copy_unchanged(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
-        stub_scope_service.list_user_profiles.return_value = {
+        stub_scope_service.list_persona_profiles.return_value = {
             "items": [],
             "total": 0,
         }
@@ -913,7 +961,7 @@ class TestPersonasMode:
 
             empty = screen.query_one("#personas-library-empty", Static)
             assert (
-                str(empty.renderable) == "No user profiles yet - use New to add one."
+                str(empty.renderable) == "No personas yet - use New to add one."
             )
             assert not list(screen.query("#personas-service-error"))
 
@@ -923,9 +971,9 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-row-user_profile-p-1")
+            await pilot.click("#personas-library-row-persona-p-1")
             await pilot.pause()
-            assert screen.state.selected_entity_kind == "user_profile"
+            assert screen.state.selected_entity_kind == "persona"
             assert screen.query_one("#ccp-persona-card-view").display is True
             assert "Selected: Archivist" in str(
                 screen.query_one("#personas-selected-name", Static).renderable
@@ -940,11 +988,11 @@ class TestPersonasMode:
             await pilot.click("#personas-library-new")
             await pilot.pause()
             assert screen._edit_mode == "create"
-            screen.post_message(UserProfileSaveRequested({"name": "Mentor"}))
+            screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            stub_scope_service.create_user_profile.assert_awaited_once()
+            stub_scope_service.create_persona_profile.assert_awaited_once()
             # Save-in-place: create -> edit, the editor stays open (not the
             # read-only card).
             assert screen._edit_mode == "edit"
@@ -956,23 +1004,23 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            assert "User Profiles: 1" in str(
+            assert "Personas: 1" in str(
                 screen.query_one("#personas-status-row", Static).renderable
             )
 
-            stub_scope_service.list_user_profiles.side_effect = RuntimeError(
+            stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
                 "scope offline"
             )
             await pilot.click("#personas-library-new")
             await pilot.pause()
-            screen.post_message(UserProfileSaveRequested({"name": "Mentor"}))
+            screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
 
             assert screen.query_one("#personas-service-error", Static)
             assert not list(screen.query(".personas-library-row"))
-            assert "User Profiles: 0" in str(
+            assert "Personas: 0" in str(
                 screen.query_one("#personas-status-row", Static).renderable
             )
 
@@ -982,28 +1030,71 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-row-user_profile-p-1")
+            await pilot.click("#personas-library-row-persona-p-1")
             await pilot.pause()
-            screen.post_message(EditUserProfileRequested("p-1"))
+            screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
             assert screen._edit_mode == "edit"
             assert screen.query_one("#ccp-persona-editor-view").display is True
             screen.post_message(
-                UserProfileSaveRequested({"id": "p-1", "name": "Archivist 2"})
+                PersonaProfileSaveRequested({"id": "p-1", "name": "Archivist 2"})
             )
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            stub_scope_service.update_user_profile.assert_awaited_once()
-            assert stub_scope_service.update_user_profile.await_args.args[0] == "p-1"
+            stub_scope_service.update_persona_profile.assert_awaited_once()
+            assert stub_scope_service.update_persona_profile.await_args.args[0] == "p-1"
             # Save-in-place: the editor stays open after an edit save too.
             assert screen._edit_mode == "edit"
             assert screen.query_one("#ccp-persona-editor-view").display is True
 
+    async def test_local_profile_editor_roundtrip_builds_local_update_schema(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        raw_local_record = {
+            **PROFILE,
+            "description": "RAW-LOCAL-DESCRIPTION-SENTINEL",
+            "personality_traits": "RAW-LOCAL-TRAITS-SENTINEL",
+        }
+        stub_scope_service.list_persona_profiles.return_value = {
+            "items": [dict(raw_local_record)],
+            "total": 1,
+        }
+        stub_scope_service.get_persona_profile.return_value = dict(raw_local_record)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            await pilot.click("#personas-library-row-persona-p-1")
+            await pilot.pause()
+            screen.post_message(EditPersonaProfileRequested("p-1"))
+            await pilot.pause()
+
+            description = screen.query_one(
+                "#personas-editor-description", TextArea
+            )
+            personality_traits = screen.query_one(
+                "#personas-editor-personality-traits", TextArea
+            )
+            assert description.text == "RAW-LOCAL-DESCRIPTION-SENTINEL"
+            assert personality_traits.text == "RAW-LOCAL-TRAITS-SENTINEL"
+
+            screen.query_one("#personas-editor-name", Input).value = "Archivist Revised"
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            request = stub_scope_service.update_persona_profile.await_args.args[1]
+            assert isinstance(request, LocalPersonaProfileUpdate)
+            assert request.name == "Archivist Revised"
+            assert request.description == "RAW-LOCAL-DESCRIPTION-SENTINEL"
+            assert request.personality_traits == "RAW-LOCAL-TRAITS-SENTINEL"
+
     async def test_profile_save_failure_keeps_editor_open(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
-        stub_scope_service.create_user_profile.side_effect = RuntimeError("boom")
+        stub_scope_service.create_persona_profile.side_effect = RuntimeError("boom")
         notifications: list[tuple[str, str]] = []
         app = PersonasTestApp(mock_app_instance)
         app.notify = lambda message, severity="information", **kwargs: (
@@ -1013,7 +1104,7 @@ class TestPersonasMode:
             screen = await self._enter_personas_mode(pilot)
             await pilot.click("#personas-library-new")
             await pilot.pause()
-            screen.post_message(UserProfileSaveRequested({"name": "Mentor"}))
+            screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -1024,7 +1115,7 @@ class TestPersonasMode:
             assert screen._edit_mode == "create"
             assert screen.query_one("#ccp-persona-editor-view").display is True
 
-    async def test_profile_save_passes_schema_object(
+    async def test_local_profile_save_passes_local_schema_with_local_only_fields(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
         app = PersonasTestApp(mock_app_instance)
@@ -1033,18 +1124,101 @@ class TestPersonasMode:
             await pilot.click("#personas-library-new")
             await pilot.pause()
             screen.post_message(
-                UserProfileSaveRequested(
-                    {"name": "Mentor", "description": "Guides new users"}
+                PersonaProfileSaveRequested(
+                    {
+                        "name": "Mentor",
+                        "description": "Guides new users",
+                        "personality_traits": "patient, curious",
+                    }
                 )
             )
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            stub_scope_service.create_user_profile.assert_awaited_once()
-            request = stub_scope_service.create_user_profile.await_args.args[0]
-            assert isinstance(request, PersonaProfileCreate)
+            stub_scope_service.create_persona_profile.assert_awaited_once()
+            request = stub_scope_service.create_persona_profile.await_args.args[0]
+            assert isinstance(request, LocalPersonaProfileCreate)
             assert request.name == "Mentor"
             assert request.description == "Guides new users"
+            assert request.personality_traits == "patient, curious"
+
+    async def test_server_profile_save_omits_local_only_fields(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            await screen.handle_runtime_backend_changed("server")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            screen.post_message(
+                PersonaProfileSaveRequested(
+                    {
+                        "name": "Mentor",
+                        "description": "Must remain local",
+                        "personality_traits": "must remain local",
+                    }
+                )
+            )
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            request = stub_scope_service.create_persona_profile.await_args.args[0]
+            assert isinstance(request, PersonaProfileCreate)
+            assert request.model_dump().keys().isdisjoint(
+                {"description", "personality_traits"}
+            )
+            assert stub_scope_service.create_persona_profile.await_args.kwargs["mode"] == (
+                "server"
+            )
+
+    async def test_server_profile_edit_blocks_and_omits_local_only_fields(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            await screen.handle_runtime_backend_changed("server")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.click("#personas-library-row-persona-p-1")
+            await pilot.pause()
+            screen.post_message(EditPersonaProfileRequested("p-1"))
+            await pilot.pause()
+
+            assert screen.query_one("#personas-editor-description").disabled is True
+            assert (
+                screen.query_one("#personas-editor-personality-traits").disabled
+                is True
+            )
+            screen.post_message(
+                PersonaProfileSaveRequested(
+                    {
+                        "id": "p-1",
+                        "version": 1,
+                        "name": "Archivist 2",
+                        "description": "Must remain local",
+                        "personality_traits": "must remain local",
+                    }
+                )
+            )
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            request = stub_scope_service.update_persona_profile.await_args.args[1]
+            assert isinstance(request, PersonaProfileUpdate)
+            assert request.model_dump().keys().isdisjoint(
+                {"description", "personality_traits"}
+            )
+            assert stub_scope_service.update_persona_profile.await_args.kwargs["mode"] == (
+                "server"
+            )
 
     async def test_double_save_creates_once(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1054,12 +1228,12 @@ class TestPersonasMode:
             screen = await self._enter_personas_mode(pilot)
             await pilot.click("#personas-library-new")
             await pilot.pause()
-            screen.post_message(UserProfileSaveRequested({"name": "Mentor"}))
-            screen.post_message(UserProfileSaveRequested({"name": "Mentor"}))
+            screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
+            screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            stub_scope_service.create_user_profile.assert_awaited_once()
+            stub_scope_service.create_persona_profile.assert_awaited_once()
 
     async def test_character_mode_unaffected(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1238,7 +1412,7 @@ class TestSearch:
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
         # Replace the scope service stub with two profiles
-        stub_scope_service.list_user_profiles = AsyncMock(
+        stub_scope_service.list_persona_profiles = AsyncMock(
             return_value={"items": [dict(p) for p in PROFILES_FOR_SEARCH], "total": 2}
         )
 
@@ -1246,7 +1420,7 @@ class TestSearch:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-mode-user_profiles")
+            await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -1258,8 +1432,8 @@ class TestSearch:
             assert [_row_text(r) for r in rows] == ["Navigator"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
             # Task 4: personas paginate in-memory; the count is the match total.
-            # task-445: a total of exactly 1 reads singular ("1 user profile").
-            assert "1 user profile" in count
+            # task-445: a total of exactly 1 reads singular ("1 persona").
+            assert "1 persona" in count
 
     async def test_mode_switch_clears_search(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1274,7 +1448,7 @@ class TestSearch:
             await self._wait_for_search_render(pilot)
             assert len(screen.query(".personas-library-row")) == 1
             # Switch to personas mode and back
-            await pilot.click("#personas-mode-user_profiles")
+            await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -1949,7 +2123,7 @@ class TestImportExport:
     async def _open_persona_editor(pilot, mode: str):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-mode-user_profiles")
+        await pilot.click("#personas-mode-personas")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -1957,9 +2131,9 @@ class TestImportExport:
             await pilot.click("#personas-library-new")
             await pilot.pause()
         else:
-            await pilot.click("#personas-library-row-user_profile-p-1")
+            await pilot.click("#personas-library-row-persona-p-1")
             await pilot.pause()
-            screen.post_message(EditUserProfileRequested("p-1"))
+            screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
         assert screen._edit_mode == mode
         assert screen.state.has_unsaved_changes is False
@@ -2169,11 +2343,11 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-mode-user_profiles")
+            await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#personas-library-row-user_profile-p-1")
+            await pilot.click("#personas-library-row-persona-p-1")
             await pilot.pause()
             target = tmp_path / "archivist.json"
             await screen._export_selected_character(str(target), fmt="json")
@@ -2198,7 +2372,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-mode-user_profiles")
+            await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -2662,15 +2836,15 @@ class TestConversationsPanel:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
             assert len(screen.query(".personas-conversation-row")) == 1
-            await pilot.click("#personas-mode-user_profiles")
+            await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#personas-library-row-user_profile-p-1")
+            await pilot.click("#personas-library-row-persona-p-1")
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            assert screen.state.selected_entity_kind == "user_profile"
+            assert screen.state.selected_entity_kind == "persona"
             assert list(screen.query(".personas-conversation-row")) == []
 
 
@@ -2709,11 +2883,11 @@ class TestConsoleActions:
     async def _select_profile(self, pilot):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-mode-user_profiles")
+        await pilot.click("#personas-mode-personas")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        await pilot.click("#personas-library-row-user_profile-p-1")
+        await pilot.click("#personas-library-row-persona-p-1")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -3030,7 +3204,7 @@ class TestConsoleActions:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-mode-user_profiles")
+            await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -3226,8 +3400,8 @@ class TestConsoleActions:
             await pilot.pause()
         app.open_chat_with_handoff.assert_called_once()
         payload = app.open_chat_with_handoff.call_args.args[0]
-        assert payload.metadata["selected_kind"] == "user_profile"
-        assert payload.metadata["selected_target_id"] == "local:user_profile:p-1"
+        assert payload.metadata["selected_kind"] == "persona"
+        assert payload.metadata["selected_target_id"] == "local:persona:p-1"
         assert "Archivist" in payload.title
         assert "You are a meticulous archivist." in payload.body
 
@@ -3244,14 +3418,14 @@ class TestConsoleActions:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_profile(pilot)
             # The service degrades after listing/selection succeeded.
-            stub_scope_service.get_user_profile = AsyncMock(
+            stub_scope_service.get_persona_profile = AsyncMock(
                 side_effect=RuntimeError("service down")
             )
             screen.query_one("#personas-attach-to-console", Button).press()
             await pilot.pause()
         app.open_chat_with_handoff.assert_not_called()
         assert (
-            "User profile is not fully loaded; try reselecting it.",
+            "Persona is not fully loaded; try reselecting it.",
             "warning",
         ) in captured
         assert not any(severity == "information" for _msg, severity in captured)
@@ -3498,7 +3672,7 @@ class TestPreviewIntegration:
             screen = await self._select_first_character(pilot)
             pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
             assert pane._character_label == "Detective Sam"
-            await screen._apply_mode("user_profiles")
+            await screen._apply_mode("personas")
             await pilot.pause()
             assert pane._character_label == "character"
 
@@ -4490,7 +4664,7 @@ class TestPreviewIntegration:
         assert payload.source == "personas"
         assert payload.item_type == "preview-conversation"
         assert payload.title == "Personas preview conversation"
-        assert "you: Hi" in payload.body
+        assert "User: Hi" in payload.body
         assert "Detective Sam: Hello." in payload.body
         assert payload.suggested_prompt == "Continue this conversation in character."
 
@@ -4635,7 +4809,7 @@ class TestPreviewIntegration:
             # History: no trailing unanswered user entry.
             assert not any(entry["role"] == "user" for entry in screen.preview.history)
             # Transcript: the user line stays visible.
-            assert "you: Hi" in pane.transcript_text()
+            assert "User: Hi" in pane.transcript_text()
             status = str(
                 screen.query_one("#personas-preview-status", _Static).renderable
             )
@@ -4847,11 +5021,11 @@ class TestDelete:
     async def _select_profile(self, pilot):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-mode-user_profiles")
+        await pilot.click("#personas-mode-personas")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        await pilot.click("#personas-library-row-user_profile-p-1")
+        await pilot.click("#personas-library-row-persona-p-1")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -4956,8 +5130,8 @@ class TestDelete:
     async def test_delete_profile_calls_scope_service(
         self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
     ):
-        # The full record (with version) comes from get_user_profile.
-        stub_scope_service.get_user_profile = AsyncMock(
+        # The full record (with version) comes from get_persona_profile.
+        stub_scope_service.get_persona_profile = AsyncMock(
             return_value={**PROFILE, "version": 3}
         )
         app = PersonasTestApp(mock_app_instance)
@@ -4966,8 +5140,8 @@ class TestDelete:
             screen = await self._select_profile(pilot)
             self._bypass_confirm(screen, True)
             await self._press_delete(pilot, screen)
-            stub_scope_service.delete_user_profile.assert_awaited_once()
-            await_args = stub_scope_service.delete_user_profile.await_args
+            stub_scope_service.delete_persona_profile.assert_awaited_once()
+            await_args = stub_scope_service.delete_persona_profile.await_args
             assert await_args.args[0] == "p-1"
             assert await_args.kwargs == {"expected_version": 3, "mode": "local"}
             assert screen.state.selected_entity_id is None
@@ -5002,166 +5176,310 @@ class TestDelete:
             )
 
 
-class TestSetAsMyName:
-    """task-442 T3: the "Set as my name" marking UX for user profiles.
+@pytest.fixture
+def legacy_human_config(tmp_path, monkeypatch):
+    """Seed and snapshot a retired human-pointer value without mutating it."""
+    legacy_key = "active_user_profile"
+    config_path = tmp_path / "legacy-persona-config.toml"
+    serialized = (
+        "[character_defaults]\n"
+        f'{legacy_key} = "Archivist"\n'
+        'provider = "anthropic"\n'
+        'model = "claude-3-haiku"\n'
+        "\n[chat_defaults]\n"
+        'provider = "anthropic"\n'
+        'model = "claude-3-haiku"\n'
+        "\n[api_settings.anthropic]\n"
+        'api_key = "unit-test-placeholder-key"\n'
+    ).encode()
+    config_path.write_bytes(serialized)
 
-    The active-profile pointer (T1's ``active_user_profile`` module) is
-    routed through an in-memory store per test - mirrors the isolation
-    fixture in Tests/Character_Chat/test_active_user_profile.py - so these
-    tests never touch the real config file even though the autouse
-    ``isolate_ui_config_path`` fixture already redirects config I/O to a
-    tmp_path file.
-    """
+    from tldw_chatbook import config as config_module
 
-    @pytest.fixture(autouse=True)
-    def _isolated_active_profile_config(self, monkeypatch):
-        store: dict = {}
-        import tldw_chatbook.Character_Chat.active_user_profile as active_profile_module
+    previous_config_path = config_module.get_cli_config_path()
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    mapping = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert mapping["character_defaults"][legacy_key] == "Archivist"
+    mapping_snapshot = deepcopy(mapping)
+    bytes_snapshot = config_path.read_bytes()
+    mutation_calls: list[str] = []
 
+    def _forbid_mutation(label):
+        def _callback(*args, **kwargs):
+            mutation_calls.append(label)
+            raise AssertionError(f"legacy config mutation callback ran: {label}")
+
+        return _callback
+
+    for label, callback_name in (
+        ("save", "save_setting_to_cli_config"),
+        ("save-or-clear", "save_settings_to_cli_config"),
+        ("clear", "delete_settings_from_cli_config"),
+        ("repair", "replace_cli_config"),
+    ):
         monkeypatch.setattr(
-            active_profile_module,
-            "get_cli_setting",
-            lambda section, key, default=None: store.get((section, key), default),
+            config_module,
+            callback_name,
+            _forbid_mutation(label),
+        )
+    for callback_name in (
+        "save_setting_to_cli_config",
+        "save_settings_to_cli_config",
+        "delete_settings_from_cli_config",
+    ):
+        monkeypatch.setattr(
+            chat_screen_module,
+            callback_name,
+            _forbid_mutation(f"chat-screen.{callback_name}"),
         )
 
-        def _save(section, key, value):
-            store[(section, key)] = value
-            return True
+    def _assert_unchanged() -> None:
+        assert config_module.get_cli_config_path() == config_path
+        assert mapping == mapping_snapshot
+        assert config_path.read_bytes() == bytes_snapshot
+        assert mutation_calls == []
 
-        monkeypatch.setattr(active_profile_module, "save_setting_to_cli_config", _save)
-        return store
+    try:
+        yield SimpleNamespace(
+            mapping=mapping,
+            path=config_path,
+            assert_unchanged=_assert_unchanged,
+        )
+    finally:
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(previous_config_path))
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+
+class TestPersonaHumanIdentityRemoval:
+    """Personas remain assistant profiles and never identify the human user."""
 
     async def _select_profile(self, pilot):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-mode-user_profiles")
+        await pilot.click("#personas-mode-personas")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        await pilot.click("#personas-library-row-user_profile-p-1")
+        await pilot.click("#personas-library-row-persona-p-1")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         return screen
 
-    async def test_set_as_my_name_sets_pointer_and_indicates(
-        self, mock_app_instance, stub_characters, stub_scope_service
+    async def test_preview_ignores_seeded_legacy_human_value(
+        self,
+        mock_app_instance,
+        stub_characters,
+        legacy_human_config,
     ):
+        profile_lister = Mock()
+        profile_lister.list_persona_profiles.return_value = [dict(PROFILE)]
+        mock_app_instance.app_config = legacy_human_config.mapping
+        mock_app_instance.local_character_persona_service = profile_lister
         app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
-            screen = await self._select_profile(pilot)
-            button = screen.query_one("#personas-set-my-name", Button)
-            assert str(button.label) == "Set as my name"
 
-            # Button.press() (not pilot.click's coordinate-based synthetic
-            # click) - the inspector's action stack plus this new button can
-            # push content to the last visible row at the default 80x24 test
-            # terminal, where the screen's docked footer occludes clicks
-            # (TestDelete._press_delete uses the same idiom for #personas-delete).
-            button.press()
-            await pilot.pause()
-
-            assert get_active_user_profile_pointer() == "Archivist"
-            summary = screen.query_one("#personas-active-profile-summary", Static)
-            assert str(summary.renderable) == "Chatting as: Archivist"
-            row = screen.query_one("#personas-library-row-user_profile-p-1")
-            assert "●" in _row_text(row)
-            assert (
-                str(screen.query_one("#personas-set-my-name", Button).label)
-                == "Clear my name"
-            )
-
-    async def test_clear_active_profile(
-        self, mock_app_instance, stub_characters, stub_scope_service
-    ):
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
-            screen = await self._select_profile(pilot)
-            screen.query_one("#personas-set-my-name", Button).press()
-            await pilot.pause()
-            assert get_active_user_profile_pointer() == "Archivist"
-
-            screen.query_one("#personas-set-my-name", Button).press()
-            await pilot.pause()
-
-            assert get_active_user_profile_pointer() is None
-            summary = screen.query_one("#personas-active-profile-summary", Static)
-            assert str(summary.renderable) == ""
-            row = screen.query_one("#personas-library-row-user_profile-p-1")
-            assert "●" not in _row_text(row)
-            assert (
-                str(screen.query_one("#personas-set-my-name", Button).label)
-                == "Set as my name"
-            )
-
-    async def test_renaming_active_profile_keeps_indicators_in_sync(
-        self, mock_app_instance, stub_characters, stub_scope_service
-    ):
-        """Whole-branch review: the rename-follows-pointer config write must
-        also refresh the inspector's "Chatting as" summary and the Set/Clear
-        button label -- the pane caches ``_active_profile_name`` (no reactive
-        plumbing), and a stale "Set as my name" label would INVERT the
-        button's action (clearing the pointer) on the next click."""
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
-            screen = await self._select_profile(pilot)
-            screen.query_one("#personas-set-my-name", Button).press()
-            await pilot.pause()
-            assert get_active_user_profile_pointer() == "Archivist"
-
-            # Simulate a save-in-place rename Archivist -> Chronicler: the
-            # refreshed list now carries the new name, then the save
-            # completion path runs.
-            renamed = dict(PROFILE)
-            renamed["name"] = "Chronicler"
-            stub_scope_service.list_user_profiles = AsyncMock(
-                return_value={"items": [renamed], "total": 1}
-            )
-            await screen._after_profile_save({"id": "p-1", "name": "Chronicler"})
-            await pilot.pause()
-
-            assert get_active_user_profile_pointer() == "Chronicler"
-            summary = screen.query_one("#personas-active-profile-summary", Static)
-            assert str(summary.renderable) == "Chatting as: Chronicler"
-            assert (
-                str(screen.query_one("#personas-set-my-name", Button).label)
-                == "Clear my name"
-            )
-
-    async def test_delete_active_profile_clears_pointer(
-        self, mock_app_instance, stub_characters, stub_scope_service
-    ):
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
-            screen = await self._select_profile(pilot)
-            screen.query_one("#personas-set-my-name", Button).press()
-            await pilot.pause()
-            assert get_active_user_profile_pointer() == "Archivist"
-
-            async def _confirm(name: str) -> bool:
-                return True
-
-            screen._confirm_delete = _confirm
-            screen.query_one("#personas-delete", Button).press()
-            await pilot.pause()
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-
-            stub_scope_service.delete_user_profile.assert_awaited_once()
-            assert get_active_user_profile_pointer() is None
-
-    async def test_set_my_name_absent_for_characters(
-        self, mock_app_instance, stub_characters, stub_scope_service
-    ):
-        app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            await pilot.click("#personas-library-row-character-1")
-            await pilot.pause()
-            assert screen.state.selected_entity_kind == "character"
-            assert (
-                screen.query_one("#personas-set-my-name", Button).display is False
+            pane = screen.query_one(PersonasPreviewPane)
+            greeting = screen.preview._load_greetings(
+                {"first_message": "Hello {{user}}, I am {{char}}."},
+                "Elara",
             )
+            await pane.seed_greeting(greeting)
+            pane.append_user("Hi")
+            await pilot.pause()
+
+            assert greeting == "Hello User, I am Elara."
+            assert pane._user_label == "User"
+            assert pane.transcript_text().endswith("User: Hi")
+            profile_lister.list_persona_profiles.assert_not_called()
+
+        legacy_human_config.assert_unchanged()
+
+    async def test_workbench_exposes_no_human_identity_controls_or_marker(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_scope_service,
+        legacy_human_config,
+    ):
+        mock_app_instance.app_config = legacy_human_config.mapping
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = await self._select_profile(pilot)
+            row = screen.query_one("#personas-library-row-persona-p-1")
+            exposed = {
+                "active summary": bool(
+                    list(screen.query("#personas-active-profile-summary"))
+                ),
+                "set/clear button": bool(list(screen.query("#personas-set-my-name"))),
+                "active marker": "●" in _row_text(row),
+                "pointer toggle handler": hasattr(
+                    PersonasScreen, "_handle_set_my_name"
+                ),
+            }
+            assert exposed == {
+                "active summary": False,
+                "set/clear button": False,
+                "active marker": False,
+                "pointer toggle handler": False,
+            }
+
+        legacy_human_config.assert_unchanged()
+
+    @pytest.mark.parametrize("runtime_source", ("local", "server"))
+    async def test_character_handoff_uses_user_without_profile_override(
+        self,
+        monkeypatch,
+        legacy_human_config,
+        runtime_source,
+    ):
+        local_profile_service = Mock()
+        local_profile_service.list_persona_profiles.return_value = [dict(PROFILE)]
+        server_profile_service = Mock()
+        server_profile_service.list_persona_profiles = AsyncMock(
+            return_value={"items": [dict(PROFILE)], "total": 1}
+        )
+
+        class _CardDB:
+            @staticmethod
+            def get_character_card_by_id(character_id):
+                assert character_id == 7
+                return {
+                    "id": 7,
+                    "name": "Elara",
+                    "first_message": "Hello {{user}}, I am {{char}}.",
+                    "system_prompt": "Stay curious.",
+                }
+
+        class _CapturingStore:
+            def __init__(self):
+                self.session = None
+                self.messages = []
+
+            def create_session(self, *, title, workspace_id, settings):
+                self.session = SimpleNamespace(
+                    id="session-1",
+                    title=title,
+                    workspace_id=workspace_id,
+                    settings=settings,
+                    character_id=None,
+                    character_name=None,
+                )
+                return self.session
+
+            def append_message(self, session_id, *, role, content, persist):
+                self.messages.append(
+                    {
+                        "session_id": session_id,
+                        "role": role,
+                        "content": content,
+                        "persist": persist,
+                    }
+                )
+
+        runtime_app = SimpleNamespace(
+            app_config=legacy_human_config.mapping,
+            chachanotes_db=_CardDB(),
+            character_persona_scope_service=server_profile_service,
+            local_character_persona_service=local_profile_service,
+            get_authoritative_runtime_source=lambda: runtime_source,
+        )
+        screen = ChatScreen(runtime_app)
+        store = _CapturingStore()
+        baseline = ConsoleSessionSettings(
+            provider="anthropic",
+            model="claude-3-haiku",
+        )
+
+        monkeypatch.setattr(
+            ChatScreen,
+            "_ensure_console_chat_store",
+            lambda self: store,
+        )
+        monkeypatch.setattr(
+            ChatScreen,
+            "_default_console_session_settings",
+            lambda self: baseline,
+        )
+        monkeypatch.setattr(
+            ChatScreen,
+            "_sync_native_console_chat_ui",
+            AsyncMock(),
+        )
+        monkeypatch.setattr(
+            ChatScreen,
+            "_focus_console_composer_if_needed",
+            lambda self, **kwargs: None,
+        )
+        payload = ChatHandoffPayload(
+            source="personas",
+            item_type="character-card",
+            title="Elara",
+            body="Character summary",
+            metadata={
+                "intent": "start_chat",
+                "selected_kind": "character",
+                "selected_record_id": "7",
+                "selected_name": "Elara",
+            },
+        )
+
+        assert await screen._start_character_console_session(payload) is True
+        assert store.session is not None
+        assert not hasattr(store.session.settings, "user_profile_label")
+        assert [message["content"] for message in store.messages] == [
+            "Hello User, I am Elara."
+        ]
+        local_profile_service.list_persona_profiles.assert_not_called()
+        server_profile_service.list_persona_profiles.assert_not_awaited()
+        legacy_human_config.assert_unchanged()
+
+    async def test_profile_rename_does_not_follow_legacy_pointer(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_scope_service,
+        legacy_human_config,
+    ):
+        mock_app_instance.app_config = legacy_human_config.mapping
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = await self._select_profile(pilot)
+            renamed = {**PROFILE, "name": "Chronicler"}
+            stub_scope_service.list_persona_profiles = AsyncMock(
+                return_value={"items": [renamed], "total": 1}
+            )
+            await screen._after_profile_save(
+                {"id": "p-1", "name": "Chronicler"}
+            )
+            await pilot.pause()
+            assert screen.state.selected_entity_name == "Chronicler"
+
+        legacy_human_config.assert_unchanged()
+
+    async def test_profile_delete_does_not_clear_legacy_pointer(
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_scope_service,
+        legacy_human_config,
+    ):
+        mock_app_instance.app_config = legacy_human_config.mapping
+        stub_scope_service.get_persona_profile = AsyncMock(
+            return_value={**PROFILE, "version": 1}
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = await self._select_profile(pilot)
+            await screen._delete_entity("persona", "p-1", 1)
+            await pilot.pause()
+            stub_scope_service.delete_persona_profile.assert_awaited_once()
+
+        legacy_human_config.assert_unchanged()
 
 
 class TestCharactersEmptyStateGuidance:
@@ -5532,10 +5850,10 @@ class TestKeyboardInteraction:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert screen.state.active_mode == "user_profiles"
+            assert screen.state.active_mode == "personas"
             # ]/[ cycle through the strip order from the active mode.
             # "prompts" is retired from the strip (Task 7), so "dictionaries"
-            # is next after "user_profiles".
+            # is next after "personas".
             await pilot.press("right_square_bracket")
             await pilot.pause()
             assert screen.state.active_mode == "dictionaries"
@@ -5543,7 +5861,7 @@ class TestKeyboardInteraction:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert screen.state.active_mode == "user_profiles"
+            assert screen.state.active_mode == "personas"
 
     async def test_focus_lands_in_editor_name_on_create(
         self, mock_app_instance, stub_characters
@@ -5659,7 +5977,7 @@ class TestDirtyTracking:
     async def test_persona_editor_typing_marks_dirty_and_guard_fires(
         self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
     ):
-        """Carryover: UserProfileEditorWidget._field_changed parity with the
+        """Carryover: PersonaProfileEditorWidget._field_changed parity with the
         character editor — typing posts EditorContentChanged exactly once, the
         screen marks the session unsaved, and leaving consults the guard."""
         from textual.widgets import TextArea
@@ -5668,13 +5986,13 @@ class TestDirtyTracking:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-mode-user_profiles")
+            await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#personas-library-row-user_profile-p-1")
+            await pilot.click("#personas-library-row-persona-p-1")
             await pilot.pause()
-            screen.post_message(EditUserProfileRequested("p-1"))
+            screen.post_message(EditPersonaProfileRequested("p-1"))
             await pilot.pause()
             assert screen._edit_mode == "edit"
             # Programmatic population must not have marked the session dirty.

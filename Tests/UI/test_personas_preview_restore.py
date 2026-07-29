@@ -57,9 +57,8 @@ async def test_restore_conversation_seeds_greeting_then_turns_and_sets_seeded_fo
 
 @pytest.mark.asyncio
 async def test_handle_character_loaded_does_not_relabel_on_preserve():
-    # task-437 review: a same-character reload that PRESERVES an in-progress
-    # transcript must not call set_speakers — that only relabels FUTURE lines,
-    # leaving the already-rendered lines under the old prefix (mixed/stale).
+    # A same-character reload that preserves a transcript only refreshes the
+    # greeting seed. Selection/save paths own speaker-label changes.
     ctrl, _ = _controller_with_mock_pane()
     ctrl.seeded_for = "7"
     pane = ctrl.screen.query_one.return_value

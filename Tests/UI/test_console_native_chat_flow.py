@@ -1,5 +1,7 @@
 import asyncio
+from copy import deepcopy
 import inspect
+import json
 import re
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -45,6 +47,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console import (
@@ -7458,6 +7461,72 @@ def test_native_console_state_round_trip_preserves_session_system_prompt():
     restored_session = restored_store.sessions()[0]
     assert restored_session.settings is not None
     assert restored_session.settings.system_prompt == "Be terse and cite sources."
+
+
+def test_native_console_restore_ignores_legacy_identity_without_mutation_or_config_io(
+    monkeypatch,
+) -> None:
+    """Exercise legacy identity filtering through the native state owner."""
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(
+        id="session-a",
+        title="Legacy identity",
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+    )
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    payload = _bare_console_screen(store)._serialize_native_console_state()
+    assert payload is not None
+    settings_payload = payload["sessions"][0]["settings"]
+    assert settings_payload is not None
+    settings_payload["persona_label"] = "Legacy A"
+    settings_payload["user_profile_label"] = "Legacy B"
+    payload_before = deepcopy(payload)
+    encoded_before = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+    config_callbacks = {
+        name: Mock(name=name)
+        for name in (
+            "save_setting_to_cli_config",
+            "save_settings_to_cli_config",
+            "delete_settings_from_cli_config",
+        )
+    }
+    for name, callback in config_callbacks.items():
+        monkeypatch.setattr(chat_screen_module, name, callback)
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+    restored_screen._restore_native_console_state(payload)
+    restored_session = restored_store.sessions()[0]
+    serialized = restored_screen._serialize_native_console_state()
+
+    assert payload == payload_before
+    assert (
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        == encoded_before
+    )
+    assert restored_session.settings is not None
+    assert not hasattr(restored_session.settings, "user_profile_label")
+    assert serialized is not None
+    serialized_settings = serialized["sessions"][0]["settings"]
+    assert serialized_settings is not None
+    assert {
+        "persona_label",
+        "user_profile_label",
+        "assistant_kind",
+        "assistant_name",
+        "assistant_id",
+    }.isdisjoint(serialized_settings)
+    for callback in config_callbacks.values():
+        callback.assert_not_called()
 
 
 def test_native_console_state_round_trip_preserves_character_identity():

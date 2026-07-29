@@ -2,6 +2,7 @@ import builtins
 import inspect
 
 import tldw_chatbook.Chat.console_session_settings as session_settings
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSettingsContextEstimate,
@@ -15,6 +16,22 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_provider_options,
     validate_console_session_settings,
 )
+
+
+def test_console_settings_and_native_session_schemas_do_not_store_persona_presentation() -> (
+    None
+):
+    settings_fields = set(ConsoleSessionSettings.__dataclass_fields__)
+    session_fields = set(ConsoleChatSession.__dataclass_fields__)
+
+    assert "user_profile_label" not in settings_fields
+    assert "persona_label" not in settings_fields
+    assert {"assistant_kind", "assistant_name", "assistant_id"}.isdisjoint(
+        settings_fields
+    )
+    assert {"assistant_kind", "assistant_name", "assistant_id"}.isdisjoint(
+        session_fields
+    )
 
 
 def test_session_settings_keeps_gateway_runtime_dependencies_out() -> None:
@@ -782,7 +799,7 @@ def test_model_section_lines_compact_summary():
         model_row="Model: gpt-4o (Missing key)",
         context_row="Context: 0 / 8,192 tokens; 4,096 response tokens",
         sampling_row="Sampling: T 0.60, P 0.95, min_p 0.05",
-        identity_row="As: General",
+        identity_row="Assistant: General",
         provider_row="Provider: openai",
         transport_row="Streaming: off",
     )
@@ -822,7 +839,7 @@ def test_model_section_line_truncates_long_local_model_names():
         model_row="Model: Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf",
         context_row="Context: 0 / 4,096 tokens",
         sampling_row="Sampling: T 0.60",
-        identity_row="As: General",
+        identity_row="Assistant: General",
         provider_row="Provider: llama_cpp",
         transport_row="Streaming: off",
     )

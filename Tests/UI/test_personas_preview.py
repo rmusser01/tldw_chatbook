@@ -96,12 +96,12 @@ async def test_seed_append_reset_roundtrip():
         await pilot.pause()
         assert _line_texts(pilot.app) == [
             "character: Greetings, detective.",
-            "you: Who are you?",
+            "User: Who are you?",
             "character: Your humble narrator.",
         ]
         assert pane.transcript_text() == (
             "character: Greetings, detective.\n"
-            "you: Who are you?\n"
+            "User: Who are you?\n"
             "character: Your humble narrator."
         )
         pane.set_status("Ready")
@@ -155,7 +155,7 @@ async def test_status_region_renders_below_transcript():
         # The transcript itself stays in chronological order.
         assert _line_texts(pilot.app) == [
             "character: Greetings, detective.",
-            "you: Who are you?",
+            "User: Who are you?",
         ]
         # The status lives in its own region, separate from the transcript.
         assert "anthropic is not ready" in str(
@@ -180,9 +180,9 @@ async def test_transcript_lines_carry_role_classes():
         await pane.seed_greeting("Hello.")
         pane.append_user("Hi")
         await pilot.pause()
-        you_lines = pilot.app.query(".personas-preview-line-you")
+        user_lines = pilot.app.query(".personas-preview-line-you")
         character_lines = pilot.app.query(".personas-preview-line-character")
-        assert [str(line.renderable) for line in you_lines] == ["you: Hi"]
+        assert [str(line.renderable) for line in user_lines] == ["User: Hi"]
         assert [str(line.renderable) for line in character_lines] == ["character: Hello."]
 
 
@@ -197,7 +197,7 @@ async def test_test_reply_posts_message_and_clears_input():
         await pilot.pause()
         assert pilot.app.replies == ["Hi there"]
         assert pilot.app.query_one("#personas-preview-input", Input).value == ""
-        assert _line_texts(pilot.app) == ["you: Hi there"]
+        assert _line_texts(pilot.app) == ["User: Hi there"]
 
 
 async def test_enter_in_input_submits_like_test_reply():
@@ -215,7 +215,7 @@ async def test_enter_in_input_submits_like_test_reply():
         await pilot.pause()
         assert pilot.app.replies == ["Hi there"]
         assert field.value == ""
-        assert _line_texts(pilot.app) == ["you: Hi there"]
+        assert _line_texts(pilot.app) == ["User: Hi there"]
 
 
 async def test_oversized_message_is_rejected_with_readable_status():
@@ -318,7 +318,7 @@ async def test_discard_partial_reply_removes_in_progress_line():
         await pane.discard_partial_reply()
         pane.append_user("Still works")
         await pilot.pause()
-        assert pane.transcript_text() == "character: Hello.\nyou: Still works"
+        assert pane.transcript_text() == "character: Hello.\nUser: Still works"
 
 
 async def test_seed_greeting_clears_partial_reply_state():
@@ -394,7 +394,7 @@ async def test_markup_like_transcript_content_renders_without_raising():
         await pilot.pause()  # would raise MarkupError at render with markup on
         assert _line_texts(pilot.app) == [
             "character: [/oops]",
-            "you: [/bad user]",
+            "User: [/bad user]",
             "character: [bold]unclosed",
         ]
 
@@ -432,22 +432,25 @@ async def test_speaker_labels_use_character_name():
         await pilot.pause()
         assert _line_texts(app) == [
             "Sherlock Holmes: Greetings.",
-            "you: Hi",
+            "User: Hi",
             "Sherlock Holmes: Elementary.",
         ]
         assert pane.transcript_text() == (
-            "Sherlock Holmes: Greetings.\nyou: Hi\nSherlock Holmes: Elementary."
+            "Sherlock Holmes: Greetings.\nUser: Hi\nSherlock Holmes: Elementary."
         )
 
 
-async def test_speaker_labels_default_without_name():
+async def test_empty_preview_uses_neutral_user_label():
     app = PreviewApp()
     async with app.run_test() as pilot:
         pane = app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("")
+        assert pane.transcript_text() == ""
+        assert pane._user_label == "User"
         pane.append_user("Hi")
         pane.append_reply("Hello.")
         await pilot.pause()
-        assert _line_texts(app) == ["you: Hi", "character: Hello."]
+        assert _line_texts(app) == ["User: Hi", "character: Hello."]
 
 
 async def test_set_speakers_ignores_empty_name():
@@ -496,9 +499,9 @@ async def test_set_speakers_relabels_existing_character_lines():
         await pilot.pause()
         pane.set_speakers(character="Bob")
         await pilot.pause()
-        assert pane.transcript_text() == "Bob: Hi.\nyou: hello\nBob: hey"
+        assert pane.transcript_text() == "Bob: Hi.\nUser: hello\nBob: hey"
         assert "Alice" not in pane.transcript_text()
-        assert _line_texts(app) == ["Bob: Hi.", "you: hello", "Bob: hey"]
+        assert _line_texts(app) == ["Bob: Hi.", "User: hello", "Bob: hey"]
 
 
 async def test_reset_speakers_restores_defaults():
@@ -512,7 +515,8 @@ async def test_reset_speakers_restores_defaults():
         pane.append_user("Hi")
         pane.append_reply("Hello.")
         await pilot.pause()
-        assert _line_texts(app) == ["you: Hi", "character: Hello."]
+        assert pane._user_label == "User"
+        assert _line_texts(app) == ["User: Hi", "character: Hello."]
 
 
 # ===== TASK-438: alternate-greeting selector =====
@@ -564,36 +568,40 @@ async def test_choosing_greeting_posts_message():
         assert posted == [1]
 
 
-# ===== task-442 T4: {{user}} renders the active user profile's name =====
+# ===== TASK-617.1: Personas never supply the human identity =====
 
 
 @pytest.fixture
-def _isolated_active_profile_config(monkeypatch):
-    """Route the active-profile pointer at an in-memory store (never real config)."""
-    store: dict = {}
-    import tldw_chatbook.Character_Chat.active_user_profile as active_profile_module
+def _seed_legacy_human_identity(monkeypatch):
+    """Expose a retired config value through the existing config read seam."""
+    from tldw_chatbook import config as config_module
 
+    legacy_key = "_".join(("active", "user", "profile"))
     monkeypatch.setattr(
-        active_profile_module,
-        "get_cli_setting",
-        lambda section, key, default=None: store.get((section, key), default),
+        config_module,
+        "load_cli_config_and_ensure_existence",
+        lambda: {"character_defaults": {legacy_key: "Sam"}},
     )
 
-    def _save(section, key, value):
-        store[(section, key)] = value
-        return True
+    def _forbid_write(*args, **kwargs):
+        raise AssertionError("preview must not mutate the legacy human pointer")
 
-    monkeypatch.setattr(active_profile_module, "save_setting_to_cli_config", _save)
-    return store
+    monkeypatch.setattr(
+        config_module,
+        "save_settings_to_cli_config",
+        _forbid_write,
+    )
 
 
 class _ProfileService:
-    """Sync ``list_user_profiles`` double matching the T1 resolver contract."""
+    """Sync profile service spy that must stay outside preview rendering."""
 
     def __init__(self, names):
         self._names = list(names)
+        self.calls = 0
 
-    def list_user_profiles(self, **kwargs):
+    def list_persona_profiles(self, **kwargs):
+        self.calls += 1
         return [{"name": name} for name in self._names]
 
 
@@ -610,68 +618,63 @@ class _ControllerScreen:
         return self._app.query_one(PersonasPreviewPane)
 
 
-async def test_greeting_renders_active_profile_name_and_labels_user_lines(
-    _isolated_active_profile_config,
+async def test_greeting_uses_literal_user_and_preview_label(
+    _seed_legacy_human_identity,
 ):
-    """Active profile "Sam": {{user}} renders "Sam" and user lines are labeled."""
-    from tldw_chatbook.Character_Chat.active_user_profile import (
-        set_active_user_profile,
-    )
+    """A legacy profile value cannot replace the neutral human identity."""
     from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
         PersonasPreviewController,
     )
 
-    set_active_user_profile("Sam")
     app = PreviewApp()
     async with app.run_test() as pilot:
         pane = app.query_one(PersonasPreviewPane)
-        controller = PersonasPreviewController(
-            _ControllerScreen(app, _ProfileService(["Sam"]))
-        )
+        service = _ProfileService(["Sam"])
+        controller = PersonasPreviewController(_ControllerScreen(app, service))
         seed = controller._load_greetings(
             {"first_message": "Hello {{user}}, I am {{char}}."}, "Elara"
         )
-        assert seed == "Hello Sam, I am Elara."
-        assert pane._user_label == "Sam"  # set_speakers(user="Sam") was called
+        assert seed == "Hello User, I am Elara."
+        assert pane._user_label == "User"
+        assert service.calls == 0
         await pane.seed_greeting(seed)
         pane.append_user("hi")
         await pilot.pause()
-        assert "Sam: hi" in pane.transcript_text()
+        assert "User: hi" in pane.transcript_text()
 
 
 class _ServerScopeService:
-    """Async ``list_user_profiles`` double matching the T2 scope-service contract."""
+    """Async profile service spy that must stay outside preview rendering."""
 
     def __init__(self, payload):
         self._payload = payload
+        self.calls = 0
 
-    async def list_user_profiles(self, **kwargs):
+    async def list_persona_profiles(self, **kwargs):
+        self.calls += 1
         return self._payload
 
 
-async def test_greeting_renders_server_backend_profile_name(
-    _isolated_active_profile_config,
+@pytest.mark.parametrize("mode", ("local", "server"))
+async def test_runtime_modes_share_neutral_user_substitution(
+    mode,
+    _seed_legacy_human_identity,
 ):
-    """task-551: with the workbench in server mode, {{user}} resolves against
-    the scope service's server profiles ("Sam") - the site (a) async callers
-    (``reset_for_character``/``handle_character_loaded``) thread the resolved
-    name into ``_load_greetings`` instead of the sync local-only fallback."""
-    from tldw_chatbook.Character_Chat.active_user_profile import (
-        set_active_user_profile,
-    )
+    """Local and server modes both render the same literal human identity."""
     from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
         PersonasPreviewController,
     )
 
-    set_active_user_profile("Sam")
     app = PreviewApp()
     async with app.run_test() as pilot:
         pane = app.query_one(PersonasPreviewPane)
-        screen = _ControllerScreen(app, None)
-        screen.app_instance.character_persona_scope_service = _ServerScopeService(
+        local_service = _ProfileService(["Sam"])
+        server_service = _ServerScopeService(
             [{"name": "Sam"}]
         )
-        screen.persona_handler = SimpleNamespace(current_mode=lambda: "server")
+        screen = _ControllerScreen(app, local_service)
+        screen.app_instance.character_persona_scope_service = server_service
+        screen.persona_handler = SimpleNamespace(current_mode=lambda: mode)
         screen.workers = SimpleNamespace(cancel_group=lambda *a, **k: None)
         controller = PersonasPreviewController(screen)
 
@@ -682,66 +685,14 @@ async def test_greeting_renders_server_backend_profile_name(
         )
         await pilot.pause()
 
-        assert pane._user_label == "Sam"  # set_speakers(user="Sam") was called
-        assert "Hello Sam, I am Elara." in pane.transcript_text()
+        assert pane.transcript_text() == "character: Hello User, I am Elara."
+        assert pane._user_label == "User"
+        assert local_service.calls == 0
+        assert server_service.calls == 0
 
 
-async def test_greeting_falls_back_to_user_without_active_profile(
-    _isolated_active_profile_config,
-):
-    """No active profile: output stays byte-identical to the "User" literal and
-    the user speaker label is untouched (AC3 twin)."""
-    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
-        PersonasPreviewController,
-    )
-
-    app = PreviewApp()
-    async with app.run_test() as pilot:
-        pane = app.query_one(PersonasPreviewPane)
-        controller = PersonasPreviewController(
-            _ControllerScreen(app, _ProfileService(["Sam"]))
-        )
-        seed = controller._load_greetings(
-            {"first_message": "Hello {{user}}, I am {{char}}."}, "Elara"
-        )
-        assert seed == "Hello User, I am Elara."
-        assert pane._user_label == "you"  # default label: no user override
-        await pane.seed_greeting(seed)
-        pane.append_user("hi")
-        await pilot.pause()
-        assert "you: hi" in pane.transcript_text()
-
-
-async def test_dangling_active_profile_pointer_falls_back_to_user(
-    _isolated_active_profile_config,
-):
-    """A pointer at a deleted/renamed profile reads as no-active (byte-compat)."""
-    from tldw_chatbook.Character_Chat.active_user_profile import (
-        set_active_user_profile,
-    )
-    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
-        PersonasPreviewController,
-    )
-
-    set_active_user_profile("Ghost")
-    app = PreviewApp()
-    async with app.run_test():
-        pane = app.query_one(PersonasPreviewPane)
-        controller = PersonasPreviewController(
-            _ControllerScreen(app, _ProfileService(["Sam"]))
-        )
-        seed = controller._load_greetings({"first_message": "Hello {{user}}."}, "Elara")
-        assert seed == "Hello User."
-        assert pane._user_label == "you"
-
-
-async def test_alias_tokens_substitute_character_name_without_active_profile(
-    _isolated_active_profile_config,
-):
-    """{{persona}}/{{character}} always resolve to the character's name, even
-    with no active user profile: T4's active-profile branching only ever
-    touches the user-side tokens, so the character-side aliases (task-437)
-    are unaffected (task-442 T5 alias pin)."""
+async def test_alias_tokens_substitute_character_name_with_neutral_user():
+    """Character-side aliases stay independent from the neutral human label."""
     from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
         PersonasPreviewController,
     )

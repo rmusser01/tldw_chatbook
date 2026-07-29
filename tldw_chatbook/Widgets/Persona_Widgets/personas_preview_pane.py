@@ -30,10 +30,9 @@ from .personas_pane_messages import (
 #: while keeping pathological pastes out of the provider request.
 PREVIEW_MESSAGE_MAX_CHARS = 4000
 
-#: Neutral speaker labels used until a character is seeded (task-437). "you"
-#: stays the user label until TASK-442 introduces the active persona/user name.
+#: Neutral speaker labels used before and after a character is seeded.
 _DEFAULT_CHARACTER_LABEL = "character"
-_DEFAULT_USER_LABEL = "you"
+_DEFAULT_USER_LABEL = "User"
 
 
 class PersonasPreviewPane(Vertical):
@@ -94,7 +93,7 @@ class PersonasPreviewPane(Vertical):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._greeting: str = ""
-        # Rendered transcript line texts ("you: ..." / "character: ...");
+        # Rendered transcript line texts ("User: ..." / "character: ...");
         # the source of truth for transcript_text().
         self._lines: list[str] = []
         # In-progress streamed reply line (begin_reply/append_reply_chunk).
@@ -120,7 +119,7 @@ class PersonasPreviewPane(Vertical):
             yield VerticalScroll(id="personas-preview-transcript")
             # The status line is a status region adjacent to the input, kept
             # BELOW the transcript so provider/error messages never render
-            # above the chronological greeting -> you -> character history.
+            # above the chronological greeting -> User -> character history.
             yield Static("", id="personas-preview-status")
             with Horizontal(id="personas-preview-greeting-row", classes="ds-toolbar"):
                 yield Static("Greeting:", classes="personas-preview-greeting-label")
@@ -194,8 +193,8 @@ class PersonasPreviewPane(Vertical):
         """The greeting a Reset restores (transcript line 0), for state capture."""
         return self._greeting
 
-    def set_speakers(self, *, character: str | None = None, user: str | None = None) -> None:
-        """Set transcript speaker labels; empty/None keeps the current label.
+    def set_speakers(self, *, character: str | None = None) -> None:
+        """Set the character speaker label; empty/None keeps the current label.
 
         When the character label changes, already-rendered character lines are
         relabelled too (e.g. a rename mid-conversation), so the transcript never
@@ -203,15 +202,10 @@ class PersonasPreviewPane(Vertical):
 
         Args:
             character: Display name for character/greeting lines (e.g. the card name).
-            user: Display name for the user's lines (e.g. the active user profile's
-                name, task-442); future lines only, already-rendered lines keep
-                their original prefix.
         """
         old_character = self._character_label
         if character:
             self._character_label = character
-        if user:
-            self._user_label = user
         if character and character != old_character:
             self._relabel_character_lines(old_character, character)
 
@@ -266,7 +260,7 @@ class PersonasPreviewPane(Vertical):
 
         ``_lines`` is parallel (append order) to the mounted
         ``.personas-preview-line`` widgets; character lines are identified by
-        their role class so a ``you:``-line that happens to start with the name
+        their role class so a ``User:`` line that happens to start with the name
         is never touched.
         """
         full_old, bare_old = f"{old_label}: ", f"{old_label}:"
@@ -287,7 +281,7 @@ class PersonasPreviewPane(Vertical):
             widget.update(self._styled_line(new_line))
 
     def append_user(self, text: str) -> None:
-        """Append a "you: ..." transcript line."""
+        """Append a neutral ``User: ...`` transcript line."""
         self._append_line(f"{self._user_label}: {text}", "personas-preview-line-you")
 
     def append_reply(self, text: str) -> None:

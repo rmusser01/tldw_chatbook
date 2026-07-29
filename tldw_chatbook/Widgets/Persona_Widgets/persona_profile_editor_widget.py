@@ -1,8 +1,8 @@
-"""User profile create/edit form for the Personas workbench."""
+"""Persona create/edit form for the Roleplay workbench."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, get_args
+from typing import Any, Dict, Literal, get_args
 
 from textual import on
 from textual.app import ComposeResult
@@ -14,35 +14,39 @@ from ...tldw_api.character_persona_schemas import PersonaMode
 from .personas_pane_messages import (
     EditorContentChanged,
     PersonaProfileEditCancelled,
-    UserProfileSaveRequested,
+    PersonaProfileSaveRequested,
 )
 
 #: The `PersonaMode` literal's values, for the editor's mode `Select` options.
 PERSONA_MODES: tuple[str, ...] = get_args(PersonaMode)
-#: Default mode for a persona with none set, matching `UserProfileCreate`.
+#: Default mode for a persona with none set.
 _DEFAULT_MODE = "session_scoped"
+_LOCAL_FIELDS_NOTE = (
+    "Description and personality traits are local-only and cannot be saved "
+    "to the server."
+)
 
 
-class UserProfileEditorWidget(Container):
+class PersonaProfileEditorWidget(Container):
     """ds-field-row form: name, description, system prompt, personality
     traits, mode, and enabled toggle."""
 
     DEFAULT_CSS = """
-    UserProfileEditorWidget {
+    PersonaProfileEditorWidget {
         width: 100%;
         height: 100%;
     }
 
-    UserProfileEditorWidget #personas-editor-body {
+    PersonaProfileEditorWidget #personas-editor-body {
         height: 1fr;
     }
 
-    UserProfileEditorWidget .ds-toolbar {
+    PersonaProfileEditorWidget .ds-toolbar {
         height: 1;
         min-height: 1;
     }
 
-    UserProfileEditorWidget .ds-toolbar Button {
+    PersonaProfileEditorWidget .ds-toolbar Button {
         width: auto;
         min-width: 0;
         height: 1;
@@ -55,7 +59,7 @@ class UserProfileEditorWidget(Container):
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
        a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
-    UserProfileEditorWidget .is-invalid {
+    PersonaProfileEditorWidget .is-invalid {
         border: round red;
     }
     """
@@ -70,6 +74,7 @@ class UserProfileEditorWidget(Container):
     def __init__(self, **kwargs) -> None:
         kwargs.setdefault("id", "ccp-persona-editor-view")
         super().__init__(**kwargs)
+        self._runtime_source: Literal["local", "server"] = "local"
         self._persona_id: str | None = None
         self._version: int | None = None
         # Dirty tracking (UX-E3): see PersonasCharacterEditorWidget for the
@@ -89,11 +94,11 @@ class UserProfileEditorWidget(Container):
         self._user_touched: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Static("User Profile Editor", classes="destination-section")
+        yield Static("Persona Editor", classes="destination-section")
         with VerticalScroll(id="personas-editor-body"):
             with Vertical(classes="ds-field-row"):
                 yield Label("Name")
-                yield Input(id="personas-editor-name", placeholder="User profile name")
+                yield Input(id="personas-editor-name", placeholder="Persona name")
             with Vertical(classes="ds-field-row"):
                 yield Label("Description")
                 yield TextArea(id="personas-editor-description")
@@ -103,6 +108,12 @@ class UserProfileEditorWidget(Container):
             with Vertical(classes="ds-field-row"):
                 yield Label("Personality traits")
                 yield TextArea(id="personas-editor-personality-traits")
+            local_fields_note = Static(
+                _LOCAL_FIELDS_NOTE,
+                id="personas-editor-local-fields-note",
+            )
+            local_fields_note.display = False
+            yield local_fields_note
             with Vertical(classes="ds-field-row"):
                 yield Label("Mode")
                 yield Select(
@@ -121,7 +132,48 @@ class UserProfileEditorWidget(Container):
             yield Button("Save", id="personas-editor-save")
             yield Button("Cancel", id="personas-editor-cancel")
 
-    def load_persona(self, data: Dict[str, Any]) -> None:
+    def on_mount(self) -> None:
+        """Apply the initial local/server field availability after compose."""
+        self._sync_runtime_source_controls()
+
+    @property
+    def runtime_source(self) -> Literal["local", "server"]:
+        """The backend whose mutation contract this editor currently targets."""
+        return self._runtime_source
+
+    def set_runtime_source(self, runtime_source: str) -> None:
+        """Set the mutation source and make local-only fields explicit.
+
+        Args:
+            runtime_source: Exactly ``"local"`` or ``"server"``.
+
+        Raises:
+            ValueError: If ``runtime_source`` is not supported.
+        """
+        normalized = str(runtime_source or "").strip().lower()
+        if normalized not in {"local", "server"}:
+            raise ValueError(f"Unsupported Persona runtime source: {runtime_source}")
+        self._runtime_source = normalized
+        if self.is_mounted:
+            self._sync_runtime_source_controls()
+
+    def _sync_runtime_source_controls(self) -> None:
+        """Enable local extensions locally and explain their server exclusion."""
+        is_server = self._runtime_source == "server"
+        self.query_one("#personas-editor-description", TextArea).disabled = is_server
+        self.query_one(
+            "#personas-editor-personality-traits", TextArea
+        ).disabled = is_server
+        self.query_one(
+            "#personas-editor-local-fields-note", Static
+        ).display = is_server
+
+    def load_persona(
+        self,
+        data: Dict[str, Any],
+        *,
+        runtime_source: str | None = None,
+    ) -> None:
         """Push persona data into the editor form fields.
 
         CCPPersonaHandler calls this method when it queries ``#ccp-persona-editor-view``
@@ -129,6 +181,7 @@ class UserProfileEditorWidget(Container):
         """
         self._loading = True
         try:
+            self.set_runtime_source(runtime_source or self._runtime_source)
             self._persona_id = str(data.get("id", "")) or None
             # Kept for optimistic locking: the save path passes it back as
             # ``expected_version`` (None for new personas).
@@ -166,9 +219,9 @@ class UserProfileEditorWidget(Container):
         self._dirty_posted = False
         self._user_touched = False
 
-    def new_persona(self) -> None:
+    def new_persona(self, *, runtime_source: str | None = None) -> None:
         """Clear the form for a new (unsaved) persona."""
-        self.load_persona({})
+        self.load_persona({}, runtime_source=runtime_source)
 
     def mark_saved(self, record: Dict[str, Any]) -> None:
         """Re-baseline dirty state to a just-persisted persona (save-in-place).
@@ -197,18 +250,19 @@ class UserProfileEditorWidget(Container):
         """
         data: Dict[str, Any] = {
             "name": self.query_one("#personas-editor-name", Input).value.strip(),
-            "description": self.query_one(
-                "#personas-editor-description", TextArea
-            ).text,
             "system_prompt": self.query_one(
                 "#personas-editor-system-prompt", TextArea
-            ).text,
-            "personality_traits": self.query_one(
-                "#personas-editor-personality-traits", TextArea
             ).text,
             "mode": self.query_one("#personas-editor-mode", Select).value,
             "is_active": self.query_one("#personas-editor-enabled", Switch).value,
         }
+        if self._runtime_source == "local":
+            data["description"] = self.query_one(
+                "#personas-editor-description", TextArea
+            ).text
+            data["personality_traits"] = self.query_one(
+                "#personas-editor-personality-traits", TextArea
+            ).text
         if self._persona_id is not None:
             data["id"] = self._persona_id
         if self._version is not None:
@@ -333,7 +387,7 @@ class UserProfileEditorWidget(Container):
         self._user_touched = True
         if any(level == "error" for _fid, _msg, level in self._run_validation()):
             return
-        self.post_message(UserProfileSaveRequested(self.collect()))
+        self.post_message(PersonaProfileSaveRequested(self.collect()))
 
     @on(Button.Pressed, "#personas-editor-cancel")
     def _cancel_pressed(self, event: Button.Pressed) -> None:
@@ -341,4 +395,4 @@ class UserProfileEditorWidget(Container):
         self.post_message(PersonaProfileEditCancelled())
 
 
-__all__ = ["UserProfileEditorWidget"]
+__all__ = ["PersonaProfileEditorWidget"]

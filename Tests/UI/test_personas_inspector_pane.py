@@ -121,7 +121,7 @@ async def test_persona_selection_disables_png_export():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Archivist", kind="user_profile")
+        pane.show_selection(name="Archivist", kind="persona")
         await pilot.pause()
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-export-png", Button).disabled is True
@@ -148,13 +148,13 @@ async def test_character_selection_renders_all_actions():
 
 async def test_persona_selection_hides_only_export_png():
     """Task-443 AC1: personas have no PNG card, so Export PNG does not
-    render for a user_profile selection - Attach/Start Chat/Export JSON
+    render for a persona selection - Attach/Start Chat/Export JSON
     still apply (the readiness gate, not kind, controls their disabled
     state)."""
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Archivist", kind="user_profile")
+        pane.show_selection(name="Archivist", kind="persona")
         await pilot.pause()
         for button_id in (
             "#personas-attach-to-console",

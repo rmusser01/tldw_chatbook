@@ -553,7 +553,11 @@ class PersonaSetupState(BaseModel):
     last_test_type: PersonaSetupTestType | None = None
 
 
-class PersonaProfileCreate(BaseModel):
+class LocalPersonaProfileCreate(BaseModel):
+    """Strict mutation contract for creating an app-owned persona."""
+
+    model_config = ConfigDict(extra="forbid")
+
     id: StrictStr | None = Field(default=None, min_length=1, max_length=200)
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
@@ -562,15 +566,17 @@ class PersonaProfileCreate(BaseModel):
     mode: PersonaMode = "session_scoped"
     system_prompt: str | None = None
     is_active: bool = True
-    # Freeform trait description, matching the character-side `personality`
-    # field (NOT the structured archetype `personality_traits: list[str]`).
     personality_traits: str = ""
     use_persona_state_context_default: bool = True
     voice_defaults: PersonaVoiceDefaults = Field(default_factory=PersonaVoiceDefaults)
     setup: PersonaSetupState = Field(default_factory=PersonaSetupState)
 
 
-class PersonaProfileUpdate(BaseModel):
+class LocalPersonaProfileUpdate(BaseModel):
+    """Strict mutation contract for updating an app-owned persona."""
+
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
     character_card_id: int | None = None
@@ -578,6 +584,56 @@ class PersonaProfileUpdate(BaseModel):
     system_prompt: str | None = None
     is_active: bool | None = None
     personality_traits: str | None = None
+    use_persona_state_context_default: bool | None = None
+    voice_defaults: PersonaVoiceDefaults | None = None
+    setup: PersonaSetupState | None = None
+
+    @field_validator(
+        "name",
+        "mode",
+        "is_active",
+        "personality_traits",
+        "use_persona_state_context_default",
+        "voice_defaults",
+        "setup",
+        mode="before",
+    )
+    @classmethod
+    def _reject_null_for_non_nullable_fields(
+        cls, value: Any, info: ValidationInfo
+    ) -> Any:
+        if value is None:
+            raise ValueError(f"{info.field_name} cannot be null")
+        return value
+
+
+class PersonaProfileCreate(BaseModel):
+    """Server request contract for creating a persona profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: StrictStr | None = Field(default=None, min_length=1, max_length=200)
+    name: str = Field(..., min_length=1, max_length=200)
+    archetype_key: str | None = Field(default=None, min_length=1, max_length=200)
+    character_card_id: int | None = None
+    mode: PersonaMode = "session_scoped"
+    system_prompt: str | None = None
+    is_active: bool = True
+    use_persona_state_context_default: bool = True
+    voice_defaults: PersonaVoiceDefaults = Field(default_factory=PersonaVoiceDefaults)
+    setup: PersonaSetupState = Field(default_factory=PersonaSetupState)
+
+
+class PersonaProfileUpdate(BaseModel):
+    """Server request contract for updating a persona profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    character_card_id: int | None = None
+    mode: PersonaMode | None = None
+    system_prompt: str | None = None
+    is_active: bool | None = None
     use_persona_state_context_default: bool | None = None
     voice_defaults: PersonaVoiceDefaults | None = None
     setup: PersonaSetupState | None = None
@@ -606,17 +662,6 @@ class PersonaProfileResponse(BaseModel):
 class PersonaProfileDeleteResponse(BaseModel):
     status: str
     persona_id: StrictStr
-
-
-# task-442 T2: "persona" never refers to the user in this app -- the
-# app-side concept is "user profile". These DTO class names are the wire
-# mirror of the server's own contract (request/response bodies exchanged
-# with tldw_server), so the ``PersonaProfile*`` names above stay put; the
-# ONE sanctioned internal "persona" remnant is this alias block, which lets
-# every app-side importer spell the concept correctly.
-UserProfileCreate = PersonaProfileCreate
-UserProfileUpdate = PersonaProfileUpdate
-UserProfileResponse = PersonaProfileResponse
 
 
 class PersonaInfo(BaseModel):

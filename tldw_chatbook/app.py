@@ -4229,7 +4229,7 @@ class TldwCli(
         )
         self.local_character_persona_service = LocalCharacterPersonaService(
             self.chachanotes_db,
-            user_profile_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
+            persona_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
         )
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
