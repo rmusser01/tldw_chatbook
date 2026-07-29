@@ -170,8 +170,14 @@ async def test_configuration_is_recorded_in_the_persistent_log(monkeypatch):
         ),
     )
 
+    # Two handlers registered, one task queued, one orphaned type: the three
+    # candidate quantities deliberately diverge so item_count == 2 can only be
+    # explained by len(registered) -- not queue depth (1) or len(orphaned) (1).
+    # Do not "simplify" these back to matching numbers.
     loop = SchedulerLoop(
-        _tasks_db(), handlers={"reminder": AsyncMock()}, poll_interval=0
+        _tasks_db(),
+        handlers={"reminder": AsyncMock(), "other_job": AsyncMock()},
+        poll_interval=0,
     )
     loop.queue.push(_due_watchlist_task())
     loop.report_configuration()
@@ -179,5 +185,5 @@ async def test_configuration_is_recorded_in_the_persistent_log(monkeypatch):
     events = [r for r in recorded if r["event"] == "scheduler_configured"]
     assert events, f"no scheduler_configured recorded, got {recorded}"
     assert events[-1]["component"] == "scheduling"
-    assert events[-1]["item_count"] == 1
+    assert events[-1]["item_count"] == 2  # handlers, not queue depth (1) or orphaned (1)
     assert events[-1]["status"] == "unhandled_types"
