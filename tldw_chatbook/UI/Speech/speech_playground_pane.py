@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from textual import on
+from textual.binding import Binding
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical
@@ -151,6 +152,19 @@ class SpeechPlaygroundPane(
     from the first. The mixin queries its controls by id, which is why this
     rebuild kept the legacy ids.
     """
+
+    #: The legacy widget's shortcuts, carried over verbatim. Deleting it
+    #: took its BINDINGS with it while the `action_*` methods survived in
+    #: `SpeechPlaybackMixin` -- five shortcuts silently stopped working, and
+    #: the screen still advertised them. Nothing in the per-view tests could
+    #: have noticed: the methods were all still there and still callable.
+    BINDINGS = [
+        Binding("ctrl+g", "generate_tts", "Generate Speech"),
+        Binding("ctrl+r", "random_text", "Random Text"),
+        Binding("ctrl+l", "clear_text", "Clear Text"),
+        Binding("ctrl+p", "play_audio", "Play Audio"),
+        Binding("ctrl+s", "stop_audio", "Stop Audio"),
+    ]
 
     def __init__(
         self,
