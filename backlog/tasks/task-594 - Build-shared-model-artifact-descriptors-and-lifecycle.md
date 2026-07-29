@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:02'
-updated_date: '2026-07-29 04:10'
+updated_date: '2026-07-29 04:13'
 labels:
   - stt
   - artifacts
@@ -62,7 +62,7 @@ Implemented a direct, one-production-module artifact core: typed immutable descr
 
 Lease contract: reuses TASK-505 with lifecycle-first writer ordering, sorted artifact keys, exact shared closure verification, and shared closure leases retained for the complete artifact-handle/resident-model lifetime.
 
-Verification: 277 offline Model_Artifacts tests passed with no warnings; Ruff lint and format checks passed; mypy passed for 3 source files; compileall and git diff --check passed.
+Verification: 278 offline Model_Artifacts tests passed with no warnings; Ruff lint and format checks passed; mypy passed for 3 source files; compileall and git diff --check passed.
 
 Deliberate non-goals: downloader, Textual UI, inference/runtime integration, model catalog, content-addressed deduplication, LLM migration, and first-run wizard implementation.
 
