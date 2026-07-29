@@ -253,6 +253,7 @@ def test_successful_install_writes_its_own_first_event(
             handler
             for handler in root_logger.handlers
             if isinstance(handler, PrivateRotatingFileHandler)
+            and handler.baseFilename == str(log_path)
         )
         installed_handler.flush()
 
