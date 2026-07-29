@@ -6406,9 +6406,7 @@ class ChatScreen(BaseAppScreen):
             target
         )
         raw_runtime_backend = conversation.get("runtime_backend")
-        if raw_runtime_backend is None:
-            runtime_backend = "local"
-        elif type(raw_runtime_backend) is str:
+        if type(raw_runtime_backend) is str:
             runtime_backend = raw_runtime_backend
         else:
             runtime_backend = ""
@@ -11900,7 +11898,7 @@ class ChatScreen(BaseAppScreen):
                 session_kwargs["runtime_backend"] = (
                     raw_runtime_backend
                     if type(raw_runtime_backend) is str
-                    else ("local" if raw_runtime_backend is None else "")
+                    else ""
                 )
                 for key in (
                     "assistant_kind",

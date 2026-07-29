@@ -6694,6 +6694,64 @@ async def test_console_resume_restores_server_character_identity_without_local_l
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("include_runtime_backend", "runtime_backend"),
+    (
+        pytest.param(False, None, id="missing"),
+        pytest.param(True, None, id="none"),
+        pytest.param(True, 123, id="non-string"),
+    ),
+)
+async def test_console_resume_rejects_character_identity_without_valid_source(
+    include_runtime_backend,
+    runtime_backend,
+):
+    """A persisted row cannot infer local provenance from its other fields."""
+    conversation = {
+        "id": "invalid-source",
+        "title": "Invalid source",
+        "assistant_kind": "character",
+        "assistant_id": "7",
+        "assistant_authority_id": "local-authority",
+        "character_id": 7,
+    }
+    if include_runtime_backend:
+        conversation["runtime_backend"] = runtime_backend
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "invalid-source": {
+                "conversation": conversation,
+                "root_threads": [],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        local_lookup = AsyncMock(return_value="Must not resolve")
+        console._resolve_resumed_character_name = local_lookup
+
+        assert (
+            await console._resume_console_workspace_conversation("invalid-source")
+            is True
+        )
+
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        assert session.runtime_backend == ""
+        assert session.assistant_kind == "character"
+        assert session.assistant_id == "7"
+        assert session.assistant_authority_id == "local-authority"
+        assert session.character_id is None
+        assert session.character_ref() is None
+        local_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_console_resume_rehydrates_local_character_name_from_local_projection():
     """Only a local character row drives the local card/name lookup."""
     app = _build_test_app()
@@ -7796,6 +7854,53 @@ def test_native_console_state_restore_adapts_legacy_local_character_without_auth
     assert restored_session.assistant_authority_id is None
     assert restored_session.character_id == 7
     assert restored_session.character_ref() is None
+
+
+@pytest.mark.parametrize(
+    ("include_runtime_backend", "runtime_backend"),
+    (
+        pytest.param(False, None, id="missing"),
+        pytest.param(True, None, id="none"),
+        pytest.param(True, 123, id="non-string"),
+    ),
+)
+def test_source_aware_native_console_state_rejects_character_without_valid_source(
+    include_runtime_backend,
+    runtime_backend,
+):
+    """Partial source-aware state cannot infer local character provenance."""
+    raw_session = {
+        "id": "session-a",
+        "title": "Invalid source",
+        "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+        "persisted_conversation_id": None,
+        "draft": "",
+        "settings": None,
+        "assistant_kind": "character",
+        "assistant_id": "7",
+        "assistant_authority_id": "local-authority",
+        "character_id": 7,
+    }
+    if include_runtime_backend:
+        raw_session["runtime_backend"] = runtime_backend
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-a",
+        "sessions": [raw_session],
+        "messages_by_session": {"session-a": []},
+    }
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+
+    restored_screen._restore_native_console_state(payload)
+
+    session = restored_store.sessions()[0]
+    assert session.runtime_backend == ""
+    assert session.assistant_kind == "character"
+    assert session.assistant_id == "7"
+    assert session.assistant_authority_id == "local-authority"
+    assert session.character_id is None
+    assert session.character_ref() is None
 
 
 def test_native_console_state_restore_does_not_coerce_identity_scalars():
