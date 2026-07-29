@@ -651,6 +651,7 @@ class PersonasScreen(BaseAppScreen):
         # count for the active (search, tag) filter, cached under
         # ``_count_cache_key`` so page-nav/sort reuse it and only a filter
         # change recomputes it.
+        self._character_page_generation: int = 0
         self._characters: list[dict] = []
         self._selected_server_character: tuple[str, dict] | None = None
         self._character_total: int = 0
@@ -1009,6 +1010,7 @@ class PersonasScreen(BaseAppScreen):
         normalized = str(runtime_backend or "").strip().lower()
         if normalized not in {"local", "server"}:
             return
+        self._next_character_page_generation()
         active_mode = self.state.active_mode
         self.runtime_backend = normalized
         self._selected_server_character = None
@@ -1216,6 +1218,11 @@ class PersonasScreen(BaseAppScreen):
         """Return whether local character editor/DB seams still own this screen."""
         return self.state.runtime_source == "local"
 
+    def _next_character_page_generation(self) -> int:
+        """Invalidate older page work and return this request's generation."""
+        self._character_page_generation += 1
+        return self._character_page_generation
+
     def _sync_local_character_actions(self) -> None:
         """Disable every local-only character action while browsing the server."""
         if not self.is_mounted:
@@ -1260,6 +1267,7 @@ class PersonasScreen(BaseAppScreen):
     def _server_character_request_is_current(
         self,
         *,
+        generation: int,
         expected_server_id: str | None,
         mode: str,
         query: str,
@@ -1269,7 +1277,8 @@ class PersonasScreen(BaseAppScreen):
     ) -> bool:
         """Return whether one server page request still owns the library."""
         return (
-            self.state.runtime_source == "server"
+            self._character_page_generation == generation
+            and self.state.runtime_source == "server"
             and self._active_server_target() == expected_server_id
             and self.state.active_mode == mode
             and self.state.search_query == query
@@ -1281,6 +1290,7 @@ class PersonasScreen(BaseAppScreen):
     def _local_character_request_is_current(
         self,
         *,
+        generation: int,
         runtime_source: str,
         mode: str,
         query: str,
@@ -1290,7 +1300,8 @@ class PersonasScreen(BaseAppScreen):
     ) -> bool:
         """Return whether one local page request still owns the library."""
         return (
-            runtime_source == "local"
+            self._character_page_generation == generation
+            and runtime_source == "local"
             and self.state.runtime_source == runtime_source
             and self.state.active_mode == mode
             and self.state.search_query == query
@@ -1358,16 +1369,26 @@ class PersonasScreen(BaseAppScreen):
         offset: int,
         sort_label: str,
         tag_label: str,
+        request_is_current: Callable[[], bool] | None = None,
+        commit_page_offset: bool = False,
+        commit_count_cache: bool = False,
+        count_cache_key: tuple | None = None,
     ) -> None:
         """Commit and render one already-fenced character page."""
-        self._characters = records
-        self._character_total = total
-        self._update_status_row()
-        try:
-            library = self.query_one(PersonasLibraryPane)
-        except QueryError:
-            return
         async with self._render_lock:
+            if request_is_current is not None and not request_is_current():
+                return
+            if commit_page_offset:
+                self.state.page_offset = offset
+            if commit_count_cache:
+                self._count_cache_key = count_cache_key
+            self._characters = records
+            self._character_total = total
+            self._update_status_row()
+            try:
+                library = self.query_one(PersonasLibraryPane)
+            except QueryError:
+                return
             await library.update_rows(
                 self._build_library_rows(records, "character"),
                 total=total,
@@ -1383,22 +1404,43 @@ class PersonasScreen(BaseAppScreen):
             ):
                 library.mark_active_row("character", self.state.selected_entity_id)
 
-    async def _reload_server_character_page(self) -> None:
+    async def _reload_server_character_page(
+        self, *, reset_offset: bool = False
+    ) -> None:
         """Load one server-owned page through the existing character scope service."""
+        generation = self._next_character_page_generation()
+        if reset_offset:
+            self.state.page_offset = 0
         mode = self.state.active_mode
         query = self.state.search_query
         sort_key = self.state.sort_key
         tag = self.state.tag_filter
         offset = self.state.page_offset
         expected_server_id = self._active_server_target()
-        self._count_cache_key = None
+
+        def request_is_current() -> bool:
+            return self._server_character_request_is_current(
+                generation=generation,
+                expected_server_id=expected_server_id,
+                mode=mode,
+                query=query,
+                sort_key=sort_key,
+                tag=tag,
+                offset=offset,
+            )
+
         await self._display_character_page(
             [],
             total=0,
             offset=offset,
             sort_label="Sort: Server order",
             tag_label="Tag: All",
+            request_is_current=request_is_current,
+            commit_count_cache=True,
+            count_cache_key=None,
         )
+        if not request_is_current():
+            return
         if expected_server_id is None:
             return
 
@@ -1434,26 +1476,13 @@ class PersonasScreen(BaseAppScreen):
         except asyncio.CancelledError:
             raise
         except Exception:
+            if not request_is_current():
+                return
             logger.warning("Server character page load failed.")
-            if self._server_character_request_is_current(
-                expected_server_id=expected_server_id,
-                mode=mode,
-                query=query,
-                sort_key=sort_key,
-                tag=tag,
-                offset=offset,
-            ):
-                self._notify("Could not load server characters.", "error")
+            self._notify("Could not load server characters.", "error")
             return
 
-        if not self._server_character_request_is_current(
-            expected_server_id=expected_server_id,
-            mode=mode,
-            query=query,
-            sort_key=sort_key,
-            tag=tag,
-            offset=offset,
-        ):
+        if not request_is_current():
             return
 
         inferred_total = offset + len(page_records) + (1 if has_more else 0)
@@ -1467,6 +1496,7 @@ class PersonasScreen(BaseAppScreen):
             offset=offset,
             sort_label="Sort: Server order",
             tag_label="Tag: All",
+            request_is_current=request_is_current,
         )
 
     async def _reload_character_page(self, *, reset_offset: bool = False) -> None:
@@ -1475,22 +1505,36 @@ class PersonasScreen(BaseAppScreen):
         Local DB count/list work remains off-thread. Server mode delegates to
         the existing source-aware scope service and never consults local rows.
         """
+        if self.state.runtime_source == "server":
+            await self._reload_server_character_page(reset_offset=reset_offset)
+            return
+        generation = self._next_character_page_generation()
         if reset_offset:
             self.state.page_offset = 0
-        if self.state.runtime_source == "server":
-            await self._reload_server_character_page()
-            return
         runtime_source = self.state.runtime_source
         mode = self.state.active_mode
         query = self.state.search_query
         sort_key = self.state.sort_key
         tag = self.state.tag_filter
-        offset = self.state.page_offset
+        requested_offset = self.state.page_offset
+        page_offset = requested_offset
         search = self._fts_match_query()
         db = self._character_db()
         if db is None:
             return
         cache_key = (search, tag)
+
+        def request_is_current() -> bool:
+            return self._local_character_request_is_current(
+                generation=generation,
+                runtime_source=runtime_source,
+                mode=mode,
+                query=query,
+                sort_key=sort_key,
+                tag=tag,
+                offset=requested_offset,
+            )
+
         try:
             if self._count_cache_key == cache_key:
                 total = self._character_total
@@ -1499,31 +1543,23 @@ class PersonasScreen(BaseAppScreen):
                     count_character_page, db, search_term=search, tag=tag
                 )
             # Clamp a now-out-of-range offset back onto the last page.
-            if offset > 0 and offset >= total:
-                offset = max(
+            if page_offset > 0 and page_offset >= total:
+                page_offset = max(
                     0,
                     ((total - 1) // PERSONAS_LIBRARY_PAGE_SIZE)
                     * PERSONAS_LIBRARY_PAGE_SIZE,
                 )
-                self.state.page_offset = offset
             records = await asyncio.to_thread(
                 get_character_page_for_ui,
                 db,
                 limit=PERSONAS_LIBRARY_PAGE_SIZE,
-                offset=offset,
+                offset=page_offset,
                 order_by=sort_key,
                 search_term=search,
                 tag=tag,
             )
         except Exception as exc:
-            if not self._local_character_request_is_current(
-                runtime_source=runtime_source,
-                mode=mode,
-                query=query,
-                sort_key=sort_key,
-                tag=tag,
-                offset=offset,
-            ):
+            if not request_is_current():
                 return
             logger.opt(exception=True).warning("Character page load failed.")
             self._notify(f"Could not load characters: {exc}", "error")
@@ -1532,25 +1568,19 @@ class PersonasScreen(BaseAppScreen):
         # supersedes this render. (is_mounted is deliberately NOT checked: it is
         # still False while the initial on-mount refresh runs; teardown is
         # tolerated instead by catching the pane QueryError below.)
-        if not self._local_character_request_is_current(
-            runtime_source=runtime_source,
-            mode=mode,
-            query=query,
-            sort_key=sort_key,
-            tag=tag,
-            offset=offset,
-        ):
+        if not request_is_current():
             return
-        # Commit shared count state only after the guard passes, so a
-        # superseded reload cannot clobber the winner's cached count.
-        self._count_cache_key = cache_key
         sort_labels = dict(self._character_sort_cycle())
         await self._display_character_page(
             records,
             total=total,
-            offset=offset,
+            offset=page_offset,
             sort_label=f"Sort: {sort_labels.get(sort_key, 'Name')}",
             tag_label=f"Tag: {tag}" if tag else "Tag: All",
+            request_is_current=request_is_current,
+            commit_page_offset=True,
+            commit_count_cache=True,
+            count_cache_key=cache_key,
         )
 
     async def _reload_active_library(self) -> None:

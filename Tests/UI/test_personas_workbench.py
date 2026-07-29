@@ -4093,6 +4093,151 @@ class TestServerCharacterSourceIsolation:
         assert screen._characters == []
         assert screen._character_total == 0
 
+    async def test_stale_local_offset_clamp_cannot_mutate_newer_page(
+        self, mock_app_instance, monkeypatch
+    ):
+        """A stale offset-100 count cannot clamp or render over offset 50."""
+        import asyncio
+
+        screen = PersonasScreen(mock_app_instance)
+        screen.state.runtime_source = "local"
+        screen.state.page_offset = 100
+        screen._character_db = lambda: object()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        count_calls = 0
+
+        async def interleaved_to_thread(function, *args, **kwargs):
+            nonlocal count_calls
+            if function is personas_screen_module.count_character_page:
+                count_calls += 1
+                if count_calls == 1:
+                    started.set()
+                    await release.wait()
+                    return 1
+                return 60
+            if kwargs["offset"] == 50:
+                return [{"id": 50, "name": "Newer offset winner"}]
+            return [{"id": 1, "name": "Stale clamped row"}]
+
+        monkeypatch.setattr(
+            personas_screen_module.asyncio, "to_thread", interleaved_to_thread
+        )
+        notify = Mock()
+        screen._notify = notify
+        display = AsyncMock(wraps=screen._display_character_page)
+        screen._display_character_page = display
+
+        stale = asyncio.create_task(screen._reload_character_page())
+        await started.wait()
+        screen.state.page_offset = 50
+        await screen._reload_character_page()
+        assert screen._characters == [{"id": 50, "name": "Newer offset winner"}]
+
+        release.set()
+        await stale
+
+        assert screen.state.page_offset == 50
+        assert screen._characters == [{"id": 50, "name": "Newer offset winner"}]
+        assert screen._character_total == 60
+        assert display.await_count == 1
+        notify.assert_not_called()
+
+    async def test_local_query_aba_drops_older_success(
+        self, mock_app_instance, monkeypatch
+    ):
+        """Local X→Y→X keeps the newer X page when the older X returns last."""
+        import asyncio
+
+        screen = PersonasScreen(mock_app_instance)
+        screen.state.runtime_source = "local"
+        screen._character_db = lambda: object()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        count_calls = 0
+        x_fetch_calls = 0
+
+        async def interleaved_to_thread(function, *args, **kwargs):
+            nonlocal count_calls, x_fetch_calls
+            if function is personas_screen_module.count_character_page:
+                count_calls += 1
+                if count_calls == 1:
+                    started.set()
+                    await release.wait()
+                return 1
+            if kwargs["search_term"] is not None:
+                return [{"id": 2, "name": "Y page"}]
+            x_fetch_calls += 1
+            if x_fetch_calls == 1:
+                return [{"id": 3, "name": "Newer X winner"}]
+            return [{"id": 1, "name": "Older X result"}]
+
+        monkeypatch.setattr(
+            personas_screen_module.asyncio, "to_thread", interleaved_to_thread
+        )
+
+        older_x = asyncio.create_task(screen._reload_character_page())
+        await started.wait()
+        screen.state.search_query = "y"
+        await screen._reload_character_page()
+        screen.state.search_query = ""
+        await screen._reload_character_page()
+        assert screen._characters == [{"id": 3, "name": "Newer X winner"}]
+
+        release.set()
+        await older_x
+
+        assert screen._characters == [{"id": 3, "name": "Newer X winner"}]
+
+    @pytest.mark.parametrize("older_outcome", ("success", "failure"))
+    async def test_server_target_aba_drops_older_request(
+        self, mock_app_instance, older_outcome
+    ):
+        """Server X→Y→X keeps newer X rows and ignores older X completion."""
+        import asyncio
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        call_count = 0
+
+        async def list_characters(*, mode, limit, offset):
+            nonlocal call_count
+            assert mode == "server"
+            call_count += 1
+            if call_count == 1:
+                started.set()
+                await release.wait()
+                if older_outcome == "failure":
+                    raise RuntimeError("older X failed")
+                return {"items": [{"id": 1, "name": "Older X"}], "total": 1}
+            if mock_app_instance.active_server_id == "target-y":
+                return {"items": [{"id": 2, "name": "Y page"}], "total": 1}
+            return {"items": [{"id": 3, "name": "Newer X winner"}], "total": 1}
+
+        mock_app_instance.runtime_backend = "server"
+        mock_app_instance.active_server_id = "target-x"
+        mock_app_instance.character_persona_scope_service = SimpleNamespace(
+            list_characters=AsyncMock(side_effect=list_characters)
+        )
+        screen = PersonasScreen(mock_app_instance)
+        notify = Mock()
+        screen._notify = notify
+
+        older_x = asyncio.create_task(screen._reload_server_character_page())
+        await started.wait()
+        mock_app_instance.active_server_id = "target-y"
+        await screen._reload_server_character_page()
+        mock_app_instance.active_server_id = "target-x"
+        await screen._reload_server_character_page()
+        assert screen._characters == [{"id": 3, "name": "Newer X winner"}]
+
+        release.set()
+        await older_x
+
+        assert screen._characters == [{"id": 3, "name": "Newer X winner"}]
+        assert screen._character_total == 1
+        notify.assert_not_called()
+
     @pytest.mark.parametrize(
         "changed_dimension",
         ("source", "target", "mode", "query", "sort", "tag", "offset"),
