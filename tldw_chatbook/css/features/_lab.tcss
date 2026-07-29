@@ -815,3 +815,22 @@ Input.speech-setting-control {
     background: transparent;
     margin-bottom: 1;
 }
+
+/* The action strip sits OUTSIDE the scroll region: `save-settings-btn`
+ * measured at y=102 after every provider block, four screens below the
+ * fold. Keeping it above the groups is what makes it reachable regardless
+ * of how many are expanded. */
+.speech-settings-pane {
+    height: 1fr;
+}
+
+#speech-settings-actions {
+    height: 1;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#speech-settings-groups {
+    height: 1fr;
+    overflow-y: auto;
+}
