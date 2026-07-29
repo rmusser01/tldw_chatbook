@@ -446,3 +446,79 @@ def test_latest_primary_run_targets_newest_primary_only(tmp_path):
     assert record is not None and record["id"] == old_primary
 
     assert db.latest_primary_run("no-such-conversation") is None
+
+
+# --- task-1273 review finding A: list_runs(agent_kind=...) + count_runs(),
+# so a caller needing "the N newest PRIMARY runs, plus an exact count of how
+# many more exist" never has to fetch every run (of every kind) for a
+# conversation just to filter and count client-side. ---
+
+
+def test_list_runs_agent_kind_filters_in_the_query(db):
+    primary = db.create_run(conversation_id="c", agent_kind="primary")
+    db.create_run(conversation_id="c", agent_kind="subagent", parent_run_id=primary)
+
+    only_primary = db.list_runs("c", agent_kind="primary")
+    assert [r["id"] for r in only_primary] == [primary]
+    assert all(r["agent_kind"] == "primary" for r in only_primary)
+
+
+def test_list_runs_agent_kind_none_preserves_prior_behavior(db):
+    db.create_run(conversation_id="c", agent_kind="primary")
+    db.create_run(conversation_id="c", agent_kind="subagent")
+    assert len(db.list_runs("c")) == 2
+    assert len(db.list_runs("c", agent_kind=None)) == 2
+
+
+def test_list_runs_agent_kind_and_limit_compose(db):
+    for _ in range(3):
+        db.create_run(conversation_id="c", agent_kind="primary")
+    db.create_run(conversation_id="c", agent_kind="subagent")
+    limited = db.list_runs("c", agent_kind="primary", limit=2)
+    assert len(limited) == 2
+    assert all(r["agent_kind"] == "primary" for r in limited)
+
+
+def test_count_runs_matches_agent_kind_and_conversation(db):
+    db.create_run(conversation_id="c", agent_kind="primary")
+    db.create_run(conversation_id="c", agent_kind="primary")
+    db.create_run(conversation_id="c", agent_kind="subagent")
+    db.create_run(conversation_id="other", agent_kind="primary")
+
+    assert db.count_runs("c") == 3
+    assert db.count_runs("c", agent_kind="primary") == 2
+    assert db.count_runs("c", agent_kind="subagent") == 1
+    assert db.count_runs("no-such-conversation") == 0
+
+
+def test_count_runs_excludes_superseded_when_asked(db):
+    a = db.create_run(conversation_id="c", agent_kind="primary")
+    db.create_run(conversation_id="c", agent_kind="primary")
+    db.supersede_run_tree(a)
+
+    assert db.count_runs("c") == 2
+    assert db.count_runs("c", include_superseded=False) == 1
+
+
+def test_count_runs_does_not_materialize_rows_beyond_a_single_count(db, monkeypatch):
+    """Finding A's own point: `count_runs` must be a single `COUNT(*)`
+    query, never `len(list_runs(...))` in disguise -- assert on the ACTUAL
+    SQL sent, the same trace-callback technique
+    test_transaction_begins_immediate_not_deferred already uses."""
+    for _ in range(5):
+        db.create_run(conversation_id="c", agent_kind="primary")
+
+    calls = []
+    original_get_connection = type(db)._get_connection
+
+    def spy_get_connection(self):
+        conn = original_get_connection(self)
+        conn.set_trace_callback(calls.append)
+        return conn
+
+    monkeypatch.setattr(type(db), "_get_connection", spy_get_connection)
+    n = db.count_runs("c", agent_kind="primary")
+    assert n == 5
+    select_calls = [c for c in calls if c.strip().upper().startswith("SELECT")]
+    assert len(select_calls) == 1
+    assert "COUNT(*)" in select_calls[0].upper()

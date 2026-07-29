@@ -513,3 +513,176 @@ def test_format_cross_run_results_no_hits_still_states_coverage():
     assert "Searched 1 of 2 run(s)" in text
     assert "1 could not be located" in text
     assert "No matching records." in text
+
+
+def test_format_cross_run_results_folds_omitted_run_count_into_not_attempted():
+    """`omitted_run_count` (runs beyond MAX_CROSS_RUN_RUNS, known only as a
+    COUNT -- see finding A) and `not_searched_run_ids` (runs cut by the
+    shared deadline, known by exact id) must both land in the SAME "not
+    attempted" coverage note and the same total, even though the caller
+    only ever has ids for one of the two."""
+    from tldw_chatbook.Agents.run_log_search import (
+        CrossRunSearchResult,
+        format_cross_run_results,
+    )
+
+    result = CrossRunSearchResult(
+        hits=[], searched_run_ids=["a"], unresolved_run_ids=[],
+        not_searched_run_ids=["b"],
+    )
+    text = format_cross_run_results(result, omitted_run_count=3)
+    # 1 searched + 0 unresolved + (1 not_searched + 3 omitted) = 5 total.
+    assert "Searched 1 of 5 run(s)" in text
+    assert "4 not attempted this call" in text
+
+
+# -- Review findings on PR #1088 ---------------------------------------------
+#
+# A (Performance, agent_service.py): the conversation-scope path called
+# AgentRunsDB.list_runs(conversation_id) with no limit, materialising every
+# run a conversation has ever had before capping to MAX_CROSS_RUN_RUNS
+# client-side. Fixed by pushing both the `agent_kind` filter and the
+# `limit` into the query (AgentRunsDB.list_runs/count_runs), so the DB
+# returns at most what the cap can use, plus one cheap COUNT(*) query for
+# the exact omitted total (never every omitted row).
+#
+# B (Reliability, run_log_search.py): the shared deadline was checked
+# before `load_records()`, but loading itself is unbounded I/O not counted
+# against the budget. Fixed by making `load_records` itself deadline-aware
+# (stops between segments, raises RunLogSearchTimeout) AND recomputing the
+# remaining deadline again immediately after each load, before searching --
+# either exhaustion routes that run to `not_searched`, never to a partial
+# scan silently presented as complete.
+
+
+def test_more_runs_than_the_cap_reports_the_excess_correctly(tmp_path, monkeypatch):
+    """Finding A: a conversation with more PRIMARY runs than
+    MAX_CROSS_RUN_RUNS must still report an EXACT omitted count via the
+    bounded `count_runs` query -- not silently claim full coverage, and not
+    require fetching every omitted run just to count them."""
+    from tldw_chatbook.Agents import run_log as run_log_module
+    from tldw_chatbook.Agents.run_log_search import MAX_CROSS_RUN_RUNS
+
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = ToolCatalogRegistry()
+    reg.register_provider(BuiltinToolProvider())
+
+    extra = 3
+    older_count = MAX_CROSS_RUN_RUNS + extra
+    for i in range(older_count):
+        _plant_older_run(
+            db, run_log_module, "c1", with_log=True, content=f"older {i}"
+        )
+
+    script = [
+        _svc_fence(SEARCH_RUN_LOG_TOOL_NAME, {"scope": "conversation"}),
+        {"choices": [{"message": {"content": "done"}}]},
+    ]
+
+    def chat(**kwargs):
+        return script.pop(0)
+
+    service = AgentService(db, reg, chat_call=chat)
+    _rid, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "go"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+
+    all_primary = [r for r in db.list_runs("c1") if r["agent_kind"] == "primary"]
+    total_primary = len(all_primary)  # older_count + 1 (current)
+    assert total_primary == older_count + 1
+    current = max(all_primary, key=lambda r: r["created_at"])
+    tool_results = [
+        s["result"]
+        for s in current["steps"]
+        if s["kind"] == "tool_result" and s.get("tool_name") == SEARCH_RUN_LOG_TOOL_NAME
+    ]
+    assert tool_results, "expected a search_run_log tool_result step"
+    text = tool_results[0]
+    # The window holds MAX_CROSS_RUN_RUNS runs (current + the 9 most recent
+    # older ones), all with real logs -- so all MAX_CROSS_RUN_RUNS are
+    # SEARCHED. The remaining (extra + 1) older runs fall outside the
+    # window and are reported via the exact `count_runs` total, not fetched.
+    assert f"Searched {MAX_CROSS_RUN_RUNS} of {total_primary} run(s)" in text
+    assert "could not be located" not in text
+    assert f"{extra + 1} not attempted this call" in text
+
+
+def test_load_records_is_deadline_aware(tmp_path, monkeypatch):
+    """The stricter half of finding B: `load_records` itself enforces
+    `deadline_seconds`, raising RunLogSearchTimeout rather than silently
+    returning a partial (and indistinguishable-from-complete) record list.
+    """
+    from tldw_chatbook.Agents import run_log as run_log_module
+    from tldw_chatbook.Agents.run_log_search import RunLogSearchTimeout, load_records
+
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    log_dir = _write_run(run_log_module, "run-x", ["hello"])
+
+    with pytest.raises(RunLogSearchTimeout):
+        load_records(log_dir, deadline_seconds=0.0)
+
+    # Unbounded (the default, and every call before task-1273) is
+    # completely unaffected -- byte-identical to prior behaviour.
+    assert len(load_records(log_dir)) == 1
+
+
+def test_slow_load_is_recorded_as_not_searched_not_scanned_or_dropped(
+    tmp_path, monkeypatch
+):
+    """Finding B, at the `search_across_runs` level: a run whose LOAD
+    consumes the shared budget must land in `not_searched_run_ids` -- never
+    silently scanned against a partial (truncated) record list (which would
+    look like a complete search that found nothing), and never simply
+    missing from every bucket (which would break the searched + unresolved
+    + not_searched == total accounting the coverage line relies on).
+    """
+    from tldw_chatbook.Agents import run_log as run_log_module
+    from tldw_chatbook.Agents import run_log_search as run_log_search_module
+    from tldw_chatbook.Agents.run_log_search import (
+        RunLogSearchTimeout,
+        search_across_runs,
+    )
+
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    fast_dir = _write_run(run_log_module, "run-fast", ["marker hello"])
+    slow_dir = _write_run(run_log_module, "run-slow", ["marker hello too"])
+
+    real_load_records = run_log_search_module.load_records
+
+    def fake_load_records(log_dir, *, deadline_seconds=None):
+        if log_dir == slow_dir:
+            # Simulate a load that alone exhausts whatever budget remained
+            # -- the exact contract `load_records` itself now honours for
+            # real (see test_load_records_is_deadline_aware above); faked
+            # here so the test is deterministic rather than relying on
+            # real slow disk I/O.
+            raise RunLogSearchTimeout("simulated: load alone spent the budget")
+        return real_load_records(log_dir, deadline_seconds=deadline_seconds)
+
+    monkeypatch.setattr(run_log_search_module, "load_records", fake_load_records)
+
+    result = search_across_runs(
+        [("run-fast", fast_dir), ("run-slow", slow_dir)],
+        current_run_id="run-fast",
+        contains="marker",
+    )
+    # The fast run completed normally: found, searched, contributed a hit.
+    assert result.searched_run_ids == ["run-fast"]
+    assert len(result.hits) == 1
+    assert result.hits[0].source_run_id == "run-fast"
+    # The slow run: not searched (its load never finished), not unresolved
+    # (its log WAS locatable -- resolved_runs handed in a real Path), and
+    # contributed no hits despite genuinely containing a "marker" record.
+    assert result.not_searched_run_ids == ["run-slow"]
+    assert result.unresolved_run_ids == []
+    assert all(h.source_run_id != "run-slow" for h in result.hits)

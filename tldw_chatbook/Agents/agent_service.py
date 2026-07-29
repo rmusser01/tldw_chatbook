@@ -919,18 +919,29 @@ class AgentService:
             if scope == "conversation":
                 try:
                     offset = int(args.get("offset") or 0)
-                    candidates = self.db.list_runs(
-                        conversation_id, include_superseded=True
+                    # task-1273 review finding A: the cap is pushed INTO the
+                    # query (both `limit` and `agent_kind`) rather than
+                    # fetched-then-discarded -- a long-lived conversation's
+                    # run count (primary + every sub-agent run it has ever
+                    # spawned) must never size this query. `count_runs` is a
+                    # second, O(1)-row query that gets the EXACT total
+                    # without materializing it, so the coverage line can
+                    # still report a precise omitted count rather than only
+                    # "more exist".
+                    windowed = self.db.list_runs(
+                        conversation_id,
+                        include_superseded=True,
+                        limit=MAX_CROSS_RUN_RUNS,
+                        agent_kind=AGENT_KIND_PRIMARY,
                     )
-                    primary_runs = [
-                        r
-                        for r in candidates
-                        if r.get("agent_kind") == AGENT_KIND_PRIMARY
-                    ]
-                    windowed = primary_runs[:MAX_CROSS_RUN_RUNS]
-                    omitted_ids = [
-                        r.get("id") for r in primary_runs[len(windowed):]
-                    ]
+                    total_primary_count = self.db.count_runs(
+                        conversation_id,
+                        include_superseded=True,
+                        agent_kind=AGENT_KIND_PRIMARY,
+                    )
+                    omitted_run_count = max(
+                        0, total_primary_count - len(windowed)
+                    )
                     resolved_runs: list = []
                     for run in windowed:
                         candidate_id = run.get("id")
@@ -970,16 +981,6 @@ class AgentService:
                     return ToolResult(
                         ok=False, error=f"Cross-run search failed: {exc}"
                     )
-                if omitted_ids:
-                    # `dataclasses` is already imported at module scope
-                    # (used by `_persist` above) -- reused here rather than
-                    # re-imported.
-                    cross_result = dataclasses.replace(
-                        cross_result,
-                        not_searched_run_ids=(
-                            cross_result.not_searched_run_ids + omitted_ids
-                        ),
-                    )
                 ceiling = config.budget.max_tool_result_chars
                 render_max_chars = ceiling if ceiling > 0 else sys.maxsize
                 return ToolResult(
@@ -990,6 +991,7 @@ class AgentService:
                         contains=contains,
                         pattern=pattern,
                         offset=offset,
+                        omitted_run_count=omitted_run_count,
                     ),
                 )
             # scope == "run" (the default, and any unrecognised value):

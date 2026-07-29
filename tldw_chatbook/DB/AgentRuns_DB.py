@@ -378,6 +378,7 @@ class AgentRunsDB(BaseDB):
         conversation_id: str,
         include_superseded: bool = True,
         limit: int | None = None,
+        agent_kind: str | None = None,
     ) -> list[dict]:
         """List a conversation's run records, newest first.
 
@@ -389,6 +390,17 @@ class AgentRunsDB(BaseDB):
                 runs (``ORDER BY created_at DESC, id DESC``). ``None``
                 (the default) returns every matching run, preserving prior
                 behavior.
+            agent_kind: When set (``"primary"`` or ``"subagent"``),
+                restricts to that kind IN THE QUERY -- e.g.
+                ``search_run_log``'s ``scope="conversation"`` (task-1273
+                review finding A) wants only the conversation's PRIMARY
+                runs, and filtering here (rather than fetching everything
+                and discarding client-side) is what lets ``limit`` bound
+                the actual number of ROWS RETURNED to what the caller can
+                use, instead of a limit over an unfiltered set that a
+                subagent-heavy conversation could still starve. ``None``
+                (the default) applies no kind filter, preserving prior
+                behavior.
 
         Returns:
             The matching runs as dicts, newest first.
@@ -397,6 +409,9 @@ class AgentRunsDB(BaseDB):
         params: list = [conversation_id]
         if not include_superseded:
             query += " AND status != 'superseded'"
+        if agent_kind is not None:
+            query += " AND agent_kind = ?"
+            params.append(agent_kind)
         query += " ORDER BY created_at DESC, id DESC"
         if limit is not None:
             query += " LIMIT ?"
@@ -404,6 +419,45 @@ class AgentRunsDB(BaseDB):
         with self.connection() as conn:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(r) for r in rows]
+
+    def count_runs(
+        self,
+        conversation_id: str,
+        include_superseded: bool = True,
+        agent_kind: str | None = None,
+    ) -> int:
+        """Count a conversation's run records, without materializing rows.
+
+        task-1273 review finding A: a caller that only needs to know HOW
+        MANY runs exist beyond a windowed ``list_runs(..., limit=N)`` call
+        (to report an exact "N more exist" count) must not fetch every row
+        just to take its length -- that is exactly the unbounded query the
+        finding flagged. ``COUNT(*)`` returns a single row regardless of
+        how many runs match, so pairing this with a ``limit``-bounded
+        ``list_runs`` call keeps BOTH queries' returned size independent of
+        the conversation's total run count.
+
+        Args:
+            conversation_id: The conversation to count runs for.
+            include_superseded: When ``False``, excludes runs whose status
+                is ``"superseded"`` -- mirrors ``list_runs``' own filter.
+            agent_kind: When set (``"primary"`` or ``"subagent"``),
+                restricts the count to that kind -- mirrors ``list_runs``'
+                own filter. ``None`` (the default) counts every kind.
+
+        Returns:
+            The number of matching runs.
+        """
+        query = "SELECT COUNT(*) AS n FROM agent_runs WHERE conversation_id = ?"
+        params: list = [conversation_id]
+        if not include_superseded:
+            query += " AND status != 'superseded'"
+        if agent_kind is not None:
+            query += " AND agent_kind = ?"
+            params.append(agent_kind)
+        with self.connection() as conn:
+            row = conn.execute(query, params).fetchone()
+        return int(row["n"])
 
     def count_subagent_runs(self, conversation_id: str) -> int:
         """Count a conversation's sub-agent runs (all statuses, historical).

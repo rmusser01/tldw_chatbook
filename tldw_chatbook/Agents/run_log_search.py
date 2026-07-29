@@ -124,21 +124,59 @@ def _looks_catastrophic(pattern: str) -> bool:
     return False
 
 
-def load_records(log_dir: Path) -> list[RunLogRecord]:
+def load_records(
+    log_dir: Path, *, deadline_seconds: float | None = None
+) -> list[RunLogRecord]:
     """Load every complete record from every segment, in order.
 
     Segment discovery is glob + sort, never the MANIFEST: a crashed run
     writes no manifest, and those are exactly the runs worth inspecting.
 
+    task-1273 review finding B: reading segment files is unbounded I/O --
+    a run with several large, multi-segment logs could previously take
+    however long that takes with no ceiling at all. `deadline_seconds`
+    (optional, `None` by default) makes this bounded the SAME way
+    `search_records` bounds its own scan: checked BETWEEN whole units of
+    work (segment files here; records there), never mid-read of a single
+    segment, which is one blocking I/O call that cannot be interrupted
+    partway through without threads. `None` (every call before this task,
+    including `search_run_log`'s own `scope="run"` path) preserves prior
+    behavior exactly -- unbounded, no check performed at all.
+
     Args:
         log_dir: The run's log directory.
+        deadline_seconds: Optional wall-clock ceiling for this call. When
+            set and exceeded before every segment has been read, raises
+            rather than returning a partial record list silently -- a
+            caller (`search_across_runs`) that went on to search a
+            partially-loaded log would look identical to one that searched
+            the WHOLE log and found nothing, exactly the "no matches when
+            more exists" failure mode task-1273 exists to prevent.
 
     Returns:
-        All records in record-number order; empty when unreadable.
+        All records in record-number order; empty when the directory (or a
+        segment within it) is unreadable -- an `OSError` degrades to
+        "return what was loaded so far", unrelated to `deadline_seconds`.
+
+    Raises:
+        RunLogSearchTimeout: `deadline_seconds` is set and was exceeded
+            before every segment was read. Some records may be unread; the
+            caller must not treat this as "searched, found nothing".
     """
     records: list[RunLogRecord] = []
+    started = time.monotonic()
     try:
         for segment in sorted(log_dir.glob("logs.*.txt")):
+            if (
+                deadline_seconds is not None
+                and time.monotonic() - started > deadline_seconds
+            ):
+                raise RunLogSearchTimeout(
+                    f"load_records exceeded its {deadline_seconds:g}s "
+                    f"wall-clock budget after reading {len(records)} "
+                    f"record(s) from {log_dir} -- further segments were "
+                    f"left unread."
+                )
             records.extend(iter_records(segment.read_bytes()))
     except OSError:
         return records
@@ -893,6 +931,15 @@ def search_across_runs(
       see the module docstring's F6 section. Once the shared budget is
       spent, remaining runs with a locatable log are reported via
       `CrossRunSearchResult.not_searched_run_ids` rather than scanned.
+      task-1273 review finding B: this budget covers `load_records` too,
+      not only `search_records` -- reading a run's segment files is
+      unbounded I/O, and a conversation with several large, multi-segment
+      logs could otherwise blow the whole shared budget on loading alone,
+      before a single search ran. The remaining deadline is recomputed
+      immediately after each `load_records` call (its own I/O is not
+      free) and `load_records` itself is called with that remaining
+      budget so it can stop reading further segments early rather than
+      finishing an over-budget read only to have the result discarded.
 
     Args:
         resolved_runs: `(run_id, log_dir)` pairs, newest run first,
@@ -922,10 +969,20 @@ def search_across_runs(
         RunLogSearchPatternRejected: `pattern` matches a known
             catastrophic-backtracking shape (raised by the first `run_id`'s
             `search_records` call, exactly like the single-run case).
-        RunLogSearchTimeout: a single run's own scan exceeded its share of
-            `deadline_seconds` -- exactly like the single-run case, this is
-            NOT caught here; a caller degrading gracefully must catch it
-            the same way it already catches it for `scope="run"`.
+        RunLogSearchTimeout: a single run's own SEARCH (not load -- see
+            below) exceeded its share of `deadline_seconds` -- exactly
+            like the single-run case, this is NOT caught here; a caller
+            degrading gracefully must catch it the same way it already
+            catches it for `scope="run"`. A run whose LOADING alone
+            exhausts the shared budget is handled differently, entirely
+            inside this function (task-1273 review finding B): reading
+            segment files is unbounded I/O, so `load_records` is called
+            with the remaining budget and, if IT raises this same
+            exception, that run is recorded as `not_searched` (its log may
+            hold more records than were read; scanning a partial list
+            would silently look like a complete search that found
+            nothing) and the loop moves on to the next run rather than
+            failing the whole call.
     """
     hits: list[CrossRunHit] = []
     searched: list[str] = []
@@ -945,7 +1002,23 @@ def search_across_runs(
             # `unresolved` (see `CrossRunSearchResult`'s own field docs).
             not_searched.append(run_id)
             continue
-        records = load_records(log_dir)
+        try:
+            records = load_records(log_dir, deadline_seconds=remaining_deadline)
+        except RunLogSearchTimeout:
+            # task-1273 review finding B: loading is unbounded I/O that
+            # must count against the shared budget too -- a run whose log
+            # took the remaining time just to LOAD (before a single search
+            # ran) is `not_searched`, never scanned against a partial
+            # record list.
+            not_searched.append(run_id)
+            continue
+        # Recompute AFTER loading, before searching: load_records' own I/O
+        # is not free, and the shared deadline must reflect time actually
+        # spent so far, not the pre-load estimate above.
+        remaining_deadline = deadline_seconds - (time.monotonic() - started)
+        if remaining_deadline <= 0:
+            not_searched.append(run_id)
+            continue
         per_run_limit = remaining_limit if remaining_limit > 0 else 0
         found = search_records(
             records,
@@ -987,6 +1060,7 @@ def format_cross_run_results(
     contains: str = "",
     pattern: str = "",
     offset: int = 0,
+    omitted_run_count: int = 0,
 ) -> str:
     """Render `search_across_runs`' result: coverage, then attributed hits.
 
@@ -998,11 +1072,7 @@ def format_cross_run_results(
     would draw a confident wrong conclusion (task-1273).
 
     Args:
-        result: `search_across_runs`'s return value (a caller may first
-            `dataclasses.replace` in additional `not_searched_run_ids`,
-            e.g. runs excluded by the `MAX_CROSS_RUN_RUNS` cap before this
-            function ever saw them -- `agent_service.py`'s closure does
-            this).
+        result: `search_across_runs`'s return value.
         max_chars: Forwarded to `format_results`, applied per hit.
         contains: The literal substring searched for, forwarded to
             `format_results` to centre each hit's rendered window.
@@ -1010,17 +1080,27 @@ def format_cross_run_results(
         offset: Forwarded to `format_results`, applied to every hit's
             rendered content identically -- same semantics as the
             single-run case.
+        omitted_run_count: Runs never attempted because they fell outside
+            `MAX_CROSS_RUN_RUNS` -- counted separately from
+            `result.not_searched_run_ids` (whose exact ids ARE known,
+            since `search_across_runs` was handed a fully-resolved list)
+            because the caller (`agent_service.py`) deliberately queries
+            only an EXACT COUNT of runs beyond the cap (task-1273 review
+            finding A) rather than fetching every one just to list their
+            ids -- that unbounded fetch is exactly what finding A flagged.
+            Folded into the same "not attempted" coverage note as
+            `not_searched_run_ids`; both mean the same thing to a reading
+            agent (a run that may still exist and be searchable, just not
+            reached by this call), only the REASON differs (a cap vs. the
+            shared time budget).
 
     Returns:
         A coverage line, then one attributed block per hit (labelled "this
         run" or "an earlier run (<run_id>)"), or the coverage line plus
         "No matching records." when there were no hits.
     """
-    total = (
-        len(result.searched_run_ids)
-        + len(result.unresolved_run_ids)
-        + len(result.not_searched_run_ids)
-    )
+    not_attempted = len(result.not_searched_run_ids) + max(0, omitted_run_count)
+    total = len(result.searched_run_ids) + len(result.unresolved_run_ids) + not_attempted
     coverage = (
         f"Searched {len(result.searched_run_ids)} of {total} run(s) "
         "in this conversation"
@@ -1033,10 +1113,10 @@ def format_cross_run_results(
             "is not reachable -- e.g. the workspace folder was bound, "
             "rebound, or unbound since)"
         )
-    if result.not_searched_run_ids:
+    if not_attempted:
         notes.append(
-            f"{len(result.not_searched_run_ids)} not attempted this call "
-            "(this call's run or time budget was reached first)"
+            f"{not_attempted} not attempted this call (this call's run or "
+            "time budget was reached first)"
         )
     if notes:
         coverage += ": " + "; ".join(notes)

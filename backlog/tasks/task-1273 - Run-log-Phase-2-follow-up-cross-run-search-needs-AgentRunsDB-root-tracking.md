@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-29 00:20'
-updated_date: '2026-07-29 17:01'
+updated_date: '2026-07-29 17:31'
 labels:
   - agents
   - run-log
@@ -95,4 +95,43 @@ programme's documented pre-existing baseline exactly.
 Files changed: tldw_chatbook/Agents/run_log_search.py,
 tldw_chatbook/Agents/agent_service.py, tldw_chatbook/Agents/tool_catalog.py,
 Tests/Agents/test_run_log_cross_run_search.py (new).
+
+--- PR #1088 review fixes ---
+
+Finding A (Performance, agent_service.py ~:934): the conversation-scope
+path called AgentRunsDB.list_runs(conversation_id) unbounded, materialising
+every run (primary + every sub-agent) a conversation has ever had before
+capping to MAX_CROSS_RUN_RUNS client-side. Fixed by pushing the cap INTO
+the query: list_runs gained an optional agent_kind filter (SQL-level, not
+client-side), called with limit=MAX_CROSS_RUN_RUNS, agent_kind="primary".
+A new count_runs() method (single COUNT(*) query, no rows materialized)
+gets the exact total so the coverage line still reports a precise omitted
+count -- CrossRunSearchResult's not_searched_run_ids (exact ids, from the
+deadline bucket) and the new omitted_run_count (a count only, from the cap)
+are folded into the same "not attempted" note by format_cross_run_results.
+
+Finding B (Reliability, run_log_search.py ~:963): the shared deadline was
+checked before load_records(), but loading itself is unbounded I/O not
+counted against the budget. Fixed BOTH ways the finding offered: (1)
+load_records() itself is now deadline-aware -- checked between segment
+files (never mid-segment-read), raises RunLogSearchTimeout if exceeded
+before every segment is read, `None` (default) preserves prior behaviour
+exactly; (2) search_across_runs recomputes the remaining deadline again
+immediately after each load_records call, before search_records. Either
+exhaustion routes that run to not_searched -- never a partial scan
+silently presented as complete, never a hard failure of the whole call.
+
+Tests added: Tests/Agents/test_run_log_cross_run_search.py (+4:
+more-runs-than-cap reports exact excess; load_records raises on an
+exhausted deadline; a load that alone exhausts the budget lands in
+not_searched via search_across_runs, not scanned or dropped; format_cross_
+run_results folds omitted_run_count correctly) and Tests/DB/test_agent_
+runs_db.py (+6: list_runs agent_kind filtering and composition with limit,
+count_runs correctness including superseded exclusion, and a trace-
+callback proof that count_runs is a single COUNT(*) query, never len(list_
+runs(...)) in disguise).
+
+Full suite: Tests/Agents/ 771 passed (767 + 4), Tests/DB/ 609 passed + 1
+skipped (no regressions), zero pre-existing tests edited. Tests/Chat/
+unaffected: 4 failed / 13 errors, matching the documented baseline exactly.
 <!-- SECTION:NOTES:END -->
