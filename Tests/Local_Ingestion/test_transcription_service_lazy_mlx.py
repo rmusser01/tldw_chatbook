@@ -269,7 +269,9 @@ def test_lightning_file_model_construction_uses_loader(
 
 
 def test_parakeet_file_model_construction_uses_loader(
-    service_module, monkeypatch: pytest.MonkeyPatch
+    service_module,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     debug_messages: list[str] = []
     monkeypatch.setattr(
@@ -287,9 +289,11 @@ def test_parakeet_file_model_construction_uses_loader(
     monkeypatch.setattr(service_module, "PARAKEET_MLX_AVAILABLE", True)
     monkeypatch.setattr(service_module, "sf", soundfile)
     monkeypatch.setattr(service_module, "_ensure_parakeet_mlx_import", ensure_import)
+    audio_path = tmp_path / "audio.wav"
+    audio_path.touch()
 
     with pytest.raises(service_module.TranscriptionError) as error:
-        service._transcribe_with_parakeet_mlx("audio.wav")
+        service._transcribe_with_parakeet_mlx(str(audio_path))
 
     assert error.value.__cause__ is sentinel
     ensure_import.assert_called_once_with()
