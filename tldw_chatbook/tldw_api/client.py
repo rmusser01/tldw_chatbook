@@ -5,6 +5,7 @@ from __future__ import annotations
 
 # Imports
 import json  # For MediaWiki streaming
+import math
 from pathlib import Path  # For utils.prepare_files_for_httpx
 from typing import Optional, Dict, Any, List, AsyncGenerator, Union, Literal
 from urllib.parse import quote
@@ -1042,13 +1043,93 @@ class ChatQueueActivityResponse(BaseModel):
 
 
 class TLDWAPIClient:
+    # Ceiling on how long a *connection* may take to establish.
+    #
+    # `timeout` is the budget for a whole operation, and some are legitimately
+    # long (uploads, transcription, batch jobs), so it defaults to 300s. httpx
+    # applies a bare float to connect/read/write/pool alike, which meant an
+    # unreachable-but-configured server -- a blackholing firewall, a downed
+    # VPN, a stale host -- spent five minutes in the connect phase.
+    #
+    # That is worse than slow: screens fetch during mount, and Textual awaits a
+    # screen's mount inside the App's own NavigateToScreen handler, so the
+    # App's message pump is blocked for the entire call and the whole app stops
+    # responding to input. A long read is sometimes right; a five-minute
+    # connect never is.
+    DEFAULT_CONNECT_TIMEOUT_SECONDS: float = 15.0
+
+    @staticmethod
+    def _validate_timeout(value: Any, field: str) -> float:
+        """Reject a nonsensical timeout at the boundary instead of at request time.
+
+        httpx validates none of this -- ``httpx.Timeout(300.0, connect=-5)``,
+        ``connect=nan`` and even ``connect="abc"`` are all accepted -- so an
+        invalid value would otherwise cross this public boundary and only
+        misbehave later, at the request, far from the call that caused it.
+        NaN is the sharp case: ``min(nan, cap)`` is ``nan``, which would
+        silently defeat the connect ceiling that keeps an unreachable host
+        from freezing the app.
+
+        Args:
+            value: The candidate timeout, in seconds.
+            field: Parameter name, used in the error message.
+
+        Returns:
+            The validated timeout as a float.
+
+        Raises:
+            TypeError: If ``value`` is not a real number.
+            ValueError: If ``value`` is not finite and positive.
+        """
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(
+                f"{field} must be a number of seconds, got {type(value).__name__}"
+            )
+        value = float(value)
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(
+                f"{field} must be a finite, positive number of seconds, got {value!r}"
+            )
+        return value
+
     def __init__(
-        self, base_url: str, token: Optional[str] = None, timeout: float = 300.0
+        self,
+        base_url: str,
+        token: Optional[str] = None,
+        timeout: float = 300.0,
+        connect_timeout: Optional[float] = None,
     ):
+        """Initialize the API client.
+
+        Args:
+            base_url: Base URL of the tldw server. A trailing slash is stripped.
+            token: Optional API key, sent as the ``X-API-KEY`` header.
+            timeout: Overall per-request budget in seconds. Defaults to 300 so
+                genuinely long operations (uploads, transcription, batch jobs)
+                are not cut short.
+            connect_timeout: Optional separate budget for establishing the
+                connection. Defaults to ``timeout`` capped at
+                ``DEFAULT_CONNECT_TIMEOUT_SECONDS``, because a long read is
+                sometimes right but a long connect never is.
+
+        Raises:
+            TypeError: If either timeout is not a number.
+            ValueError: If either timeout is not finite and positive.
+        """
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.bearer_token = None
-        self.timeout = timeout
+        self.timeout = self._validate_timeout(timeout, "timeout")
+        if connect_timeout is None:
+            # A ceiling, never an extension: a caller who asked for a short
+            # overall timeout keeps it rather than having connect widened.
+            self.connect_timeout = min(
+                self.timeout, self.DEFAULT_CONNECT_TIMEOUT_SECONDS
+            )
+        else:
+            self.connect_timeout = self._validate_timeout(
+                connect_timeout, "connect_timeout"
+            )
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -1063,7 +1144,7 @@ class TLDWAPIClient:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers=headers,
-                timeout=self.timeout,
+                timeout=httpx.Timeout(self.timeout, connect=self.connect_timeout),
                 follow_redirects=True,
             )
         return self._client

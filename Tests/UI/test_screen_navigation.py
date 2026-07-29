@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
+from textual.app import App, ComposeResult
 from textual.widgets import Button, Input
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -2592,3 +2592,277 @@ def test_push_initial_screen_fatal_error_names_the_underlying_cause(monkeypatch)
     assert "ModuleNotFoundError" in message, message
     # Chained, so the traceback shows the real import failure too.
     assert isinstance(excinfo.value.__cause__, ImportError)
+
+
+@pytest.mark.asyncio
+async def test_navigation_survives_screen_construction_failure(monkeypatch):
+    """A screen whose ``__init__`` raises must not take the whole app down.
+
+    Root cause of the reported "app crashes when clicking onto MCP": the MCP
+    canvases read ``Select.NULL`` at construction time, which does not exist
+    before Textual 8. ``_complete_screen_navigation`` guarded ``save_state``,
+    ``restore_state`` and ``apply_navigation_context`` but ran
+    ``_create_navigation_screen`` unguarded, so the AttributeError escaped the
+    ``NavigateToScreen`` handler and Textual exited the app (return_code 1).
+
+    Any screen that fails to build is a broken destination, never a dead app:
+    the user must be told and left on the screen they were already using.
+    """
+    app = _build_test_app()
+
+    class ExplodingScreen:
+        screen_name = "mcp"
+
+        def __init__(self, app_instance):
+            raise AttributeError("type object 'Select' has no attribute 'NULL'")
+
+    def fake_resolve(target):
+        return "mcp", "mcp", ExplodingScreen
+
+    switched_screens = []
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    notifications = []
+
+    class FakeOutgoingScreen:
+        screen_name = "chat"
+
+    # Same shim the flush/veto tests use: the handler reads self.screen for
+    # the outgoing save-state step, which needs a live screen stack.
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: FakeOutgoingScreen())
+    )
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notifications.append(message)
+    )
+
+    # Must not raise: an escaping exception here is what killed the app.
+    await app.handle_screen_navigation(NavigateToScreen("mcp"))
+
+    assert switched_screens == [], "a screen that failed to build must not be switched to"
+    assert notifications, "the user must be told the destination failed to open"
+
+
+@pytest.mark.asyncio
+async def test_navigation_survives_screen_mount_failure(monkeypatch):
+    """A screen that raises while mounting must not take the whole app down.
+
+    Sibling of the construction guard: the MCP audit canvas reads
+    ``Select.NULL`` inside ``compose()``, so the same AttributeError can
+    surface from ``switch_screen`` (which drives compose/mount) rather than
+    from ``__init__``. Both legs must fail soft.
+    """
+    app = _build_test_app()
+
+    class FakeScreen:
+        screen_name = "mcp"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def fake_resolve(target):
+        return "mcp", "mcp", FakeScreen
+
+    async def exploding_switch_screen(screen):
+        raise AttributeError("type object 'Select' has no attribute 'NULL'")
+
+    notifications = []
+
+    class FakeOutgoingScreen:
+        screen_name = "chat"
+
+    # Same shim the flush/veto tests use: the handler reads self.screen for
+    # the outgoing save-state step, which needs a live screen stack.
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: FakeOutgoingScreen())
+    )
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", exploding_switch_screen)
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notifications.append(message)
+    )
+
+    await app.handle_screen_navigation(NavigateToScreen("mcp"))
+
+    assert notifications, "the user must be told the destination failed to open"
+
+
+@pytest.mark.asyncio
+async def test_navigation_flush_that_never_returns_does_not_freeze_the_app(monkeypatch):
+    """A hung outgoing flush must not freeze the whole app forever.
+
+    ``handle_screen_navigation`` is an ``@on`` handler on the App, so while
+    it awaits, the App's own message pump processes nothing -- no clicks, no
+    bindings, no further navigation. The outgoing flush reaches unbounded
+    awaits (``library_screen``'s ``await worker.wait()`` with no timeout, and
+    ``_run_library_service_call``'s uncancellable ``asyncio.to_thread``), so a
+    save that never completes used to leave the app permanently frozen and
+    unkillable rather than merely slow.
+
+    The flush must therefore be bounded: on timeout the app fails closed
+    (stays put, pending edits intact) and stays responsive.
+    """
+    app = _build_test_app()
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def fake_resolve(target):
+        return "chat", "chat", FakeTargetScreen
+
+    switched_screens = []
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    class HungOutgoingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            await asyncio.Event().wait()  # never completes
+
+    notifications = []
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: HungOutgoingScreen())
+    )
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notifications.append(message)
+    )
+    monkeypatch.setattr(app, "NAVIGATION_FLUSH_TIMEOUT_SECONDS", 0.2, raising=False)
+
+    # If the flush is unbounded this never returns and the suite hangs, so
+    # bound the assertion itself rather than wedging CI.
+    await asyncio.wait_for(
+        app.handle_screen_navigation(NavigateToScreen("chat")), timeout=10
+    )
+
+    assert switched_screens == [], "a timed-out flush must fail closed, not switch"
+    assert notifications, "the user must be told the switch was abandoned"
+
+
+@pytest.mark.asyncio
+async def test_navigation_timeout_does_not_cancel_the_in_flight_save(monkeypatch):
+    """Timing out the flush must not cancel the save's reconciliation.
+
+    Bounding the flush released the App message pump, but `asyncio.wait_for`
+    cancels what it waits on -- and the Library File Notes save is a
+    `asyncio.to_thread` write that cannot be cancelled. The thread kept
+    writing while the coroutine died at the await, so `_save_draft` never ran
+    the lines after it: `_save_state` stayed "saving" and `_opened.content_hash`
+    kept the pre-save value.
+
+    That is worse than the freeze it replaced. `leave_allowed` is False while
+    the state is "saving", so the screen becomes permanently non-leavable and
+    the next save compares against a stale hash.
+
+    The wait must therefore be shielded: the app stops waiting, the save does
+    not stop saving.
+    """
+    app = _build_test_app()
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def fake_resolve(target):
+        return "chat", "chat", FakeTargetScreen
+
+    async def fake_switch_screen(screen):
+        pass
+
+    reconciled = {"done": False, "cancelled": False}
+
+    class SlowSavingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            try:
+                # Stands in for `await asyncio.to_thread(service.save_file, ...)`:
+                # slower than the navigation budget, and uncancellable in reality.
+                await asyncio.sleep(0.6)
+            except asyncio.CancelledError:
+                reconciled["cancelled"] = True
+                raise
+            # The post-save reconciliation that must still run.
+            reconciled["done"] = True
+            return True
+
+    notifications = []
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        type(app), "screen", property(lambda self: SlowSavingScreen())
+    )
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notifications.append(message)
+    )
+    monkeypatch.setattr(app, "NAVIGATION_FLUSH_TIMEOUT_SECONDS", 0.1, raising=False)
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+    assert notifications, "the user must be told the switch was abandoned"
+
+    # Give the shielded save the time it needs to finish on its own.
+    await asyncio.sleep(1.0)
+
+    assert not reconciled["cancelled"], (
+        "the in-flight save was cancelled; its reconciliation never ran, so the "
+        "editor is stuck in 'saving' with a stale content hash"
+    )
+    assert reconciled["done"], "the save must still complete after the app stops waiting"
+
+
+@pytest.mark.asyncio
+async def test_broken_screen_content_degrades_instead_of_killing_a_running_app():
+    """Integration lock for the compose seam, in a real running Textual app.
+
+    The focused navigation tests stub ``switch_screen``, which hid a real
+    limitation: Textual composes a screen inside its own mount pipeline, so an
+    exception in ``compose_content`` is never raised back to whoever called
+    ``switch_screen``. Textual records it on the App and exits the process --
+    the navigation handler's try/except cannot see it, so ``BaseAppScreen`` is
+    the only place that can catch it. That is the path the MCP crash took.
+
+    This drives a real ``push_screen`` + compose + mount through a live app.
+    It deliberately does NOT use ``_build_test_app``: real ``switch_screen``
+    does not work in that harness (navigating to a healthy screen fails there
+    too), which is why the other tests stub it.
+    """
+
+    class BrokenScreen(BaseAppScreen):
+        def __init__(self):
+            super().__init__(app_instance=None, screen_name="mcp")
+
+        def compose_content(self) -> ComposeResult:
+            # Stands in for the MCP canvases reading Select.NULL on a Textual
+            # that predates it.
+            raise AttributeError("type object 'Select' has no attribute 'NULL'")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+
+    class HostApp(App):
+        pass
+
+    app = HostApp()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        await app.push_screen(BrokenScreen())
+        await pilot.pause()
+
+        assert app.is_running, "a screen that fails to compose must not exit the app"
+        assert app.screen.query("#screen-content-error"), (
+            "the failure must be shown, not swallowed into a blank screen"
+        )
+        # The message pump must still be live afterwards.
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.is_running, "app must stay responsive after the failed compose"

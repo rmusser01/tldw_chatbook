@@ -5949,6 +5949,21 @@ class TldwCli(
         "customize": {"category": "theme"},
     }
 
+    # How long the outgoing screen gets to flush pending work before the app
+    # gives up on the transition.
+    #
+    # `handle_screen_navigation` is an `@on` handler on the App itself, so
+    # everything it awaits is awaited ON the App's message pump -- while it
+    # blocks, the app processes no clicks, no bindings and no further
+    # navigation. The flush path reaches genuinely unbounded awaits
+    # (`library_screen`'s `await worker.wait()`, and `_run_library_service_call`'s
+    # `asyncio.to_thread`, which cannot be cancelled at all), so a save that
+    # never completed left the app permanently frozen AND unkillable.
+    #
+    # Generous enough that a real save is never cut short, small enough that a
+    # wedged one costs a few seconds instead of the session.
+    NAVIGATION_FLUSH_TIMEOUT_SECONDS: float = 5.0
+
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.
 
@@ -6115,13 +6130,50 @@ class TldwCli(
             try:
                 flush_result = flush()
                 if inspect.isawaitable(flush_result):
-                    flush_result = await flush_result
+                    # Shielded: giving up on the WAIT must not give up on the
+                    # SAVE. The Library File Notes flush persists through
+                    # `asyncio.to_thread`, which cannot be cancelled -- an
+                    # unshielded `wait_for` killed the coroutine at that await
+                    # while the thread kept writing, so `_save_draft` never ran
+                    # its reconciliation: `_save_state` stayed "saving" (which
+                    # makes `leave_allowed` False *forever*) and the cached
+                    # `content_hash` stayed stale, so the next save reported a
+                    # spurious conflict.
+                    flush_task = asyncio.ensure_future(flush_result)
+                    try:
+                        flush_result = await asyncio.wait_for(
+                            asyncio.shield(flush_task),
+                            timeout=self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
+                        )
+                    except asyncio.TimeoutError:
+                        self._retain_unfinished_flush(flush_task, screen_name)
+                        raise
                 if flush_result is False:
                     logger.info(
                         f"Navigation to {screen_name} vetoed by the outgoing "
                         "screen's pending-work flush"
                     )
                     return
+            except asyncio.TimeoutError:
+                # Fail closed, exactly like a flush that raised: the pending
+                # edits may exist ONLY in the outgoing screen, so keep it
+                # mounted rather than discarding it on a save we can't
+                # confirm. Abandoning the wait does not abandon the save --
+                # the note-save worker is a separate task and keeps running.
+                logger.warning(
+                    "Screen flush timed out after {}s; staying put (route={}).",
+                    self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
+                    screen_name,
+                )
+                try:
+                    self.notify(
+                        "Still saving pending changes; staying on this screen. "
+                        "Try again in a moment.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
+                return
             except Exception as exc:
                 # The outgoing instance may be the only place pending edits
                 # still exist, so a failed flush must abort the transition.
@@ -6206,6 +6258,64 @@ class TldwCli(
             if callable(release_navigation):
                 release_navigation()
 
+    def _retain_unfinished_flush(self, flush_task: Any, screen_name: str) -> None:
+        """Keep a timed-out flush alive until it finishes on its own.
+
+        The navigation wait is shielded, so the flush keeps running after the
+        app stops waiting -- but asyncio only holds a weak reference to a
+        running task, so without a strong reference here it could be garbage
+        collected mid-save. Retaining it also gives somewhere to consume the
+        eventual result, which otherwise surfaces as "exception was never
+        retrieved" noise long after the navigation that started it.
+
+        Args:
+            flush_task: The still-running flush task.
+            screen_name: Route being navigated to, for log context.
+        """
+        pending = getattr(self, "_pending_flush_tasks", None)
+        if pending is None:
+            pending = set()
+            self._pending_flush_tasks = pending
+        pending.add(flush_task)
+
+        def _finished(task: Any) -> None:
+            pending.discard(task)
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                logger.warning(
+                    "Screen flush eventually failed after navigation gave up "
+                    "waiting (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+            else:
+                logger.info(
+                    "Screen flush eventually completed after navigation gave "
+                    "up waiting (route={}).",
+                    screen_name,
+                )
+
+        flush_task.add_done_callback(_finished)
+
+    def _notify_navigation_failure(self, screen_name: str) -> None:
+        """Tell the user a destination failed to open, without raising.
+
+        Navigation failures are reported where they happen so the user is
+        not left staring at an unchanged screen wondering whether the click
+        registered. ``notify`` itself is guarded: this runs on the crash
+        path, and a failure to display the message must not replace one
+        escaping exception with another.
+        """
+        try:
+            self.notify(
+                f"Couldn't open {screen_name}. Staying on the current screen.",
+                severity="error",
+            )
+        except Exception:
+            logger.debug(f"Could not surface navigation failure for {screen_name!r}.")
+
     async def _complete_screen_navigation(
         self,
         *,
@@ -6257,7 +6367,23 @@ class TldwCli(
                 )
 
         if screen_class:
-            new_screen = self._create_navigation_screen(screen_name, screen_class)
+            try:
+                new_screen = self._create_navigation_screen(screen_name, screen_class)
+            except Exception as exc:
+                # A destination that cannot even be constructed is a broken
+                # destination, never a dead app. This ran unguarded until
+                # 2026-07-28: the MCP canvases read `Select.NULL` (Textual 8+)
+                # at construction time, so on an older Textual the
+                # AttributeError escaped this handler and Textual exited the
+                # whole app rather than the user simply failing to reach MCP.
+                logger.opt(exception=True).error(
+                    "Screen construction failed "
+                    "(route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+                self._notify_navigation_failure(screen_name)
+                return
 
             restored_state = self.screen_state_store.restore(
                 current_tab_value,
@@ -6299,7 +6425,21 @@ class TldwCli(
                     )
 
             # Use switch_screen to replace the current screen
-            await self.switch_screen(new_screen)
+            try:
+                await self.switch_screen(new_screen)
+            except Exception as exc:
+                # Sibling of the construction guard above: a screen can also
+                # fail while composing/mounting (the MCP audit canvas reads
+                # `Select.NULL` inside compose()), and Textual surfaces that
+                # through switch_screen. Same rule -- report the broken
+                # destination instead of taking the app down with it.
+                logger.opt(exception=True).error(
+                    "Screen mount failed (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+                self._notify_navigation_failure(screen_name)
+                return
 
             # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
             self.current_tab = current_tab_value
