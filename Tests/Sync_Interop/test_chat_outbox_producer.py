@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
@@ -131,6 +132,56 @@ def test_chat_producer_skips_without_local_first_profile_or_dataset_key(
         )
         == []
     )
+
+
+def test_chat_producer_does_not_transport_or_infer_local_character_authority(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "chat.db", client_id="sync-test")
+    try:
+        character_id = db.add_character_card({"name": "Local Character"})
+        conversation_id = db.add_conversation(
+            {
+                "character_id": character_id,
+                "assistant_kind": "character",
+                "assistant_id": str(character_id),
+                "runtime_backend": "local",
+            }
+        )
+        conversation = db.get_conversation_by_id(conversation_id)
+        authority_id = conversation["assistant_authority_id"]
+        assert authority_id == db.get_local_authority_id()
+
+        dataset_key = generate_dataset_key()
+        repo = _local_first_repo(tmp_path)
+        producer = ChatSyncV2OutboxProducer(
+            state_repository=repo,
+            dataset_keys={"dataset-1": dataset_key},
+        )
+
+        producer.enqueue_chat_message(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope=None,
+            conversation_id=conversation_id,
+            message_id="message-1",
+            role="assistant",
+            content="Local answer",
+        )
+
+        envelope = repo.list_pending_sync_v2_outbox_envelopes(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope=None,
+            dataset_id="dataset-1",
+        )[0]["envelope"]
+        payload = _decrypt_payload(envelope["payload_ciphertext"], dataset_key)
+
+        assert "assistant_authority_id" not in envelope["routing_metadata"]
+        assert "assistant_authority_id" not in payload
+        assert authority_id not in json.dumps(envelope)
+    finally:
+        db.close_connection()
 
 
 def _local_first_repo(tmp_path) -> SyncStateRepository:

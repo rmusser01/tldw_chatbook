@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -42,6 +43,12 @@ class FakeDB:
     updates: list[tuple[str, dict[str, Any], int]] = field(default_factory=list)
     deletes: list[tuple[str, int]] = field(default_factory=list)
     restores: list[tuple[str, int]] = field(default_factory=list)
+    created_conversations: list[dict[str, Any]] = field(default_factory=list)
+
+    def add_conversation(self, conversation_data):
+        self.calls.append(("add_conversation", (conversation_data,), {}))
+        self.created_conversations.append(conversation_data)
+        return "conv-created"
 
     def search_conversations_page(self, query, **kwargs):
         self.calls.append(("search_conversations_page", (query,), kwargs))
@@ -231,6 +238,7 @@ def test_normalize_conversation_and_message_rows_preserve_stable_shape():
             "assistant_kind": "character",
             "character_id": 7,
             "assistant_id": "7",
+            "assistant_authority_id": "local-authority-7",
             "persona_memory_mode": None,
             "title": None,
             "state": "Resolved",
@@ -249,6 +257,7 @@ def test_normalize_conversation_and_message_rows_preserve_stable_shape():
     assert conversation["state"] == "resolved"
     assert conversation["topic_label"] == "billing"
     assert conversation["runtime_backend"] == "local"
+    assert conversation["assistant_authority_id"] == "local-authority-7"
     assert conversation["discovery_owner"] == "general_chat"
     assert conversation["discovery_entity_id"] is None
     assert conversation["keywords"] == []
@@ -311,6 +320,42 @@ def test_legacy_character_conversation_defaults_missing_assistant_id_to_characte
     )
 
     assert conversation["assistant_id"] == "9"
+    assert conversation["assistant_authority_id"] is None
+
+
+def test_create_conversation_exposes_and_threads_assistant_authority_id():
+    assert (
+        "assistant_authority_id"
+        in inspect.signature(ChatConversationService.create_conversation).parameters
+    )
+    db = FakeDB()
+    service = ChatConversationService(db)
+
+    conversation_id = service.create_conversation(
+        assistant_kind="character",
+        assistant_id="server-character-7",
+        assistant_authority_id="server-user-v1:" + ("a" * 64),
+        runtime_backend="server",
+    )
+
+    assert conversation_id == "conv-created"
+    assert db.created_conversations[0]["assistant_authority_id"] == (
+        "server-user-v1:" + ("a" * 64)
+    )
+
+
+def test_create_conversation_omits_unspecified_authority_for_database_inference():
+    db = FakeDB()
+    service = ChatConversationService(db)
+
+    service.create_conversation(
+        character_id=7,
+        assistant_kind="character",
+        assistant_id="7",
+        runtime_backend="local",
+    )
+
+    assert "assistant_authority_id" not in db.created_conversations[0]
 
 
 def test_list_conversations_normalizes_pagination_and_enforces_global_defaults():
@@ -506,12 +551,14 @@ def test_mixed_case_assistant_kind_normalizes_on_read_and_write():
 
 
 def test_get_and_update_conversation_metadata_routes_normalized_fields():
+    authority_id = "11111111-1111-4111-8111-111111111111"
     db = FakeDB(
         conversations_by_id={
             "conv-1": {
                 "id": "conv-1",
                 "assistant_kind": "character",
                 "assistant_id": "17",
+                "assistant_authority_id": authority_id,
                 "character_id": 17,
                 "persona_memory_mode": None,
                 "scope_type": "global",
@@ -537,12 +584,21 @@ def test_get_and_update_conversation_metadata_routes_normalized_fields():
     assert metadata["title"] == "Chat with Character 17"
     assert metadata["keywords"] == ["ops", "urgent"]
     assert metadata["topic_label"] == "ops"
+    assert metadata["assistant_authority_id"] == authority_id
+
+    authority_result = service.update_conversation_metadata(
+        "conv-1",
+        {"assistant_authority_id": f"  {authority_id}  "},
+        expected_version=9,
+    )
+    assert authority_result is True
 
     result = service.update_conversation_metadata(
         "conv-1",
         {
             "assistant_kind": None,
             "assistant_id": None,
+            "assistant_authority_id": None,
             "character_id": None,
             "persona_memory_mode": None,
             "scope_type": "workspace",
@@ -560,9 +616,15 @@ def test_get_and_update_conversation_metadata_routes_normalized_fields():
     assert db.updates == [
         (
             "conv-1",
+            {"assistant_authority_id": authority_id},
+            9,
+        ),
+        (
+            "conv-1",
             {
                 "assistant_kind": None,
                 "assistant_id": None,
+                "assistant_authority_id": None,
                 "character_id": None,
                 "persona_memory_mode": None,
                 "scope_type": "workspace",

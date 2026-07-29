@@ -55,17 +55,40 @@ class TestChatPersistenceService:
     ):
         service = ChatPersistenceService(db_instance)
         character_id = db_instance.add_character_card({"name": "Alice"})
+        authority_id = db_instance.get_local_authority_id()
         conversation_id = service.create_conversation(
             character_id=character_id,
             character_name="Alice",
             assistant_kind="character",
-            assistant_id="char.local.alice",
+            assistant_id=str(character_id),
+            assistant_authority_id=authority_id,
             runtime_backend="local",
             discovery_owner="ccp_character",
             discovery_entity_id="char.local.alice",
         )
         conversation = db_instance.get_conversation_by_id(conversation_id)
-        assert conversation["assistant_id"] == "char.local.alice"
+        assert conversation["title"] == "Chat with Alice"
+        assert conversation["assistant_id"] == str(character_id)
+        assert conversation["assistant_id"] != "Alice"
+        assert conversation["assistant_authority_id"] == authority_id
+
+    def test_unspecified_local_authority_is_left_for_database_inference(
+        self, db_instance: CharactersRAGDB
+    ):
+        service = ChatPersistenceService(db_instance)
+        character_id = db_instance.add_character_card({"name": "Bob"})
+
+        conversation_id = service.create_conversation(
+            character_id=character_id,
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            runtime_backend="local",
+        )
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["assistant_authority_id"] == (
+            db_instance.get_local_authority_id()
+        )
 
     def test_canonical_citation_writes_ready_requires_matching_ready_repository(
         self,

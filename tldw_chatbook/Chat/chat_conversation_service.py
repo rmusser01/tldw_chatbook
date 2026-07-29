@@ -228,6 +228,9 @@ def normalize_conversation_row(
         "character_id": character_id,
         "assistant_kind": assistant_kind,
         "assistant_id": assistant_id,
+        "assistant_authority_id": _clean_text(
+            conversation_row.get("assistant_authority_id")
+        ),
         "runtime_backend": _normalize_runtime_backend(
             conversation_row.get("runtime_backend")
         ),
@@ -358,6 +361,7 @@ class ChatConversationService:
         character_id: int | None = None,
         assistant_kind: str | None = None,
         assistant_id: str | None = None,
+        assistant_authority_id: str | None = None,
         persona_memory_mode: str | None = None,
         runtime_backend: str | None = None,
         discovery_owner: str | None = None,
@@ -393,6 +397,8 @@ class ChatConversationService:
             "source": source,
             "external_ref": external_ref,
         }
+        if assistant_authority_id is not None:
+            conversation_data["assistant_authority_id"] = assistant_authority_id
         conversation_id = self.db.add_conversation(conversation_data)
         if conversation_id is None:
             raise ValueError("Unable to create chat conversation.")
@@ -515,6 +521,7 @@ class ChatConversationService:
                 normalized_update[key] = _normalize_assistant_kind(value)
             elif key in {
                 "assistant_id",
+                "assistant_authority_id",
                 "persona_memory_mode",
                 "topic_label",
                 "topic_label_source",

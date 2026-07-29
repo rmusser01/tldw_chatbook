@@ -467,6 +467,7 @@ class ChatbookImporter:
                         "updated_at", datetime.now().isoformat()
                     ),
                     "character_id": character_id,
+                    "assistant_authority_id": None,
                     "root_id": f"imported_{conv_data.get('id', 'unknown')}",
                 }
                 # Stage all filesystem work FIRST (attachment byte loads),
