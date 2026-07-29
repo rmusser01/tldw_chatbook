@@ -57,7 +57,6 @@ from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
 )
-
 from .agent_models import FENCE_TOOL_RESULT_PREFIX, SEARCH_RUN_LOG_TOOL_NAME
 
 #: `[agents]` config key (see `run_log._setting`'s env-var/TOML/default
@@ -114,6 +113,21 @@ def coerce_min_recent_rounds(value: object) -> int:
     defensive-coercion pattern ``run_log._coerce_positive_int`` already
     establishes for the other numeric run-log settings.
 
+    DECLINED (raised a third time across this series' review, same
+    ruling each time): routing this one setting through a Pydantic model
+    instead of this env/TOML/default chain plus defensive coercion.
+    Every sibling ``[agents]`` setting this module and ``run_log.py``
+    resolve -- ``run_log_enabled``, ``run_log_dir_name``,
+    ``run_log_segment_bytes``, ``run_log_max_record_bytes``, and this
+    key's own gate ``run_log_evict_enabled`` -- goes through the exact
+    same ``_setting``-style chain with its own defensive cast, not a
+    schema. Giving only this key a Pydantic model would make it the odd
+    one out in its own module without changing behaviour: the coercion
+    contract (accept env string / TOML value / already-typed default;
+    reject anything unparseable, negative, or non-finite; fall back to a
+    logged default rather than raise) is identical either way, and is
+    the property the direct unit tests below exist to pin down instead.
+
     Args:
         value: The raw configured value.
 
@@ -122,14 +136,21 @@ def coerce_min_recent_rounds(value: object) -> int:
         choice (opts out of the floor, keeping only the current-turn
         guarantee ``bound_messages_to_window`` already provides
         unconditionally) and is passed through, not treated as invalid.
-        Anything non-numeric or negative falls back to
+        Anything non-numeric, non-finite, or negative falls back to
         ``DEFAULT_MIN_RECENT_ROUNDS``, logged at warning.
     """
     try:
         if isinstance(value, bool) or not isinstance(value, (int, float, str)):
             raise TypeError(f"unsupported type {type(value).__name__}")
         parsed = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: TOML (and JSON via some parsers) accepts `inf`/
+        # `-inf` as a literal float, so a config value of infinity reaches
+        # here as an actual Python `float('inf')` -- `int(float('inf'))`
+        # raises OverflowError, NOT TypeError/ValueError, and previously
+        # escaped uncaught into run setup (task-1272 Phase 3 review
+        # finding C; `float('nan')` was already covered -- `int()` raises
+        # ValueError for NaN, not OverflowError).
         logger.warning(
             f"run log: invalid {RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY}={value!r}; "
             f"using default {DEFAULT_MIN_RECENT_ROUNDS}"
@@ -212,24 +233,79 @@ def _make_round_boundary(*, native: bool) -> Callable[[dict[str, Any]], bool]:
     return boundary
 
 
-def _pinned_prefix_len(payload: list[dict[str, Any]]) -> int:
-    """How many leading rows `bound_messages_to_window(pin_first_user=True)`
-    pins: the leading system rows plus, ambiguity-free, everything up to and
-    including the first `role == "user"` row after them (the task
-    instruction -- see `bound_history_for_send`'s `pin_first_user=True`).
+def _task_row_index(
+    payload: list[dict[str, Any]],
+    boundary: Callable[[dict[str, Any]], bool],
+) -> int | None:
+    """Locate the task instruction: the LAST real (non-continuation)
+    ``role == "user"`` row in ``payload``.
 
-    Mirrors that function's own prefix computation on the ORIGINAL payload
-    rather than reading it back off the result, so the synthetic note can be
-    spliced at the exact boundary; not a reimplementation of the trimming
-    itself, only of the few lines that locate this one insertion point.
+    task-1272 Phase 3 review finding A: the original implementation pinned
+    the FIRST ``role == "user"`` row after the leading system rows, on the
+    assumption that it is always the task. That assumption only holds when
+    the payload's ONLY real user row IS the task -- true for a freshly
+    seeded single-turn run (every test fixture in this module's test file
+    seeds exactly that way), but false the moment the caller seeds with
+    more than the bare task. ``AgentService.run_turn``'s own docstring
+    says the primary-agent seed is "typically the conversation transcript
+    plus any staged/RAG context" -- i.e. a multi-turn Console conversation,
+    where the first real user row is an OLDER, unrelated turn and the
+    actual task is the newest one. Pinning the first row in that shape
+    protects a stale message while the real instruction -- indistinguishable
+    from any other "old" round to the trimmer -- can still be evicted.
+    Exactly the amnesia this module exists to prevent, on a technicality.
+
+    The LAST real user row is unambiguous instead, for either protocol:
+    ``agent_runtime.run_agent_loop`` never appends a fresh, non-continuation
+    ``role == "user"`` message of its own once a run is under way -- its
+    only appends are ``role == "assistant"`` replies, ``role == "tool"``
+    native results, and fence-protocol tool-result rows (``role ==
+    "user"``, but excluded here via ``boundary``, the exact same
+    round-boundary predicate ``bound_messages_to_window`` groups rounds
+    with -- see ``_make_round_boundary``). So nothing genuinely
+    user-authored can ever appear in the payload AFTER the task, no matter
+    how much prior conversation precedes it or how many rounds this run
+    has produced since.
+
+    Args:
+        payload: The full SEND payload (system prefix, any prior
+            conversation history, this run's task, and everything the run
+            has produced so far).
+        boundary: The SAME round-boundary predicate used for this call's
+            ``bound_messages_to_window`` (``_make_round_boundary``'s
+            output) -- required so a fence tool-result row is never
+            mistaken for the task.
+
+    Returns:
+        The 0-based index of the task row in ``payload``, or ``None`` when
+        no row unambiguously qualifies (no real user-authored row exists
+        in the payload at all -- an edge/malformed-seed case). Callers
+        MUST treat ``None`` as "cannot safely pin," never as "pin
+        nothing": see ``bound_history_for_send``'s handling, which is to
+        decline eviction entirely for this call rather than trim without
+        knowing what to protect.
+    """
+    for index in range(len(payload) - 1, -1, -1):
+        message = payload[index]
+        if message.get("role") == "user" and boundary(message):
+            return index
+    return None
+
+
+def _pinned_prefix_len(payload: list[dict[str, Any]], task_index: int) -> int:
+    """How many leading rows are pinned: the leading system rows plus,
+    through ``task_index`` (the task row located by ``_task_row_index``).
+
+    Mirrors ``bound_messages_to_window``'s own prefix computation
+    (``pin_row_index``, applied on this same ORIGINAL payload) rather than
+    reading it back off the result, so the synthetic note can be spliced at
+    the exact boundary; not a reimplementation of the trimming itself, only
+    of the few lines that locate this one insertion point.
     """
     index = 0
     while index < len(payload) and payload[index].get("role") == "system":
         index += 1
-    for i in range(index, len(payload)):
-        if payload[i].get("role") == "user":
-            return i + 1
-    return index
+    return max(index, task_index + 1)
 
 
 def _synthetic_note(dropped_rounds: int) -> dict[str, str]:
@@ -306,7 +382,17 @@ def bound_history_for_send(
         window: Explicit context window override (tests); ``None`` uses
             the normal token_counter lookup.
         count_fn: Injectable token counter (tests); ``None`` uses the real
-            one.
+            one -- ``console_history_budget.count_console_messages_tokens``,
+            which folds a native-protocol assistant message's
+            ``tool_calls`` structure into its counted text (task-1272
+            Phase 3 review finding B: an assistant turn that only issues
+            tool calls typically has empty ``content``, so without this
+            the call's real size -- sometimes substantial -- was invisible
+            to every counter here, silently undercounting a native payload
+            and letting it exceed the window even after "successful"
+            trimming). A caller-supplied ``count_fn`` is trusted as-is and
+            must account for ``tool_calls`` itself if it matters for that
+            caller's provider.
         min_recent_rounds: Minimum number of most recent complete rounds
             that must always survive, regardless of budget (forwarded to
             ``bound_messages_to_window``'s ``min_recent_turns``; see
@@ -318,17 +404,34 @@ def bound_history_for_send(
 
     Returns:
         ``payload`` unchanged (same object) when ``enabled`` is ``False``,
-        when nothing needed dropping, or when trimming itself failed;
-        otherwise a NEW list with the oldest whole rounds removed and a
-        synthetic note in their place. Never raises: any failure degrades
-        to sending the full history for this turn, logged at warning --
-        eviction is a context optimisation, never load-bearing for the
-        run's correctness (task-1272: "must never raise into an agent
-        run").
+        when the task instruction cannot be unambiguously located (see
+        ``_task_row_index`` -- a wrong pin is worse than no eviction, so
+        this degrades exactly like a failure rather than guessing), when
+        nothing needed dropping, or when trimming itself failed; otherwise
+        a NEW list with the oldest whole rounds removed and a synthetic
+        note in their place. Never raises: any failure degrades to sending
+        the full history for this turn, logged at warning -- eviction is a
+        context optimisation, never load-bearing for the run's correctness
+        (task-1272: "must never raise into an agent run").
     """
     if not enabled:
         return payload
     try:
+        boundary = _make_round_boundary(native=native)
+        # task-1272 Phase 3 review finding A: locate the task by CONTENT
+        # (the last real user row -- see `_task_row_index`'s own
+        # docstring), not by assuming it is the first row after the
+        # system prefix. `None` means no row in this payload qualifies --
+        # per the coordinator's ruling, decline eviction entirely for this
+        # call rather than trim without a pin to protect (a wrong guess is
+        # worse than sending the full history for one turn).
+        task_index = _task_row_index(payload, boundary)
+        if task_index is None:
+            logger.warning(
+                "run-log eviction: no identifiable task row in payload; "
+                "sending full history rather than risk pinning the wrong one"
+            )
+            return payload
         bound = bound_messages_to_window(
             payload,
             model=model,
@@ -336,15 +439,18 @@ def bound_history_for_send(
             response_reservation=response_reservation,
             window=window,
             count_fn=count_fn,
-            is_turn_boundary=_make_round_boundary(native=native),
-            # Live-verified 2026-07-28: without this, the task instruction
-            # -- the payload's only REAL role="user" row -- sits in the
-            # middle of history like any other droppable round and a tight
-            # enough window silently evicted it, leaving the agent with no
-            # memory of what it was asked to do (it then narrated about
-            # its own log instead of finishing). See the parameter's
+            is_turn_boundary=boundary,
+            # Live-verified 2026-07-28, hardened by finding A above:
+            # without this, the task instruction sits in the middle of
+            # history like any other droppable round and a tight enough
+            # window silently evicted it, leaving the agent with no memory
+            # of what it was asked to do (it then narrated about its own
+            # log instead of finishing). `pin_row_index` pins the EXACT
+            # row this function already identified above, rather than
+            # asking `bound_messages_to_window` to re-guess a position
+            # (`pin_first_user`'s forward scan) -- see that parameter's
             # docstring in console_history_budget.py.
-            pin_first_user=True,
+            pin_row_index=task_index,
             # Live-verified follow-up, same day: without a floor, a tight
             # enough window can keep only the in-flight round, so the agent
             # can no longer see the handful of steps it just took and
@@ -355,12 +461,15 @@ def bound_history_for_send(
             return payload
         # Splice the note in right where the dropped rounds were: after the
         # PINNED prefix (recomputed here on the ORIGINAL payload -- a small
-        # scan mirroring `bound_messages_to_window`'s own `pin_first_user`
+        # scan mirroring `bound_messages_to_window`'s own `pin_row_index`
         # logic, not a re-implementation of the trimmer itself -- because
         # that prefix is preserved verbatim, so its length is identical in
         # `bound.messages`).
         result = list(bound.messages)
-        result.insert(_pinned_prefix_len(payload), _synthetic_note(bound.dropped_turns))
+        result.insert(
+            _pinned_prefix_len(payload, task_index),
+            _synthetic_note(bound.dropped_turns),
+        )
         return result
     except Exception:  # noqa: BLE001 -- eviction must never abort a run
         logger.opt(exception=True).warning(

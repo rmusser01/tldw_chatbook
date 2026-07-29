@@ -7,6 +7,7 @@ limit / count_tokens_messages), which tasks 320/321 sharpen later.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -51,6 +52,20 @@ def count_console_messages_tokens(
     text counting stays byte-identical, and 320/321 flow through), then adds
     ``per_image_tokens`` per image part.
 
+    Native-protocol ``tool_calls`` (an assistant message's ``tool_calls``
+    list -- function name plus a JSON-string arguments blob, per
+    ``agent_service.py``'s native branch) are counted too: an assistant
+    turn that only issues tool calls typically carries empty/near-empty
+    ``content``, so without this the (sometimes substantial) call
+    structure was invisible to every caller of this counter, silently
+    undercounting a native-protocol payload's real size (task-1272 Phase 3
+    review finding B). Counted by folding ``json.dumps(tool_calls)`` into
+    that message's flattened text before it reaches the same tokenizer
+    path text already goes through -- not a separate estimate, so it is
+    consistent with everything else this function counts. A message
+    without ``tool_calls`` is completely unaffected (falsy check below),
+    so this is additive only.
+
     Args:
         messages: Provider payload dicts (``role``/``content``).
         model: Model name for the underlying tokenizer.
@@ -74,16 +89,25 @@ def count_console_messages_tokens(
                 for part in content
                 if isinstance(part, dict) and part.get("type") != "text"
             )
-            flattened.append(
-                {
-                    **message,
-                    "content": " ".join(
-                        t for t in texts if isinstance(t, str) and t
-                    ),
-                }
-            )
+            entry = {
+                **message,
+                "content": " ".join(
+                    t for t in texts if isinstance(t, str) and t
+                ),
+            }
         else:
-            flattened.append(message)
+            entry = message
+        tool_calls = message.get("tool_calls")
+        if tool_calls:
+            base_content = entry.get("content")
+            base_text = base_content if isinstance(base_content, str) else ""
+            entry = {
+                **entry,
+                "content": (
+                    f"{base_text} {json.dumps(tool_calls, default=str)}"
+                ).strip(),
+            }
+        flattened.append(entry)
     return count_tokens_messages(flattened, model) + per_image_tokens * image_count
 
 
@@ -140,6 +164,7 @@ def bound_messages_to_window(
     count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
     is_turn_boundary: Callable[[dict[str, Any]], bool] | None = None,
     pin_first_user: bool = False,
+    pin_row_index: int | None = None,
     min_recent_turns: int = 0,
 ) -> BoundResult:
     """Drop oldest whole turns until the payload fits the model window.
@@ -171,18 +196,33 @@ def bound_messages_to_window(
             after the leading system rows. ``False`` (every Console call
             site) keeps the original contract, where only the leading
             system rows and "the current turn" (the LAST boundary row
-            onward) are pinned. Console's "last user message" framing
-            means something different for an agent run: there is exactly
-            ONE real ``role == "user"`` row -- the task instruction -- and
-            every later one is a tool-result row wearing the same role
-            (see ``Agents.run_log_eviction``'s fence handling), so without
-            this the task instruction sits in the middle of history like
-            any other droppable turn and a tight enough window silently
-            drops it. A forward scan needs no protocol awareness the way
-            the backward "last user" search does: no tool result can ever
-            be emitted before the task that triggered it, so the first
-            ``role == "user"`` row scanning forward is unambiguously the
-            task, for either tool-call protocol.
+            onward) are pinned. A forward scan is unambiguous ONLY when
+            the payload's ONLY real ``role == "user"`` row is the task --
+            true for a freshly-seeded single-turn agent run, but NOT for a
+            payload seeded with a multi-turn conversation transcript (the
+            production shape at the primary-agent seam -- see
+            ``AgentService.run_turn``'s own docstring), where the first
+            real user row is an unrelated, older turn and the actual task
+            is the newest one. task-1272 Phase 3 review finding A:
+            ``Agents.run_log_eviction`` no longer uses this flag for that
+            reason -- it locates the task itself (the LAST non-continuation
+            ``role == "user"`` row, which no protocol can ever emit
+            anything genuinely user-authored after -- see
+            ``run_log_eviction._task_row_index``) and pins that exact
+            index via ``pin_row_index`` instead. This flag is kept, as-is,
+            for its existing direct callers/tests; a caller that cannot
+            guarantee "the payload's only real user row is the task"
+            should use ``pin_row_index``, not this.
+        pin_row_index: When set, extends the pinned prefix (same effect as
+            ``pin_first_user``) through this exact 0-based index into
+            ``messages`` instead of scanning for it. Lets a caller that
+            already knows WHICH row must never be dropped (e.g.
+            ``run_log_eviction``, which locates the task by content/
+            protocol knowledge this primitive does not have) pin it
+            directly rather than asking this function to re-guess a
+            position. Out-of-range or ``None`` (every Console call site)
+            is a no-op. Composes with ``pin_first_user``: the pinned
+            prefix extends through whichever of the two reaches further.
         min_recent_turns: Minimum number of most-recent turns guaranteed to
             survive, COUNTING the current turn as one of them (so ``0`` and
             ``1`` are equivalent to the original contract, where the current
@@ -244,6 +284,11 @@ def bound_messages_to_window(
             if messages[index].get("role") == "user":
                 sys_end = index + 1
                 break
+    # See `pin_row_index`'s own docstring above: a caller-identified exact
+    # row, applied independently of (and composing with, via `max`) the
+    # scan-based pin immediately above.
+    if pin_row_index is not None and 0 <= pin_row_index < len(messages):
+        sys_end = max(sys_end, pin_row_index + 1)
     system_prefix = messages[:sys_end]
     rest = messages[sys_end:]
 

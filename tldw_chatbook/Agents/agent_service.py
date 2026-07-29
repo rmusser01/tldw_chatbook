@@ -909,7 +909,18 @@ class AgentService:
                 # past-the-end clamping happens in format_results itself
                 # (single point of truth, mirroring `context`'s own clamp).
                 offset = int(args.get("offset") or 0)
-            except (TypeError, ValueError) as exc:
+            except (TypeError, ValueError, OverflowError) as exc:
+                # OverflowError: a model can send `float('inf')` (or a
+                # literal large enough to parse as one) for from_record/
+                # to_record/context/offset -- `int(float('inf'))` raises
+                # OverflowError, NOT TypeError/ValueError, so it must be
+                # caught here too or it escapes uncaught into the run.
+                # `float('nan')` already raises ValueError, already
+                # covered. Same gap `run_log_stats`/`run_log_slice` below
+                # already close for their own from_record/to_record --
+                # this closure (Phase 1, merged earlier) was the one
+                # sibling still missing it (task-1272 Phase 3 review,
+                # carried-over finding).
                 return ToolResult(ok=False, error=f"Invalid search arguments: {exc}")
             except (RunLogSearchPatternRejected, RunLogSearchTimeout) as exc:
                 # F6 (Qodo #6): a model-supplied `pattern=` that looks

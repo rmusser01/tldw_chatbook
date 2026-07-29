@@ -37,9 +37,10 @@ from tldw_chatbook.Agents.run_log_eviction import (
     RUN_LOG_EVICT_ENABLED_KEY,
     RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY,
     _make_round_boundary,
+    _task_row_index,
     bound_history_for_send,
+    coerce_min_recent_rounds,
 )
-
 from Tests.Agents.test_agent_service import ScriptedChat, native_call
 
 
@@ -874,3 +875,289 @@ def test_min_recent_rounds_config_key_is_honored(db, tmp_path, monkeypatch):
         f"MARK{n - 2}_" in str(m.get("content", "")) for m in last_payload
     ), "floor=2 should not have kept a round two positions back"
     assert any(f"MARK{n}_" in str(m.get("content", "")) for m in last_payload)
+
+
+# --------------------------------------------------------------------------
+# task-1272 Phase 3 review finding A: the task instruction is not always the
+# FIRST role=="user" row -- `AgentService.run_turn`'s own docstring says the
+# primary-agent seed is "typically the conversation transcript plus any
+# staged/RAG context", so a real payload can carry an older, unrelated
+# Console turn ahead of the actual task. The original `pin_first_user=True`
+# approach pinned whatever came first, which is provably wrong there. These
+# tests build that exact shape and confirm the fix (`_task_row_index`, the
+# LAST real user row, plus `bound_messages_to_window`'s `pin_row_index`)
+# protects the actual task regardless of what precedes it.
+# --------------------------------------------------------------------------
+
+
+def _payload_with_older_turn_before_the_task(n_rounds: int) -> list[dict]:
+    """[system, OLDER unrelated user/assistant turn, user(task), (fence
+    rounds) x n] -- the production shape finding A is about, not the
+    single-real-user-row shape every fixture above this section uses."""
+    payload = [
+        _msg("system", "sys"),
+        _msg("user", "what is 2+2? (an older, unrelated Console turn)"),
+        _msg("assistant", "4"),
+        _msg("user", _TASK_TEXT),
+    ]
+    for i in range(1, n_rounds + 1):
+        payload.append(_msg("assistant", fence_call("echo", {"i": i})))
+        payload.append(_fence_result_row("echo", f"MARK{i}"))
+    return payload
+
+
+def test_task_row_index_finds_the_last_real_user_row_not_the_first():
+    """Direct unit coverage of the new lookup: index 3 (the task), not
+    index 1 (the older, unrelated turn)."""
+    payload = _payload_with_older_turn_before_the_task(1)
+    boundary = _make_round_boundary(native=False)
+    assert _task_row_index(payload, boundary) == 3
+
+
+def test_task_row_index_returns_none_with_no_real_user_row():
+    """No row anywhere qualifies (every `role=="user"` row is a fence
+    continuation, or there simply is none) -- must return `None`, not a
+    wrong guess."""
+    payload = [
+        _msg("system", "sys"),
+        _msg("assistant", "orphaned assistant turn, nothing preceding it"),
+        _fence_result_row("echo", "MARK1"),
+    ]
+    boundary = _make_round_boundary(native=False)
+    assert _task_row_index(payload, boundary) is None
+
+
+def test_pin_first_user_would_protect_the_wrong_row_when_history_precedes_the_task():
+    """The regression this fix targets, reproduced directly against the
+    surviving `pin_first_user` primitive (left unchanged for its own
+    existing callers/tests): given a payload seeded the way
+    `AgentService.run_turn` actually seeds a primary agent -- a real,
+    older conversation turn BEFORE the task -- `pin_first_user=True`
+    protects that older turn instead and still lets the real task
+    instruction be evicted under a tight window."""
+    payload = _payload_with_older_turn_before_the_task(8)
+    old_behavior = bound_messages_to_window(
+        payload, model="m", provider="p", response_reservation=0,
+        window=10, count_fn=_wordcount,
+        is_turn_boundary=_make_round_boundary(native=False),
+        pin_first_user=True,
+    )
+    assert not any(
+        m.get("role") == "user" and m.get("content") == _TASK_TEXT
+        for m in old_behavior.messages
+    ), (
+        "test only meaningful if the OLD forward-scan pin drops the task "
+        "-- if this now passes, the regression this test guards against "
+        "no longer reproduces and should be revisited"
+    )
+
+
+def test_bound_history_for_send_protects_the_actual_task_not_the_first_user_row():
+    """The FIX, through the production entry point (`bound_history_for_
+    send`, which no longer uses `pin_first_user` at all -- see
+    `_task_row_index`): the same shape as above, same starving window --
+    the task instruction now survives regardless of the older turn ahead
+    of it."""
+    payload = _payload_with_older_turn_before_the_task(8)
+    result = bound_history_for_send(
+        payload, model="m", provider="p", native=False, enabled=True,
+        window=10, response_reservation=0, count_fn=_wordcount,
+    )
+    assert any(
+        m.get("role") == "user" and m.get("content") == _TASK_TEXT
+        for m in result
+    ), "the actual task instruction must survive, not just some earlier user row"
+
+
+def test_no_identifiable_task_row_declines_eviction_entirely():
+    """The coordinator's ruling on finding A: when no row in the payload
+    unambiguously qualifies as the task, eviction must decline outright --
+    never guess a pin -- even under a starving window that would otherwise
+    force heavy trimming. `bound_history_for_send` must return the exact
+    same object, not even an attempted (and necessarily unprotected) trim.
+    """
+    payload = [
+        _msg("system", "sys"),
+        _msg("assistant", "orphaned assistant turn, no task preceding it"),
+    ]
+    for i in range(1, 4):
+        payload.append(_msg("assistant", fence_call("echo", {"i": i})))
+        payload.append(_fence_result_row("echo", f"MARK{i}"))
+    result = bound_history_for_send(
+        payload, model="m", provider="p", native=False, enabled=True,
+        window=5, response_reservation=0, count_fn=_wordcount,
+    )
+    assert result is payload
+
+
+# --------------------------------------------------------------------------
+# task-1272 Phase 3 review finding B: eviction measures the payload with the
+# Console token counter, which did not account for native-protocol
+# `tool_calls` structures -- an assistant turn that only issues tool calls
+# typically has empty `content`, so the (sometimes substantial) call itself
+# was invisible to the counter, silently undercounting a native payload.
+# Fixed at the root: `console_history_budget.count_console_messages_tokens`
+# (the DEFAULT counter every caller here gets when `count_fn` is not
+# overridden) now folds `tool_calls` into what it counts.
+# --------------------------------------------------------------------------
+
+
+def test_count_console_messages_tokens_counts_native_tool_calls():
+    """Direct unit coverage of the counter itself: a message whose entire
+    payload lives in `tool_calls` (empty `content`) must count for
+    meaningfully more than the same message with `tool_calls` stripped."""
+    big_args = json.dumps({"data": list(range(500))})
+    plain = [{"role": "assistant", "content": ""}]
+    with_calls = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "echo", "arguments": big_args},
+                }
+            ],
+        }
+    ]
+    plain_tokens = budget_module.count_console_messages_tokens(plain, "gpt-4")
+    with_calls_tokens = budget_module.count_console_messages_tokens(with_calls, "gpt-4")
+    assert with_calls_tokens > plain_tokens + 100, (
+        "a substantial tool_calls structure must move the count by more "
+        "than incidental JSON-key overhead"
+    )
+
+
+def test_native_payload_with_substantial_tool_calls_is_bounded_correctly():
+    """Integration proof through `bound_history_for_send`'s ACTUAL default
+    counter (no `count_fn` override): a native round whose `tool_calls`
+    carries a large arguments blob (empty `content`) must be evicted once
+    it no longer fits, exactly like a round with equally large plain
+    `content` would be -- not silently kept because the counter only ever
+    looked at `content`.
+    """
+    big_args = json.dumps({"data": list(range(2000))})
+    heavy_round = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "echo", "arguments": big_args},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+    ]
+    light_rounds: list[dict] = []
+    for i in range(2, 6):
+        call_id = f"call_{i}"
+        light_rounds += [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": "echo", "arguments": json.dumps({"i": i})},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": call_id, "content": f"MARK{i}"},
+        ]
+    payload = [_msg("system", "sys"), _msg("user", _TASK_TEXT), *heavy_round, *light_rounds]
+    without_heavy_round = [_msg("system", "sys"), _msg("user", _TASK_TEXT), *light_rounds]
+
+    # Calibrate against the REAL default counter this function actually
+    # uses in production (no count_fn override): a window that comfortably
+    # fits everything EXCEPT the heavy round's tool_calls, but not the full
+    # payload -- so eviction is required, and only lands on the heavy
+    # round if its tool_calls are actually counted. `window` stays well
+    # under the primitive's win/50 margin threshold (25_600), so the
+    # margin contribution is the constant 512 floor on both sides of this
+    # calibration.
+    light_tokens = budget_module.count_console_messages_tokens(without_heavy_round, "gpt-4")
+    full_tokens = budget_module.count_console_messages_tokens(payload, "gpt-4")
+    assert full_tokens > light_tokens + 500, (
+        "test setup needs the heavy round's tool_calls to dominate the "
+        "count -- if this now fails, make the arguments blob bigger"
+    )
+    window = light_tokens + 700
+
+    result = bound_history_for_send(
+        payload, model="gpt-4", provider="openai", native=True, enabled=True,
+        window=window, response_reservation=0, min_recent_rounds=1,
+    )
+
+    def _has_call(messages, call_id):
+        return any(
+            call.get("id") == call_id
+            for m in messages
+            for call in (m.get("tool_calls") or [])
+        )
+
+    assert not _has_call(result, "call_1"), (
+        "the oversized tool_calls round must be evicted once its "
+        "arguments are actually counted toward the budget"
+    )
+    for i in range(2, 6):
+        assert _has_call(result, f"call_{i}"), f"round {i} (small) should still fit"
+    assert any(
+        m.get("role") == "user" and m.get("content") == _TASK_TEXT for m in result
+    )
+
+
+# --------------------------------------------------------------------------
+# task-1272 Phase 3 review finding D: `coerce_min_recent_rounds` had no
+# direct unit tests of its own (only indirect coverage via env-var-string
+# integration tests above). Finding C's OverflowError fix lives here too --
+# the `float("inf")` case is the one that previously escaped uncaught.
+# --------------------------------------------------------------------------
+
+
+def test_coerce_min_recent_rounds_valid_value_passes_through():
+    assert coerce_min_recent_rounds(7) == 7
+
+
+def test_coerce_min_recent_rounds_negative_falls_back_to_default():
+    assert coerce_min_recent_rounds(-3) == DEFAULT_MIN_RECENT_ROUNDS
+
+
+def test_coerce_min_recent_rounds_zero_is_a_valid_deliberate_choice():
+    assert coerce_min_recent_rounds(0) == 0
+
+
+def test_coerce_min_recent_rounds_non_numeric_falls_back_to_default():
+    assert coerce_min_recent_rounds("not-a-number") == DEFAULT_MIN_RECENT_ROUNDS
+
+
+def test_coerce_min_recent_rounds_none_falls_back_to_default():
+    assert coerce_min_recent_rounds(None) == DEFAULT_MIN_RECENT_ROUNDS
+
+
+def test_coerce_min_recent_rounds_infinity_falls_back_to_default():
+    """Finding C: `int(float('inf'))` raises `OverflowError`, which the
+    original `except (TypeError, ValueError)` did not catch -- a config
+    value of infinity used to raise straight out of run setup instead of
+    degrading to the default."""
+    assert coerce_min_recent_rounds(float("inf")) == DEFAULT_MIN_RECENT_ROUNDS
+    assert coerce_min_recent_rounds(float("-inf")) == DEFAULT_MIN_RECENT_ROUNDS
+
+
+def test_coerce_min_recent_rounds_nan_falls_back_to_default():
+    assert coerce_min_recent_rounds(float("nan")) == DEFAULT_MIN_RECENT_ROUNDS
+
+
+def test_coerce_min_recent_rounds_enormous_value_passes_through():
+    """No documented upper bound: an absurdly large but finite floor is
+    accepted as-is, same as any other non-negative int."""
+    huge = 10**30
+    assert coerce_min_recent_rounds(huge) == huge
+
+
+def test_coerce_min_recent_rounds_truncating_float_rounds_toward_zero():
+    assert coerce_min_recent_rounds(4.9) == 4
