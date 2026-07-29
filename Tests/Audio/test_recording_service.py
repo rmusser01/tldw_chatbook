@@ -254,9 +254,7 @@ class TestAudioRecordingService:
         assert service.audio_buffer[0] == chunk
         callback.assert_called_once_with(chunk)
 
-    def test_buffer_limit_keeps_complete_pcm_frames_and_stops_once(
-        self, mock_pyaudio
-    ):
+    def test_buffer_limit_keeps_complete_pcm_frames_and_stops_once(self, mock_pyaudio):
         """A configured memory limit must stop capture without splitting a frame."""
         limit_called = threading.Event()
         limit_calls = []
