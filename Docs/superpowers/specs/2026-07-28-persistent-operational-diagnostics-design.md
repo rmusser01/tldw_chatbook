@@ -67,9 +67,12 @@ def persist_event(component: str, event: str, *, level: int = logging.INFO, **fi
     Uses stdlib logging deliberately: the persistent marker does not survive the
     Loguru forwarder, and must not — see module docstring.
     """
+    safe_component = safe_metadata_token(component)
+    if safe_component == "invalid":
+        raise ValueError("persist_event component must be a bounded metadata token")
     log_persistent_metadata(
-        logging.getLogger(f"tldw_chatbook.diagnostics.{component}"),
-        level, event, component=component, **fields,
+        logging.getLogger(f"tldw_chatbook.diagnostics.{safe_component}"),
+        level, event, component=safe_component, **fields,
     )
 ```
 
@@ -84,10 +87,23 @@ Two details in that signature are deliberate:
   that module. The distinct namespace keeps persisted events greppable and independently
   configurable, and still satisfies `_is_chatbook_record`, which requires the `tldw_chatbook.`
   prefix.
-- **`component` is positional**, so passing it twice is already a `TypeError` from Python itself
-  ("got multiple values for argument 'component'"). An explicit guard would be unreachable — the
-  interpreter raises before the function body runs. A first draft specified one, and the Task 1
+- **`component` is positional**, so passing it *twice* is already a `TypeError` from Python itself
+  ("got multiple values for argument 'component'"). A guard against *that* would be unreachable —
+  the interpreter raises before the function body runs. A first draft specified one, and the Task 1
   review caught that both it and its test were dead.
+- **`component` is nonetheless validated, and rejection is a `ValueError`, not a substitution.**
+  This is a different guard from the duplicate-argument one above and it is not dead. `component`
+  is used *twice*: as a schema field, where an invalid value degrades to `component=invalid`, and
+  **raw**, to build the logger name. The persistent formatter is
+  `"…%(name)s:%(lineno)d - %(message)s"`, so the logger name is written to disk, and
+  `_is_chatbook_record` only checks the `tldw_chatbook.` prefix. Without validation,
+  `persist_event(f"tool.{tool_name}", …)` or `persist_event(f"provider.{provider}", …)` — both
+  natural readings of the docstring — would put caller-supplied text straight into the persistent
+  log while every guard reported success. It raises rather than substituting because a non-token
+  `component` means the caller has misunderstood the contract, and writing `invalid` would hide
+  that. Because it raises, every call site wraps the call in `try/except Exception: pass`:
+  `on_unmount`'s emit in particular sits *above* the whole shutdown sequence (DB closes, worker
+  cancellation, ingest pool teardown), and diagnostics must never break the thing they observe.
 
 **These records also reach the terminal and the in-app Logs screen**, because they go through the
 root logger like everything else. That is intended — a persisted event is worth seeing live — but
@@ -109,12 +125,27 @@ the schema apart from `component`.
 | `app_started` | `app` | — | Anchors a session; its absence dates a crash. |
 | `app_stopping` | `app` | — | Distinguishes a clean exit from a kill. |
 | `persistent_sink_installed` | `logging` | `status` | Emitted immediately after install, so an empty file is unambiguous. |
-| `worker_failed` | caller's | `operation`, `exception_type` | The TASK-1210 class: a worker that dies leaves a trace. |
+| `worker_failed` | `app` | `operation`, `exception_type` | The TASK-1210 class: a worker that dies leaves a trace. |
 | `scheduler_configured` | `scheduling` | `item_count`, `status` | Handlers registered, and whether queued work had none. |
-| `unhandled_exception` | caller's | `exception_type`, `error_category` | A crash names its type without its message. |
+| `unhandled_exception` | `app` | `exception_type` | A crash names its type without its message. |
 
 No message text, no traceback, no paths. `exception_type` is a class name, which is a code-side
 identifier.
+
+Two corrections to an earlier draft of this table, made because the ADR-029 owner is asked to
+sign off against it and it must describe what the branch actually emits:
+
+- **`error_category` is not emitted for `unhandled_exception`, and has been dropped from the
+  table** rather than added to the code. It remains in `_TOKEN_FIELDS` (it predates this task and
+  is used elsewhere), but emitting it here would mean inventing a classification vocabulary for
+  arbitrary exception types with no consumer for it, widening the persisted record for no
+  diagnostic gain. `exception_type` already answers the question the event exists to answer.
+- **`worker_failed` and `unhandled_exception` are `app`, not "caller's".** Both are emitted from
+  exactly one place — `TldwCli.on_worker_state_changed` and `TldwCli._handle_exception` — and both
+  hardcode `"app"`. There is no caller-supplied component anywhere in this design, and as of the
+  Critical-1 fix there cannot be one: `persist_event` raises `ValueError` if `component` is not a
+  bounded metadata token, because `component` is used raw to build the logger name and the
+  persistent formatter writes `%(name)s` to disk.
 
 **Emission points.** The listed events are not scattered across the codebase; each has one
 defined home, and the two that could have sprawled do not:
@@ -148,7 +179,24 @@ the bundle work, when there is a consumer).
 permissions or path problem yields an empty log forever — the same silent-failure class as
 TASK-1240 itself. `persistent_sink_installed` is emitted immediately after a successful install,
 which makes the two states distinguishable: a file with one line means the sink works and
-nothing else has happened; an empty file means the sink did not install.
+nothing else has been admitted; an empty file means the sink did not install.
+
+Two details make that reading actually true, both added by the whole-branch review:
+
+- **The event is emitted at `file_log_level`, not at INFO.** The handler's own level is
+  user-configurable and the shipped `config.py` comment offers `WARNING, ERROR, CRITICAL`. At any
+  of those, an INFO install line is dropped *by the very handler it exists to prove installed* —
+  every other INFO event in this design goes with it, the user sends a zero-byte log, and the
+  paragraph above tells the maintainer to read that as "the sink did not install". Logging it at
+  the handler's own level means it always clears its own gate, whatever that gate is set to.
+  Corollary, which the code comment states too: the other events remain level-gated, so a log
+  containing only this line means "installed, and everything below the configured level was
+  filtered" — not "nothing happened".
+- **It is emitted outside the `try` that reports install failure.** Inside it, a future failure in
+  the emit itself would be caught by the `except Exception` that warns and returns `False` —
+  reporting a broken sink when the handler is built, filtered, attached and working. It is also
+  individually wrapped in `try/except Exception: pass`, like every other `persist_event` call
+  site, because `persist_event` raises on a malformed `component`.
 
 ## Testing
 

@@ -94,8 +94,16 @@ types). One schema field, `component`, was added to `_TOKEN_FIELDS` for this.
 **The Loguru path stays deliberately closed.** `_forward_loguru_to_standard` rebuilds `extra` from
 scratch and drops the `_tldw_metadata_only_record` marker; `persist_event` always goes through the
 stdlib logger, never Loguru. This is pinned as a security property, not an oversight, by
-`Tests/test_persistent_diagnostic_boundary.py` (mutation-checked: reintroducing the marker through
-a Loguru `.bind()` call is asserted to still be rejected).
+`test_forward_loguru_to_standard_drops_the_metadata_marker` in
+**`Tests/Utils/test_persist_event.py`** — it asserts on the stdlib `LogRecord` the forwarder
+builds, so a change that carried Loguru's bound extras through (letting any code write
+`logger.bind(_tldw_metadata_only_record=True).info(secret)`) fails there.
+
+*Correction (whole-branch review, M13): an earlier draft of these notes credited
+`Tests/test_persistent_diagnostic_boundary.py` with this pin and listed it as modified. That file
+is untouched by this branch — `git log origin/dev..HEAD -- Tests/test_persistent_diagnostic_boundary.py`
+returns zero commits and it does not appear in `git diff --name-only origin/dev...HEAD`. It has
+been removed from the modified-files list below.*
 
 **The non-empty guard asserts named events, not bare non-emptiness.** `persistent_sink_installed`
 alone would satisfy `assert file_is_non_empty` even if every other event were broken — the same
@@ -114,8 +122,67 @@ test composes a real emitter with a real installed sink, so an app.py-before-sin
 ordering regression would pass both halves silently — is recorded in the spec's Risks section and
 tracked as TASK-1330 (filed To Do, not started).
 
-Full affected suite (`Tests/Utils/ Tests/Scheduling/ Tests/App/` plus the five persistent-diagnostics
-test files) passes: 848 passed, 0 failed.
+## Whole-branch review fix wave
+
+A whole-branch review (after the per-task reviews) found defects living *between* the tasks. All
+are fixed on this branch:
+
+- **Critical — `component` reached the persistent log unvalidated.** `persist_event` used
+  `component` twice: as a schema field (validated, degrading to `component=invalid`) and **raw**,
+  to build the logger name. The persistent formatter writes `%(name)s`, so the raw value landed on
+  disk, and `_is_chatbook_record` only checks the `tldw_chatbook.` prefix. Mutation-confirmed: with
+  the guard removed the file reads `tldw_chatbook.diagnostics.<caller text>:… event=app_started
+  component=invalid` — the field reports a rejection while the logger name carries the payload.
+  `persist_event` now rejects a non-token `component` with `ValueError` (substituting `invalid`
+  would hide a caller who misunderstood the contract). **Because it now raises, all five call sites
+  are wrapped in `try/except Exception: pass`** — `on_unmount`'s in particular sits *above* the
+  entire shutdown sequence (DB closes, worker cancellation, ingest pool teardown).
+- **Important — `unhandled_exception` recorded textual's useless `WorkerFailed` wrapper.** With
+  `exit_on_error` true (the default) `Worker._run` calls `_handle_exception(WorkerFailed(...))`
+  *synchronously* while `StateChanged` is only *queued*, so this override fires first and
+  `_fatal_error()` -> `_close_messages_no_wait()` can race the `worker_failed` event that carries
+  the real type and `operation`. Every worker crash in the app persisted the identical
+  `exception_type=WorkerFailed`. Now unwrapped via `WorkerFailed.error`.
+- **Important — "an empty log means the sink did not install" was false.** The install event was
+  emitted at INFO while the handler is set to `file_log_level`, whose shipped config comment offers
+  `WARNING, ERROR, CRITICAL`. On that config the install line is dropped by the very handler it
+  proves installed. Now emitted at `file_log_level`, and moved *outside* the `try` whose `except`
+  returns `False` so a failure there cannot report "install failed" on a working sink.
+- **Important — test defects.** `test_successful_worker_records_nothing` asserted no `worker_failed`
+  existed *anywhere* in the recorder, which its own sibling twelve lines earlier documents as
+  unsafe (real background workers route through the same hook during `pilot.pause()`); it now
+  selects by `operation` identity. `test_persist_event.py`'s forwarder test called bare
+  `loguru_logger.remove()`, destroying **every** Loguru sink process-wide while its `finally`
+  restored only its own — `Tests/Utils/` is collected before the root `Tests/test_*.py` files, so
+  the rest of the session ran sink-less; the `remove()` is gone and the assertion is now
+  `all(not hasattr(r, "_tldw_metadata_only_record") for r in captured)`, which is *stronger*
+  (survives duplicate forwarders) and mutates nothing global.
+- **`Tests/App/test_unhandled_exception_event.py` was testing a path production never takes.** Its
+  `try/except Exception: pass` blocks were commented "Textual's implementation re-raises" — it does
+  not. They were not dead, though: they were absorbing
+  `ValueError: Value for 'trace' required if not called in except: block`, raised by
+  `_fatal_error()`'s bare `rich.traceback.Traceback()`. Every test now calls `_handle_exception`
+  from inside a live `except` block, as `Worker._run` and the message pump do, with no swallow.
+- **Durable comments added where the next change is dangerous.** `operation` uses `Worker.name`
+  (code-side); `Worker.description` is built by textual as `f"{name}={value!r}"` over the worker's
+  *actual arguments*, so "improving" `operation` to use it would put prompts, API keys and tool
+  values straight into the persistent log. Said so at the call site. `app.py`'s
+  `else "unknown"` stays, with the reason recorded: `Worker._run` assigns `self.state =
+  WorkerState.ERROR` — whose setter posts `StateChanged` — one line *before* `self._error = error`;
+  delivery is via the message queue so `_error` has landed in every real interleaving, but the
+  branch is a cheap total-function guard on a path that only runs when something already broke.
+  (The review recorded the assignment order the other way round; the conclusion is unchanged.)
+
+New guards, each mutation-checked by reverting its fix and confirming a red test: the `component`
+guard (8 parametrized cases), the `WorkerFailed` unwrap, the install event's level, and the
+forwarder's marker drop.
+
+Full affected suite (`Tests/Utils/ Tests/Scheduling/ Tests/App/ Tests/Architecture/` plus the two
+persistent-diagnostics test files) — **822 passed, 1 failed**. The single failure is
+`Tests/Architecture/test_persistent_diagnostic_inventory.py`, which is **pre-existing**: the
+checker exits `1` on `origin/dev` and at this branch's merge-base (`d36bfae0b`), verified by
+running it in a detached worktree. See the ADR-029 amendment note for the branch's own (unwritten)
+delta to that artifact.
 
 ## Sign-off gate (do not merge without this)
 
@@ -133,8 +200,9 @@ that reason — marking it Done would misrepresent an unratified privacy-boundar
 - `tldw_chatbook/app.py`, `Logging_Config.py`, `Scheduling/scheduler/loop.py` — event emission sites, Tasks 3-7
 - `Tests/Utils/test_persist_event.py`, `Tests/App/test_app_lifecycle_events.py`,
   `Tests/App/test_worker_failure_event.py`, `Tests/App/test_unhandled_exception_event.py`,
-  `Tests/Scheduling/test_scheduler_observability.py`, `Tests/test_persistent_log_is_not_empty.py`,
-  `Tests/test_persistent_diagnostic_boundary.py` (new/extended assertions) — Tasks 1-8
+  `Tests/Scheduling/test_scheduler_observability.py`, `Tests/test_persistent_log_is_not_empty.py`
+  (new/extended assertions) — Tasks 1-8. `Tests/test_persistent_diagnostic_boundary.py` was listed
+  here in error and is **not** modified by this branch (see the correction above).
 - `Docs/superpowers/specs/2026-07-28-persistent-operational-diagnostics-design.md` — Testing
   section corrected, Risks section extended, Governance "seven" → "six" fixed (Task 9)
 - `backlog/decisions/029-local-private-data-boundary.md` — proposed amendment recorded, pending

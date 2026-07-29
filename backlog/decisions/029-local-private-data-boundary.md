@@ -66,6 +66,17 @@ This restores the design's stated goal of keeping persistent diagnostics useful.
 Before it, the sink admitted nothing at all, because `log_persistent_metadata()`
 had no production callers and every ordinary log record was rejected.
 
+**Note for the reviewer — this branch touches an owner-controlled artifact.**
+`Docs/security/production-diagnostic-inventory.json` is not left untouched by the TASK-1240
+branch: the branch shifts **4 `diagnostic_digest` values** and **9 sink-topology line numbers** in
+it, as a mechanical consequence of adding `persist_event` call sites and the `component` field.
+The inventory has **not** been regenerated here. Its checker already exits `1` on `origin/dev` and
+at this branch's merge-base, so the red gate is pre-existing rather than a regression introduced by
+this work; regenerating the artifact on this branch would entangle it with a failure that belongs
+to someone else's change and would re-baseline digests this ADR's owner is the authority on.
+Regeneration is therefore left to the owner, to be done together with whatever already made the
+checker red. This sign-off request should not be read as implying the artifact is unaffected.
+
 Known residual gap, not resolved by this amendment: no test composes a real production emitter
 with a real installed sink (see [TASK-1330](../tasks/task-1330%20-%20Prove-app_started-is-never-emitted-before-the-persistent-sink-installs.md)).
 Full design and test rationale: [Design spec](../../Docs/superpowers/specs/2026-07-28-persistent-operational-diagnostics-design.md).
