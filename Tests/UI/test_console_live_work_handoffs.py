@@ -11,6 +11,9 @@ from textual.app import App
 from Tests.UI.test_destination_shells import DestinationHarness, _wait_for_selector
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
@@ -98,6 +101,37 @@ class ConsoleHarness(App):
 
 def _active_console_screen(host: ConsoleHarness):
     return host.screen_stack[-1]
+
+
+async def _wait_for_production_chat_screen(
+    app, pilot, *, timeout: float = 6.0
+) -> ChatScreen:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, ChatScreen) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for production ChatScreen; active={type(app.screen).__name__}"
+    )
+
+
+async def _wait_for_production_artifacts_screen(
+    app, pilot, *, timeout: float = 6.0
+) -> ArtifactsScreen:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, ArtifactsScreen) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for production ArtifactsScreen; "
+        f"active={type(app.screen).__name__}"
+    )
 
 
 def _screen_static_text(screen) -> str:
@@ -190,6 +224,7 @@ class StaticLocalChatbookService:
     def __init__(self, chatbooks):
         self.chatbooks = tuple(chatbooks)
         self.calls = []
+        self.get_calls = []
 
     async def list_chatbooks(self, *, q=None, limit=100, offset=0, **kwargs):
         self.calls.append(
@@ -201,6 +236,14 @@ class StaticLocalChatbookService:
             }
         )
         return list(self.chatbooks)[int(offset) : int(offset) + int(limit)]
+
+    async def get_chatbook(self, chatbook_id):
+        self.get_calls.append(chatbook_id)
+        for chatbook in self.chatbooks:
+            record_id = chatbook.get("chatbook_id") or chatbook.get("id")
+            if str(record_id) == str(chatbook_id):
+                return dict(chatbook)
+        raise KeyError(chatbook_id)
 
 
 async def _wait_for_destination_recovery_state(
@@ -395,8 +438,10 @@ def test_open_console_for_live_work_routes_to_chat_route():
     )
 
     assert seen == ["chat"]
-    assert isinstance(app.pending_console_launch, ConsoleLiveWorkLaunch)
-    assert app.pending_console_launch.to_pending_payload() == {
+    claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+    assert claim is not None
+    assert isinstance(claim.value, ConsoleLiveWorkLaunch)
+    assert claim.value.to_pending_payload() == {
         "source": "workflows",
         "title": "Daily digest",
         "payload": {"run_id": "run-1"},
@@ -404,6 +449,7 @@ def test_open_console_for_live_work_routes_to_chat_route():
         "recovery": "Workflow is starting.",
         "action_label": "Open workflow run",
     }
+    assert app.pending_handoffs.acknowledge(claim)
 
 
 def test_open_console_for_live_work_preserves_minimal_call_defaults():
@@ -413,8 +459,10 @@ def test_open_console_for_live_work_preserves_minimal_call_defaults():
 
     app.open_console_for_live_work(source="workflows", title="Daily digest")
 
-    assert isinstance(app.pending_console_launch, ConsoleLiveWorkLaunch)
-    assert app.pending_console_launch.to_pending_payload() == {
+    claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK)
+    assert claim is not None
+    assert isinstance(claim.value, ConsoleLiveWorkLaunch)
+    assert claim.value.to_pending_payload() == {
         "source": "workflows",
         "title": "Daily digest",
         "payload": {},
@@ -422,6 +470,7 @@ def test_open_console_for_live_work_preserves_minimal_call_defaults():
         "recovery": "Console has staged this live-work request.",
         "action_label": "Open in Console",
     }
+    assert app.pending_handoffs.acknowledge(claim)
 
 
 def test_console_live_work_status_card_state_derives_stable_rows_from_launch():
@@ -647,7 +696,11 @@ def test_app_console_live_work_primary_action_routes_wc_run_details():
 async def test_schedules_console_follow_uses_home_dashboard_app_inputs():
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4.1"]}
-    app._screen_states = {"chat": {"conversation_id": "c1"}}
+    app.screen_state_store.save(
+        "chat",
+        {"conversation_id": "c1"},
+        app._current_runtime_identity(),
+    )
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
             HomeActiveWorkItem(
@@ -779,7 +832,11 @@ async def test_schedules_destination_routes_latest_active_run_to_console():
 def test_workflows_console_launch_uses_home_dashboard_app_inputs():
     app = _build_test_app()
     app.providers_models = {"OpenAI": ["gpt-4.1"]}
-    app._screen_states = {"chat": {"conversation_id": "c1"}}
+    app.screen_state_store.save(
+        "chat",
+        {"conversation_id": "c1"},
+        app._current_runtime_identity(),
+    )
     app.home_active_work_adapter = StaticHomeActiveWorkAdapter(
         (
             HomeActiveWorkItem(
@@ -1583,8 +1640,7 @@ async def test_artifacts_destination_uses_numeric_id_tie_break_for_latest_chatbo
 @pytest.mark.asyncio
 async def test_artifacts_destination_consumes_pending_chatbook_target_before_latest_fallback():
     app = _build_test_app()
-    app.pending_artifacts_chatbook_target_id = "local:chatbook:77"
-    app.local_chatbook_service = StaticLocalChatbookService(
+    chatbook_service = StaticLocalChatbookService(
         (
             {
                 "chatbook_id": 77,
@@ -1601,16 +1657,28 @@ async def test_artifacts_destination_consumes_pending_chatbook_target_before_lat
         )
     )
     app.open_console_for_live_work = Mock()
-    host = DestinationHarness(app, "artifacts")
 
-    async with host.run_test(size=(180, 40)) as pilot:
-        screen = _active_console_screen(host)
+    async with app.run_test(size=(180, 40)) as pilot:
+        await _wait_for_production_chat_screen(app, pilot)
+        app.local_chatbook_service = chatbook_service
+        app.pending_handoffs.stage(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET,
+            "local:chatbook:77",
+        )
+        app.post_message(NavigateToScreen("artifacts"))
+        screen = await _wait_for_production_artifacts_screen(app, pilot)
         await _wait_for_selector(screen, pilot, "#artifacts-console-available")
 
         text = _screen_static_text(screen)
         assert "Open Console for requested Chatbook artifact: Requested Pack." in text
         assert "Latest Pack" not in text
-        assert getattr(app, "pending_artifacts_chatbook_target_id", None) is None
+        assert not app.pending_handoffs.has_pending(
+            HandoffChannel.ARTIFACT_CHATBOOK_TARGET
+        )
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.ARTIFACT_CHATBOOK_TARGET) is None
+        )
+        assert chatbook_service.get_calls == ["77"]
 
         await pilot.click("#artifacts-use-in-console")
 
@@ -1652,19 +1720,21 @@ async def test_artifacts_destination_distinguishes_chatbook_service_failure_from
 async def test_console_renders_pending_launch_context():
     ConsoleLiveWorkLaunch = _load_console_live_work_contract()
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "workflows",
-        "title": "Daily digest",
-        "payload": {"attempt": 2, "run_id": "run-1"},
-        "status": "running",
-        "recovery": "Workflow is starting.",
-        "action_label": "Open workflow run",
-    }
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "workflows",
+            "title": "Daily digest",
+            "payload": {"attempt": 2, "run_id": "run-1"},
+            "status": "running",
+            "recovery": "Workflow is starting.",
+            "action_label": "Open workflow run",
+        },
+    )
 
-    async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
-        screen = _active_console_screen(host)
+    async with app.run_test(size=(180, 40)) as pilot:
+        screen = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen, pilot, "#console-pending-launch-card")
 
         assert screen.query_one("#console-pending-launch-card")
         assert len(screen.query("#console-live-work-source-readiness")) == 0
@@ -1705,7 +1775,8 @@ async def test_console_renders_pending_launch_context():
         assert "attempt: 2" in text
         assert "run_id: run-1" in text
         assert isinstance(screen._pending_console_launch_context, ConsoleLiveWorkLaunch)
-        assert app.pending_console_launch is None
+        assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
+        assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_LIVE_WORK) is None
 
 
 @pytest.mark.asyncio
@@ -1749,38 +1820,49 @@ async def test_console_renders_source_readiness_summary_without_pending_launch()
 @pytest.mark.asyncio
 async def test_console_wc_live_work_action_button_routes_run_details():
     app = _build_test_app()
-    app.pending_console_launch = {
-        "source": "Watchlists",
-        "title": "Daily security feed",
-        "payload": {"target_id": "local:watchlist_run:91", "run_id": 91},
-        "status": "failed",
-        "recovery": "Review the Watchlists run details or retry from Watchlists.",
-        "action_label": "Open Watchlists run",
-    }
-    app.post_message = Mock()
-    app.notify = Mock()
-    host = ConsoleHarness(app)
+    app.pending_handoffs.stage(
+        HandoffChannel.CONSOLE_LIVE_WORK,
+        {
+            "source": "Watchlists",
+            "title": "Daily security feed",
+            "payload": {"target_id": "local:watchlist_run:91", "run_id": 91},
+            "status": "failed",
+            "recovery": ("Review the Watchlists run details or retry from Watchlists."),
+            "action_label": "Open Watchlists run",
+        },
+    )
 
-    async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
-        screen = _active_console_screen(host)
+    async with app.run_test(size=(180, 40)) as pilot:
+        screen = await _wait_for_production_chat_screen(app, pilot)
+        await _wait_for_selector(screen, pilot, "#console-live-work-primary-action")
+        navigation_messages = []
+        original_post_message = app.post_message
+
+        def record_and_post(message):
+            if getattr(message, "screen_name", None) is not None:
+                navigation_messages.append(message)
+            return original_post_message(message)
+
+        app.post_message = record_and_post
         button = screen.query_one("#console-live-work-primary-action")
         assert str(button.label) == "Open Watchlists run"
 
         button.press()
-        await pilot.pause(0.1)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not navigation_messages:
+            await pilot.pause(0.01)
 
-    app.post_message.assert_called_once()
-    navigation = app.post_message.call_args.args[0]
-    assert navigation.screen_name == "watchlists_collections"
-    assert navigation.screen_context == {
-        "section": "runs",
-        "backend": "local",
-        "run_id": "local:watchlist_run:91",
-    }
-    assert not hasattr(app, "pending_watchlists_section")
-    assert not hasattr(app, "pending_watchlists_run_id")
-    app.notify.assert_not_called()
+        assert len(navigation_messages) == 1
+        navigation = navigation_messages[0]
+        assert navigation.screen_name == "watchlists_collections"
+        assert navigation.screen_context == {
+            "section": "runs",
+            "backend": "local",
+            "run_id": "local:watchlist_run:91",
+        }
+        assert not hasattr(app, "pending_watchlists_section")
+        assert not hasattr(app, "pending_watchlists_run_id")
+        app.post_message = original_post_message
 
 
 # ---------------------------------------------------------------------------
