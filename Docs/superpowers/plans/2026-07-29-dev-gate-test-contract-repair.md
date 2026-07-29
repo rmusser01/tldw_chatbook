@@ -1199,6 +1199,47 @@ git add Tests/UI/test_console_command_composer.py
 git commit -m "test(console): align unknown command hint"
 ```
 
+### Task 4aa: Follow Console session and prompt-handoff ownership
+
+**Files:**
+- Modify: `Tests/UI/test_console_command_composer.py`
+- Modify: `Tests/UI/test_library_prompts_canvas.py`
+
+- [ ] **Step 1: Reproduce the remaining composer ownership failures**
+
+Run both modules. Expected: two literal-send assertions omit the dispatch-time
+`session_id`; eight composer prompt-insert cases and three Library source cases
+assign or inspect deleted `pending_console_prompt_insert`.
+
+- [ ] **Step 2: Retarget the live ownership seams**
+
+Assert literal sends call `submit_draft` with the exact active session id.
+Stage all Console prompt text through
+`pending_handoffs.stage(HandoffChannel.CONSOLE_PROMPT_INSERT, text)` and use
+`has_pending` for terminal or no-op state. In the Library success case, claim
+the staged text, assert it exactly, and acknowledge it; assert no pending
+channel for dirty and empty cases. Preserve every existing lifecycle, draft,
+collapse, notification, navigation, and source-integrity assertion. Do not
+change production.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/UI/test_console_command_composer.py \
+  Tests/UI/test_library_prompts_canvas.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/UI/test_console_command_composer.py \
+  Tests/UI/test_library_prompts_canvas.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/UI/test_console_command_composer.py \
+  Tests/UI/test_library_prompts_canvas.py
+git add \
+  Tests/UI/test_console_command_composer.py \
+  Tests/UI/test_library_prompts_canvas.py
+git commit -m "test(console): follow prompt handoff ownership"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1280,6 +1321,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
   Tests/UI/test_console_command_composer.py \
+  Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
@@ -1316,6 +1358,7 @@ Expected: all affected tests pass.
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
   Tests/UI/test_console_command_composer.py \
+  Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
@@ -1347,6 +1390,7 @@ Expected: all affected tests pass.
   Tests/TTS/test_tts_preferences.py \
   Tests/UI/test_command_palette_providers.py \
   Tests/UI/test_console_command_composer.py \
+  Tests/UI/test_library_prompts_canvas.py \
   Tests/integration/test_library_ingest_flow.py \
   Tests/test_config_delete_settings.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \

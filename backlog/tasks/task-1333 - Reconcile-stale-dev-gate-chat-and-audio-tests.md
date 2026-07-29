@@ -57,6 +57,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #29 The Library ingest option-persistence integration regression observes the live batched config writer and proves the submitted PDF and generic option groups are persisted together, without patching the retired per-key save path.
 - [ ] #30 Structured config-mutation regressions observe the live private atomic writer for one-replacement, pre-replacement failure, overlap rejection, shared-lock, batch-wrapper, and delete-wrapper coverage; the packaging source-seam regression requires that same profile-aware private writer and application-owned directory posture, without restoring the deleted generic writer symbol or hard-coded default path.
 - [ ] #31 Console unknown-command composer regressions expect the complete current registered-command hint, including image generation and rewind, while retaining first-Enter interception, second-Enter literal send, edit-disarm, and message-count coverage.
+- [ ] #32 Console composer send regressions assert the dispatch-time session id, and Console/Library prompt-insert regressions use the live typed pending-handoff channel instead of the retired app-root prompt field, while retaining lifecycle, retry, blocked, append, collapse, navigation, dirty-editor, and empty-prompt coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -94,6 +95,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 24. Retarget the Library ingest option-persistence regression to the current batched config writer.
 25. Retarget structured config-mutation regressions to the private atomic writer that now owns config replacement.
 26. Align the Console unknown-command expected hint with the complete live command registry.
-27. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-28. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+27. Retarget Console send and Library-to-Console prompt-insert regressions to dispatch-time session and typed pending-handoff ownership.
+28. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+29. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

@@ -263,6 +263,17 @@ Update the tests to describe current behavior:
     count coverage. Do not derive the expected string by calling the production
     hint formatter inside the test, and do not remove the two registered
     commands from production.
+30. In the two Console literal-send regressions, assert that `submit_draft`
+    receives both the exact draft and the active session id captured for
+    dispatch. In every Console prompt-insert regression, stage text through
+    `app.pending_handoffs` on `HandoffChannel.CONSOLE_PROMPT_INSERT` and assert
+    terminal consumption with `has_pending`; retain mount/resume timing,
+    stale-session draft protection, clean insert, append, collapsed paste,
+    blocked notification, and no-op coverage. In the Library prompt editor
+    regressions, claim the staged value to verify its exact text and settle the
+    claim, while dirty and empty cases prove the channel remains empty. Do not
+    restore `pending_console_prompt_insert`, omit the dispatch-time session id,
+    or weaken the existing lifecycle and interaction assertions.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -355,6 +366,11 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   under test would hide copy or registry omissions. Updating the two curated
   expected constants keeps the assertion independent and preserves the
   Enter-again safety behavior.
+- Accepting a draft-only `submit_draft` assertion would miss the session-switch
+  routing guarantee, while restoring a mutable prompt field would bypass claim
+  settlement and retry semantics. Following the live session argument and
+  typed handoff store preserves both ownership contracts without production
+  compatibility state.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
