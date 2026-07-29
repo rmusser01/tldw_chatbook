@@ -288,9 +288,7 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
             # revision returned here directly, which let a caller be told the
             # sink is live while the log stayed empty -- the one state this
             # design instructs a maintainer to read as "the sink did not
-            # install". The handler's own level is the gate to clear, since
-            # that is the handler the record must pass.
-            installed_level = existing_handler.level
+            # install".
         else:
             max_bytes = int(get_cli_setting("logging", "log_max_bytes", 10485760))
             backup_count = int(get_cli_setting("logging", "log_backup_count", 5))
@@ -317,7 +315,6 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
                 "Private rotating file logging installed at level %s.",
                 logging.getLevelName(file_log_level),
             )
-            installed_level = file_log_level
     except PrivatePathError as exc:
         root_logger.warning(
             "File logging disabled: unsafe persistent target (%s).",
@@ -331,47 +328,37 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
         )
         return False
 
-    # TASK-1240. Written the moment the sink is live, so an empty file means
-    # "the sink did not install" rather than "nothing has happened yet". This
-    # function swallows install failures (it warns and returns False), so
-    # without this line those two states are indistinguishable.
+    # TASK-1240. Written the moment the sink is live, so at the *default*
+    # `file_log_level` an empty file means "the sink did not install" rather
+    # than "nothing has happened yet". This function swallows install failures
+    # (it warns and returns False), so without this line those two states are
+    # indistinguishable.
+    #
+    # That reading is scoped to the default. Under a raised `file_log_level`,
+    # or a raised `general.log_level` (root still sits at that value here --
+    # `configure_application_logging` lowers root to match the most verbose
+    # handler only *after* calling this function), this INFO record is filtered
+    # like any other. An empty log there means "configured to be quiet", not
+    # "failed".
+    #
+    # Severity is deliberately NOT inflated to force the line past those gates.
+    # An earlier revision emitted at max(handler level, root level), which made
+    # a *successful install* render as WARNING or CRITICAL. These records
+    # propagate to every root handler -- the terminal and the in-app Logs
+    # screen included -- so a normal startup would read as a critical event and
+    # could trip alerting integrations. Severity is semantic; it is not a
+    # transport for defeating a level gate. INFO is the honest severity for a
+    # success, and a configuration that filters it is working as asked.
     #
     # Emitted OUTSIDE the try above (M7): that try's handlers report "install
     # failed" and return False, so a future failure originating in this call --
     # after the handler is built, filtered and attached -- would misreport a
     # working sink as a broken one.
-    #
-    # Emitted above BOTH gates in front of it, not at INFO (I3). A record must
-    # clear the *logger's* effective level before `logging` will even build it,
-    # and then the *handler's* level. The two fail at opposite ends of the
-    # configured range, and the install line has to survive both:
-    #
-    #   - Handler gate. `file_log_level` is user-configurable and the shipped
-    #     `config.py` comment offers WARNING/ERROR/CRITICAL. At any of those an
-    #     INFO install line is dropped by the very handler it is meant to prove
-    #     installed.
-    #   - Logger gate. `configure_application_logging` only lowers the root
-    #     logger to match the most verbose handler *after* calling this
-    #     function, so at this moment root still sits at `general.log_level`.
-    #     With `file_log_level = "DEBUG"` and `general.log_level = "INFO"`, a
-    #     DEBUG install line is discarded by the root logger before the handler
-    #     ever sees it.
-    #
-    # Either way the user sends a zero-byte log -- which the paragraph above
-    # tells a maintainer to read as "the sink did not install". `max()` of the
-    # two clears whichever is higher, so the line survives every combination.
-    #
-    # Corollary, worth stating because it looks like a bug otherwise: the
-    # *other* events in this design are still level-gated normally, so under
-    # `file_log_level = "WARNING"` a log containing only this line means
-    # "installed, and everything below WARNING was filtered" -- not "nothing
-    # happened".
-    emit_level = max(installed_level, root_logger.getEffectiveLevel())
     try:
         persist_event(
             "logging",
             "persistent_sink_installed",
-            level=emit_level,
+            level=logging.INFO,
             status="ok",
         )
     except Exception:

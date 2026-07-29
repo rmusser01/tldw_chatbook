@@ -204,6 +204,21 @@ def persist_event(
     caller has misunderstood the contract, and silently writing `invalid` would
     hide that.
 
+    Args:
+        component: Code-side subsystem name owning the event -- `app`,
+            `logging`, `scheduling`. Must be a bounded metadata token; it is
+            written to disk both as a schema field and inside the logger name.
+        event: Event name, recorded as the `event` field. Validated against the
+            persistent metadata schema.
+        level: Standard `logging` level for the emitted record. Defaults to
+            `logging.INFO`. Use `logging.ERROR` for failures; do not raise it
+            to push a record past a handler or logger level gate, since these
+            records also reach the terminal and the in-app Logs screen.
+        **fields: Additional schema fields for the record (for example
+            `status`, `operation`, `exception_type`). Each is validated and
+            formatted by `log_persistent_metadata`; values outside the schema
+            are rejected rather than written.
+
     Raises:
         ValueError: If `component` is not a bounded metadata token, or if
             `event`/`fields` violate the persistent metadata schema.

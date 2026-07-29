@@ -526,6 +526,13 @@ API_IMPORTS_SUCCESSFUL = True
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
+
+# TASK-1240. The `component` this module passes to `persist_event`. It is a
+# bounded metadata token (`persist_event` raises `ValueError` otherwise) and is
+# used raw to build the diagnostics logger name, so the four emit sites in this
+# file must agree on one spelling. Private to `app.py`: every event emitted
+# here belongs to the application lifecycle.
+_DIAGNOSTICS_COMPONENT_APP = "app"
 #
 #######################################################################################################################
 #
@@ -6688,7 +6695,7 @@ class TldwCli(
         # malformed component and its sink can fail; diagnostics must never be
         # the reason mount does not complete.
         try:
-            persist_event("app", "app_started")
+            persist_event(_DIAGNOSTICS_COMPONENT_APP, "app_started")
         except Exception:
             pass
 
@@ -7712,7 +7719,7 @@ class TldwCli(
         underlying = getattr(error, "error", None) if isinstance(error, WorkerFailed) else None
         try:
             persist_event(
-                "app",
+                _DIAGNOSTICS_COMPONENT_APP,
                 "unhandled_exception",
                 level=logging.ERROR,
                 exception_type=type(
@@ -7736,7 +7743,7 @@ class TldwCli(
         # would skip all of it. Diagnostics must never break the thing they
         # observe.
         try:
-            persist_event("app", "app_stopping")
+            persist_event(_DIAGNOSTICS_COMPONENT_APP, "app_stopping")
         except Exception:
             pass
         try:
@@ -8161,7 +8168,7 @@ class TldwCli(
             # comparison on a path that only runs when something already broke.
             try:
                 persist_event(
-                    "app",
+                    _DIAGNOSTICS_COMPONENT_APP,
                     "worker_failed",
                     level=logging.ERROR,
                     operation=str(worker_name or "unknown"),

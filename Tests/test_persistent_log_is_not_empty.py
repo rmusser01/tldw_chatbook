@@ -168,40 +168,53 @@ def test_no_message_text_reaches_the_persistent_log(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("file_log_level", "root_level", "binding_gate"),
+    ("file_log_level", "root_level", "expect_line", "rationale"),
     [
-        # Baseline: the shipped default, where neither gate bites.
-        ("INFO", logging.INFO, "neither"),
-        # Handler gate. `config.py`'s own comment offers WARNING/ERROR/CRITICAL;
-        # at any of those an INFO install line is dropped by the very handler it
-        # is meant to prove installed.
-        ("WARNING", logging.WARNING, "handler"),
-        ("CRITICAL", logging.INFO, "handler"),
-        # Logger gate -- the opposite end, and the one a handler-level-only fix
-        # newly breaks. `configure_application_logging` lowers root to match the
-        # most verbose handler only *after* calling
+        # Baseline: the shipped default. Neither gate bites, so the line is
+        # present and an empty log here really does mean "the sink did not
+        # install".
+        ("INFO", logging.INFO, True, "the shipped default admits an INFO record"),
+        # The regression case. `configure_application_logging` lowers root to
+        # match the most verbose handler only *after* calling
         # `_configure_private_file_logging`, so at install time root still sits
-        # at `general.log_level`. A DEBUG install line is then discarded by the
-        # root logger before the handler is ever consulted -- and this
-        # combination used to work, back when the line was hardcoded to INFO.
-        ("DEBUG", logging.INFO, "logger"),
+        # at `general.log_level`. A revision that emitted at the *handler's*
+        # level put a DEBUG record in front of an INFO root logger and lost it.
+        # Emitting at INFO keeps this "verbose file, quiet terminal" setup
+        # working: the handler admits DEBUG and up, root admits INFO and up.
+        ("DEBUG", logging.INFO, True, "a DEBUG handler behind an INFO root admits INFO"),
+        # Raised levels legitimately filter the line. `config.py`'s own comment
+        # offers WARNING/ERROR/CRITICAL, and at those the user has asked for a
+        # quiet log. The install event is not exempted from that by inflating
+        # its severity -- these records also reach the terminal and the Logs
+        # screen, where a successful install rendered as WARNING or CRITICAL is
+        # a lie about what happened.
+        ("WARNING", logging.WARNING, False, "the handler filters INFO at WARNING"),
+        ("CRITICAL", logging.INFO, False, "the handler filters INFO at CRITICAL"),
     ],
 )
-def test_the_install_event_clears_both_level_gates(
-    tmp_path, monkeypatch, file_log_level, root_level, binding_gate
+def test_the_install_event_is_emitted_at_info_and_level_gated_like_any_other_record(
+    tmp_path, monkeypatch, file_log_level, root_level, expect_line, rationale
 ):
-    """`persistent_sink_installed` must survive every level combination.
+    """`persistent_sink_installed` is an INFO record, gated like the rest.
 
-    The whole point of the event is that an empty persistent log means "the
-    sink did not install". Two independent gates stand in front of it -- the
-    logger's effective level, then the handler's -- and they fail at *opposite*
-    ends of the configured range. If either drops the line, the user sends a
-    zero-byte log and the maintainer reads it as a failed install, which is the
-    exact false reading this event exists to eliminate.
+    The event's promise is scoped, not absolute: at the *default*
+    `file_log_level` an empty persistent log means "the sink did not install",
+    and that is the reading the design relies on. At a raised `file_log_level`
+    or `general.log_level` the line is filtered exactly like any other INFO
+    record, and an empty log there means "configured to be quiet".
+
+    Severity is deliberately not inflated to force the line past those gates.
+    An earlier revision emitted at `max(handler level, root level)`, which made
+    a *successful install* arrive at WARNING or CRITICAL on every root handler,
+    terminal and in-app Logs screen included.
+
+    In the filtered cases this asserts `_configure_private_file_logging`
+    returned `True` regardless -- so the absent line is proven to be level
+    filtering, not an install that failed.
 
     Note what this test deliberately does NOT do: pin `root` to `DEBUG`. An
     earlier version did, which pinned away the logger gate entirely and so
-    could not see the DEBUG-config regression below. `root_level` is set to a
+    could not see the DEBUG-config regression above. `root_level` is set to a
     realistic `general.log_level` per case instead.
     """
     from tldw_chatbook.Logging_Config import _configure_private_file_logging
@@ -216,6 +229,9 @@ def test_the_install_event_clears_both_level_gates(
     root.setLevel(root_level)
     handler = None
     try:
+        # Asserted in every case, including the filtered ones: this is what
+        # separates "the line is absent because the level says so" from "the
+        # line is absent because the sink never installed".
         assert _configure_private_file_logging(root) is True
         handler = _installed_handler(root, log_path)
         assert handler.level == getattr(logging, file_log_level)
@@ -227,14 +243,18 @@ def test_the_install_event_clears_both_level_gates(
             handler.close()
         root.setLevel(previous_level)
 
-    assert written, (
-        f"zero-byte log with the sink installed: the {binding_gate} gate "
-        f"dropped the install event at file_log_level={file_log_level}, "
-        f"root={logging.getLevelName(root_level)}"
-    )
-    assert "event=persistent_sink_installed" in written, (
-        f"the install event was filtered out by the {binding_gate} gate"
-    )
+    if expect_line:
+        assert "event=persistent_sink_installed" in written, (
+            f"the install event was dropped at file_log_level={file_log_level}, "
+            f"root={logging.getLevelName(root_level)}, where {rationale}"
+        )
+    else:
+        assert "event=persistent_sink_installed" not in written, (
+            f"the install event reached the log at "
+            f"file_log_level={file_log_level}, "
+            f"root={logging.getLevelName(root_level)}, where {rationale} -- "
+            "its severity is being inflated to defeat the level gate"
+        )
 
 
 def test_the_already_installed_path_also_emits_the_install_event(

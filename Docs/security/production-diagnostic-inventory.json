@@ -839,7 +839,7 @@
     },
     {
       "call_count": 31,
-      "diagnostic_digest": "617d1a743995a7272841",
+      "diagnostic_digest": "5ba7a0c97ec695134b38",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Logging_Config.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2666,7 +2666,7 @@
     },
     {
       "call_count": 241,
-      "diagnostic_digest": "293f4d39f550eb53fce5",
+      "diagnostic_digest": "338f21b8b7aa1f9ad375",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2727,37 +2727,37 @@
         {
           "digest": "5e6ab9333644517d",
           "kind": "PrivateRotatingFileHandler",
-          "line": 301,
+          "line": 299,
           "method": "PrivateRotatingFileHandler"
         },
         {
           "digest": "6873d362f90a7843",
           "kind": "addHandler",
-          "line": 315,
+          "line": 313,
           "method": "addHandler"
         },
         {
           "digest": "564e6ba00dec45c0",
           "kind": "addHandler",
-          "line": 420,
+          "line": 407,
           "method": "addHandler"
         },
         {
           "digest": "0575ac40a7a642a3",
           "kind": "loguru_sink",
-          "line": 432,
+          "line": 419,
           "method": "add"
         },
         {
           "digest": "7907c11f3c5927cc",
           "kind": "addHandler",
-          "line": 504,
+          "line": 491,
           "method": "addHandler"
         },
         {
           "digest": "f32845c700525187",
           "kind": "addHandler",
-          "line": 539,
+          "line": 526,
           "method": "addHandler"
         }
       ]
@@ -2814,13 +2814,13 @@
         {
           "digest": "567455f2495e9603",
           "kind": "addHandler",
-          "line": 5701,
+          "line": 5708,
           "method": "addHandler"
         },
         {
           "digest": "928f6c554daaf493",
           "kind": "addHandler",
-          "line": 5755,
+          "line": 5762,
           "method": "addHandler"
         }
       ]
