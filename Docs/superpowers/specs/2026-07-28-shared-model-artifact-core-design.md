@@ -112,9 +112,12 @@ rolled back.
 Copying into a unique, non-loadable staging directory does not hold the lifecycle
 lease. Verification and promotion acquire the lifecycle lease plus the target
 artifact's exclusive lease, recheck the destination, and use a same-filesystem
-rename that fails if the final directory already exists. This keeps slow file
-copying out of the authoritative writer critical section while preserving one
-writer for installed state.
+rename after the authoritative absent-destination check. This relies on the
+managed store's sole-writer contract: Python's standard library has no portable
+atomic no-replace directory rename across every supported platform, so
+out-of-band mutation by a non-service writer is outside this correctness
+boundary. This keeps slow file copying out of the authoritative writer critical
+section while preserving one writer for installed state.
 
 ## Readiness, activation, and handles
 

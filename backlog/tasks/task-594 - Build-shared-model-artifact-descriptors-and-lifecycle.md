@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:02'
-updated_date: '2026-07-29 06:13'
+updated_date: '2026-07-29 06:14'
 labels:
   - stt
   - artifacts
@@ -73,4 +73,6 @@ Files modified or added across TASK-594 at a high level: shared artifact service
 Retained gate caveat: evidence is local/macOS only and is not cross-platform proof. TASK-505 remains open for native Windows/Linux and final matrix qualification.
 
 PR review follow-up: routed local-import paths through the central validator before the artifact core’s stricter no-follow tree checks; documented the public install contract; and removed a stale active selector when readiness revalidation fails while preserving a different active revision. Focused verification now covers 280 offline Model_Artifacts tests.
+
+Review clarification: the design now states the portable stdlib promotion boundary precisely—managed-store safety depends on ModelArtifactService being the sole writer; unsupported out-of-band filesystem mutation is not claimed to be serialized.
 <!-- SECTION:NOTES:END -->
