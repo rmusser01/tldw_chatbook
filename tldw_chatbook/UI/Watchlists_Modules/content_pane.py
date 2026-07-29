@@ -11,8 +11,9 @@ from typing import Any
 from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.containers import Vertical
+from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
@@ -20,6 +21,18 @@ from ...Widgets.recompose_capture_guard import RecomposeCaptureGuard
 # be recovered without re-fetching the source. Say so rather than rendering an
 # empty pane the reader will mistake for a bug.
 _NO_BODY = "no body captured for this item — re-check this source to fetch it"
+
+# Task 5: opening an item marks it read, and this note sits next to the
+# explicit unread toggle so the reversibility and the *scope* of both actions
+# are stated up front rather than discovered as a bug later. `mark_item_status`
+# (see `SubscriptionsDB`) updates one `subscription_items` row by its own id --
+# there is no per-watchlist copy of an item's status -- so this must NOT read
+# as "in this watchlist"; it is the same article everywhere the source it
+# came from is included.
+_GLOBAL_STATUS_NOTE = (
+    "Read status is shared: marking this item read (or unread) changes it "
+    "everywhere it appears, in every watchlist that includes its source."
+)
 
 
 def render_article(item: dict[str, Any]) -> Text:
@@ -97,6 +110,21 @@ def render_for(item: dict[str, Any]) -> Text:
     return _RENDERERS.get(str(item.get("content_kind") or ""), render_article)(item)
 
 
+class UnreadToggleRequested(Message):
+    """Posted when the user reverses a mark-read via the explicit unread toggle.
+
+    Opening an item marks it read, which destroys its place in whatever
+    unread list surfaced it -- an accidental open must be recoverable, so
+    this is that escape hatch. Carries the full item dict (not just an id)
+    so the screen's handler does not have to re-look it up from a list that
+    may already have moved on.
+    """
+
+    def __init__(self, item: dict[str, Any] | None) -> None:
+        self.item = item
+        super().__init__()
+
+
 class ContentPane(RecomposeCaptureGuard, Vertical):
     """Hosts the reader for the currently selected item.
 
@@ -116,4 +144,15 @@ class ContentPane(RecomposeCaptureGuard, Vertical):
         if self.item is None:
             yield Static("Select an item to read it.", id="content-empty")
             return
+        # Task 5: the reader marks an item read on open (see the screen's
+        # `_mark_item_read_on_open`); this button is the deliberate way back,
+        # and the note above it states the scope so it reads as intended
+        # behaviour rather than a bug report waiting to happen.
+        yield Button("Mark unread", id="content-mark-unread-button")
+        yield Static(_GLOBAL_STATUS_NOTE, id="content-status-note")
         yield Static(render_for(self.item), id="content-body")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "content-mark-unread-button":
+            event.stop()
+            self.post_message(UnreadToggleRequested(self.item))

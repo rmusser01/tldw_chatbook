@@ -51,7 +51,7 @@ from ..Watchlists_Modules.inspector_pane import (
     PreviewRequested,
     StageInConsoleRequested,
 )
-from ..Watchlists_Modules.content_pane import ContentPane
+from ..Watchlists_Modules.content_pane import ContentPane, UnreadToggleRequested
 from ..Watchlists_Modules.items_pane import ItemSelected, ItemsPane, RefreshItemsRequested
 from ..Watchlists_Modules.notifications_pane import (
     DismissNotificationRequested,
@@ -2821,6 +2821,53 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.query_one("#watchlists-content-pane", ContentPane).item = event.item
         except NoMatches:
             pass
+        self._mark_item_read_on_open(event.item)
+
+    def _mark_item_read_on_open(self, item: dict[str, Any] | None) -> None:
+        """Opening an item in the reader marks it read (Task 5).
+
+        Only fires the "new" -> "reviewed" transition: an item already at
+        "reviewed"/"ingested"/"ignored"/"error" left the unread bucket
+        through some other deliberate action already, and re-opening it here
+        must not clobber that back down to a bare "reviewed". Silent
+        (`notify_toast=False`) because this fires on every selection, not on
+        a deliberate user request for a status change -- a toast per click
+        would be noise, unlike the explicit `Mark reviewed`/unread actions.
+
+        This reuses the exact status column `_update_item_status` already
+        writes for the Inspector's `Mark reviewed` button
+        (`SubscriptionsDB.mark_item_status`, keyed by the item's own row id,
+        not by any (watchlist, item) pair) -- so it is global by
+        construction: the same article read from "All sources" is read in
+        every watchlist whose sources include it.
+        """
+        if item is None:
+            return
+        if str(item.get("status") or "").strip().lower() != "new":
+            return
+        item_id = item.get("id")
+        if item_id is None:
+            return
+        self.run_worker(
+            self._update_item_status(item_id, "reviewed", notify_toast=False),
+            exclusive=True,
+        )
+
+    @on(UnreadToggleRequested)
+    def handle_unread_toggle_requested(self, event: UnreadToggleRequested) -> None:
+        """The explicit way back (Task 5): marking read is otherwise
+        irreversible from the reader, since it drops the item out of the
+        unread list. Reuses the same global status column, just the other
+        direction.
+        """
+        event.stop()
+        item = event.item
+        if item is None:
+            return
+        item_id = item.get("id")
+        if item_id is None:
+            return
+        self.run_worker(self._update_item_status(item_id, "new"), exclusive=True)
 
     @on(RefreshItemsRequested)
     def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:
@@ -2932,7 +2979,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self.run_worker(self._update_item_status(entity.get("id"), "ignored"), exclusive=True)
 
-    async def _update_item_status(self, item_id: Any, status: str) -> None:
+    async def _update_item_status(
+        self, item_id: Any, status: str, *, notify_toast: bool = True
+    ) -> None:
+        """Move one item to `status` through the shared item-status API.
+
+        `notify_toast` is False only for the Task 5 auto-mark-read-on-open
+        path -- every other caller (Mark reviewed/Ingest/Ignore, the unread
+        toggle) is a deliberate user action and keeps the toast. Failures are
+        always surfaced regardless, since a silently-broken status write is
+        worse than one extra toast.
+        """
         notify = getattr(self.app_instance, "notify", None)
         try:
             await self._controller.update_item_status(
@@ -2940,8 +2997,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 item_id=item_id,
                 status=status,
             )
-            if callable(notify):
-                notify(f"Item marked {status}.", severity="information")
+            if notify_toast and callable(notify):
+                label = "unread" if status == "new" else status
+                notify(f"Item marked {label}.", severity="information")
         except Exception:
             logger.opt(exception=True).warning(f"Failed to mark item {status}.")
             if callable(notify):
