@@ -132,6 +132,12 @@ Update the tests to describe current behavior:
 13. Create the benchmark harness's isolated `config/tldw_cli` directory as
     owner-only and idempotently before overriding `TLDW_CONFIG_PATH`. Do not
     relax private-path verification or expose host environment values.
+14. In the production Console Stop regression, advance the Textual pilot after
+    the Stop control becomes visible and before issuing the pointer click. The
+    test must continue exercising the real visible action and proving provider
+    cancellation plus preservation of the stopped partial response; do not
+    bypass the UI through direct controller calls or weaken production
+    cancellation behavior.
 
 The only planned production change outside an ADR-029 diagnostic correction is
 the three-name synchronization of the existing Library collision boundary. No
@@ -154,6 +160,9 @@ compatibility shims. No broad deletion of live tests.
 - Deriving the Library shadow set dynamically from the agent registry would
   couple a pure display-state module to runtime ownership and replace the
   intentional fixed collision boundary.
+- Replacing the visible Console click with a direct controller call would no
+  longer prove that the user-facing Stop control is wired. Merely increasing
+  the timeout would not render the control before hit testing.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

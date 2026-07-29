@@ -576,6 +576,41 @@ git add Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py
 git commit -m "test(benchmark): create isolated config profile"
 ```
 
+### Task 4j: Render the visible Console Stop control before clicking
+
+**Files:**
+- Modify: `Tests/ProductionApp/test_chat_root_state_removal.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run
+`test_visible_console_stop_cancels_native_run_without_root_worker_state`.
+Expected: the provider stream starts, but the pointer click never reaches the
+screen handler and the stream is only cancelled during teardown. The test
+observes `stop_button.display` using `asyncio.sleep`, which does not guarantee
+that Textual has completed the corresponding layout and hit-test refresh.
+
+- [ ] **Step 2: Render before the user action**
+
+Advance the Textual pilot once after the Stop control becomes visible and
+before `pilot.click()`. Keep the visible pointer action, provider cancellation,
+stopped controller state, and exact partial-response assertions. Do not call
+the controller directly, change production cancellation, or mask the failure
+with a larger timeout.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/ProductionApp/test_chat_root_state_removal.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/ProductionApp/test_chat_root_state_removal.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/ProductionApp/test_chat_root_state_removal.py
+git add Tests/ProductionApp/test_chat_root_state_removal.py
+git commit -m "test(console): render stop control before click"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -646,6 +681,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Local_Ingestion/test_quick_ingest_db_path.py \
   Tests/Local_Ingestion/test_local_file_ingestion.py \
   Tests/Performance/test_rag_citation_provenance_benchmark.py \
+  Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -667,6 +703,7 @@ Expected: all affected tests pass.
   Tests/Library/test_library_rag_scope.py \
   Tests/Library/test_library_skills_state.py \
   Tests/Local_Ingestion/test_quick_ingest_db_path.py \
+  Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -682,6 +719,7 @@ Expected: all affected tests pass.
   Tests/Library/test_library_rag_scope.py \
   Tests/Library/test_library_skills_state.py \
   Tests/Local_Ingestion/test_quick_ingest_db_path.py \
+  Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
