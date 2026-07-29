@@ -28,6 +28,8 @@ regenerate the inventory before reviewing its changed owners and sink topology.
 
 - Modify `Tests/Event_Handlers/test_worker_events_contract.py`: retain only the
   unique non-streaming exception regression.
+- Delete `Tests/Event_Handlers/test_worker_local_citation_capture.py`: all cases
+  exercise retired worker streaming, sentinel, logging, or builder ownership.
 - Verify `Tests/UI/test_chat_shell_bar.py`: preserve the current `dev` repair
   without a branch edit.
 - Modify `Tests/Audio/test_audio_integration.py`: make stream-error behavior
@@ -91,6 +93,38 @@ Expected: both modules pass.
 ```bash
 git add Tests/Event_Handlers/test_worker_events_contract.py
 git commit -m "test(chat): remove retired worker-event contract"
+```
+
+### Task 1b: Remove obsolete worker-local citation ownership tests
+
+**Files:**
+- Delete: `Tests/Event_Handlers/test_worker_local_citation_capture.py`
+- Verify: `Tests/Event_Handlers/test_retained_worker_adapter.py`
+- Verify: `Tests/Event_Handlers/test_worker_events_contract.py`
+- Verify: `Tests/Chat/test_console_local_citation_boundary.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run the obsolete module. Expected: all four tests fail because they require the
+retired streaming bridge, removed sentinel/error swallowing, or worker-owned
+citation-builder stripping.
+
+- [ ] **Step 2: Remove only dead coverage**
+
+Delete the obsolete module. Do not add a compatibility shim: the retained
+adapter contract already covers live delegation, streaming rejection, and
+non-streaming failure propagation, while native Console owns citation lifetime
+and privacy coverage.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Event_Handlers/test_retained_worker_adapter.py \
+  Tests/Event_Handlers/test_worker_events_contract.py \
+  Tests/Chat/test_console_local_citation_boundary.py -q
+git add Tests/Event_Handlers/test_worker_local_citation_capture.py
+git commit -m "test(chat): remove retired worker citation tests"
 ```
 
 ### Task 2: Preserve the upstream chat-shell repair

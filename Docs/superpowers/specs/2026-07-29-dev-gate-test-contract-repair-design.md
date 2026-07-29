@@ -15,6 +15,11 @@ The failures reproduce on an exact `origin/dev` checkout:
 - `Tests/Event_Handlers/test_worker_events_contract.py` imports `StreamDone`,
   although TASK-577 deliberately removed that event and made the retained
   adapter reject streaming.
+- `Tests/Event_Handlers/test_worker_local_citation_capture.py` exclusively
+  exercises the same retired streaming bridge, removed sentinel/error
+  swallowing, and worker-owned citation-builder stripping. The sole retained
+  caller is explicitly non-streaming and passes no citation builder; native
+  Console now owns the live citation and privacy lifecycle.
 - Latest `dev` independently removed the retired `TabState` fixture from
   `Tests/UI/test_chat_shell_bar.py` while adding current persona-label coverage.
   TASK-1333 preserves that upstream repair rather than carrying a competing
@@ -56,9 +61,12 @@ TASK-1333 owns these gate repairs and the reviewed generated-inventory refresh.
 Update the tests to describe current behavior:
 
 1. Keep the non-streaming worker failure regression and delete its obsolete
-   streaming-sentinel case. The existing
+   streaming-sentinel case. Delete the fully obsolete worker-local citation
+   capture file rather than recreating retired streaming, sentinel, logging, or
+   builder ownership. The existing
    `Tests/Event_Handlers/test_retained_worker_adapter.py` already pins the live
-   streaming-rejection contract, so TASK-1333 adds no duplicate.
+   delegation and streaming-rejection contracts, while native Console tests pin
+   citation lifetime and privacy, so TASK-1333 adds no duplicates.
 2. Preserve the latest `dev` chat-shell test unchanged. It already covers the
    live session and persona-label contract without `TabState`.
 3. In the stream-error regression, run `_pyaudio_recording_loop()` exactly once
@@ -106,10 +114,13 @@ review identifies an actual privacy violation.
 
 - Restoring `StreamDone` or replacing the upstream `TabState` repair would
   contradict the accepted retirement architecture and revive dead ownership.
-- Deleting whole test files would make collection green but discard useful
-  retained non-streaming, shell-label, and audio-error coverage.
+- Deleting live test files would make collection green but discard useful
+  retained non-streaming, shell-label, and audio-error coverage. The one deleted
+  file contains no live contract after worker ownership moved to native Console.
 - Replacing retired models with local fixtures or duplicating the existing
   streaming-rejection test would keep dead or redundant coverage alive.
+- Teaching the retained adapter to strip, log, or consume citation builders
+  would revive ownership that moved to native Console.
 - Blindly regenerating the diagnostic inventory would defeat its review gate.
 - Raising the indexing test's timeout would retain a machine-dependent failure
   with a different arbitrary threshold.

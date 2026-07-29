@@ -26,7 +26,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The worker-events regression test retains its non-streaming failure coverage without importing retired message classes or duplicating the existing streaming-rejection contract.
+- [ ] #1 Worker-event regressions retain the live non-streaming delegation and failure coverage without importing retired message classes, recreating worker-owned citation/streaming behavior, or duplicating existing native Console and streaming-rejection contracts.
 - [ ] #2 The current dev chat-shell regression retains live session/persona label coverage without importing or replacing the retired `TabState` model.
 - [ ] #3 The audio stream-error regression invokes one synchronous recording loop without VAD or thread races and proves the exact pre-error callback sequence, stream closure, and stopped state.
 - [ ] #4 The PyAudio flow regression invokes one synchronous recording loop without VAD or thread races and proves exactly three callbacks, stream closure, and stopped state.
@@ -48,7 +48,7 @@ ADR required: no
 ADR path: backlog/decisions/029-local-private-data-boundary.md
 Reason: Reconciles tests with accepted production contracts and applies ADR-029's existing metadata-only inventory review requirement without making a new architectural decision.
 
-1. Remove the retired StreamDone import and duplicate streaming assertion while preserving unique non-streaming failure coverage.
+1. Remove the retired StreamDone import, duplicate streaming assertion, and fully obsolete worker-local citation capture file while preserving unique retained-adapter and non-streaming failure coverage.
 2. Preserve the current dev chat-shell repair rather than carrying a superseded branch edit.
 3. Make both PyAudio loop tests synchronous, VAD-independent, and exact; keep the SoundDevice fixture VAD-independent with explicit cleanup.
 4. Patch provider request tests through the live runtime-config snapshot seam instead of deleted module globals.
