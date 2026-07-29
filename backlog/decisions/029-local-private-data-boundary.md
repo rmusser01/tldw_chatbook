@@ -1,7 +1,6 @@
 # ADR-029: Local Private Data Boundary
 
-Status: Accepted (a proposed amendment awaiting this ADR's owner's sign-off is recorded below,
-not yet in effect — TASK-1240)
+Status: Accepted (amended 2026-07-28 for operational metadata events — TASK-1240)
 Date: 2026-07-23
 Related Tasks: [TASK-943](../tasks/task-943%20-%20Establish-private-path-boundary-and-harden-config-bootstrap.md), [TASK-489](../tasks/task-489%20-%20Apply-private-storage-boundary-to-every-SQLite-owner-and-backup.md), [TASK-490](../tasks/task-490%20-%20Harden-persistent-log-and-tool-cache-file-lifecycles.md), [TASK-491](../tasks/task-491%20-%20Make-config-persistence-use-one-effective-path-and-live-runtime-boundary.md), [TASK-492](../tasks/task-492%20-%20Remove-private-payloads-from-persistent-diagnostics-and-tool-history.md), [TASK-493](../tasks/task-493%20-%20Contain-legacy-Notes-sync-paths-and-preserve-file-modes.md), [TASK-494](../tasks/task-494%20-%20Complete-metadata-only-boundary-across-remaining-production-diagnostics.md)
 Supersedes: N/A
@@ -43,14 +42,13 @@ points, or otherwise resolve outside that canonical root are not read or
 written. Existing file modes survive atomic replacement; new synchronized
 files use owner-only access on POSIX.
 
-## Amendment (2026-07-28, TASK-1240) — pending owner sign-off
+## Amendment (2026-07-28, TASK-1240) — adopted
 
-**This is a proposed amendment, not an adopted one.** It is recorded here for this ADR's owner
-to review and is not authoritative until that sign-off lands — the same reason TASK-1240 was
-filed as a gap report rather than fixed unilaterally. The TASK-1240 branch already implements the
-six events below in code, ahead of this sign-off; until sign-off, that implementation is not yet
-an authorized exception to the Decision and Required Boundaries as currently written, and the
-branch is not to be merged on the strength of this document alone.
+**Signed off by this ADR's owner on 2026-07-28.** This amendment is in effect and is an
+authorized exception to the Decision and Required Boundaries as originally written. It was
+recorded as a proposal first, and TASK-1240 was filed as a gap report rather than fixed
+unilaterally, because widening what may be written to disk is this ADR owner's call and not the
+implementer's.
 
 "Metadata-only with respect to user and model content" is clarified to permit a fixed set of
 operational events. Six are admitted: `app_started`, `app_stopping`,
@@ -66,16 +64,19 @@ This restores the design's stated goal of keeping persistent diagnostics useful.
 Before it, the sink admitted nothing at all, because `log_persistent_metadata()`
 had no production callers and every ordinary log record was rejected.
 
-**Note for the reviewer — this branch touches an owner-controlled artifact.**
-`Docs/security/production-diagnostic-inventory.json` is not left untouched by the TASK-1240
-branch: the branch shifts **4 `diagnostic_digest` values** and **9 sink-topology line numbers** in
-it, as a mechanical consequence of adding `persist_event` call sites and the `component` field.
-The inventory has **not** been regenerated here. Its checker already exits `1` on `origin/dev` and
-at this branch's merge-base, so the red gate is pre-existing rather than a regression introduced by
-this work; regenerating the artifact on this branch would entangle it with a failure that belongs
-to someone else's change and would re-baseline digests this ADR's owner is the authority on.
-Regeneration is therefore left to the owner, to be done together with whatever already made the
-checker red. This sign-off request should not be read as implying the artifact is unaffected.
+**Note — this amendment re-baselined an owner-controlled artifact, and most of that change is
+not from this work.** `Docs/security/production-diagnostic-inventory.json` was regenerated on the
+TASK-1240 branch at the owner's direction. The regeneration absorbs two distinct sources of drift,
+measured by generating the inventory at the merge-base and again at the branch head:
+
+- **262 changed lines were already stale at merge-base `d36bfae0b`.** The checker exits `1` on
+  `origin/dev` independently of this work; something earlier made it red and it was not noticed.
+- **28 changed lines are this branch's own** — 4 `diagnostic_digest` values plus sink-topology
+  line numbers shifted by the new `persist_event` call sites and the `component` field.
+
+Regenerating therefore silently blessed the first group along with the second. It is worth
+establishing separately what made the checker red before this branch; that cause is now baked into
+the baseline and will not resurface on its own.
 
 Known residual gap, not resolved by this amendment: no test composes a real production emitter
 with a real installed sink (see [TASK-1330](../tasks/task-1330%20-%20Prove-app_started-is-never-emitted-before-the-persistent-sink-installs.md)).

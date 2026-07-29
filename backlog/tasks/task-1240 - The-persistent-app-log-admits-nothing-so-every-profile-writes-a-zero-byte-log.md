@@ -1,7 +1,7 @@
 ---
 id: TASK-1240
 title: 'The persistent app log admits nothing, so every profile writes a zero-byte log'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-07-28 10:20'
 updated_date: '2026-07-29 01:49'
@@ -78,14 +78,15 @@ reporting that currently has nowhere to land.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Status stays In Progress, not Done — see Sign-off gate below.**
+**ADR-029 owner signed off 2026-07-28; the amendment is adopted and the merge gate is cleared.**
 
 ## What shipped
 
 Six operational events reach the persistent log through a new `persist_event(component, event,
 *, level, **fields)` wrapper in `Utils/persistent_diagnostics.py`: `app_started`, `app_stopping`
 (`TldwCli.on_mount`/`on_unmount`), `persistent_sink_installed` (`Logging_Config`, immediately
-after `addHandler`, so an empty file is unambiguous), `worker_failed` (the single existing
+after `addHandler`, so at the default `file_log_level` an empty file means the sink did not
+install), `worker_failed` (the single existing
 `on_worker_state_changed` hook — no per-call-site changes to 398 `run_worker` sites), `unhandled_exception`
 (`App._handle_exception` override, type only, no message), and `scheduler_configured`
 (`SchedulerLoop.report_configuration`, discriminating handler count from queue depth and orphaned
@@ -198,15 +199,39 @@ checker exits `1` on `origin/dev` and at this branch's merge-base (`d36bfae0b`),
 running it in a detached worktree. See the ADR-029 amendment note for the branch's own (unwritten)
 delta to that artifact.
 
-## Sign-off gate (do not merge without this)
+## Sign-off gate — cleared 2026-07-28
 
-AC #1 and #5 are satisfied by documentation, not by unilateral authority: the clarification of
-ADR-029's "metadata-only" scope to admit these six events is written as a **proposed amendment**
-in `backlog/decisions/029-local-private-data-boundary.md`, marked pending and explicitly not
-authoritative, because this branch adds one admitted field and six admitted events to a privacy
-boundary owned by ADR-029/task series 489-494. The branch cannot merge until that ADR's owner
-signs off on the amendment. This task is left at **In Progress** rather than **Done** for exactly
-that reason — marking it Done would misrepresent an unratified privacy-boundary change as settled.
+AC #1 and #5 widen a privacy boundary owned by ADR-029/task series 489-494: one admitted field
+(`component`) and six admitted events. That is the ADR owner's call, not the implementer's, which
+is why TASK-1240 was filed as a gap report rather than fixed unilaterally, and why the amendment
+in `backlog/decisions/029-local-private-data-boundary.md` was first recorded as **proposed** and
+the task held at In Progress while it was unratified.
+
+**The owner signed off on 2026-07-28.** The amendment is adopted and in effect, and this task is
+now Done.
+
+## Post-review corrections (PR #1084)
+
+Automated review after the branch was opened found one real defect and two overstated claims,
+all fixed before merge:
+
+- **A successful install was logged at CRITICAL.** Making the install line clear both level gates
+  had been implemented as `max(installed_level, root.getEffectiveLevel())` — using *severity* as a
+  transport mechanism. Since these records also propagate to the terminal and the in-app Logs
+  screen, `file_log_level="CRITICAL"` rendered a normal startup as a critical event and could have
+  tripped alerting. Now emitted at honest `INFO`; the consequence — a raised `file_log_level` or
+  `general.log_level` legitimately yields a sparse or empty log — is documented rather than
+  papered over with severity.
+- **`app_stopping` did not prove what the spec claimed.** It is emitted above the entire shutdown
+  sequence, so it marks shutdown *initiation*, not a clean exit. Wording corrected; the emit stays
+  where it is deliberately.
+- Docstring `Args:` section added to `persist_event`; the repeated `"app"` component literal
+  extracted to a constant.
+
+Two further review findings were declined as already-tracked: `app_started` can be emitted before
+the sink installs on paths that skip `initialize_early_logging()`, and no test composes a real app
+with a real sink. Both are **TASK-1330**, already filed and already recorded in the spec's Risks
+section; both need a change to startup ordering that is out of this branch's scope.
 
 ## Modified/added files
 
@@ -219,7 +244,7 @@ that reason — marking it Done would misrepresent an unratified privacy-boundar
   here in error and is **not** modified by this branch (see the correction above).
 - `Docs/superpowers/specs/2026-07-28-persistent-operational-diagnostics-design.md` — Testing
   section corrected, Risks section extended, Governance "seven" → "six" fixed (Task 9)
-- `backlog/decisions/029-local-private-data-boundary.md` — proposed amendment recorded, pending
-  sign-off (Task 9)
+- `backlog/decisions/029-local-private-data-boundary.md` — amendment recorded (Task 9), adopted on
+  owner sign-off 2026-07-28
 - `backlog/tasks/task-1330 - ...md` — new follow-up task filed for the residual ordering gap (Task 9)
 <!-- SECTION:NOTES:END -->
