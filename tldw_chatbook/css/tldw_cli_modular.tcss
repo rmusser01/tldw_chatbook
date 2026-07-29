@@ -16185,11 +16185,11 @@ WatchlistSourcePickerDialog {
  * the stylesheet fails to parse and every rule after it is lost. 3 is the
  * narrowest width that renders.
  *
- * The source rows deliberately get NO rule: their two-space label indent
- * plus Textual's `min-width: 16` centring already places them past the
- * watchlist name (name at column 5, source at column 7 in a 26-column rail),
- * so the nesting reads without adding a margin that would only move with the
- * chevron's width.
+ * The source rows deliberately get NO rule: their four-space label indent
+ * plus Textual's one-column line pad places the left-aligned source name one
+ * column past the watchlist name (column 6 versus column 5 in a 26-column
+ * rail), so the nesting reads without adding a margin that would only move
+ * with the chevron's width.
  */
 .watchlist-tree .watchlist-tree-row {
     width: 100%;

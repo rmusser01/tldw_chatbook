@@ -380,7 +380,10 @@ class WatchlistTree(Vertical):
                 source_id = int(row["id"])
                 source_name = escape_markup(str(row["name"]))
                 source = Button(
-                    f"  {source_name}",
+                    # TASK-1091 left-aligns tree labels. Four spaces plus the
+                    # Button line pad keep the source name one column past
+                    # the parent name after the expander's three columns.
+                    f"    {source_name}",
                     id=f"wl-tree-node-source-{watchlist_id}-{row['id']}",
                     compact=True,
                     tooltip=f"Show items from {source_name}.",

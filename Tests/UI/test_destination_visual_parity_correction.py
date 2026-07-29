@@ -37,7 +37,11 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    NavigateToScreen,
+)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens import (
     artifacts_screen as artifacts_screen_module,
     library_screen as library_screen_module,
@@ -113,6 +117,26 @@ def _default_advanced_open(monkeypatch):
 def _region(widget):
     region = widget.region
     return region.x, region.y, region.width, region.height
+
+
+async def _wait_for_production_screen(
+    app,
+    pilot,
+    screen_type,
+    *,
+    timeout: float = 6.0,
+):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        screen = app.screen
+        if isinstance(screen, screen_type) and screen.region.width > 0:
+            await pilot.pause()
+            return screen
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for {screen_type.__name__}; "
+        f"active={type(app.screen).__name__}"
+    )
 
 
 def _assert_no_horizontal_overlap(left, right, *, context: str) -> None:
@@ -3533,9 +3557,14 @@ async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
     )
     service.add_source(watchlist["id"], arxiv)
 
-    host = _visual_destination_harness(app, "watchlists_collections")
-    async with host.run_test(size=size) as pilot:
-        screen = _active_destination_screen(host)
+    async with app.run_test(size=size) as pilot:
+        await _wait_for_production_screen(app, pilot, ChatScreen)
+        await app.handle_screen_navigation(NavigateToScreen("watchlists_collections"))
+        screen = await _wait_for_production_screen(
+            app,
+            pilot,
+            wc_screen_module.WatchlistsCollectionsScreen,
+        )
         await _wait_for_selector(
             screen, pilot, f"#wl-tree-node-watchlist-{watchlist['id']}"
         )
@@ -3601,7 +3630,7 @@ async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
             f"{node.region}"
         )
         rows = painted_rows()
-        # The source's indent is textual (its label is prefixed with two
+        # The source's indent is textual (its label is prefixed with four
         # spaces), not a region offset, so assert on what is painted.
         assert rows[source.region.y].index("ArXiv") > rows[node.region.y].index(
             "Morning AI Brief"
