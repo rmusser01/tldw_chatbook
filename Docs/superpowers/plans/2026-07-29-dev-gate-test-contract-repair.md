@@ -683,6 +683,42 @@ git add Tests/ProductionApp/test_provider_selection_ownership.py
 git commit -m "test(settings): await provider selection state"
 ```
 
+### Task 4m: Remove obsolete fail-open RAG UI coverage
+
+**Files:**
+- Modify: `Tests/RAG/test_rag_ui_integration.py`
+
+- [ ] **Step 1: Reproduce RED and confirm the live owner**
+
+Run
+`test_capture_unavailable_keeps_ui_pipeline_context_and_legacy_string`.
+Expected: production returns `LocalRagContextResult(None, None)` with
+`reason=prompt_authority_failure`, while the stale UI integration test expects
+raw context for a recognized media candidate. Confirm
+`Tests/RAG/test_local_citation_capture.py` already covers prompt-authority
+failure, current-authority exclusion without a builder, and the narrow
+unsupported-source legacy fallback.
+
+- [ ] **Step 2: Remove only obsolete coverage**
+
+Delete `CaptureUnavailableApp` and its sole test. Do not change production,
+restore raw recognized candidates to prompt context, or duplicate the focused
+citation-capture contracts in this legacy UI integration module.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/RAG/test_rag_ui_integration.py \
+  Tests/RAG/test_local_citation_capture.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/RAG/test_rag_ui_integration.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/RAG/test_rag_ui_integration.py
+git add Tests/RAG/test_rag_ui_integration.py
+git commit -m "test(rag): remove fail-open UI fallback"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -756,6 +792,8 @@ Include any conditionally required focused test/production files in that commit.
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
   Tests/ProductionApp/test_provider_selection_ownership.py \
+  Tests/RAG/test_rag_ui_integration.py \
+  Tests/RAG/test_local_citation_capture.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -780,6 +818,7 @@ Expected: all affected tests pass.
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
   Tests/ProductionApp/test_provider_selection_ownership.py \
+  Tests/RAG/test_rag_ui_integration.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -798,6 +837,7 @@ Expected: all affected tests pass.
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
   Tests/ProductionApp/test_provider_selection_ownership.py \
+  Tests/RAG/test_rag_ui_integration.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \

@@ -151,6 +151,13 @@ Update the tests to describe current behavior:
     defaults. Preserve the distinction between global defaults, the existing
     user-owned Console session, and the later explicit handoff. Do not change
     production Settings or replace state predicates with arbitrary pauses.
+17. Remove the RAG UI integration fixture and test that expect a recognized
+    canonical media candidate to fall back to raw pipeline context when the
+    app cannot establish current prompt authority. Do not restore that
+    fail-open behavior or duplicate its replacement: the dedicated local
+    citation-capture suite already proves authority failure returns no context,
+    current-authority exclusion cannot revive legacy bytes without a builder,
+    and unsupported external results retain the narrow legacy fallback.
 
 The only planned production change outside an ADR-029 diagnostic correction is
 the three-name synchronization of the existing Library collision boundary. No
@@ -185,6 +192,10 @@ compatibility shims. No broad deletion of live tests.
   before save. Directly exercising the live handlers and waiting on their
   observable staged/persisted results keeps this ownership test deterministic
   without adding a driver-level form-interaction scenario it does not need.
+- Changing the obsolete RAG assertion to expect `None` would duplicate the
+  focused citation-capture suite while retaining a misleading DB-free fixture.
+  Deleting that fixture and test preserves the authoritative security coverage
+  in its actual owner without restoring raw recognized candidates to prompts.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
