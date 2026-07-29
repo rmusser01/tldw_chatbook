@@ -430,11 +430,13 @@ class TestPerformance:
         # Create service with a mocked backend so cleanup behavior is not
         # dependent on host audio libraries.
         with patch("tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE", True):
-            service = AudioRecordingService()
+            service = AudioRecordingService(backend="pyaudio", use_vad=False)
         service_ref = weakref.ref(service)
 
-        # Use it
-        service.start_recording()
+        # Exercise the in-memory recording lifecycle without opening a native
+        # audio device or starting a background thread.
+        service.is_recording = True
+        service._handle_audio_chunk(b"\x00\x01" * 512)
         service.stop_recording()
 
         # Delete and collect
