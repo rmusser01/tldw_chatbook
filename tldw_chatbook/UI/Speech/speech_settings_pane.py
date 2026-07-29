@@ -93,6 +93,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
         classes = kwargs.pop("classes", "")
         super().__init__(classes=f"speech-settings-pane {classes}".strip(), **kwargs)
         self.values: dict[str, Any] = dict(values or {})
+        self.init_settings_state()
 
     @on(Select.Changed)
     def on_default_selects_changed(self, event: Select.Changed) -> None:

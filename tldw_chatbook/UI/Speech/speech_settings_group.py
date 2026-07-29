@@ -48,13 +48,25 @@ from .speech_settings_model import (
 #: their group, next to the setting they fill -- and they must be mounted:
 #: `_set_initial_values` queries `#kokoro-browse-model-btn` and friends, so
 #: omitting them took the whole of initialisation down with a NoMatches.
+#: Labels are the legacy strings verbatim, emoji and capitalisation
+#: included. I retyped them in Console casing first and
+#: `test_audio_cpp_settings_surface_is_external_only` failed on
+#: "Test connection" vs "Test Connection" -- correctly, since the rule for
+#: this rebuild is that layout changes and copy does not. The browse labels
+#: are also rewritten at runtime by `_update_file_button_labels`, which
+#: expects to find what it wrote.
 PROVIDER_ACTION_LABELS: dict[str, str] = {
-    "audio-cpp-test-connection-btn": "Test connection",
-    "audio-cpp-refresh-models-btn": "Refresh models",
-    "kokoro-browse-model-btn": "Browse model…",
-    "kokoro-browse-voices-btn": "Browse voices…",
-    "chatterbox-browse-voice-dir-btn": "Browse voice dir…",
-    "higgs-voices-browse-btn": "Browse voices…",
+    "audio-cpp-test-connection-btn": "Test Connection",
+    "audio-cpp-refresh-models-btn": "Refresh Models",
+    "kokoro-browse-model-btn": "📁 Select model file",
+    "kokoro-browse-voices-btn": "📁 Select voices.json",
+    "chatterbox-browse-voice-dir-btn": "📁 Select voice directory",
+    "higgs-voices-browse-btn": "📁",
+}
+
+#: Provider key -> the legacy container id the group inherits.
+LEGACY_CONTAINER_IDS: dict[str, str] = {
+    "audio_cpp": "audio-cpp-settings",
 }
 
 #: Provider key -> the name shown in the header.
@@ -213,8 +225,19 @@ SETTING_DEFAULTS: dict[str, dict[str, object]] = {   'alltalk-url-input': {'plac
 
 #: Setting id -> its label, taken from the legacy screen so the copy is not
 #: quietly reinvented while the layout changes.
+#: Readouts that ship with fixed copy, taken from the legacy screen.
+STATUS_TEXT: dict[str, str] = {
+    'audio-cpp-mode-value': 'External',
+    'audio-cpp-privacy-notice': (
+        'External synthesis sends submitted text to the configured server. '
+        'Save changes before testing.'
+    ),
+}
+
 SETTING_LABELS: dict[str, str] = {
     'audio-cpp-discovery-status': 'Discovery',
+    'audio-cpp-mode-value': 'Mode',
+    'audio-cpp-privacy-notice': 'Privacy',
     'kokoro-voice-blends-list': 'Voice blends',
     'alltalk-format-select': 'Output Format',
     'alltalk-language-select': 'Language',
@@ -228,8 +251,6 @@ SETTING_LABELS: dict[str, str] = {
     'audio-cpp-max-metadata-bytes-input': 'Max metadata bytes',
     'audio-cpp-max-response-bytes-input': 'Max response bytes',
     'audio-cpp-max-voices-per-model-input': 'Max voices per model',
-    'audio-cpp-mode-value': 'External',
-    'audio-cpp-privacy-notice': 'Privacy notice',
     'audio-cpp-settings': 'Settings',
     'audio-cpp-synthesis-timeout-input': 'Synthesis timeout',
     'chatterbox-candidates-input': 'Number of Candidates',
@@ -337,7 +358,12 @@ def _rendered_settings(provider: str) -> tuple[str, ...]:
         for a in SETTINGS_ACTIONS
         if a.startswith(prefix) and a in PROVIDER_ACTION_LABELS
     )
-    return owned + readouts + actions
+    # Readouts and actions FIRST. Put after the settings, audio.cpp's "Test
+    # Connection" sat below nine inputs inside a scrolling group, far enough
+    # down that Pilot could not even click it -- four tests failed with
+    # OutOfBounds. What the provider is, and what you can do to it, belong at
+    # the top of its group; the values you edit follow.
+    return readouts + actions + owned
 
 
 def _setting_rows(provider: str, values: Mapping[str, Any]) -> list[Horizontal]:
@@ -357,16 +383,21 @@ def _setting_rows(provider: str, values: Mapping[str, Any]) -> list[Horizontal]:
         spec = SETTING_DEFAULTS.get(setting, {})
         control: Any
         if setting in PROVIDER_ACTION_LABELS:
+            # No empty label column. With one, the button's position
+            # depended on `.speech-setting-label { width: 28 }` -- and under
+            # a harness that does not load the app bundle the column
+            # collapsed and pushed the button to x=198, out of the visible
+            # region, so `pilot.click` could not reach it. An action needs no
+            # label anyway: its text is the label.
             rows.append(
                 Horizontal(
-                    Static("", classes="speech-setting-label"),
                     Button(
                         PROVIDER_ACTION_LABELS[setting],
                         id=setting,
                         classes="workbench-action speech-setting-action",
                         compact=True,
                     ),
-                    classes="speech-setting-row",
+                    classes="speech-setting-row speech-setting-action-row",
                 )
             )
             continue
@@ -374,7 +405,12 @@ def _setting_rows(provider: str, values: Mapping[str, Any]) -> list[Horizontal]:
             # A readout, not an input. The code that fills these does
             # `query_one(..., Static).update(...)`, which raises against an
             # Input and leaves a local unbound.
-            control = Static("", id=setting, classes="speech-setting-readout")
+            control = Static(
+                STATUS_TEXT.get(setting, ""),
+                id=setting,
+                classes="speech-setting-readout",
+                markup=False,
+            )
         elif _is_switch(setting):
             control = Switch(
                 value=bool(current),
@@ -441,6 +477,11 @@ class SpeechSettingsGroup(Collapsible):
         """
         values = dict(values or {})
         classes = kwargs.pop("classes", "")
+        # The legacy per-provider container id lands on the group that
+        # replaces it. Dropping it entirely broke the tests that assert on
+        # `#audio-cpp-settings` -- and rightly: this IS that container, just
+        # a Collapsible now rather than a Vertical.
+        kwargs.setdefault("id", LEGACY_CONTAINER_IDS.get(provider))
         title = (
             f"{PROVIDER_TITLES.get(provider, provider)} · "
             f"{_state_summary(provider, values)}"

@@ -66,6 +66,22 @@ class SpeechSettingsMixin:
     #: widget still had its own copy.
     OPENAI_TTS_DEFAULT_URL = "https://api.openai.com/v1/audio/speech"
 
+    def init_settings_state(self) -> None:
+        """Initialise the state the settings path reads.
+
+        Call from the host's ``__init__``. Two attributes, and both matter:
+        `_discover_audio_cpp` bumps the generation before awaiting and
+        compares it after, which is how a superseded discovery is discarded
+        rather than overwriting a newer result. Without it that method
+        raises AttributeError inside a worker, where it is swallowed -- the
+        button appeared to do nothing at all.
+        """
+        #: Bumped per discovery request; a reply carrying an older
+        #: generation is dropped.
+        self._audio_cpp_discovery_generation = 0
+        #: The one read-only preferences snapshot taken at mount.
+        self._preferences_snapshot = None
+
     def _tts_service_factory(self):
         """Return the TTS service, awaitable.
 

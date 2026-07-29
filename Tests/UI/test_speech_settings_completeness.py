@@ -17,6 +17,7 @@ from textual.app import App, ComposeResult
 from tldw_chatbook.UI.Speech.speech_settings_model import (
     ALL_SETTINGS_CONTROLS,
     NON_SETTING_IDS,
+    SETTINGS_CONTAINERS,
     PROVIDER_SETTINGS,
     SETTINGS_ACTIONS,
     SETTINGS_STATUS,
@@ -32,7 +33,6 @@ _BUNDLE = (
 #: Named rather than dropped from the inventory so removing one is a recorded
 #: decision and removing anything else still fails.
 NOT_REBUILT: dict[str, str] = {
-    "audio-cpp-settings": "container, replaced by the provider group",
     "audio-cpp-mode-value": "static readout folded into the group header",
     "audio-cpp-privacy-notice": "one-line notice, per the spec",
 }
@@ -86,6 +86,7 @@ async def test_what_is_not_rebuilt_is_declared():
         await _mounted_ids()
         | set(NOT_REBUILT)
         | set(NON_SETTING_IDS)
+        | set(SETTINGS_CONTAINERS)
         | set(SETTINGS_ACTIONS)
         | set(SETTINGS_STATUS)
     )

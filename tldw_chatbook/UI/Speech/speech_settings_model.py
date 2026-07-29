@@ -135,16 +135,23 @@ SETTINGS_ACTIONS: tuple[str, ...] = (   'add-voice-blend-btn',
 #: whole of `_set_initial_values` down with it.
 SETTINGS_STATUS: tuple[str, ...] = (
     'audio-cpp-discovery-status',
+    'audio-cpp-mode-value',
+    'audio-cpp-privacy-notice',
     'kokoro-voice-blends-list',
 )
 
-#: Structural leftovers, not settings: a container, a static mode readout and
-#: a privacy notice. Filed as settings they rendered as three empty labelled
-#: rows -- "External", "Privacy notice", "Settings" -- with nothing in them,
-#: which is what driving the screen showed.
-NON_SETTING_IDS: frozenset[str] = frozenset(
-    {"audio-cpp-settings", "audio-cpp-mode-value", "audio-cpp-privacy-notice"}
-)
+#: Nothing is dropped outright any more. The mode readout and privacy notice
+#: were briefly filed here after they rendered as empty labelled rows, but
+#: they carry real copy -- "External", and what external synthesis sends --
+#: so they are readouts, not omissions. Kept as an empty set rather than
+#: deleted: the completeness check reads it, and the next id that genuinely
+#: cannot be rebuilt belongs here with its reason.
+NON_SETTING_IDS: frozenset[str] = frozenset()
+
+#: Legacy per-provider container ids. The rebuilt group inherits them rather
+#: than dropping them -- `#audio-cpp-settings` IS the audio.cpp group now,
+#: just a Collapsible instead of a Vertical, and tests assert on it.
+SETTINGS_CONTAINERS: frozenset[str] = frozenset({"audio-cpp-settings"})
 
 #: Every id `TTSSettingsWidget` composed, frozen as the yardstick a
 #: completeness check measures against.

@@ -14,6 +14,7 @@ from tldw_chatbook.UI.Speech.speech_settings_model import (
     ALL_SETTINGS_CONTROLS,
     PROVIDER_SETTINGS,
     NON_SETTING_IDS,
+    SETTINGS_CONTAINERS,
     SETTINGS_ACTIONS,
     SETTINGS_STATUS,
     SETTINGS_PROVIDER_ORDER,
@@ -125,6 +126,7 @@ def test_the_inventory_covers_every_legacy_id():
         | set(SETTINGS_ACTIONS)
         | set(SETTINGS_STATUS)
         | set(NON_SETTING_IDS)
+        | set(SETTINGS_CONTAINERS)
     )
     assert classified <= ALL_SETTINGS_CONTROLS
     unclassified = ALL_SETTINGS_CONTROLS - classified
