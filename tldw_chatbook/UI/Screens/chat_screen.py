@@ -5012,6 +5012,38 @@ class ChatScreen(BaseAppScreen):
         if composer is not None:
             composer.tick_voice_elapsed()
 
+    def _speak_status(self, text: str) -> None:
+        """Speak a status/ack/error via TTS when spoken feedback is on and idle.
+
+        Posts `TTSRequestEvent(text)` iff `dictation.spoken_feedback` is
+        truthy (default `false`) AND the microphone is not open right now
+        (`_console_dictation_state == "idle"`). The state check is the hard
+        microphone/speaker mutual-exclusion rule (spec): speech overlapping a
+        live capture would be picked up by the recognizer and transcribed
+        straight into the user's own draft, so this must never fire
+        mid-capture regardless of the toggle.
+
+        "Capture started" is deliberately never routed through this method --
+        see `_request_console_dictation_start`'s unconditional
+        `TTSPlaybackEvent(stop)`, which handles the opposite direction
+        (silencing speech *before* a capture opens) instead.
+
+        Args:
+            text: The plain-text status, command acknowledgement, or error
+                reason to speak -- the same copy the corresponding toast uses.
+        """
+        if self._console_dictation_state != "idle":
+            return
+        if not coerce_bool_setting(
+            get_cli_setting("dictation.spoken_feedback", False), False
+        ):
+            return
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSRequestEvent,
+        )
+
+        self.app_instance.post_message(TTSRequestEvent(text=text))
+
     def _notify_console_dictation_error(self, exc: Exception) -> None:
         """Return dictation to idle and show its actionable failure."""
         self._cancel_console_dictation_timer()
@@ -5025,7 +5057,9 @@ class ChatScreen(BaseAppScreen):
         # on whatever capture succeeds next.
         self._console_pending_voice_action = None
         self._set_console_dictation_state("idle")
-        self.app_instance.notify(f"Dictation failed: {exc}", severity="error")
+        reason = f"Dictation failed: {exc}"
+        self.app_instance.notify(reason, severity="error")
+        self._speak_status(reason)
 
     def _emit_console_dictation_event(self, session: Any, event: Any) -> None:
         """Hand a controller event to the UI thread. Safe from any thread.
@@ -5661,6 +5695,11 @@ class ChatScreen(BaseAppScreen):
         self._console_dictation_origin_session_id = None
         self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
+        if self._console_pending_voice_action is None:
+            # A plain stop -- no capture-ending command queued anything
+            # further. The command acks below speak in its place, so this
+            # and they never double up on the same capture.
+            self._speak_status("Capture ended.")
         await self._run_pending_console_voice_action()
 
     async def _run_pending_console_voice_action(self) -> None:
@@ -5686,8 +5725,10 @@ class ChatScreen(BaseAppScreen):
                 )
                 return
             send_button.press()
+            self._speak_status("Sent.")
         elif pending_action == "new-session":
             self.action_new_console_tab()
+            self._speak_status("New session.")
         elif pending_action == "read-that-back":
             await self._console_read_last_response_back()
 
@@ -5702,6 +5743,7 @@ class ChatScreen(BaseAppScreen):
         """
         if self._console_run_active():
             self.app_instance.notify("Still responding.", severity="warning")
+            self._speak_status("Still responding.")
             return
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
@@ -5713,6 +5755,7 @@ class ChatScreen(BaseAppScreen):
                     break
         if message is None:
             self.app_instance.notify("Nothing to read yet.", severity="warning")
+            self._speak_status("Nothing to read yet.")
             return
         from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
             TTSRequestEvent,
@@ -5811,6 +5854,7 @@ class ChatScreen(BaseAppScreen):
                 exit_on_error=False,
             )
         self.app_instance.notify("Dictation cancelled.", severity="information")
+        self._speak_status("Discarded.")
 
     def _request_console_dictation_start(self) -> None:
         if self._console_dictation_state != "idle":
@@ -5831,6 +5875,18 @@ class ChatScreen(BaseAppScreen):
         # leaked in, so it is reset again on this end too.
         self._console_pending_voice_action = None
         self._set_console_dictation_state("starting")
+        # Unconditional -- not gated on the spoken-feedback toggle: a status
+        # ack or a "read that back" reply can be playing even with feedback
+        # off, and the single-slot TTS player only stops the PREVIOUS clip
+        # when a NEW one starts -- opening a microphone plays nothing, so it
+        # would never stop this on its own. Posted here, before the worker
+        # below ever reaches the recorder, so an in-flight clip cannot bleed
+        # into the recognizer and get transcribed into this capture's draft.
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            TTSPlaybackEvent,
+        )
+
+        self.app_instance.post_message(TTSPlaybackEvent(action="stop"))
         self.run_worker(
             self._start_console_dictation(),
             exclusive=True,
