@@ -123,14 +123,18 @@ the schema apart from `component`.
 | Event | Component | Fields | Why |
 | --- | --- | --- | --- |
 | `app_started` | `app` | — | Anchors a session; its absence dates a crash. |
-| `app_stopping` | `app` | — | Distinguishes a clean exit from a kill. |
-| `persistent_sink_installed` | `logging` | `status` | Emitted immediately after install, so an empty file is unambiguous. |
+| `app_stopping` | `app` | — | Marks shutdown initiation: an orderly shutdown beginning, versus an abrupt kill. |
+| `persistent_sink_installed` | `logging` | `status` | Emitted immediately after install, so at the default level an empty file is unambiguous. |
 | `worker_failed` | `app` | `operation`, `exception_type` | The TASK-1210 class: a worker that dies leaves a trace. |
 | `scheduler_configured` | `scheduling` | `item_count`, `status` | Handlers registered, and whether queued work had none. |
 | `unhandled_exception` | `app` | `exception_type` | A crash names its type without its message. |
 
 No message text, no traceback, no paths. `exception_type` is a class name, which is a code-side
 identifier.
+
+`app_stopping` is emitted at the top of `on_unmount`, above the whole shutdown sequence (DB closes,
+worker cancellation, pool teardown) — deliberately, so it is recorded before that work can fail —
+so its presence does not by itself prove cleanup completed.
 
 Two corrections to an earlier draft of this table, made because the ADR-029 owner is asked to
 sign off against it and it must describe what the branch actually emits:
@@ -178,30 +182,31 @@ the bundle work, when there is a consumer).
 `_configure_private_file_logging` catches `Exception`, logs a warning and returns `False`, so a
 permissions or path problem yields an empty log forever — the same silent-failure class as
 TASK-1240 itself. `persistent_sink_installed` is emitted immediately after a successful install,
-which makes the two states distinguishable: a file with one line means the sink works and
-nothing else has been admitted; an empty file means the sink did not install.
+which makes the two states distinguishable **at the default `file_log_level`**: a file with one
+line means the sink works and nothing else has been admitted; an empty file means the sink did not
+install.
 
-Two details make that reading actually true, both added by the whole-branch review:
+That reading is scoped to the default, and the scope is deliberate:
 
-- **The event is emitted above *both* level gates — `max(file_log_level, root.getEffectiveLevel())`
-  — not at INFO.** Two independent gates stand in front of the record, and they fail at opposite
-  ends of the configured range:
-  - *Handler gate.* `file_log_level` is user-configurable and the shipped `config.py` comment
-    offers `WARNING, ERROR, CRITICAL`. At any of those, an INFO install line is dropped *by the
-    very handler it exists to prove installed*.
-  - *Logger gate.* `configure_application_logging` lowers the root logger to match the most verbose
-    handler only **after** calling `_configure_private_file_logging`, so at install time root still
-    sits at `general.log_level`. With `file_log_level = "DEBUG"` and `general.log_level = "INFO"` —
-    a perfectly ordinary "verbose file, quiet terminal" setup — a DEBUG install line is discarded
-    by the root logger before the handler is ever consulted. A first attempt at this fix used the
-    handler level alone and *newly broke* this combination, which had worked while the line was
-    hardcoded to INFO; the re-review caught it.
+- **The event is emitted at `logging.INFO`, the honest severity for a success.** Under a raised
+  `file_log_level` (the shipped `config.py` comment offers `WARNING, ERROR, CRITICAL`) or a raised
+  `general.log_level` — root still sits at that value here, since `configure_application_logging`
+  lowers root to match the most verbose handler only **after** calling
+  `_configure_private_file_logging` — the line is filtered like any other INFO record. An empty log
+  in that configuration means "configured to be quiet", not "the sink failed".
 
-  Either gate dropping the line produces the same zero-byte log the paragraph above tells the
-  maintainer to read as "the sink did not install". `max()` of the two clears whichever is higher.
-  Corollary, which the code comment states too: the other events remain level-gated normally, so a
-  log containing only this line means "installed, and everything below the configured level was
-  filtered" — not "nothing happened".
+  Severity is **not** inflated to force the line past those gates. An earlier revision emitted at
+  `max(file_log_level, root.getEffectiveLevel())`, which made a successful install arrive at
+  WARNING or CRITICAL. These records propagate to every root handler — the terminal and the in-app
+  Logs screen included — so an ordinary startup rendered as a critical event and could trip
+  alerting integrations. Severity is semantic; it is not a transport for defeating a level gate.
+
+  One combination still has to work and does: `file_log_level = "DEBUG"` with
+  `general.log_level = "INFO"` — the ordinary "verbose file, quiet terminal" setup. A first attempt
+  at this area emitted at the *handler's* level, putting a DEBUG record in front of an INFO root
+  logger and losing it; INFO clears both. Corollary, which the code comment states too: the other
+  events remain level-gated normally, so a log containing only this line means "installed, and
+  everything below the configured level was filtered" — not "nothing happened".
 - **It is emitted outside the `try` that reports install failure.** Inside it, a future failure in
   the emit itself would be caught by the `except Exception` that warns and returns `False` —
   reporting a broken sink when the handler is built, filtered, attached and working. It is also
