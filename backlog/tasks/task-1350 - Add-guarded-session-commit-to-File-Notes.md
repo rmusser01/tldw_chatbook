@@ -1,9 +1,11 @@
 ---
 id: TASK-1350
 title: Add guarded session commit to File Notes
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-29 19:17'
+updated_date: '2026-07-29 23:43'
 labels:
   - notes
   - git
@@ -16,6 +18,7 @@ dependencies:
 documentation:
   - >-
     Docs/superpowers/specs/2026-07-29-file-notes-guarded-session-commit-design.md
+  - Docs/superpowers/plans/2026-07-29-file-notes-guarded-session-commit.md
   - backlog/decisions/038-file-notes-guarded-session-commit.md
   - backlog/decisions/035-file-notes-session-git-index-controls.md
   - backlog/decisions/033-application-session-state-ownership.md
@@ -40,3 +43,20 @@ Let users turn the exact Chatbook-owned staged notes from the current File Notes
 - [ ] #7 Commit actions never rewrite note bytes or mutate the independent SQLite replica, revisions, tombstones, repository configuration, remotes, credentials, push/pull/fetch, lazy-fetch objects, amend, signing, or general branch management; the feature adds no durable trust state and preserves ADR-035 trust invalidation semantics.
 - [ ] #8 Focused unit, disposable-repository integration, lifecycle, and mounted Textual tests include repository-wide logical-index proof without unrelated-path disclosure, ambient date/replacement/graft-state isolation, partial/promisor blocking without network access, no automatic-maintenance descendant, exact success-index proof, uncertain Check-again convergence, a representative session set in a 1,000-note repository, and a bounded Git process count; a representative two-note flow receives narrow/wide live UAT, with no unrelated full-suite or broad CI expansion.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/038-file-notes-guarded-session-commit.md
+Reason: ADR-038 defines the guarded local-commit service, security, recovery, process, and UX boundary; ADR-035 remains the staging authority.
+
+Detailed plan: Docs/superpowers/plans/2026-07-29-file-notes-guarded-session-commit.md
+
+1. Add pure commit contracts and exact owner authority.
+2. Add retained child settlement and complete guarded review proof.
+3. Execute once, prove typed outcomes, and converge uncertainty.
+4. Cover the disposable-repository security matrix.
+5. Add the Prepare-panel review and workspace lifecycle.
+6. Run focused verification and wide/40x20 live UAT.
+<!-- SECTION:PLAN:END -->
