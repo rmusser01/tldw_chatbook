@@ -194,6 +194,12 @@ Update the tests to describe current behavior:
     that retired seam or pretend Prompts is routed through the map. Keep the
     real resolver dispatch, copying, manifest-entry, success, and partial
     profile-failure coverage.
+22. Remove only `atomic_write_text` from the TTS preference read-purity test's
+    monkeypatch list. That symbol was deleted from `config` when persistence
+    moved to the private atomic owner; keep guards for all four live public
+    settings mutation helpers plus the unchanged input and zero-call
+    assertions. Do not restore the implementation symbol or patch private
+    file-writing internals that the pure preference parser does not own.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -255,6 +261,10 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   Overriding those two entries on the fixture window's resolver map while
   retaining the direct Prompts patch uses the current seams and keeps host
   databases out of the test without changing production.
+- Restoring `config.atomic_write_text` or patching the replacement private-file
+  implementation would couple a pure parser regression to deleted or internal
+  persistence details. The public config mutation guards already express the
+  relevant no-write boundary.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.

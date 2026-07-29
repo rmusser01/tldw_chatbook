@@ -905,6 +905,40 @@ git add Tests/TTS/test_profile_backup_integration.py
 git commit -m "test(backup): inject canonical source resolvers"
 ```
 
+### Task 4s: Drop the deleted TTS preference write guard
+
+**Files:**
+- Modify: `Tests/TTS/test_tts_preferences.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run
+`test_reading_legacy_blanks_does_not_mutate_input_or_write_disk`. Expected:
+setup raises `AttributeError` while monkeypatching deleted
+`config.atomic_write_text`, before the pure parser or its assertions run.
+Confirm the test still patches the four live public config mutation helpers and
+that `TTSPreferencesSnapshot.from_settings()` does not own persistence.
+
+- [ ] **Step 2: Remove only the dead symbol**
+
+Delete `atomic_write_text` from the helper-name tuple. Retain the unexpected
+persistence callback, the zero-call assertion, and the deep input-equality
+assertion. Do not restore a config alias or patch private atomic-write
+internals.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/TTS/test_tts_preferences.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/TTS/test_tts_preferences.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/TTS/test_tts_preferences.py
+git add Tests/TTS/test_tts_preferences.py
+git commit -m "test(tts): guard live preference writers"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -982,6 +1016,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/RAG/test_local_citation_capture.py \
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/TTS/test_profile_backup_integration.py \
+  Tests/TTS/test_tts_preferences.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -1009,6 +1044,7 @@ Expected: all affected tests pass.
   Tests/RAG/test_rag_ui_integration.py \
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/TTS/test_profile_backup_integration.py \
+  Tests/TTS/test_tts_preferences.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -1031,6 +1067,7 @@ Expected: all affected tests pass.
   Tests/RAG/test_rag_ui_integration.py \
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/TTS/test_profile_backup_integration.py \
+  Tests/TTS/test_tts_preferences.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
