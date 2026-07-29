@@ -45,13 +45,21 @@ REGION_TITLES: dict[Region, str] = {
 #: *collapsed* header still read "▸ Watchlists". Membership here means
 #: "the pane supplies its own heading", which is the actual rule.
 #:
-#: Phase D wires a real reader pane into CONTENT; whoever does that must add
-#: `Region.CONTENT` here *if and only if* that pane draws its own heading.
+#: Task 4 wired `ContentPane` into CONTENT (`watchlists_collections_screen.py`
+#: `_build_content_pane`) and deliberately did NOT add `Region.CONTENT` here:
+#: `ContentPane.compose()` yields only a bare `Static` (the placeholder or the
+#: rendered item), no heading widget of its own -- the same shape as
+#: LEFT_RAIL's `WatchlistTree` above, which is excluded for the identical
+#: reason. CONTENT gets the generic "Content" title like LEFT_RAIL gets
+#: "Watchlists".
 SELF_HEADED_REGIONS: frozenset[Region] = frozenset(
     {Region.FEEDS, Region.ITEMS, Region.RIGHT_RAIL}
 )
 
-#: Placeholder body copy. Phase C and D replace these with real panes.
+#: Placeholder body copy, shown only if a region's content factory is
+#: missing or returns `None`. Every region now has a factory (Task 4 was the
+#: last -- CONTENT), so this dict is a defensive fallback rather than
+#: something any region currently renders in practice.
 REGION_PLACEHOLDERS: dict[Region, str] = {
     Region.LEFT_RAIL: "Watchlist tree arrives in the next slice.",
     Region.FEEDS: "Feeds table arrives in the next slice.",

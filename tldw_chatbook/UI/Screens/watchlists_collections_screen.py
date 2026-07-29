@@ -50,6 +50,7 @@ from ..Watchlists_Modules.inspector_pane import (
     PreviewRequested,
     StageInConsoleRequested,
 )
+from ..Watchlists_Modules.content_pane import ContentPane
 from ..Watchlists_Modules.items_pane import ItemSelected, ItemsPane, RefreshItemsRequested
 from ..Watchlists_Modules.notifications_pane import (
     DismissNotificationRequested,
@@ -194,10 +195,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     selected_entity = reactive(None)
     recovery_state = reactive(None)
     overview_data = reactive({}, recompose=True)
-    # CONTENT hosts the Phase D reader stub, so it starts collapsed to avoid
-    # spending screen space on a placeholder. `on_mount` overlays whatever is
-    # actually persisted (see `region_layout_store`) on top of this default.
-    region_layout = reactive(RegionLayout(collapsed=frozenset({Region.CONTENT})))
+    # Through Phase C, CONTENT held only a placeholder stub and started
+    # collapsed to avoid spending screen space on it. Phase D wires a real
+    # reader (`ContentPane`) into CONTENT, so it now starts expanded like
+    # every other region. `on_mount` overlays whatever is actually persisted
+    # (see `region_layout_store.load_region_layout`) on top of this default —
+    # including a one-time migration that drops any CONTENT collapse a user
+    # saved before this change, since that could only be a leftover of the
+    # old stub-era default, never a deliberate choice about the real reader.
+    region_layout = reactive(RegionLayout())
     focused_region = reactive(Region.FEEDS)
     # Two scopes, deliberately: they answer different questions and they
     # diverge (fix round 1, Finding 2).
@@ -269,6 +275,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._loaded_sources: list[dict[str, Any]] = []
         self._loaded_items: list[dict[str, Any]] = []
         self._loaded_rules: list[dict[str, Any]] = []
+        # The item currently open in the CONTENT reader (Task 4). Held here
+        # for the identical reason as `_loaded_items` above: `_build_content_pane`
+        # is a factory the workbench calls on every region rebuild, and a
+        # freshly built `ContentPane`'s `item` reactive would otherwise start
+        # back at `None` on every collapse/solo/rail toggle, clearing the
+        # reader out from under a user who hadn't touched Items at all.
+        self._selected_content_item: dict[str, Any] | None = None
         # Left-rail tree inputs (Task 4): loaded together by `_load_tree_data`
         # in exactly two queries (`list_watchlists` + `get_watchlist_item_counts`),
         # never one per node -- see that method's docstring.
@@ -1157,6 +1170,31 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             classes="destination-workbench-pane",
         )
 
+    def _build_content_pane(self) -> ContentPane:
+        """Build the CONTENT-region content: the reader for the last
+        selected item (Task 4).
+
+        Called fresh on every region rebuild, like every other region
+        builder here -- see the factory note on `WatchlistsWorkbench.__init__`.
+        Seeded from `_selected_content_item` (Finding pattern established by
+        `_build_inspector_pane`'s `selected_entity` seeding above): without
+        this, a collapse/solo/rail toggle would construct a brand new
+        `ContentPane` whose `item` reactive starts back at its class default
+        of `None`, silently clearing the reader.
+
+        Deliberately not gated on `active_section`: unlike `_build_detail_pane`,
+        which swaps in a different pane per tab, the reader is a persistent
+        cross-cutting surface for whatever item was last opened, regardless
+        of which section the user is currently viewing.
+
+        `ContentPane` does not draw its own heading (see `SELF_HEADED_REGIONS`
+        in `watchlists_workbench.py`), so `WatchlistsWorkbench` prepends the
+        generic "Content" title above whatever this returns.
+        """
+        pane = ContentPane(id="watchlists-content-pane")
+        pane.item = self._selected_content_item
+        return pane
+
     def _watchlists_are_empty(self) -> bool:
         """Whether this profile has nothing in Watchlists yet (TASK-998).
 
@@ -1342,6 +1380,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     Region.LEFT_RAIL: self._build_tree_pane,
                     Region.FEEDS: self._build_list_pane,
                     Region.ITEMS: self._build_detail_pane,
+                    Region.CONTENT: self._build_content_pane,
                     Region.RIGHT_RAIL: lambda: self._build_inspector_pane(
                         latest_console_item, attach_disabled, attach_tooltip
                     ),
@@ -2722,6 +2761,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def handle_item_selected(self, event: ItemSelected) -> None:
         event.stop()
         self._select_entity(event.item)
+        # Route to the reader (Task 4), independent of `_select_entity`'s
+        # generic Inspector reconciliation above: Sources/Runs/Rules also
+        # flow through `_select_entity`, and none of those dicts carry
+        # `content_kind`/`content` -- pushing them into `ContentPane` would
+        # render `render_for`'s article-fallback over the WRONG entity's
+        # fields instead of leaving the reader showing the last real item.
+        # Held on the screen (`_selected_content_item`), not just pushed to
+        # the mounted pane, so `_build_content_pane` can re-seed a rebuilt
+        # `ContentPane` the same way `_build_inspector_pane` re-seeds
+        # `selected_entity` — see that seeding note above.
+        self._selected_content_item = event.item
+        try:
+            self.query_one("#watchlists-content-pane", ContentPane).item = event.item
+        except NoMatches:
+            pass
 
     @on(RefreshItemsRequested)
     def handle_refresh_items_requested(self, event: RefreshItemsRequested) -> None:

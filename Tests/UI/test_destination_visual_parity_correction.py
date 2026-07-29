@@ -1058,23 +1058,22 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         # structural landmarks instead: the workbench container, and each
         # region wrapper.
         #
-        # CONTENT starts collapsed on a genuinely fresh config (as here): its
-        # reader is a Phase D stub, and `region_layout_store.load_region_layout`
-        # distinguishes a never-saved key (`None`, applies the first-run
-        # default with CONTENT collapsed) from an explicitly-saved empty
-        # layout (`[]`, honored exactly) — see that module for why the two
-        # can't be collapsed into one. So the header, not the body, is
-        # asserted here.
+        # CONTENT no longer starts collapsed on a genuinely fresh config
+        # (Task 4): it now hosts a real reader (`ContentPane`), not the
+        # Phase C placeholder stub, so a first-run user sees it expanded like
+        # every other region — the same first-run default
+        # `region_layout_store.load_region_layout` applies for a never-saved
+        # key. So the body, not the header, is asserted here.
         assert screen.query_one("#wl-workbench")
         for region_id in (
             "wl-region-left_rail",
             "wl-region-feeds",
             "wl-region-items",
+            "wl-region-content",
             "wl-region-right_rail",
         ):
             assert screen.query_one(f"#{region_id}")
-        assert screen.query_one("#wl-header-content")
-        assert not screen.query("#wl-region-content")
+        assert not screen.query("#wl-header-content")
 
 
 @pytest.mark.asyncio
@@ -1493,16 +1492,22 @@ async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds(
     been exercised by a test. This forces FEEDS past its cap inside the real
     chrome-wrapped screen and pins the resulting split.
 
-    The numbers, measured at 160x42 (the tightest viewport this app ships):
-    the three centre regions share a fixed 34-row budget, so with
-    ITEMS/CONTENT at `2fr`/`1fr` a capped FEEDS leaves `items ~= (34 - cap) *
-    2/3`. Swept: cap=12 -> items=14, cap=13 -> items=14, cap=14 -> items=13,
-    which inverts the invariant. 13 is the maximum that holds here, but it
-    holds ONLY at height >= 42 -- at 160x41 the budget drops to 33 and 13
-    ties at items=13. The shipped cap is 12, which gives items=14 at both
-    budgets, so the invariant survives a 41-row terminal and one more row
-    of chrome above the workbench. Anything beyond that trips this test --
-    which is the point of pinning it.
+    Re-derived for Task 4 (the numbers below are NOT the pre-Phase-D ones):
+    CONTENT stopped being a `1fr` co-claimant on the ITEMS/CONTENT split (see
+    `.watchlists-region-content` in `_watchlists.tcss`) and became `auto` +
+    `max-height`, content-sized like FEEDS rather than budget-sized like
+    ITEMS. With no item selected -- true here, this test never selects one --
+    `ContentPane` composes just its one-line placeholder, so CONTENT sits at
+    its structural floor (border 2 + the generic "Content" heading 1 + the
+    placeholder line 1 = 4 rows) regardless of terminal height. ITEMS is
+    therefore the `.watchlists-centre` Vertical's ONLY real `fr` sibling
+    again (as it was before CONTENT held any real content), and simply takes
+    what FEEDS and CONTENT leave: `items = budget - feeds_cap - content_floor
+    = budget - 12 - 4`. At budget 34 that is 18; at budget 33, 17 -- both
+    comfortably above FEEDS's 12, so this split has real margin rather than
+    the pre-Phase-D derivation's razor-thin one-cap-value-wide window (that
+    fragility was a direct consequence of `fr`-splitting a shrinking pool
+    two ways; a fixed content floor does not have that problem).
     """
     app = _build_test_app()
     # Setup change only (Task 7 fix round 1, Finding 1) -- see
@@ -1532,13 +1537,16 @@ async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds(
             f"FEEDS should sit exactly at its `max-height: 12` at 160x{height}: "
             f"{feeds.region}"
         )
-        assert items.region.height == 14, (
-            f"the 2fr/1fr split of the {budget}-row budget should leave ITEMS "
-            f"14 rows -- two more than the cap. This is the whole reason the "
-            f"cap is 12 and not the 13 the 160x42 maximum would allow: 13 "
-            f"gives items=14 at budget 34 but ties at items=13 when the "
-            f"budget drops to 33. feeds={feeds.region} items={items.region} "
-            f"content={content.region}"
+        assert content.region.height == 4, (
+            f"CONTENT's idle floor (border 2 + heading 1 + placeholder 1) "
+            f"should not depend on terminal height: content={content.region}"
+        )
+        expected_items = {34: 18, 33: 17}[budget]
+        assert items.region.height == expected_items, (
+            f"ITEMS should take exactly what FEEDS (pinned at its 12-row "
+            f"cap) and CONTENT (idle at its 4-row floor) leave of the "
+            f"{budget}-row budget -- {budget} - 12 - 4 = {expected_items}: "
+            f"feeds={feeds.region} items={items.region} content={content.region}"
         )
         assert items.region.height > feeds.region.height, (
             f"ITEMS must stay the taller reading area even when FEEDS is "

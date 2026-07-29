@@ -1,8 +1,19 @@
+import pytest
+
 from tldw_chatbook.UI.Watchlists_Modules import region_layout_store
 from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region, RegionLayout
 
+pytestmark = pytest.mark.unit
+
 
 def test_round_trips_collapsed_regions(monkeypatch):
+    """Uses FEEDS/RIGHT_RAIL, deliberately not CONTENT: this test is about
+    generic round-tripping, and CONTENT now goes through the one-time
+    migration in `load_region_layout` (see the dedicated migration tests
+    below), which would make a CONTENT-collapsed input diverge from what
+    comes back out on the very first load — a different behaviour than the
+    one this test checks.
+    """
     saved = {}
 
     def fake_save(section, key, value):
@@ -11,33 +22,37 @@ def test_round_trips_collapsed_regions(monkeypatch):
 
     monkeypatch.setattr(region_layout_store, "save_setting_to_cli_config", fake_save)
     region_layout_store.save_region_layout(
-        RegionLayout(collapsed=frozenset({Region.CONTENT, Region.RIGHT_RAIL}))
+        RegionLayout(collapsed=frozenset({Region.FEEDS, Region.RIGHT_RAIL}))
     )
 
     # Flat section, not "watchlists.layout" — a dotted section silently no-ops.
     assert ("watchlists", "collapsed_regions") in saved
-    assert sorted(saved[("watchlists", "collapsed_regions")]) == ["content", "right_rail"]
+    assert sorted(saved[("watchlists", "collapsed_regions")]) == ["feeds", "right_rail"]
 
     monkeypatch.setattr(
         region_layout_store, "get_cli_setting",
         lambda section, key, default=None: saved.get((section, key), default),
     )
     loaded = region_layout_store.load_region_layout()
-    assert loaded.collapsed == frozenset({Region.CONTENT, Region.RIGHT_RAIL})
+    assert loaded.collapsed == frozenset({Region.FEEDS, Region.RIGHT_RAIL})
 
 
 def test_load_applies_first_run_default_when_key_was_never_saved(monkeypatch):
     """`get_cli_setting` returns its `default` argument only when the key is
     absent — i.e. this is a genuine "never saved" case, not merely "saved as
-    empty." That must apply the first-run default (CONTENT collapsed), not
-    `RegionLayout()`. See `load_region_layout`'s docstring for why the two
-    cases cannot be collapsed into one."""
+    empty." Phase D wires a real reader into CONTENT, so the first-run
+    default is now `RegionLayout()` (nothing collapsed) like any other
+    region — see `load_region_layout`'s docstring for why the
+    never-saved-vs-saved-empty *distinction* still matters even though both
+    now resolve to the same value."""
     monkeypatch.setattr(
         region_layout_store, "get_cli_setting", lambda section, key, default=None: default
     )
+    monkeypatch.setattr(
+        region_layout_store, "save_setting_to_cli_config", lambda *a, **k: True
+    )
     loaded = region_layout_store.load_region_layout()
-    assert loaded == RegionLayout(collapsed=frozenset({Region.CONTENT}))
-    assert loaded != RegionLayout()
+    assert loaded == RegionLayout()
 
 
 def test_load_honors_an_explicit_empty_layout_as_everything_expanded(monkeypatch):
@@ -49,7 +64,66 @@ def test_load_honors_an_explicit_empty_layout_as_everything_expanded(monkeypatch
     monkeypatch.setattr(
         region_layout_store, "get_cli_setting", lambda section, key, default=None: []
     )
+    monkeypatch.setattr(
+        region_layout_store, "save_setting_to_cli_config", lambda *a, **k: True
+    )
     assert region_layout_store.load_region_layout() == RegionLayout()
+
+
+def test_load_migrates_a_pre_phase_d_content_collapse_away_on_first_run(monkeypatch):
+    """A user who saved a layout before Phase D necessarily has CONTENT in
+    `collapsed_regions` unless they specifically expanded it (CONTENT started
+    collapsed by default back then), so honoring that membership forever
+    would leave the new reader stuck collapsed post-upgrade, looking broken
+    rather than shipped. The migration marker is unset (a pre-upgrade config
+    never wrote it), so the persisted CONTENT collapse must be dropped, and
+    the migration marker must be written so this runs exactly once.
+    """
+    saved = {"collapsed_regions": ["content", "right_rail"]}
+    migration_writes = []
+
+    def fake_get(section, key, default=None):
+        if key == "content_reader_migrated":
+            return False
+        return saved.get(key, default)
+
+    def fake_save(section, key, value):
+        if key == "content_reader_migrated":
+            migration_writes.append(value)
+        else:
+            saved[key] = value
+        return True
+
+    monkeypatch.setattr(region_layout_store, "get_cli_setting", fake_get)
+    monkeypatch.setattr(region_layout_store, "save_setting_to_cli_config", fake_save)
+
+    loaded = region_layout_store.load_region_layout()
+
+    assert loaded.collapsed == frozenset({Region.RIGHT_RAIL}), (
+        "a stub-era CONTENT collapse must not survive the Phase D upgrade"
+    )
+    assert migration_writes == [True], "the migration marker must be persisted exactly once"
+
+
+def test_load_honors_a_deliberate_content_collapse_once_migrated(monkeypatch):
+    """After the one-time migration has run (marker already `True`), a
+    CONTENT collapse the user set AFTERWARD — a genuine choice about the
+    real reader, not a leftover stub-era default — must be honored like any
+    other region, not stripped again on every future load.
+    """
+    saved = {"collapsed_regions": ["content"], "content_reader_migrated": True}
+
+    monkeypatch.setattr(
+        region_layout_store, "get_cli_setting",
+        lambda section, key, default=None: saved.get(key, default),
+    )
+    monkeypatch.setattr(
+        region_layout_store, "save_setting_to_cli_config",
+        lambda section, key, value: saved.__setitem__(key, value) or True,
+    )
+
+    loaded = region_layout_store.load_region_layout()
+    assert loaded.collapsed == frozenset({Region.CONTENT})
 
 
 def test_load_ignores_unknown_region_names(monkeypatch):

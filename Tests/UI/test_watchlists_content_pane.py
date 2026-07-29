@@ -177,3 +177,77 @@ def test_diff_lines_with_hostile_markup_are_escaped():
     }))
 
     assert "\\[bold red]" in out
+
+
+def test_content_region_is_not_collapsed_by_default_now_it_has_a_reader():
+    """Task 4: through Phase C, CONTENT held only a placeholder stub and
+    started collapsed. Now it hosts the real reader, so a fresh screen must
+    show it expanded like every other region.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        WatchlistsCollectionsScreen,
+    )
+
+    # `Reactive` does not expose its default value publicly in this Textual
+    # version (`8.2.8`) -- only the private `_default` attribute holds it;
+    # `.default` (as an earlier draft of this test used) does not exist and
+    # raises `AttributeError` before ever reaching the real assertion.
+    default = WatchlistsCollectionsScreen.region_layout._default
+    layout = default() if callable(default) else default
+    assert Region.CONTENT not in layout.collapsed
+
+
+@pytest.mark.asyncio
+async def test_selecting_an_item_renders_it_in_the_content_region():
+    """Selection must reach the reader through the real screen wiring.
+
+    Drives the real `ItemsPane` -> `ItemSelected` -> screen handler ->
+    `ContentPane` path (not a direct call into `ContentPane`), following the
+    harness the Phase C screen tests use (`test_watchlists_item_actions.py`).
+    """
+    from textual.widgets import Static
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+
+    item = {
+        "id": 7,
+        "title": "Claude Opus 4.5 is now available",
+        "source_name": "Anthropic News",
+        "content": "The model is available in the API today.",
+        "content_kind": "article",
+        "content_format": "text",
+    }
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+
+        items_pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+        items_pane.items = [item]
+        await pilot.pause(0.2)
+
+        items_pane.select_item_by_id("7")
+        await pilot.pause(0.3)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        body = content_pane.query_one("#content-body", Static)
+        rendered = str(body.renderable)
+        assert "Claude Opus 4.5 is now available" in rendered
+        assert "The model is available in the API today." in rendered
+
+        # Selecting `None` (e.g. the row no longer matches anything) must
+        # clear the pane back to its placeholder, not leave the stale body.
+        items_pane.select_item_by_id("does-not-exist")
+        await pilot.pause(0.3)
+
+        assert content_pane.item is None
+        empty_placeholder = content_pane.query_one("#content-empty", Static)
+        assert str(empty_placeholder.renderable) == "Select an item to read it."

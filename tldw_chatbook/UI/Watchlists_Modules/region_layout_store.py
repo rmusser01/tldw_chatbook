@@ -29,13 +29,33 @@ logger = logger.bind(module="WatchlistsRegionLayoutStore")
 _SECTION = "watchlists"
 _KEY = "collapsed_regions"
 
-#: What to show before anyone has ever touched collapse state. CONTENT's
-#: reader is a Phase D stub, so it starts collapsed rather than spending a
-#: third of the centre column on "Reader arrives in the next slice." on
-#: every first launch. This is deliberately NOT the same value as
-#: `RegionLayout()` (nothing collapsed) — see the None-vs-`[]` handling in
-#: `load_region_layout` below for why the distinction matters.
-_FIRST_RUN_DEFAULT = RegionLayout(collapsed=frozenset({Region.CONTENT}))
+#: What to show before anyone has ever touched collapse state. Through Phase
+#: C, CONTENT held only a placeholder stub, so it started collapsed rather
+#: than spending a third of the centre column on "Reader arrives in the next
+#: slice." on every first launch. Phase D wires a real reader into CONTENT
+#: (`ContentPane`), so that reasoning no longer applies -- a first-run user
+#: should see the reader like every other region. `RegionLayout()` (nothing
+#: collapsed) is now both the first-run default AND what a genuinely empty
+#: persisted layout means; see the None-vs-`[]` handling in
+#: `load_region_layout` below for why the *distinction between those two
+#: cases* still matters even though they resolve to the same value today.
+_FIRST_RUN_DEFAULT = RegionLayout()
+
+#: One-time-migration marker (Phase D). A user who saved ANY layout before
+#: this change necessarily has CONTENT in their persisted `collapsed_regions`
+#: unless they specifically expanded it: CONTENT started collapsed by
+#: default (see `_FIRST_RUN_DEFAULT`'s history above), so every save made
+#: while that default was in effect carried CONTENT along, whether or not
+#: the user meant anything by it -- there was nothing behind it to look at.
+#: Honoring that persisted membership forever would leave every such user's
+#: reader stuck collapsed post-upgrade, looking broken rather than shipped.
+#: This key is set exactly once, the first time `load_region_layout` runs
+#: after upgrading: while unset, a persisted CONTENT collapse is dropped
+#: (never a persisted expansion -- only ever a discard); once set, a later
+#: DELIBERATE collapse of CONTENT (the reader now exists and can genuinely
+#: be closed on purpose) is honored like any other region on every load
+#: after that, including a value re-added after the marker was set.
+_CONTENT_READER_MIGRATED_KEY = "content_reader_migrated"
 
 
 def load_region_layout() -> RegionLayout:
@@ -53,19 +73,33 @@ def load_region_layout() -> RegionLayout:
     permanently strand a user who deliberately keeps CONTENT expanded, since
     saving that exact choice looks identical to never having saved anything.
 
+    Also performs the Phase D one-time migration (see
+    `_CONTENT_READER_MIGRATED_KEY`): the first time this runs after
+    upgrading, any persisted CONTENT collapse is dropped, since it can only
+    be a leftover from the placeholder-stub-era default rather than a
+    decision about the real reader. Every call after that honors CONTENT's
+    collapse state exactly like any other region's.
+
     Returns:
         The collapse state to apply: the first-run default
         (`_FIRST_RUN_DEFAULT`) when the config key has never been saved, or
         the persisted collapsed set otherwise (silently dropping any
-        unrecognized region names or non-sequence stored value).
+        unrecognized region names or non-sequence stored value), with the
+        one-time CONTENT migration applied when it has not run yet.
     """
+    migrated = bool(get_cli_setting(_SECTION, _CONTENT_READER_MIGRATED_KEY, False))
     raw = get_cli_setting(_SECTION, _KEY, None)
+
     if raw is None:
+        if not migrated:
+            _mark_content_reader_migrated()
         return _FIRST_RUN_DEFAULT
     if isinstance(raw, str):
         raw = [raw]
     if not isinstance(raw, Sequence):
         logger.debug("Ignoring non-sequence watchlists collapse state: {!r}", raw)
+        if not migrated:
+            _mark_content_reader_migrated()
         return RegionLayout()
 
     collapsed = set()
@@ -74,7 +108,31 @@ def load_region_layout() -> RegionLayout:
             collapsed.add(Region(str(value)))
         except ValueError:
             logger.debug("Ignoring unknown watchlists region {!r} from config.", value)
+
+    if not migrated:
+        # Stub-era saves always carried CONTENT along in `collapsed` (it was
+        # the default), so its presence here says nothing about user intent.
+        # Drop it exactly once; `_mark_content_reader_migrated` ensures a
+        # DELIBERATE re-collapse afterward is never touched again.
+        collapsed.discard(Region.CONTENT)
+        _mark_content_reader_migrated()
+
     return RegionLayout(collapsed=frozenset(collapsed))
+
+
+def _mark_content_reader_migrated() -> None:
+    """Record that the Phase D CONTENT-collapse migration has run.
+
+    Best-effort, matching `save_region_layout`'s own error handling: failing
+    to persist the marker means the next launch re-runs (and re-no-ops, since
+    it only ever discards) the migration rather than losing collapse state.
+    """
+    try:
+        save_setting_to_cli_config(_SECTION, _CONTENT_READER_MIGRATED_KEY, True)
+    except Exception:
+        logger.opt(exception=True).debug(
+            "Failed to persist watchlists content-reader migration marker."
+        )
 
 
 def save_region_layout(layout: RegionLayout) -> None:
