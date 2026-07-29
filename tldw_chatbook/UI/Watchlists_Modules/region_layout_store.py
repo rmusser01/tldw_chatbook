@@ -114,7 +114,25 @@ def load_region_layout() -> RegionLayout:
         # the default), so its presence here says nothing about user intent.
         # Drop it exactly once; `_mark_content_reader_migrated` ensures a
         # DELIBERATE re-collapse afterward is never touched again.
+        #
+        # Fix round 2 (coordinator review): dropping CONTENT from the
+        # RETURNED layout without also rewriting `collapsed_regions` on disk
+        # made the correction last exactly one `RegionLayout` -- the marker
+        # got written, but the persisted list did not, so the very next
+        # `load_region_layout()` call (next launch, or simply the next
+        # remount -- this screen unmounts on navigation) read `migrated ==
+        # True` and skipped the discard entirely, permanently re-collapsing
+        # CONTENT for exactly the returning users this migration exists to
+        # help. The caller's own persistence bookkeeping
+        # (`_last_persisted_collapsed` in `watchlists_collections_screen.py`)
+        # cannot be relied on to paper over this: it gets primed from
+        # whatever THIS function returns, which is the very value that was
+        # never written. This function must make its own correction durable
+        # itself, not depend on a caller noticing the discrepancy.
+        had_content = Region.CONTENT in collapsed
         collapsed.discard(Region.CONTENT)
+        if had_content:
+            save_region_layout(RegionLayout(collapsed=frozenset(collapsed)))
         _mark_content_reader_migrated()
 
     return RegionLayout(collapsed=frozenset(collapsed))

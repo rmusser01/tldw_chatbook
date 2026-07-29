@@ -78,20 +78,32 @@ def test_load_migrates_a_pre_phase_d_content_collapse_away_on_first_run(monkeypa
     rather than shipped. The migration marker is unset (a pre-upgrade config
     never wrote it), so the persisted CONTENT collapse must be dropped, and
     the migration marker must be written so this runs exactly once.
+
+    Fix round 2 (coordinator review, Critical): the first version of this
+    test hard-returned `False` for the migration-marker key from `fake_get`
+    regardless of what `fake_save` had written, so it measured only ONE
+    `load_region_layout()` call and never exercised the write -> read
+    feedback loop the whole migration depends on. That let a real bug ship:
+    the migration dropped CONTENT from the RETURNED layout and wrote the
+    marker, but never rewrote `collapsed_regions` itself -- so the disk
+    value stayed `["content", "right_rail"]`, and the very next load (next
+    launch, or simply the next remount -- this screen unmounts on
+    navigation) saw `migrated == True` and skipped the discard entirely,
+    permanently re-collapsing CONTENT for exactly the returning users this
+    migration exists to help. `fake_get` now reads back whatever `fake_save`
+    actually wrote for EVERY key, and a second `load_region_layout()` call
+    against the same fake store asserts the correction survives it.
     """
     saved = {"collapsed_regions": ["content", "right_rail"]}
     migration_writes = []
 
     def fake_get(section, key, default=None):
-        if key == "content_reader_migrated":
-            return False
         return saved.get(key, default)
 
     def fake_save(section, key, value):
+        saved[key] = value
         if key == "content_reader_migrated":
             migration_writes.append(value)
-        else:
-            saved[key] = value
         return True
 
     monkeypatch.setattr(region_layout_store, "get_cli_setting", fake_get)
@@ -103,6 +115,26 @@ def test_load_migrates_a_pre_phase_d_content_collapse_away_on_first_run(monkeypa
         "a stub-era CONTENT collapse must not survive the Phase D upgrade"
     )
     assert migration_writes == [True], "the migration marker must be persisted exactly once"
+    assert saved["collapsed_regions"] == ["right_rail"], (
+        "the migration must rewrite `collapsed_regions` on disk, not just "
+        "the marker -- otherwise the correction is visible for exactly the "
+        "one RegionLayout this call returned and reverts on the next load"
+    )
+
+    # The write -> read loop, exercised for real: a SECOND load against the
+    # same fake store (simulating the next launch, or simply the next
+    # remount -- this screen unmounts on navigation) must still see CONTENT
+    # expanded. Before the fix this returned `frozenset({Region.CONTENT,
+    # Region.RIGHT_RAIL})` -- the marker suppressed the discard, and the
+    # stale disk value was all that was left to read.
+    reloaded = region_layout_store.load_region_layout()
+    assert reloaded.collapsed == frozenset({Region.RIGHT_RAIL}), (
+        "the correction must survive a second load, not just the first -- "
+        f"got {reloaded.collapsed}"
+    )
+    assert migration_writes == [True], (
+        "the second load must not re-run the migration or write the marker again"
+    )
 
 
 def test_load_honors_a_deliberate_content_collapse_once_migrated(monkeypatch):
