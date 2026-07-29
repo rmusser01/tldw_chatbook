@@ -38,6 +38,12 @@ from tldw_chatbook.Subscriptions.watchlist_normalizers import (
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
 
+# Whole-branch review (Important): without this, CI's `pytest -m unit` run
+# DESELECTS this entire module, so every assertion here -- including the ones
+# this branch changed when Task 5 deleted the Inspector's "Mark reviewed"
+# button -- was only ever exercised locally.
+pytestmark = pytest.mark.unit
+
 # Exactly the row shape `SubscriptionsDB.get_new_items` returns for a scraped
 # feed entry, put through the same normalizer the Items pane is fed from.
 REAL_ITEM = normalize_watchlist_item(

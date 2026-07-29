@@ -18,6 +18,11 @@ from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import (
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
 
+# Whole-branch review (Important): without this, CI's `pytest -m unit` run
+# DESELECTS this entire module. See the identical note in
+# `test_watchlists_item_actions.py`.
+pytestmark = pytest.mark.unit
+
 
 def _app_with_watchlists(watch_items):
     app = _build_test_app()
