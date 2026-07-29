@@ -41,7 +41,8 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #13 The reusable RAG citation benchmark host context creates an owner-only isolated config profile before selecting `TLDW_CONFIG_PATH`, runs without reading or mutating host config/data/secrets, and retains its existing output-privacy assertions.
 - [ ] #14 The production Console Stop regression drives a rendered visible button before clicking it, and proves that the user action cancels the provider stream and preserves the stopped partial response without relying on app teardown.
 - [ ] #15 The production Media lifecycle regressions wait boundedly for replaced windows to become closed and detached before exercising stale-owner and cross-window write ordering, without weakening the fresh-screen or durable last-edit-wins contracts.
-- [ ] #16 The affected modules and repository-wide suite collect and run without these baseline failures.
+- [ ] #16 The production provider-selection ownership regression waits for the recomposed Settings controls, deterministically stages and saves the selected provider/model through their live handlers, and retains per-session preservation plus subsequent handoff coverage.
+- [ ] #17 The affected modules and repository-wide suite collect and run without these baseline failures.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -65,6 +66,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 10. Create the isolated RAG benchmark's trusted config profile directory before application imports.
 11. Let the Textual pilot render the visible Console Stop state before issuing the pointer click, retaining the real user-action cancellation assertion.
 12. Wait for outgoing Media windows to finish Textual's asynchronous close/detach lifecycle before asserting replacement behavior.
-13. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-14. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+13. Await the recomposed provider controls and boundedly observe staging and persistence around their live Settings handlers.
+14. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+15. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

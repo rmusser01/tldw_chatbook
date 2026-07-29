@@ -646,6 +646,43 @@ git add Tests/ProductionApp/test_media_state_ownership.py
 git commit -m "test(media): await replaced owner teardown"
 ```
 
+### Task 4l: Settle provider-selection Settings state
+
+**Files:**
+- Modify: `Tests/ProductionApp/test_provider_selection_ownership.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run
+`test_settings_save_preserves_user_session_then_away_command_hands_off`.
+Expected: querying the provider control immediately after the category becomes
+active can race its recompose and raise `NoMatches`. Waiting only for the
+control then exposes a second ordering failure when the full module runs:
+programmatic `.value` assignments have not reliably reached the Settings
+staging handlers before save, leaving the old OpenAI defaults.
+
+- [ ] **Step 2: Await and observe the live Settings seams**
+
+Use the existing `_wait_for_widget` helper for the provider and model controls.
+After each programmatic assignment, invoke the corresponding live `Changed`
+handler and use one small bounded pilot-driven predicate helper to observe the
+staged provider/model values. After Save, wait for both app defaults to update.
+Keep the existing user-session preservation and later provider-handoff
+assertions unchanged. Do not edit production or add arbitrary pauses.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/ProductionApp/test_provider_selection_ownership.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/ProductionApp/test_provider_selection_ownership.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/ProductionApp/test_provider_selection_ownership.py
+git add Tests/ProductionApp/test_provider_selection_ownership.py
+git commit -m "test(settings): await provider selection state"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -718,6 +755,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Performance/test_rag_citation_provenance_benchmark.py \
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
+  Tests/ProductionApp/test_provider_selection_ownership.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -741,6 +779,7 @@ Expected: all affected tests pass.
   Tests/Local_Ingestion/test_quick_ingest_db_path.py \
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
+  Tests/ProductionApp/test_provider_selection_ownership.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -758,6 +797,7 @@ Expected: all affected tests pass.
   Tests/Local_Ingestion/test_quick_ingest_db_path.py \
   Tests/ProductionApp/test_chat_root_state_removal.py \
   Tests/ProductionApp/test_media_state_ownership.py \
+  Tests/ProductionApp/test_provider_selection_ownership.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \

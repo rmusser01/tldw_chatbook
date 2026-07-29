@@ -144,6 +144,13 @@ Update the tests to describe current behavior:
     exclusion, and durable last-edit-wins behavior unchanged. Do not change
     production screen teardown or replace lifecycle checks with an arbitrary
     sleep.
+16. In the production provider-selection ownership regression, wait for the
+    recomposed provider and model controls before using them. Deliver the same
+    `Changed` events to the live Settings handlers after programmatic test
+    assignments, then wait boundedly for the staged mapping and saved app
+    defaults. Preserve the distinction between global defaults, the existing
+    user-owned Console session, and the later explicit handoff. Do not change
+    production Settings or replace state predicates with arbitrary pauses.
 
 The only planned production change outside an ADR-029 diagnostic correction is
 the three-name synchronization of the existing Library collision boundary. No
@@ -173,6 +180,11 @@ compatibility shims. No broad deletion of live tests.
   conflates two asynchronous Textual lifecycle milestones. Removing the
   closure checks would lose the stale-owner contract; a bounded predicate wait
   preserves it without assuming those milestones complete atomically.
+- A single `pilot.pause()` after programmatically assigning Settings controls
+  does not guarantee their queued `Changed` messages have staged draft state
+  before save. Directly exercising the live handlers and waiting on their
+  observable staged/persisted results keeps this ownership test deterministic
+  without adding a driver-level form-interaction scenario it does not need.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
