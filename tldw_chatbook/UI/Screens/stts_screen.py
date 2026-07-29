@@ -54,7 +54,10 @@ SPEECH_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 )
 
 #: Rail rows that do not correspond to an ``STTSWindow.current_view``.
-SPEECH_NON_VIEW_KEYS = frozenset({"voice-cloning", "effects"})
+#: `voice-cloning` pushes its own screen rather than switching the view.
+#: `effects` used to be here too, as a disabled row that opened nothing;
+#: it has a placeholder view now, which explains itself.
+SPEECH_NON_VIEW_KEYS = frozenset({"voice-cloning"})
 
 
 class STTSScreen(LabScreen):
@@ -97,7 +100,6 @@ class STTSScreen(LabScreen):
                     # whose only handler toasts "coming soon" is the
                     # dead-end-toast pattern; disabling says it once, in the
                     # control itself, exactly as the old sidebar did.
-                    disabled=view_key == "effects",
                 )
                 # Carried as an attribute rather than parsed back out of the
                 # id, mirroring LLMScreen's lab_view_key.

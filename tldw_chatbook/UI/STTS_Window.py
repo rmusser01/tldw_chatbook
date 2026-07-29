@@ -72,6 +72,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
 )
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_settings_mixin import SpeechSettingsMixin
+from tldw_chatbook.UI.Speech.speech_effects_pane import SpeechEffectsPane
 from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
 from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
@@ -1235,6 +1236,8 @@ class STTSWindow(Container):
             content_container.mount(SpeechSettingsPane(id="speech-settings-pane"))
         elif new_view == "audiobook":
             content_container.mount(AudioBookGenerationWidget())
+        elif new_view == "effects":
+            content_container.mount(SpeechEffectsPane(id="speech-effects-pane"))
         elif new_view == "dictation":
             content_container.mount(DictationWindow())
 
