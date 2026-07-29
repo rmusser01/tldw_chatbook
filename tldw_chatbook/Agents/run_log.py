@@ -226,6 +226,79 @@ def _coerce_positive_int(value, default: int, name: str) -> int:
         return default
 
 
+def configured_max_record_bytes() -> int:
+    """Return the currently configured ``[agents] run_log_max_record_bytes``.
+
+    Review finding E (PR #1082): the writer has no enforced UPPER bound on
+    this setting (only ``_coerce_positive_int``'s "must be positive" floor)
+    -- a user who raises it can legitimately store records larger than the
+    Console's "read the full result" viewer used to render
+    (``ConsoleAgentBridge.load_run_log_text``'s old fixed 2,000,000-char
+    ``format_results`` window). This is the shared read of that same
+    setting, so the viewer can size its own window to always cover a
+    record the CURRENT config allows the writer to store, instead of
+    leaving an unreachable "Use offset=N to continue" marker behind (that
+    marker is for ``search_run_log``'s interactive paging, which the
+    static viewer has no way to act on).
+
+    Returns:
+        The configured value, coerced the same way ``RunLogWriter.__init__``
+        coerces it (falls back to ``DEFAULT_MAX_RECORD_BYTES`` for a
+        non-positive or unparsable value).
+    """
+    configured = _setting("run_log_max_record_bytes", DEFAULT_MAX_RECORD_BYTES)
+    return _coerce_positive_int(configured, DEFAULT_MAX_RECORD_BYTES, "max_record_bytes")
+
+
+def _validate_run_id_path_component(run_id: str) -> str | None:
+    """Validate ``run_id`` as a single, safe path COMPONENT.
+
+    Review finding F (PR #1082, ruling PARTIAL-ACCEPT): the run-log path is
+    deliberately NOT routed through ``Utils/path_validation.validate_path``
+    -- that helper rejects any hidden (dotted) path component outright,
+    which would make the sandbox-fallback/TASK-1270 ``.agent-runs``
+    directory unreadable by design (see ``_coerce_dir_name``'s docstring
+    for the full rationale, which still applies here unchanged). What IS a
+    real gap: ``resolve_existing_log_dir`` joins a CALLER-supplied
+    ``run_id`` onto the resolved root without validating that component at
+    all -- unlike ``RunLogWriter.bind()``, which has its own
+    ``is_within(run_dir, root)`` containment check as defense in depth
+    (see ``_coerce_dir_name``'s "Deliberately NOT routed..." paragraph).
+    A path separator, ``..``, or an absolute value in ``run_id`` could
+    otherwise redirect the read (pathlib's ``/`` operator REPLACES the
+    whole path outright when the right-hand side is absolute -- the same
+    hazard ``_coerce_dir_name`` guards against for ``dir_name``).
+
+    Mirrors ``_coerce_dir_name``'s checks, but returns ``None`` on failure
+    instead of falling back to a default -- there is no sensible default
+    run id to substitute; the caller must fail closed (treat it as "no log
+    for this id") rather than raise into the Console rail.
+
+    Args:
+        run_id: The candidate run id (arbitrary caller input -- from the
+            Console rail's drill-in state or a resumed conversation's
+            durable run record).
+
+    Returns:
+        ``run_id`` unchanged when it is a safe single path component,
+        else ``None``.
+    """
+    try:
+        s = str(run_id).strip()
+        if not s:
+            raise ValueError("empty run_id")
+        if "/" in s or "\\" in s:
+            raise ValueError(f"run_id contains a path separator: {s!r}")
+        if s in (".", ".."):
+            raise ValueError(f"run_id is a path-traversal segment: {s!r}")
+        if Path(s).is_absolute():
+            raise ValueError(f"run_id is absolute: {s!r}")
+    except Exception:
+        logger.warning("run log: rejected invalid run_id for log lookup")
+        return None
+    return s
+
+
 def resolve_log_root() -> Path | None:
     """Return the directory the log tree is created under, or ``None``.
 
@@ -291,7 +364,11 @@ def resolve_existing_log_dir(run_id: str) -> Path | None:
     Deliberately NOT routed through ``Utils/path_validation.validate_path``:
     that rejects any hidden (dotted) path component outright, which would
     make the sandbox-fallback ``.agent-runs`` case unreadable by design --
-    see ``_coerce_dir_name``'s own docstring for the same point.
+    see ``_coerce_dir_name``'s own docstring for the same point. ``run_id``
+    itself IS validated as a path component (review finding F,
+    ``_validate_run_id_path_component``) before being joined onto the
+    resolved root -- unlike ``bind()``, this read path had no containment
+    check on the caller-supplied id at all until this fix.
 
     Args:
         run_id: The run's id (matches ``RunLogRecord.run_id`` and the
@@ -302,15 +379,20 @@ def resolve_existing_log_dir(run_id: str) -> Path | None:
     Returns:
         The run's log directory when it exists and holds at least one
         segment file, else ``None`` -- including when no root can be
-        resolved at all (logging off, or nothing in ``allowed_file_roots``).
+        resolved at all (logging off, or nothing in ``allowed_file_roots``),
+        or when ``run_id`` fails path-component validation (a separator,
+        ``..``, an absolute value, or empty/whitespace).
     """
+    safe_run_id = _validate_run_id_path_component(run_id)
+    if safe_run_id is None:
+        return None
     root = resolve_log_root()
     if root is None:
         return None
     configured = _setting("run_log_dir_name", DEFAULT_DIR_NAME)
     dir_name = _coerce_dir_name(configured, DEFAULT_DIR_NAME)
     for candidate_dir_name in (dir_name, f".{dir_name}"):
-        run_dir = root / candidate_dir_name / run_id
+        run_dir = root / candidate_dir_name / safe_run_id
         try:
             if run_dir.is_dir() and any(run_dir.glob("logs.*.txt")):
                 return run_dir
@@ -394,10 +476,7 @@ class RunLogWriter:
                 max_record_bytes, DEFAULT_MAX_RECORD_BYTES, "max_record_bytes"
             )
         else:
-            configured = _setting("run_log_max_record_bytes", DEFAULT_MAX_RECORD_BYTES)
-            self._max_record_bytes = _coerce_positive_int(
-                configured, DEFAULT_MAX_RECORD_BYTES, "max_record_bytes"
-            )
+            self._max_record_bytes = configured_max_record_bytes()
 
         self._lock = threading.Lock()
         self._counter = 0

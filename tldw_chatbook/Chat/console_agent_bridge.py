@@ -1845,6 +1845,36 @@ class ConsoleAgentBridge:
         record = self._db.latest_primary_run(conversation_id)
         return record["id"] if record is not None else None
 
+    def _owning_run_id_for_log(self, run_id: str) -> str:
+        """Return the run id whose ON-DISK log directory holds ``run_id``'s records.
+
+        Review finding B (PR #1082): only a PRIMARY run ever binds a
+        ``RunLogWriter`` (``AgentService._run_one`` binds the shared writer
+        to the primary run's id; a spawned sub-agent shares that SAME
+        writer instance rather than binding its own). A sub-agent's own
+        records are therefore appended to its PRIMARY's log directory,
+        each one individually tagged with the sub-agent's own run id (see
+        ``run_log_format.RunLogRecord.run_id``) -- there is no directory
+        named after the sub-agent's run id at all. Looking a sub-agent's
+        run id up directly (the pre-fix behavior) could therefore never
+        find a log, and the "View full log" affordance could never appear
+        once drilled into a sub-agent.
+
+        Args:
+            run_id: A run id that may be either a primary or a sub-agent
+                run.
+
+        Returns:
+            ``run_id`` unchanged when it is a primary run (or unknown to
+            this bridge's ``AgentRunsDB`` -- treated as "its own owner" so
+            an unresolvable id still gets a definite, if empty, answer
+            rather than a lookup error); its ``parent_run_id`` when it is
+            a recorded sub-agent run.
+        """
+        record = self.subagent_run(run_id)
+        parent_run_id = record.get("parent_run_id") if record else None
+        return parent_run_id or run_id
+
     def run_log_available(self, run_id: str) -> bool:
         """Whether an on-disk run log exists for ``run_id``.
 
@@ -1854,17 +1884,36 @@ class ConsoleAgentBridge:
         to show (logging disabled, no root resolvable, or a run so short it
         never wrote a single record).
 
+        Review finding B: ``run_id`` may name a sub-agent run, whose
+        records live inside its PRIMARY's log directory rather than one of
+        its own (see ``_owning_run_id_for_log``). For a primary run this is
+        exactly the pre-fix check (directory exists and holds a segment
+        file); for a sub-agent, that same directory check only proves the
+        PRIMARY logged something -- this additionally confirms at least one
+        record in it actually carries the sub-agent's own run id, so the
+        affordance never appears for a sub-agent that itself never
+        produced a single logged step even though its primary did.
+
         Args:
             run_id: The run's id (``AgentRunsDB`` run id, matches
                 ``RunLogRecord.run_id``).
 
         Returns:
-            ``True`` when ``run_id``'s log directory exists and holds at
-            least one segment file.
+            ``True`` when a log exists for ``run_id`` -- its own directory
+            for a primary run, or at least one tagged record within its
+            owning primary's directory for a sub-agent run.
         """
         from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
 
-        return resolve_existing_log_dir(run_id) is not None
+        owner_run_id = self._owning_run_id_for_log(run_id)
+        log_dir = resolve_existing_log_dir(owner_run_id)
+        if log_dir is None:
+            return False
+        if owner_run_id == run_id:
+            return True
+        from tldw_chatbook.Agents.run_log_search import load_records
+
+        return any(record.run_id == run_id for record in load_records(log_dir))
 
     def load_run_log_text(self, run_id: str) -> str:
         """Render ``run_id``'s full, untruncated run log for display.
@@ -1873,11 +1922,29 @@ class ConsoleAgentBridge:
         should check that first (or simply accept an empty string here when
         no log exists, which this also returns safely rather than raising).
         Every record the run wrote (model turns, tool calls, tool results,
-        spawns) is rendered in full via ``run_log_search.format_results``
-        with a per-record ceiling far above anything a real record can
-        reach (``run_log.DEFAULT_MAX_RECORD_BYTES`` already caps what the
-        WRITER stores at 1MB/record) -- so nothing here re-truncates what
-        the writer already kept.
+        spawns) is rendered in full via ``run_log_search.format_results``.
+
+        Review finding B: resolves and reads the OWNING primary's log
+        directory (see ``_owning_run_id_for_log``) and, when ``run_id``
+        names a sub-agent, filters the loaded records down to only the
+        ones that sub-agent itself produced -- the shared directory also
+        holds the primary's own records and any OTHER sub-agent's, none of
+        which belong in this run's viewer.
+
+        Review finding E: the per-record rendering window is no longer a
+        fixed 2,000,000 characters. ``run_log_max_record_bytes`` (the
+        WRITER's per-record ceiling) has no enforced maximum, so a fixed,
+        smaller viewer window could leave a real, fully-stored record
+        behind an unreachable "Use offset=N to continue" marker -- that
+        marker exists for ``search_run_log``'s interactive paging, which
+        this one-shot static viewer has no way to act on. The window is
+        instead ``max(2_000_000, configured_max_record_bytes())``: the
+        default behavior is unchanged (2,000,000 already exceeds the
+        default 1MB/record cap), and a larger configured cap grows the
+        window to match, so a freshly-written record -- bounded by the
+        writer to at most the CURRENT ``run_log_max_record_bytes`` bytes,
+        and UTF-8-decoded char count never exceeds byte count -- always
+        fits within one render.
 
         Args:
             run_id: The run's id to load.
@@ -1886,16 +1953,23 @@ class ConsoleAgentBridge:
             The rendered log text, or ``""`` when no log exists for
             ``run_id``.
         """
-        from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
+        from tldw_chatbook.Agents.run_log import (
+            configured_max_record_bytes,
+            resolve_existing_log_dir,
+        )
         from tldw_chatbook.Agents.run_log_search import format_results, load_records
 
-        log_dir = resolve_existing_log_dir(run_id)
+        owner_run_id = self._owning_run_id_for_log(run_id)
+        log_dir = resolve_existing_log_dir(owner_run_id)
         if log_dir is None:
             return ""
         records = load_records(log_dir)
+        if owner_run_id != run_id:
+            records = [record for record in records if record.run_id == run_id]
         if not records:
             return ""
-        return format_results(records, max_chars=2_000_000)
+        max_chars = max(2_000_000, configured_max_record_bytes())
+        return format_results(records, max_chars=max_chars)
 
     def record_run_assistant_message(
         self, run_id: str, persisted_message_id: str

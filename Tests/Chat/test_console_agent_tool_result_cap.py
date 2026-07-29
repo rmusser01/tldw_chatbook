@@ -21,7 +21,12 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.Agents import run_log as run_log_module
-from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY, AgentStep, STEP_TOOL_RESULT
+from tldw_chatbook.Agents.agent_models import (
+    AGENT_KIND_PRIMARY,
+    AGENT_KIND_SUBAGENT,
+    AgentStep,
+    STEP_TOOL_RESULT,
+)
 from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
@@ -263,3 +268,164 @@ def test_latest_primary_run_id_resolves_the_newest_primary_run(bridge):
 def test_latest_primary_run_id_is_none_for_an_unknown_conversation(bridge):
     console_bridge, _db = bridge
     assert console_bridge.latest_primary_run_id("conv-never-ran") is None
+
+
+# -- Review finding B: a sub-agent's records live in its PRIMARY's log
+# directory (only the primary binds a RunLogWriter), tagged with the
+# sub-agent's OWN run id per record -- the affordance must resolve through
+# the primary and filter to just that sub-agent's records. --
+
+
+def test_run_log_available_is_true_for_a_primary_run(bridge, log_root):
+    """Unchanged baseline: a primary run's own directory is still checked directly."""
+    console_bridge, db = bridge
+    primary_id = db.create_run(conversation_id="conv-1", agent_kind=AGENT_KIND_PRIMARY)
+    writer = RunLogWriter()
+    writer.bind(primary_id)
+    writer.append(run_id=primary_id, kind="primary", type="model", content="hi")
+
+    assert console_bridge.run_log_available(primary_id) is True
+
+
+def test_run_log_available_is_true_for_a_drilled_in_subagent_run(bridge, log_root):
+    """Pre-fix: this always returned False -- a sub-agent never binds its own
+    writer/directory, so checking the sub-agent's own run id directly could
+    never find anything, and the "View full log" affordance could never
+    appear once drilled into a sub-agent."""
+    console_bridge, db = bridge
+    primary_id = db.create_run(conversation_id="conv-1", agent_kind=AGENT_KIND_PRIMARY)
+    subagent_id = db.create_run(
+        conversation_id="conv-1",
+        agent_kind=AGENT_KIND_SUBAGENT,
+        parent_run_id=primary_id,
+        task="fetch docs",
+    )
+    writer = RunLogWriter()
+    writer.bind(primary_id)  # only the PRIMARY id binds a writer/directory
+    writer.append(run_id=primary_id, kind="primary", type="model", content="primary turn")
+    writer.append(
+        run_id=subagent_id,
+        kind="subagent",
+        type="tool_result",
+        tool="fetch",
+        content="sub-agent's own result",
+    )
+
+    assert console_bridge.run_log_available(subagent_id) is True
+
+
+def test_run_log_available_is_false_for_a_subagent_that_never_logged_a_record(
+    bridge, log_root
+):
+    """The primary's directory existing is not enough -- this sub-agent must
+    have at least one record of its OWN in it, or the button would dangle."""
+    console_bridge, db = bridge
+    primary_id = db.create_run(conversation_id="conv-1", agent_kind=AGENT_KIND_PRIMARY)
+    subagent_id = db.create_run(
+        conversation_id="conv-1",
+        agent_kind=AGENT_KIND_SUBAGENT,
+        parent_run_id=primary_id,
+        task="fetch docs",
+    )
+    writer = RunLogWriter()
+    writer.bind(primary_id)
+    writer.append(run_id=primary_id, kind="primary", type="model", content="primary only")
+
+    assert console_bridge.run_log_available(subagent_id) is False
+
+
+def test_load_run_log_text_for_a_subagent_only_shows_that_subagents_records(
+    bridge, log_root
+):
+    console_bridge, db = bridge
+    primary_id = db.create_run(conversation_id="conv-1", agent_kind=AGENT_KIND_PRIMARY)
+    subagent_id = db.create_run(
+        conversation_id="conv-1",
+        agent_kind=AGENT_KIND_SUBAGENT,
+        parent_run_id=primary_id,
+        task="fetch docs",
+    )
+    other_subagent_id = db.create_run(
+        conversation_id="conv-1",
+        agent_kind=AGENT_KIND_SUBAGENT,
+        parent_run_id=primary_id,
+        task="summarize",
+    )
+    writer = RunLogWriter()
+    writer.bind(primary_id)
+    writer.append(
+        run_id=primary_id, kind="primary", type="model", content="primary secret plan"
+    )
+    writer.append(
+        run_id=subagent_id,
+        kind="subagent",
+        type="tool_result",
+        tool="fetch",
+        content="the target sub-agent's own result",
+    )
+    writer.append(
+        run_id=other_subagent_id,
+        kind="subagent",
+        type="tool_result",
+        tool="summarize",
+        content="a DIFFERENT sub-agent's result",
+    )
+
+    text = console_bridge.load_run_log_text(subagent_id)
+
+    assert "the target sub-agent's own result" in text
+    assert "primary secret plan" not in text
+    assert "a DIFFERENT sub-agent's result" not in text
+
+
+def test_load_run_log_text_for_a_primary_run_is_unaffected_by_subagents(
+    bridge, log_root
+):
+    console_bridge, db = bridge
+    primary_id = db.create_run(conversation_id="conv-1", agent_kind=AGENT_KIND_PRIMARY)
+    subagent_id = db.create_run(
+        conversation_id="conv-1",
+        agent_kind=AGENT_KIND_SUBAGENT,
+        parent_run_id=primary_id,
+        task="fetch docs",
+    )
+    writer = RunLogWriter()
+    writer.bind(primary_id)
+    writer.append(run_id=primary_id, kind="primary", type="model", content="primary turn")
+    writer.append(
+        run_id=subagent_id, kind="subagent", type="tool_result", tool="fetch", content="sub"
+    )
+
+    text = console_bridge.load_run_log_text(primary_id)
+
+    assert "primary turn" in text
+    assert "sub" in text  # the primary's own view still shows everything
+
+
+# -- Review finding E: the viewer's render window must cover whatever the
+# CURRENT `run_log_max_record_bytes` config allows the writer to store --
+# a fixed, smaller window could leave a real record behind an unreachable
+# "Use offset=N to continue" marker. --
+
+
+def test_load_run_log_text_window_grows_with_a_raised_max_record_bytes_config(
+    bridge, log_root, monkeypatch
+):
+    console_bridge, db = bridge
+    run_id = db.create_run(conversation_id="conv-1", agent_kind=AGENT_KIND_PRIMARY)
+    big_content = "x" * 2_500_000  # bigger than the old fixed 2,000,000 window
+
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_cli_setting",
+        lambda section, key, default: 3_000_000
+        if (section, key) == ("agents", "run_log_max_record_bytes")
+        else default,
+    )
+    writer = RunLogWriter()
+    writer.bind(run_id)
+    writer.append(run_id=run_id, kind="primary", type="tool_result", tool="t", content=big_content)
+
+    text = console_bridge.load_run_log_text(run_id)
+
+    assert big_content in text
+    assert "Use offset=" not in text
