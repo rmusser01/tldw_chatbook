@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Input, RadioButton, RadioSet, Static
+from textual.widgets import Button, Input, RadioButton, RadioSet, Static, Switch
 
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
@@ -12,7 +12,9 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     FirstRunSetupWizard,
     ModelStep,
     ProviderStep,
+    RagStep,
     SetupWizardContainer,
+    ToolsStep,
 )
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
@@ -604,3 +606,53 @@ def test_model_step_worker_group_is_not_wizard_advance():
     step.on_show()
     assert calls, "expected on_show to schedule a model-load worker"
     assert calls[0]["group"] == "setup-model-load"
+
+
+@pytest.mark.asyncio
+async def test_rag_step_missing_deps_shows_install_copy_and_commits_nothing():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = RagStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="rag", title="RAG", step_number=4),
+        deps_installed=lambda: False,
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        body = str(step.query_one("#setup-rag-status", Static).render())
+        assert "tldw_chatbook[embeddings_rag]" in body
+        ok, _ = await step.commit()
+        assert ok
+        wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tools_step_commits_only_changed_gates():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=5),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        switches = list(step.query(Switch))
+        assert switches, "tools step must render one switch per gateable tool"
+        assert all(sw.value is False for sw in switches)  # default OFF
+        switches[0].value = True
+        ok, _ = await step.commit()
+        assert ok
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed["tools"][step.gate_key_for(switches[0])] is True

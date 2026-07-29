@@ -513,6 +513,115 @@ class ModelStep(SetupStep):
         return {"model_id": self.selected_model_id}
 
 
+class RagStep(SetupStep):
+    """RAG/embeddings: report dep status; pick a default embedding model."""
+
+    def __init__(self, wizard=None, config=None, *, deps_installed=None, **kwargs):
+        super().__init__(wizard=wizard, config=config, **kwargs)
+        if deps_installed is None:
+            from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
+
+            deps_installed = embeddings_rag_deps_installed
+        self._deps_installed = deps_installed
+        self.selected_embedding_model: str = ""
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="setup-rag"):
+            yield Static("Search & RAG", classes="setup-title")
+            yield Static("", id="setup-rag-status", classes="setup-subtitle")
+            with RadioSet(id="setup-rag-model-choice"):
+                for model_id in self._embedding_model_ids():
+                    yield RadioButton(model_id)
+            yield Static("", classes="setup-step-error")
+
+    def _embedding_model_ids(self) -> list[str]:
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+        embedding_config = app_config.get("embedding_config", {})
+        models = embedding_config.get("models", {}) if isinstance(embedding_config, dict) else {}
+        return sorted(models) if isinstance(models, dict) else []
+
+    def on_mount(self) -> None:
+        status = self.query_one("#setup-rag-status", Static)
+        if self._deps_installed():
+            status.update("Embedding dependencies are installed. Pick a default model, or skip.")
+        else:
+            status.update(
+                # Static.update() treats [..] as Rich markup by default, so the
+                # extras-package brackets must be escaped or "[embeddings_rag]"
+                # silently vanishes from the rendered text instead of showing.
+                "RAG needs optional dependencies that aren't installed. Install the "
+                "extras package `tldw_chatbook\\[embeddings_rag]` with your package "
+                "manager, then revisit Settings ▸ RAG. Skipping for now is fine."
+            )
+            try:
+                self.query_one("#setup-rag-model-choice", RadioSet).disabled = True
+            except Exception:
+                pass
+
+    @on(RadioSet.Changed, "#setup-rag-model-choice")
+    def _on_model(self, event: RadioSet.Changed) -> None:
+        self.selected_embedding_model = str(event.pressed.label)
+
+    async def commit(self) -> tuple[bool, str]:
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import build_rag_commit
+
+        if not (self._deps_installed() and self.selected_embedding_model):
+            return True, ""
+        ok = await self.wizard.commit_config(
+            build_rag_commit(default_model_id=self.selected_embedding_model)
+        )
+        return (True, "") if ok else (False, "Saving the embedding model failed.")
+
+    def get_step_data(self) -> Dict[str, Any]:
+        return {"embedding_model": self.selected_embedding_model}
+
+
+class ToolsStep(SetupStep):
+    """Enable built-in tools (all default OFF; risk-tagged ones still ask per call)."""
+
+    def compose(self) -> ComposeResult:
+        from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
+
+        self._entries = list(gateable_builtin_tools())
+        with Vertical(classes="setup-tools"):
+            yield Static("Built-in tools", classes="setup-title")
+            yield Static(
+                "Everything is off by default. Tools that read or change your "
+                "files still show an approval card every time they run.",
+                classes="setup-subtitle",
+            )
+            for entry in self._entries:
+                with Horizontal(classes="setup-tool-row"):
+                    yield Switch(value=False, id=f"setup-tool-{entry.tool_name}")
+                    yield Label(entry.tool_name.replace("_", " "))
+            yield Static("", classes="setup-step-error")
+
+    def gate_key_for(self, switch: Switch) -> str:
+        tool_name = (switch.id or "").removeprefix("setup-tool-")
+        for entry in self._entries:
+            if entry.tool_name == tool_name:
+                return entry.gate_key
+        return ""
+
+    async def commit(self) -> tuple[bool, str]:
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import build_tools_commit
+
+        gate_values: dict[str, bool] = {}
+        for switch in self.query(Switch):
+            gate_key = self.gate_key_for(switch)
+            if gate_key and switch.value:  # only persist enables; absent == off
+                gate_values[gate_key] = True
+        if not gate_values:
+            return True, ""
+        ok = await self.wizard.commit_config(build_tools_commit(gate_values=gate_values))
+        return (True, "") if ok else (False, "Saving tool settings failed.")
+
+    def get_step_data(self) -> Dict[str, Any]:
+        return {"enabled_gates": [
+            self.gate_key_for(sw) for sw in self.query(Switch) if sw.value
+        ]}
+
+
 class WelcomeStep(SetupStep):
     """Track choice: Quick / Full / Skip."""
 
@@ -582,8 +691,8 @@ class SetupWizardContainer(WizardContainer):
                 environ=os.environ,
             ),
             ModelStep(wizard=self, config=cfg(wizard_state.STEP_MODEL, "Model", 3)),
-            SetupStep(wizard=self, config=cfg(wizard_state.STEP_RAG, "RAG", 4)),
-            SetupStep(wizard=self, config=cfg(wizard_state.STEP_TOOLS, "Tools", 5)),
+            RagStep(wizard=self, config=cfg(wizard_state.STEP_RAG, "RAG", 4)),
+            ToolsStep(wizard=self, config=cfg(wizard_state.STEP_TOOLS, "Tools", 5)),
             SetupStep(wizard=self, config=cfg(wizard_state.STEP_NOTES, "Notes sync", 6)),
             SetupStep(
                 wizard=self, config=cfg(wizard_state.STEP_APPEARANCE, "Appearance", 7)
