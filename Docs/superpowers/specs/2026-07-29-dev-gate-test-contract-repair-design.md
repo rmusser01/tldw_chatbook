@@ -157,11 +157,16 @@ Update the tests to describe current behavior:
     fail-open behavior or duplicate its replacement: the dedicated local
     citation-capture suite already proves authority failure returns no context,
     current-authority exclusion cannot revive legacy bytes without a builder,
-    and unsupported external results retain the narrow legacy fallback.
+    and unsupported external results retain the narrow legacy fallback. Update
+    `get_rag_context_capture_for_chat`'s docstring to state that recognized
+    candidates require completed current authority regardless of builder
+    availability and that only unsupported results retain raw legacy context;
+    do not change runtime behavior.
 
-The only planned production change outside an ADR-029 diagnostic correction is
-the three-name synchronization of the existing Library collision boundary. No
-compatibility shims. No broad deletion of live tests.
+The only planned production behavior change outside an ADR-029 diagnostic
+correction is the three-name synchronization of the existing Library collision
+boundary. The RAG capture edit is documentation-only and records already-live
+fail-closed behavior. No compatibility shims. No broad deletion of live tests.
 
 ## Alternatives
 

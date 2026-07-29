@@ -687,6 +687,7 @@ git commit -m "test(settings): await provider selection state"
 
 **Files:**
 - Modify: `Tests/RAG/test_rag_ui_integration.py`
+- Modify: `tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py`
 
 - [ ] **Step 1: Reproduce RED and confirm the live owner**
 
@@ -701,7 +702,10 @@ unsupported-source legacy fallback.
 
 - [ ] **Step 2: Remove only obsolete coverage**
 
-Delete `CaptureUnavailableApp` and its sole test. Do not change production,
+Delete `CaptureUnavailableApp` and its sole test. Clarify the public capture
+function's stale docstring: recognized canonical candidates require completed
+current prompt authority even when no builder exists; only unsupported results
+may retain raw legacy pipeline context. Do not change production behavior,
 restore raw recognized candidates to prompt context, or duplicate the focused
 citation-capture contracts in this legacy UI integration module.
 
@@ -712,10 +716,14 @@ citation-capture contracts in this legacy UI integration module.
   Tests/RAG/test_rag_ui_integration.py \
   Tests/RAG/test_local_citation_capture.py -q
 ../../.venv/bin/python -m ruff check \
-  Tests/RAG/test_rag_ui_integration.py
+  Tests/RAG/test_rag_ui_integration.py \
+  tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py
 ../../.venv/bin/python -m ruff format --check \
-  Tests/RAG/test_rag_ui_integration.py
-git add Tests/RAG/test_rag_ui_integration.py
+  Tests/RAG/test_rag_ui_integration.py \
+  tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py
+git add \
+  Tests/RAG/test_rag_ui_integration.py \
+  tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py
 git commit -m "test(rag): remove fail-open UI fallback"
 ```
 
@@ -825,6 +833,7 @@ Expected: all affected tests pass.
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py \
   Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
+  tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py \
   tldw_chatbook/Library/library_skills_state.py
 ../../.venv/bin/python -m ruff format --check \
   Tests/Event_Handlers/test_worker_events_contract.py \
@@ -844,6 +853,7 @@ Expected: all affected tests pass.
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py \
   Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
+  tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py \
   tldw_chatbook/Library/library_skills_state.py
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
 git diff --check origin/dev...HEAD
@@ -868,8 +878,9 @@ and leave it In Progress.
 
 Review the diff against TASK-1333 and the approved design. Fix only valid
 Critical or Important findings and rerun affected verification. Do not make any
-additional production edit beyond a documented, test-first Task 5 correction
-for an actual ADR-029 violation.
+additional production behavior edit beyond a documented, test-first Task 5
+correction for an actual ADR-029 violation; the Task 4m docstring clarification
+is documentation-only.
 
 - [ ] **Step 5: Complete Backlog hygiene**
 
