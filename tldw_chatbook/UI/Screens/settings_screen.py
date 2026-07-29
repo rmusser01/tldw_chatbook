@@ -403,9 +403,13 @@ API_URL_PROVIDER_KEYS = {
     "vllm",
 }
 SETTINGS_SOURCE_LABELS = {
+    # Keys mirror the source values resolve_effective_provider_model can
+    # return (Provider/provider_model_resolution.py) -- task-648 renamed
+    # console_control to console_session and deleted app_reactive; TASK-1310's
+    # review caught the stale keys here rendering a raw "console session"
+    # fallback label in Settings > Providers.
     "settings_draft": "Unsaved Settings draft",
-    "console_control": "Console runtime override",
-    "app_reactive": "Current app selection",
+    "console_session": "Console runtime override",
     "chat_defaults": "Saved chat defaults",
     "default": "Default fallback",
 }

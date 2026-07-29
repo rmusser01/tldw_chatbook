@@ -7364,3 +7364,15 @@ async def test_settings_mount_triggers_at_most_one_post_mount_recompose():
         f"Settings composed {compose_calls} times after mount -- the sync-rows "
         "refresh storm is no longer coalesced (task-290)."
     )
+
+
+def test_settings_source_labels_cover_every_resolvable_source():
+    """TASK-1310 review follow-up: the source-label map must cover exactly the
+    source keys `resolve_effective_provider_model` can return, so the
+    Providers category never renders a raw `key.replace("_", " ")` fallback
+    (the stale `console_control`/`app_reactive` keys did exactly that for
+    `console_session` after task-648's rename)."""
+    from tldw_chatbook.UI.Screens.settings_screen import SETTINGS_SOURCE_LABELS
+
+    resolvable = {"settings_draft", "console_session", "chat_defaults", "default"}
+    assert set(SETTINGS_SOURCE_LABELS) == resolvable
