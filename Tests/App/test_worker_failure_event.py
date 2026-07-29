@@ -35,12 +35,19 @@ async def test_worker_error_records_worker_failed(monkeypatch):
         await app.on_worker_state_changed(event)
         await pilot.pause()
 
-    failures = [r for r in recorded if r["event"] == "worker_failed"]
-    assert failures, f"no worker_failed recorded, got {recorded}"
-    assert failures[-1]["exception_type"] == "ValueError"
-    assert failures[-1]["operation"] == "scheduler_worker"
+    # Select by identity, not position: real background workers started by
+    # _build_test_app (scheduler_loop.run, model-catalog refresh, FTS backfill)
+    # also route through this hook during pilot.pause() and could append their
+    # own worker_failed entries after this one.
+    failure = next(
+        (f for f in recorded
+         if f["event"] == "worker_failed" and f["operation"] == "scheduler_worker"),
+        None,
+    )
+    assert failure is not None, f"no worker_failed for the injected worker, got {recorded}"
+    assert failure["exception_type"] == "ValueError"
     # The message must not travel: "boom" is caller-supplied text.
-    assert "boom" not in str(failures[-1])
+    assert "boom" not in str(failure)
 
 
 @pytest.mark.asyncio
