@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 import dataclasses
 import json
 import re
@@ -232,6 +233,7 @@ PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: Rows per library page. ``page_offset`` is always kept a multiple of this so
 #: the pane's "start-end of N" label math stays exact.
 PERSONAS_LIBRARY_PAGE_SIZE = 50
+_MAX_CHARACTER_ID = (1 << 63) - 1
 #: Display labels for the library sort keys (shared by the character sort cycle
 #: and the persona render path).
 _LIBRARY_SORT_LABELS: dict[str, str] = {
@@ -649,6 +651,7 @@ class PersonasScreen(BaseAppScreen):
         # ``_count_cache_key`` so page-nav/sort reuse it and only a filter
         # change recomputes it.
         self._characters: list[dict] = []
+        self._selected_server_character: tuple[str, dict] | None = None
         self._character_total: int = 0
         self._count_cache_key: tuple | None = None
         self._character_tags: list[str] = []
@@ -966,7 +969,10 @@ class PersonasScreen(BaseAppScreen):
             setup_loading = getattr(loading_manager, "setup", None)
             if callable(setup_loading):
                 await setup_loading()
-            await self.character_handler.refresh_character_list()
+            if self.state.runtime_source == "server":
+                await self._reload_character_page()
+            else:
+                await self.character_handler.refresh_character_list()
             self._sync_title_and_console_actions()
             await self._apply_pending_restore()
         except Exception as exc:
@@ -1003,6 +1009,9 @@ class PersonasScreen(BaseAppScreen):
             return
         active_mode = self.state.active_mode
         self.runtime_backend = normalized
+        self._selected_server_character = None
+        self.character_handler.current_character_id = None
+        self.character_handler.current_character_data = {}
         self.state.reset_for_runtime_source_change(normalized)
         self._set_persona_editor_runtime_source(normalized)
         if self.is_mounted:
@@ -1072,8 +1081,12 @@ class PersonasScreen(BaseAppScreen):
         here from the handler's list for compatibility, but the paged reload
         below immediately replaces it with the current page only.
         """
-        self._characters = [dict(record) for record in (characters or [])]
         self._count_cache_key = None
+        if self.state.runtime_source == "server":
+            if self.state.active_mode == "characters":
+                await self._render_library_rows()
+            return
+        self._characters = [dict(record) for record in (characters or [])]
         self._update_status_row()
         if self.state.active_mode != "characters":
             return
@@ -1174,16 +1187,174 @@ class PersonasScreen(BaseAppScreen):
         escaped = term.replace('"', '""')
         return f'"{escaped}"*'
 
-    async def _reload_character_page(self, *, reset_offset: bool = False) -> None:
-        """Load and render one page of characters from the local DB.
+    def _active_server_target(self) -> str | None:
+        """Return the exact active configured-target ID, when usable."""
+        value = getattr(self.app_instance, "active_server_id", None)
+        if type(value) is str and value and value == value.strip():
+            return value
+        return None
 
-        The DB count/list run off-thread; the count is cached under
-        ``(search, tag)`` so page-nav and sort reuse it. After the awaits, a
-        freshness guard re-checks ``(mode, search, sort, tag, offset)`` so a
-        superseded reload never writes stale rows into the pane.
+    @staticmethod
+    def _character_record_mapping(value: Any) -> dict | None:
+        """Return one detached character DTO mapping, if structurally valid."""
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            try:
+                value = model_dump(mode="json")
+            except Exception:
+                return None
+        if not isinstance(value, Mapping):
+            return None
+        return dict(value)
+
+    @staticmethod
+    def _server_character_id(value: Any) -> int | None:
+        """Return one server DTO's canonical positive numeric ID."""
+        if type(value) is not int or not (1 <= value <= _MAX_CHARACTER_ID):
+            return None
+        return value
+
+    @classmethod
+    def _server_character_rows(
+        cls, response: Any
+    ) -> tuple[list[dict], int | None]:
+        """Normalize the existing list/query response shapes without widening them."""
+        response_mapping = cls._character_record_mapping(response)
+        total: int | None = None
+        if response_mapping is not None:
+            raw_items = response_mapping.get(
+                "items", response_mapping.get("characters", [])
+            )
+            raw_total = response_mapping.get("total")
+            if type(raw_total) is int and raw_total >= 0:
+                total = raw_total
+        elif isinstance(response, (list, tuple)):
+            raw_items = response
+        else:
+            raw_items = ()
+
+        rows: list[dict] = []
+        for value in raw_items if isinstance(raw_items, (list, tuple)) else ():
+            record = cls._character_record_mapping(value)
+            if record is None:
+                continue
+            character_id = cls._server_character_id(record.get("id"))
+            if character_id is None:
+                continue
+            record["id"] = character_id
+            rows.append(record)
+        return rows, total
+
+    async def _display_character_page(
+        self,
+        records: list[dict],
+        *,
+        total: int,
+        offset: int,
+        sort_label: str,
+        tag_label: str,
+    ) -> None:
+        """Commit and render one already-fenced character page."""
+        self._characters = records
+        self._character_total = total
+        self._update_status_row()
+        try:
+            library = self.query_one(PersonasLibraryPane)
+        except QueryError:
+            return
+        async with self._render_lock:
+            await library.update_rows(
+                self._build_library_rows(records, "character"),
+                total=total,
+                noun="characters",
+                page_offset=offset,
+                page_size=PERSONAS_LIBRARY_PAGE_SIZE,
+            )
+            library.set_sort_label(sort_label)
+            library.set_tag_label(tag_label)
+            if (
+                self.state.selected_entity_kind == "character"
+                and self.state.selected_entity_id
+            ):
+                library.mark_active_row("character", self.state.selected_entity_id)
+
+    async def _reload_server_character_page(self) -> None:
+        """Load one server-owned page through the existing character scope service."""
+        mode = self.state.active_mode
+        query = self.state.search_query
+        sort_key = self.state.sort_key
+        tag = self.state.tag_filter
+        offset = self.state.page_offset
+        expected_server_id = self._active_server_target()
+        if expected_server_id is None:
+            return
+
+        service = getattr(
+            self.app_instance, "character_persona_scope_service", None
+        )
+        method_name = "search_characters" if query else "list_characters"
+        load_characters = getattr(service, method_name, None)
+        if not callable(load_characters):
+            return
+        try:
+            if query:
+                response = await load_characters(
+                    query,
+                    mode="server",
+                    limit=offset + PERSONAS_LIBRARY_PAGE_SIZE + 1,
+                )
+                page_start = offset
+            else:
+                response = await load_characters(
+                    mode="server",
+                    limit=PERSONAS_LIBRARY_PAGE_SIZE + 1,
+                    offset=offset,
+                )
+                page_start = 0
+            records, exact_total = self._server_character_rows(response)
+            page_end = page_start + PERSONAS_LIBRARY_PAGE_SIZE
+            page_records = records[page_start:page_end]
+            has_more = len(records) > page_end
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Server character page load failed.")
+            self._notify("Could not load server characters.", "error")
+            return
+
+        if (
+            self.state.runtime_source != "server"
+            or self._active_server_target() != expected_server_id
+            or self.state.active_mode != mode
+            or self.state.search_query != query
+            or self.state.sort_key != sort_key
+            or self.state.tag_filter != tag
+            or self.state.page_offset != offset
+        ):
+            return
+
+        inferred_total = offset + len(page_records) + (1 if has_more else 0)
+        total = exact_total if exact_total is not None else inferred_total
+        self._count_cache_key = None
+        await self._display_character_page(
+            page_records,
+            total=max(total, inferred_total),
+            offset=offset,
+            sort_label="Sort: Server order",
+            tag_label="Tag: All",
+        )
+
+    async def _reload_character_page(self, *, reset_offset: bool = False) -> None:
+        """Load and render one page of characters from the selected source.
+
+        Local DB count/list work remains off-thread. Server mode delegates to
+        the existing source-aware scope service and never consults local rows.
         """
         if reset_offset:
             self.state.page_offset = 0
+        if self.state.runtime_source == "server":
+            await self._reload_server_character_page()
+            return
         mode = self.state.active_mode
         query = self.state.search_query
         sort_key = self.state.sort_key
@@ -1236,32 +1407,15 @@ class PersonasScreen(BaseAppScreen):
             return
         # Commit shared count state only after the guard passes, so a
         # superseded reload cannot clobber the winner's cached count.
-        self._character_total = total
         self._count_cache_key = cache_key
-        self._characters = records
-        self._update_status_row()
-        rows = self._build_library_rows(records, "character")
-        try:
-            library = self.query_one(PersonasLibraryPane)
-        except QueryError:
-            # Screen torn down mid-reload; nothing to render.
-            return
         sort_labels = dict(self._character_sort_cycle())
-        async with self._render_lock:
-            await library.update_rows(
-                rows,
-                total=total,
-                noun="characters",
-                page_offset=offset,
-                page_size=PERSONAS_LIBRARY_PAGE_SIZE,
-            )
-            library.set_sort_label(f"Sort: {sort_labels.get(sort_key, 'Name')}")
-            library.set_tag_label(f"Tag: {tag}" if tag else "Tag: All")
-            if (
-                self.state.selected_entity_kind == "character"
-                and self.state.selected_entity_id
-            ):
-                library.mark_active_row("character", self.state.selected_entity_id)
+        await self._display_character_page(
+            records,
+            total=total,
+            offset=offset,
+            sort_label=f"Sort: {sort_labels.get(sort_key, 'Name')}",
+            tag_label=f"Tag: {tag}" if tag else "Tag: All",
+        )
 
     async def _reload_active_library(self) -> None:
         """Re-render whichever paginated library (characters/personas) is active."""
@@ -1456,6 +1610,8 @@ class PersonasScreen(BaseAppScreen):
     async def _tag_filter_worker(self) -> None:
         """List tags off-thread, prompt for one, and apply the pick."""
         try:
+            if self.state.runtime_source == "server":
+                return
             db = self._character_db()
             if db is None:
                 return
@@ -1762,6 +1918,7 @@ class PersonasScreen(BaseAppScreen):
 
     async def _apply_mode(self, mode: str) -> None:
         self._cancel_search_debounce()
+        self._selected_server_character = None
         # switch_mode resets sort_key/tag_filter/page_offset for a fresh window.
         self.state.switch_mode(mode)
         self._set_persona_editor_runtime_source(self.persona_handler.current_mode())
@@ -1931,9 +2088,69 @@ class PersonasScreen(BaseAppScreen):
         # Prompts are not wired here: prompt management is retired from
         # Personas and lives entirely inside Library (Task 7).
 
+    async def _fetch_server_character(
+        self, entity_id: str
+    ) -> tuple[str, dict] | None:
+        """Fetch one server card and prove its source target and numeric ID."""
+        if (
+            type(entity_id) is not str
+            or re.fullmatch(r"[1-9][0-9]{0,18}", entity_id) is None
+        ):
+            return None
+        character_id = int(entity_id)
+        if character_id > _MAX_CHARACTER_ID:
+            return None
+
+        expected_server_id = self._active_server_target()
+        if expected_server_id is None:
+            return None
+        service = getattr(
+            self.app_instance, "character_persona_scope_service", None
+        )
+        get_character = getattr(service, "get_character", None)
+        if not callable(get_character):
+            return None
+        try:
+            response = await get_character(character_id, mode="server")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Server character detail load failed.")
+            self._notify("Could not load the server character.", "error")
+            return None
+        if (
+            self.state.runtime_source != "server"
+            or self._active_server_target() != expected_server_id
+        ):
+            return None
+
+        record = self._character_record_mapping(response)
+        if (
+            record is None
+            or self._server_character_id(record.get("id")) != character_id
+        ):
+            return None
+        record["id"] = character_id
+        return expected_server_id, record
+
     async def _select_character(
         self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
     ) -> None:
+        server_record: dict | None = None
+        if self.state.runtime_source == "server":
+            fetched = await self._fetch_server_character(entity_id)
+            if fetched is None:
+                return
+            server_target, server_record = fetched
+            entity_name = str(server_record.get("name") or entity_name or "Unnamed")
+            server_record["name"] = entity_name
+            self._selected_server_character = (
+                server_target,
+                dict(server_record),
+            )
+        else:
+            self._selected_server_character = None
+
         self.state.select_entity(
             entity_kind="character",
             entity_id=entity_id,
@@ -1942,33 +2159,35 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasPreviewPane).set_speakers(character=entity_name)
         self._edit_mode = "view"
         self.query_one(PersonasLibraryPane).mark_active_row("character", entity_id)
-        await self.character_handler.load_character(entity_id)
+        if server_record is None:
+            await self.character_handler.load_character(entity_id)
+        else:
+            self.query_one(PersonasCharacterCardWidget).load_character(server_record)
         self._show_center("#ccp-character-card-view")
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=entity_name, kind="character")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
-        # Fire-and-forget, like the conversations list below: the portrait
-        # needs a DB read and an image decode, and awaiting it inline made
-        # selecting a character wait on both. It also yielded control mid
-        # selection, which let the editor's debounced validation run and clear
-        # a footer the save path had just written. The render carries its own
-        # selection-changed guard, so a late result cannot paint the wrong face.
-        self.run_worker(
-            self._render_inspector_avatar(),
-            group="inspector-avatar",
-            exclusive=True,
-        )
-        # Drop any previous character's rows immediately and show a loading
-        # placeholder; the worker fills the panel in once the listing returns
-        # (or replaces the placeholder with the empty-state copy).
+
         self.conversations.reset()
-        await inspector.show_conversations_loading()
-        self.conversations.load_conversations(entity_id)
+        if server_record is None:
+            # Local-only auxiliary data stays behind the local boundary.
+            self.run_worker(
+                self._render_inspector_avatar(),
+                group="inspector-avatar",
+                exclusive=True,
+            )
+            await inspector.show_conversations_loading()
+            self.conversations.load_conversations(entity_id)
+        else:
+            inspector.set_avatar_thumbnail(None)
+            await inspector.show_conversations(())
+            self.query_one(
+                "#personas-card-edit-character", Button
+            ).disabled = True
+
         if restore_preview is not None:
-            # A navigation round-trip (task-434): rebuild the saved preview
-            # transcript instead of reseeding just the greeting.
             await self.preview.restore_conversation(
                 greeting=str(restore_preview.get("greeting") or ""),
                 history=list(restore_preview.get("history") or []),
@@ -1976,21 +2195,14 @@ class PersonasScreen(BaseAppScreen):
                 greeting_index=int(restore_preview.get("greeting_index") or 0),
             )
         else:
-            # Seed the ephemeral preview with the character's greeting. The
-            # list rows are id/name-only summaries and load_character only
-            # SCHEDULES a thread worker, so the full record (with
-            # first_message) is usually not available yet here. Instant
-            # path: when the handler already holds this character's full
-            # card (re-selection), seed now; otherwise clear the preview and
-            # let the CharacterMessage.Loaded handler seed it.
-            record = self._full_character_record(entity_id)
             await self.preview.reset_for_character(
                 character_id=entity_id,
                 character_name=entity_name,
-                record=record,
+                record=server_record or self._full_character_record(entity_id),
             )
-        await self._refresh_character_dictionaries()
-        await self._refresh_character_worldbooks()
+        if server_record is None:
+            await self._refresh_character_dictionaries()
+            await self._refresh_character_worldbooks()
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -2542,6 +2754,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _refresh_character_dictionaries(self) -> None:
         """Re-feed the character dictionaries panel (best-effort)."""
+        if self.state.runtime_source == "server":
+            return
         entity_id = self.state.selected_entity_id
         service = self._dictionary_scope_service()
         if (
@@ -2565,6 +2779,8 @@ class PersonasScreen(BaseAppScreen):
 
     async def _refresh_character_worldbooks(self) -> None:
         """Re-feed the character world-books panel (best-effort)."""
+        if self.state.runtime_source == "server":
+            return
         entity_id = self.state.selected_entity_id
         if self.state.selected_entity_kind != "character" or not entity_id:
             return
@@ -3614,9 +3830,7 @@ class PersonasScreen(BaseAppScreen):
             )
         active_server_profile_id = None
         if runtime_source == "server":
-            active_server_id = getattr(self.app_instance, "active_server_id", None)
-            if type(active_server_id) is str and active_server_id:
-                active_server_profile_id = active_server_id
+            active_server_profile_id = self._active_server_target()
         payload = ChatHandoffPayload.from_source_content(
             source="personas",
             item_type=item_type,
@@ -3805,6 +4019,21 @@ class PersonasScreen(BaseAppScreen):
     @on(CharacterMessage.Loaded)
     async def _handle_character_loaded(self, message: CharacterMessage.Loaded) -> None:
         message.stop()
+        if self.state.runtime_source == "server":
+            cached = self._selected_server_character
+            if cached is not None:
+                target, record = cached
+            else:
+                target, record = None, None
+            if (
+                target == self._active_server_target()
+                and record is not None
+                and str(record.get("id")) == str(self.state.selected_entity_id)
+            ):
+                self.character_handler.current_character_id = record["id"]
+                self.character_handler.current_character_data = dict(record)
+                self.query_one(PersonasCharacterCardWidget).load_character(record)
+            return
         await self.preview.handle_character_loaded(
             character_id=str(message.character_id),
             card_data=message.card_data,
@@ -4346,12 +4575,23 @@ class PersonasScreen(BaseAppScreen):
             pane.set_row_unsaved(None, None, False)
 
     def _full_character_record(self, character_id: str) -> dict | None:
-        """Return the handler's fully-loaded card, or ``None`` when stale.
+        """Return the selected source's fully-loaded card, or ``None`` when stale.
 
         The list rows in ``_characters`` are id/name-only; falling back to
         them would feed the editor (and a later save) empty fields, so a
         mismatch deliberately returns ``None``.
         """
+        if self.state.runtime_source == "server":
+            cached = self._selected_server_character
+            if cached is None:
+                return None
+            target, record = cached
+            if (
+                target == self._active_server_target()
+                and str(record.get("id")) == character_id
+            ):
+                return dict(record)
+            return None
         loaded = self.character_handler.current_character_data
         if loaded and str(self.character_handler.current_character_id) == character_id:
             return dict(loaded)
@@ -4589,6 +4829,9 @@ class PersonasScreen(BaseAppScreen):
             inspector = self.query_one(PersonasInspectorPane)
         except QueryError:
             return
+        if self.state.runtime_source == "server":
+            inspector.set_avatar_thumbnail(None)
+            return
         if self.state.selected_entity_kind != "character":
             inspector.set_avatar_thumbnail(None)
             return
@@ -4635,7 +4878,10 @@ class PersonasScreen(BaseAppScreen):
         # render must not paint another character's face into the rail -- and
         # a late FAILURE must not blank the portrait of whoever is selected
         # now, so the staleness check comes before any clearing.
-        if str(self.state.selected_entity_id or "") != selected_id:
+        if (
+            self.state.runtime_source != "local"
+            or str(self.state.selected_entity_id or "") != selected_id
+        ):
             return
         if not ok or not self.is_mounted:
             inspector.set_avatar_thumbnail(None)
@@ -7374,7 +7620,7 @@ class PersonasScreen(BaseAppScreen):
             dict_panel.display = visible_id in (
                 "#ccp-character-card-view",
                 "#ccp-character-editor-view",
-            )
+            ) and self.state.runtime_source == "local"
         # The docked wrapper that holds BOTH character-attachment panels
         # (Roleplay P2f Task 6 added the world-books panel alongside the
         # P1f dictionaries panel inside #personas-character-attachments)
@@ -7395,7 +7641,7 @@ class PersonasScreen(BaseAppScreen):
             attachments_wrapper.display = visible_id in (
                 "#ccp-character-card-view",
                 "#ccp-character-editor-view",
-            )
+            ) and self.state.runtime_source == "local"
         # The conversation actions row is chrome shown alongside (not instead
         # of) the read-only conversation view.
         try:

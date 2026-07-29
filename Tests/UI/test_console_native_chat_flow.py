@@ -43,6 +43,10 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    HandoffChannel,
+    PendingHandoffStore,
+)
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_ACTIVE_RUN_STATUSES,
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
@@ -3056,7 +3060,7 @@ def _character_start_handoff(
     selected_kind: str = "character",
     source: str = "personas",
     active_server_profile_id: str | None = None,
-    character_id: str = "7",
+    character_id: object = "7",
 ) -> ChatHandoffPayload:
     return ChatHandoffPayload(
         source=source,
@@ -3097,7 +3101,7 @@ def _character_handoff_runtime(
     active_server_id: str | None = None,
     local_authority: str | None = "local-authority",
     card=_DEFAULT_HANDOFF_VALUE,
-    server_authority: str | None = "server-user-v1:" + ("a" * 64),
+    server_authority: object = "server-user-v1:" + ("a" * 64),
 ) -> SimpleNamespace:
     """Build a source-aware handoff runtime with inspectable boundaries."""
     scoped_card = _character_card() if card is _DEFAULT_HANDOFF_VALUE else card
@@ -3165,29 +3169,93 @@ async def _run_character_handoff(monkeypatch, runtime, payload):
 
 
 @pytest.mark.parametrize(
-    ("source", "runtime_backend"),
+    ("field", "value"),
     (
-        pytest.param("library", "local", id="wrong-origin"),
-        pytest.param("personas", "LOCAL", id="non-exact-runtime-source"),
+        pytest.param("source", "library", id="wrong-origin"),
+        pytest.param("item_type", "persona-card", id="wrong-item-type"),
+        pytest.param("runtime_backend", "LOCAL", id="non-exact-runtime-source"),
+        pytest.param("source_owner", "server", id="contradictory-owner"),
+        pytest.param(
+            "source_selector_state",
+            "server",
+            id="contradictory-selector",
+        ),
     ),
 )
-def test_character_start_handoff_requires_personas_and_exact_runtime_source(
-    source,
-    runtime_backend,
+def test_character_start_handoff_requires_exact_coherent_envelope(
+    field,
+    value,
 ):
-    payload = _character_start_handoff(
-        source=source,
-        runtime_backend=runtime_backend,
-    )
+    payload = _character_start_handoff()
+    setattr(payload, field, value)
 
     assert (
         chat_screen_module._character_session_identity_from_handoff(payload) is None
     )
 
 
-@pytest.mark.parametrize("character_id", ("0", "opaque-7", "７"))
-def test_character_start_handoff_requires_positive_numeric_wire_id(character_id):
+@pytest.mark.parametrize(
+    ("metadata_key", "value"),
+    (
+        pytest.param("intent", " start_chat", id="non-exact-intent"),
+        pytest.param("selected_kind", " character", id="non-exact-kind"),
+        pytest.param("backend", "server", id="contradictory-backend"),
+        pytest.param("backend", None, id="missing-backend"),
+    ),
+)
+def test_character_start_handoff_requires_exact_coherent_metadata(
+    metadata_key,
+    value,
+):
+    payload = _character_start_handoff()
+    payload.metadata[metadata_key] = value
+
+    assert (
+        chat_screen_module._character_session_identity_from_handoff(payload) is None
+    )
+
+
+@pytest.mark.parametrize(
+    "character_id",
+    (
+        pytest.param("01", id="leading-zero"),
+        pytest.param(" 7", id="leading-whitespace"),
+        pytest.param("7 ", id="trailing-whitespace"),
+        pytest.param("７", id="unicode-digit"),
+        pytest.param("0", id="zero"),
+        pytest.param("-1", id="negative"),
+        pytest.param(7.0, id="float"),
+        pytest.param(True, id="bool"),
+        pytest.param(7, id="integer"),
+        pytest.param("9" * 5000, id="overlong"),
+        pytest.param(str(1 << 63), id="signed-64-overflow"),
+    ),
+)
+def test_character_start_handoff_requires_canonical_positive_numeric_wire_id(
+    character_id,
+):
     payload = _character_start_handoff(character_id=character_id)
+
+    assert (
+        chat_screen_module._character_session_identity_from_handoff(payload) is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("record_id", "target_id"),
+    (
+        pytest.param(None, "local:character:7", id="missing-record"),
+        pytest.param("7", None, id="missing-target"),
+        pytest.param("7", "local:character:8", id="conflicting-ids"),
+    ),
+)
+def test_character_start_handoff_requires_matching_record_and_target_ids(
+    record_id,
+    target_id,
+):
+    payload = _character_start_handoff()
+    payload.metadata["selected_record_id"] = record_id
+    payload.metadata["selected_target_id"] = target_id
 
     assert (
         chat_screen_module._character_session_identity_from_handoff(payload) is None
@@ -3273,6 +3341,92 @@ async def test_local_character_handoff_without_scoped_card_falls_back(monkeypatc
     assert store.session is None
 
 
+@pytest.mark.parametrize("runtime_backend", ("local", "server"))
+@pytest.mark.parametrize(
+    "returned_character_id",
+    (
+        pytest.param(_DEFAULT_HANDOFF_VALUE, id="missing-id"),
+        pytest.param("07", id="noncanonical-id"),
+        pytest.param(8, id="mismatched-id"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_character_handoff_requires_exact_returned_card_identity(
+    monkeypatch,
+    runtime_backend,
+    returned_character_id,
+):
+    card = _character_card()
+    if returned_character_id is _DEFAULT_HANDOFF_VALUE:
+        card.pop("id")
+    else:
+        card["id"] = returned_character_id
+    active_server_id = (
+        "configured-target-7" if runtime_backend == "server" else None
+    )
+    runtime = _character_handoff_runtime(
+        active_server_id=active_server_id,
+        card=card,
+    )
+
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend=runtime_backend,
+            active_server_profile_id=active_server_id,
+        ),
+    )
+
+    assert started is False
+    runtime.scope_service.get_character.assert_awaited_once_with(
+        7,
+        mode=runtime_backend,
+    )
+    assert store.session is None
+    assert store.messages == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_after_character_session_commit_consumes_without_replay(
+    monkeypatch,
+):
+    runtime = _character_handoff_runtime()
+    runtime.app.pending_handoffs = PendingHandoffStore()
+    runtime.app.pending_handoffs.stage(
+        HandoffChannel.CHAT,
+        _character_start_handoff(),
+    )
+    store = _CharacterHandoffStore()
+    screen = _handoff_chat_screen(monkeypatch, runtime.app, store)
+    sync_started = asyncio.Event()
+    hold_sync = asyncio.Event()
+
+    async def _block_post_commit_sync():
+        sync_started.set()
+        await hold_sync.wait()
+
+    monkeypatch.setattr(
+        screen,
+        "_sync_native_console_chat_ui",
+        _block_post_commit_sync,
+    )
+
+    consume_task = asyncio.create_task(screen._consume_pending_chat_handoff())
+    await asyncio.wait_for(sync_started.wait(), timeout=1)
+    consume_task.cancel()
+    await consume_task
+
+    assert store.session is not None
+    assert len(store.messages) == 1
+    assert not runtime.app.pending_handoffs.has_pending(HandoffChannel.CHAT)
+
+    await screen._consume_pending_chat_handoff()
+
+    assert len(store.messages) == 1
+    assert not runtime.app.pending_handoffs.has_pending(HandoffChannel.CHAT)
+
+
 @pytest.mark.asyncio
 async def test_server_character_handoff_scopes_exact_target_without_local_projection(
     monkeypatch,
@@ -3350,6 +3504,62 @@ async def test_server_identity_failure_still_seeds_unscoped_character_session(
     assert [message["content"] for message in store.messages] == [
         "Hello User, I am Elara."
     ]
+
+
+@pytest.mark.parametrize(
+    "resolved_authority_id",
+    (
+        pytest.param(
+            "server-user-v2:" + ("a" * 64),
+            id="wrong-prefix",
+        ),
+        pytest.param(
+            "server-user-v1:" + ("a" * 63),
+            id="short-digest",
+        ),
+        pytest.param(
+            "server-user-v1:" + ("a" * 65),
+            id="long-digest",
+        ),
+        pytest.param(
+            "server-user-v1:" + ("A" * 64),
+            id="uppercase-digest",
+        ),
+        pytest.param(7, id="non-string"),
+        pytest.param(
+            " server-user-v1:" + ("a" * 64),
+            id="leading-whitespace",
+        ),
+        pytest.param(
+            "server-user-v1:" + ("a" * 64) + " ",
+            id="trailing-whitespace",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_server_character_handoff_rejects_malformed_resolver_authority(
+    monkeypatch,
+    resolved_authority_id,
+):
+    expected_server_id = "configured-target-7"
+    runtime = _character_handoff_runtime(
+        active_server_id=expected_server_id,
+        server_authority=resolved_authority_id,
+    )
+
+    started, store = await _run_character_handoff(
+        monkeypatch,
+        runtime,
+        _character_start_handoff(
+            runtime_backend="server",
+            active_server_profile_id=expected_server_id,
+        ),
+    )
+
+    assert started is True
+    assert store.session is not None
+    assert store.session.assistant_authority_id is None
+    assert store.session.character_ref() is None
 
 
 @pytest.mark.asyncio

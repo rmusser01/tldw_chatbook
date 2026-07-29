@@ -3287,23 +3287,161 @@ class TestConsoleActions:
         assert payload.suggested_prompt == "Respond as Detective Sam."
 
     async def test_server_start_chat_carries_exact_source_and_active_target(
-        self, mock_app_instance, stub_characters, stub_conversations
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
     ):
-        """Server Start Chat captures the selected target in the handoff."""
+        """Server browsing, detail, preview, and handoff share one proven card."""
+        local_card = {
+            "id": 1,
+            "name": "Local collision",
+            "description": "Local-only description",
+            "first_message": "Local-only greeting",
+        }
+        server_row = {
+            "id": 1,
+            "name": "Remote Elara",
+            "description": "Server summary",
+        }
+        server_card = {
+            "id": 1,
+            "name": "Remote Elara",
+            "description": "Remote authoritative description",
+            "first_message": "Remote hello from {{char}}.",
+            "system_prompt": "Use the server card.",
+        }
+        local_list = Mock(return_value=[dict(local_card)])
+        local_detail = Mock(return_value=dict(local_card))
+        local_page = Mock(return_value=[dict(local_card)])
+        local_count = Mock(return_value=1)
+        local_conversations = Mock(return_value=[])
+        local_dictionaries = AsyncMock(return_value={"dictionaries": []})
+        local_worldbooks = Mock(return_value=[])
+        local_avatar = AsyncMock()
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_all_characters",
+            local_list,
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            local_detail,
+        )
+        monkeypatch.setattr(
+            personas_screen_module,
+            "get_character_page_for_ui",
+            local_page,
+        )
+        monkeypatch.setattr(
+            personas_screen_module,
+            "count_character_page",
+            local_count,
+        )
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            local_conversations,
+        )
+        monkeypatch.setattr(
+            PersonasScreen,
+            "_render_inspector_avatar",
+            local_avatar,
+        )
+        monkeypatch.setattr(
+            PersonasScreen,
+            "_lore_manager",
+            lambda self: SimpleNamespace(
+                get_world_books_for_character=local_worldbooks
+            ),
+        )
+
+        row_dto = SimpleNamespace(
+            model_dump=Mock(return_value=dict(server_row))
+        )
+        detail_dto = SimpleNamespace(
+            model_dump=Mock(return_value=dict(server_card))
+        )
+        scope_service = SimpleNamespace(
+            list_characters=AsyncMock(return_value=[row_dto]),
+            search_characters=AsyncMock(
+                return_value={"items": [row_dto], "total": 1}
+            ),
+            get_character=AsyncMock(return_value=detail_dto),
+        )
         mock_app_instance.app_config = {
             "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
             "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8181"}},
         }
         mock_app_instance.runtime_backend = "server"
         mock_app_instance.active_server_id = "configured-target-7"
+        mock_app_instance.character_persona_scope_service = scope_service
+        mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+            list_character_dictionaries=local_dictionaries
+        )
         app = PersonasTestApp(mock_app_instance)
         app.open_chat_with_handoff = Mock()
 
         async with app.run_test(size=(160, 50)) as pilot:
-            screen = await self._select_first_character(pilot)
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            row = screen.query_one("#personas-library-row-character-1")
+            assert "Remote Elara" in _row_text(row)
+            assert "Local collision" not in _row_text(row)
+
+            screen.state.search_query = "remote"
+            await screen._reload_character_page(reset_offset=True)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert "Remote Elara" in str(
+                screen.query_one("#personas-character-card-name", Static).renderable
+            )
+            assert "Remote authoritative description" in str(
+                screen.query_one(
+                    "#personas-character-card-description", Static
+                ).renderable
+            )
+            assert "Remote Elara: Remote hello from Remote Elara." in (
+                screen.query_one(PersonasPreviewPane).transcript_text()
+            )
+            assert (
+                screen.query_one("#personas-character-attachments").display is False
+            )
+            assert (
+                screen.query_one("#personas-card-edit-character", Button).disabled
+                is True
+            )
             screen.query_one("#personas-start-chat", Button).press()
             await pilot.pause()
 
+        page_size = personas_screen_module.PERSONAS_LIBRARY_PAGE_SIZE
+        scope_service.list_characters.assert_awaited_once_with(
+            mode="server",
+            limit=page_size + 1,
+            offset=0,
+        )
+        scope_service.search_characters.assert_awaited_once_with(
+            "remote",
+            mode="server",
+            limit=page_size + 1,
+        )
+        scope_service.get_character.assert_awaited_once_with(1, mode="server")
+        row_dto.model_dump.assert_called_with(mode="json")
+        detail_dto.model_dump.assert_called_once_with(mode="json")
+        local_list.assert_not_called()
+        local_page.assert_not_called()
+        local_count.assert_not_called()
+        local_detail.assert_not_called()
+        local_avatar.assert_not_awaited()
+        local_conversations.assert_not_called()
+        local_dictionaries.assert_not_awaited()
+        local_worldbooks.assert_not_called()
         app.open_chat_with_handoff.assert_called_once()
         payload = app.open_chat_with_handoff.call_args.args[0]
         assert payload.source == "personas"
@@ -3314,6 +3452,8 @@ class TestConsoleActions:
         assert payload.metadata["intent"] == "start_chat"
         assert payload.metadata["selected_target_id"] == "server:character:1"
         assert payload.metadata["backend"] == "server"
+        assert "Remote authoritative description" in payload.body
+        assert "Local-only description" not in payload.body
 
     async def test_start_chat_action_guard_blocks_unready_provider(
         self, mock_app_instance, stub_characters, stub_conversations

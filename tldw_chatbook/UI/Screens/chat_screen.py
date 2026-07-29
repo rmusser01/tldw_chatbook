@@ -987,6 +987,36 @@ def _is_empty_select_value(value: Any) -> bool:
     return value is None or value == Select.BLANK or str(value).startswith("Select.")
 
 
+_MAX_CANONICAL_CHARACTER_ID = (1 << 63) - 1
+_MAX_CANONICAL_CHARACTER_ID_TEXT = str(_MAX_CANONICAL_CHARACTER_ID)
+_CANONICAL_CHARACTER_ID_PATTERN = re.compile(r"[1-9][0-9]{0,18}")
+_SERVER_CHARACTER_AUTHORITY_PATTERN = re.compile(
+    r"server-user-v1:[0-9a-f]{64}"
+)
+
+
+def _canonical_character_id_text(value: Any) -> str | None:
+    """Return an exact signed-64 positive decimal wire ID."""
+    if type(value) is not str:
+        return None
+    if _CANONICAL_CHARACTER_ID_PATTERN.fullmatch(value) is None:
+        return None
+    if (
+        len(value) == len(_MAX_CANONICAL_CHARACTER_ID_TEXT)
+        and value > _MAX_CANONICAL_CHARACTER_ID_TEXT
+    ):
+        return None
+    return value
+
+
+def _canonical_card_character_id(value: Any) -> int | None:
+    """Return a canonical signed-64 positive ID from a card response."""
+    if type(value) is int:
+        return value if 1 <= value <= _MAX_CANONICAL_CHARACTER_ID else None
+    value_text = _canonical_character_id_text(value)
+    return int(value_text) if value_text is not None else None
+
+
 def _character_session_identity_from_handoff(
     payload: ChatHandoffPayload,
 ) -> tuple[str, int, str, str] | None:
@@ -1000,36 +1030,40 @@ def _character_session_identity_from_handoff(
         assistant_id)` when the payload represents a source-aware Personas
         character Start Chat handoff; otherwise `None`.
     """
-    metadata = payload.metadata or {}
+    metadata = payload.metadata
+    if not isinstance(metadata, Mapping):
+        return None
     if (
         payload.source != "personas"
-        or str(metadata.get("intent") or "").strip() != "start_chat"
-        or str(metadata.get("selected_kind") or "").strip() != "character"
+        or payload.item_type != "character-card"
+        or metadata.get("intent") != "start_chat"
+        or metadata.get("selected_kind") != "character"
     ):
         return None
     runtime_backend = payload.runtime_backend
     if runtime_backend not in {"local", "server"}:
         return None
+    if (
+        payload.source_owner != runtime_backend
+        or payload.source_selector_state != runtime_backend
+        or metadata.get("backend") != runtime_backend
+    ):
+        return None
 
-    raw_record_id = metadata.get("selected_record_id")
-    character_id_text = "" if raw_record_id is None else str(raw_record_id).strip()
-    if not character_id_text:
-        target_id = str(metadata.get("selected_target_id") or "").strip()
-        match = re.fullmatch(
-            rf"{re.escape(runtime_backend)}:character:([0-9]+)",
-            target_id,
-        )
-        if match:
-            character_id_text = match.group(1)
-    if not character_id_text.isascii() or not character_id_text.isdecimal():
+    character_id_text = _canonical_character_id_text(
+        metadata.get("selected_record_id")
+    )
+    if character_id_text is None:
+        return None
+    if (
+        metadata.get("selected_target_id")
+        != f"{runtime_backend}:character:{character_id_text}"
+    ):
         return None
 
     character_id = int(character_id_text)
-    if character_id < 1:
-        return None
     character_name = str(metadata.get("selected_name") or payload.title or "").strip()
-    assistant_id = str(character_id)
-    return runtime_backend, character_id, character_name, assistant_id
+    return runtime_backend, character_id, character_name, character_id_text
 
 
 def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
@@ -12235,8 +12269,10 @@ class ChatScreen(BaseAppScreen):
                     resolved_authority_id = None
                 if (
                     type(resolved_authority_id) is str
-                    and resolved_authority_id
-                    and resolved_authority_id == resolved_authority_id.strip()
+                    and _SERVER_CHARACTER_AUTHORITY_PATTERN.fullmatch(
+                        resolved_authority_id
+                    )
+                    is not None
                 ):
                     assistant_authority_id = resolved_authority_id
 
@@ -12263,6 +12299,8 @@ class ChatScreen(BaseAppScreen):
         if not isinstance(card, Mapping) or not card:
             return False
         card = dict(card)
+        if _canonical_card_character_id(card.get("id")) != character_id:
+            return False
 
         if runtime_backend == "server":
             expected_server_id = payload.active_server_profile_id
@@ -12316,6 +12354,10 @@ class ChatScreen(BaseAppScreen):
         try:
             await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)
+        except asyncio.CancelledError:
+            # The durable commit boundary is above. Report success so the
+            # caller acknowledges this handoff instead of replaying it.
+            return True
         except Exception:
             # The character session (and its greeting) is already durably
             # created above -- a UI-sync/focus failure here must not
