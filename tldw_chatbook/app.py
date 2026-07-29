@@ -6130,10 +6130,24 @@ class TldwCli(
             try:
                 flush_result = flush()
                 if inspect.isawaitable(flush_result):
-                    flush_result = await asyncio.wait_for(
-                        flush_result,
-                        timeout=self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
-                    )
+                    # Shielded: giving up on the WAIT must not give up on the
+                    # SAVE. The Library File Notes flush persists through
+                    # `asyncio.to_thread`, which cannot be cancelled -- an
+                    # unshielded `wait_for` killed the coroutine at that await
+                    # while the thread kept writing, so `_save_draft` never ran
+                    # its reconciliation: `_save_state` stayed "saving" (which
+                    # makes `leave_allowed` False *forever*) and the cached
+                    # `content_hash` stayed stale, so the next save reported a
+                    # spurious conflict.
+                    flush_task = asyncio.ensure_future(flush_result)
+                    try:
+                        flush_result = await asyncio.wait_for(
+                            asyncio.shield(flush_task),
+                            timeout=self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
+                        )
+                    except asyncio.TimeoutError:
+                        self._retain_unfinished_flush(flush_task, screen_name)
+                        raise
                 if flush_result is False:
                     logger.info(
                         f"Navigation to {screen_name} vetoed by the outgoing "
@@ -6243,6 +6257,47 @@ class TldwCli(
         finally:
             if callable(release_navigation):
                 release_navigation()
+
+    def _retain_unfinished_flush(self, flush_task: Any, screen_name: str) -> None:
+        """Keep a timed-out flush alive until it finishes on its own.
+
+        The navigation wait is shielded, so the flush keeps running after the
+        app stops waiting -- but asyncio only holds a weak reference to a
+        running task, so without a strong reference here it could be garbage
+        collected mid-save. Retaining it also gives somewhere to consume the
+        eventual result, which otherwise surfaces as "exception was never
+        retrieved" noise long after the navigation that started it.
+
+        Args:
+            flush_task: The still-running flush task.
+            screen_name: Route being navigated to, for log context.
+        """
+        pending = getattr(self, "_pending_flush_tasks", None)
+        if pending is None:
+            pending = set()
+            self._pending_flush_tasks = pending
+        pending.add(flush_task)
+
+        def _finished(task: Any) -> None:
+            pending.discard(task)
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                logger.warning(
+                    "Screen flush eventually failed after navigation gave up "
+                    "waiting (route={}, exception_category={}).",
+                    screen_name,
+                    type(exc).__name__,
+                )
+            else:
+                logger.info(
+                    "Screen flush eventually completed after navigation gave "
+                    "up waiting (route={}).",
+                    screen_name,
+                )
+
+        flush_task.add_done_callback(_finished)
 
     def _notify_navigation_failure(self, screen_name: str) -> None:
         """Tell the user a destination failed to open, without raising.
