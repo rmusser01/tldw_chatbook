@@ -22,7 +22,7 @@ from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Button, Select, Static
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from ...Constants import (
     WATCHLISTS_NAV_CONTEXT_BACKEND,
@@ -181,6 +181,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ("d", "delete_selected", "Delete"),
         ("c", "check_now_selected", "Check now"),
         ("p", "preview_selected", "Preview"),
+        ("j", "next_item", "Next item"),
+        ("k", "previous_item", "Previous item"),
         ("z", "toggle_region", "Collapse"),
         ("Z", "solo_region", "Solo"),
         ("left_square_bracket", "toggle_left_rail", "Left rail"),
@@ -3241,3 +3243,77 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             return
         self.handle_preview_requested(PreviewRequested(entity))
+
+    def action_next_item(self) -> None:
+        """`j`: move the reader to the next item in the list (Task 6)."""
+        self._navigate_item(1)
+
+    def action_previous_item(self) -> None:
+        """`k`: move the reader to the previous item in the list (Task 6)."""
+        self._navigate_item(-1)
+
+    def _navigate_item(self, delta: int) -> None:
+        """Shared `j`/`k` implementation.
+
+        Guarded against a focused text-entry widget: a user typing "j" into
+        the items search box (or any future `Input`/`TextArea` on this
+        screen) must get the character, not navigation.
+
+        CONFIRMED BY MUTATION TEST that this guard is not what protects a
+        real keypress today: `Input._on_key` already consumes and stops a
+        printable key before it would ever reach this screen's BINDINGS
+        resolution (Textual only resolves a non-priority binding once the
+        `Key` message actually bubbles all the way up to the `App`, and a
+        focused `Input` stops a printable key right where it starts), so
+        deleting this `isinstance` check does NOT turn
+        `test_typing_j_in_the_search_input_does_not_navigate` red -- that
+        test drives a real keypress and never reaches this method either
+        way. The check is still kept, as explicit defense-in-depth for any
+        future caller that invokes `action_next_item`/`action_previous_item`
+        directly rather than through a real keypress (already true of this
+        very module -- see `action_check_now_selected` et al. above, which
+        call their handlers directly), and it IS the thing
+        `test_action_next_item_is_a_noop_when_a_text_input_has_focus`
+        pins down: that test calls `action_next_item()` directly, bypassing
+        `Input`'s key handling entirely, and does go red without this check.
+
+        Scoped to the Items ("Read") tab, where `ContentPane` is actually
+        mounted (Task 4 gates CONTENT to that tab) -- firing elsewhere would
+        silently write a read-status change to the database, through
+        `_mark_item_read_on_open` below, for an item the user cannot even
+        see.
+
+        Reuses `handle_item_selected` exactly as a click or an `ItemsPane`
+        row highlight does -- the same "synthesize the event, call the
+        handler directly" pattern `action_check_now_selected`/
+        `action_preview_selected` above already use -- rather than driving
+        the `ItemsPane` `DataTable` cursor. That means this inherits the
+        Task 5 fix for free: `_mark_item_read_on_open` calls
+        `_update_item_status(..., refresh=False, patch_item=item)`, which
+        patches the same dict in place instead of forcing the
+        `overview_data` `reactive(recompose=True)` full-screen rebuild that
+        once dropped focus and broke a second keypress (see that method's
+        docstring and `test_selecting_an_item_does_not_break_keyboard_navigation`).
+
+        Boundaries do not raise: an out-of-range index is simply a no-op.
+        """
+        focused = self.focused
+        if isinstance(focused, (Input, TextArea)):
+            return
+        if self.active_section != "items":
+            return
+        items = self._loaded_items
+        if not items:
+            return
+        current = self._selected_content_item
+        current_id = current.get("id") if current else None
+        index = -1
+        if current_id is not None:
+            for position, candidate in enumerate(items):
+                if candidate.get("id") == current_id:
+                    index = position
+                    break
+        new_index = index + delta
+        if new_index < 0 or new_index >= len(items):
+            return
+        self.handle_item_selected(ItemSelected(items[new_index]))

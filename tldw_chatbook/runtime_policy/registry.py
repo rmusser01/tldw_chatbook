@@ -630,13 +630,17 @@ AUDITED_CAPABILITY_SEEDS = (
                 "watchlists",
                 actions=_combine_action_sets(CRUD_ACTIONS, (PREVIEW, IMPORT, EXPORT)),
             ),
-            # TASK-1120: UPDATE is what `Mark reviewed`/`Ingest`/`Ignore`
-            # need. Without it `watchlists.items.update.local` was an
-            # unregistered action id and the enforcer denied it, so the three
-            # item actions could not have worked even once the Inspector
-            # started offering them. LIST/DETAIL alone described a read-only
-            # item list, which the Items pane has not been since it grew
-            # actions.
+            # TASK-1120: UPDATE is what `Ingest`/`Ignore`, the reader's
+            # explicit unread toggle, and opening an item (which marks it
+            # read on open) need. Without it `watchlists.items.update.local`
+            # was an unregistered action id and the enforcer denied it, so
+            # these item-status writes could not have worked even once the
+            # Inspector/reader started offering them. LIST/DETAIL alone
+            # described a read-only item list, which the Items pane has not
+            # been since it grew actions. ("Mark reviewed" was the original
+            # TASK-1120 button; Phase D task 5 deleted it once opening an
+            # item started marking it read automatically, but this grant is
+            # still needed by the consumers named above.)
             _resource("watchlists.items", actions=(LIST, DETAIL, UPDATE)),
             _resource("watchlists.alert_rules", actions=CRUD_ACTIONS),
             _resource("watchlists.runs", actions=(LIST, DETAIL, LAUNCH, OBSERVE, CANCEL)),

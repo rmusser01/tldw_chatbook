@@ -334,3 +334,361 @@ async def test_content_region_gating_does_not_clobber_a_real_collapse_preference
             "returning to Items must restore the user's own collapse choice, "
             "not silently force CONTENT back open"
         )
+
+
+# --- Task 6: `j` / `k` item navigation -------------------------------------
+
+
+def test_j_and_k_are_bound_and_do_not_collide_with_any_ancestor_bindings():
+    """Task 6 Step 1: the binding-conflict audit the brief requires before
+    adding anything.
+
+    `j`/`k` must be bound on this screen, and those exact keys must not
+    already appear in `BaseAppScreen`'s BINDINGS, the app class's BINDINGS,
+    or the built-in `DataTable`/`Tree` widgets whose own bindings would
+    otherwise swallow the keypress while a table or tree has focus. Reads
+    the class attributes directly -- tmux cannot even encode some keys and
+    has produced false conclusions about this screen's bindings before, so
+    it is not evidence either way.
+    """
+    from textual.widgets import DataTable, Tree
+
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
+    from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+        WatchlistsCollectionsScreen,
+    )
+
+    def _keys(bindings) -> set[str]:
+        keys: set[str] = set()
+        for entry in bindings:
+            # The screen's own BINDINGS are plain (key, action, description)
+            # tuples; Textual's built-in widgets and the app class use
+            # `Binding` objects. Handle both rather than assume one shape.
+            key = entry.key if hasattr(entry, "key") else entry[0]
+            keys.update(key.split(","))
+        return keys
+
+    screen_keys = _keys(WatchlistsCollectionsScreen.BINDINGS)
+    assert "j" in screen_keys, "j must be bound on WatchlistsCollectionsScreen"
+    assert "k" in screen_keys, "k must be bound on WatchlistsCollectionsScreen"
+
+    # `BaseAppScreen` defines no `BINDINGS` of its own, so this resolves
+    # through the MRO to Textual's `Screen.BINDINGS` (tab/shift+tab/copy at
+    # the time of writing) -- checking the resolved attribute, not assuming
+    # BaseAppScreen is empty, is the point of the audit.
+    ancestor_keys = _keys(BaseAppScreen.BINDINGS)
+    ancestor_keys |= _keys(TldwCli.BINDINGS)
+    ancestor_keys |= _keys(DataTable.BINDINGS)
+    ancestor_keys |= _keys(Tree.BINDINGS)
+
+    assert "j" not in ancestor_keys, (
+        f"j collides with an ancestor/built-in binding: {sorted(ancestor_keys)}"
+    )
+    assert "k" not in ancestor_keys, (
+        f"k collides with an ancestor/built-in binding: {sorted(ancestor_keys)}"
+    )
+
+
+def _seed_three_items(db):
+    """Add one source with three "new" items, in a fixed, known order.
+
+    Returns (source_id, [item_id, item_id, item_id]) in insertion order.
+    Insertion order is NOT asserted to be the order the screen loads them in
+    -- tests below read `screen._loaded_items` back and use ITS order as
+    ground truth, since that is the exact list `j`/`k` walk.
+    """
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+
+    source_id = db.add_subscription(
+        name="Summit Route", type="rss", source="https://summitroute.com/blog/feed.xml"
+    )
+    item_ids = []
+    with db.transaction() as conn:
+        for index in range(3):
+            item_id = persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": f"https://summitroute.com/blog/2024/nav-item-{index}/",
+                    "title": f"Nav item {index}",
+                    "content": f"body for nav item {index}",
+                    "content_hash": f"hash-jk-{index}",
+                    "status": "new",
+                },
+                run_id=None,
+                now=f"2026-07-28T09:0{index}:00+00:00",
+            )
+            item_ids.append(item_id)
+    return source_id, item_ids
+
+
+async def _mount_items_screen(pilot, host, expected_count: int = 3):
+    """Shared setup: switch to Items, wait for the seeded items to load."""
+    from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemsPane
+
+    await pilot.pause(0.2)
+    screen = host.screen_stack[-1]
+    screen.active_section = "items"
+    await pilot.pause(0.3)
+
+    pane = screen.query_one("#watchlists-items-pane", ItemsPane)
+    for _ in range(40):
+        await pilot.pause()
+        if len(pane.items) >= expected_count:
+            break
+    assert len(pane.items) == expected_count, (
+        "all seeded items must reach the Items pane before driving j/k"
+    )
+    return screen, pane
+
+
+@pytest.mark.asyncio
+async def test_j_and_k_move_to_the_next_and_previous_item_and_update_the_reader():
+    """The core Task 6 behaviour: `j` moves forward, `k` moves back, and
+    each move updates the reader -- not just some in-memory index -- and
+    marks the newly-opened item read exactly as clicking it does (Task 5's
+    `_mark_item_read_on_open`).
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from textual.widgets import Static
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _source_id, item_ids = _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        items = screen._loaded_items
+        # `items[i]["id"]` is the NORMALIZED id (`local:watchlist_item:<row
+        # id>`, see `normalize_watchlist_item`), not the raw DB row id
+        # `_seed_three_items` returns -- compare counts, not the raw ids.
+        assert len(items) == len(item_ids)
+
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+
+        pane.select_item_by_id(str(items[0]["id"]))
+        await pilot.pause(0.3)
+        body = content_pane.query_one("#content-body", Static)
+        assert items[0]["title"] in str(body.renderable)
+        for _ in range(30):
+            await pilot.pause()
+            if db.get_new_items(status="reviewed", limit=10):
+                break
+        # `db.get_new_items` returns raw DB rows keyed by the raw row id
+        # (`item_id` on the normalized dict), not the normalized `id` string
+        # (`local:watchlist_item:<row id>`) `j`/`k` navigate by.
+        assert {row["id"] for row in db.get_new_items(status="reviewed", limit=10)} == {
+            items[0]["item_id"]
+        }, "selecting the first item must mark it read, same as any other open"
+
+        await pilot.press("j")
+        await pilot.pause(0.3)
+        assert screen._selected_content_item["id"] == items[1]["id"]
+        body = content_pane.query_one("#content-body", Static)
+        assert items[1]["title"] in str(body.renderable)
+        for _ in range(30):
+            await pilot.pause()
+            if len(db.get_new_items(status="reviewed", limit=10)) >= 2:
+                break
+        assert {row["id"] for row in db.get_new_items(status="reviewed", limit=10)} == {
+            items[0]["item_id"],
+            items[1]["item_id"],
+        }, "j must mark the item it moves to read, exactly as clicking would"
+
+        await pilot.press("j")
+        await pilot.pause(0.3)
+        assert screen._selected_content_item["id"] == items[2]["id"]
+        body = content_pane.query_one("#content-body", Static)
+        assert items[2]["title"] in str(body.renderable)
+
+        await pilot.press("k")
+        await pilot.pause(0.3)
+        assert screen._selected_content_item["id"] == items[1]["id"]
+        body = content_pane.query_one("#content-body", Static)
+        assert items[1]["title"] in str(body.renderable)
+
+
+@pytest.mark.asyncio
+async def test_j_and_k_do_not_raise_at_the_list_boundaries():
+    """`k` at the first item and `j` at the last item must be a no-op, not
+    an exception -- an exception escaping an event handler exits the whole
+    application.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from textual.widgets import Static
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        items = screen._loaded_items
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+
+        first_item = items[0]
+        pane.select_item_by_id(str(first_item["id"]))
+        await pilot.pause(0.3)
+
+        await pilot.press("k")
+        await pilot.pause(0.3)
+        assert screen._selected_content_item["id"] == first_item["id"], (
+            "k at the first item must not move"
+        )
+        body = content_pane.query_one("#content-body", Static)
+        assert first_item["title"] in str(body.renderable)
+
+        last_item = items[-1]
+        pane.select_item_by_id(str(last_item["id"]))
+        await pilot.pause(0.3)
+
+        await pilot.press("j")
+        await pilot.pause(0.3)
+        assert screen._selected_content_item["id"] == last_item["id"], (
+            "j at the last item must not move"
+        )
+        body = content_pane.query_one("#content-body", Static)
+        assert last_item["title"] in str(body.renderable)
+
+
+@pytest.mark.asyncio
+async def test_typing_j_in_the_search_input_does_not_navigate():
+    """A user typing "j" into the items search box must get the character,
+    not next-item navigation -- the failure a user would hit within a
+    minute of real use if the focused-input guard were missing.
+    """
+    from textual.widgets import Input
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _source_id, item_ids = _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        items = screen._loaded_items
+        first_item = items[0]
+
+        pane.select_item_by_id(str(first_item["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item["id"] == first_item["id"]
+
+        search_input = pane.query_one("#items-search-input", Input)
+        search_input.focus()
+        await pilot.pause(0.2)
+        assert search_input.has_focus, "the search input must actually hold focus"
+
+        await pilot.press("j")
+        await pilot.pause(0.3)
+
+        assert search_input.value == "j", (
+            "the focused search box must receive the typed character"
+        )
+        assert screen._selected_content_item["id"] == first_item["id"], (
+            "typing j into a focused text input must not navigate the reader"
+        )
+
+
+@pytest.mark.asyncio
+async def test_action_next_item_is_a_noop_when_a_text_input_has_focus():
+    """Isolates `_navigate_item`'s own focused-widget guard from `Input`'s
+    key handling.
+
+    `Input._on_key` already stops a printable key before it can ever reach
+    this screen's BINDINGS resolution -- confirmed empirically: deleting the
+    `isinstance(focused, (Input, TextArea))` check in `_navigate_item` does
+    NOT turn `test_typing_j_in_the_search_input_does_not_navigate` red,
+    because that test drives a real keypress, and the keypress never gets
+    as far as `action_next_item` either way. Calling `action_next_item()`
+    directly, bypassing the key-event pipeline entirely, is what actually
+    isolates the guard: with it removed, this is the one test that goes
+    red, because nothing else stops a direct call from navigating while
+    focus sits on the search box.
+    """
+    from textual.widgets import Input
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _source_id, item_ids = _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        items = screen._loaded_items
+        first_item = items[0]
+
+        pane.select_item_by_id(str(first_item["id"]))
+        await pilot.pause(0.3)
+        assert screen._selected_content_item["id"] == first_item["id"]
+
+        search_input = pane.query_one("#items-search-input", Input)
+        search_input.focus()
+        await pilot.pause(0.2)
+        assert search_input.has_focus, "the search input must actually hold focus"
+
+        screen.action_next_item()
+        await pilot.pause(0.2)
+
+        assert screen._selected_content_item["id"] == first_item["id"], (
+            "action_next_item() must be a no-op while a text input has "
+            "focus, regardless of how it was invoked"
+        )
+
+
+@pytest.mark.asyncio
+async def test_j_navigation_does_not_recompose_the_screen():
+    """Task 6 must reuse the Task 5 fix, not reintroduce the reload.
+
+    `_update_item_status`'s default refresh path ends in
+    `_refresh_overview_data()`, and `overview_data` is
+    `reactive({}, recompose=True)` on the screen -- a full rebuild that
+    replaces the mounted `ItemsPane`/`ContentPane` wholesale and drops
+    focus (Task 5's CRITICAL finding). `j`/`k` reuse `handle_item_selected`,
+    which marks read via `_mark_item_read_on_open`'s `refresh=False` +
+    `patch_item` path, so the SAME pane instances must survive two
+    consecutive `j` presses.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        items = screen._loaded_items
+        content_pane_before = screen.query_one("#watchlists-content-pane", ContentPane)
+
+        pane.select_item_by_id(str(items[0]["id"]))
+        await pilot.pause(0.3)
+
+        await pilot.press("j")
+        await pilot.pause(0.3)
+        await pilot.press("j")
+        await pilot.pause(0.3)
+
+        assert screen.query_one("#watchlists-items-pane", type(pane)) is pane, (
+            "the ItemsPane instance must survive two j presses, not be "
+            "rebuilt by a screen-level recompose"
+        )
+        assert (
+            screen.query_one("#watchlists-content-pane", ContentPane)
+            is content_pane_before
+        ), "the ContentPane instance must survive two j presses too"
+        assert screen._selected_content_item["id"] == items[2]["id"]
