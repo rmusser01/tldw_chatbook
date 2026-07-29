@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -220,8 +221,83 @@ def compose_agent_system_prompt(session_prompt: str) -> str:
     return f"{session_prompt}\n\n{operating}"
 
 
+#: TASK-870: kept ONLY for ``Tests/Utils/test_path_validation_multi.py``,
+#: which imports this symbol directly to exercise ``_truncate_step_text``
+#: at "the transcript marker's limit" without depending on config/env
+#: resolution. Equal to ``config.DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS``
+#: (hardcoded rather than imported so this module never needs a top-level
+#: dependency on ``tldw_chatbook.config`` just for a test fixture) -- no
+#: production code path reads it anymore. See ``_console_tool_result_
+#: display_cap`` for what the live/marker/resumed paths actually use.
 _STEP_MARKER_RESULT_LIMIT = 160
-_STEP_SUMMARY_LIMIT = 200
+
+#: Env-var override for the Console tool-result display cap, one tier above
+#: ``[console] tool_result_display_chars`` in config.toml -- see
+#: ``_console_tool_result_display_cap``. Named ``TLDW_`` + the config
+#: SECTION (``console``) + the key, this repo's existing per-setting
+#: override convention (e.g. ``TLDW_CONSOLE_LLAMA_CPP_BASE_URL`` in
+#: ``UI/Screens/chat_screen.py``).
+_TOOL_RESULT_DISPLAY_ENV_VAR = "TLDW_CONSOLE_TOOL_RESULT_DISPLAY_CHARS"
+
+
+def _console_tool_result_display_cap() -> int:
+    """Resolve the Console's agent tool-result display cap.
+
+    TASK-870: the single, user-adjustable setting that now governs how much
+    of a tool result the Console *shows* -- the live step summary
+    (``_summarize``), the transcript TOOL marker
+    (``format_agent_step_marker``), and a resumed/persisted step's summary
+    (``_summarize_persisted_step``) all resolve through this one function,
+    so none of the three can drift from the others or from a user's
+    Settings change. Distinct from ``RunBudget.max_tool_result_chars``,
+    which governs how much the MODEL saw and is never read here.
+
+    Resolution order mirrors ``run_log._setting`` (CLAUDE.md: "env vars ->
+    config.toml -> defaults"), which this deliberately stays consistent
+    with: ``TLDW_CONSOLE_TOOL_RESULT_DISPLAY_CHARS``, then
+    ``[console] tool_result_display_chars``, then
+    ``DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS``. Read fresh on every call
+    -- nothing in this module caches it -- so a Settings save (which
+    reloads the config cache ``get_cli_setting`` reads from) takes effect
+    on the very next step rendered, live or resumed, with no app restart.
+
+    Returns:
+        The configured cap, clamped to ``[MIN_CONSOLE_TOOL_RESULT_DISPLAY_
+        CHARS, MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS]``; an unparsable or
+        out-of-range value falls back to
+        ``DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS``.
+    """
+    from tldw_chatbook.config import (
+        DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        coerce_int_setting,
+    )
+
+    env_value = os.environ.get(_TOOL_RESULT_DISPLAY_ENV_VAR)
+    if env_value not in (None, ""):
+        return coerce_int_setting(
+            env_value,
+            DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            minimum=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+            maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        )
+    try:
+        from tldw_chatbook.config import get_cli_setting
+
+        value = get_cli_setting(
+            "console",
+            "tool_result_display_chars",
+            DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        )
+    except Exception:
+        return DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
+    return coerce_int_setting(
+        value,
+        DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        minimum=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+        maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+    )
 
 
 def _truncate_step_text(text: str, *, limit: int) -> str:
@@ -280,9 +356,12 @@ def format_agent_step_marker(
     if kind == STEP_TOOL_RESULT and tool_name not in _QUIET_STEP_TOOLS:
         # Collapse the result to a preview: a spawn_subagent result IS the full
         # answer, and dumping it verbatim duplicated the assistant bubble (task-350).
+        # TASK-870: limit is the user-configurable Console display cap, not a
+        # hardcoded constant -- shared with the live step summary and the
+        # resumed/persisted step summary below (AC#4).
         preview = _truncate_step_text(
             str(result if result is not None else ""),
-            limit=_STEP_MARKER_RESULT_LIMIT,
+            limit=_console_tool_result_display_cap(),
         )
         return f"⚙ {tool_name} → {preview}"
     if kind == STEP_ERROR:
@@ -1744,6 +1823,154 @@ class ConsoleAgentBridge:
     def subagent_run(self, run_id: str) -> dict | None:
         return self._db.get_run(run_id)
 
+    def latest_primary_run_id(self, conversation_id: str) -> str | None:
+        """Return the most recent non-superseded PRIMARY run's id, if any.
+
+        TASK-870: what the "View full log" affordance targets when the
+        Agent rail is showing the top-level overview (not drilled into a
+        sub-agent run, which already carries its own explicit run id) --
+        the run whose live/historical steps the overview is currently
+        summarizing is always this one. Present from the moment a run
+        starts (``AgentService._run_one`` calls ``self.db.create_run()``
+        before any step happens), so this resolves correctly for a run
+        still in progress, not only a finished one.
+
+        Args:
+            conversation_id: Durable conversation id whose runs to inspect.
+
+        Returns:
+            The newest non-superseded primary run's id, or ``None`` when
+            the conversation has never run an agent.
+        """
+        record = self._db.latest_primary_run(conversation_id)
+        return record["id"] if record is not None else None
+
+    def _owning_run_id_for_log(self, run_id: str) -> str:
+        """Return the run id whose ON-DISK log directory holds ``run_id``'s records.
+
+        Review finding B (PR #1082): only a PRIMARY run ever binds a
+        ``RunLogWriter`` (``AgentService._run_one`` binds the shared writer
+        to the primary run's id; a spawned sub-agent shares that SAME
+        writer instance rather than binding its own). A sub-agent's own
+        records are therefore appended to its PRIMARY's log directory,
+        each one individually tagged with the sub-agent's own run id (see
+        ``run_log_format.RunLogRecord.run_id``) -- there is no directory
+        named after the sub-agent's run id at all. Looking a sub-agent's
+        run id up directly (the pre-fix behavior) could therefore never
+        find a log, and the "View full log" affordance could never appear
+        once drilled into a sub-agent.
+
+        Args:
+            run_id: A run id that may be either a primary or a sub-agent
+                run.
+
+        Returns:
+            ``run_id`` unchanged when it is a primary run (or unknown to
+            this bridge's ``AgentRunsDB`` -- treated as "its own owner" so
+            an unresolvable id still gets a definite, if empty, answer
+            rather than a lookup error); its ``parent_run_id`` when it is
+            a recorded sub-agent run.
+        """
+        record = self.subagent_run(run_id)
+        parent_run_id = record.get("parent_run_id") if record else None
+        return parent_run_id or run_id
+
+    def run_log_available(self, run_id: str) -> bool:
+        """Whether an on-disk run log exists for ``run_id``.
+
+        TASK-870 (AC#6/#7): gates the Console's "View full log" affordance
+        -- present only when this is ``True``, absent (not merely disabled)
+        otherwise, so the button can never dangle on a run that has nothing
+        to show (logging disabled, no root resolvable, or a run so short it
+        never wrote a single record).
+
+        Review finding B: ``run_id`` may name a sub-agent run, whose
+        records live inside its PRIMARY's log directory rather than one of
+        its own (see ``_owning_run_id_for_log``). For a primary run this is
+        exactly the pre-fix check (directory exists and holds a segment
+        file); for a sub-agent, that same directory check only proves the
+        PRIMARY logged something -- this additionally confirms at least one
+        record in it actually carries the sub-agent's own run id, so the
+        affordance never appears for a sub-agent that itself never
+        produced a single logged step even though its primary did.
+
+        Args:
+            run_id: The run's id (``AgentRunsDB`` run id, matches
+                ``RunLogRecord.run_id``).
+
+        Returns:
+            ``True`` when a log exists for ``run_id`` -- its own directory
+            for a primary run, or at least one tagged record within its
+            owning primary's directory for a sub-agent run.
+        """
+        from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
+
+        owner_run_id = self._owning_run_id_for_log(run_id)
+        log_dir = resolve_existing_log_dir(owner_run_id)
+        if log_dir is None:
+            return False
+        if owner_run_id == run_id:
+            return True
+        from tldw_chatbook.Agents.run_log_search import load_records
+
+        return any(record.run_id == run_id for record in load_records(log_dir))
+
+    def load_run_log_text(self, run_id: str) -> str:
+        """Render ``run_id``'s full, untruncated run log for display.
+
+        TASK-870 (AC#6): the counterpart to ``run_log_available`` -- callers
+        should check that first (or simply accept an empty string here when
+        no log exists, which this also returns safely rather than raising).
+        Every record the run wrote (model turns, tool calls, tool results,
+        spawns) is rendered in full via ``run_log_search.format_results``.
+
+        Review finding B: resolves and reads the OWNING primary's log
+        directory (see ``_owning_run_id_for_log``) and, when ``run_id``
+        names a sub-agent, filters the loaded records down to only the
+        ones that sub-agent itself produced -- the shared directory also
+        holds the primary's own records and any OTHER sub-agent's, none of
+        which belong in this run's viewer.
+
+        Review finding E: the per-record rendering window is no longer a
+        fixed 2,000,000 characters. ``run_log_max_record_bytes`` (the
+        WRITER's per-record ceiling) has no enforced maximum, so a fixed,
+        smaller viewer window could leave a real, fully-stored record
+        behind an unreachable "Use offset=N to continue" marker -- that
+        marker exists for ``search_run_log``'s interactive paging, which
+        this one-shot static viewer has no way to act on. The window is
+        instead ``max(2_000_000, configured_max_record_bytes())``: the
+        default behavior is unchanged (2,000,000 already exceeds the
+        default 1MB/record cap), and a larger configured cap grows the
+        window to match, so a freshly-written record -- bounded by the
+        writer to at most the CURRENT ``run_log_max_record_bytes`` bytes,
+        and UTF-8-decoded char count never exceeds byte count -- always
+        fits within one render.
+
+        Args:
+            run_id: The run's id to load.
+
+        Returns:
+            The rendered log text, or ``""`` when no log exists for
+            ``run_id``.
+        """
+        from tldw_chatbook.Agents.run_log import (
+            configured_max_record_bytes,
+            resolve_existing_log_dir,
+        )
+        from tldw_chatbook.Agents.run_log_search import format_results, load_records
+
+        owner_run_id = self._owning_run_id_for_log(run_id)
+        log_dir = resolve_existing_log_dir(owner_run_id)
+        if log_dir is None:
+            return ""
+        records = load_records(log_dir)
+        if owner_run_id != run_id:
+            records = [record for record in records if record.run_id == run_id]
+        if not records:
+            return ""
+        max_chars = max(2_000_000, configured_max_record_bytes())
+        return format_results(records, max_chars=max_chars)
+
     def record_run_assistant_message(
         self, run_id: str, persisted_message_id: str
     ) -> None:
@@ -1885,7 +2112,8 @@ class ConsoleAgentBridge:
         raw = step.summary or step.result or step.tool_name or step.kind
         # task-350: mark truncation with an ellipsis + affordance instead of a
         # silent mid-word clip for the run inspector's live-step lines.
-        return _truncate_step_text(str(raw), limit=_STEP_SUMMARY_LIMIT)
+        # TASK-870: limit is the user-configurable Console display cap.
+        return _truncate_step_text(str(raw), limit=_console_tool_result_display_cap())
 
     def _previous_primary_run_id(self, conversation_id: str) -> str | None:
         for record in self._db.list_runs(conversation_id, include_superseded=False):
@@ -1941,4 +2169,12 @@ class ConsoleAgentBridge:
             or step.get("kind")
             or ""
         )
-        return str(raw)[:200]
+        # TASK-870 (AC#5): a resumed/historical run used to get a bare
+        # `str(raw)[:200]` slice here -- a silent mid-word clip, the exact
+        # defect task-350 fixed for the LIVE path (`_summarize`, above) but
+        # never carried over to this persisted-step twin. Now shares both
+        # the same word-boundary + "(+N chars)" affordance (via
+        # `_truncate_step_text`) AND the same user-configurable cap, so a
+        # resumed transcript's step summaries render byte-identical to what
+        # a live run of the same steps would have shown.
+        return _truncate_step_text(str(raw), limit=_console_tool_result_display_cap())

@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
     build_console_conversation_browser_state,
@@ -670,6 +671,247 @@ async def test_drilldown_render_path_rejects_record_from_other_conversation():
         status_line, _steps, _subagents = console._console_agent_section_lines()
         assert console._console_agent_drilldown_run_id is None
         assert not status_line.startswith("Sub-agent ·")
+
+
+# -- Review finding A: the rail must not re-slice an already-capped step
+# summary down to a hardcoded 80 characters -- that silently overrides any
+# configured value above 80 with no visible effect, defeating TASK-870's
+# whole point. Covers both render paths: the live/historical overview
+# (`snapshot.steps`) and the drilled-in sub-agent path (`record["steps"]`,
+# which used to bypass `_summarize_persisted_step` entirely). --
+
+_A_LONG_RESULT = (
+    "The traditional rollback procedure requires draining every in-flight "
+    "request before the schema migration begins, otherwise a half-applied "
+    "column default can leave orphaned rows that the backfill job never "
+    "revisits, which is exactly the failure mode this runbook exists to "
+    "prevent for anyone paging through it at 3am."
+)
+
+
+@pytest.mark.asyncio
+async def test_drilldown_step_text_grows_with_a_configured_cap_above_eighty(
+    monkeypatch,
+):
+    monkeypatch.delenv("TLDW_CONSOLE_TOOL_RESULT_DISPLAY_CHARS", raising=False)
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        class _FakeBridge:
+            def subagent_run(self, run_id):
+                return {
+                    "id": run_id,
+                    "conversation_id": "conv-A",
+                    "status": "done",
+                    "task": "t",
+                    "steps": [
+                        {"kind": "tool_result", "summary": _A_LONG_RESULT},
+                    ],
+                }
+
+        console._console_agent_bridge = _FakeBridge()
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_run_id = "run-x"
+        console._console_agent_drilldown_conversation_id = "conv-A"
+
+        monkeypatch.setattr(
+            "tldw_chatbook.config.get_cli_setting", lambda *a, **k: 40
+        )
+        _status, steps_at_40, _subagents = console._console_agent_section_lines()
+
+        monkeypatch.setattr(
+            "tldw_chatbook.config.get_cli_setting", lambda *a, **k: 300
+        )
+        _status, steps_at_300, _subagents = console._console_agent_section_lines()
+
+        # A bare `[:80]` slice (the pre-fix behavior) would make BOTH of
+        # these identical (both capped at 80) regardless of the configured
+        # value -- raising the cap from well below 80 to well above it
+        # must visibly show more text.
+        assert len(steps_at_300) > len(steps_at_40)
+        assert len(steps_at_300) > 80
+        assert "(+" in steps_at_40  # still truncated at the lower cap
+
+
+# -- Review finding D: the "View full log" affordance's availability check
+# (a SQLite lookup to resolve the target run id, plus a filesystem probe)
+# must not run on every 0.2s rail tick -- cached per target run id, and
+# skipped entirely while the Agent section is collapsed. --
+
+
+@pytest.mark.asyncio
+async def test_full_log_probe_never_touches_the_bridge_while_collapsed():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        probe_calls = []
+
+        class _FakeBridge:
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot(status="done")
+
+            def subagent_run(self, run_id):
+                return None
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+            def latest_primary_run_id(self, conversation_id):
+                return "run-1"
+
+            def run_log_available(self, run_id):
+                probe_calls.append(run_id)
+                return True
+
+        console._console_agent_bridge = _FakeBridge()
+        console._console_agent_drilldown_run_id = None
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_conversation_id = "conv-A"
+        console._current_console_rail_state = lambda: SimpleNamespace(agent_open=False)
+
+        # Several "ticks" while collapsed: not even the run-id resolution
+        # -- let alone `run_log_available` -- may run.
+        console._sync_console_agent_section()
+        console._sync_console_agent_section()
+        console._sync_console_agent_section()
+
+        assert probe_calls == []
+
+
+@pytest.mark.asyncio
+async def test_full_log_probe_is_cached_per_run_id_while_open():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        probe_calls = []
+
+        class _FakeBridge:
+            def __init__(self):
+                self.target_run_id = "run-1"
+
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot(status="done")
+
+            def subagent_run(self, run_id):
+                return None
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+            def latest_primary_run_id(self, conversation_id):
+                return self.target_run_id
+
+            def run_log_available(self, run_id):
+                probe_calls.append(run_id)
+                return True
+
+        fake_bridge = _FakeBridge()
+        console._console_agent_bridge = fake_bridge
+        console._console_agent_drilldown_run_id = None
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_conversation_id = "conv-A"
+        console._current_console_rail_state = lambda: SimpleNamespace(agent_open=True)
+
+        # Steady state (same target run id across ticks): probed once, then
+        # every later tick is a cache hit.
+        console._sync_console_agent_section()
+        console._sync_console_agent_section()
+        console._sync_console_agent_section()
+        assert probe_calls == ["run-1"]
+
+        # The target run changes (e.g. a new primary run started) -- the
+        # cache must invalidate and re-probe exactly once for the new id.
+        fake_bridge.target_run_id = "run-2"
+        console._sync_console_agent_section()
+        console._sync_console_agent_section()
+        assert probe_calls == ["run-1", "run-2"]
+
+
+# -- Review finding C: the full-log load (filesystem read + record parse +
+# formatting) must happen off the UI thread -- the modal is only ever
+# pushed once control is back on it. --
+
+
+@pytest.mark.asyncio
+async def test_view_full_log_loads_off_thread_then_opens_the_modal():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        class _FakeBridge:
+            def live_snapshot(self, conversation_id):
+                return AgentLiveSnapshot(status="done")
+
+            def subagent_run(self, run_id):
+                return None
+
+            def subagent_runs(self, conversation_id):
+                return []
+
+            def latest_primary_run_id(self, conversation_id):
+                return "run-1"
+
+            def run_log_available(self, run_id):
+                return True
+
+            def load_run_log_text(self, run_id):
+                return "full untruncated log text for run-1"
+
+        console._console_agent_bridge = _FakeBridge()
+        console._console_agent_drilldown_run_id = None
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._console_agent_drilldown_conversation_id = "conv-A"
+
+        stack_len_before = len(host.screen_stack)
+        console._open_console_agent_run_log_viewer()
+        # The call itself only dispatches a worker -- it must return without
+        # blocking and without having pushed the modal yet.
+        assert len(host.screen_stack) == stack_len_before
+
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(host.screen_stack) == stack_len_before + 1
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, ConsoleRunLogModal)
+        assert modal._run_id == "run-1"
+        assert modal._log_text == "full untruncated log text for run-1"
+
+
+@pytest.mark.asyncio
+async def test_view_full_log_no_ops_when_there_is_no_target_run():
+    """No bridge/conversation/target -- must not dispatch a worker or push anything."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        console._console_agent_bridge = None  # no agent runtime available
+        console._console_agent_drilldown_run_id = None
+
+        stack_len_before = len(host.screen_stack)
+        console._open_console_agent_run_log_viewer()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(host.screen_stack) == stack_len_before
 
 
 @pytest.mark.asyncio

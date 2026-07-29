@@ -328,6 +328,7 @@ from ...Widgets.Console.console_prompt_picker_modal import (
     MODE_APPLY_SYSTEM as CONSOLE_PROMPT_PICKER_MODE_APPLY_SYSTEM,
     ConsolePromptPickerModal,
 )
+from ...Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from ...Widgets.Console.console_skill_picker_modal import ConsoleSkillPickerModal
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_system_prompt_modal import ConsoleSystemPromptModal
@@ -2184,8 +2185,14 @@ class ChatScreen(BaseAppScreen):
         # (skip Static.update()/style work when the computed payload hasn't
         # changed since the last successful apply).
         self._console_agent_section_last: (
-            tuple[str, str, str, str, bool, bool] | None
+            tuple[str, str, str, str, bool, bool, bool] | None
         ) = None
+        # Finding D (review round 2): cache of the "View full log"
+        # affordance's availability, keyed by the target run id -- see
+        # `_console_agent_full_log_available`'s docstring for why this
+        # exists (avoids a filesystem/DB probe on every 0.2s rail tick).
+        self._console_agent_full_log_cache_run_id: str | None = None
+        self._console_agent_full_log_cache_available: bool = False
         # TASK-915: transient (never persisted) "user collapsed the Agent
         # section while the fleet was busy" flag. Set by
         # `_toggle_console_rail_section` when the user closes the section
@@ -3077,9 +3084,20 @@ class ChatScreen(BaseAppScreen):
         if drill:
             record = bridge.subagent_run(drill)
             if record is not None and record.get("conversation_id") == conversation_id:
+                # Finding A (review round 2): this used to slice the raw
+                # `summary`/`result` field to a hardcoded 80 characters,
+                # bypassing `_summarize_persisted_step` entirely -- so a
+                # drilled-in sub-agent's step text neither respected the
+                # user-configurable display cap (TASK-870) nor got the
+                # word-boundary truncation affordance every other render
+                # path shares. Route through the same helper the top-level
+                # overview's persisted/resumed steps already use (see
+                # `ConsoleAgentBridge._derive_historical_snapshot`).
+                from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
                 steps = "\n".join(
                     f"{s.get('kind')}: "
-                    f"{str(s.get('summary') or s.get('result') or '')[:80]}"
+                    f"{ConsoleAgentBridge._summarize_persisted_step(s)}"
                     for s in record.get("steps", [])
                 )
                 return (
@@ -3112,7 +3130,13 @@ class ChatScreen(BaseAppScreen):
         status = f"Agent: {snapshot.status}"
         if snapshot.status == "running":
             status = f"Agent: running · step {snapshot.step}"
-        steps = "\n".join(f"· {s.text[:80]}" for s in snapshot.steps)
+        # Finding A (review round 2): `s.text` is already truncated to the
+        # user-configurable cap by whichever bridge helper built this
+        # snapshot (`_summarize` for a live step, `_summarize_persisted_
+        # step` for a resumed/historical one) -- re-slicing to a hardcoded
+        # 80 here silently overrode any configured value above 80 with no
+        # visible effect, defeating the whole point of that setting.
+        steps = "\n".join(f"· {s.text}" for s in snapshot.steps)
         glyphs = {
             "done": "✓",
             "running": "●",
@@ -3144,6 +3168,171 @@ class ChatScreen(BaseAppScreen):
             return ""
         return f"{running} other agents running, {pending} waiting for approval."
 
+    def _console_agent_full_log_run_id(self) -> str | None:
+        """Return the run id the "View full log" affordance should target.
+
+        TASK-870: mirrors ``_console_agent_section_lines``'s own
+        drill-vs-overview precedence -- the drilled-into sub-agent run
+        (when drilled in and still valid for the active conversation, the
+        same check that method uses), else the conversation's latest
+        primary run, which is what the top-level overview is summarizing.
+
+        Returns:
+            The relevant run id, or ``None`` when there is nothing to
+            target -- no bridge, no active conversation, a stale drill-in
+            left over from a conversation switch, or a conversation that
+            has never run an agent. Callers must still confirm
+            ``ConsoleAgentBridge.run_log_available`` before showing the
+            affordance for whatever id this returns -- a valid run id does
+            not imply a log was ever written for it.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return None
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id:
+            return None
+        drill = self._console_agent_drilldown_run_id
+        if drill:
+            record = bridge.subagent_run(drill)
+            if record is not None and record.get("conversation_id") == conversation_id:
+                return drill
+            return None
+        # getattr tolerates a bare test double that only implements the
+        # older bridge surface (subagent_run/subagent_runs/live_snapshot) --
+        # same idiom _console_agent_section_lines already uses for
+        # historical_snapshot, immediately below this method in this file.
+        latest_primary_run_id = getattr(bridge, "latest_primary_run_id", None)
+        if latest_primary_run_id is None:
+            return None
+        return latest_primary_run_id(conversation_id)
+
+    def _console_agent_full_log_available(self, *, allow_probe: bool = True) -> bool:
+        """Whether the "View full log" affordance should be shown right now.
+
+        TASK-870 (AC#6/#7): ``True`` only when ``_console_agent_full_log_
+        run_id`` resolves to a run AND that run actually has an on-disk log
+        -- absent (button hidden) for every other case, including a bridge
+        or filesystem lookup that raises, so a resolution failure can never
+        surface as a dangling or erroring button.
+
+        Finding D (review round 2): the underlying check costs a SQLite
+        lookup (``_console_agent_full_log_run_id``, to resolve the target
+        run id) plus a filesystem probe (``bridge.run_log_available``, to
+        confirm a log directory/segment exists -- for a drilled-in
+        sub-agent this can also mean parsing its primary's whole log, see
+        finding B) -- paying that unconditionally on every 0.2s rail tick
+        is real, avoidable I/O for a value that is overwhelmingly the same
+        tick to tick. The filesystem/DB probe result is cached keyed by
+        the resolved run id and only redone when that id changes; when
+        ``allow_probe`` is ``False`` (the periodic sync passes this while
+        the Agent section is collapsed -- see
+        ``_sync_console_agent_section``), this returns the last cached
+        answer WITHOUT even resolving the current run id, so a collapsed
+        section's steady-state tick touches neither disk nor the DB.
+
+        Args:
+            allow_probe: Whether a cache miss may fall through to the
+                SQLite/filesystem lookup. Callers that need a fresh,
+                authoritative answer (the one-shot compose-time render,
+                and the "open the viewer" press-time re-check) should
+                leave this ``True``; the periodic rail sync passes
+                ``section_open`` here.
+
+        Returns:
+            Whether the affordance should be visible for the current
+            target run -- possibly a stale cached value when
+            ``allow_probe`` is ``False`` and the target has since changed
+            unobserved (self-corrects the moment the section reopens).
+        """
+        if not allow_probe:
+            return self._console_agent_full_log_cache_available
+        run_id = self._console_agent_full_log_run_id()
+        if run_id == self._console_agent_full_log_cache_run_id:
+            return self._console_agent_full_log_cache_available
+        if not run_id:
+            available = False
+        else:
+            bridge = self._ensure_console_agent_bridge()
+            if bridge is None:
+                available = False
+            else:
+                try:
+                    available = bool(bridge.run_log_available(run_id))
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "console agent rail: run_log_available check failed for "
+                        f"run_id={run_id}; hiding the View full log affordance"
+                    )
+                    available = False
+        self._console_agent_full_log_cache_run_id = run_id
+        self._console_agent_full_log_cache_available = available
+        return available
+
+    def _open_console_agent_run_log_viewer(self) -> None:
+        """Kick off loading the full run log for whatever "View full log" targets.
+
+        TASK-870 (AC#6): re-resolves the target run id at press time
+        (rather than trusting a value cached from the last 0.2s sync) so a
+        drill-in change between sync ticks can never open the wrong run's
+        log. No-ops quietly if there is no current target.
+
+        Finding C (review round 2): the actual filesystem read + record
+        parse + formatting now happens off the UI thread (see
+        ``_load_console_agent_run_log``) -- a run's segments can total
+        many megabytes (4MB per segment, no cap on segment count), and
+        doing that synchronously on the Textual event loop could freeze
+        the whole app for the duration of the read.
+        """
+        run_id = self._console_agent_full_log_run_id()
+        if not run_id:
+            return
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return
+        self._load_console_agent_run_log(bridge, run_id)
+
+    @work(thread=True)
+    def _load_console_agent_run_log(self, bridge: Any, run_id: str) -> None:
+        """Load, filter, and format one run's full log off the UI thread.
+
+        Finding C: the worker half of ``_open_console_agent_run_log_
+        viewer`` -- everything here is filesystem/CPU work (no widget
+        access), so it is safe to run in a real thread. The modal is only
+        ever pushed back on the UI thread, via ``call_from_thread``.
+
+        Args:
+            bridge: The already-resolved Console agent bridge (resolved on
+                the UI thread by the caller -- lazy bridge construction
+                touches ``self.app_instance``/config and should not run
+                off-thread).
+            run_id: The run id to load, as resolved by the caller at press
+                time.
+        """
+        try:
+            if not bridge.run_log_available(run_id):
+                return
+            log_text = bridge.load_run_log_text(run_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"console agent rail: failed to load run log for run_id={run_id}"
+            )
+            return
+        if not log_text:
+            return
+        self.app.call_from_thread(
+            self._show_console_agent_run_log_modal, run_id, log_text
+        )
+
+    def _show_console_agent_run_log_modal(self, run_id: str, log_text: str) -> None:
+        """Push the full-log modal. UI-thread only -- see ``_load_console_agent_run_log``.
+
+        Args:
+            run_id: The run id the loaded text belongs to.
+            log_text: The fully rendered, untruncated log text.
+        """
+        self.app.push_screen(ConsoleRunLogModal(run_id=run_id, log_text=log_text))
+
     def _sync_console_agent_section(self) -> None:
         """Refresh the mounted Agent rail Statics + Back-button visibility.
 
@@ -3161,6 +3350,11 @@ class ChatScreen(BaseAppScreen):
         or release the section on this same periodic sync, or the fleet
         line would only ever be reachable for whichever fleet state
         happened to exist at the moment the screen was first composed.
+
+        TASK-870: also tracks the "View full log" affordance's visibility
+        (``_console_agent_full_log_available``) -- present only while a run
+        log actually exists for whatever run the section is currently
+        showing (AC#6/#7).
         """
         status_line, steps_text, subagents_text = self._console_agent_section_lines()
         fleet_line = self._console_agent_fleet_summary_line()
@@ -3181,6 +3375,11 @@ class ChatScreen(BaseAppScreen):
             # still worth applying even when the section's own open state
             # cannot be derived.
             section_open = False
+        # Finding D: never probe disk/DB for the full-log affordance while
+        # the section is collapsed -- `section_open` must be known first.
+        full_log_visible = self._console_agent_full_log_available(
+            allow_probe=section_open
+        )
         payload = (
             status_line,
             steps_text,
@@ -3188,6 +3387,7 @@ class ChatScreen(BaseAppScreen):
             fleet_line,
             back_visible,
             section_open,
+            full_log_visible,
         )
         if payload == self._console_agent_section_last:
             return
@@ -3202,6 +3402,10 @@ class ChatScreen(BaseAppScreen):
             fleet_summary.styles.display = "block" if fleet_line else "none"
             back_button = self.query_one("#console-agent-drilldown-back", Button)
             back_button.styles.display = "block" if back_visible else "none"
+            full_log_button = self.query_one(
+                "#console-agent-view-full-log", Button
+            )
+            full_log_button.styles.display = "block" if full_log_visible else "none"
             agent_body = self.query_one("#console-rail-section-body-agent")
             agent_body.styles.display = "block" if section_open else "none"
             agent_header = self.query_one(
@@ -10236,6 +10440,27 @@ class ChatScreen(BaseAppScreen):
                             if not self._console_agent_drilldown_run_id:
                                 back_button.styles.display = "none"
                             yield back_button
+                            # TASK-870 (AC#6/#7): the full-run-log
+                            # affordance -- present only while a run log
+                            # actually exists for whatever run this section
+                            # is currently showing.
+                            full_log_button = Button(
+                                "View full log",
+                                id="console-agent-view-full-log",
+                                classes=(
+                                    "console-workspace-action "
+                                    "console-agent-view-full-log"
+                                ),
+                                compact=True,
+                            )
+                            full_log_button.tooltip = (
+                                "Open the full, untruncated run log for this "
+                                "run -- what the model actually saw, before "
+                                "the Console's display cap trimmed it."
+                            )
+                            if not self._console_agent_full_log_available():
+                                full_log_button.styles.display = "none"
+                            yield full_log_button
 
                         # Section 4: Details (storage, sync, handoff plumbing).
                         yield DestinationRailSectionHeader(
@@ -16569,6 +16794,10 @@ class ChatScreen(BaseAppScreen):
                 exclusive=True,
                 group="console-sync",
             )
+            return
+        if button_id == "console-agent-view-full-log":
+            event.stop()
+            self._open_console_agent_run_log_viewer()
             return
         if button_id and button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
             event.stop()

@@ -3549,6 +3549,99 @@ async def test_settings_console_behavior_saves_max_parallel_runs(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_settings_console_behavior_rejects_invalid_tool_result_display_chars(
+    monkeypatch,
+):
+    """Review finding G (PR #1082, ruling DECLINE the bespoke-Pydantic ask):
+    ``_normalise_tool_result_display_chars`` already validates through
+    ``validate_number_range`` -- the same shared helper every other
+    Console Behavior numeric field uses (see
+    ``test_settings_console_behavior_saves_max_parallel_runs`` for the
+    sibling field this mirrors). This confirms, rather than assumes, that
+    an out-of-range value, a non-numeric value, and an empty value each
+    produce the existing user-facing error on Save and leave the stored
+    setting untouched -- exactly what a bespoke per-field Pydantic model
+    would also have to guarantee, without the inconsistency of one field
+    validating differently from its siblings.
+    """
+    app = _build_test_app()
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        field = screen.query_one(
+            "#settings-console-tool-result-display-chars", Input
+        )
+
+        assert field.restrict == r"^[0-9]*$"
+        assert field.value == "160"  # DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS
+
+        # Out of range (MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS is 2000).
+        field.value = "999999"
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await pilot.pause(0.5)
+        assert (
+            "Tool result display cap must be between 20 and 2000."
+            in _visible_text(screen)
+        )
+        assert saved == []
+        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+
+        # Non-numeric (bypasses the Input's own `restrict` -- e.g. a paste
+        # or a programmatic set -- so the handler's own guard is what's
+        # actually under test here).
+        field.value = "abc"
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await pilot.pause(0.5)
+        assert (
+            "Tool result display cap must be a whole number."
+            in _visible_text(screen)
+        )
+        assert saved == []
+        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+
+        # Empty.
+        field.value = ""
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await pilot.pause(0.5)
+        assert (
+            "Tool result display cap must be a whole number."
+            in _visible_text(screen)
+        )
+        assert saved == []
+        assert "tool_result_display_chars" not in app.app_config.get("console", {})
+
+        # A valid value still saves normally after the rejected attempts.
+        field.value = "500"
+        screen.handle_console_tool_result_display_chars_changed(
+            Input.Changed(field, field.value)
+        )
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
+
+    assert saved == [{"console": {"tool_result_display_chars": 500}}]
+    assert app.app_config["console"]["tool_result_display_chars"] == 500
+
+
+@pytest.mark.asyncio
 async def test_settings_console_behavior_renders_global_default_controls():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
