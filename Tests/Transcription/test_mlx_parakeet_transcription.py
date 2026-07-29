@@ -763,6 +763,7 @@ class TestMLXParakeetIntegration:
                 # Should handle empty file gracefully
                 assert "text" in result
                 assert result["text"] == "" or result["text"].strip() == ""
+                assert result["segments"] == []
 
             finally:
                 os.unlink(tmp_file.name)

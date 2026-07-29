@@ -346,10 +346,8 @@ class TestMLXParakeetIntegration:
         assert "precision" in result
         assert result["precision"] == precision
 
-    def test_empty_audio_returns_zero_length_addressable_segment(
-        self, transcription_service, mock_model_download
-    ):
-        """Empty Parakeet results retain one addressable zero-length span."""
+    def test_empty_audio(self, transcription_service, mock_model_download):
+        """Test handling of empty audio files."""
         # Create empty WAV file
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
             with wave.open(tmp_file.name, "wb") as wav_file:
@@ -360,22 +358,6 @@ class TestMLXParakeetIntegration:
             empty_file = tmp_file.name
 
         try:
-            # Override the mock factory to handle empty audio
-            def create_empty_model(*args, **kwargs):
-                model = MagicMock()
-
-                def transcribe_empty(audio_path, **kwargs):
-                    result = MagicMock()
-                    result.text = ""  # Empty transcription for empty audio
-                    result.sentences = []  # No sentences
-                    return result
-
-                model.transcribe = transcribe_empty
-                model._model_name = args[0] if args else "test-model"
-                return model
-
-            mock_model_download.side_effect = create_empty_model
-
             result = transcription_service.transcribe(
                 audio_path=empty_file, provider="parakeet-mlx"
             )
@@ -383,16 +365,8 @@ class TestMLXParakeetIntegration:
             # Should handle gracefully
             assert "text" in result
             assert result["text"] == ""
-            assert result["segments"] == [
-                {
-                    "start": 0.0,
-                    "end": 0.0,
-                    "text": "",
-                    "Time_Start": 0.0,
-                    "Time_End": 0.0,
-                    "Text": "",
-                }
-            ]
+            assert result["segments"] == []
+            mock_model_download.assert_not_called()
         finally:
             os.unlink(empty_file)
 

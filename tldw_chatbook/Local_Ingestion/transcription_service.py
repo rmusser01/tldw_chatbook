@@ -2433,6 +2433,98 @@ class _LegacyTranscriptionBackend:
             except Exception as e:
                 _handle_progress_callback_error(e)
 
+        if sf is not None:
+            try:
+                audio_info = sf.info(audio_path)
+            except Exception:
+                audio_info = None
+            if audio_info is not None:
+                raw_frames = getattr(audio_info, "frames", None)
+                raw_duration = getattr(audio_info, "duration", None)
+                empty_frames = isinstance(raw_frames, (int, float)) and raw_frames == 0
+                empty_duration = (
+                    isinstance(raw_duration, (int, float))
+                    and float(raw_duration) == 0.0
+                )
+                if empty_frames or empty_duration:
+                    chunk_duration = kwargs.get(
+                        "chunk_duration",
+                        kwargs.get(
+                            "chunk_size",
+                            self._parakeet_mlx_config["chunk_duration"],
+                        ),
+                    )
+                    overlap_duration = kwargs.get(
+                        "overlap_duration",
+                        kwargs.get(
+                            "overlap",
+                            self._parakeet_mlx_config["overlap_duration"],
+                        ),
+                    )
+                    try:
+                        chunk_duration = float(chunk_duration)
+                    except (TypeError, ValueError):
+                        chunk_duration = float(
+                            self._parakeet_mlx_config["chunk_duration"]
+                        )
+                    try:
+                        overlap_duration = float(overlap_duration)
+                    except (TypeError, ValueError):
+                        overlap_duration = float(
+                            self._parakeet_mlx_config["overlap_duration"]
+                        )
+                    if chunk_duration <= 0:
+                        chunk_duration = float(
+                            self._parakeet_mlx_config["chunk_duration"]
+                        )
+                    if overlap_duration < 0:
+                        overlap_duration = 0.0
+                    if overlap_duration >= chunk_duration:
+                        overlap_duration = max(0.0, chunk_duration - 1.0)
+
+                    raw_sample_rate = getattr(audio_info, "samplerate", None)
+                    audio_sample_rate = (
+                        int(raw_sample_rate)
+                        if isinstance(raw_sample_rate, (int, float))
+                        else None
+                    )
+                    result_dict = {
+                        "text": "",
+                        "segments": [],
+                        "language": source_lang or "en",
+                        "provider": "parakeet-mlx",
+                        "model": model,
+                        "precision": precision,
+                        "attention_type": attention_type,
+                        "chunk_size": chunk_duration,
+                        "overlap": overlap_duration,
+                        "sample_rate": (
+                            f"{audio_sample_rate} -> 16000"
+                            if audio_sample_rate and audio_sample_rate != 16000
+                            else str(audio_sample_rate)
+                            if audio_sample_rate
+                            else "16000"
+                        ),
+                        "duration": 0.0,
+                    }
+                    logger.info(
+                        "[PARAKEET] Empty audio metadata detected; skipping model load"
+                    )
+                    if progress_callback:
+                        try:
+                            progress_callback(
+                                100,
+                                "Transcription complete: 0 segments, 0 characters",
+                                {
+                                    "total_segments": 0,
+                                    "total_chars": 0,
+                                    "model": model,
+                                },
+                            )
+                        except Exception as e:
+                            _handle_progress_callback_error(e)
+                    return result_dict
+
         # Lazy load Parakeet MLX model with thread safety
         logger.info("[PARAKEET] Checking if model needs to be loaded...")
         logger.info(f"[PARAKEET] Current model: {self._parakeet_mlx_model}")
