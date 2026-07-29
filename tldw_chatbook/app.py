@@ -7682,6 +7682,26 @@ class TldwCli(
         if cancellation is not None:
             raise cancellation
 
+    def _handle_exception(self, error: Exception) -> None:
+        """Record the crash type, then let Textual do what it always did.
+
+        TASK-1240. Names the exception class only -- never the message, which is
+        caller-supplied text and may quote user or model content. Calls super()
+        unconditionally: Textual sets the return code here and re-raises for
+        test frameworks, and swallowing that would turn a crash into a hang.
+        """
+        try:
+            persist_event(
+                "app",
+                "unhandled_exception",
+                level=logging.ERROR,
+                exception_type=type(error).__name__,
+            )
+        except Exception:
+            # Diagnostics must never be the reason a crash handler fails.
+            pass
+        super()._handle_exception(error)
+
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
         import asyncio
