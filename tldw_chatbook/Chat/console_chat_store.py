@@ -34,6 +34,8 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
+from tldw_chatbook.TTS.profile_errors import ProfileValidationError
+from tldw_chatbook.TTS.profile_types import CharacterRef
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
@@ -233,11 +235,48 @@ class ConsoleChatSession:
     #: ``SessionScopeHolder``. ``persist_session_if_needed`` flushes it
     #: through to durable storage exactly once, at first persistence.
     rag_scope_holder: SessionScopeHolder = field(default_factory=SessionScopeHolder)
-    #: When set, this is a character-bound session: it persists with the
-    #: character's id, forces the plain-provider path, and restores as a
-    #: character session (task-427). ``None`` = a normal Console session.
+    #: Durable assistant identity. Authority may be ``None`` for an unscoped
+    #: character; such a session still routes as direct character chat but is
+    #: not eligible for authority-scoped profile assignment.
+    runtime_backend: str = "local"
+    assistant_kind: str | None = "generic"
+    assistant_id: str | None = "console"
+    assistant_authority_id: str | None = None
+    #: Local-only numeric compatibility/display projection. Server character
+    #: IDs remain opaque in ``assistant_id`` and never populate this field.
     character_id: int | None = None
     character_name: str | None = None
+
+    def character_ref(self) -> CharacterRef | None:
+        """Return the complete authority-scoped character identity, if any."""
+        if self.assistant_kind != "character":
+            return None
+        if type(self.assistant_authority_id) is not str:
+            return None
+        if type(self.assistant_id) is not str or not self.assistant_id:
+            return None
+
+        if self.runtime_backend == "local":
+            if (
+                type(self.character_id) is not int
+                or self.character_id < 1
+                or self.assistant_id != str(self.character_id)
+            ):
+                return None
+        elif self.runtime_backend == "server":
+            if self.character_id is not None:
+                return None
+        else:
+            return None
+
+        try:
+            return CharacterRef(
+                source=self.runtime_backend,
+                authority_id=self.assistant_authority_id,
+                character_id=self.assistant_id,
+            )
+        except ProfileValidationError:
+            return None
 
 
 class ConsoleChatStore:
@@ -341,12 +380,24 @@ class ConsoleChatStore:
         title: str = DEFAULT_CONSOLE_SESSION_TITLE,
         workspace_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
+        runtime_backend: str = "local",
+        assistant_kind: str | None = "generic",
+        assistant_id: str | None = "console",
+        assistant_authority_id: str | None = None,
+        character_id: int | None = None,
+        character_name: str | None = None,
     ) -> ConsoleChatSession:
         """Create and activate a new native Console session."""
         session = ConsoleChatSession(
             title=title,
             workspace_id=workspace_id or self.workspace_context.active_workspace_id,
             settings=settings,
+            runtime_backend=runtime_backend,
+            assistant_kind=assistant_kind,
+            assistant_id=assistant_id,
+            assistant_authority_id=assistant_authority_id,
+            character_id=character_id,
+            character_name=character_name,
         )
         self._sessions[session.id] = session
         self._messages_by_session[session.id] = []
@@ -366,6 +417,12 @@ class ConsoleChatStore:
         all_nodes: Iterable[ConsoleChatMessage],
         active_leaf_persisted_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
+        runtime_backend: str = "local",
+        assistant_kind: str | None = "generic",
+        assistant_id: str | None = "console",
+        assistant_authority_id: str | None = None,
+        character_id: int | None = None,
+        character_name: str | None = None,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -409,6 +466,12 @@ class ConsoleChatStore:
             title=title,
             workspace_id=workspace_id,
             settings=settings,
+            runtime_backend=runtime_backend,
+            assistant_kind=assistant_kind,
+            assistant_id=assistant_id,
+            assistant_authority_id=assistant_authority_id,
+            character_id=character_id,
+            character_name=character_name,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
         self._ingest_full_tree(
@@ -1900,18 +1963,21 @@ class ConsoleChatStore:
         if self.persistence is None:
             return None
         scope_type, persisted_workspace_id = self._persistence_scope(session)
-        if session.character_id is not None:
-            identity_kwargs = {
-                "assistant_kind": "character",
-                "assistant_id": str(session.character_id),
-                "character_id": session.character_id,
-                "character_name": session.character_name,
-            }
-        else:
-            identity_kwargs = {
-                "assistant_kind": "generic",
-                "assistant_id": "console",
-            }
+        is_local_character = (
+            session.runtime_backend == "local"
+            and session.assistant_kind == "character"
+            and type(session.character_id) is int
+            and session.character_id > 0
+            and session.assistant_id == str(session.character_id)
+        )
+        identity_kwargs = {
+            "runtime_backend": session.runtime_backend,
+            "assistant_kind": session.assistant_kind,
+            "assistant_id": session.assistant_id,
+            "assistant_authority_id": session.assistant_authority_id,
+            "character_id": session.character_id if is_local_character else None,
+            "character_name": session.character_name if is_local_character else None,
+        }
         session.persisted_conversation_id = self.persistence.create_conversation(
             conversation_title=session.title,
             workspace_id=persisted_workspace_id,

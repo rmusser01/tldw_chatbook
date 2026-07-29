@@ -6405,6 +6405,37 @@ class ChatScreen(BaseAppScreen):
         active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(
             target
         )
+        raw_runtime_backend = conversation.get("runtime_backend")
+        if raw_runtime_backend is None:
+            runtime_backend = "local"
+        elif type(raw_runtime_backend) is str:
+            runtime_backend = raw_runtime_backend
+        else:
+            runtime_backend = ""
+        raw_assistant_kind = conversation.get("assistant_kind")
+        assistant_kind = (
+            raw_assistant_kind if type(raw_assistant_kind) is str else None
+        )
+        raw_assistant_id = conversation.get("assistant_id")
+        assistant_id = raw_assistant_id if type(raw_assistant_id) is str else None
+        raw_assistant_authority_id = conversation.get("assistant_authority_id")
+        assistant_authority_id = (
+            raw_assistant_authority_id
+            if type(raw_assistant_authority_id) is str
+            else None
+        )
+        raw_character_id = conversation.get("character_id")
+        character_id = (
+            raw_character_id
+            if (
+                runtime_backend == "local"
+                and assistant_kind == "character"
+                and type(raw_character_id) is int
+                and raw_character_id > 0
+                and assistant_id == str(raw_character_id)
+            )
+            else None
+        )
         session = store.restore_persisted_session(
             title=title,
             workspace_id=workspace_id,
@@ -6412,6 +6443,11 @@ class ChatScreen(BaseAppScreen):
             all_nodes=all_nodes,
             active_leaf_persisted_id=active_leaf_id,
             settings=self._console_session_settings_for_resume(conversation),
+            runtime_backend=runtime_backend,
+            assistant_kind=assistant_kind,
+            assistant_id=assistant_id,
+            assistant_authority_id=assistant_authority_id,
+            character_id=character_id,
         )
         # Re-derive display-only agent TOOL markers from AgentRunsDB and overlay
         # them onto the restored active-path VIEW (markers are never tree nodes;
@@ -6423,38 +6459,30 @@ class ChatScreen(BaseAppScreen):
                 store.messages_for_session(session.id), target
             ),
         )
-        # TASK-427: the plain-provider gate (task-3) keys off the active
-        # session's ``character_id`` -- restore it from the persisted
-        # conversation row so a character conversation resumed after an
-        # app restart keeps routing sends off the agent loop.
-        raw_character_id = conversation.get("character_id")
-        if raw_character_id is not None:
-            try:
-                character_id = int(raw_character_id)
-            except (TypeError, ValueError):
-                character_id = None
-            session.character_id = character_id
-            if character_id is not None:
-                # The persisted conversation row carries only the id, so
-                # rehydrate the character name/label from the card. This keeps
-                # the settings identity row reading "Character: <name>" after
-                # resume instead of the Persona fallback. Best-effort: a
-                # missing/failed card leaves ``character_id`` (and the routing
-                # gate) intact.
-                character_name = await self._resolve_resumed_character_name(
-                    character_id
+        # Local presentation remains keyed only by the numeric local
+        # projection. Opaque server identity never enters local card/avatar/
+        # dictionary lookup paths.
+        if (
+            session.runtime_backend == "local"
+            and session.assistant_kind == "character"
+            and session.character_id is not None
+        ):
+            character_name = await self._resolve_resumed_character_name(
+                session.character_id
+            )
+            if character_name:
+                session.character_name = character_name
+            # Always (re)set the label on a local character resume -- to the
+            # resolved name, or clear it when unresolved. ``settings`` are
+            # otherwise inherited from the currently active session, so
+            # leaving an inherited ``character_label`` in place would make
+            # a card-less resume show a *different* character's name.
+            if session.settings is not None:
+                session.settings = replace(
+                    session.settings, character_label=character_name
                 )
-                if character_name:
-                    session.character_name = character_name
-                # Always (re)set the label on a character resume -- to the
-                # resolved name, or clear it when unresolved. ``settings`` are
-                # otherwise inherited from the currently active session, so
-                # leaving an inherited ``character_label`` in place would make
-                # a card-less resume show a *different* character's name.
-                if session.settings is not None:
-                    session.settings = replace(
-                        session.settings, character_label=character_name
-                    )
+        elif session.settings is not None:
+            session.settings = replace(session.settings, character_label="")
         self._set_active_workspace_for_console_session(session.id)
         # task-9/task-13: warm the EFFECTIVE (conversation ∩ workspace)
         # scope cache for this session now (off-loop) so the Inspector row
@@ -11798,9 +11826,10 @@ class ChatScreen(BaseAppScreen):
                     "draft": session.draft,
                     "settings": self._serialize_console_settings(session.settings),
                     "updated_at": session.updated_at,
-                    # task-427: round-trip the character binding so a screen-
-                    # state restore keeps a character session on the plain-
-                    # provider gate instead of reverting it to a generic one.
+                    "runtime_backend": session.runtime_backend,
+                    "assistant_kind": session.assistant_kind,
+                    "assistant_id": session.assistant_id,
+                    "assistant_authority_id": session.assistant_authority_id,
                     "character_id": session.character_id,
                     "character_name": session.character_name,
                 }
@@ -11857,15 +11886,53 @@ class ChatScreen(BaseAppScreen):
             raw_updated_at = raw_session.get("updated_at")
             if raw_updated_at:
                 session_kwargs["updated_at"] = str(raw_updated_at)
-            # task-427: restore the character binding when present. Legacy
-            # payloads (saved before these keys existed) simply omit them and
-            # keep the ConsoleChatSession ``None`` defaults.
+            identity_keys = (
+                "runtime_backend",
+                "assistant_kind",
+                "assistant_id",
+                "assistant_authority_id",
+            )
+            has_source_aware_identity = any(
+                key in raw_session for key in identity_keys
+            )
+            if has_source_aware_identity:
+                raw_runtime_backend = raw_session.get("runtime_backend")
+                session_kwargs["runtime_backend"] = (
+                    raw_runtime_backend
+                    if type(raw_runtime_backend) is str
+                    else ("local" if raw_runtime_backend is None else "")
+                )
+                for key in (
+                    "assistant_kind",
+                    "assistant_id",
+                    "assistant_authority_id",
+                ):
+                    value = raw_session.get(key)
+                    session_kwargs[key] = value if type(value) is str else None
+
             raw_character_id = raw_session.get("character_id")
-            if raw_character_id is not None:
-                try:
-                    session_kwargs["character_id"] = int(raw_character_id)
-                except (TypeError, ValueError):
-                    pass
+            character_id: int | None = None
+            if type(raw_character_id) is int and raw_character_id > 0:
+                if not has_source_aware_identity:
+                    character_id = raw_character_id
+                elif (
+                    session_kwargs.get("runtime_backend") == "local"
+                    and session_kwargs.get("assistant_kind") == "character"
+                    and session_kwargs.get("assistant_id") == str(raw_character_id)
+                ):
+                    character_id = raw_character_id
+            if character_id is not None:
+                session_kwargs["character_id"] = character_id
+            if not has_source_aware_identity and character_id is not None:
+                # Pre-provenance screen state used the numeric local character
+                # projection as its direct-chat routing marker. Preserve that
+                # behavior without inventing a proven authority.
+                session_kwargs.update(
+                    runtime_backend="local",
+                    assistant_kind="character",
+                    assistant_id=str(character_id),
+                    assistant_authority_id=None,
+                )
             raw_character_name = raw_session.get("character_name")
             if raw_character_name is not None:
                 session_kwargs["character_name"] = str(raw_character_name)
@@ -12149,6 +12216,13 @@ class ChatScreen(BaseAppScreen):
             workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
             settings=settings,
         )
+        # This local-only handoff has no proven authority. Record its basic
+        # source/kind/id for direct-chat compatibility while authority-scoped
+        # features continue to fail closed.
+        session.runtime_backend = "local"
+        session.assistant_kind = "character"
+        session.assistant_id = _assistant_id
+        session.assistant_authority_id = None
         session.character_id = character_id
         session.character_name = name
         if greeting:

@@ -11,8 +11,91 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleCha
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, read_conversation_scope
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
+
+
+def test_session_character_ref_projects_complete_local_and_server_identities():
+    local = ConsoleChatSession(
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="local-authority",
+        character_id=7,
+    )
+    server = ConsoleChatSession(
+        runtime_backend="server",
+        assistant_kind="character",
+        assistant_id="opaque-character",
+        assistant_authority_id="server-user-v1:" + ("a" * 64),
+        character_id=None,
+    )
+
+    assert local.character_ref() == CharacterRef(
+        source="local",
+        authority_id="local-authority",
+        character_id="7",
+    )
+    assert server.character_ref() == CharacterRef(
+        source="server",
+        authority_id="server-user-v1:" + ("a" * 64),
+        character_id="opaque-character",
+    )
+
+
+@pytest.mark.parametrize(
+    "session_kwargs",
+    [
+        {
+            "runtime_backend": "server",
+            "assistant_kind": "character",
+            "assistant_id": "opaque-character",
+            "assistant_authority_id": None,
+        },
+        {
+            "runtime_backend": "local",
+            "assistant_kind": "persona",
+            "assistant_id": "persona-1",
+            "assistant_authority_id": None,
+        },
+        {},
+        {
+            "runtime_backend": "local",
+            "assistant_kind": "character",
+            "assistant_id": "007",
+            "assistant_authority_id": "local-authority",
+            "character_id": 7,
+        },
+        {
+            "runtime_backend": "server",
+            "assistant_kind": "character",
+            "assistant_id": "opaque-character",
+            "assistant_authority_id": "server-authority",
+            "character_id": 7,
+        },
+        {
+            "runtime_backend": "other",
+            "assistant_kind": "character",
+            "assistant_id": "7",
+            "assistant_authority_id": "local-authority",
+            "character_id": 7,
+        },
+    ],
+    ids=[
+        "unscoped-server",
+        "persona",
+        "generic",
+        "mismatched-local-id",
+        "server-with-local-projection",
+        "unknown-source",
+    ],
+)
+def test_session_character_ref_rejects_unproven_or_inconsistent_identity(
+    session_kwargs,
+):
+    session = ConsoleChatSession(**session_kwargs)
+    assert session.character_ref() is None
 
 
 def test_store_creates_session_and_appends_messages():
@@ -584,21 +667,146 @@ def test_persist_session_if_needed_passes_none_system_prompt_without_settings():
     assert persistence.created_conversations[0]["system_prompt"] is None
 
 
-def test_persist_session_if_needed_passes_character_identity():
+@pytest.mark.parametrize(
+    ("session_kwargs", "expected"),
+    [
+        (
+            {
+                "runtime_backend": "local",
+                "assistant_kind": "character",
+                "assistant_id": "7",
+                "assistant_authority_id": "local-authority",
+                "character_id": 7,
+                "character_name": "Elara",
+            },
+            {
+                "runtime_backend": "local",
+                "assistant_kind": "character",
+                "assistant_id": "7",
+                "assistant_authority_id": "local-authority",
+                "character_id": 7,
+                "character_name": "Elara",
+            },
+        ),
+        (
+            {
+                "runtime_backend": "server",
+                "assistant_kind": "character",
+                "assistant_id": "opaque-character",
+                "assistant_authority_id": "server-user-v1:" + ("b" * 64),
+            },
+            {
+                "runtime_backend": "server",
+                "assistant_kind": "character",
+                "assistant_id": "opaque-character",
+                "assistant_authority_id": "server-user-v1:" + ("b" * 64),
+                "character_id": None,
+                "character_name": None,
+            },
+        ),
+        (
+            {
+                "runtime_backend": "server",
+                "assistant_kind": "character",
+                "assistant_id": "opaque-character",
+                "assistant_authority_id": None,
+            },
+            {
+                "runtime_backend": "server",
+                "assistant_kind": "character",
+                "assistant_id": "opaque-character",
+                "assistant_authority_id": None,
+                "character_id": None,
+                "character_name": None,
+            },
+        ),
+        (
+            {
+                "runtime_backend": "local",
+                "assistant_kind": "persona",
+                "assistant_id": "persona-1",
+                "assistant_authority_id": None,
+                "character_id": 99,
+            },
+            {
+                "runtime_backend": "local",
+                "assistant_kind": "persona",
+                "assistant_id": "persona-1",
+                "assistant_authority_id": None,
+                "character_id": None,
+                "character_name": None,
+            },
+        ),
+        (
+            {
+                "runtime_backend": "local",
+                "assistant_kind": "character",
+                "assistant_id": "007",
+                "assistant_authority_id": "local-authority",
+                "character_id": 7,
+                "character_name": "Mismatched",
+            },
+            {
+                "runtime_backend": "local",
+                "assistant_kind": "character",
+                "assistant_id": "007",
+                "assistant_authority_id": "local-authority",
+                "character_id": None,
+                "character_name": None,
+            },
+        ),
+        (
+            {
+                "runtime_backend": "local",
+                "assistant_kind": "character",
+                "assistant_id": "0",
+                "assistant_authority_id": "local-authority",
+                "character_id": 0,
+                "character_name": "Invalid",
+            },
+            {
+                "runtime_backend": "local",
+                "assistant_kind": "character",
+                "assistant_id": "0",
+                "assistant_authority_id": "local-authority",
+                "character_id": None,
+                "character_name": None,
+            },
+        ),
+        (
+            {},
+            {
+                "runtime_backend": "local",
+                "assistant_kind": "generic",
+                "assistant_id": "console",
+                "assistant_authority_id": None,
+                "character_id": None,
+                "character_name": None,
+            },
+        ),
+    ],
+    ids=[
+        "local-character",
+        "scoped-server",
+        "unscoped-server",
+        "persona",
+        "noncanonical-local-id",
+        "nonpositive-local-id",
+        "generic",
+    ],
+)
+def test_persist_session_if_needed_passes_exact_session_identity(
+    session_kwargs, expected
+):
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
-    session = store.create_session(title="Chat with Elara")
-    session.character_id = 7
-    session.character_name = "Elara"
+    session = store.create_session(title="Identity chat", **session_kwargs)
 
     conv_id = store.persist_session_if_needed(session.id)
 
     assert conv_id is not None
     kwargs = persistence.last_create_kwargs
-    assert kwargs["character_id"] == 7
-    assert kwargs["character_name"] == "Elara"
-    assert kwargs["assistant_kind"] == "character"
-    assert kwargs["assistant_id"] == "7"
+    assert {key: kwargs[key] for key in expected} == expected
 
 
 def test_persist_session_if_needed_non_character_stays_generic():
@@ -609,9 +817,11 @@ def test_persist_session_if_needed_non_character_stays_generic():
     store.persist_session_if_needed(session.id)
 
     kwargs = persistence.last_create_kwargs
+    assert kwargs["runtime_backend"] == "local"
     assert kwargs["assistant_kind"] == "generic"
     assert kwargs["assistant_id"] == "console"
-    assert kwargs.get("character_id") is None
+    assert kwargs["assistant_authority_id"] is None
+    assert kwargs["character_id"] is None
 
 
 def test_set_session_system_prompt_updates_settings_without_persisting_when_unsaved():

@@ -6558,6 +6558,187 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
 
 
 @pytest.mark.asyncio
+async def test_console_resume_restores_server_character_identity_without_local_lookup():
+    """Server opaque identity comes only from the selected persisted row."""
+    scoped_authority = "server-user-v1:" + ("c" * 64)
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "server-scoped": {
+                "conversation": {
+                    "id": "server-scoped",
+                    "title": "Scoped server character",
+                    "runtime_backend": "server",
+                    "assistant_kind": "character",
+                    "assistant_id": "opaque-character",
+                    "assistant_authority_id": scoped_authority,
+                    "character_id": None,
+                },
+                "root_threads": [],
+            },
+            "server-unscoped": {
+                "conversation": {
+                    "id": "server-unscoped",
+                    "title": "Unscoped server character",
+                    "runtime_backend": "server",
+                    "assistant_kind": "character",
+                    "assistant_id": "other-opaque-character",
+                    "assistant_authority_id": None,
+                    "character_id": None,
+                },
+                "root_threads": [],
+            },
+            "malformed-local-scalars": {
+                "conversation": {
+                    "id": "malformed-local-scalars",
+                    "title": "Malformed local character",
+                    "runtime_backend": "local",
+                    "assistant_kind": "character",
+                    "assistant_id": 7,
+                    "assistant_authority_id": 123,
+                    "character_id": 7,
+                },
+                "root_threads": [],
+            },
+            "noncanonical-local-id": {
+                "conversation": {
+                    "id": "noncanonical-local-id",
+                    "title": "Noncanonical local character",
+                    "runtime_backend": "local",
+                    "assistant_kind": "character",
+                    "assistant_id": "007",
+                    "assistant_authority_id": "local-authority",
+                    "character_id": 7,
+                },
+                "root_threads": [],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        active = store.switch_session(store.active_session_id)
+        active.runtime_backend = "server"
+        active.assistant_kind = "character"
+        active.assistant_id = "active-server-character"
+        active.assistant_authority_id = "server-user-v1:" + ("d" * 64)
+        active.settings = ConsoleSessionSettings(
+            provider="llama_cpp",
+            character_label="Wrong active character",
+        )
+        local_lookup = AsyncMock(
+            side_effect=AssertionError("server identity must not use local cards")
+        )
+        console._resolve_resumed_character_name = local_lookup
+
+        assert (
+            await console._resume_console_workspace_conversation("server-scoped")
+            is True
+        )
+        scoped = store.switch_session(store.active_session_id)
+        assert scoped.runtime_backend == "server"
+        assert scoped.assistant_kind == "character"
+        assert scoped.assistant_id == "opaque-character"
+        assert scoped.assistant_authority_id == scoped_authority
+        assert scoped.character_id is None
+        assert scoped.character_ref() is not None
+        assert scoped.settings is not None
+        assert scoped.settings.character_label == ""
+
+        assert (
+            await console._resume_console_workspace_conversation("server-unscoped")
+            is True
+        )
+        unscoped = store.switch_session(store.active_session_id)
+        assert unscoped.runtime_backend == "server"
+        assert unscoped.assistant_kind == "character"
+        assert unscoped.assistant_id == "other-opaque-character"
+        assert unscoped.assistant_authority_id is None
+        assert unscoped.character_id is None
+        assert unscoped.character_ref() is None
+        assert unscoped.settings is not None
+        assert unscoped.settings.character_label == ""
+
+        assert (
+            await console._resume_console_workspace_conversation(
+                "malformed-local-scalars"
+            )
+            is True
+        )
+        malformed = store.switch_session(store.active_session_id)
+        assert malformed.runtime_backend == "local"
+        assert malformed.assistant_kind == "character"
+        assert malformed.assistant_id is None
+        assert malformed.assistant_authority_id is None
+        assert malformed.character_id is None
+        assert malformed.character_ref() is None
+
+        assert (
+            await console._resume_console_workspace_conversation(
+                "noncanonical-local-id"
+            )
+            is True
+        )
+        noncanonical = store.switch_session(store.active_session_id)
+        assert noncanonical.runtime_backend == "local"
+        assert noncanonical.assistant_kind == "character"
+        assert noncanonical.assistant_id == "007"
+        assert noncanonical.assistant_authority_id == "local-authority"
+        assert noncanonical.character_id is None
+        assert noncanonical.character_ref() is None
+        local_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_console_resume_rehydrates_local_character_name_from_local_projection():
+    """Only a local character row drives the local card/name lookup."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "local-character": {
+                "conversation": {
+                    "id": "local-character",
+                    "title": "Local character",
+                    "runtime_backend": "local",
+                    "assistant_kind": "character",
+                    "assistant_id": "7",
+                    "assistant_authority_id": "local-authority",
+                    "character_id": 7,
+                },
+                "root_threads": [],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        name_lookup = AsyncMock(return_value="Elara")
+        console._resolve_resumed_character_name = name_lookup
+
+        assert (
+            await console._resume_console_workspace_conversation("local-character")
+            is True
+        )
+
+        store = console._ensure_console_chat_store()
+        session = store.switch_session(store.active_session_id)
+        assert session.runtime_backend == "local"
+        assert session.assistant_kind == "character"
+        assert session.assistant_id == "7"
+        assert session.assistant_authority_id == "local-authority"
+        assert session.character_id == 7
+        assert session.character_name == "Elara"
+        name_lookup.assert_awaited_once_with(7)
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_conversation_resume_restores_system_prompt():
     """Resuming a saved conversation restores its persisted system prompt.
 
@@ -7529,19 +7710,16 @@ def test_native_console_restore_ignores_legacy_identity_without_mutation_or_conf
         callback.assert_not_called()
 
 
-def test_native_console_state_round_trip_preserves_character_identity():
-    """A character-bound session must keep ``character_id``/``character_name``
-    across a native Console screen-state save/restore (task-427).
-
-    Without round-tripping these fields, a screen-state restore silently
-    flips a character session back to a generic one (``character_id=None``),
-    disabling the plain-provider gate and losing the character identity that
-    ``_serialize_native_console_state`` is supposed to preserve.
-    """
+def test_native_console_state_round_trip_preserves_source_aware_character_identity():
+    """Screen state keeps exact assistant provenance and local presentation."""
     store = ConsoleChatStore()
     session = ConsoleChatSession(
         id="session-a",
         title="Chat with Elara",
+        runtime_backend="local",
+        assistant_kind="character",
+        assistant_id="7",
+        assistant_authority_id="local-authority",
         character_id=7,
         character_name="Elara",
     )
@@ -7554,16 +7732,166 @@ def test_native_console_state_round_trip_preserves_character_identity():
 
     payload = screen._serialize_native_console_state()
     assert payload is not None
-    assert payload["sessions"][0]["character_id"] == 7
-    assert payload["sessions"][0]["character_name"] == "Elara"
+    assert {
+        key: payload["sessions"][0][key]
+        for key in (
+            "runtime_backend",
+            "assistant_kind",
+            "assistant_id",
+            "assistant_authority_id",
+            "character_id",
+            "character_name",
+        )
+    } == {
+        "runtime_backend": "local",
+        "assistant_kind": "character",
+        "assistant_id": "7",
+        "assistant_authority_id": "local-authority",
+        "character_id": 7,
+        "character_name": "Elara",
+    }
 
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
     restored_screen._restore_native_console_state(payload)
 
     restored_session = restored_store.sessions()[0]
+    assert restored_session.runtime_backend == "local"
+    assert restored_session.assistant_kind == "character"
+    assert restored_session.assistant_id == "7"
+    assert restored_session.assistant_authority_id == "local-authority"
     assert restored_session.character_id == 7
     assert restored_session.character_name == "Elara"
+    assert restored_session.character_ref() is not None
+
+
+def test_native_console_state_restore_adapts_legacy_local_character_without_authority():
+    """Legacy numeric character state keeps direct-chat kind but stays unproven."""
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-a",
+        "sessions": [
+            {
+                "id": "session-a",
+                "title": "Chat with Elara",
+                "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "character_id": 7,
+                "character_name": "Elara",
+            }
+        ],
+        "messages_by_session": {"session-a": []},
+    }
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+
+    restored_screen._restore_native_console_state(payload)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.runtime_backend == "local"
+    assert restored_session.assistant_kind == "character"
+    assert restored_session.assistant_id == "7"
+    assert restored_session.assistant_authority_id is None
+    assert restored_session.character_id == 7
+    assert restored_session.character_ref() is None
+
+
+def test_native_console_state_restore_does_not_coerce_identity_scalars():
+    """Malformed scalar types cannot be promoted into proven provenance."""
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-a",
+        "sessions": [
+            {
+                "id": "session-a",
+                "title": "Malformed identity",
+                "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "runtime_backend": "local",
+                "assistant_kind": "character",
+                "assistant_id": 7,
+                "assistant_authority_id": 123,
+                "character_id": 7,
+            },
+            {
+                "id": "session-b",
+                "title": "Malformed source",
+                "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "runtime_backend": 123,
+                "assistant_kind": "character",
+                "assistant_id": "8",
+                "assistant_authority_id": "local-authority",
+                "character_id": 8,
+            },
+        ],
+        "messages_by_session": {"session-a": [], "session-b": []},
+    }
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+
+    restored_screen._restore_native_console_state(payload)
+
+    session = restored_store.sessions()[0]
+    assert session.runtime_backend == "local"
+    assert session.assistant_kind == "character"
+    assert session.assistant_id is None
+    assert session.assistant_authority_id is None
+    assert session.character_id is None
+    assert session.character_ref() is None
+
+    invalid_source = restored_store.sessions()[1]
+    assert invalid_source.runtime_backend == ""
+    assert invalid_source.assistant_kind == "character"
+    assert invalid_source.assistant_id == "8"
+    assert invalid_source.assistant_authority_id == "local-authority"
+    assert invalid_source.character_id is None
+    assert invalid_source.character_ref() is None
+
+
+def test_native_console_state_restore_drops_server_numeric_local_projection():
+    """A server character keeps opaque provenance but no local lookup key."""
+    authority_id = "server-user-v1:" + ("e" * 64)
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-a",
+        "sessions": [
+            {
+                "id": "session-a",
+                "title": "Server identity",
+                "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+                "runtime_backend": "server",
+                "assistant_kind": "character",
+                "assistant_id": "opaque-character",
+                "assistant_authority_id": authority_id,
+                "character_id": 7,
+                "character_name": "Server Card",
+            }
+        ],
+        "messages_by_session": {"session-a": []},
+    }
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+
+    restored_screen._restore_native_console_state(payload)
+
+    session = restored_store.sessions()[0]
+    assert session.runtime_backend == "server"
+    assert session.assistant_kind == "character"
+    assert session.assistant_id == "opaque-character"
+    assert session.assistant_authority_id == authority_id
+    assert session.character_id is None
+    assert session.character_name == "Server Card"
+    assert session.character_ref() is not None
 
 
 def test_native_console_state_restore_tolerates_legacy_payload_without_updated_at():
