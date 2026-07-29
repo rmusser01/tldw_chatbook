@@ -45,6 +45,7 @@ from textual.widgets import (
     Input,
     Select,
     Static,
+    Switch,
     TextArea,
 )
 
@@ -226,6 +227,37 @@ class SpeechPlaygroundPane(
         """
         event.stop()
         self._save_axes_as_default()
+
+    @on(Switch.Changed)
+    def on_tts_option_switch_changed(self, event: Switch.Changed) -> None:
+        """Delegate to the shared catalog mixin.
+
+        Args:
+            event: Any Switch change in this pane.
+        """
+        self.handle_option_switch_changed(event)
+
+    @on(Input.Changed)
+    def on_tts_speed_changed(self, event: Input.Changed) -> None:
+        """Delegate to the shared catalog mixin.
+
+        dev wired this up while the rebuild was in flight -- it had been an
+        undispatched name, which is why an earlier version of this branch
+        deleted it as dead. It is live now, so the pane carries it.
+
+        Args:
+            event: Any Input change in this pane.
+        """
+        self.handle_speed_changed(event)
+
+    @on(TextArea.Changed)
+    def on_tts_text_changed(self, event: TextArea.Changed) -> None:
+        """Delegate to the shared catalog mixin.
+
+        Args:
+            event: Any TextArea change in this pane.
+        """
+        self.handle_text_changed(event)
 
     @on(Select.Changed)
     def on_tts_provider_select_changed(self, event: Select.Changed) -> None:

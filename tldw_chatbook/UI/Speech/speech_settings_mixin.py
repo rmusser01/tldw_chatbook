@@ -28,7 +28,7 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from loguru import logger
 from rich.text import Text
@@ -44,6 +44,7 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
 from tldw_chatbook.TTS import TTSPreferencesSnapshot, get_tts_service
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen as FileOpen,
     EnhancedFileSave as FileSave,
@@ -1369,3 +1370,150 @@ class SpeechSettingsMixin:
 
         # Push the file picker screen
         self.app.push_screen(file_picker, self._handle_higgs_voices_dir_selection)
+
+    def _handle_chatterbox_voice_dir_selection(self, path: Optional[Path]) -> None:
+        """Handle Chatterbox voice directory selection"""
+        if path:
+            # Get the directory from the selected path
+            directory = path if path.is_dir() else path.parent
+            # Update the stored path
+            self.chatterbox_voice_dir = str(directory)
+            # Update button label
+            self._update_file_button_labels()
+            logger.info(f"Chatterbox voice directory selected: {directory}")
+
+    def _handle_export_file(self, path: Optional[str]) -> None:
+        """Handle the export file location"""
+        if not path or not hasattr(self, "_export_blends"):
+            return
+
+        try:
+            export_path = Path(path)
+
+            # Write the blends to the selected file
+            with open(export_path, "w") as f:
+                json.dump(self._export_blends, f, indent=2)
+
+            self.app.notify(
+                f"Exported {len(self._export_blends)} voice blend(s) to: {export_path.name}",
+                severity="success",
+            )
+
+            # Clean up temporary storage
+            del self._export_blends
+
+        except Exception as e:
+            logger.error(f"Failed to export voice blends: {e}")
+            self.app.notify(f"Error exporting voice blends: {e}", severity="error")
+
+    def _handle_higgs_voices_dir_selection(self, path: Optional[Path]) -> None:
+        """Handle the selection of Higgs voices directory"""
+        if path:
+            # Extract directory from selected file
+            if path.is_file():
+                dir_path = path.parent
+            else:
+                dir_path = path
+
+            # Update input
+            voices_input = self.query_one("#higgs-voices-dir-input", Input)
+            voices_input.value = str(dir_path)
+            logger.info(f"Higgs voices directory selected: {dir_path}")
+
+    def _handle_import_file(self, path: Optional[str]) -> None:
+        """Handle the imported file"""
+        if not path:
+            return
+
+        try:
+            import_path = Path(path)
+
+            # Load the import file
+            with open(import_path, "r") as f:
+                imported_blends = json.load(f)
+
+            # Load existing blends
+            blend_file = (
+                Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+            )
+            blend_file.parent.mkdir(parents=True, exist_ok=True)
+
+            if blend_file.exists():
+                with open(blend_file, "r") as f:
+                    existing_blends = json.load(f)
+            else:
+                existing_blends = {}
+
+            # Merge blends (imported overwrites existing with same name)
+            existing_blends.update(imported_blends)
+
+            # Save merged blends
+            with open(blend_file, "w") as f:
+                json.dump(existing_blends, f, indent=2)
+
+            # Refresh display
+            self._load_kokoro_voice_blends()
+            self.app.notify(
+                f"Imported {len(imported_blends)} voice blend(s) successfully",
+                severity="success",
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to import voice blends: {e}")
+            self.app.notify(f"Error importing voice blends: {e}", severity="error")
+
+    def _handle_kokoro_model_selection(self, path: Optional[Path]) -> None:
+        """Handle Kokoro model file selection"""
+        if path:
+            # Update the stored path
+            self.kokoro_model_path = str(path)
+            # Update button label
+            self._update_file_button_labels()
+            logger.info(f"Kokoro model selected: {path}")
+
+    def _handle_kokoro_voices_selection(self, path: Optional[Path]) -> None:
+        """Handle Kokoro voices file selection"""
+        if path:
+            # Update the stored path
+            self.kokoro_voices_path = str(path)
+            # Update button label
+            self._update_file_button_labels()
+            logger.info(f"Kokoro voices config selected: {path}")
+
+    async def _show_add_voice_blend_dialog(self) -> None:
+        """Show dialog to add a new voice blend"""
+        try:
+            # Show the voice blend dialog
+            result = await self.app.push_screen_wait(VoiceBlendDialog())
+
+            if result:
+                # Save the blend
+                blend_file = (
+                    Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
+                )
+                blend_file.parent.mkdir(parents=True, exist_ok=True)
+
+                # Load existing blends
+                if blend_file.exists():
+                    with open(blend_file, "r") as f:
+                        blends = json.load(f)
+                else:
+                    blends = {}
+
+                # Add new blend
+                blends[result["name"]] = result
+
+                # Save back
+                with open(blend_file, "w") as f:
+                    json.dump(blends, f, indent=2)
+
+                # Refresh display
+                self._load_kokoro_voice_blends()
+                self.app.notify(
+                    f"Voice blend '{result['name']}' created successfully",
+                    severity="success",
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to create voice blend: {e}")
+            self.app.notify(f"Error creating voice blend: {e}", severity="error")

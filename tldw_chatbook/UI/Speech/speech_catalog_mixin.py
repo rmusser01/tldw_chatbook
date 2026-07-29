@@ -32,7 +32,7 @@ from loguru import logger
 from rich.text import Text
 from textual import on, work
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, Select, Static, Switch, TextArea
 
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.TTS import STTSGeneratedAudio, get_tts_service
@@ -53,6 +53,7 @@ from tldw_chatbook.UI.stts_playground_catalog import (
     LOADING_SELECT_VALUE,
     PlaygroundControls,
     SERVER_DEFAULT_VOICE_ID,
+    SERVER_DEFAULT_VOICE_LABEL,
     UNAVAILABLE_SELECT_VALUE,
     SelectSentinel,
     SelectValue,
@@ -982,3 +983,77 @@ class SpeechCatalogMixin:
                 "Generation in progress…"
             )
             self.query_one("#tts-generate-btn", Button).disabled = True
+
+    def _reproject_current_catalog(self) -> None:
+        provider_id = self._selected_provider_id
+        if provider_id is None:
+            return
+        catalog = self._catalogs.get(provider_id)
+        if catalog is not None:
+            self._apply_catalog(provider_id, catalog)
+
+    def _reserve_voice_request_token(
+        self,
+        provider_id: str,
+        model_id: str,
+        catalog_revision: int,
+    ) -> CatalogRequestToken:
+        """Reserve one voice request and capture its catalog authority."""
+        request_key = (provider_id, model_id)
+        request_generation = self._voice_request_generations.get(request_key, 0) + 1
+        self._voice_request_generations[request_key] = request_generation
+        configuration_revision = self._catalog_configuration_revisions.get(provider_id)
+        if configuration_revision is None:
+            service = self._tts_service
+            if service is None:
+                raise TTSRegistryClosedError("The TTS service is unavailable")
+            configuration_revision = service.configuration_revision(provider_id)
+        return CatalogRequestToken(
+            provider_id=provider_id,
+            configuration_revision=configuration_revision,
+            catalog_revision=catalog_revision,
+            model_id=model_id,
+            request_generation=request_generation,
+        )
+
+    # Decorated on the host, not here: Textual registers `@on`
+    # handlers per-class in its metaclass, so one declared in a
+    # mixin is never dispatched.
+    def handle_option_switch_changed(self, event: Switch.Changed) -> None:
+        if (
+            not self._applying_catalog_controls
+            and event.switch.has_focus
+            and self._end_profile_preset()
+        ):
+            self._reproject_current_catalog()
+
+    # Decorated on the host, not here: Textual registers `@on`
+    # handlers per-class in its metaclass, so one declared in a
+    # mixin is never dispatched.
+    def handle_speed_changed(self, event: Input.Changed) -> None:
+        if self._applying_catalog_controls:
+            return
+        if event.value != event.input.value:
+            return
+        if self._selected_provider_id is not None:
+            if event.input.id == "tts-speed-input":
+                self._remember_current_controls(self._selected_provider_id)
+                preset = self._profile_preset
+                try:
+                    unchanged = (
+                        preset is not None and float(event.value) == preset.speed
+                    )
+                except ValueError:
+                    unchanged = False
+                if unchanged:
+                    return
+            elif not event.input.has_focus:
+                return
+            if self._end_profile_preset():
+                self._reproject_current_catalog()
+
+    # Decorated on the host, not here: Textual registers `@on`
+    # handlers per-class in its metaclass, so one declared in a
+    # mixin is never dispatched.
+    def handle_text_changed(self, _event: TextArea.Changed) -> None:
+        self._sync_generate_enabled()
