@@ -275,13 +275,23 @@ def resolve_existing_log_dir(run_id: str) -> Path | None:
     ONE run tree a given writer instance is currently bound to. This is the
     read-only counterpart to ``RunLogWriter.bind()``: it resolves the same
     root via ``resolve_log_root()`` and tries both directory-name
-    candidates ``bind()`` can produce (undotted, and dotted under the
-    sandbox-fallback naming -- see ``bind()``'s own "Final-review CRITICAL
-    2" comment), without creating anything. Deliberately NOT routed through
-    ``Utils/path_validation.validate_path``: that rejects any hidden
-    (dotted) path component outright, which would make the sandbox-fallback
-    ``.agent-runs`` case unreadable by design -- see ``_coerce_dir_name``'s
-    own docstring for the same point.
+    candidates ``bind()`` can produce as of THIS task -- undotted, and
+    dotted under the sandbox-fallback naming (see ``bind()``'s own
+    "Final-review CRITICAL 2" comment) -- without creating anything.
+
+    TASK-1270 (PR #1071, open as of this writing) changes ``bind()`` to dot
+    the directory UNCONDITIONALLY -- the undotted workspace-folder case let
+    a sub-agent ``grep_files`` its parent's log, the same disclosure CRITICAL
+    2 already closed for the sandbox-fallback case. Once #1071 merges, no
+    run will ever write to the undotted candidate again; it is kept here
+    ONLY so a log written before that merge stays discoverable. This is a
+    known, deliberate backward-compatibility case, not a live write path --
+    do not "helpfully" reintroduce undotted writes anywhere to match it.
+
+    Deliberately NOT routed through ``Utils/path_validation.validate_path``:
+    that rejects any hidden (dotted) path component outright, which would
+    make the sandbox-fallback ``.agent-runs`` case unreadable by design --
+    see ``_coerce_dir_name``'s own docstring for the same point.
 
     Args:
         run_id: The run's id (matches ``RunLogRecord.run_id`` and the

@@ -659,8 +659,17 @@ MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 100000
 # `Agents.agent_models.RunBudget.max_tool_result_chars` (default 16,000),
 # which caps what the MODEL saw -- that value enters the model's own
 # history, not the Console's UI, and stays out of this control's reach.
-# Default (160) matches the transcript marker's prior cap exactly, so a
-# fresh install's transcript reads no differently than before this task.
+# Default (160) is the transcript TOOL marker's prior cap, kept as-is: the
+# inline marker is the primary, always-visible reading surface (every user
+# scrolling the transcript sees it), so a fresh install's TRANSCRIPT reads
+# unchanged. The Agent rail's live-step and resumed/persisted step summaries
+# were previously 200, not 160 -- unifying to one cap means those two
+# secondary, optional-panel surfaces now trim 40 characters more than
+# before. That is a real, if minor, behaviour change, not a no-op: chosen
+# over raising the default to 200 (which would instead grow the marker and
+# make the transcript itself noisier) because the transcript is what most
+# users actually read, and "View full log" now exists as the full-fidelity
+# escape hatch the rail's tighter preview can safely defer to.
 # Maximum (2000) is not arbitrary: `agent_runtime.py` already caps a step's
 # OWN recorded `result` field at 2000 characters before any of these three
 # display paths ever see it -- raising the display cap past that ceiling
