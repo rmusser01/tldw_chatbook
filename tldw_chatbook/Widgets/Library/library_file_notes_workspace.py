@@ -1422,6 +1422,14 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._clear_git_last_action()
                 return
             snapshot = self._session_owner.snapshot(binding)
+        if (
+            self._git_refresh_after_mutation
+            and not self._session_owner.mutation_active(binding)
+        ):
+            self._git_refresh_after_mutation = False
+            self._start_git_refresh()
+            self.call_after_refresh(self._focus_session_git_panel)
+            return
         if self._rehydrate_git_presentation():
             self.call_after_refresh(self._focus_session_git_panel)
             return

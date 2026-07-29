@@ -2158,6 +2158,96 @@ async def test_unexpected_action_failure_survives_postflight_refresh(
 
 
 @pytest.mark.asyncio
+async def test_hidden_unexpected_action_failure_refreshes_on_reopen(
+    tmp_path: Path,
+) -> None:
+    _root, owner, binding, replica, git_service, workspace = _workspace_fixture(
+        tmp_path
+    )
+    git_service.action_release = asyncio.Event()
+    git_service.action_error = RuntimeError("simulated hidden action failure")
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        entry = workspace.query_one("#file-notes-session-changes", Button)
+        entry.press()
+        await _wait_until(
+            pilot,
+            lambda: len(git_service.status_calls) == 1
+            and len(workspace._git_panel_widget.rows) == 2,
+            "initial status did not finish",
+        )
+        initial_status = owner.snapshot(binding).git_status
+        assert initial_status is not None
+
+        workspace.query_one("#file-notes-git-stage-selected", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: git_service.stage_calls == [(1,)]
+            and owner.mutation_active(binding),
+            "Stage did not retain the mutation gate",
+        )
+        workspace.query_one("#file-notes-git-back", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace._navigator_mode != "git" and entry.has_focus,
+            "Back did not hide Session Git and restore entry focus",
+        )
+
+        git_service.action_release.set()
+        await _wait_until(
+            pilot,
+            lambda: not owner.mutation_active(binding)
+            and workspace._git_last_action is not None,
+            "hidden Stage failure did not settle",
+        )
+        await pilot.pause(0.1)
+        assert len(git_service.status_calls) == 1
+        retained_action = workspace._git_last_action
+        assert retained_action is not None
+        assert workspace._git_refresh_after_mutation
+        assert retained_action.binding == binding
+        assert retained_action.repository == git_service.repository
+        assert retained_action.changes == owner.snapshot(binding).changes
+        assert retained_action.text == (
+            "Last action: FAILED — Git action failed: simulated hidden action "
+            "failure. Inspect the repository index outside Chatbook, then Refresh."
+        )
+
+        entry.press()
+        await _wait_until(
+            pilot,
+            lambda: len(git_service.status_calls) == 2
+            and owner.snapshot(binding).git_status is not None
+            and owner.snapshot(binding).git_status.status_generation
+            > initial_status.status_generation
+            and "Status: CURRENT · READY"
+            in _text(workspace.query_one("#file-notes-git-status", Static)),
+            "reopen did not refresh the hidden action failure",
+        )
+        await _wait_for_current_git_row_projection(workspace)
+        assert not workspace._git_refresh_after_mutation
+        git_rows = workspace.query_one("#file-notes-git-rows", ListView)
+        await _wait_until(
+            pilot,
+            lambda: git_rows.has_focus,
+            "reopen did not restore focus to the refreshed rows",
+        )
+        assert workspace._git_last_action == retained_action
+        action_status = workspace.query_one(
+            "#file-notes-git-action-status",
+            Static,
+        )
+        assert action_status.display
+        assert _flat_text(action_status).startswith("Last action: FAILED")
+        assert _flat_text(action_status).endswith(
+            "outside Chatbook, then Refresh."
+        )
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_session_change_invalidates_last_action_before_refresh(
     tmp_path: Path,
 ) -> None:
