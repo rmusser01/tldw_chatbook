@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
 from collections.abc import Iterable, Mapping
@@ -22,6 +23,12 @@ _PORTABLE_FILE_COMPONENT = re.compile(
     re.ASCII,
 )
 _LOWERCASE_SHA256 = re.compile(r"[0-9a-f]{64}\Z", re.ASCII)
+_URL_HOST_LABEL = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z",
+    re.ASCII,
+)
+_URL_PATH = re.compile(r"(?:/[A-Za-z0-9._~!$&'()*+,;=:@%\-]*)*\Z", re.ASCII)
+_INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})", re.ASCII)
 _WINDOWS_RESERVED_BASENAMES = frozenset(
     {
         "aux",
@@ -127,12 +134,66 @@ def _validate_nonempty_text(field_name: str, value: object) -> None:
         )
 
 
+def _valid_url_hostname(hostname: str, *, bracketed: bool) -> bool:
+    if bracketed:
+        try:
+            ipaddress.IPv6Address(hostname)
+        except ValueError:
+            return False
+        return True
+    if ":" in hostname:
+        return False
+    try:
+        ascii_hostname = hostname.encode("idna").decode("ascii")
+    except UnicodeError:
+        return False
+    labels = ascii_hostname.removesuffix(".").split(".")
+    return (
+        bool(labels)
+        and all(_URL_HOST_LABEL.fullmatch(label) is not None for label in labels)
+        and len(ascii_hostname) <= 254
+    )
+
+
+def _valid_url_authority(authority: str, hostname: str) -> bool:
+    bracketed = authority.startswith("[")
+    if bracketed:
+        closing_bracket = authority.find("]")
+        if closing_bracket < 0:
+            return False
+        raw_hostname = authority[1:closing_bracket]
+        suffix = authority[closing_bracket + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            return False
+    else:
+        if "[" in authority or "]" in authority or authority.count(":") > 1:
+            return False
+        raw_hostname, separator, port_text = authority.rpartition(":")
+        if not separator:
+            raw_hostname = authority
+        elif not port_text.isdigit():
+            return False
+    return raw_hostname.casefold() == hostname.casefold() and _valid_url_hostname(
+        hostname,
+        bracketed=bracketed,
+    )
+
+
 def _validate_url(field_name: str, value: object) -> None:
     _validate_nonempty_text(field_name, value)
     assert isinstance(value, str)
-    if "?" in value or "#" in value or any(character.isspace() for character in value):
+    if (
+        "?" in value
+        or "#" in value
+        or "\\" in value
+        or any(character.isspace() for character in value)
+    ):
         raise ArtifactDescriptorValidationError(
             f"{field_name} must not include whitespace, a query, or a fragment"
+        )
+    if _INVALID_PERCENT_ESCAPE.search(value) is not None:
+        raise ArtifactDescriptorValidationError(
+            f"{field_name} contains an invalid percent escape"
         )
     try:
         parsed = urlsplit(value)
@@ -150,6 +211,8 @@ def _validate_url(field_name: str, value: object) -> None:
         or parsed.password is not None
         or parsed.query
         or parsed.fragment
+        or not _valid_url_authority(parsed.netloc, parsed.hostname)
+        or _URL_PATH.fullmatch(parsed.path) is None
     ):
         raise ArtifactDescriptorValidationError(
             f"{field_name} must be a valid credential-free HTTP(S) URL"
@@ -515,6 +578,10 @@ def _require_exact_keys(
 ) -> None:
     if not isinstance(raw, Mapping):
         raise ArtifactDescriptorParseError(f"{context} must be a mapping")
+    if any(type(key) is not str for key in raw):
+        raise ArtifactDescriptorParseError(
+            f"{context} has invalid keys: keys must be strings"
+        )
     actual = set(raw)
     if actual != expected:
         missing = sorted(expected - actual)

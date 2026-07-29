@@ -218,6 +218,44 @@ def test_descriptor_accepts_valid_url_with_ipv6_hostname() -> None:
     )
 
     assert item.source_url == "https://[2001:db8::1]/model"
+    assert ArtifactDescriptor.from_dict(item.to_dict()) == item
+
+
+@pytest.mark.parametrize("field", ("source_url", "license_url"))
+@pytest.mark.parametrize(
+    "value",
+    (
+        r"https://example.test\evil.com/model",
+        "https://./model",
+        "https://example.test/%zz",
+    ),
+)
+def test_descriptor_rejects_malformed_http_urls(
+    field: str,
+    value: str,
+) -> None:
+    with pytest.raises(ArtifactDescriptorValidationError, match=field):
+        descriptor(**{field: value})
+
+
+@pytest.mark.parametrize("field", ("source_url", "license_url"))
+@pytest.mark.parametrize(
+    "value",
+    (
+        r"https://example.test\evil.com/model",
+        "https://./model",
+        "https://example.test/%zz",
+    ),
+)
+def test_descriptor_parser_rejects_malformed_http_urls(
+    field: str,
+    value: str,
+) -> None:
+    encoded = descriptor().to_dict()
+    encoded[field] = value
+
+    with pytest.raises(ArtifactDescriptorParseError, match=field):
+        ArtifactDescriptor.from_dict(encoded)
 
 
 def test_descriptor_rejects_duplicate_or_conflicting_dependencies() -> None:
@@ -343,6 +381,27 @@ def test_descriptor_parser_rejects_unknown_or_mistyped_nested_fields() -> None:
     assert isinstance(first_file, dict)
     first_file["size_bytes"] = True
     with pytest.raises(ArtifactDescriptorParseError, match="files"):
+        ArtifactDescriptor.from_dict(encoded)
+
+
+@pytest.mark.parametrize("target", ("descriptor", "reference", "file"))
+def test_descriptor_parser_rejects_mixed_type_extra_keys(
+    target: str,
+) -> None:
+    encoded = descriptor().to_dict()
+    if target == "descriptor":
+        mapping = encoded
+    elif target == "reference":
+        mapping = encoded["reference"]
+    else:
+        files = encoded["files"]
+        assert isinstance(files, list)
+        mapping = files[0]
+    assert isinstance(mapping, dict)
+    mapping[1] = "unexpected"
+    mapping[None] = "unexpected"
+
+    with pytest.raises(ArtifactDescriptorParseError, match="keys"):
         ArtifactDescriptor.from_dict(encoded)
 
 
