@@ -10,6 +10,8 @@ import multiprocessing
 import os
 import shutil
 import stat
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,7 @@ from typing import Any
 import pytest
 
 from Tests.Model_Artifacts.lease_processes import hold_set
+import tldw_chatbook.Model_Artifacts as artifacts_module
 from tldw_chatbook.Model_Artifacts import service as service_module
 from tldw_chatbook.Model_Artifacts import (
     ArtifactDescriptor,
@@ -30,6 +33,70 @@ from tldw_chatbook.Model_Artifacts import (
     ProvenanceClass,
     closure_fingerprint,
 )
+
+
+def test_package_exports_the_complete_public_artifact_api() -> None:
+    expected = {
+        "ArtifactConflictError",
+        "ArtifactDependencyError",
+        "ArtifactDescriptor",
+        "ArtifactDescriptorError",
+        "ArtifactDescriptorParseError",
+        "ArtifactDescriptorValidationError",
+        "ArtifactDiskUsage",
+        "ArtifactError",
+        "ArtifactFile",
+        "ArtifactFormat",
+        "ArtifactHandle",
+        "ArtifactInUseError",
+        "ArtifactIntegrityError",
+        "ArtifactLeaseCancelledError",
+        "ArtifactLeaseError",
+        "ArtifactLeaseKey",
+        "ArtifactLeaseTimeoutError",
+        "ArtifactNotReadyError",
+        "ArtifactOperationLease",
+        "ArtifactOperationLeaseSet",
+        "ArtifactPathError",
+        "ArtifactRef",
+        "ArtifactRole",
+        "ArtifactStateError",
+        "InstalledArtifact",
+        "LeasedArtifactHandle",
+        "LeaseMode",
+        "ModelArtifactService",
+        "ProvenanceClass",
+        "ReconcileReport",
+        "closure_fingerprint",
+    }
+
+    assert set(artifacts_module.__all__) == expected
+    assert all(hasattr(artifacts_module, name) for name in expected)
+    assert "_ReadinessRecord" not in artifacts_module.__all__
+    assert not hasattr(artifacts_module, "_ReadinessRecord")
+
+
+def test_package_import_does_not_load_inference_or_http_runtimes() -> None:
+    code = """
+import sys
+import tldw_chatbook.Model_Artifacts
+
+for name in ("onnxruntime", "onnx_asr", "ctranslate2", "faster_whisper", "httpx"):
+    assert name not in sys.modules, name
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, (
+        f"fresh package import failed with exit code {completed.returncode}\n"
+        f"stdout:\n{completed.stdout}\n"
+        f"stderr:\n{completed.stderr}"
+    )
 
 
 def ref(
