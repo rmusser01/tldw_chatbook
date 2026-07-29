@@ -414,9 +414,12 @@ def test_effective_provider_model_prefers_console_overrides():
 
 
 def test_effective_provider_model_preserves_configured_provider_when_reactive_is_default_openai():
-    """Task-648 removed the app-reactive fallback; assert the current
-    persisted-defaults-only fallback still preserves a non-OpenAI configured
-    provider (no OpenAI-default special case exists to override it any more)."""
+    """Preserve a non-OpenAI configured provider under the current fallback.
+
+    Task-648 removed the app-reactive fallback; the persisted-defaults-only
+    fallback must still preserve a non-OpenAI configured provider (no
+    OpenAI-default special case exists to override it any more).
+    """
     persisted_defaults = {"provider": "llama_cpp", "model": "qwen"}
 
     result = resolve_effective_provider_model(persisted_defaults)
@@ -455,10 +458,13 @@ def test_effective_provider_model_ignores_blank_provider_overrides_for_default_f
 
 
 def test_effective_provider_model_ignores_blank_reactive_provider_for_default_fallback():
-    """Task-648 dropped the app-reactive provider signal entirely; the closest
+    """Blank configured providers pass through as the chat_defaults fallback.
+
+    Task-648 dropped the app-reactive provider signal entirely; the closest
     surviving edge case is a blank/placeholder *configured* provider value,
-    which passes straight through as the chat_defaults fallback (only the
-    settings/console override paths run blank-text filtering)."""
+    which passes straight through (only the settings/console override paths
+    run blank-text filtering).
+    """
     for configured_provider in ("", " ", "None"):
         persisted_defaults = {"provider": configured_provider, "model": "qwen"}
 
@@ -4155,11 +4161,19 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
             return True
 
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
-    # TASK-1310: 1df0c4cb4 removed settings_screen's import of the per-key
-    # save_setting_to_cli_config helper entirely, so there is no longer an
-    # attribute here to monkeypatch as a "legacy call" tripwire -- the module
-    # cannot call it (it isn't imported); doing so would raise NameError, a
-    # stronger guarantee than the old runtime mock provided.
+    # TASK-1310 + Qodo #1081: 1df0c4cb4 removed settings_screen's import of
+    # the per-key save_setting_to_cli_config helper, but a future change
+    # could re-import it and quietly reintroduce per-key writes ALONGSIDE the
+    # batched save -- the positive assertion below would still pass. Plant a
+    # tripwire on the (absent) legacy name so any reintroduced call fails
+    # loudly instead.
+    legacy_calls = []
+    monkeypatch.setattr(
+        settings_screen_module,
+        "save_setting_to_cli_config",
+        lambda *a, **k: legacy_calls.append((a, k)),
+        raising=False,
+    )
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -4190,6 +4204,10 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
     ]
     assert app.app_config["console"]["paste_collapse_threshold"] == 120
     assert app.app_config["chat_defaults"]["streaming"] is False
+    assert legacy_calls == [], (
+        "Console Behavior must save atomically through the batched adapter; "
+        "a legacy per-key save_setting_to_cli_config call was reintroduced"
+    )
 
 
 @pytest.mark.asyncio
@@ -7367,11 +7385,14 @@ async def test_settings_mount_triggers_at_most_one_post_mount_recompose():
 
 
 def test_settings_source_labels_cover_every_resolvable_source():
-    """TASK-1310 review follow-up: the source-label map must cover exactly the
-    source keys `resolve_effective_provider_model` can return, so the
-    Providers category never renders a raw `key.replace("_", " ")` fallback
-    (the stale `console_control`/`app_reactive` keys did exactly that for
-    `console_session` after task-648's rename)."""
+    """Pin the source-label map to exactly the resolvable source keys.
+
+    TASK-1310 review follow-up: the map must cover exactly the source keys
+    `resolve_effective_provider_model` can return, so the Providers category
+    never renders a raw `key.replace("_", " ")` fallback (the stale
+    `console_control`/`app_reactive` keys did exactly that for
+    `console_session` after task-648's rename).
+    """
     from tldw_chatbook.UI.Screens.settings_screen import SETTINGS_SOURCE_LABELS
 
     resolvable = {"settings_draft", "console_session", "chat_defaults", "default"}
