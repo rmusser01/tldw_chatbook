@@ -21,7 +21,8 @@ The operation uses a normal whole-index Git commit only after proving that the
 complete staged delta contains no content outside current Chatbook ownership.
 It bypasses hooks, disables signing, retains the child lifecycle, and verifies
 the exact commit afterward. It does not add push, remotes, credentials, amend,
-repository repair, full-repository status, or general branch management.
+repository repair, user-visible full-repository status, or general branch
+management.
 
 Ordinary Markdown/text files remain authoritative. The independent SQLite
 replica, protected revisions, and deletion tombstones are unaffected.
@@ -72,11 +73,14 @@ Chatbook never guesses, rolls back shared Git state, or automatically retries.
 - Deterministic message construction and validation
 - Git-resolved author/committer confirmation
 - Complete-index and owned-worktree preflight
+- Internal repository-wide logical-index commit proof without
+  unrelated-path disclosure
 - Immutable review snapshot and confirmation revalidation
 - Hook bypass and signing disablement
 - Retained process lifecycle and exact postflight
 - Prepare-panel form, review, progress, outcomes, and recovery
-- Focused automated and live acceptance coverage
+- Focused automated and live acceptance coverage, including a representative
+  session set in a 1,000-note repository
 
 ### Excluded
 
@@ -85,12 +89,13 @@ Chatbook never guesses, rolls back shared Git state, or automatically retries.
   sign-offs, trailers, templates, or signed commits
 - Branch create, switch, delete, rename, repair, reset, checkout, restore, or
   arbitrary ref manipulation
-- Hunk staging, full-repository status, unrelated-path disclosure, or general
-  Git history browsing
+- Hunk staging, user-visible full-repository status, unrelated-path disclosure,
+  or general Git history browsing
 - Hook configuration or execution
 - Persistent commit queue, review snapshot, staging ownership, or crash journal
-- Sparse checkout/index, nested repository management, submodule mutation, or
-  unsupported semantic index normalization
+- Sparse checkout/index, partial-clone/promisor repositories, legacy grafts,
+  nested repository management, submodule mutation, or unsupported semantic
+  index normalization
 - Any note-worktree or SQLite mutation beyond autosave settlement; required Git
   metadata writes and the secure temporary hooks-directory lifecycle remain
   part of the commit operation
@@ -194,6 +199,7 @@ The snapshot contains:
 - unique operation ID and owner generation;
 - selected-root binding and complete repository identity;
 - exact attached branch ref and old `HEAD` object ID;
+- expected complete commit tree object ID;
 - complete logical staged-delta/index signature;
 - every included staging-ownership and topology signature;
 - owned endpoint/closure worktree freshness;
@@ -203,7 +209,11 @@ The snapshot contains:
 - the facts required to reproduce the review count and policy copy.
 
 It contains object identifiers, modes, raw path identities, and signatures, but
-not note bodies or blob contents. It is process-memory only and single-use.
+not note bodies or blob contents. It is process-memory only. Confirm consumes
+its one-shot authorization capability. If the result is uncertain, its
+immutable old-HEAD, expected-tree, message, and identity proof evidence remains
+available only to `Check again` until that check reaches a definite result, the
+repository binding changes, or the process exits.
 
 The workspace stores it opaquely. The panel receives a separately sanitized
 projection. Repository path, note path, identity, message, and diagnostic
@@ -253,7 +263,9 @@ instruction. Chatbook offers no identity editor and writes no configuration.
 The review shows one `Identity` line when author and committer are equal and
 separate `Author`/`Committer` lines otherwise. Confirm binds the reviewed
 name/email values into the child environment so later configuration drift
-cannot change them. Git chooses execution timestamps.
+cannot change them. The identity-resolution and commit environments remove
+ambient `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE`; Git chooses execution
+timestamps.
 
 ## Complete preflight
 
@@ -265,6 +277,8 @@ Preflight fails closed unless all of the following are freshly true:
 - branch ref and old `HEAD` match the snapshot at Confirm;
 - no merge, rebase, cherry-pick, revert, bisect, sequencer, or equivalent
   worktree-specific operation is active;
+- no common-Git-dir `info/grafts` file, partial-clone extension, promisor remote
+  configuration, or promisor object marker is present;
 - no relevant Git lock is already present;
 - no unmerged or intent-to-add entry exists, and no staged/owned entry has
   gitlink mode, sparse state, an unsupported semantic index flag, or another
@@ -283,6 +297,23 @@ Preflight fails closed unless all of the following are freshly true:
 
 Unrelated unstaged paths are allowed and remain untouched.
 
+The complete-index proof path is a dedicated internal inspection, not an
+extension of the Session Git status surface. Preflight, postflight, and
+`Check again` use bounded NUL-delimited raw/plumbing records for repository-wide
+logical-index metadata, including unchanged entries, with rename detection,
+external diff execution, text conversion, and configured filesystem monitors
+disabled. Raw unrelated path identities exist only long enough to classify the
+current proof; the service emits a generic unrelated-state category and never
+sends those identities to widgets, persists them, or adds them to session
+ownership. Existing session-status commands and their path whitelist remain
+unchanged.
+
+Partial-clone/promisor detection uses only local configuration and filesystem
+markers and runs before any object-resolving command. Such repositories block.
+All proof and commit child environments also set `GIT_NO_LAZY_FETCH=1` as
+defense in depth; any required object missing locally blocks or yields
+uncertainty without contacting a remote.
+
 Preflight compares worktree freshness through trusted Git semantics rather than
 requiring raw disk bytes to equal staged blob bytes; clean filters can
 legitimately transform content.
@@ -294,7 +325,11 @@ of:
 
 ```text
 git \
+  --no-replace-objects \
   -c core.hooksPath=<private-empty-directory> \
+  -c core.fsmonitor=false \
+  -c maintenance.auto=false \
+  -c gc.auto=0 \
   -c commit.gpgSign=false \
   -c i18n.commitEncoding=UTF-8 \
   commit \
@@ -306,7 +341,17 @@ git \
 The actual invocation is one direct argument vector with no shell. Exact
 message bytes are supplied on stdin. The sanitized environment removes
 repository/index/config redirection, disables terminal prompting and editor
-invocation, and binds confirmed author/committer names and emails.
+invocation, removes ambient author/committer date overrides, and binds
+confirmed author/committer names and emails. Replacement refs are disabled
+consistently for preflight, execution, and postflight. A present common-Git-dir
+`info/grafts` file is blocked before review and Confirm and rechecked during
+postflight/recovery, so every accepted parent/tree/message comparison uses raw
+repository object semantics.
+
+Automatic maintenance and legacy auto-GC are disabled command-locally so the
+commit cannot detach an unowned maintenance process beyond the retained child.
+Configured filesystem monitoring is disabled so the operation cannot invoke an
+external monitor helper.
 
 The private hooks directory:
 
@@ -316,6 +361,10 @@ The private hooks directory:
 - is removed only after certain child termination; and
 - is left in place after uncertain termination rather than being removed under
   a potentially live child.
+
+If the retained owner later proves termination, it removes the directory then.
+A forced process kill may leave an empty owner-only temporary directory for
+the operating system's temporary-file cleanup; it contains no user data.
 
 No repository or global configuration is modified. `--no-verify` is not treated
 as sufficient because it does not bypass every commit hook; the empty
@@ -361,8 +410,12 @@ Immediately after certain child termination, fresh Git inspection verifies:
 - complete new commit tree equal to the expected reviewed index tree;
 - exact normalized message bytes;
 - reviewed author/committer names and emails;
-- absence of a commit-signature header; and
-- current logical index and worktree facts.
+- absence of a commit-signature header;
+- raw commit-object headers and message payload, with replacement refs disabled
+  and legacy grafts absent;
+- complete logical index equality with the new reviewed tree and no staged
+  delta; and
+- current worktree facts.
 
 External worktree changes that appeared after final preflight do not invalidate
 an otherwise exact commit. They are classified separately during the status
@@ -391,7 +444,10 @@ Examples:
 
 ### `Succeeded`
 
-The child terminated normally with success and every postflight proof matched.
+Either the child terminated normally with success and every immediate
+postflight proof matched, or a later `Check again` proved that the same branch
+tip is the exact reviewed child of old `HEAD` and the complete logical index
+equals its tree with no staged delta.
 
 Atomically:
 
@@ -403,6 +459,13 @@ Atomically:
 - clear the message draft; and
 - report:
   `Committed N session notes as <short-oid>; unrelated changes untouched.`
+
+Here, `unrelated changes untouched` means the exact commit contained no
+unrelated staged content and Chatbook selected no unrelated worktree path. It
+does not claim that a concurrent external tool could not change repository
+files. The result shows the adjacent visible line:
+`No unrelated staged content was committed; Chatbook selected no unrelated
+worktree paths.`
 
 ### `Failed unchanged`
 
@@ -434,8 +497,8 @@ Use uncertainty for:
 Never reset `HEAD`, index, or worktree; delete a Git lock; remove a possibly
 in-use hooks directory; or automatically retry.
 
-Clear cached status and staging ownership, preserve the message draft, and
-disable Git mutations. Show:
+Clear cached status, preserve the message draft, quarantine captured staging
+ownership so it cannot authorize an action, and disable Git mutations. Show:
 
 ```text
 Commit may have succeeded. Git actions are disabled until the repository is
@@ -445,12 +508,26 @@ checked. Run git status and git log -1, then choose Check again.
 `Check again` is unavailable while the retained child might still be alive or
 a relevant lock/special operation remains. After certain termination, it
 performs fresh repository discovery, identity verification, branch inspection,
-and complete status. It reports whether the exact reviewed commit is present,
-the old branch/index state remains, or the repository differs from both.
+complete internal branch/index proof, and fresh session status:
 
-Fresh safe status may restore ordinary Stage/Unstage eligibility. Cleared
-staging ownership is never recreated implicitly; affected groups must be
-staged again before another commit review.
+- if the same branch tip is the matching reviewed child of old `HEAD` and the
+  complete logical index equals its tree with no staged delta, publish the
+  normal `Succeeded` result and perform its
+  group-retirement/status-refresh steps;
+- if the same branch and complete logical index still equal the captured old
+  state and the retained child is now known to have terminated normally
+  without success, publish `Failed unchanged` and reactivate captured
+  ownership only after its repository, `HEAD`, and index signatures are
+  freshly revalidated;
+  or
+- otherwise keep the attempt `Uncertain`, report that the repository differs
+  from both proven outcomes, and never derive ownership from fresh status.
+
+The consumed confirmation capability is never restored. Immutable proof
+evidence remains only while the attempt is uncertain, until repository
+rebinding, or until process exit. Fresh safe session status may restore
+ordinary eligibility, but only retained and exactly revalidated captured
+ownership can restore Unstage authority.
 
 Repository trust remains only when complete repository identity is freshly
 re-established.
@@ -491,7 +568,8 @@ it. Repository rebinding clears it with an explicit explanation.
 
 - Show `Checking commit...`.
 - Keep `Cancel commit` available because no branch mutation has begun.
-- Restore editor, toolbars, and prior focus after cancellation/block.
+- Restore editor writability and prior focus after cancellation/block while
+  preserving Prepare mode's visually quiet toolbar state.
 
 ### Review
 
@@ -501,17 +579,29 @@ Show:
 - exact normalized message preview;
 - resolved identity/identities;
 - `N session notes will be committed; unrelated changes untouched`;
+- `No unrelated staged content will be committed; Chatbook will select no
+  unrelated worktree paths`;
 - change-type counts;
 - included notes as New, Modified, Deleted, or `old -> new`;
-- `Commit policy: Git hooks will not run · Commit will be unsigned`; and
+- `Commit policy: Git hooks will not run · Commit will be unsigned`;
+- `Included notes use their complete staged file state, not only edits made in
+  Chatbook`; and
 - `Edit message`, `Cancel commit`, and `Confirm commit`.
 
 Focus initially lands on `Edit message`, never Confirm. Enter activates only the
 focused control. Escape returns to message editing.
 
-The included-note disclosure is expanded only when count and available height
-make it useful. Its large form is virtualized/incremental, and the focused row
-exposes the complete sanitized path. Elision never hides the change type.
+The included-note disclosure uses an explicit `Show included notes (N)` /
+`Hide included notes` control and is expanded only when count and available
+height make it useful. It uses the existing scrollable row list; add
+incremental mounting only if focused measurement shows session-row rendering
+needs it. The focused row exposes the complete sanitized path. Elision never
+hides the change type.
+
+At `40x20`, the fixed footer stacks into two rows: `Edit message` then
+`Cancel commit` on the first row and `Confirm commit` on the second. Keyboard
+order is the disclosure control when present, Edit, Cancel, then Confirm;
+Confirm is always last and never receives initial focus.
 
 ### Execution
 
@@ -577,11 +667,14 @@ store under ADR-029.
 - Run no Git subprocess per note. The preflight/postflight command count is
   bounded independently of included-note count.
 - Use Git's NUL-delimited bulk machine formats and existing exact index models.
+- Keep repository-wide logical-index inspection internal and discard unrelated
+  raw path identities after each proof classification.
 - Keep Git work over 100 ms off the Textual event loop.
 - Retain signatures and object IDs, not note bodies.
-- Virtualize or incrementally mount large review lists.
-- Support a repository with at least 1,000 notes without broad repository UI
-  enumeration.
+- Use the existing scrollable review list; introduce incremental mounting only
+  if focused session-row measurement demonstrates a need.
+- Support a repository with at least 1,000 notes using a representative session
+  set without broad repository UI enumeration.
 
 ## Focused verification
 
@@ -594,13 +687,16 @@ or broad performance gate.
   UTF-8 bounds;
 - author/committer resolution, missing identity, display collapse, and
   confirmation binding;
-- complete staged-delta equality, modes, deletions, topology, unrelated staged
-  blocking, and owned worktree freshness;
+- complete logical-index/staged-delta equality, modes, deletions, topology,
+  unrelated staged blocking, and owned worktree freshness;
 - attached/detached/unborn and special-operation detection;
-- immutable/single-use review snapshot and generation drift;
+- immutable review snapshot, single-use confirmation capability, uncertain
+  evidence lifetime, and generation drift;
 - direct argv, exact stdin, sanitized environment, hook directory, signing and
-  encoding overrides, and no shell/editor/prompt;
-- success, unchanged failure, uncertainty, and later Check-again state;
+  encoding overrides, ambient-date removal, replacement-free raw object reads,
+  graft/partial/promisor blocking, disabled lazy fetch,
+  filesystem monitoring/auto-maintenance, and no shell/editor/prompt;
+- success, unchanged failure, uncertainty, and delayed Check-again convergence;
 - gate, retained child, shutdown, editor lease, and owner publication;
 - bounded/sanitized hostile diagnostics and paths; and
 - no per-note subprocess growth.
@@ -616,12 +712,17 @@ Cover:
 - configured signing proving Chatbook still creates an unsigned commit;
 - unrelated unstaged state remaining untouched;
 - unrelated staged state blocking with unchanged branch/index;
+- unrelated staged state blocking without unrelated-path UI/persistence;
 - staged notes with newer worktree edits requiring Stage update;
 - missing identity, detached/unborn branch, conflicts, special operations,
-  index locks, unsupported index states, and repository replacement;
+  index locks, unsupported index states, repository replacement, legacy grafts,
+  and partial/promisor repositories without network access;
 - trusted clean-filter worktree freshness rather than raw-byte comparison;
 - definite failure versus simulated timeout/termination uncertainty;
+- uncertain evidence retention through a definite Check-again result;
 - postflight `HEAD`/index drift and no rollback;
+- success requiring the logical index to equal the committed tree with no
+  staged delta;
 - success group retirement and retained newer worktree edits; and
 - unchanged note bytes, SQLite replica, revisions, and tombstones.
 
@@ -636,7 +737,7 @@ Cover:
 - editor read-only lease and exact restoration;
 - cancellation before child start and no cancellation afterward;
 - wrapped non-elided recovery and fixed action footer;
-- one-note and 1,000-note included-note presentation;
+- one-note and representative-session presentation in a 1,000-note repository;
 - operation-ID stale-result rejection; and
 - wide plus `40x20` geometry and keyboard flow.
 
