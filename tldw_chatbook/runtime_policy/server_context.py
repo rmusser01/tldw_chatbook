@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping
+from uuid import UUID
 
 from loguru import logger
 
@@ -26,7 +27,60 @@ from .server_credentials import (
     SERVER_CREDENTIAL_REFRESH_TOKEN,
     ServerCredentialStore,
 )
-from .types import ServerContextFailure, ServerContextFailureReason
+from .types import (
+    RuntimeSourceState,
+    ServerContextFailure,
+    ServerContextFailureReason,
+)
+
+_CHARACTER_AUTHORITY_DOMAIN = b"tldw-chatbook.character-authority"
+_CHARACTER_AUTHORITY_VERSION = b"1"
+_MAX_SERVER_USER_ID = 2**63 - 1
+
+
+def encode_server_user_character_authority(
+    authority_scope_id: str,
+    user_id: int,
+) -> str:
+    """Encode one configured-target scope and authenticated user as authority.
+
+    Args:
+        authority_scope_id: Exact canonical lowercase hyphenated UUIDv4 scope.
+        user_id: Exact positive integer server user identifier.
+
+    Returns:
+        The fixed-width version-one server-user authority identifier.
+
+    Raises:
+        ValueError: If either identity component is outside the canonical
+            encoding contract.
+    """
+    if type(authority_scope_id) is not str:
+        raise ValueError("authority_scope_id must be a canonical UUIDv4")
+    try:
+        scope_ascii = authority_scope_id.encode("ascii")
+        parsed_scope = UUID(authority_scope_id)
+    except (UnicodeEncodeError, ValueError):
+        raise ValueError("authority_scope_id must be a canonical UUIDv4") from None
+    if parsed_scope.version != 4 or str(parsed_scope) != authority_scope_id:
+        raise ValueError("authority_scope_id must be a canonical UUIDv4")
+
+    if type(user_id) is not int or not 1 <= user_id <= _MAX_SERVER_USER_ID:
+        raise ValueError("user_id must be a positive signed 64-bit integer")
+    user_id_ascii = str(user_id).encode("ascii")
+
+    def _length_prefix(value: bytes) -> bytes:
+        return len(value).to_bytes(4, byteorder="big", signed=False) + value
+
+    frame = b"".join(
+        (
+            _length_prefix(_CHARACTER_AUTHORITY_DOMAIN),
+            _length_prefix(_CHARACTER_AUTHORITY_VERSION),
+            _length_prefix(scope_ascii),
+            _length_prefix(user_id_ascii),
+        )
+    )
+    return f"server-user-v1:{hashlib.sha256(frame).hexdigest()}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +103,23 @@ class _CachedClientKey:
     auth_method: str
     credential_source: str
     token_fingerprint: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _CharacterAuthorityContextCapture:
+    runtime_state: RuntimeSourceState = field(repr=False)
+    runtime_revision: int
+    expected_server_id: str = field(repr=False)
+    authority_scope_id: str = field(repr=False)
+    active_context: ActiveServerContext = field(repr=False)
+    client_cache_key: _CachedClientKey = field(repr=False)
+    client: TLDWAPIClient = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedCharacterAuthority:
+    capture: _CharacterAuthorityContextCapture = field(repr=False)
+    authority_id: str = field(repr=False)
 
 
 class ServerContextError(RuntimeError):
@@ -84,6 +155,13 @@ class ServerCredentialsUnavailable(ServerContextError):
     reason_code = "server_credentials_unavailable"
 
 
+class ServerIdentityUnavailable(ServerContextError):
+    reason_code = "server_identity_unavailable"
+
+    def __init__(self) -> None:
+        super().__init__("Server identity unavailable.")
+
+
 class RuntimeServerContextProvider:
     def __init__(
         self,
@@ -100,6 +178,7 @@ class RuntimeServerContextProvider:
         self._legacy_cleared_server_ids: set[str] = set()
         self._cached_client_key: _CachedClientKey | None = None
         self._cached_client: TLDWAPIClient | None = None
+        self._cached_character_authority: _CachedCharacterAuthority | None = None
         self._pending_client_close_tasks: set[asyncio.Task[None]] = set()
 
     def get_active_context(self) -> ActiveServerContext:
@@ -153,10 +232,78 @@ class RuntimeServerContextProvider:
         )
         return self._cached_client
 
+    async def resolve_character_authority_id(
+        self,
+        *,
+        expected_server_id: str,
+    ) -> str:
+        """Resolve authority for the expected target's authenticated user.
+
+        Args:
+            expected_server_id: Configured target identifier already carried
+                by the caller's character context.
+
+        Returns:
+            The versioned server-user character authority identifier.
+
+        Raises:
+            ServerIdentityUnavailable: If exact stable target and account
+                authority cannot be proven.
+            asyncio.CancelledError: If the caller cancels the identity lookup.
+        """
+        try:
+            capture = self._capture_character_authority_context(expected_server_id)
+        except Exception:
+            raise ServerIdentityUnavailable() from None
+
+        cached = self._cached_character_authority
+        if cached is not None and self._same_authority_capture(
+            cached.capture,
+            capture,
+        ):
+            return cached.authority_id
+
+        try:
+            response = await capture.client.get_current_user_profile(
+                sections="identity"
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise ServerIdentityUnavailable() from None
+
+        if not self._character_authority_capture_matches(capture):
+            raise ServerIdentityUnavailable() from None
+
+        try:
+            user_id = self._extract_identity_user_id(response)
+            authority_id = encode_server_user_character_authority(
+                capture.authority_scope_id,
+                user_id,
+            )
+        except Exception:
+            raise ServerIdentityUnavailable() from None
+
+        cached = self._cached_character_authority
+        if cached is not None and self._same_authority_capture(
+            cached.capture,
+            capture,
+        ):
+            if cached.authority_id != authority_id:
+                raise ServerIdentityUnavailable() from None
+            return cached.authority_id
+
+        self._cached_character_authority = _CachedCharacterAuthority(
+            capture=capture,
+            authority_id=authority_id,
+        )
+        return authority_id
+
     async def close_cached_client(self) -> None:
         cached_client = self._cached_client
         self._cached_client = None
         self._cached_client_key = None
+        self._cached_character_authority = None
         if cached_client is not None:
             await cached_client.close()
         pending_tasks = list(self._pending_client_close_tasks)
@@ -268,6 +415,120 @@ class RuntimeServerContextProvider:
         ):
             return resolved_target
         return None
+
+    def _capture_character_authority_context(
+        self,
+        expected_server_id: str,
+    ) -> _CharacterAuthorityContextCapture:
+        if type(expected_server_id) is not str:
+            raise ServerIdentityUnavailable()
+        if not expected_server_id or expected_server_id != expected_server_id.strip():
+            raise ServerIdentityUnavailable()
+
+        runtime_state, runtime_revision = self.runtime_context.snapshot()
+        if not self._runtime_state_matches_expected_target(
+            runtime_state,
+            expected_server_id,
+        ):
+            raise ServerIdentityUnavailable()
+
+        authority_scope_id = self.target_store.ensure_authority_scope_id(
+            expected_server_id
+        )
+        active_context = self.get_active_context()
+        if (
+            active_context.active_server_id != expected_server_id
+            or active_context.target.server_id != expected_server_id
+            or active_context.target.authority_scope_id != authority_scope_id
+        ):
+            raise ServerIdentityUnavailable()
+
+        client_cache_key = self._client_cache_key(active_context)
+        client = self.build_client()
+        capture = _CharacterAuthorityContextCapture(
+            runtime_state=runtime_state,
+            runtime_revision=runtime_revision,
+            expected_server_id=expected_server_id,
+            authority_scope_id=authority_scope_id,
+            active_context=active_context,
+            client_cache_key=client_cache_key,
+            client=client,
+        )
+        if not self._character_authority_capture_matches(capture):
+            raise ServerIdentityUnavailable()
+        return capture
+
+    def _character_authority_capture_matches(
+        self,
+        capture: _CharacterAuthorityContextCapture,
+    ) -> bool:
+        runtime_state, runtime_revision = self.runtime_context.snapshot()
+        if (
+            runtime_revision != capture.runtime_revision
+            or runtime_state != capture.runtime_state
+            or not self._runtime_state_matches_expected_target(
+                runtime_state,
+                capture.expected_server_id,
+            )
+        ):
+            return False
+
+        try:
+            authority_scope_id = self.target_store.ensure_authority_scope_id(
+                capture.expected_server_id
+            )
+            active_context = self.get_active_context()
+            client_cache_key = self._client_cache_key(active_context)
+        except Exception:
+            return False
+
+        return (
+            authority_scope_id == capture.authority_scope_id
+            and active_context == capture.active_context
+            and client_cache_key == capture.client_cache_key
+            and self._cached_client_key == capture.client_cache_key
+            and self._cached_client is capture.client
+        )
+
+    @staticmethod
+    def _same_authority_capture(
+        left: _CharacterAuthorityContextCapture,
+        right: _CharacterAuthorityContextCapture,
+    ) -> bool:
+        return left == right and left.client is right.client
+
+    @staticmethod
+    def _runtime_state_matches_expected_target(
+        runtime_state: RuntimeSourceState,
+        expected_server_id: str,
+    ) -> bool:
+        active_server_id = runtime_state.active_server_id
+        return (
+            runtime_state.active_source == "server"
+            and runtime_state.server_configured
+            and active_server_id == expected_server_id
+        )
+
+    @staticmethod
+    def _extract_identity_user_id(response: Any) -> int:
+        missing = object()
+        if isinstance(response, Mapping):
+            mapped_user = response.get("user", missing)
+            attribute_user = getattr(response, "user", missing)
+            if attribute_user is not missing and attribute_user != mapped_user:
+                raise ValueError("ambiguous user identity response")
+            user = mapped_user
+        else:
+            user = getattr(response, "user", missing)
+
+        if not isinstance(user, Mapping):
+            raise ValueError("missing user identity")
+        user_id = user.get("id", missing)
+        if user_id is missing:
+            raise ValueError("missing user identifier")
+        if type(user_id) is not int or not 1 <= user_id <= _MAX_SERVER_USER_ID:
+            raise ValueError("invalid user identifier")
+        return user_id
 
     def _require_active_server_id(self) -> str:
         state = self.runtime_context.state
@@ -456,6 +717,7 @@ class RuntimeServerContextProvider:
         cached_client = self._cached_client
         self._cached_client = None
         self._cached_client_key = None
+        self._cached_character_authority = None
         if cached_client is not None:
             self._close_client_sync_safe(cached_client)
 
@@ -565,4 +827,6 @@ __all__ = [
     "ServerContextError",
     "ServerContextUnavailable",
     "ServerCredentialsUnavailable",
+    "ServerIdentityUnavailable",
+    "encode_server_user_character_authority",
 ]
