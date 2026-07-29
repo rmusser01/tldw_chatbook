@@ -50,6 +50,7 @@ Restore the mandatory dev test gate by aligning stale or nondeterministic tests 
 - [ ] #22 Manifest staging regressions observe the secure exclusive-create helper in the worker thread, exercise cleanup failures only after a stage exists, and assert injected private values remain absent from public diagnostics without rejecting unrelated isolated config-path logs.
 - [ ] #23 Profile-backup integration fixtures inject temporary ChaChaNotes and Media paths through the live canonical resolver map while retaining the direct Prompts resolver patch, so success and partial-failure manifests prove the intended legacy and optional TTS Profile entry sets without relying on ignored `config_data` fields.
 - [ ] #24 The TTS preference read-purity regression guards the live public config mutation helpers without monkeypatching the deleted `atomic_write_text` implementation symbol, while retaining input immutability and zero-persistence-call coverage.
+- [ ] #25 Parakeet MLX returns no synthetic segment when the model emits empty text and no sentences, for both zero-duration and very-short audio, while retaining sentence timestamps and the single untimed fallback for non-empty text without sentence metadata.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -80,6 +81,7 @@ Reason: Reconciles tests with accepted production contracts and applies ADR-029'
 17. Retarget manifest staging and cleanup regressions to the current secure create seam and post-stage failure boundary.
 18. Point the profile-backup fixtures' temporary legacy database paths through the current canonical resolver owner.
 19. Remove the deleted config write implementation from the TTS preference reader's live persistence guard.
-20. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
-21. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+20. Align Parakeet MLX empty-result segment normalization with the other transcription providers.
+21. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+22. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

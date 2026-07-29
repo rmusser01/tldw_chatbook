@@ -939,6 +939,52 @@ git add Tests/TTS/test_tts_preferences.py
 git commit -m "test(tts): guard live preference writers"
 ```
 
+### Task 4t: Do not synthesize empty Parakeet MLX segments
+
+**Files:**
+- Modify: `tldw_chatbook/Local_Ingestion/transcription_service.py`
+- Modify: `Tests/Transcription/test_mlx_parakeet_edge_cases.py`
+- Verify: `Tests/Transcription/test_mlx_parakeet_integration.py`
+
+- [ ] **Step 1: Preserve the existing RED regression**
+
+Run
+`TestMLXParakeetIntegration::test_empty_audio`. Expected: the model returns
+empty text and no sentences, but normalization creates one zero-duration empty
+segment because `audio_duration` is `0.0` rather than `None`. Confirm
+faster-whisper and MLX Whisper already return zero segments for empty text and
+that non-empty text without timestamps still receives a single fallback.
+Confirm `test_extreme_audio_lengths` has the same stale expectation for its
+mocked 10 ms empty transcription.
+
+- [ ] **Step 2: Correct the fallback condition**
+
+In the no-sentences branch, create a fallback segment only when `text` is
+non-empty. Otherwise return no segments. Update the adjacent stale comment and
+the very-short empty-result assertion from one segment to zero. Do not change
+sentence timestamp conversion, chunking, model invocation, metadata, routing,
+or error handling.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Transcription/test_mlx_parakeet_integration.py \
+  Tests/Transcription/test_mlx_parakeet_edge_cases.py -q
+../../.venv/bin/python -m ruff check \
+  tldw_chatbook/Local_Ingestion/transcription_service.py \
+  Tests/Transcription/test_mlx_parakeet_integration.py \
+  Tests/Transcription/test_mlx_parakeet_edge_cases.py
+../../.venv/bin/python -m ruff format --check \
+  tldw_chatbook/Local_Ingestion/transcription_service.py \
+  Tests/Transcription/test_mlx_parakeet_integration.py \
+  Tests/Transcription/test_mlx_parakeet_edge_cases.py
+git add \
+  tldw_chatbook/Local_Ingestion/transcription_service.py \
+  Tests/Transcription/test_mlx_parakeet_edge_cases.py
+git commit -m "fix(stt): omit empty Parakeet MLX segment"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1017,6 +1063,8 @@ Include any conditionally required focused test/production files in that commit.
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
+  Tests/Transcription/test_mlx_parakeet_integration.py \
+  Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -1045,6 +1093,8 @@ Expected: all affected tests pass.
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
+  Tests/Transcription/test_mlx_parakeet_integration.py \
+  Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -1068,6 +1118,8 @@ Expected: all affected tests pass.
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
+  Tests/Transcription/test_mlx_parakeet_integration.py \
+  Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/LLM/test_local_llm_provider_config.py \
   Tests/LLM_Provider_Catalog/test_local_openai_compatible_provider_name.py \
   Tests/DB/test_rag_indexing_db.py \
@@ -1075,7 +1127,8 @@ Expected: all affected tests pass.
   Tests/Audio/test_recording_service.py \
   Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
   tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py \
-  tldw_chatbook/Library/library_skills_state.py
+  tldw_chatbook/Library/library_skills_state.py \
+  tldw_chatbook/Local_Ingestion/transcription_service.py
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
 git diff --check origin/dev...HEAD
 git diff --check

@@ -200,6 +200,15 @@ Update the tests to describe current behavior:
     settings mutation helpers plus the unchanged input and zero-call
     assertions. Do not restore the implementation symbol or patch private
     file-writing internals that the pure preference parser does not own.
+23. In Parakeet MLX result normalization, synthesize an untimed segment only
+    when the model returned non-empty text without sentence timestamps. Empty
+    text plus no sentences must return an empty segment list even when audio
+    duration is known (including `0.0`). Preserve real sentence timestamps,
+    non-empty untimed fallback behavior, response metadata, and the existing
+    empty-audio regression. Update the one contradictory very-short-audio
+    assertion to expect no segment when its mocked model also returns empty
+    text and no sentences. This is a direct correction to the established
+    cross-provider empty-transcription contract, not a new service boundary.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -265,6 +274,10 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
   implementation would couple a pure parser regression to deleted or internal
   persistence details. The public config mutation guards already express the
   relevant no-write boundary.
+- Treating a known duration as sufficient to create an empty Parakeet segment
+  produces a meaningless addressable record and contradicts faster-whisper and
+  MLX Whisper empty-result behavior. Keying the fallback on non-empty text
+  preserves useful untimed transcripts without manufacturing empty content.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
