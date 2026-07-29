@@ -56,3 +56,28 @@ def test_unknown_fields_are_still_rejected(sink):
     """The schema is the guarantee; persist_event must not bypass it."""
     with pytest.raises(ValueError):
         persist_event("app", "app_started", prompt="secret user text")
+
+
+def test_a_loguru_record_carrying_the_marker_is_still_rejected(sink):
+    """The marker must not survive the Loguru forwarder.
+
+    If it did, any code could write
+    `logger.bind(_tldw_metadata_only_record=True).info(secret)` and bypass the
+    schema entirely. `_forward_loguru_to_standard` rebuilds `extra` from
+    scratch, which drops it -- this asserts that stays true.
+    """
+    from loguru import logger as loguru_logger
+
+    from tldw_chatbook.Logging_Config import _forward_loguru_to_standard
+
+    path, handler = sink
+    loguru_logger.remove()
+    sink_id = loguru_logger.add(_forward_loguru_to_standard, level="TRACE")
+    try:
+        loguru_logger.bind(_tldw_metadata_only_record=True).info(
+            "event=forged component=attacker"
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+    handler.flush()
+    assert "forged" not in path.read_text()
