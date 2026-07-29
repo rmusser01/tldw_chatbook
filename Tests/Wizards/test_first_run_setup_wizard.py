@@ -8,9 +8,11 @@ from textual.widgets import Button, Input, RadioButton, RadioSet, Static, Switch
 
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    AppearanceStep,
     CLOUD_PROBE_TIMEOUT_SECONDS,
     FirstRunSetupWizard,
     ModelStep,
+    NotesSyncStep,
     ProviderStep,
     RagStep,
     SetupWizardContainer,
@@ -656,3 +658,75 @@ async def test_tools_step_commits_only_changed_gates():
         assert ok
         committed = wizard.commit_config.call_args.args[0]
         assert committed["tools"][step.gate_key_for(switches[0])] is True
+
+
+@pytest.mark.asyncio
+async def test_notes_step_commit_writes_directory_and_toggle():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = NotesSyncStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="notes", title="Notes sync", step_number=6),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-notes-enable", Switch).value = True
+        step.query_one("#setup-notes-directory", Input).value = "~/MyNotes"
+        ok, _ = await step.commit()
+        assert ok
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed == {
+            "notes": {"sync_directory": "~/MyNotes", "auto_sync_enabled": True}
+        }
+
+
+@pytest.mark.asyncio
+async def test_notes_step_disabled_commits_nothing():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = NotesSyncStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="notes", title="Notes sync", step_number=6),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        ok, _ = await step.commit()
+        assert ok
+        wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_appearance_step_commits_theme_and_card():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True), rerun=False,
+    )
+    step = AppearanceStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
+    )
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.selected_theme = "textual-light"
+        step.selected_splash_card = "matrix"
+        ok, _ = await step.commit()
+        assert ok
+        committed = wizard.commit_config.call_args.args[0]
+        assert committed["general"] == {"default_theme": "textual-light"}
+        assert committed["splash_screen"] == {"card_selection": "matrix"}

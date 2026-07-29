@@ -622,6 +622,121 @@ class ToolsStep(SetupStep):
         ]}
 
 
+class NotesSyncStep(SetupStep):
+    """Optional bidirectional notes sync: a directory and a toggle."""
+
+    def compose(self) -> ComposeResult:
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import read_wizard_prefill
+
+        prefill = read_wizard_prefill(
+            getattr(self.wizard.app_instance, "app_config", {}) or {}
+        )
+        with Vertical(classes="setup-notes"):
+            yield Static("Notes sync", classes="setup-title")
+            yield Static(
+                "Keep a folder of Markdown files in sync with your notes. "
+                "Skip if you only want in-app notes.",
+                classes="setup-subtitle",
+            )
+            with Horizontal(classes="setup-tool-row"):
+                yield Switch(value=prefill.auto_sync_enabled, id="setup-notes-enable")
+                yield Label("Enable notes sync")
+            yield Label("Notes directory", classes="setup-field-label")
+            yield Input(
+                value=prefill.sync_directory or "~/Documents/Notes",
+                id="setup-notes-directory",
+            )
+            yield Static("", classes="setup-step-error")
+
+    async def commit(self) -> tuple[bool, str]:
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import build_notes_commit
+
+        enabled = self.query_one("#setup-notes-enable", Switch).value
+        directory = self.query_one("#setup-notes-directory", Input).value.strip()
+        if not enabled:
+            return True, ""
+        if not directory:
+            return False, "Pick a directory or turn sync off."
+        ok = await self.wizard.commit_config(
+            build_notes_commit(sync_directory=directory, auto_sync_enabled=True)
+        )
+        return (True, "") if ok else (False, "Saving notes sync settings failed.")
+
+    def get_step_data(self) -> Dict[str, Any]:
+        return {"auto_sync_enabled": self.query_one("#setup-notes-enable", Switch).value}
+
+
+class AppearanceStep(SetupStep):
+    """Theme and splash card. Applies the theme live on commit (best effort)."""
+
+    selected_theme: str = ""
+    selected_splash_card: str = ""
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="setup-appearance"):
+            yield Static("Appearance", classes="setup-title")
+            yield Label("Theme", classes="setup-field-label")
+            with RadioSet(id="setup-theme-choice"):
+                for theme_name in self._theme_names():
+                    yield RadioButton(theme_name)
+            yield Label("Splash screen card", classes="setup-field-label")
+            with RadioSet(id="setup-splash-choice"):
+                yield RadioButton("Surprise me (random)", value=True)
+                for card_name in self._card_names()[:10]:
+                    yield RadioButton(card_name)
+            yield Static("", classes="setup-step-error")
+
+    def _theme_names(self) -> list[str]:
+        try:
+            return sorted(self.app.available_themes)
+        except Exception:
+            return ["textual-dark", "textual-light"]
+
+    @staticmethod
+    def _card_names() -> list[str]:
+        try:
+            from tldw_chatbook.Utils.Splash_Screens.card_definitions import (
+                get_all_card_definitions,
+            )
+
+            return sorted(get_all_card_definitions())
+        except Exception:
+            return []
+
+    @on(RadioSet.Changed, "#setup-theme-choice")
+    def _on_theme(self, event: RadioSet.Changed) -> None:
+        self.selected_theme = str(event.pressed.label)
+
+    @on(RadioSet.Changed, "#setup-splash-choice")
+    def _on_card(self, event: RadioSet.Changed) -> None:
+        label = str(event.pressed.label)
+        self.selected_splash_card = "" if label.startswith("Surprise me") else label
+
+    async def commit(self) -> tuple[bool, str]:
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+            build_appearance_commit,
+        )
+
+        if not self.selected_theme and not self.selected_splash_card:
+            return True, ""
+        theme = self.selected_theme or "textual-dark"
+        ok = await self.wizard.commit_config(
+            build_appearance_commit(
+                default_theme=theme,
+                splash_card=self.selected_splash_card or None,
+            )
+        )
+        if ok and self.selected_theme:
+            try:
+                self.app.theme = self.selected_theme
+            except Exception:
+                logger.debug("Live theme apply failed; persisted value still wins")
+        return (True, "") if ok else (False, "Saving appearance settings failed.")
+
+    def get_step_data(self) -> Dict[str, Any]:
+        return {"theme": self.selected_theme, "splash_card": self.selected_splash_card}
+
+
 class WelcomeStep(SetupStep):
     """Track choice: Quick / Full / Skip."""
 
@@ -693,8 +808,8 @@ class SetupWizardContainer(WizardContainer):
             ModelStep(wizard=self, config=cfg(wizard_state.STEP_MODEL, "Model", 3)),
             RagStep(wizard=self, config=cfg(wizard_state.STEP_RAG, "RAG", 4)),
             ToolsStep(wizard=self, config=cfg(wizard_state.STEP_TOOLS, "Tools", 5)),
-            SetupStep(wizard=self, config=cfg(wizard_state.STEP_NOTES, "Notes sync", 6)),
-            SetupStep(
+            NotesSyncStep(wizard=self, config=cfg(wizard_state.STEP_NOTES, "Notes sync", 6)),
+            AppearanceStep(
                 wizard=self, config=cfg(wizard_state.STEP_APPEARANCE, "Appearance", 7)
             ),
             SetupStep(
