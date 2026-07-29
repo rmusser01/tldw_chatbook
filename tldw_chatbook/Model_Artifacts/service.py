@@ -100,6 +100,23 @@ _DESCRIPTOR_KEYS = frozenset(
 _MANIFEST_SCHEMA_VERSION = 1
 _MANIFEST_KEYS = frozenset({"schema_version", "descriptor"})
 _LIFECYCLE_LEASE_KEY = ArtifactLeaseKey("!lifecycle", "1", "writer")
+_PathSnapshot = tuple[int, int, int, int, int, int]
+_NodeIdentity = tuple[int, int, int]
+
+
+def _path_snapshot(info: os.stat_result) -> _PathSnapshot:
+    return (
+        info.st_dev,
+        info.st_ino,
+        stat.S_IFMT(info.st_mode),
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _node_identity(info: os.stat_result) -> _NodeIdentity:
+    return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode))
 
 
 class ArtifactDescriptorError(ValueError):
@@ -792,6 +809,23 @@ class ModelArtifactService:
             self._locks_path,
         ):
             self._ensure_owned_directory(path)
+        managed_roots = (
+            self._root,
+            self._artifacts_path,
+            self._active_path,
+            self._ready_path,
+            self._staging_path,
+            self._locks_path,
+        )
+        try:
+            self._managed_root_identities = {
+                path: _node_identity(path.stat(follow_symlinks=False))
+                for path in managed_roots
+            }
+        except OSError as error:
+            raise ArtifactPathError("failed to inspect managed store roots") from error
+        for path in managed_roots:
+            self._assert_managed_path(path)
 
     @property
     def artifacts_path(self) -> Path:
@@ -901,11 +935,20 @@ class ModelArtifactService:
         """Return logical managed regular-file bytes and current free space."""
 
         try:
+            installed_bytes = self._regular_tree_bytes(self._artifacts_path)
+            staging_bytes = self._regular_tree_bytes(self._staging_path)
+            self._assert_managed_path(self._root)
+            self._assert_managed_path(self._artifacts_path)
+            self._assert_managed_path(self._staging_path)
+            free_bytes = shutil.disk_usage(self._root)[2]
+            self._assert_managed_path(self._root)
             return ArtifactDiskUsage(
-                installed_bytes=self._regular_tree_bytes(self._artifacts_path),
-                staging_bytes=self._regular_tree_bytes(self._staging_path),
-                free_bytes=shutil.disk_usage(self._root)[2],
+                installed_bytes=installed_bytes,
+                staging_bytes=staging_bytes,
+                free_bytes=free_bytes,
             )
+        except ArtifactPathError:
+            raise
         except OSError as error:
             raise ArtifactStateError("failed to account artifact disk usage") from error
 
@@ -920,18 +963,33 @@ class ModelArtifactService:
             raise TypeError("descriptor must be an ArtifactDescriptor")
         if not isinstance(source_directory, Path):
             raise TypeError("source_directory must be a Path")
-        self._validate_payload_tree(source_directory, descriptor.files)
+        source_directory = Path(os.path.abspath(source_directory))
+        source_snapshot = self._validate_payload_tree(
+            source_directory,
+            descriptor.files,
+        )
 
         staging: Path | None = None
         try:
+            self._assert_managed_path(self._staging_path)
             staging = Path(
                 tempfile.mkdtemp(
                     prefix="install-",
                     dir=self._staging_path,
                 )
             )
+            self._assert_managed_path(staging)
             self._copy_payload(descriptor, source_directory, staging)
+            if (
+                self._validate_payload_tree(
+                    source_directory,
+                    descriptor.files,
+                )
+                != source_snapshot
+            ):
+                raise ArtifactPathError("source tree changed during artifact copy")
             destination = self.artifact_path(descriptor.reference)
+            self._assert_managed_path(self._locks_path)
 
             # ponytail: one lifecycle writer lock is enough until measured install throughput
             # justifies per-artifact writer coordination.
@@ -947,7 +1005,7 @@ class ModelArtifactService:
                     LeaseMode.EXCLUSIVE,
                     timeout_seconds=self._lease_timeout_seconds,
                 ):
-                    if destination.exists() or destination.is_symlink():
+                    if self._managed_path_exists(destination):
                         self._verify_existing_destination(
                             destination,
                             descriptor,
@@ -962,11 +1020,14 @@ class ModelArtifactService:
                         },
                     )
                     self._ensure_final_parent(destination.parent)
-                    if destination.exists() or destination.is_symlink():
+                    if self._managed_path_exists(destination):
                         raise ArtifactConflictError(
                             "immutable artifact destination already exists"
                         )
+                    self._assert_managed_path(staging)
+                    self._assert_managed_path(destination.parent)
                     self._promote(staging, destination)
+                    self._assert_managed_path(destination)
                     staging = None
             return descriptor.reference
         except ArtifactError:
@@ -997,14 +1058,98 @@ class ModelArtifactService:
         if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
             raise ArtifactPathError(f"managed path {path.name} must be a directory")
 
+    def _assert_managed_path(
+        self,
+        path: Path,
+        *,
+        allow_missing: bool = False,
+        target_must_be_directory: bool = True,
+    ) -> None:
+        # Portable stdlib checks cannot pin a directory against a coordinated
+        # swap-and-restore. The service sole-writer invariant excludes that
+        # managed-store race; identity snapshots reject observable changes.
+        lexical_path = Path(os.path.abspath(path))
+        try:
+            relative = lexical_path.relative_to(self._root)
+        except ValueError as error:
+            raise ArtifactPathError(
+                "managed path escapes the artifact store root"
+            ) from error
+
+        current = self._root
+        chain = (self._root,) + tuple(
+            self._root.joinpath(*relative.parts[:index])
+            for index in range(1, len(relative.parts) + 1)
+        )
+        for index, current in enumerate(chain):
+            try:
+                info = current.stat(follow_symlinks=False)
+            except FileNotFoundError as error:
+                if allow_missing:
+                    return
+                raise ArtifactPathError("managed path component is missing") from error
+            except (OSError, ValueError) as error:
+                raise ArtifactPathError("failed to inspect managed path") from error
+            is_target = index == len(chain) - 1
+            if stat.S_ISLNK(info.st_mode):
+                raise ArtifactPathError("managed path component is a symlink")
+            if not stat.S_ISDIR(info.st_mode) and (
+                not is_target or target_must_be_directory
+            ):
+                raise ArtifactPathError("managed path component is not a directory")
+            expected = self._managed_root_identities.get(current)
+            if expected is not None and _node_identity(info) != expected:
+                raise ArtifactPathError("managed store root identity changed")
+            try:
+                resolved = current.resolve(strict=True)
+                resolved.relative_to(self._root)
+            except (OSError, RuntimeError, ValueError) as error:
+                raise ArtifactPathError(
+                    "managed path resolves outside the artifact store root"
+                ) from error
+            if resolved != current:
+                raise ArtifactPathError(
+                    "managed path contains a redirected path component"
+                )
+
+    def _managed_path_exists(self, path: Path) -> bool:
+        self._assert_managed_path(
+            path,
+            allow_missing=True,
+            target_must_be_directory=False,
+        )
+        try:
+            path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        except (OSError, ValueError) as error:
+            raise ArtifactPathError("failed to inspect managed destination") from error
+        return True
+
     def _regular_tree_bytes(self, root: Path) -> int:
+        self._assert_managed_path(root)
+        try:
+            before = _path_snapshot(root.stat(follow_symlinks=False))
+        except OSError as error:
+            raise ArtifactPathError("failed to inspect accounting directory") from error
         total = 0
-        for entry in os.scandir(root):
+        try:
+            entries = sorted(os.scandir(root), key=lambda entry: entry.name)
+        except OSError as error:
+            raise ArtifactPathError("failed to scan accounting directory") from error
+        for entry in entries:
             entry_stat = entry.stat(follow_symlinks=False)
             if stat.S_ISREG(entry_stat.st_mode):
                 total += entry_stat.st_size
             elif stat.S_ISDIR(entry_stat.st_mode):
                 total += self._regular_tree_bytes(Path(entry.path))
+        self._assert_managed_path(root)
+        try:
+            after = _path_snapshot(root.stat(follow_symlinks=False))
+        except OSError as error:
+            raise ArtifactPathError("failed to recheck accounting directory") from error
+        if after != before:
+            raise ArtifactPathError("accounting directory changed during scan")
         return total
 
     def _ensure_final_parent(self, parent: Path) -> None:
@@ -1012,7 +1157,9 @@ class ModelArtifactService:
         current = self._artifacts_path
         for component in relative.parts:
             current = current / component
+            self._assert_managed_path(current, allow_missing=True)
             self._ensure_owned_directory(current)
+            self._assert_managed_path(current)
 
     def _validate_payload_tree(
         self,
@@ -1020,15 +1167,22 @@ class ModelArtifactService:
         files: tuple[ArtifactFile, ...],
         *,
         allowed_files: frozenset[str] = frozenset(),
-    ) -> None:
+    ) -> tuple[tuple[str, _PathSnapshot], ...]:
+        lexical_root = Path(os.path.abspath(root))
         try:
-            root_mode = root.stat(follow_symlinks=False).st_mode
+            resolved_root = lexical_root.resolve(strict=True)
+            root_info = lexical_root.stat(follow_symlinks=False)
         except (FileNotFoundError, NotADirectoryError) as error:
             raise ArtifactPathError(
                 "source_directory must be an existing directory"
             ) from error
         except (OSError, ValueError) as error:
             raise ArtifactPathError("failed to inspect source_directory") from error
+        if resolved_root != lexical_root:
+            raise ArtifactPathError(
+                "artifact directory contains a symlinked or redirected ancestor"
+            )
+        root_mode = root_info.st_mode
         if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
             raise ArtifactPathError("source_directory must be a non-symlink directory")
         expected_files = {item.path for item in files}
@@ -1039,6 +1193,7 @@ class ModelArtifactService:
             for index in range(1, len(Path(path).parts))
         }
         actual_files: set[str] = set()
+        snapshots = [("", _path_snapshot(root_info))]
 
         def scan(directory: Path, prefix: str = "") -> None:
             try:
@@ -1048,11 +1203,12 @@ class ModelArtifactService:
             for entry in entries:
                 relative = f"{prefix}/{entry.name}" if prefix else entry.name
                 try:
-                    mode = entry.stat(follow_symlinks=False).st_mode
+                    entry_info = entry.stat(follow_symlinks=False)
                 except OSError as error:
                     raise ArtifactPathError(
                         f"failed to inspect source entry {relative}"
                     ) from error
+                mode = entry_info.st_mode
                 if stat.S_ISLNK(mode):
                     raise ArtifactPathError(f"source entry is a symlink: {relative}")
                 if stat.S_ISDIR(mode):
@@ -1071,13 +1227,15 @@ class ModelArtifactService:
                     raise ArtifactPathError(
                         f"source contains a special entry: {relative}"
                     )
+                snapshots.append((relative, _path_snapshot(entry_info)))
 
-        scan(root)
+        scan(lexical_root)
         missing = expected_files - actual_files
         if missing:
             raise ArtifactPathError(
                 f"source is missing declared files: {sorted(missing)}"
             )
+        return tuple(snapshots)
 
     def _copy_payload(
         self,
@@ -1141,6 +1299,7 @@ class ModelArtifactService:
             ) from error
 
     def _read_manifest(self, directory: Path) -> ArtifactDescriptor:
+        self._assert_managed_path(directory)
         try:
             directory_mode = directory.stat(follow_symlinks=False).st_mode
             manifest_path = directory / "manifest.json"

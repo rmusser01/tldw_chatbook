@@ -702,6 +702,53 @@ def test_install_rejects_symlinked_source_directory(tmp_path: Path) -> None:
     assert tuple(service.staging_path.iterdir()) == ()
 
 
+def test_install_rejects_symlinked_source_ancestor(tmp_path: Path) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    real_parent = tmp_path / "real-parent"
+    source = real_parent / "source"
+    source.mkdir(parents=True)
+    (source / "model.onnx").write_bytes(b"model")
+    linked_parent = tmp_path / "linked-parent"
+    symlink_or_skip(linked_parent, real_parent, target_is_directory=True)
+    item = descriptor(files=(artifact_file(b"model"),))
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service.install(item, linked_parent / "source")
+
+    assert service.artifact_path(item.reference).exists() is False
+    assert tuple(service.staging_path.iterdir()) == ()
+
+
+def test_install_rejects_source_directory_identity_change_during_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, source = install_inputs(tmp_path)
+    abandoned = service.staging_path / "abandoned"
+    abandoned.mkdir()
+    replacement = tmp_path / "replacement"
+    replacement.mkdir()
+    (replacement / "model.onnx").write_bytes(b"model")
+    original_copy = service._copy_payload
+
+    def swap_then_copy(
+        copied_descriptor: ArtifactDescriptor,
+        copied_source: Path,
+        staging: Path,
+    ) -> None:
+        copied_source.rename(tmp_path / "original-source")
+        replacement.rename(copied_source)
+        original_copy(copied_descriptor, copied_source, staging)
+
+    monkeypatch.setattr(service, "_copy_payload", swap_then_copy)
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service.install(item, source)
+
+    assert service.artifact_path(item.reference).exists() is False
+    assert tuple(service.staging_path.iterdir()) == (abandoned,)
+
+
 def test_install_rejects_special_source_entry_when_supported(
     tmp_path: Path,
 ) -> None:
@@ -810,6 +857,45 @@ def test_install_preserves_conflicting_existing_artifact(
         path.relative_to(destination).as_posix(): path.read_bytes()
         for path in destination.iterdir()
     } == before
+
+
+def test_install_rejects_managed_ancestor_symlink_before_external_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, item, source = install_inputs(tmp_path)
+    external = tmp_path / "external-artifact"
+    external_final = external / item.reference.revision / item.reference.variant
+    external_final.mkdir(parents=True)
+    (external_final / "model.onnx").write_bytes(b"model")
+    (external_final / "manifest.json").write_text(
+        json.dumps(
+            {"schema_version": 1, "descriptor": item.to_dict()},
+        ),
+        encoding="utf-8",
+    )
+    managed_ancestor = service.artifacts_path / item.reference.artifact_id
+    symlink_or_skip(managed_ancestor, external, target_is_directory=True)
+    before = {
+        path.relative_to(external).as_posix(): path.read_bytes()
+        for path in external.rglob("*")
+        if path.is_file()
+    }
+
+    def forbid_manifest_read(_directory: Path) -> ArtifactDescriptor:
+        raise AssertionError("external manifest must not be read")
+
+    monkeypatch.setattr(service, "_read_manifest", forbid_manifest_read)
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service.install(item, source)
+
+    assert {
+        path.relative_to(external).as_posix(): path.read_bytes()
+        for path in external.rglob("*")
+        if path.is_file()
+    } == before
+    assert tuple(service.staging_path.iterdir()) == ()
 
 
 @pytest.mark.parametrize("failure", ("copy", "hash", "promotion"))
@@ -1009,3 +1095,52 @@ def test_disk_usage_counts_regular_bytes_without_following_symlinks(
     )
     assert usage.installed_bytes < external_file.stat().st_size
     assert usage.staging_bytes == len(b"staging")
+
+
+@pytest.mark.parametrize("owned_root", ("artifacts", "staging"))
+def test_disk_usage_rejects_replaced_owned_root_symlink(
+    tmp_path: Path,
+    owned_root: str,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    external = tmp_path / "external"
+    external.mkdir()
+    external_file = external / "outside.bin"
+    external_file.write_bytes(b"outside")
+    replaced = (
+        service.artifacts_path if owned_root == "artifacts" else service.staging_path
+    )
+    replaced.rmdir()
+    symlink_or_skip(replaced, external, target_is_directory=True)
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service.disk_usage()
+
+    assert external_file.read_bytes() == b"outside"
+
+
+def test_disk_usage_rejects_directory_identity_change_during_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    original_scandir = service_module.os.scandir
+    previous_artifacts = tmp_path / "previous-artifacts"
+    swapped = False
+
+    def swap_artifacts(path: str | os.PathLike[str]) -> object:
+        nonlocal swapped
+        if Path(path) == service.artifacts_path and not swapped:
+            entries = list(original_scandir(path))
+            service.artifacts_path.rename(previous_artifacts)
+            service.artifacts_path.mkdir()
+            swapped = True
+            return iter(entries)
+        return original_scandir(path)
+
+    monkeypatch.setattr(service_module.os, "scandir", swap_artifacts)
+
+    with pytest.raises(service_module.ArtifactPathError):
+        service.disk_usage()
+
+    assert swapped is True
