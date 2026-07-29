@@ -167,7 +167,7 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
     _mark_console_onboarding_complete(app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
-        async with app.run_test(size=(140, 42)) as pilot:
+        async with app.run_test(size=(160, 42)) as pilot:
             await _open_console(app, pilot)
 
             shell = app.screen.query_one("#console-shell")
