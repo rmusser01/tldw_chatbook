@@ -533,12 +533,35 @@ language = "en"
 punctuation = true
 commands = true
 buffer_duration_ms = 500
+# How long a stop waits for the transcription thread to drain what is left of
+# the capture. Must comfortably exceed one transcription: a warm local model
+# takes about a second, a large one longer. If a stop reports "Transcription
+# did not finish before dictation stopped", raise this (or pick a faster
+# model). Invalid or non-positive values fall back to the 30s default.
+stop_join_timeout_seconds = 30.0
+# Load the speech model before the microphone opens, rather than lazily on the
+# first audio chunk (which recorded into a void while the model downloaded).
+# Set to false to skip it: the model then loads during the capture, as it used
+# to. Default true.
+warm_model_before_capture = true
 
 [dictation.privacy]
 save_history = false
 local_only = true
 auto_clear_buffer = true
 ```
+
+`local_only` accepts any provider that runs on this machine — all of
+`parakeet-onnx`, `parakeet-mlx`, `lightning-whisper-mlx`, `faster-whisper`,
+`qwen2audio`, `parakeet` and `canary`. Only a provider that sends audio off the
+machine (`remote-whisper`) is substituted.
+
+> **First run:** the Console loads the speech model *before* it opens the
+> microphone, and the composer's voice chip says so ("Preparing speech
+> model…"), with the details in a notification. On a fresh machine that first
+> load downloads the model and can take several minutes; nothing is being
+> recorded during it, the mic button cancels it, and a failure to load is
+> reported as a model/provider problem rather than a microphone one.
 
 ### TTS Settings
 ```toml

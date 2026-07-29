@@ -4,6 +4,7 @@ Improved live dictation service with lazy initialization and better resource man
 This implementation addresses the issues identified in the architectural review.
 """
 
+import math
 import os
 import sys
 import threading
@@ -29,16 +30,41 @@ except ImportError:
 # Local imports
 from ..config import get_cli_setting, save_setting_to_cli_config
 
+# One catalogue of local providers, shared with the Console's resolver. Import
+# free of heavy dependencies by design (`find_spec` only), so this costs
+# nothing here and cannot drift from what the resolver picks.
+from ..Utils.local_stt_providers import (
+    LOCAL_STT_PROVIDERS,
+    installed_local_providers,
+    provider_is_local,
+)
+
 
 @dataclass
 class DictationResult:
-    """Result from a dictation session."""
+    """Result from a dictation session.
+
+    Attributes:
+        transcript: Everything the recognizer finalized, space-joined.
+        segments: The individual finalized segments, with timestamps.
+        duration: Wall-clock seconds the capture ran for.
+        audio_data: Raw PCM, only when the caller asked for it.
+        timestamp: When the result was produced.
+        captured_bytes: PCM bytes the recorder actually delivered. Zero means
+            the microphone produced nothing -- the only case in which an empty
+            transcript is a capture problem.
+        transcription_complete: False when the processing thread was still
+            working when its join expired, so audio was dropped unread. An
+            empty transcript then says nothing about the microphone.
+    """
 
     transcript: str
     segments: List[Dict[str, Any]]
     duration: float
     audio_data: Optional[bytes] = None
     timestamp: datetime = None
+    captured_bytes: int = 0
+    transcription_complete: bool = True
 
     def __post_init__(self):
         if self.timestamp is None:
@@ -74,6 +100,22 @@ class LazyLiveDictationService:
     BUFFER_DURATION_MS = 500  # Default, now configurable
     MIN_SPEECH_DURATION_MS = 300
 
+    #: How long `stop_dictation()` waits for the processing thread to drain
+    #: and transcribe what is left. This used to be a hard-coded 2.0s, which
+    #: is shorter than a single warm transcription (~1s) and orders of
+    #: magnitude shorter than a cold one, so a first capture's audio was
+    #: routinely thrown away with no signal at all. Configurable as
+    #: `dictation.stop_join_timeout_seconds`.
+    STOP_JOIN_TIMEOUT_SECONDS = 30.0
+
+    #: Instance defaults, declared on the class so a service built with
+    #: `__new__` (teardown-path tests do exactly that) still stops cleanly
+    #: instead of raising AttributeError while releasing the microphone.
+    stop_join_timeout_seconds = STOP_JOIN_TIMEOUT_SECONDS
+    captured_bytes = 0
+    max_buffer_bytes: Optional[int] = None
+    on_buffer_limit: Optional[Callable[[], None]] = None
+
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
 
@@ -85,11 +127,30 @@ class LazyLiveDictationService:
         enable_punctuation: bool = True,
         enable_commands: bool = True,
         audio_backend: Optional[str] = None,
+        max_buffer_bytes: Optional[int] = None,
+        on_buffer_limit: Optional[Callable[[], None]] = None,
     ):
-        """
-        Initialize dictation service with lazy loading.
+        """Initialize dictation service with lazy loading.
 
         Audio and transcription services are not initialized until first use.
+
+        Args:
+            transcription_provider: Provider name, or "auto" to let the
+                transcription service choose.
+            transcription_model: Model identifier for that provider.
+            language: Language code passed to the recognizer.
+            enable_punctuation: Whether to ask the provider to punctuate.
+            enable_commands: Whether spoken commands are interpreted.
+            audio_backend: Preferred capture backend, or None to auto-detect.
+            max_buffer_bytes: Hard cap on the PCM the recorder retains for one
+                capture. `None` (the default, and what every non-Console
+                caller uses) leaves the recorder unbounded, which is only safe
+                for captures bounded some other way -- a continuous capture
+                accumulates ~32 KB/s in the recorder's buffer, again in its
+                undrained queue, and again in `self.audio_buffer`.
+            on_buffer_limit: Invoked once when `max_buffer_bytes` is reached,
+                from a daemon notification thread the recorder spawns. Ignored
+                unless `max_buffer_bytes` is set.
         """
         self.transcription_provider = transcription_provider
         self.transcription_model = transcription_model
@@ -97,6 +158,8 @@ class LazyLiveDictationService:
         self.enable_punctuation = enable_punctuation
         self.enable_commands = enable_commands
         self.audio_backend_preference = audio_backend
+        self.max_buffer_bytes = max_buffer_bytes
+        self.on_buffer_limit = on_buffer_limit
 
         # Lazy-loaded services
         self._audio_service = None
@@ -145,11 +208,51 @@ class LazyLiveDictationService:
         self.buffer_duration_ms = get_cli_setting(
             "dictation.buffer_duration_ms", self.BUFFER_DURATION_MS
         )
+        self.stop_join_timeout_seconds = self._resolve_stop_join_timeout()
+
+        # Bytes the recorder has handed us this session. The one fact that
+        # separates "the microphone produced nothing" from "the transcriber
+        # produced nothing", which callers previously had to guess at.
+        self.captured_bytes = 0
 
         logger.info(
             f"LazyLiveDictationService initialized (services will load on demand) "
             f"provider: {transcription_provider}, privacy: {self.privacy_settings}"
         )
+
+    @classmethod
+    def _resolve_stop_join_timeout(cls) -> float:
+        """Read `dictation.stop_join_timeout_seconds`, falling back to the default.
+
+        Returns:
+            A positive number of seconds to wait for the processing thread.
+        """
+        raw = get_cli_setting(
+            "dictation.stop_join_timeout_seconds", cls.STOP_JOIN_TIMEOUT_SECONDS
+        )
+        try:
+            timeout = float(raw)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid dictation.stop_join_timeout_seconds {!r}; using {}s",
+                raw,
+                cls.STOP_JOIN_TIMEOUT_SECONDS,
+            )
+            return cls.STOP_JOIN_TIMEOUT_SECONDS
+        # `nan` and `inf` are valid TOML floats and both survive `float()`.
+        # `nan <= 0` is False, so a bare positivity check waves them through --
+        # and `Thread.join(timeout=nan)` raises ValueError from inside the stop
+        # worker, which used to abandon a live microphone behind an idle state
+        # machine. `inf` would simply hang the stop forever.
+        if not math.isfinite(timeout) or timeout <= 0:
+            logger.warning(
+                "dictation.stop_join_timeout_seconds must be a positive, finite "
+                "number (got {!r}); using {}s",
+                raw,
+                cls.STOP_JOIN_TIMEOUT_SECONDS,
+            )
+            return cls.STOP_JOIN_TIMEOUT_SECONDS
+        return timeout
 
     def _load_privacy_settings(self):
         """Load privacy settings from configuration."""
@@ -183,6 +286,10 @@ class LazyLiveDictationService:
                     chunk_size=int(
                         self.buffer_duration_ms * 16
                     ),  # 16 samples/ms at 16kHz
+                    # Both default to None, so every caller that does not ask
+                    # for a bound gets exactly the behaviour it had before.
+                    max_buffer_bytes=self.max_buffer_bytes,
+                    on_buffer_limit=self.on_buffer_limit,
                 )
                 logger.info("Audio recording service initialized successfully")
             except Exception as e:
@@ -297,6 +404,7 @@ class LazyLiveDictationService:
             self.transcript_segments = []
             self.current_transcript = ""
             self.audio_buffer = []
+            self.captured_bytes = 0
             self.start_time = time.time()
             self.save_audio = save_audio and not self.privacy_settings["local_only"]
 
@@ -334,17 +442,40 @@ class LazyLiveDictationService:
             self._notify_error(e)
             return False
 
+    @staticmethod
+    def _preferred_local_provider() -> str:
+        """Pick a local provider to fall back to under privacy mode.
+
+        Prefers one that is actually installed on this machine. The old
+        hard-coded `parakeet-mlx` is Apple-Silicon-only, so on Linux it swapped
+        a working provider for one that fails on every chunk.
+
+        Returns:
+            An installed local provider id, or the first local provider when
+            none is installed (nothing will work either way; this at least
+            keeps the reported provider inside the local catalogue).
+        """
+        installed = installed_local_providers()
+        return installed[0] if installed else LOCAL_STT_PROVIDERS[0]
+
     def _initialize_streaming_transcriber(self):
         """Initialize streaming transcriber if available."""
         if self.privacy_settings["local_only"]:
-            # Only use local providers when in privacy mode
-            allowed_providers = ["parakeet-mlx", "faster-whisper", "lightning-whisper"]
-            if self.transcription_provider not in allowed_providers:
+            # Privacy mode means "audio never leaves this machine", so the test
+            # is exactly `provider_is_local()` -- the same catalogue the Console
+            # resolver picks from (`Utils/local_stt_providers`). A second,
+            # hand-maintained list lived here and drifted twice: once on a
+            # misspelled id ("lightning-whisper"), and once by staying at three
+            # providers while the resolver grew to seven, which made the Console
+            # download and announce one model and then transcribe with another.
+            # Do not reintroduce a literal list here.
+            if not provider_is_local(self.transcription_provider):
+                fallback = self._preferred_local_provider()
                 logger.info(
-                    f"Provider '{self.transcription_provider}' not allowed in privacy mode. "
-                    f"Using local provider instead."
+                    f"Provider '{self.transcription_provider}' is not local; "
+                    f"privacy mode requires one. Using '{fallback}' instead."
                 )
-                self.transcription_provider = "parakeet-mlx"  # Default local provider
+                self.transcription_provider = fallback
 
         try:
             self.streaming_transcriber = (
@@ -394,9 +525,12 @@ class LazyLiveDictationService:
                 logger.debug(f"Could not calculate audio level: {e}")
                 self._current_audio_level = 0.0
 
-            # Add to buffer
+            # Add to buffer. `captured_bytes` is a running total and must not
+            # be derived from `audio_buffer`, which privacy mode trims to the
+            # last few chunks while the capture is still running.
             with self.buffer_lock:
                 self.audio_buffer.append(audio_chunk)
+                self.captured_bytes += len(audio_chunk)
 
             # Queue for processing
             self.processing_queue.put(("audio", audio_chunk))
@@ -459,6 +593,32 @@ class LazyLiveDictationService:
                 logger.error(f"Processing loop error: {e}")
                 self._notify_error(e)
 
+        # `stop_dictation()` sets `stop_processing` and the `while` above
+        # exits on its very next iteration, abandoning whatever is still in
+        # `accumulated_audio` plus anything left unread in
+        # `processing_queue`. Without this, a capture shorter than one
+        # `buffer_duration_ms` window is transcribed as nothing at all, and
+        # the tail of every longer capture (audio queued since the last
+        # periodic flush) is silently dropped. Drain the queue and flush
+        # whatever remains before the thread returns.
+        try:
+            while True:
+                try:
+                    item_type, data = self.processing_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+                if item_type == "audio":
+                    accumulated_audio.append(data)
+
+            if accumulated_audio:
+                audio_data = b"".join(accumulated_audio)
+                self._process_audio_buffer(audio_data)
+                accumulated_audio = []
+        except Exception as e:
+            logger.error(f"Processing loop final flush error: {e}")
+            self._notify_error(e)
+
     def _cleanup(self):
         """Clean up resources with privacy considerations."""
         with self.state_lock:
@@ -513,57 +673,160 @@ class LazyLiveDictationService:
         logger.info(f"Buffer duration set to {self.buffer_duration_ms}ms")
 
     def _process_audio_buffer(self, audio_data: bytes):
-        """Process audio buffer for transcription."""
+        """Transcribe one buffered chunk of PCM and publish what it says.
+
+        Two paths, in order of preference:
+
+        1. The session's streaming transcriber, when one was built.
+        2. ``TranscriptionService.transcribe_buffer()``, which takes raw PCM.
+
+        Never ``TranscriptionService.transcribe()``: that one takes an *audio
+        file path* and reaches ``Path(audio_path)`` before any provider is
+        dispatched, so handing it PCM raised ``TypeError`` on every single
+        chunk -- a capture produced no partials, no finals and no transcript,
+        for every provider. See ``Tests/Audio/test_dictation_lazy_transcription.py``.
+        """
+        if not audio_data:
+            return
+
         try:
-            if not self.transcription_service:
+            if self.streaming_transcriber is not None:
+                result = None
+                try:
+                    result = self.streaming_transcriber.process_audio(audio_data)
+                except Exception as e:
+                    # Includes the transcriber simply not speaking this
+                    # protocol; the buffer path below is a complete fallback.
+                    logger.warning(
+                        f"Streaming transcription failed, "
+                        f"falling back to buffer transcription: {e}"
+                    )
+
+                if isinstance(result, dict):
+                    partial = self._streamed_partial_text(result)
+                    if partial:
+                        self._handle_partial_text(partial)
+
+                    final = result.get("final")
+                    if isinstance(final, str) and final.strip():
+                        self._handle_streamed_final(final)
+                    return
+
+            service = self.transcription_service
+            if service is None:
                 return
 
-            # Convert audio data to format expected by transcription service
-            # This is a simplified version - actual implementation may need format conversion
-            result = self.transcription_service.transcribe(audio_data)
+            # The recorder built for *this* capture, never the `audio_service`
+            # property: reading that property lazily CONSTRUCTS a recorder and
+            # opens an audio device.
+            recorder = self._audio_service
+            sample_rate = getattr(recorder, "sample_rate", None) or 16000
+            channels = getattr(recorder, "channels", None) or 1
+
+            # Pass the provider the caller resolved. Omitting it silently falls
+            # back to the transcription service's own default provider, which
+            # would make the "using X instead of your configured Y" notice a lie.
+            result = service.transcribe_buffer(
+                audio_data=audio_data,
+                sample_rate=sample_rate,
+                channels=channels,
+                sample_width=2,  # 16-bit PCM
+                provider=self.transcription_provider,
+                model=self.transcription_model,
+                language=self.language,
+            )
 
             if result and result.get("text"):
-                text = result["text"].strip()
-                if text:
-                    self.current_transcript = text
-
-                    # Notify partial transcript
-                    if self.on_partial_transcript:
-                        try:
-                            self.on_partial_transcript(text)
-                        except Exception as e:
-                            logger.error(f"Partial transcript callback error: {e}")
-
-                    # Check for commands if enabled
-                    if self.enable_commands and self.on_command:
-                        command = self._detect_command(text)
-                        if command:
-                            try:
-                                self.on_command(command)
-                            except Exception as e:
-                                logger.error(f"Command callback error: {e}")
+                self._handle_partial_text(result["text"])
 
         except Exception as e:
             logger.error(f"Audio processing error: {e}")
             self._notify_error(e)
 
+    @staticmethod
+    def _streamed_partial_text(result: Dict[str, Any]) -> Optional[str]:
+        """Pull the in-progress text out of a streaming transcriber's result.
+
+        Two shapes exist in the wild: ``{"partial": "<text>"}`` and
+        ``{"partial": True, "text": "<text>"}`` (what
+        ``ParakeetMLXStreamingTranscriber`` returns). Treat both as partials
+        rather than handing a bool to the transcript accumulator.
+        """
+        partial = result.get("partial")
+        if isinstance(partial, str):
+            return partial
+        text = result.get("text")
+        if isinstance(text, str):
+            return text
+        return None
+
+    def _handle_partial_text(self, text: str):
+        """Accumulate one chunk's text and publish the segment so far.
+
+        Chunks arrive roughly every ``buffer_duration_ms``; replacing the
+        transcript with each one (as this used to) would leave a segment
+        holding only its last half-second of speech.
+        """
+        chunk = (text or "").strip()
+        if not chunk:
+            return
+
+        with self.transcript_lock:
+            self.current_transcript = (
+                f"{self.current_transcript} {chunk}"
+                if self.current_transcript
+                else chunk
+            )
+            accumulated = self.current_transcript
+
+        # Consumers redraw the preview from each partial, so send the whole
+        # segment, not just this chunk.
+        if self.on_partial_transcript:
+            try:
+                self.on_partial_transcript(accumulated)
+            except Exception as e:
+                logger.error(f"Partial transcript callback error: {e}")
+
+        # Commands are looked for in the new speech only; the accumulated text
+        # would re-trigger a command already handled on an earlier chunk.
+        if self.enable_commands and self.on_command:
+            command = self._detect_command(chunk)
+            if command:
+                try:
+                    self.on_command(command)
+                except Exception as e:
+                    logger.error(f"Command callback error: {e}")
+
+    def _handle_streamed_final(self, text: str):
+        """Commit a segment the streaming transcriber has already finalised."""
+        final = text.strip()
+        if not final:
+            return
+
+        # A streaming final supersedes the partial hypotheses that previewed it.
+        with self.transcript_lock:
+            self.current_transcript = final
+
+        self._finalize_current_segment()
+
     def _finalize_current_segment(self):
         """Finalize the current transcript segment."""
-        if self.current_transcript:
-            # Add to segments
-            self.transcript_segments.append(
-                {"text": self.current_transcript, "timestamp": time.time()}
-            )
-
-            # Notify final transcript
-            if self.on_final_transcript:
-                try:
-                    self.on_final_transcript(self.current_transcript)
-                except Exception as e:
-                    logger.error(f"Final transcript callback error: {e}")
-
-            # Clear current
+        with self.transcript_lock:
+            text = self.current_transcript
             self.current_transcript = ""
+
+        if not text:
+            return
+
+        # Add to segments
+        self.transcript_segments.append({"text": text, "timestamp": time.time()})
+
+        # Notify final transcript
+        if self.on_final_transcript:
+            try:
+                self.on_final_transcript(text)
+            except Exception as e:
+                logger.error(f"Final transcript callback error: {e}")
 
     def _detect_command(self, text: str) -> Optional[str]:
         """Detect voice commands in transcript."""
@@ -585,7 +848,13 @@ class LazyLiveDictationService:
         return None
 
     def stop_dictation(self) -> DictationResult:
-        """Stop dictation and return results."""
+        """Stop dictation and return results.
+
+        Returns:
+            The transcript, plus the two facts a caller needs to explain an
+            empty one honestly: how many bytes the recorder delivered, and
+            whether the processing thread finished before the join expired.
+        """
         logger.info("Stopping dictation...")
 
         # Change state
@@ -599,9 +868,21 @@ class LazyLiveDictationService:
         if self.stop_processing:
             self.stop_processing.set()
 
-        # Wait for processing thread to finish
+        # Wait for the processing thread to drain and transcribe what is left.
+        # The old hard-coded 2.0s was shorter than a single warm transcription,
+        # so on any real capture this expired and the work in flight was thrown
+        # away silently -- indistinguishable, downstream, from a dead
+        # microphone. Report the expiry instead of hiding it.
+        transcription_complete = True
         if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join(timeout=2.0)
+            self.processing_thread.join(timeout=self.stop_join_timeout_seconds)
+            transcription_complete = not self.processing_thread.is_alive()
+            if not transcription_complete:
+                logger.warning(
+                    "Dictation transcription did not finish within {}s; "
+                    "audio still in flight was dropped",
+                    self.stop_join_timeout_seconds,
+                )
 
         # Finalize any remaining transcript
         self._finalize_current_segment()
@@ -617,7 +898,21 @@ class LazyLiveDictationService:
             transcript=final_transcript,
             segments=self.transcript_segments.copy(),
             duration=duration,
+            captured_bytes=self.captured_bytes,
+            transcription_complete=transcription_complete,
         )
+
+        # Release capture explicitly. The non-lazy service does this in its own
+        # stop_dictation; this one never did, so every successful stop left the
+        # microphone live. Use the private attribute, not the `audio_service`
+        # property -- reading the property lazily CONSTRUCTS a recorder, which
+        # would open an audio device during teardown.
+        recorder = self._audio_service
+        if recorder is not None:
+            try:
+                recorder.stop_recording()
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                logger.opt(exception=True).warning("Failed to release audio capture")
 
         # Cleanup
         self._cleanup()
