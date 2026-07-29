@@ -520,57 +520,160 @@ class LazyLiveDictationService:
         logger.info(f"Buffer duration set to {self.buffer_duration_ms}ms")
 
     def _process_audio_buffer(self, audio_data: bytes):
-        """Process audio buffer for transcription."""
+        """Transcribe one buffered chunk of PCM and publish what it says.
+
+        Two paths, in order of preference:
+
+        1. The session's streaming transcriber, when one was built.
+        2. ``TranscriptionService.transcribe_buffer()``, which takes raw PCM.
+
+        Never ``TranscriptionService.transcribe()``: that one takes an *audio
+        file path* and reaches ``Path(audio_path)`` before any provider is
+        dispatched, so handing it PCM raised ``TypeError`` on every single
+        chunk -- a capture produced no partials, no finals and no transcript,
+        for every provider. See ``Tests/Audio/test_dictation_lazy_transcription.py``.
+        """
+        if not audio_data:
+            return
+
         try:
-            if not self.transcription_service:
+            if self.streaming_transcriber is not None:
+                result = None
+                try:
+                    result = self.streaming_transcriber.process_audio(audio_data)
+                except Exception as e:
+                    # Includes the transcriber simply not speaking this
+                    # protocol; the buffer path below is a complete fallback.
+                    logger.warning(
+                        f"Streaming transcription failed, "
+                        f"falling back to buffer transcription: {e}"
+                    )
+
+                if isinstance(result, dict):
+                    partial = self._streamed_partial_text(result)
+                    if partial:
+                        self._handle_partial_text(partial)
+
+                    final = result.get("final")
+                    if isinstance(final, str) and final.strip():
+                        self._handle_streamed_final(final)
+                    return
+
+            service = self.transcription_service
+            if service is None:
                 return
 
-            # Convert audio data to format expected by transcription service
-            # This is a simplified version - actual implementation may need format conversion
-            result = self.transcription_service.transcribe(audio_data)
+            # The recorder built for *this* capture, never the `audio_service`
+            # property: reading that property lazily CONSTRUCTS a recorder and
+            # opens an audio device.
+            recorder = self._audio_service
+            sample_rate = getattr(recorder, "sample_rate", None) or 16000
+            channels = getattr(recorder, "channels", None) or 1
+
+            # Pass the provider the caller resolved. Omitting it silently falls
+            # back to the transcription service's own default provider, which
+            # would make the "using X instead of your configured Y" notice a lie.
+            result = service.transcribe_buffer(
+                audio_data=audio_data,
+                sample_rate=sample_rate,
+                channels=channels,
+                sample_width=2,  # 16-bit PCM
+                provider=self.transcription_provider,
+                model=self.transcription_model,
+                language=self.language,
+            )
 
             if result and result.get("text"):
-                text = result["text"].strip()
-                if text:
-                    self.current_transcript = text
-
-                    # Notify partial transcript
-                    if self.on_partial_transcript:
-                        try:
-                            self.on_partial_transcript(text)
-                        except Exception as e:
-                            logger.error(f"Partial transcript callback error: {e}")
-
-                    # Check for commands if enabled
-                    if self.enable_commands and self.on_command:
-                        command = self._detect_command(text)
-                        if command:
-                            try:
-                                self.on_command(command)
-                            except Exception as e:
-                                logger.error(f"Command callback error: {e}")
+                self._handle_partial_text(result["text"])
 
         except Exception as e:
             logger.error(f"Audio processing error: {e}")
             self._notify_error(e)
 
+    @staticmethod
+    def _streamed_partial_text(result: Dict[str, Any]) -> Optional[str]:
+        """Pull the in-progress text out of a streaming transcriber's result.
+
+        Two shapes exist in the wild: ``{"partial": "<text>"}`` and
+        ``{"partial": True, "text": "<text>"}`` (what
+        ``ParakeetMLXStreamingTranscriber`` returns). Treat both as partials
+        rather than handing a bool to the transcript accumulator.
+        """
+        partial = result.get("partial")
+        if isinstance(partial, str):
+            return partial
+        text = result.get("text")
+        if isinstance(text, str):
+            return text
+        return None
+
+    def _handle_partial_text(self, text: str):
+        """Accumulate one chunk's text and publish the segment so far.
+
+        Chunks arrive roughly every ``buffer_duration_ms``; replacing the
+        transcript with each one (as this used to) would leave a segment
+        holding only its last half-second of speech.
+        """
+        chunk = (text or "").strip()
+        if not chunk:
+            return
+
+        with self.transcript_lock:
+            self.current_transcript = (
+                f"{self.current_transcript} {chunk}"
+                if self.current_transcript
+                else chunk
+            )
+            accumulated = self.current_transcript
+
+        # Consumers redraw the preview from each partial, so send the whole
+        # segment, not just this chunk.
+        if self.on_partial_transcript:
+            try:
+                self.on_partial_transcript(accumulated)
+            except Exception as e:
+                logger.error(f"Partial transcript callback error: {e}")
+
+        # Commands are looked for in the new speech only; the accumulated text
+        # would re-trigger a command already handled on an earlier chunk.
+        if self.enable_commands and self.on_command:
+            command = self._detect_command(chunk)
+            if command:
+                try:
+                    self.on_command(command)
+                except Exception as e:
+                    logger.error(f"Command callback error: {e}")
+
+    def _handle_streamed_final(self, text: str):
+        """Commit a segment the streaming transcriber has already finalised."""
+        final = text.strip()
+        if not final:
+            return
+
+        # A streaming final supersedes the partial hypotheses that previewed it.
+        with self.transcript_lock:
+            self.current_transcript = final
+
+        self._finalize_current_segment()
+
     def _finalize_current_segment(self):
         """Finalize the current transcript segment."""
-        if self.current_transcript:
-            # Add to segments
-            self.transcript_segments.append(
-                {"text": self.current_transcript, "timestamp": time.time()}
-            )
-
-            # Notify final transcript
-            if self.on_final_transcript:
-                try:
-                    self.on_final_transcript(self.current_transcript)
-                except Exception as e:
-                    logger.error(f"Final transcript callback error: {e}")
-
-            # Clear current
+        with self.transcript_lock:
+            text = self.current_transcript
             self.current_transcript = ""
+
+        if not text:
+            return
+
+        # Add to segments
+        self.transcript_segments.append({"text": text, "timestamp": time.time()})
+
+        # Notify final transcript
+        if self.on_final_transcript:
+            try:
+                self.on_final_transcript(text)
+            except Exception as e:
+                logger.error(f"Final transcript callback error: {e}")
 
     def _detect_command(self, text: str) -> Optional[str]:
         """Detect voice commands in transcript."""
