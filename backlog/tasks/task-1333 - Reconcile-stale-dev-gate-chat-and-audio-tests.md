@@ -11,6 +11,8 @@ labels:
   - baseline
   - cleanup
 dependencies: []
+references:
+  - backlog/decisions/029-local-private-data-boundary.md
 documentation:
   - Docs/superpowers/specs/2026-07-29-dev-gate-test-contract-repair-design.md
 priority: high
@@ -19,15 +21,17 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Restore the mandatory dev test gate by aligning three stale or nondeterministic tests with the current retired-Chat and audio-recording contracts, without changing production behavior.
+Restore the mandatory dev test gate by aligning stale or nondeterministic tests with the current retired-Chat and audio-recording contracts, preserving the current dev shell-test repair, and safely refreshing the reviewed diagnostic inventory.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The worker-events regression test retains its non-streaming failure coverage without importing retired message classes or duplicating the existing streaming-rejection contract.
-- [ ] #2 The chat-shell regression test retains live `ChatSessionData` label coverage without importing or replacing the retired `TabState` model.
+- [ ] #2 The current dev chat-shell regression retains live session/persona label coverage without importing or replacing the retired `TabState` model.
 - [ ] #3 The audio stream-error regression invokes one synchronous recording loop without VAD or thread races and proves the exact pre-error callback sequence, stream closure, and stopped state.
-- [ ] #4 The three repaired modules and the repository-wide suite collect and run without these baseline failures.
+- [ ] #4 The PyAudio flow regression invokes one synchronous recording loop without VAD or thread races and proves exactly three callbacks, stream closure, and stopped state.
+- [ ] #5 Every changed diagnostic owner is reviewed against ADR-029, no unsafe payload logging is admitted, persistent sink topology remains unchanged, and the checked inventory matches production.
+- [ ] #6 The affected modules and repository-wide suite collect and run without these baseline failures.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,11 +40,12 @@ Restore the mandatory dev test gate by aligning three stale or nondeterministic 
 Plan: Docs/superpowers/plans/2026-07-29-dev-gate-test-contract-repair.md
 
 ADR required: no
-ADR path: N/A
-Reason: Test-only reconciliation with accepted production contracts; no architectural boundary changes.
+ADR path: backlog/decisions/029-local-private-data-boundary.md
+Reason: Reconciles tests with accepted production contracts and applies ADR-029's existing metadata-only inventory review requirement without making a new architectural decision.
 
 1. Remove the retired StreamDone import and duplicate streaming assertion while preserving unique non-streaming failure coverage.
-2. Remove the retired TabState half of the shell-context test while preserving live ChatSessionData labels.
-3. Make the PyAudio stream-error test synchronous, VAD-independent, and exact.
-4. Run affected, static, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
+2. Preserve the current dev chat-shell repair rather than carrying a superseded branch edit.
+3. Make both PyAudio loop tests synchronous, VAD-independent, and exact.
+4. Review all changed production diagnostics and sink topology against ADR-029 before regenerating the checked inventory.
+5. Run affected, static, inventory, and repository-wide gates; review and close only if the full Definition of Done is satisfied.
 <!-- SECTION:PLAN:END -->

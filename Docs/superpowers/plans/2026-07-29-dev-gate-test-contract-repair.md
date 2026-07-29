@@ -2,35 +2,40 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove three obsolete or nondeterministic test failures from the current `dev` gate without changing production behavior.
+**Goal:** Remove the confirmed obsolete or nondeterministic test failures from the current `dev` gate and safely refresh the reviewed diagnostic inventory.
 
-**Architecture:** Edit only the three failing test modules. Delete assertions for retired or already-covered Chat contracts, and make the PyAudio error test synchronous and independent of optional VAD behavior.
+**Architecture:** Delete the obsolete worker-event assertion, preserve the shell-test repair already present on current `dev`, and make both PyAudio loop tests synchronous and independent of optional VAD behavior. Review changed diagnostic owners against ADR-029 before updating the generated inventory.
 
 **Tech Stack:** Python 3.11+, pytest, unittest.mock, Ruff.
 
 **ADR required:** no
 
-**ADR path:** N/A
+**ADR path:** backlog/decisions/029-local-private-data-boundary.md
 
-**Reason:** This reconciles tests with accepted runtime contracts and changes no architecture, storage, dependency, security, or production interface.
+**Reason:** This reconciles tests with accepted runtime contracts and applies ADR-029's existing metadata-only inventory boundary without introducing a new architectural decision.
 
 ---
 
 ## Scope guard
 
-Do not edit production files. Do not restore `StreamDone` or `TabState`. Do not
-add replacement coverage for the unused `from_tab_state` helper. Do not
-duplicate the streaming-rejection test already present in
-`Tests/Event_Handlers/test_retained_worker_adapter.py`.
+Do not restore `StreamDone` or `TabState`. Do not replace the latest `dev`
+chat-shell fixture or duplicate the streaming-rejection test already present in
+`Tests/Event_Handlers/test_retained_worker_adapter.py`. Do not edit production
+files unless diagnostic review finds an actual ADR-029 violation, and never
+regenerate the inventory before reviewing its changed owners and sink topology.
 
 ## File map
 
 - Modify `Tests/Event_Handlers/test_worker_events_contract.py`: retain only the
   unique non-streaming exception regression.
-- Modify `Tests/UI/test_chat_shell_bar.py`: remove the retired `TabState` half
-  of the combined context test while retaining live `ChatSessionData` labels.
+- Verify `Tests/UI/test_chat_shell_bar.py`: preserve the current `dev` repair
+  without a branch edit.
 - Modify `Tests/Audio/test_audio_integration.py`: make stream-error behavior
   synchronous, VAD-independent, and exact.
+- Modify `Tests/Audio/test_recording_service.py`: make PyAudio happy-flow
+  behavior synchronous, VAD-independent, and exact.
+- Modify `Docs/security/production-diagnostic-inventory.json`: only after
+  reviewing every generated owner/topology change against ADR-029.
 - Modify TASK-1333 and this plan only for closeout evidence.
 
 ### Task 1: Remove the retired worker-event contract
@@ -39,7 +44,7 @@ duplicate the streaming-rejection test already present in
 - Modify: `Tests/Event_Handlers/test_worker_events_contract.py`
 - Verify: `Tests/Event_Handlers/test_retained_worker_adapter.py`
 
-- [ ] **Step 1: Reproduce RED**
+- [x] **Step 1: Reproduce RED**
 
 Run:
 
@@ -50,7 +55,7 @@ Run:
 
 Expected: collection fails because `StreamDone` was deliberately removed.
 
-- [ ] **Step 2: Make the smallest test correction**
+- [x] **Step 2: Make the smallest test correction**
 
 Update the module description so it claims only the retained non-streaming
 failure contract. Import only `chat_wrapper_function`. Delete
@@ -59,7 +64,7 @@ replace it because
 `test_retained_worker_adapter_rejects_legacy_streaming_bridge` already covers
 the live streaming rejection.
 
-- [ ] **Step 3: Verify GREEN**
+- [x] **Step 3: Verify GREEN**
 
 Run:
 
@@ -71,38 +76,24 @@ Run:
 
 Expected: both modules pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add Tests/Event_Handlers/test_worker_events_contract.py
 git commit -m "test(chat): remove retired worker-event contract"
 ```
 
-### Task 2: Remove the retired tab-state fixture
+### Task 2: Preserve the upstream chat-shell repair
 
 **Files:**
-- Modify: `Tests/UI/test_chat_shell_bar.py`
+- Verify: `Tests/UI/test_chat_shell_bar.py`
 
-- [ ] **Step 1: Reproduce RED**
+- [x] **Step 1: Rebase onto current `dev`**
 
-Run:
+Current `dev` independently removed `TabState` and added current persona-label
+coverage. Drop the superseded TASK-1333 edit and retain upstream unchanged.
 
-```bash
-../../.venv/bin/python -m pytest Tests/UI/test_chat_shell_bar.py -q
-```
-
-Expected: collection fails because `TabState` was deliberately removed.
-
-- [ ] **Step 2: Retain only live session coverage**
-
-Remove the `TabState` import, construction, `from_tab_state` call, and
-`tab_context` assertions. Rename the combined test to
-`test_chat_shell_context_supports_chat_session_data`. Its resolver needs only
-`workspace_name="Research Lab"` and `character_label="Vox"`. Keep the existing
-`ChatSessionData` assertions for Server, Workspace, Character, and Session
-labels.
-
-- [ ] **Step 3: Verify GREEN**
+- [x] **Step 2: Verify GREEN**
 
 Run:
 
@@ -112,19 +103,12 @@ Run:
 
 Expected: the module collects and passes.
 
-- [ ] **Step 4: Commit**
-
-```bash
-git add Tests/UI/test_chat_shell_bar.py
-git commit -m "test(chat): remove retired tab-state fixture"
-```
-
 ### Task 3: Make the stream-error test deterministic
 
 **Files:**
 - Modify: `Tests/Audio/test_audio_integration.py`
 
-- [ ] **Step 1: Reproduce RED**
+- [x] **Step 1: Reproduce RED**
 
 Run:
 
@@ -137,7 +121,7 @@ Run:
 Expected: the assertion sees zero callbacks when installed VAD rejects the
 synthetic chunks; the test also races the recorder thread it starts.
 
-- [ ] **Step 2: Replace the nondeterministic test body**
+- [x] **Step 2: Replace the nondeterministic test body**
 
 Rename the test to
 `test_recording_stops_after_stream_error_and_preserves_prior_chunks`. Keep the
@@ -165,7 +149,7 @@ Do not call `start_recording()`, do not spawn a thread, and do not retain the
 fourth post-error “recovery” chunk because production stops on the first stream
 error.
 
-- [ ] **Step 3: Verify GREEN**
+- [x] **Step 3: Verify GREEN**
 
 Run:
 
@@ -177,14 +161,112 @@ Run:
 
 Expected: the test passes deterministically.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add Tests/Audio/test_audio_integration.py
 git commit -m "test(audio): make stream-error coverage deterministic"
 ```
 
-### Task 4: Verify and close TASK-1333
+### Task 4: Make the PyAudio flow test deterministic
+
+**Files:**
+- Modify: `Tests/Audio/test_recording_service.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run:
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Audio/test_recording_service.py::TestAudioRecordingIntegration::test_pyaudio_recording_flow \
+  -q
+```
+
+Expected: the test can hang because two recording loops race while optional VAD
+may reject the synthetic bytes.
+
+- [ ] **Step 2: Replace the nondeterministic test body**
+
+Construct `AudioRecordingService(backend="pyaudio", use_vad=False)`. Assign the
+callback and `is_recording = True` directly, invoke
+`_pyaudio_recording_loop()` once, and stop from the callback after exactly
+three chunks. Assert `[test_audio] * 3`, stopped state, one `stop_stream()`, one
+`close()`, and `service.stream is None`.
+
+- [ ] **Step 3: Verify GREEN**
+
+Run the focused test twice, then the full module:
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Audio/test_recording_service.py::TestAudioRecordingIntegration::test_pyaudio_recording_flow \
+  -q
+../../.venv/bin/python -m pytest \
+  Tests/Audio/test_recording_service.py::TestAudioRecordingIntegration::test_pyaudio_recording_flow \
+  -q
+../../.venv/bin/python -m pytest Tests/Audio/test_recording_service.py -q
+```
+
+Expected: all runs pass without threads or VAD-dependent behavior.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add Tests/Audio/test_recording_service.py
+git commit -m "test(audio): make pyaudio flow deterministic"
+```
+
+### Task 5: Review and refresh the diagnostic inventory
+
+**Files:**
+- Modify: `Docs/security/production-diagnostic-inventory.json`
+- Conditionally modify: a production diagnostic owner and its focused test only
+  if review proves an ADR-029 violation
+
+- [ ] **Step 1: Generate and compare the candidate**
+
+Run:
+
+```bash
+../../.venv/bin/python -c \
+  'import json; from scripts.check_persistent_diagnostic_inventory import build_inventory; print(json.dumps(build_inventory(), indent=2, sort_keys=True))' \
+  > /tmp/task-1333-diagnostic-inventory.json
+diff -u \
+  Docs/security/production-diagnostic-inventory.json \
+  /tmp/task-1333-diagnostic-inventory.json
+```
+
+Inspect the exact diff and compare every changed owner and every sink-topology
+entry with the checked artifact. The checked repository file remains untouched.
+
+- [ ] **Step 2: Review the changed call sites**
+
+Inspect each added or changed production diagnostic. Confirm it logs only
+approved operation identity, counts, lengths, status, duration, retry, posture,
+and exception class names—not prompts, messages, request/response bodies,
+credential fragments, file content, arbitrary values, or raw exception text.
+
+- [ ] **Step 3: Resolve the review**
+
+If every change is safe and sink topology is unchanged, retain the generated
+artifact. If any call violates ADR-029, add a focused failing privacy
+regression and make the smallest production correction before regenerating.
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py --write
+../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
+../../.venv/bin/python -m pytest \
+  Tests/Architecture/test_persistent_diagnostic_inventory.py -q
+git add Docs/security/production-diagnostic-inventory.json
+git commit -m "docs(security): refresh reviewed diagnostic inventory"
+```
+
+Include any conditionally required focused test/production files in that commit.
+
+### Task 6: Verify and close TASK-1333
 
 **Files:**
 - Modify: `backlog/tasks/task-1333 - Reconcile-stale-dev-gate-chat-and-audio-tests.md`
@@ -198,7 +280,8 @@ git commit -m "test(audio): make stream-error coverage deterministic"
   Tests/Event_Handlers/test_retained_worker_adapter.py \
   Tests/UI/test_chat_shell_bar.py \
   Tests/Audio/test_audio_integration.py \
-  Tests/Audio/test_recording_service.py -q
+  Tests/Audio/test_recording_service.py \
+  Tests/Architecture/test_persistent_diagnostic_inventory.py -q
 ```
 
 Expected: all affected tests pass.
@@ -208,12 +291,13 @@ Expected: all affected tests pass.
 ```bash
 ../../.venv/bin/python -m ruff check \
   Tests/Event_Handlers/test_worker_events_contract.py \
-  Tests/UI/test_chat_shell_bar.py \
-  Tests/Audio/test_audio_integration.py
+  Tests/Audio/test_audio_integration.py \
+  Tests/Audio/test_recording_service.py
 ../../.venv/bin/python -m ruff format --check \
   Tests/Event_Handlers/test_worker_events_contract.py \
-  Tests/UI/test_chat_shell_bar.py \
-  Tests/Audio/test_audio_integration.py
+  Tests/Audio/test_audio_integration.py \
+  Tests/Audio/test_recording_service.py
+../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
 git diff --check origin/dev...HEAD
 git diff --check
 ```
@@ -226,16 +310,18 @@ Expected: all checks pass.
 ../../.venv/bin/python -m pytest -q
 ```
 
-Expected: the suite collects past the retired imports and no longer reports the
-three TASK-1333 failures. Do not hide unrelated or environment-dependent
-failures. Mark TASK-1333 Done only if the repository Definition of Done is
-satisfied; otherwise record exact evidence and leave it In Progress.
+Expected: the suite collects past the retired import, both PyAudio tests finish
+deterministically, and the diagnostic inventory is current. Do not hide
+unrelated or environment-dependent failures. Mark TASK-1333 Done only if the
+repository Definition of Done is satisfied; otherwise record exact evidence
+and leave it In Progress.
 
 - [ ] **Step 4: Request final review**
 
 Review the diff against TASK-1333 and the approved design. Fix only valid
-Critical or Important findings, rerun affected verification, and keep all
-production files untouched.
+Critical or Important findings and rerun affected verification. Do not make any
+additional production edit beyond a documented, test-first Task 5 correction
+for an actual ADR-029 violation.
 
 - [ ] **Step 5: Complete Backlog hygiene**
 
