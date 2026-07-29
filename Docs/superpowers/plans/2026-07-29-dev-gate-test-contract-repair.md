@@ -1010,9 +1010,11 @@ result with standard provider metadata, normalized default/request chunk
 settings, sample rate, duration `0.0`, and a final progress update. Do not load
 or invoke the model. If probing raises, continue through the existing path so
 invalid files still fail normally. Simplify the mocked zero-frame test to
-assert empty text/segments and that the model loader was not called; strengthen
-the real integration to assert no segments. Do not alter non-empty decoding,
-chunking, routing, or fallback behavior.
+use explicit model/precision/attention and invalid chunk/overlap overrides,
+install a cached-model spy, and assert the exact normalized result,
+initial/final progress, zero loader calls, and zero cached-model inference;
+strengthen the real integration to assert no segments. Do not alter non-empty
+decoding, chunking, routing, or fallback behavior.
 
 - [ ] **Step 3: Verify and commit**
 
