@@ -25,7 +25,7 @@ from Tests.UI.test_console_dictation import (
     _wait_for_mic_label,
 )
 from tldw_chatbook.Chat import console_voice_input as voice_module
-from tldw_chatbook.Chat.console_voice_input import VoiceFailed
+from tldw_chatbook.Chat.console_voice_input import VoiceCommand, VoiceFailed
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -1308,3 +1308,185 @@ async def test_cancelling_releases_the_microphone_off_the_ui_thread(monkeypatch)
     finally:
         session.discard_gate.set()
         session.start_gate.set()
+
+
+# --- Task 2: inline voice commands and command-aware capture outcome -------
+
+
+def test_join_segments_concatenates_break_entries_without_padding():
+    """A plain `" ".join` would sandwich a break in spaces: `"one. \n\n two"`."""
+    assert (
+        chat_screen_module._join_segments(["one.", "\n\n", "two"]) == "one.\n\ntwo"
+    )
+    assert (
+        chat_screen_module._join_segments(["one", "\n", "two", "\n\n", "three"])
+        == "one\ntwo\n\nthree"
+    )
+    assert chat_screen_module._join_segments([]) == ""
+    assert chat_screen_module._join_segments(["\n\n"]) == "\n\n"
+
+
+@pytest.mark.asyncio
+async def test_inline_new_paragraph_command_appends_a_break_and_counts_as_consumed(
+    monkeypatch,
+):
+    """A finalized "Console, new paragraph." becomes a break, not dictated text."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        session = console._console_dictation_session
+
+        service.emit_final("one.")
+        service.emit_final("Console, new paragraph.")
+        service.emit_final("two")
+        await pilot.pause()
+
+        assert session.commands_consumed == 1
+
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        # Unpadded: not "one. \n\n two", which is what a naive " ".join would
+        # have produced.
+        assert composer.draft_text() == "one.\n\ntwo"
+
+
+@pytest.mark.asyncio
+async def test_inline_only_capture_returns_empty_and_does_not_raise(monkeypatch):
+    """A capture of nothing but "Console, new paragraph." must not error.
+
+    The transcript joins down to pure whitespace (`"\n\n"`), which used to be
+    indistinguishable from a silent microphone; `commands_consumed` is what
+    tells them apart now.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        stored_before = store.session_draft(session_id)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        session = console._console_dictation_session
+
+        service.emit_final("Console, new paragraph.")
+        await pilot.pause()
+
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert session.commands_consumed == 1
+        assert composer.draft_text() == "keep this draft"
+        assert store.session_draft(session_id) == stored_before
+        assert [
+            call
+            for call in notify.call_args_list
+            if call.kwargs.get("severity") == "error"
+        ] == []
+
+
+@pytest.mark.asyncio
+async def test_capture_ending_command_is_kept_out_of_segments_but_forwarded(
+    monkeypatch,
+):
+    """`VoiceCommand("stop")` must not leak into the transcript.
+
+    It still increments `commands_consumed` (so a command-only capture is not
+    mistaken for a silent one) and reaches the screen's event channel
+    unchanged -- Task 3 is what routes it into actually stopping the capture;
+    this task only guarantees it survives to be routed and never contaminates
+    dictated text.
+    """
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        session = console._console_dictation_session
+
+        received: list = []
+        original_on_event = session._on_event
+
+        def _spy(sess, event):
+            received.append(event)
+            return original_on_event(sess, event)
+
+        monkeypatch.setattr(session, "_on_event", _spy)
+
+        service.emit_final("dictated words")
+        service.emit_final("Console, stop.")
+        await pilot.pause()
+
+        assert session.commands_consumed == 1
+        forwarded_commands = [
+            event for event in received if isinstance(event, VoiceCommand)
+        ]
+        assert len(forwarded_commands) == 1
+        assert forwarded_commands[0].name == "stop"
+
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        # Only the dictated segment reached the draft; "stop" did not.
+        assert composer.draft_text() == "dictated words"
+
+
+@pytest.mark.asyncio
+async def test_genuinely_empty_capture_with_no_commands_still_raises(monkeypatch):
+    """`commands_consumed == 0` must keep the V1 silent-capture wording exact."""
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("keep this draft")
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+        session = console._console_dictation_session
+        assert session.commands_consumed == 0
+
+        await pilot.pause(0.1)
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Mic")
+
+        assert composer.draft_text() == "keep this draft"
+        assert [
+            call
+            for call in notify.call_args_list
+            if "No audio was captured from the microphone." in str(call.args[0])
+            and call.kwargs.get("severity") == "error"
+        ]

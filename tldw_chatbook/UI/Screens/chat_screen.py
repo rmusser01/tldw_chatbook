@@ -184,6 +184,7 @@ from ...Chat.console_voice_input import (
     TRANSCRIPTION_INCOMPLETE_REASON,
     TRANSCRIPTION_INCOMPLETE_REMEDY,
     ConsoleVoiceInputController,
+    VoiceCommand,
     VoiceFailed,
     VoiceFinal,
     VoiceModelPreparing,
@@ -651,6 +652,49 @@ class ConsoleDictationLimitSignal(Message):
         self.session = session
 
 
+#: `VoiceCommand.name` -> the literal break text `ConsoleStreamingDictationSession`
+#: appends to `_segments` in its place. These two are the only command names
+#: this adapter acts on itself; the rest of `COMMAND_PHRASES` (`stop`, `send`,
+#: `discard`, `read-that-back`, `new-session`) end the capture and are Task
+#: 3's to route -- this adapter only keeps them out of `_segments` and counts
+#: them via `commands_consumed`.
+_INLINE_BREAK_COMMANDS: dict[str, str] = {
+    "new-paragraph": "\n\n",
+    "new-line": "\n",
+}
+
+
+def _join_segments(segments: list[str]) -> str:
+    """Join transcript segments with single spaces, without padding breaks.
+
+    A plain `" ".join(segments)` would sandwich an inline `new-paragraph`/
+    `new-line` break entry between two spaces -- `"para. \\n\\n para"` --
+    which reads as a blank line with a stray leading and trailing space
+    rather than a clean paragraph break. A break entry is recognized as
+    exactly `"\\n"` or `"\\n\\n"` (the only values
+    `ConsoleStreamingDictationSession` ever appends for an inline command)
+    and is concatenated directly, trimming any trailing space the previous
+    segment left behind first.
+
+    Args:
+        segments: Finalized transcript text and inline-command break entries,
+            in the order the recognizer produced them.
+
+    Returns:
+        The joined transcript: dictated segments separated by single spaces,
+        breaks concatenated without surrounding padding.
+    """
+    out = ""
+    for segment in segments:
+        if segment in ("\n", "\n\n"):
+            out = out.rstrip(" ") + segment
+        elif out and not out.endswith((" ", "\n")):
+            out += " " + segment
+        else:
+            out += segment
+    return out
+
+
 class ConsoleStreamingDictationSession:
     """Drive `ConsoleVoiceInputController` through the one-shot session port.
 
@@ -679,6 +723,15 @@ class ConsoleStreamingDictationSession:
     `stop_and_transcribe()` returns one transcript at the instant the
     controller reaches `idle`. That preserves the shipping insertion contract:
     the draft is written once, at the caret, and never mid-capture.
+
+    A finalized segment that matched the spoken-command grammar arrives as a
+    `VoiceCommand` instead of a `VoiceFinal` (see `classify_segment`). Two
+    command names -- `new-paragraph` and `new-line` -- are this adapter's to
+    act on: they become break entries in `_segments` (see `_join_segments`),
+    never dictated text. Every other command name ends the capture and is
+    Task 3's to route; this class only keeps it out of `_segments`, counts it
+    in `commands_consumed`, and forwards it to `on_event` unchanged, exactly
+    like any other event.
     """
 
     def __init__(
@@ -702,6 +755,12 @@ class ConsoleStreamingDictationSession:
         self._on_event = on_event
         self._lock = threading.Lock()
         self._segments: list[str] = []
+        #: Finalized commands seen this capture -- inline (`new-paragraph`,
+        #: `new-line`) and capture-ending alike. Read by `stop_and_transcribe`
+        #: to tell a capture that was only ever spoken commands apart from a
+        #: genuinely silent one, since both join down to an empty (or
+        #: whitespace-only) transcript.
+        self.commands_consumed: int = 0
         self._failure = ""
         self._in_blocking_call = False
         self._heard_recognizer_output = False
@@ -756,6 +815,21 @@ class ConsoleStreamingDictationSession:
                     self._heard_recognizer_output = True
                     if text:
                         self._segments.append(text)
+            elif isinstance(event, VoiceCommand):
+                # A command proves the recognizer ran, same as a `VoiceFinal`
+                # above. `_INLINE_BREAK_COMMANDS` is this adapter's own to
+                # act on -- its break text joins `_segments` in place of
+                # dictated text. Every other command name (the
+                # capture-ending ones `stop`/`send`/`discard`/
+                # `read-that-back`/`new-session`) is deliberately left out of
+                # `_segments` and just forwarded below, unchanged, for the
+                # screen to route in Task 3.
+                break_text = _INLINE_BREAK_COMMANDS.get(event.name)
+                with self._lock:
+                    self._heard_recognizer_output = True
+                    if break_text is not None:
+                        self._segments.append(break_text)
+                    self.commands_consumed += 1
             elif isinstance(event, VoicePartial):
                 if event.text.strip():
                     with self._lock:
@@ -812,6 +886,7 @@ class ConsoleStreamingDictationSession:
         self._on_buffer_limit = on_buffer_limit
         with self._lock:
             self._segments.clear()
+            self.commands_consumed = 0
             self._failure = ""
             self._heard_recognizer_output = False
         with self._blocking_call():
@@ -830,15 +905,22 @@ class ConsoleStreamingDictationSession:
         Blocks until the controller reaches `idle`, so the screen inserts
         exactly once, with the whole transcript, at that moment.
 
-        Never returns an empty transcript, matching the one-shot backend this
-        replaced (`Audio/console_dictation.py`): it raised rather than hand
-        back nothing, and the screen's insertion has no empty case -- an empty
-        transcript still pads to a stray space at the caret, silently, and gets
-        persisted to the session draft.
+        Never returns an empty transcript for an ordinary capture, matching
+        the one-shot backend this replaced (`Audio/console_dictation.py`): it
+        raised rather than hand back nothing, and the screen's insertion has
+        no empty case for dictated text -- an empty transcript still pads to
+        a stray space at the caret, silently, and gets persisted to the
+        session draft. The one deliberate exception is a capture made of
+        nothing but spoken commands (`self.commands_consumed > 0` -- e.g.
+        "Console, new paragraph." alone, or "Console, stop." with nothing
+        dictated first): the segments still join down to `""` or pure
+        whitespace, but that is not a silent microphone, so this returns
+        `""` rather than raising it as one. The caller must treat that empty
+        return as "nothing to insert," not as the empty case above.
 
-        An empty transcript has three genuinely different causes, and this
-        reports each as itself rather than blaming the microphone for all
-        three:
+        An empty transcript with no commands consumed has three genuinely
+        different causes, and this reports each as itself rather than
+        blaming the microphone for all three:
 
         1. The recorder delivered no bytes -- a real capture or permission
            problem. Keeps the one-shot backend's wording verbatim.
@@ -854,11 +936,16 @@ class ConsoleStreamingDictationSession:
         recognizer-output flag is the fallback, exactly as before.
 
         Returns:
-            The accumulated segments, space-joined. Never empty.
+            The accumulated segments, joined by `_join_segments` (so an
+            inline command's break lands unpadded). Empty only when the
+            capture consisted solely of spoken commands; an ordinary
+            dictated capture is never empty.
 
         Raises:
-            RuntimeError: The controller failed while finishing, nothing was
-                transcribed, or the transcription never completed.
+            RuntimeError: The controller failed while finishing, or the
+                capture was genuinely silent (`self.commands_consumed == 0`
+                and nothing was transcribed, or the transcription never
+                completed).
         """
         with self._blocking_call():
             self._controller.stop()
@@ -866,10 +953,13 @@ class ConsoleStreamingDictationSession:
         if failure:
             raise RuntimeError(failure)
         with self._lock:
-            transcript = " ".join(self._segments)
+            transcript = _join_segments(self._segments)
             heard = self._heard_recognizer_output
-        if transcript:
+            commands_consumed = self.commands_consumed
+        if transcript.strip():
             return transcript
+        if commands_consumed > 0:
+            return ""
         outcome = self._controller.last_capture_outcome
         if not outcome.transcription_complete:
             raise RuntimeError(
@@ -888,6 +978,7 @@ class ConsoleStreamingDictationSession:
         self._controller.abandon()
         with self._lock:
             self._segments.clear()
+            self.commands_consumed = 0
             self._failure = ""
 
 
@@ -5431,10 +5522,16 @@ class ChatScreen(BaseAppScreen):
             return
         if self._console_dictation_session is not session:
             return
-        self._insert_console_dictation(
-            origin_session_id=origin_session_id,
-            transcript=transcript,
-        )
+        # A command-only capture (Task 2's `commands_consumed` early-return
+        # in `stop_and_transcribe`) returns "" here rather than raising --
+        # that is not a silent-microphone failure, but it is also nothing to
+        # insert. `_dictation_insertion` would otherwise pad it to a stray
+        # space at the caret and persist that to the draft.
+        if transcript:
+            self._insert_console_dictation(
+                origin_session_id=origin_session_id,
+                transcript=transcript,
+            )
         self._console_dictation_origin_session_id = None
         self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
