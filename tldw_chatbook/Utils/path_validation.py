@@ -12,6 +12,59 @@ from typing import Optional, Sequence, Union
 from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
+#: Ultra-short recovery pointer, LED with (round 1 review CRITICAL 2): the
+#: full `ROOT_DENIAL_RECOVERY_HINT` sentence below is itself too long to
+#: survive the Console transcript's live tool-step-marker truncation
+#: (``console_agent_bridge._STEP_MARKER_RESULT_LIMIT`` = 160 chars) once
+#: the tool's own "Failed to {read/write/list} ... " prefix and the path
+#: itself are accounted for -- measured: for a realistic 45-60 char path,
+#: the visible (pre-truncation) budget is only ~155-158 chars, and the
+#: prefix + "Path '<path>' is outside every allowed root." core sentence
+#: alone already consumes ~95-135 of that, leaving too little room for
+#: "Settings > Workspaces" to ever appear. This pointer is deliberately the
+#: FIRST thing after the bare "outside every allowed root" acknowledgement
+#: -- before the path is even repeated -- so it is what survives
+#: truncation, not what gets cut. See `test_recovery_pointer_survives_real_
+#: transcript_truncation` (Tests/Utils/test_path_validation_multi.py) for
+#: the actual truncation math, not just an estimate.
+#:
+#: Qodo PR #1074 finding 3: the ORIGINAL pointer ("create a workspace +
+#: bind a folder") baked in the Default-workspace assumption unconditionally
+#: -- misleading for the common case of a run already in a normal, named
+#: workspace, where the actual fix is just "bind a folder" (creating
+#: another workspace would be actively wrong advice there). This function's
+#: caller, `validate_path_multi` below, has no cheap way to know which
+#: workspace the denied run belongs to: it is a generic multi-root path
+#: validator with no workspace awareness, called from three sites in
+#: `Tools/file_operation_tools.py` that would each need to resolve and
+#: thread the run's *effective* workspace id here -- duplicating
+#: `workspace_file_roots.allowed_file_roots`'s own None-falls-back-to-
+#: active-workspace logic, across a Utils -> Tools/Workspaces layering
+#: boundary this module does not otherwise cross, just to pick a copy
+#: variant. So the pointer stays workspace-agnostic and universally
+#: correct instead, and the Default-specific caveat moves to
+#: `ROOT_DENIAL_RECOVERY_HINT` below, reworded as an explicit conditional
+#: rather than an assertion.
+ROOT_DENIAL_RECOVERY_POINTER = "Fix: bind a folder in Settings > Workspaces."
+
+#: Fuller explanation appended AFTER the pointer above and the (now
+#: second-priority) path/consulted-roots detail (TASK-1231, fleet-UX review
+#: F3; reworded to a conditional per Qodo PR #1074 finding 3): on a fresh
+#: install every session starts on the Default workspace, which cannot
+#: hold folder bindings -- the FIRST file-tool call a model makes there is
+#: always rejected. Phrased as an "if" (not "you are in Default") because
+#: this exact denial also fires for a normal, already-named workspace that
+#: simply has no folder bound yet -- for that run, "create a NEW
+#: workspace" would be wrong; it only needs the bind-a-folder step the
+#: pointer above already covers. This is the part truncation is allowed to
+#: eat into (along with the consulted-roots list) -- it is not the user's
+#: only route to the fix, `ROOT_DENIAL_RECOVERY_POINTER` above is.
+ROOT_DENIAL_RECOVERY_HINT = (
+    "The Default workspace cannot hold folder bindings -- create a named "
+    "workspace first if this run is in Default, then bind a folder to it "
+    "and use a session in that workspace."
+)
+
 
 def validate_path(
     user_path: Union[str, Path], base_directory: Union[str, Path]
@@ -410,6 +463,12 @@ def validate_path_multi(
         except ValueError:
             continue
     consulted = ", ".join(str(root.resolve()) for root in root_list)
+    # Ordering is load-bearing (round 1 review CRITICAL 2): the ultra-short
+    # POINTER comes first, before the path is even repeated, because it is
+    # the one piece of this message that MUST survive the transcript's
+    # 160-char truncation -- the path and consulted-roots list may not.
     raise ValueError(
-        f"Path '{user_path}' is outside every allowed root ({consulted})."
+        f"Outside every allowed root. {ROOT_DENIAL_RECOVERY_POINTER} "
+        f"Path: '{user_path}'. {ROOT_DENIAL_RECOVERY_HINT} "
+        f"(Checked: {consulted})"
     )

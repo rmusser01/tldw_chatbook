@@ -12,6 +12,9 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH,
+)
 from tldw_chatbook.Chat.console_glyphs import (
     GLYPH_COLLAPSED,
     GLYPH_EXPANDED,
@@ -231,6 +234,49 @@ def _marker_prefixed_name_lines(
     if not lines:
         return lines
     return (f"{prefix}{lines[0]}", *lines[1:])
+
+
+def _marker_meaning_tooltip_suffix(marker_glyph: str) -> str:
+    """Return `" — <meaning>"` for a non-empty fleet run-marker glyph, else "".
+
+    Fleet-UX expert review F4 (task-1233): sidebar row and header tooltips
+    decode whichever marker glyph they carry in context, same as Console
+    session tab tooltips (``ConsoleSessionSurface._session_tab_tooltip``).
+    An unrecognized or empty glyph (the steady state) adds no suffix, so a
+    caller can always append this unconditionally.
+    """
+    meaning = CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH.get(str(marker_glyph or "").strip(), "")
+    return f" — {meaning}" if meaning else ""
+
+
+def _marker_aware_tooltip(text: str, marker_glyph: str) -> str:
+    """Return an escaped, period-terminated tooltip sentence for ``text``.
+
+    Single assembly point for every sidebar tooltip this module builds
+    (conversation rows, section headers, group headers), so all three
+    agree on both the escaping discipline and the trailing-period
+    convention (task-1233 review round 1):
+
+    * ``text`` is the sentence so far -- e.g. a title plus a bracket-
+      wrapped status badge ("Alpha [saved]"), or "Expand Workspaces" --
+      with the marker meaning (if any) and final period NOT yet applied.
+      The whole assembled sentence is escaped exactly once, HERE, after
+      every raw fragment (title, status badge, marker meaning) has been
+      concatenated. An earlier round escaped only the title fragment and
+      left a literal ``"[saved]"`` status badge un-escaped: Rich/Textual
+      markup parsing reads an unescaped ``"["`` as a style-tag start, and
+      an *unrecognized* tag name like ``"saved"`` is silently DROPPED from
+      the rendered text rather than shown literally -- confirmed via
+      ``Content.from_markup("...[saved]...").plain`` in this venv, which
+      loses the word entirely. Escaping fragment-by-fragment is fragile
+      (it is easy to add a new bracket-bearing fragment and forget it);
+      escaping the fully-assembled sentence once, here, is not.
+    * Every tooltip this module builds ends in a period, matching Console
+      session tab tooltips' existing, already-pinned convention
+      (``ConsoleSessionSurface._session_tab_tooltip``), whether or not a
+      marker is present.
+    """
+    return _escape_markup(f"{text}{_marker_meaning_tooltip_suffix(marker_glyph)}.")
 
 
 # Pre-measurement fallback for the tray's usable row width. Only the first
@@ -701,6 +747,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         id: str,
         conversation_id: str,
         tooltip_label: str | None = None,
+        run_marker: str = "",
         selected: bool = False,
         subagent_count: int = 0,
         name_line_count: int = 1,
@@ -719,7 +766,17 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         )
         button.conversation_id = conversation_id
         fallback_tooltip = text.splitlines()[0].strip() if text else text
-        button.tooltip = f"Switch to {tooltip_label or fallback_tooltip}"
+        # TASK-1233 AC#1 (review round 1): `_marker_aware_tooltip` escapes
+        # the whole "Switch to <tooltip_label or fallback_tooltip>" sentence
+        # exactly once (both branches -- neither is pre-escaped here) and
+        # appends the marker meaning + trailing period. See its docstring
+        # for why per-fragment escaping at the call site missed a literal
+        # "[" in a bracket-wrapped status badge; pre-escaping either branch
+        # here too would double-escape it instead.
+        button.tooltip = _marker_aware_tooltip(
+            f"Switch to {tooltip_label or fallback_tooltip}",
+            run_marker,
+        )
         button.set_class(selected, "console-workspace-conversation-row-selected")
         row_height = _conversation_row_render_height(name_line_count, subagent_count)
         button.styles.height = row_height
@@ -1125,10 +1182,15 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             toggle.group_id = f"section:{section.section_id}"
-            toggle.tooltip = (
-                f"Expand {section.label}"
-                if section.collapsed
-                else f"Collapse {section.label}"
+            # TASK-1233 AC#1: decode whichever aggregate marker the header
+            # itself is currently showing (same collapsed/capped split as
+            # the label above) rather than inventing a new tooltip surface.
+            header_marker = (
+                section.run_marker if section.collapsed else section.capped_run_marker
+            )
+            action_verb = "Expand" if section.collapsed else "Collapse"
+            toggle.tooltip = _marker_aware_tooltip(
+                f"{action_verb} {section.label}", header_marker
             )
             yield toggle
 
@@ -1180,10 +1242,15 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             toggle.group_id = group.group_id
-            toggle.tooltip = (
-                f"Expand {group.label}"
-                if group.collapsed
-                else f"Collapse {group.label}"
+            # TASK-1233 AC#1: same collapsed/capped aggregate-marker split
+            # as the label above, decoded into the already-existing toggle
+            # tooltip rather than a new tooltip surface.
+            header_marker = (
+                group.run_marker if group.collapsed else group.capped_run_marker
+            )
+            action_verb = "Expand" if group.collapsed else "Collapse"
+            toggle.tooltip = _marker_aware_tooltip(
+                f"{action_verb} {group.label}", header_marker
             )
             yield toggle
 
@@ -1218,11 +1285,21 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 budget,
             )
             status_suffix = f" [{status}]" if status else ""
+            # TASK-1233 AC#1 (review round 1): `tooltip_label` here is the
+            # PRE-escape, pre-period sentence body -- `_conversation_button`
+            # passes it straight to `_marker_aware_tooltip`, which escapes
+            # the whole thing (title + this bracket-wrapped status badge)
+            # exactly once. Escaping only `title` here, as an earlier round
+            # did, left the literal "[" in `status_suffix` un-escaped: Rich/
+            # Textual markup parsing reads it as a style-tag start and
+            # silently drops the unrecognized "saved"/etc. tag -- the word
+            # never reaches the rendered tooltip at all.
             row_button = self._conversation_button(
                 "\n".join((*name_lines, secondary)),
                 id=f"console-workspace-conversation-{index}",
                 conversation_id=row.conversation_id or row.row_key,
                 tooltip_label=f"{title}{status_suffix}",
+                run_marker=row.run_marker,
                 selected=row.selected,
                 subagent_count=row.subagent_count,
                 name_line_count=len(name_lines),

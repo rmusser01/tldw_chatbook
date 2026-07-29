@@ -331,8 +331,10 @@ class ConsoleControlState:
 
         Returns:
             A ``ConsoleControlState`` whose ``tools_label`` counts the tools that
-            can actually run (built-in + MCP) and whose ``*_active`` flags drive
-            chip emphasis.
+            can actually run (built-in + MCP) -- or reads "Tools: not loaded"
+            at a zero count (task-1234/F7: an honest placeholder, since this
+            app never distinguishes "definitely zero" from "not counted yet")
+            -- and whose ``*_active`` flags drive chip emphasis.
         """
         # Two distinct facts, two chips. The old single chip rendered
         # "Assistant: General" from the USER-PROFILE value, which Console always
@@ -347,6 +349,25 @@ class ConsoleControlState:
         # showed "MCP: 10 tools ready". `mcp_tool_count is None` means no MCP seam
         # wired, so the chip falls back to built-in only.
         effective_tool_count = tool_count + (mcp_tool_count or 0)
+        # Fleet-UX expert review F7 (task-1234): `tool_count` is sourced from
+        # a getattr hook (`ChatScreen._console_tool_count`) that production
+        # code never actually populates -- so a fresh app reads "Tools: 0
+        # ready" forever, not just before the catalog lazily builds, and
+        # that copy reads as "no tools available" even though built-ins
+        # like calculator/get_current_datetime are always registered.
+        # Eagerly counting the real enabled-builtin total was rejected: it
+        # would also feed `ConsoleInspectorState`'s "Review tool call" gate
+        # (a DIFFERENT concept -- "were any tool calls actually made this
+        # run", not "how many tools are configured") and falsely mark it
+        # actionable before any call ever happened. Scoped fix: a neutral,
+        # honest placeholder for this chip alone at the zero count --
+        # `tools_active` (dim/emphasis) is UNCHANGED, still `effective_tool_
+        # count > 0`.
+        tools_label = (
+            "Tools: not loaded"
+            if effective_tool_count == 0
+            else f"Tools: {effective_tool_count} ready"
+        )
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
@@ -354,7 +375,7 @@ class ConsoleControlState:
             user_profile_label=user_profile_label,
             rag_label=f"RAG: {'on' if rag_enabled else 'off'}",
             sources_label=f"Sources: {staged_source_count} staged",
-            tools_label=f"Tools: {effective_tool_count} ready",
+            tools_label=tools_label,
             approvals_label=f"Approvals: {approval_count} pending",
             sources_active=staged_source_count > 0,
             tools_active=effective_tool_count > 0,

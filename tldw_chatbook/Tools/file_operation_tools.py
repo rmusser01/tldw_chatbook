@@ -13,7 +13,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path, PureWindowsPath
-from typing import Dict, Any, Iterator
+from typing import Dict, Any, Iterator, Mapping
 
 from loguru import logger
 
@@ -25,7 +25,7 @@ from ..Utils.sensitive_paths import (
     refuses_new_directory_chain,
     resolve_sensitive_context,
 )
-from .workspace_file_roots import allowed_file_roots
+from .workspace_file_roots import allowed_file_roots, run_workspace
 
 
 def _resolve_sandbox_config() -> str:
@@ -87,6 +87,122 @@ def _tool_sandbox_root() -> Path:
     root = Path(_resolve_sandbox_config()).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+#: Tool name -> (path argument key, write access required). Read/write mirror
+#: exactly what each tool itself passes to `allowed_file_roots(write=...)`
+#: below (see `ReadFileTool`/`ListDirectoryTool`/`WriteFileTool.execute`).
+#: Consulted by `path_precheck_failed` (TASK-1231/F3 AC2) -- the approval
+#: card's pre-flight check -- so the two never drift: if a tool's own
+#: `write=` argument ever changes, this mapping must change with it.
+_FILE_TOOL_PATH_ARGS: dict[str, tuple[str, bool]] = {
+    "read_file": ("file_path", False),
+    "list_directory": ("directory_path", False),
+    "write_file": ("file_path", True),
+}
+
+
+def path_precheck_failed(
+    tool_name: str,
+    args: Mapping[str, Any] | None,
+    *,
+    workspace_id: str | None = None,
+    roots_cache: dict[bool, tuple[Path, ...]] | None = None,
+) -> bool:
+    """Whether ``tool_name``'s path argument in ``args`` will fail the roots check.
+
+    TASK-1231/F3 AC2: on an unbound (Default) workspace, an approved
+    `read_file`/`list_directory`/`write_file` call used to fail invisibly
+    AFTER the user already approved it -- the approval card had no way to
+    know the call was doomed. This lets `console_chat_controller.
+    build_tool_review_hook` pre-flight that same check at card-build time so
+    the row can WARN the user instead. It is a warning only: the user can
+    still approve, and the call then fails exactly as before with
+    `validate_path_multi`'s own (now recovery-route-bearing) error --
+    this function must never be used to auto-deny or otherwise gate
+    dispatch. The real, authoritative enforcement remains `ReadFileTool`/
+    `ListDirectoryTool`/`WriteFileTool.execute`'s own `validate_path_multi`
+    call.
+
+    Fails closed to ``False`` (no warning shown) on any unexpected error --
+    a pre-flight check that itself breaks must never block or corrupt the
+    approval flow; the tool's own enforcement at dispatch time is unaffected
+    either way.
+
+    Args:
+        tool_name: The builtin tool's dispatch name (``ToolCall.name`` /
+            ``MCPPendingCall.llm_name`` for a builtin row).
+        args: The call's raw arguments, as the model supplied them.
+        workspace_id: The RUN's own workspace id (round 1 review CRITICAL 1)
+            -- e.g. ``ConsoleChatStore.session_workspace_id(session_id)`` --
+            bound via `workspace_file_roots.run_workspace` for the duration
+            of this check, exactly as `BuiltinToolProvider.invoke` binds it
+            around the real dispatch call. Without this, `allowed_file_
+            roots` falls back to `current_run_workspace_id()` (unset here)
+            -> `registry.get_active_workspace()`, i.e. whichever workspace
+            the UI happens to be showing -- NOT necessarily the session
+            that owns this approval round, which is wrong in either
+            direction for a parked/background session. ``None`` (the
+            default) reproduces that same active-workspace fallback
+            deliberately -- e.g. for a caller with no session context at
+            all -- it must never be assumed to mean "use the active
+            workspace" when a real run's own workspace id is available;
+            callers that have one MUST pass it.
+        roots_cache: Optional dict a caller may supply to memoize
+            `allowed_file_roots` (keyed by the ``write`` bool this tool
+            needs) across MULTIPLE calls to this function that share the
+            same ``workspace_id`` -- e.g. one `review_tool_calls` batch
+            checking several file-tool rows in one turn. Each distinct
+            `workspace_id`/turn should use its OWN fresh dict (typically
+            built once per `review_tool_calls` invocation and discarded
+            after); reusing one across turns/workspaces would silently
+            serve a stale root set. ``None`` (the default) recomputes
+            `allowed_file_roots` every call, exactly as before this
+            parameter existed -- correctness never depends on passing
+            this, only the number of registry/filesystem round trips does.
+
+    Returns:
+        ``True`` only for a known file tool whose path argument is a
+        non-empty string that `validate_path_multi` would currently reject
+        against this run's `allowed_file_roots`. ``False`` for every other
+        tool name (including every non-file builtin and every MCP tool), a
+        missing/blank path argument, or an unexpected error while checking.
+    """
+    spec = _FILE_TOOL_PATH_ARGS.get(tool_name)
+    if spec is None:
+        return False
+    arg_name, write = spec
+    path_value = args.get(arg_name) if isinstance(args, Mapping) else None
+    if not isinstance(path_value, str) or not path_value.strip():
+        return False
+    try:
+        if roots_cache is not None and write in roots_cache:
+            roots = roots_cache[write]
+        else:
+            # Bind THIS run's workspace for the duration of the check only
+            # -- mirrors BuiltinToolProvider.invoke's own `with run_
+            # workspace(...)` around the real dispatch call, so the
+            # pre-flight and the eventual enforcement resolve the
+            # IDENTICAL root set (round 1 CRITICAL 1).
+            with run_workspace(workspace_id):
+                roots = allowed_file_roots(
+                    write=write, sandbox_root=_tool_sandbox_root()
+                )
+            if roots_cache is not None:
+                roots_cache[write] = roots
+        validate_path_multi(path_value, roots)
+    except ValueError:
+        return True
+    except Exception:  # noqa: BLE001 -- a broken pre-flight must never break approval
+        logger.opt(exception=True).warning(
+            "path_precheck_failed: unexpected error checking {!r} for {!r}; "
+            "not warning (the tool's own validate_path_multi still enforces "
+            "this at dispatch time)",
+            tool_name,
+            path_value,
+        )
+        return False
+    return False
 
 
 class ReadFileTool(Tool):

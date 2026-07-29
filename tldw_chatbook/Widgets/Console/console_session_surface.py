@@ -6,14 +6,16 @@ import asyncio
 from dataclasses import replace
 from typing import Any
 
+from rich.markup import escape as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import HorizontalScroll, Vertical
+from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_RUN_MARKER_GLYPHS,
+    CONSOLE_RUN_MARKER_MEANINGS,
     ConsoleRunMarker,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
@@ -36,19 +38,47 @@ CONSOLE_NEW_TAB_BUTTON_HEIGHT = 1
 CONSOLE_SESSION_TAB_DISPLAY_CHARS = 19
 CONSOLE_SESSION_TAB_WIDTH = 21
 CONSOLE_TRANSCRIPT_TITLE = "Transcript / Event Stream"
+#: Fleet-UX expert review F2 (task-1232): one-time coach-mark row mounted
+#: under the tab strip, hidden until `show_fleet_coachmark` reveals it.
+CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH = 3
 
 
 def _session_tab_tooltip(
     session: ConsoleChatSession,
     *,
     active: bool,
-    streaming: bool = False,
+    marker: ConsoleRunMarker = ConsoleRunMarker.NONE,
 ) -> str:
-    """Return action copy for a Console session tab."""
-    suffix = " Run in progress." if streaming else ""
+    """Return action copy for a Console session tab.
+
+    Fleet-UX expert review F4 (task-1233): decodes the tab's fleet
+    run-marker glyph in context ("Blue Chat — waiting for approval.")
+    rather than leaving the reader to infer ● / ◆ / ✓ / ✗ from shape alone.
+    ``ConsoleRunMarker.NONE`` (the steady state) adds no suffix at all, so
+    an unmarked tab's tooltip is byte-for-byte the pre-task-1233 copy.
+    Every tooltip ends in a period, marked or not -- the sidebar's mirrored
+    ``_marker_aware_tooltip`` (``console_workspace_context.py``) matches
+    this convention (task-1233 review round 1).
+
+    The whole assembled sentence is escaped exactly once, at the end, not
+    per-fragment: the tooltip widget renders Rich markup (Textual's
+    ``Tooltip`` is a ``Static`` with markup parsing on), so an unescaped
+    ``"["`` anywhere in the sentence -- not just in ``session.title`` --
+    would be read as a style-tag start. Escaping only the title fragment
+    left a sibling bug in the sidebar row tooltip (a literal
+    ``"[saved]"`` status badge concatenated in unescaped): an unrecognized
+    tag name is silently DROPPED from the rendered text, not shown
+    literally. Escaping the fully-assembled sentence once, here, avoids
+    that class of bug even though today's fixed vocabulary (the marker
+    meaning, "Click again to rename.") happens to contain no brackets.
+    """
+    meaning = CONSOLE_RUN_MARKER_MEANINGS.get(marker, "")
+    tail = f" — {meaning}." if meaning else "."
     if active:
-        return f"Active Console tab: {session.title}.{suffix} Click again to rename."
-    return f"Switch to Console tab: {session.title}.{suffix}"
+        text = f"Active Console tab: {session.title}{tail} Click again to rename."
+    else:
+        text = f"Switch to Console tab: {session.title}{tail}"
+    return _escape_markup(text)
 
 
 class ConsoleSessionTabButton(Button):
@@ -126,6 +156,7 @@ class ConsoleSessionSurface(Vertical):
         tab_strip.styles.max_height = 1
         with tab_strip:
             yield self._build_new_tab_button()
+        yield self._build_fleet_coachmark()
         yield ChatTaskCards(id="console-task-surface")
         yield ConsoleTranscriptSurface(
             self._transcript_background_effect_settings(
@@ -134,6 +165,68 @@ class ConsoleSessionSurface(Vertical):
             id="console-transcript-surface",
             classes="console-transcript-surface",
         )
+
+    def _build_fleet_coachmark(self) -> Horizontal:
+        """Build the (initially hidden) one-time parallel-agents coach-mark.
+
+        Fleet-UX expert review F2 / Upgrade proposal 1 (task-1232): composed
+        every time (mirrors the composer's `#console-clear-attachment`
+        pattern of always mounting a `display: none` control and toggling
+        it later) so visibility is driven by `show_fleet_coachmark`/
+        `hide_fleet_coachmark` calls off real state, never by a one-shot
+        value baked in at mount time.
+        """
+        row = Horizontal(
+            id="console-fleet-coachmark",
+            classes="console-fleet-coachmark",
+        )
+        row.styles.height = 1
+        row.styles.min_height = 1
+        row.styles.max_height = 1
+        row.styles.display = "none"
+        text = Static("", id="console-fleet-coachmark-text")
+        text.styles.width = "1fr"
+        dismiss = Button(
+            GLYPH_CLOSE,
+            id="console-fleet-coachmark-dismiss",
+            compact=True,
+        )
+        dismiss.tooltip = "Dismiss"
+        dismiss.styles.width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
+        dismiss.styles.min_width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
+        dismiss.styles.max_width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
+        # Children are composed via `compose_add_child` rather than a
+        # generator `with row: yield ...` block because THIS helper itself
+        # returns a plain `Horizontal` (not a generator) so its caller can
+        # `yield self._build_fleet_coachmark()` alongside the tab strip's own
+        # already-established `with tab_strip: yield ...` pattern.
+        row.compose_add_child(text)
+        row.compose_add_child(dismiss)
+        return row
+
+    def show_fleet_coachmark(self, text: str) -> None:
+        """Reveal the one-time parallel-agents coach-mark with the given copy.
+
+        Args:
+            text: Plain-text copy to show; rendered via ``rich.text.Text``
+                (not markup-parsed) so the copy is safe even if it ever
+                contains literal square brackets.
+        """
+        try:
+            banner = self.query_one("#console-fleet-coachmark")
+            content = self.query_one("#console-fleet-coachmark-text", Static)
+        except Exception:
+            return
+        content.update(Text(text))
+        banner.styles.display = "block"
+
+    def hide_fleet_coachmark(self) -> None:
+        """Hide the parallel-agents coach-mark (dismissed, or nothing to show)."""
+        try:
+            banner = self.query_one("#console-fleet-coachmark")
+        except Exception:
+            return
+        banner.styles.display = "none"
 
     def _build_new_tab_button(self) -> Button:
         """Return the compact symbolic Console new-session control."""
@@ -151,23 +244,28 @@ class ConsoleSessionSurface(Vertical):
     def _display_title(cls, title: str) -> str:
         """Return a tab label that preserves space for close/rename controls.
 
-        TASK-375: middle-truncate with a single-cell ellipsis rather than an
-        end "...". The old end-truncation was defeated by the tab button's
-        word-wrap (height-1 showed only the first word, never the mark); a
-        middle ellipsis sits early in the label (well inside the button width),
-        so with the button's nowrap it is always visible, and it preserves the
-        distinguishing words at BOTH ends so two conversations sharing a first
-        word are not reduced to the same fragment.
+        TASK-375 originally middle-truncated here ("Long conv…local RAG")
+        so a shared first word wouldn't collapse two conversations to the
+        same fragment. Fleet-UX expert review F7 (task-1234): the mark
+        lands mid-word often enough to read as GARBLED rather than
+        truncated ("What is t…ate an."), which live UAT judged the worse
+        defect. END-truncation now matches ``derive_console_session_title``
+        (``console_chat_models.py``, the auto-title helper this label
+        usually renders) -- one truncation convention, not two. TASK-375's
+        own word-wrap fix (``ConsoleSessionTabButton``'s ``text-wrap:
+        nowrap`` DEFAULT_CSS above) is untouched and still what keeps a
+        single-line label from hiding the ellipsis off-screen; only the
+        cut POSITION changes here. Trade-off accepted: two conversations
+        sharing a long common prefix can once again render identical tab
+        labels (the disambiguation TASK-375 added AC#2 for) -- the full
+        title always remains one hover away in the tab's tooltip
+        (``_session_tab_tooltip``).
         """
         normalized_title = title.strip() or "Untitled"
         if len(normalized_title) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS:
             return normalized_title
         keep = CONSOLE_SESSION_TAB_DISPLAY_CHARS - 1  # room for the ellipsis cell
-        head = (keep + 1) // 2
-        tail = keep - head
-        head_text = normalized_title[:head].rstrip()
-        tail_text = normalized_title[len(normalized_title) - tail:].lstrip()
-        return f"{head_text}…{tail_text}"
+        return f"{normalized_title[:keep].rstrip()}…"
 
     def _build_session_tab_button(
         self,
@@ -188,7 +286,7 @@ class ConsoleSessionSurface(Vertical):
             session_id=session.id,
         )
         button.tooltip = _session_tab_tooltip(
-            session, active=active, streaming=marker is ConsoleRunMarker.RUNNING
+            session, active=active, marker=marker
         )
         button.styles.width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.min_width = CONSOLE_SESSION_TAB_WIDTH
@@ -296,7 +394,7 @@ class ConsoleSessionSurface(Vertical):
                 child.tooltip = _session_tab_tooltip(
                     session,
                     active=session.id == active_session_id,
-                    streaming=marker is ConsoleRunMarker.RUNNING,
+                    marker=marker,
                 )
                 child.set_class(
                     session.id == active_session_id,

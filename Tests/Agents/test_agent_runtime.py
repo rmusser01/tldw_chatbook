@@ -310,8 +310,16 @@ def test_identical_consecutive_calls_trip_loop_detection():
     assert out.steps[-1].kind == "error"
     # The stuck summary is surfaced verbatim to the user (see
     # console_chat_controller._agent_failure_visible_copy) -- it must name
-    # the looping tool, not just "1-cycle" jargon.
-    assert "calculator" in out.steps[-1].summary
+    # the looping tool and read as plain English, not "1-cycle" jargon
+    # (TASK-1231/F3 AC4).
+    summary = out.steps[-1].summary
+    assert "calculator" in summary
+    assert summary == (
+        "Agent stopped: it kept calling calculator with the same arguments "
+        f"({LOOP_DETECTION_N} times) without making progress."
+    )
+    assert "cycle" not in summary
+    assert "loop detected" not in summary
 
 
 def test_same_tool_different_args_is_not_stuck():
@@ -383,12 +391,16 @@ def test_alternating_calls_trip_loop_detection():
     )
     assert out.status == RUN_STUCK
     assert out.steps[-1].kind == "error"
-    assert "loop detected" in out.steps[-1].summary
+    summary = out.steps[-1].summary
+    # User-comprehensible copy, not "N-cycle" jargon (TASK-1231/F3 AC4).
+    assert "loop detected" not in summary
+    assert summary.startswith("Agent stopped: it kept repeating")
+    assert "without making progress" in summary
     # Both cycle members must be named -- a period>1 trip that only
     # mentioned one tool would be just as unactionable as the old
     # "N-cycle" jargon.
-    assert "calculator" in out.steps[-1].summary
-    assert "new_tool" in out.steps[-1].summary
+    assert "calculator" in summary
+    assert "new_tool" in summary
 
 
 def test_same_tool_distinct_args_not_stuck():

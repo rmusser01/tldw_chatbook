@@ -234,6 +234,49 @@ async def test_set_batch_renders_one_row_per_unique_name_with_tooltips():
 
 
 @pytest.mark.asyncio
+async def test_risk_floored_row_header_carries_a_why_affordance_tooltip():
+    """Fleet-UX expert review F5/F7 (task-1234, item g): "(high risk)" on a
+    plain read reads as alarmist with no explanation -- the row header
+    Static now carries a tooltip naming why. `config_changed` rows (no
+    risk badge) get no tooltip at all; this is scoped to `risk_floored`."""
+    app = _CardHarnessApp()
+    calls = [
+        {
+            "llm_name": "read_file",
+            "server_key": "builtin",
+            "tool_name": "read_file",
+            "server_label": "Built-in",
+            "arguments": {"path": "notes.txt"},
+            "reason": "risk_floored",
+        },
+        {
+            "llm_name": "mcp__srv_b__write",
+            "server_key": "local:srv_b",
+            "tool_name": "write",
+            "server_label": "Srv B",
+            "arguments": {"path": "/tmp/x"},
+            "reason": "config_changed",
+        },
+    ]
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(calls, timeout_seconds=45.0)
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row"))
+        risk_header = rows[0].query_one(".approval-row-header", Static)
+        changed_header = rows[1].query_one(".approval-row-header", Static)
+
+        assert "(high risk)" in _text(risk_header)
+        assert risk_header.tooltip == (
+            "Reads can exfiltrate file contents; built-in file tools "
+            "always ask before running."
+        )
+        assert "(definition changed)" in _text(changed_header)
+        assert not changed_header.tooltip
+
+
+@pytest.mark.asyncio
 async def test_set_batch_row_with_options_key_narrows_the_select_and_stays_valid_default():
     """Task-5: a row's ``options`` key narrows its ``Select`` choices.
 
@@ -543,6 +586,209 @@ async def test_set_batch_remount_does_not_duplicate_rows():
 
 
 # ---------------------------------------------------------------------------
+# Single-row fast-approval path (Fleet-UX expert review F5, task-1234)
+# ---------------------------------------------------------------------------
+
+
+def _single_call() -> list[dict]:
+    """One unique pending call -- exercises the single-row fast-path gate."""
+    return [
+        {
+            "llm_name": "mcp__srv_a__search",
+            "server_key": "local:srv_a",
+            "tool_name": "search",
+            "server_label": "Srv A",
+            "arguments": {"query": "hello"},
+            "reason": "ask",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_single_row_batch_renders_fast_approve_and_deny_buttons():
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0)
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row"))
+        assert len(rows) == 1
+
+        fast_approve = app.query_one(".approval-row-fast-approve", Button)
+        fast_deny = app.query_one(".approval-row-fast-deny", Button)
+        assert str(fast_approve.label) == "Approve once"
+        assert str(fast_deny.label) == "Deny"
+        assert fast_approve.tooltip
+        assert fast_deny.tooltip
+
+        # The Select+Submit path stays fully available alongside the fast
+        # buttons -- this is an addition, not a replacement (e.g. "Approve
+        # for session" is still only reachable through the row's Select).
+        assert list(app.query(Select))
+        assert app.query_one("#approval-submit", Button)
+
+
+@pytest.mark.asyncio
+async def test_multi_row_batch_omits_fast_buttons():
+    """Multi-row cards keep the Select+Submit-only flow -- the fast path
+    is gated on exactly one row (`ChatApprovalCard.set_batch`'s
+    `single_row`)."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=45.0)
+        await pilot.pause()
+
+        assert len(list(app.query(".approval-row"))) == 2
+        assert not list(app.query(".approval-row-fast-approve"))
+        assert not list(app.query(".approval-row-fast-deny"))
+
+
+@pytest.mark.asyncio
+async def test_fast_approve_button_submits_approve_once_immediately():
+    """SAFETY: the fast Approve button maps to `approve_once` ONLY, and
+    submits through the exact same `ApprovalDecided`/`round_id` seam a
+    normal Select+Submit round trip uses -- no new resolution path."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-fast-1")
+        await pilot.pause()
+
+        # Never touched the Select or clicked Submit.
+        app.query_one(".approval-row-fast-approve", Button).press()
+        await pilot.pause()
+
+        assert app.decided == [{"mcp__srv_a__search": "approve_once"}]
+        assert app.decided_round_ids == ["round-fast-1"]
+
+
+@pytest.mark.asyncio
+async def test_fast_deny_button_submits_deny_immediately():
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-fast-2")
+        await pilot.pause()
+
+        app.query_one(".approval-row-fast-deny", Button).press()
+        await pilot.pause()
+
+        assert app.decided == [{"mcp__srv_a__search": "deny"}]
+        assert app.decided_round_ids == ["round-fast-2"]
+
+
+@pytest.mark.asyncio
+async def test_stale_generation_fast_button_press_is_a_noop():
+    """SAFETY (task-1234 review round 1): a fast button from a SUPERSEDED
+    batch must never resolve the NEW round it was superseded by.
+    `set_batch`'s row remount is fire-and-forget (`remove_children()`
+    defers the actual detachment to the next event-loop tick -- its own
+    docstring), so a stale-generation button stays mounted and pressable
+    for a narrow window after a new batch arrives. Without a guard, that
+    press would resolve the NEW round using whatever `self._batch_names`/
+    `self._batch_round_id` the newer `set_batch` call just overwrote them
+    with -- silently deciding a tool call the user never reviewed.
+    `on_button_pressed` now guards on `self._batch_fast_buttons`
+    membership, mirroring `_on_batch_row_select_changed`'s
+    `self._batch_selects` guard."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-old")
+        await pilot.pause()
+
+        stale_button = app.query_one(".approval-row-fast-approve", Button)
+        assert stale_button in card._batch_fast_buttons
+
+        new_call = [
+            {
+                "llm_name": "mcp__srv_c__delete",
+                "server_key": "local:srv_c",
+                "tool_name": "delete",
+                "server_label": "Srv C",
+                "arguments": {"path": "/tmp/y"},
+                "reason": "ask",
+            }
+        ]
+        # No pause between these two calls -- the stale button is still
+        # mounted (remove_children's detachment is deferred) at the exact
+        # moment it is pressed below, matching the real race.
+        card.set_batch(new_call, timeout_seconds=45.0, round_id="round-new")
+        assert stale_button not in card._batch_fast_buttons
+
+        stale_button.press()
+        await pilot.pause()
+
+        assert app.decided == []
+        assert app.decided_round_ids == []
+
+        # The new round's OWN fast button still resolves normally --
+        # the guard blocks stale presses, not the whole fast path.
+        fresh_button = app.query_one(".approval-row-fast-approve", Button)
+        assert fresh_button is not stale_button
+        fresh_button.press()
+        await pilot.pause()
+
+        assert app.decided == [{"mcp__srv_c__delete": "approve_once"}]
+        assert app.decided_round_ids == ["round-new"]
+
+
+@pytest.mark.asyncio
+async def test_fast_approve_button_disables_after_press_to_prevent_double_submit():
+    """task-1234 review round 1: Submit/fast buttons only resolve the
+    round ONCE -- disabling immediately after a press closes the
+    double-submit window rather than relying on a re-render to happen
+    first (previously incidental safety only)."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-once")
+        await pilot.pause()
+
+        fast_approve = app.query_one(".approval-row-fast-approve", Button)
+        fast_deny = app.query_one(".approval-row-fast-deny", Button)
+        submit = app.query_one("#approval-submit", Button)
+        assert fast_approve.disabled is False
+        assert submit.disabled is False
+
+        fast_approve.press()
+        await pilot.pause()
+
+        assert app.decided == [{"mcp__srv_a__search": "approve_once"}]
+        assert fast_approve.disabled is True
+        assert fast_deny.disabled is True
+        assert submit.disabled is True
+
+        # A second press is a no-op: `Button.press()` itself refuses once
+        # `disabled` is True, so no second `Button.Pressed` is ever posted.
+        fast_approve.press()
+        await pilot.pause()
+        assert app.decided == [{"mcp__srv_a__search": "approve_once"}]
+
+
+@pytest.mark.asyncio
+async def test_new_batch_reenables_submit_after_a_prior_round_disabled_it():
+    """A NEW round must never inherit a disabled Submit button from its
+    predecessor -- `set_batch` re-enables `#approval-submit` (and installs
+    fresh, enabled fast buttons) at the start of every call."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_sample_calls(), timeout_seconds=45.0, round_id="round-a")
+        await pilot.pause()
+
+        app.query_one("#approval-submit", Button).press()
+        await pilot.pause()
+        assert app.query_one("#approval-submit", Button).disabled is True
+
+        card.set_batch(_sample_calls(), timeout_seconds=45.0, round_id="round-b")
+        await pilot.pause()
+        assert app.query_one("#approval-submit", Button).disabled is False
+
+
+# ---------------------------------------------------------------------------
 # CSS / geometry (T9, MCP Hub Phase 5) -- T5 deferred `.approval-row*`
 # styling to this task's phase gate; `ChatApprovalCard` carries no
 # `DEFAULT_CSS` of its own at all, so these bundle-source rules are the
@@ -650,6 +896,70 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
             f"approval-batch-actions bar at y={batch_actions.region.y} is too far "
             f"below last row's bottom ({last_row.region.bottom}) -- should be "
             f"within {max_y_gap} lines"
+        )
+
+
+@pytest.mark.asyncio
+async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_under_bundled_css():
+    """task-1234 review round 1: the sibling multi-row geometry test above
+    only ever mounts a 2-row batch, so `.approval-row-fast-approve`/
+    `.approval-row-fast-deny` (single-row-only, see `set_batch`'s
+    `single_row` gate) never actually render under the REAL bundled
+    stylesheet in any existing test. Asserts both fast buttons get real,
+    non-overlapping geometry, sit after the decision Select, and stay
+    inside the row's own bounds -- the same class of `Select { width:
+    100%; }`-style cascade surprise the sibling test guards against, now
+    for the two new buttons.
+
+    An explicit `pilot.pause()` before `set_batch` (absent from the
+    sibling test above, which is why it currently fails independent of
+    this task -- confirmed via stash-diff against dev tip) lets
+    `ChatApprovalCard.on_mount`'s deferred `_hide_batch_body` callback run
+    BEFORE `set_batch` sets `#approval-batch-body.display = True`;
+    otherwise that deferred callback fires AFTER and silently reverts the
+    card to display:none, collapsing every child to zero size. Calling
+    `set_batch` this early (before the widget's first refresh) does not
+    happen in the real app (the pending-approval round trip always lands
+    well after the screen has settled), so this is purely a test-harness
+    ordering fix, not a production behavior change."""
+    app = _CardHarnessAppWithBundledCSS()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0)
+        await pilot.pause()
+
+        rows = list(app.query(".approval-row"))
+        assert len(rows) == 1
+        row = rows[0]
+        select = row.query_one(".approval-row-decision", Select)
+        fast_approve = row.query_one(".approval-row-fast-approve", Button)
+        fast_deny = row.query_one(".approval-row-fast-deny", Button)
+
+        for widget, label in (
+            (fast_approve, "fast-approve"),
+            (fast_deny, "fast-deny"),
+        ):
+            assert widget.size.width > 0 and widget.size.height > 0, (
+                f"approval row {label} button collapsed to zero size under "
+                "bundled CSS"
+            )
+            assert widget.size.width == 14, (
+                f"{label} button width {widget.size.width} != pinned 14"
+            )
+
+        # Left-to-right order, no overlap: Select, then fast-approve, then
+        # fast-deny, each starting no earlier than the previous widget's
+        # right edge, and both fast buttons stay inside the row.
+        assert fast_approve.region.x >= select.region.right
+        assert fast_deny.region.x >= fast_approve.region.right
+        assert fast_approve.region.right <= row.region.right
+        assert fast_deny.region.right <= row.region.right
+
+        # Compact, one-line-tall row (same discipline as the sibling test).
+        assert row.size.height <= 4, (
+            f"single-row approval row ballooned to height {row.size.height} "
+            "under bundled CSS"
         )
 
 

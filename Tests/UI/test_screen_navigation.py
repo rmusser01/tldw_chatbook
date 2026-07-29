@@ -813,15 +813,36 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
                 await pilot.pause(0)
         # Let the queued switches drain, then prove the app still navigates.
         app.post_message(NavigateToScreen("library"))
-        for _ in range(150):
+        zombies: list = []
+        for _ in range(200):
             await pilot.pause(0.02)
             if type(app.screen).__name__ == "LibraryScreen" and app.screen.is_running:
-                break
+                # TASK-1230: `handle_screen_navigation` now runs each
+                # attempt as its own worker (`_dispatch_screen_navigation`)
+                # instead of inline on the App's own message-processing
+                # task, specifically so a busy-fleet confirm dialog can
+                # never starve that task's own input routing (see that
+                # method's docstring). Twelve back-to-back navigations
+                # posted with zero pacing (`pilot.pause(0)` above) now
+                # queue behind `_screen_navigation_lock` with real worker-
+                # scheduling overhead each, so the LAST one's own children
+                # can still be finishing their own mount for a brief beat
+                # after `app.screen` first reports the target screen and
+                # `is_running` -- keep polling for the zombie check itself
+                # to clear rather than asserting on the very first tick;
+                # if the app ever regresses to genuinely stuck/dead
+                # widgets (the historical instance-cache bug this test
+                # guards against), `zombies` never clears and the
+                # assertion below still fails.
+                zombies = [
+                    widget
+                    for widget in app.screen.walk_children()
+                    if not widget.is_running
+                ]
+                if not zombies:
+                    break
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen.is_running
-        zombies = [
-            widget for widget in app.screen.walk_children() if not widget.is_running
-        ]
         assert not zombies, f"zombie widgets on active screen: {zombies[:5]}"
         # One more hop for responsiveness.
         app.post_message(NavigateToScreen("home"))
@@ -831,6 +852,148 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
                 break
         assert type(app.screen).__name__ == "HomeScreen"
         assert app.screen.is_running
+
+
+@pytest.mark.asyncio
+async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
+    """TASK-1230 review follow-up: `TldwCli._dispatch_screen_navigation`
+    runs each `NavigateToScreen` attempt as its own worker instead of
+    awaiting it inline on the App's own message-processing task (see that
+    method's docstring for why -- a busy-fleet confirm dialog must never
+    starve that task's own input routing). Workers are otherwise
+    independent tasks, so nothing but `_screen_navigation_lock` stops
+    three overlapping attempts from racing on shared state
+    (``self.current_tab``, ``ScreenStateStore`` save/restore, and
+    ``switch_screen``'s screen stack -- all inside the region the lock
+    guards, since they run from within ``_handle_screen_navigation_locked``
+    while the lock is held).
+
+    This asserts the STRONGER property than "the last target wins" (which
+    the storm test above already covers): three back-to-back
+    ``NavigateToScreen`` messages -- posted with NO awaited gap between
+    them, an idle fleet so no confirm dialog ever gates any of them --
+    must still MOUNT in EXACTLY the order they were posted. Recorded via
+    the real ``BaseAppScreen.on_mount`` seam every screen (Home/Library/
+    Workflows alike) calls once actually mounted -- the point AFTER
+    ``switch_screen``'s own async unmount/mount work has run, which is
+    where two attempts racing without the lock could genuinely finish out
+    of order. (Recording at ``TldwCli._create_navigation_screen`` instead
+    -- called synchronously, early in each attempt, before any of that
+    async work -- was tried and rejected: it recorded FIFO order even with
+    the lock temporarily replaced by a fresh, unshared ``asyncio.Lock()``
+    per call [i.e. no real serialization at all], because nothing before
+    that point yields the event loop for an idle-fleet attempt -- not a
+    discriminating check.)
+
+    Incidental asyncio scheduling alone turned out to be an unreliable way
+    to PROVE the lock matters (verified directly: with the lock replaced
+    by a fresh, unshared lock per call, reordering was observed on some
+    runs but not others -- real, but not deterministic, since nothing
+    forces the three attempts' async work to overlap in a particular way).
+    So this test manufactures a deterministic race instead: it wraps
+    `_complete_screen_navigation` (called from inside the guarded region)
+    with a per-target `asyncio.sleep` -- LONGEST for "home" (posted
+    FIRST), zero for "workflows" (posted LAST) -- so that without
+    serialization the last-posted, zero-delay attempt would provably
+    finish first. Confirmed this setup, with the real lock temporarily
+    replaced by a fresh lock per call, reliably reorders `mounted_order`
+    (5/5 runs; "workflows" -- zero delay -- mounts first every time, then
+    either `['workflows', 'library', 'home']` [the exact reverse, 4/5
+    runs] or `['workflows', 'home', 'library']` [1/5 runs] depending on
+    exactly how "library"'s short delay lands relative to "home"'s longer
+    one); restoring the real lock forces `['home', 'library', 'workflows']`
+    every time despite the same delays, because the lock keeps "library"
+    from even starting its own (short) delay until "home" -- delay
+    included -- fully finishes, and likewise for "workflows" after
+    "library". Not polling ``app.screen`` after the fact: polling can only
+    ever observe whichever attempt happens to be current when it looks,
+    never prove the two that came before it also landed in order.
+    """
+    from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
+
+    app = _build_test_app()
+    mounted_order: list[str] = []
+    original_on_mount = BaseAppScreen.on_mount
+
+    def _recording_on_mount(self) -> None:
+        mounted_order.append(self.screen_name)
+        return original_on_mount(self)
+
+    # Deterministic race pressure: "home" (posted first) is slowest,
+    # "workflows" (posted last) is instant. Without the lock this
+    # guarantees "workflows" mounts before "home" even finishes; with the
+    # lock, "workflows" cannot start until "library" (and, transitively,
+    # "home") has fully completed, delay included.
+    delays = {"home": 0.2, "library": 0.05, "workflows": 0.0}
+    original_complete = type(app)._complete_screen_navigation
+
+    async def _delayed_complete(self, **kwargs):
+        delay = delays.get(kwargs.get("screen_name"), 0.0)
+        if delay:
+            await asyncio.sleep(delay)
+        return await original_complete(self, **kwargs)
+
+    with (
+        patch.object(BaseAppScreen, "on_mount", _recording_on_mount),
+        patch.object(type(app), "_complete_screen_navigation", _delayed_complete),
+    ):
+        async with app.run_test(size=(160, 40)) as pilot:
+            for _ in range(150):
+                await pilot.pause(0.02)
+                if type(app.screen).__name__ != "Screen":
+                    break
+            assert type(app.screen).__name__ != "Screen", (
+                "app never mounted its initial screen"
+            )
+            # Deliberately NOT clearing `mounted_order` here: the app's own
+            # delayed initial-tab switch (a known cold-start gotcha -- it
+            # can re-navigate to "chat" shortly after the placeholder
+            # screen clears) settles on an unpredictable timeline under
+            # load. Filtering the recorded names down to this test's own
+            # three targets below is immune to that race regardless of how
+            # long the boot noise takes to settle.
+
+            # Three DIFFERENT targets, posted back-to-back with NO await
+            # between them -- this is exactly what lets their
+            # `_dispatch_screen_navigation` workers get CREATED in a tight
+            # burst; only `_screen_navigation_lock` then decides which one
+            # actually gets to run its body first. A `pilot.pause(0)`
+            # between posts (as the storm test above uses) would let each
+            # attempt fully settle before the next is even posted, which
+            # would never exercise the lock's ordering guarantee at all.
+            app.post_message(NavigateToScreen("home"))
+            app.post_message(NavigateToScreen("library"))
+            app.post_message(NavigateToScreen("workflows"))
+
+            # Wait for all THREE targets to have mounted at least once,
+            # rather than asserting `app.screen`'s final type: without the
+            # lock, completion order reverses (the induced delays mean
+            # "home" -- posted first, slowest -- finishes LAST), so
+            # whichever screen ends up current when this loop times out
+            # differs run to run and isn't itself the property under
+            # test. The FIFO check below, on `mounted_order`, is.
+            this_tests_targets = {"home", "library", "workflows"}
+            for _ in range(150):
+                await pilot.pause(0.02)
+                seen = {name for name in mounted_order if name in this_tests_targets}
+                if len(seen) >= 3:
+                    break
+
+    # `mounted_order` can also carry the app's own cold-start noise (its
+    # delayed initial-tab switch to "chat"; see above) and
+    # `BaseAppScreen.on_mount` fires twice per real mount (a pre-existing,
+    # harmless duplication -- also visible as a doubled "Screen X mounted"
+    # log line, unrelated to this fix). Filter down to this test's own
+    # three targets and dedupe consecutive repeats before asserting order,
+    # so the check is immune to both and verifies FIFO ordering only.
+    this_tests_targets = {"home", "library", "workflows"}
+    filtered = [name for name in mounted_order if name in this_tests_targets]
+    deduped = [
+        name for i, name in enumerate(filtered) if i == 0 or name != filtered[i - 1]
+    ]
+    assert deduped == ["home", "library", "workflows"], (
+        f"navigation attempts mounted out of FIFO order: {mounted_order}"
+    )
 
 
 def _build_test_app(configured_default: str | None = None) -> TldwCli:

@@ -6006,9 +6006,88 @@ class TldwCli(
         """Return the screen-snapshot scope from authoritative runtime state."""
         return RuntimeIdentity.from_state(self.runtime_policy.state)
 
+    def _screen_navigation_lock(self) -> asyncio.Lock:
+        """Return the lock serializing `handle_screen_navigation` attempts.
+
+        TASK-1230: `_dispatch_screen_navigation` (the App's real
+        ``@on(NavigateToScreen)`` handler) now runs each navigation attempt
+        as its own worker instead of awaiting it inline on the App's single
+        message-processing task -- see that method's docstring for why.
+        Workers are otherwise independent, and running two attempts
+        concurrently would let them race on shared state in a way the old
+        single-queue dispatch never allowed: ``self.current_tab``,
+        ``switch_screen``'s screen stack, and -- inside
+        ``_complete_screen_navigation``, itself called from within the
+        guarded region -- ``self.screen_state_store.save()`` (snapshotting
+        the OUTGOING screen) and ``.restore()`` (rehydrating the INCOMING
+        one); two attempts interleaving there could save/restore the wrong
+        screen's state or clobber a snapshot the other attempt just wrote.
+        This lock preserves the old FIFO ordering: `asyncio.Lock` serves
+        waiters in arrival order, so attempts still complete strictly one
+        at a time, in the order their ``NavigateToScreen`` messages were
+        dispatched -- confirmed by
+        ``test_overlapping_navigate_requests_complete_in_fifo_order``,
+        which reliably reorders without this lock -- the only change is
+        that an attempt waiting on a confirm-navigation dialog no longer
+        blocks the App from routing input to that very dialog while it
+        waits its turn.
+        """
+        lock = getattr(self, "_screen_navigation_lock_instance", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._screen_navigation_lock_instance = lock
+        return lock
+
     @on(NavigateToScreen)
+    def _dispatch_screen_navigation(self, message: NavigateToScreen) -> None:
+        """Kick off ``handle_screen_navigation`` as its own worker (TASK-1230).
+
+        F1 (fleet-UX expert review, 2026-07-28): a busy-fleet navigation
+        opens a confirm-navigate dialog via ``ChatScreen.confirm_navigation``
+        (``push_screen_wait`` inside a worker, its result awaited back out).
+        That await used to happen INLINE inside this handler -- and Textual
+        dispatches every ``@on``-decorated handler by awaiting it directly
+        from the App's own single message-processing task, the SAME task
+        solely responsible for routing every subsequent driver-originated
+        mouse/key event (``App.on_event`` -> ``screen._forward_event``) to
+        whatever is on top of the screen stack, dialog included. Awaiting
+        the dialog's result inline therefore starved that task's own event
+        loop for the dialog's entire lifetime: no click, key press, or
+        Escape could ever reach it, because delivering any of them requires
+        this exact task to loop back and dequeue the next message, which it
+        cannot do while suspended awaiting `confirm_navigation`. That is the
+        zombie-modal soft-lock: reproduced directly (not just theorized) by
+        posting a real driver-style MouseDown/MouseUp pair while a confirm
+        dialog was open and observing the App's own message queue grow
+        without ever draining -- see the task's Implementation Notes.
+
+        Running the full sequence (``handle_screen_navigation``, including
+        its own flush/confirm/complete steps) as a decoupled worker keeps
+        this task free to keep delivering input the moment ANY confirm
+        dialog opens, first one or a subsequent one alike.
+        ``handle_screen_navigation`` itself is unchanged and still directly
+        awaitable to completion (its own FIFO ordering across overlapping
+        attempts is preserved by ``_screen_navigation_lock``), so every
+        existing direct caller (tests included) keeps working exactly as
+        before; only real navigation -- dispatched through this handler --
+        gains the fix.
+        """
+        self.run_worker(
+            self.handle_screen_navigation(message),
+            group="screen-navigation",
+            exclusive=False,
+            exit_on_error=False,
+        )
+
     async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
         """Handle navigation to a different screen using switch_screen for better performance."""
+        async with self._screen_navigation_lock():
+            await self._handle_screen_navigation_locked(message)
+
+    async def _handle_screen_navigation_locked(
+        self, message: NavigateToScreen
+    ) -> None:
+        """Body of `handle_screen_navigation`, run under its FIFO lock."""
         requested_screen = message.screen_name
         screen_name, current_tab_value, screen_class = (
             self._resolve_screen_navigation_target(requested_screen)

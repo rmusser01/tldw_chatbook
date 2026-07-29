@@ -409,10 +409,16 @@ class ConsoleComposerBar(Horizontal):
 
         stop_button.disabled = False
         stop_button.variant = "warning" if run_active else "default"
+        # Fleet-UX expert review F7 (task-1234): this LIVE sync overrides
+        # the button's construction-time tooltip on every action-state
+        # refresh, so the compose-time copy alone (see `compose()` above)
+        # was never actually what a user hovering an active Stop button
+        # saw -- fixed here too, matching the collapsed Stop button (which
+        # has no such override).
         stop_button.tooltip = (
-            "Stop generation in the active Console session."
+            "Stop this tab's run."
             if run_active
-            else "No active Console run to stop."
+            else "No active run to stop in this tab."
         )
         stop_button.set_class(run_active, "console-stop-active")
         stop_button.set_class(not run_active, "console-stop-idle")
@@ -2073,7 +2079,11 @@ class ConsoleComposerBar(Horizontal):
                     width=8,
                     id="console-stop-generation",
                     classes="destination-action-button console-stop-button",
-                    tooltip="Stop generation in the active Console session.",
+                    # Fleet-UX expert review F7 (task-1234): under parallel
+                    # runs "Stop generation in the active Console session"
+                    # read as ambiguous scope; the button only ever stops
+                    # THIS tab's own run (behavior unchanged) -- say so.
+                    tooltip="Stop this tab's run.",
                 )
                 stop_button.styles.display = "none"
                 yield stop_button
@@ -2126,7 +2136,9 @@ class ConsoleComposerBar(Horizontal):
                 id="console-collapsed-stop-generation",
                 classes="destination-action-button console-stop-button",
                 variant="warning",
-                tooltip="Stop generation in the active Console session.",
+                # Fleet-UX expert review F7 (task-1234): matches the
+                # expanded Stop button's tooltip (console-stop-generation).
+                tooltip="Stop this tab's run.",
             )
             collapsed_stop.styles.display = "block" if self._run_active else "none"
             yield collapsed_stop
