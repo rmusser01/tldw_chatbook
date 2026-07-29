@@ -380,6 +380,38 @@ to carry — and each read as live to a grep.
 
 ---
 
+## A suite that no gate runs can rot invisibly for days
+
+**TASK-1310, 2026-07-28.** `Tests/UI/test_settings_configuration_hub.py` carried 22
+failures at dev tip — byte-identical at base and branch, so none were caused by the
+branch that finally surfaced them (TASK-1234's review, the first time this hub ran in
+that review cycle). The suite was last known green before #1050; nothing narrower
+caught the drift for days across two deliberate, well-reasoned refactors
+(`d15882398` "own provider selection by lifetime" and `1df0c4cb4` "reconcile privacy
+lifecycle eval and packaging hardening") that each correctly updated every production
+call site and left this one 253-test file behind.
+
+Both refactors were textbook-good: each shipped its own new, correct test coverage
+(`Tests/Provider/test_provider_model_resolution.py`; the batched-save-adapter test in
+this same file) and left zero live bugs — `grep` across all of `tldw_chatbook/` for the
+removed symbols (`chat_api_provider_value`, `save_setting_to_cli_config` imported into
+`settings_screen`) came back empty on both counts. The damage was entirely to *this*
+suite's ability to say so: 22 tests calling a removed signature/attribute is worse than
+0 tests, because a red suite nobody gates reports exactly as much confidence as a suite
+that does not exist, while still costing the CI minutes of everyone who happens to run
+it directly.
+
+**What to do.** A suite this large (253 tests, a whole product surface) needs a home in
+routine verification, not opportunistic discovery via someone else's PR review. The
+Settings/Console-area verification gate must include
+`Tests/UI/test_settings_configuration_hub.py` going forward — not because it is
+special, but because "carries the hub's tests" is exactly the kind of suite that rots
+silently when nothing runs it: too large to eyeball, too domain-specific for a generic
+CI matrix to catch by accident, and it will not fail loudly for anyone except the next
+person who happens to touch that screen.
+
+---
+
 ## Related
 
 - `lessons-live-verification.md` — why the suite could not see seven of these defects
