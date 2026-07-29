@@ -1245,7 +1245,14 @@ class StudyScreen(BaseAppScreen):
         try:
             await self._load_after_mount_inner()
         except Exception as exc:
-            logger.opt(exception=True).error(f"Study initial load failed: {exc}")
+            logger.opt(exception=True).error(
+                "Study initial load failed "
+                "(section={}, scope_key={}, backend={}, exception_category={}).",
+                self.current_section,
+                self._effective_scope_key,
+                getattr(self.scope_state, "backend", None),
+                type(exc).__name__,
+            )
             try:
                 self.notify("Couldn't load study data.", severity="error")
             except Exception:

@@ -971,7 +971,11 @@ class PersonasScreen(BaseAppScreen):
             await self._apply_pending_restore()
         except Exception as exc:
             logger.opt(exception=True).error(
-                f"Personas initial load failed: {exc}"
+                "Personas initial load failed "
+                "(mode={}, runtime_backend={}, exception_category={}).",
+                getattr(self.state, "active_mode", None),
+                getattr(self.state, "runtime_source", None),
+                type(exc).__name__,
             )
             try:
                 self.notify(

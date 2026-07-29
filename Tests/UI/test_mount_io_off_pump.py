@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import replace
+from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
@@ -45,29 +46,38 @@ class SlowHubService:
             selected_source="local", selected_section="overview"
         )
 
-    async def load_context(self):
+    async def load_context(self) -> UnifiedMCPContext:
+        """Return the stored context, slowly."""
         await asyncio.sleep(SERVICE_DELAY)
         return self.context
 
-    async def select_source(self, source):
+    async def select_source(self, source: str) -> UnifiedMCPContext:
+        """Record the selected source and return the updated context."""
         self.context = replace(self.context, selected_source=source)
         return self.context
 
-    async def select_scope(self, scope, scope_ref=None):
+    async def select_scope(
+        self, scope: str | None, scope_ref: str | None = None
+    ) -> UnifiedMCPContext:
+        """Return the context unchanged; scope is irrelevant to these tests."""
         return self.context
 
-    async def select_section(self, section):
+    async def select_section(self, section: str) -> UnifiedMCPContext:
+        """Return the context unchanged; section is irrelevant to these tests."""
         return self.context
 
-    async def load_section(self, section=None):
+    async def load_section(self, section: str | None = None) -> list[Any]:
+        """Return no rows, slowly."""
         await asyncio.sleep(SERVICE_DELAY)
         return []
 
-    async def local_external_catalog(self):
+    async def local_external_catalog(self) -> list[Any]:
+        """Return an empty local catalog, slowly."""
         await asyncio.sleep(SERVICE_DELAY)
         return []
 
-    def available_actions(self):
+    def available_actions(self) -> list[Any]:
+        """Offer no hub actions."""
         return []
 
 
@@ -266,9 +276,10 @@ async def test_chatbooks_scan_does_not_block_the_event_loop(monkeypatch):
 @pytest.mark.asyncio
 async def test_personas_mount_does_not_block_on_the_character_library(monkeypatch):
     """Opening Personas must not freeze the app while characters load."""
-    import sys
-
-    sys.path.insert(0, "Tests/UI")
+    # `syspath_prepend`, not a bare `sys.path.insert`: monkeypatch restores it
+    # after the test, so sibling test modules are not left shadowable for the
+    # rest of the session.
+    monkeypatch.syspath_prepend("Tests/UI")
     from test_destination_shells import DestinationHarness, _build_test_app
 
     import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as handler_module
@@ -315,9 +326,7 @@ async def test_study_mount_does_not_block_on_scoped_data(monkeypatch):
     than a stalled event loop -- and the right instrument is whether the app
     still handles messages, not whether the loop ticks on time.
     """
-    import sys
-
-    sys.path.insert(0, "Tests/UI")
+    monkeypatch.syspath_prepend("Tests/UI")
     from test_destination_shells import _build_test_app
 
     from tldw_chatbook.UI.Screens.study_screen import StudyScreen
@@ -374,13 +383,18 @@ async def test_study_mount_does_not_block_on_scoped_data(monkeypatch):
 
 
 class FailingHubService(SlowHubService):
-    async def load_context(self):
+    """A hub service whose every read raises, like a service that is down."""
+
+    async def load_context(self) -> UnifiedMCPContext:
+        """Raise instead of answering."""
         raise RuntimeError("backing service is down")
 
-    async def load_section(self, section=None):
+    async def load_section(self, section: str | None = None) -> list[Any]:
+        """Raise instead of answering."""
         raise RuntimeError("backing service is down")
 
-    async def local_external_catalog(self):
+    async def local_external_catalog(self) -> list[Any]:
+        """Raise instead of answering."""
         raise RuntimeError("backing service is down")
 
 
@@ -450,3 +464,36 @@ async def test_an_unhandled_deferred_load_error_does_not_kill_the_app(monkeypatc
         assert app.is_running, (
             "an unhandled error in the deferred mount load exited the app"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_direct_reload_also_shows_the_loading_state():
+    """`reload()` must own the loading state, not just the mount path.
+
+    `is_loading` is the UI-facing "a reload is in flight" flag, and `reload()`
+    always clears it in its `finally` -- but it was only ever SET by `on_mount`.
+    `MCPScreen.action_mcp_refresh()` calls `workbench.reload()` directly, so a
+    manual refresh ran with no spinner at all and then cleared a flag it never
+    raised.
+    """
+    app = SlowWorkbenchApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+
+        # Let the mount-time load settle so we observe `reload()` on its own.
+        deadline = time.perf_counter() + SERVICE_DELAY * 6
+        while time.perf_counter() < deadline and workbench.is_loading:
+            await pilot.pause()
+            await asyncio.sleep(0.05)
+        assert not workbench.is_loading, "mount-time load never settled"
+
+        reload_task = asyncio.create_task(workbench.reload())
+        await asyncio.sleep(0.1)
+        try:
+            assert workbench.is_loading, (
+                "a direct reload() ran without raising the loading state, so a "
+                "manual refresh shows no spinner while it fetches"
+            )
+        finally:
+            await reload_task

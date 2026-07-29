@@ -707,6 +707,12 @@ class MCPWorkbench(Container):
 
     def _start_initial_load(self) -> None:
         """Kick off the mount-time reload once the subtree is mounted."""
+        # Re-assert the spinner now that the subtree has definitely settled.
+        # `watch_is_loading` runs when `on_mount` sets the flag, and the canvas
+        # happens to be queryable by then -- but that watcher tolerates a miss
+        # rather than retrying, so re-applying here keeps a future change to
+        # mount ordering from silently costing the loading state.
+        self.watch_is_loading(self.is_loading)
         self.run_worker(
             self._reload_guarded(),
             group="mcp_workbench_reload",
@@ -731,7 +737,15 @@ class MCPWorkbench(Container):
             self.is_loading = False
             self._reloading = False
             logger.opt(exception=True).error(
-                f"MCP workbench initial load failed: {exc}"
+                "MCP workbench initial load failed "
+                "(source={}, scope={}, scope_ref={}, server_key={}, mode={}, "
+                "exception_category={}).",
+                self._source,
+                self._scope,
+                self._scope_ref,
+                self._selected_server_key,
+                self.active_mode,
+                type(exc).__name__,
             )
             try:
                 self.app.notify(
@@ -754,6 +768,11 @@ class MCPWorkbench(Container):
 
     async def reload(self) -> None:
         self._reloading = True
+        # Raised here, not only in `on_mount`: `reload()` always CLEARS this in
+        # its `finally`, so every caller must also raise it or a direct reload
+        # (MCPScreen's manual refresh calls this straight) would fetch with no
+        # spinner and then clear a flag it never set.
+        self.is_loading = True
         try:
             service = self._service()
             if service is not None:
