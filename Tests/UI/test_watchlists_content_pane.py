@@ -600,20 +600,24 @@ async def test_typing_j_in_the_search_input_does_not_navigate():
 
 
 @pytest.mark.asyncio
-async def test_action_next_item_is_a_noop_when_a_text_input_has_focus():
-    """Isolates `_navigate_item`'s own focused-widget guard from `Input`'s
+async def test_navigate_item_is_a_noop_when_a_text_input_has_focus():
+    """Pins `_navigate_item`'s own defensive branch, isolated from `Input`'s
     key handling.
 
-    `Input._on_key` already stops a printable key before it can ever reach
-    this screen's BINDINGS resolution -- confirmed empirically: deleting the
-    `isinstance(focused, (Input, TextArea))` check in `_navigate_item` does
-    NOT turn `test_typing_j_in_the_search_input_does_not_navigate` red,
-    because that test drives a real keypress, and the keypress never gets
-    as far as `action_next_item` either way. Calling `action_next_item()`
-    directly, bypassing the key-event pipeline entirely, is what actually
-    isolates the guard: with it removed, this is the one test that goes
-    red, because nothing else stops a direct call from navigating while
-    focus sits on the search box.
+    This is NOT what protects a real keypress today: `Input._on_key`
+    already stops a printable key before it can ever reach this screen's
+    BINDINGS resolution -- confirmed empirically:
+    `test_typing_j_in_the_search_input_does_not_navigate` does not go red
+    when the `isinstance` check in `_navigate_item` is deleted, because
+    that test drives a real keypress and `Input` already stopped it first.
+    The check is kept as defense-in-depth for any direct caller (and this
+    repo has precedent for a bare-letter `priority=True` binding --
+    `SearchRAGWindow`'s `f`/`focus_search` -- which would bypass `Input`'s
+    protection entirely and make this guard load-bearing overnight). Calling
+    `action_next_item()` directly, bypassing the key-event pipeline
+    entirely, is what actually isolates the guard: with it removed, this is
+    the one test that goes red, because nothing else stops a direct call
+    from navigating while focus sits on the search box.
     """
     from textual.widgets import Input
 
@@ -646,6 +650,149 @@ async def test_action_next_item_is_a_noop_when_a_text_input_has_focus():
             "action_next_item() must be a no-op while a text input has "
             "focus, regardless of how it was invoked"
         )
+
+
+@pytest.mark.asyncio
+async def test_j_skips_items_hidden_by_a_filter_and_does_not_mark_them_read():
+    """Task 6 fix round 1, Important #1.
+
+    `_navigate_item` must walk `ItemsPane.displayed_items()` -- the SAME
+    filtered/searched sequence the table renders -- not the screen's raw
+    unfiltered `_loaded_items`. Otherwise, with a search query active, `j`
+    could open, and silently mark read, an item that is not on screen at
+    all: marking read is destructive (it drops the item out of the unread
+    bucket) and the user would have no way to know it happened for an item
+    they never saw.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from textual.widgets import Static
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    source_id = db.add_subscription(
+        name="Summit Route", type="rss", source="https://summitroute.com/blog/feed.xml"
+    )
+    with db.transaction() as conn:
+        for index, title in enumerate(["Keep alpha", "Hide me", "Keep beta"]):
+            persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": f"https://summitroute.com/blog/2024/filter-item-{index}/",
+                    "title": title,
+                    "content": f"body {index}",
+                    "content_hash": f"hash-filter-{index}",
+                    "status": "new",
+                },
+                run_id=None,
+                now=f"2026-07-28T09:0{index}:00+00:00",
+            )
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+
+        pane.search_query = "Keep"
+        await pilot.pause(0.3)
+
+        displayed = pane.displayed_items()
+        assert {item["title"] for item in displayed} == {"Keep alpha", "Keep beta"}, (
+            "the search filter must hide 'Hide me' from the displayed sequence"
+        )
+        assert len(displayed) == 2
+
+        pane.select_and_reveal(displayed[0])
+        await pilot.pause(0.3)
+        assert screen._selected_content_item["id"] == displayed[0]["id"]
+
+        await pilot.press("j")
+        await pilot.pause(0.3)
+
+        assert screen._selected_content_item["id"] == displayed[1]["id"], (
+            "j must move to the next VISIBLE item, skipping the one the "
+            "filter hides entirely"
+        )
+        body = content_pane.query_one("#content-body", Static)
+        assert displayed[1]["title"] in str(body.renderable)
+
+        # The filtered-out item must never have been opened, and therefore
+        # never marked read.
+        hidden_raw_id = next(
+            item["item_id"] for item in screen._loaded_items if item["title"] == "Hide me"
+        )
+        reviewed_raw_ids = {row["id"] for row in db.get_new_items(status="reviewed", limit=10)}
+        assert hidden_raw_id not in reviewed_raw_ids, (
+            "j must never open -- and therefore never mark read -- an item "
+            "hidden by the active filter"
+        )
+
+
+@pytest.mark.asyncio
+async def test_j_keeps_the_reader_the_pane_selection_and_the_cursor_in_sync():
+    """Task 6 fix round 1, Important #2.
+
+    Before this fix, `_navigate_item` updated only the reader, never
+    `ItemsPane.selected_item` or the table's cursor. Since `selected_item`
+    is a plain `reactive` with no `always_update`, a later click on the row
+    the reader had just left was silently swallowed: the reactive saw no
+    change (it was already set to that same item from before `j`/`k` ever
+    ran) and never re-posted `ItemSelected`. Asserts all three agree after
+    `j`, and that a subsequent click on the row the reader left IS honoured.
+    """
+    from textual.widgets import DataTable, Static
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        items = screen._loaded_items
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        table = pane.query_one("#items-table", DataTable)
+
+        pane.select_and_reveal(items[0])
+        await pilot.pause(0.3)
+        assert table.cursor_row == 0
+
+        await pilot.press("j")
+        await pilot.pause(0.3)
+
+        assert screen._selected_content_item["id"] == items[1]["id"], (
+            "the reader must have moved to the second item"
+        )
+        assert pane.selected_item is not None
+        assert pane.selected_item["id"] == items[1]["id"], (
+            "ItemsPane.selected_item must follow the reader, not stay stuck "
+            "on the previous item"
+        )
+        assert table.cursor_row == 1, (
+            "the table's cursor must follow the reader too, so the "
+            "highlighted row and the open item are never out of sync"
+        )
+        body = content_pane.query_one("#content-body", Static)
+        assert items[1]["title"] in str(body.renderable)
+
+        # Now select the row the reader just left (row 0) -- the exact
+        # scenario Important #2 reported as silently swallowed.
+        pane.select_item_by_id(str(items[0]["id"]))
+        await pilot.pause(0.3)
+
+        assert screen._selected_content_item["id"] == items[0]["id"], (
+            "selecting the row the reader just left must be honoured, not "
+            "swallowed by a stale selected_item value that never changed"
+        )
+        body = content_pane.query_one("#content-body", Static)
+        assert items[0]["title"] in str(body.renderable)
 
 
 @pytest.mark.asyncio

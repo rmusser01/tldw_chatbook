@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Input, Select, Static
@@ -156,6 +157,54 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
                 item = candidate
                 break
         self.selected_item = item
+
+    def displayed_items(self) -> list[dict[str, Any]]:
+        """The items actually rendered in the table right now.
+
+        Task 6 fix round 1: the raw `items` reactive is unfiltered, but the
+        table renders `_filtered_items()` (status filter + search query
+        applied). The screen's `j`/`k` navigation must walk THIS sequence,
+        not the unfiltered one -- otherwise a keyboard press can open, and
+        silently mark read, an item the user cannot currently see because a
+        filter is hiding it.
+        """
+        return self._filtered_items()
+
+    def select_and_reveal(self, item: dict[str, Any] | None) -> None:
+        """Programmatic selection driven by the screen (`j`/`k`
+        navigation), as opposed to a user mouse/keyboard cursor move inside
+        this pane's own `DataTable`.
+
+        Task 6 fix round 1: keeps `selected_item`, the table's cursor row,
+        and its scroll position all pointing at the same item. Without
+        this, `j`/`k` moved only the reader (via a direct call into the
+        screen's `handle_item_selected`), leaving `selected_item` and the
+        cursor stuck on whatever was selected before -- and since
+        `selected_item` is a plain `reactive` (no `always_update`), a later
+        click on that stale, still-"selected" row was silently swallowed:
+        the reactive saw no change and never re-posted `ItemSelected`, so
+        the reader stayed on wherever `j`/`k` had left it.
+
+        Setting `selected_item` here (rather than the screen reaching into
+        this pane's `DataTable` directly) reuses the exact same
+        `watch_selected_item` -> `ItemSelected` -> screen's
+        `handle_item_selected` path a mouse click or an arrow-key highlight
+        already uses, so the reader update and the Task 5 mark-read-on-open
+        behaviour come along for free -- the screen's navigation method
+        only has to pick which item is next and call this.
+        """
+        self.selected_item = item
+        if item is None:
+            return
+        item_id = str(item.get("id") or "")
+        try:
+            table = self.query_one("#items-table", DataTable)
+        except NoMatches:
+            return
+        for row_index, candidate in enumerate(self._filtered_items()):
+            if str(candidate.get("id") or "") == item_id:
+                table.move_cursor(row=row_index, scroll=True, animate=False)
+                break
 
     def watch_selected_item(self, item: dict[str, Any] | None) -> None:
         if self.is_mounted:

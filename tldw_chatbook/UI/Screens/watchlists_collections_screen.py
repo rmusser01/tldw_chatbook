@@ -3255,27 +3255,36 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _navigate_item(self, delta: int) -> None:
         """Shared `j`/`k` implementation.
 
-        Guarded against a focused text-entry widget: a user typing "j" into
-        the items search box (or any future `Input`/`TextArea` on this
-        screen) must get the character, not navigation.
+        Guarded against a focused `Input`, or a focused *editable*
+        `TextArea` -- both already consume and stop a printable key
+        themselves (`Input._on_key`, `TextArea._on_key` when
+        `read_only` is False), so this guard is not what protects typing
+        today (confirmed by mutation test:
+        `test_typing_j_in_the_search_input_does_not_navigate` does not
+        redden when this check is deleted, because that test drives a real
+        keypress and `Input` already stopped it before this method could
+        ever run). It is kept anyway because this repo already binds a bare
+        letter with `priority=True` elsewhere
+        (`SearchRAGWindow.BINDINGS`'s `Binding("f", "focus_search", ...,
+        priority=True)`) -- `App.on_event` resolves priority bindings
+        BEFORE forwarding the key to the focused widget at all, bypassing
+        `Input`'s own consumption entirely. If `j`/`k` on this screen were
+        ever changed to `priority=True` (a one-line, easy-to-miss edit,
+        given the precedent), this guard would become the ONLY thing
+        stopping a keystroke from hijacking a user's typing -- load-bearing
+        overnight rather than merely defensive. Directly exercised by
+        `test_navigate_item_is_a_noop_when_a_text_input_has_focus`, which
+        calls `action_next_item()` directly, bypassing the key-event
+        pipeline (and therefore `Input`'s own protection) entirely, and
+        does go red without this check.
 
-        CONFIRMED BY MUTATION TEST that this guard is not what protects a
-        real keypress today: `Input._on_key` already consumes and stops a
-        printable key before it would ever reach this screen's BINDINGS
-        resolution (Textual only resolves a non-priority binding once the
-        `Key` message actually bubbles all the way up to the `App`, and a
-        focused `Input` stops a printable key right where it starts), so
-        deleting this `isinstance` check does NOT turn
-        `test_typing_j_in_the_search_input_does_not_navigate` red -- that
-        test drives a real keypress and never reaches this method either
-        way. The check is still kept, as explicit defense-in-depth for any
-        future caller that invokes `action_next_item`/`action_previous_item`
-        directly rather than through a real keypress (already true of this
-        very module -- see `action_check_now_selected` et al. above, which
-        call their handlers directly), and it IS the thing
-        `test_action_next_item_is_a_noop_when_a_text_input_has_focus`
-        pins down: that test calls `action_next_item()` directly, bypassing
-        `Input`'s key handling entirely, and does go red without this check.
+        A *read-only* `TextArea` is deliberately NOT guarded: read-only
+        `TextArea._on_key` returns before calling `event.stop()`, so it
+        does not consume a printable key at all -- and a read-only
+        `TextArea` is exactly the shape a future reader body could take
+        (today `ContentPane` renders into a `Static`, not a `TextArea`).
+        Guarding it out unconditionally would block `j`/`k` precisely where
+        navigating away from the currently-open item is the whole point.
 
         Scoped to the Items ("Read") tab, where `ContentPane` is actually
         mounted (Task 4 gates CONTENT to that tab) -- firing elsewhere would
@@ -3283,26 +3292,40 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `_mark_item_read_on_open` below, for an item the user cannot even
         see.
 
-        Reuses `handle_item_selected` exactly as a click or an `ItemsPane`
-        row highlight does -- the same "synthesize the event, call the
-        handler directly" pattern `action_check_now_selected`/
-        `action_preview_selected` above already use -- rather than driving
-        the `ItemsPane` `DataTable` cursor. That means this inherits the
-        Task 5 fix for free: `_mark_item_read_on_open` calls
-        `_update_item_status(..., refresh=False, patch_item=item)`, which
-        patches the same dict in place instead of forcing the
-        `overview_data` `reactive(recompose=True)` full-screen rebuild that
-        once dropped focus and broke a second keypress (see that method's
-        docstring and `test_selecting_an_item_does_not_break_keyboard_navigation`).
+        Walks `ItemsPane.displayed_items()` -- the SAME filtered/searched
+        sequence the table renders (Task 6 fix round 1, Important #1) --
+        not the screen's unfiltered `_loaded_items`. Otherwise, with a
+        search query or status filter active, `j`/`k` could open, and
+        silently mark read, an item that is not on screen at all.
+
+        Hands the chosen item to `ItemsPane.select_and_reveal` (Task 6 fix
+        round 1, Important #2) rather than calling `handle_item_selected`
+        directly: that keeps `ItemsPane.selected_item`, the table's cursor
+        row, and its scroll position all pointing at the same item as the
+        reader, through the exact same `selected_item` ->
+        `watch_selected_item` -> `ItemSelected` -> `handle_item_selected`
+        path a mouse click or an arrow-key highlight already uses -- so
+        this still inherits the Task 5 fix for free
+        (`_mark_item_read_on_open` calls `_update_item_status(...,
+        refresh=False, patch_item=item)`, patching the item dict in place
+        instead of forcing the `overview_data` `reactive(recompose=True)`
+        full-screen rebuild that once dropped focus and broke a second
+        keypress).
 
         Boundaries do not raise: an out-of-range index is simply a no-op.
         """
         focused = self.focused
-        if isinstance(focused, (Input, TextArea)):
+        if isinstance(focused, Input) or (
+            isinstance(focused, TextArea) and not focused.read_only
+        ):
             return
         if self.active_section != "items":
             return
-        items = self._loaded_items
+        try:
+            pane = self.query_one("#watchlists-items-pane", ItemsPane)
+        except NoMatches:
+            return
+        items = pane.displayed_items()
         if not items:
             return
         current = self._selected_content_item
@@ -3316,4 +3339,4 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         new_index = index + delta
         if new_index < 0 or new_index >= len(items):
             return
-        self.handle_item_selected(ItemSelected(items[new_index]))
+        pane.select_and_reveal(items[new_index])
