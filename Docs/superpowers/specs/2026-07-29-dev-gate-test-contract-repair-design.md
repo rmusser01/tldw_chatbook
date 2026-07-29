@@ -40,6 +40,10 @@ The failures reproduce on an exact `origin/dev` checkout:
   unchanged `origin/dev` test took 24.98 seconds inside a loaded full-suite run
   but 1.25 seconds in isolation, proving the timing assertion depends on host
   contention rather than database behavior.
+- `Tests/Event_Handlers/test_eval_db_operations_path.py` retargets
+  `TLDW_CONFIG_PATH` beneath a nonexistent `profile-two` directory. The
+  private-path boundary correctly rejects that missing trusted parent before
+  config or database creation.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` reports reviewed
   production-owner drift while the persistent sink topology remains unchanged.
   ADR-029 requires inspecting the changed calls before regenerating the checked
@@ -89,6 +93,9 @@ Update the tests to describe current behavior:
    assertions, but remove its host-dependent elapsed-time measurements. This
    default functional gate must prove persistence correctness, not benchmark a
    contended workstation.
+10. Create the retargeted profile fixture directory with mode `0700` before
+    selecting its config file. Do not make production config loading create or
+    trust a missing security-sensitive parent.
 
 No planned production file changes. No compatibility shims. No broad test
 deletion. A production diagnostic may change only if the required ADR-029

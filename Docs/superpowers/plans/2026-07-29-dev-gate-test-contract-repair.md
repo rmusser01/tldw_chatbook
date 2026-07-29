@@ -42,6 +42,8 @@ regenerate the inventory before reviewing its changed owners and sink topology.
   trusted Notes bases before service construction.
 - Modify `Tests/DB/test_rag_indexing_db.py`: retain large-batch correctness
   coverage without host-dependent wall-clock assertions.
+- Modify `Tests/Event_Handlers/test_eval_db_operations_path.py`: create its
+  fixture-owned retargeted profile directory before config selection.
 - Modify `Docs/security/production-diagnostic-inventory.json`: only after
   reviewing every generated owner/topology change against ADR-029.
 - Modify TASK-1333 and this plan only for closeout evidence.
@@ -358,6 +360,37 @@ git add Tests/DB/test_rag_indexing_db.py
 git commit -m "test(db): remove load-sensitive timing gate"
 ```
 
+### Task 4f: Create the retargeted Evals profile fixture root
+
+**Files:**
+- Modify: `Tests/Event_Handlers/test_eval_db_operations_path.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run `test_default_db_path_tracks_a_retargeted_profile`.
+Expected: setup fails with `PrivatePathError` and reason `missing_parent`
+because the fixture selects `profile-two/config.toml` without creating
+`profile-two`.
+
+- [ ] **Step 2: Satisfy the trusted-parent contract in the fixture**
+
+Assign the profile directory separately, create it with `mode=0o700`, then
+derive `config.toml` beneath it before setting `TLDW_CONFIG_PATH`. Do not change
+production config or private-path behavior.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/Event_Handlers/test_eval_db_operations_path.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/Event_Handlers/test_eval_db_operations_path.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/Event_Handlers/test_eval_db_operations_path.py
+git add Tests/Event_Handlers/test_eval_db_operations_path.py
+git commit -m "test(evals): create retargeted profile root"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -419,6 +452,7 @@ Include any conditionally required focused test/production files in that commit.
 ../../.venv/bin/python -m pytest \
   Tests/Event_Handlers/test_worker_events_contract.py \
   Tests/Event_Handlers/test_retained_worker_adapter.py \
+  Tests/Event_Handlers/test_eval_db_operations_path.py \
   Tests/UI/test_chat_shell_bar.py \
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
@@ -436,6 +470,7 @@ Expected: all affected tests pass.
 ```bash
 ../../.venv/bin/python -m ruff check \
   Tests/Event_Handlers/test_worker_events_contract.py \
+  Tests/Event_Handlers/test_eval_db_operations_path.py \
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
@@ -444,6 +479,7 @@ Expected: all affected tests pass.
   Tests/Audio/test_recording_service.py
 ../../.venv/bin/python -m ruff format --check \
   Tests/Event_Handlers/test_worker_events_contract.py \
+  Tests/Event_Handlers/test_eval_db_operations_path.py \
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
