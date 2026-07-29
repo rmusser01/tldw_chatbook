@@ -1070,6 +1070,37 @@ git add Tests/Transcription/test_mlx_parakeet_transcription.py
 git commit -m "test(stt): isolate missing SoundFile path"
 ```
 
+### Task 4w: Retarget command-palette provider ownership tests
+
+**Files:**
+- Modify: `Tests/UI/test_command_palette_providers.py`
+
+- [ ] **Step 1: Reproduce the retired-root failure**
+
+Run the command-palette provider module. Expected: the show-current regression
+assigns `chat_api_provider_value`, but production ignores that retired root and
+returns `Unknown`; the switch regression also asserts the deleted ownership
+path instead of the pending-handoff flow.
+
+- [ ] **Step 2: Exercise the current ownership seams**
+
+Give the provider a mounted Console test double. Have its
+`current_console_provider_for_command()` method return `OpenAI` for the
+show-current case. For the switch case, assert the exact
+`ConsoleProviderIntent` is staged on `HandoffChannel.CONSOLE_PROVIDER` and the
+mounted Console consumes it. Do not modify production or add compatibility
+state.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest Tests/UI/test_command_palette_providers.py -q
+../../.venv/bin/python -m ruff check Tests/UI/test_command_palette_providers.py
+../../.venv/bin/python -m ruff format --check Tests/UI/test_command_palette_providers.py
+git add Tests/UI/test_command_palette_providers.py
+git commit -m "test(ui): follow console provider ownership"
+```
+
 ### Task 5: Review and refresh the diagnostic inventory
 
 **Files:**
@@ -1148,6 +1179,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
+  Tests/UI/test_command_palette_providers.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/Transcription/test_mlx_parakeet_transcription.py \
@@ -1179,6 +1211,7 @@ Expected: all affected tests pass.
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
+  Tests/UI/test_command_palette_providers.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/Transcription/test_mlx_parakeet_transcription.py \
@@ -1205,6 +1238,7 @@ Expected: all affected tests pass.
   Tests/RAG_Admin/test_app_lazy_rag_admin_wiring.py \
   Tests/TTS/test_profile_backup_integration.py \
   Tests/TTS/test_tts_preferences.py \
+  Tests/UI/test_command_palette_providers.py \
   Tests/Transcription/test_mlx_parakeet_integration.py \
   Tests/Transcription/test_mlx_parakeet_edge_cases.py \
   Tests/Transcription/test_mlx_parakeet_transcription.py \

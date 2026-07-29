@@ -225,6 +225,14 @@ Update the tests to describe current behavior:
     SoundFile is installed lets the nonexistent `dummy.wav` case proceed to a
     real Hugging Face model load. Retain the local `TranscriptionError`
     assertion and do not alter production dependency probing.
+26. In the command-palette provider unit regressions, supply a mounted Console
+    owner whose current-provider method returns the expected value. For switch
+    commands, assert that the provider intent is staged through
+    `pending_handoffs` and consumed by that mounted Console owner. Do not assign
+    or assert `chat_api_provider_value`; that retired app-root reactive is no
+    longer provider authority. Keep production behavior unchanged because the
+    production ownership suite already proves live-session, configured-default,
+    and off-Console queued-handoff behavior.
 
 The only planned production behavior change outside an ADR-029 diagnostic
 correction is the three-name synchronization of the existing Library collision
@@ -302,6 +310,10 @@ fail-closed behavior. No compatibility shims. No broad deletion of live tests.
 - Treating the availability flag alone as the dependency seam makes the
   no-SoundFile test host-dependent. Patching the imported module object too
   exercises the intended branch and prevents an unrelated network download.
+- Restoring the app-root provider reactive or teaching the command provider to
+  read it would recreate competing provider authority. Retargeting the unit
+  regression to the mounted Console and pending-handoff seams matches the
+  production ownership suite without adding compatibility state.
 - The selected edits remove only obsolete assertions, make the audio contracts
   deterministic, retain large-batch correctness coverage, and preserve the
   existing privacy boundary.
