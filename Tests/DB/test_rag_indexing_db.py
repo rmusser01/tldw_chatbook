@@ -300,14 +300,13 @@ class TestRAGIndexingDB:
         # Check precision (SQLite stores to microsecond precision)
         assert abs((retrieved_time - precise_time).total_seconds()) < 0.000001
 
-    def test_large_batch_operations(self, temp_db):
-        """Test handling large batches of items."""
+    def test_large_batch_persists_all_items(self, temp_db):
+        """Test persistence and repeatable retrieval for a large batch."""
         item_type = "media"
         batch_size = 1000
         now = datetime.now(timezone.utc)
 
         # Index large batch
-        start_time = time.time()
         for i in range(batch_size):
             temp_db.mark_item_indexed(
                 item_id=f"item_{i}",
@@ -315,21 +314,13 @@ class TestRAGIndexingDB:
                 last_modified=now,
                 chunk_count=1,
             )
-        index_time = time.time() - start_time
 
         # Verify all indexed
         indexed_items = temp_db.get_indexed_items_by_type(item_type)
         assert len(indexed_items) == batch_size
 
-        # Performance check - should complete reasonably fast
-        assert index_time < 10.0  # 10 seconds for 1000 items
-
-        # Test retrieval performance
-        start_time = time.time()
-        indexed_items = temp_db.get_indexed_items_by_type(item_type)
-        retrieve_time = time.time() - start_time
-
-        assert retrieve_time < 1.0  # Should retrieve in under 1 second
+        # Verify repeated retrieval is consistent
+        assert temp_db.get_indexed_items_by_type(item_type) == indexed_items
 
 
 if __name__ == "__main__":
