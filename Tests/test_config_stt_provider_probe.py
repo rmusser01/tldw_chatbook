@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
     [
         (("parakeet_mlx", "lightning_whisper_mlx"), "parakeet-mlx"),
         (("lightning_whisper_mlx",), "lightning-whisper-mlx"),
-        ((), "faster_whisper"),
+        ((), "faster-whisper"),
     ],
 )
 def test_macos_stt_default_probes_packages_without_importing_them(
@@ -61,6 +61,23 @@ def test_macos_stt_default_probes_packages_without_importing_them(
         print(json.dumps(settings["STT_settings"]["default_stt_provider"]))
         """
     )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=PROJECT_ROOT,
+        env=_hermetic_env(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip().splitlines()[-1] == f'"{expected}"'
+
+
+def _hermetic_env(tmp_path: Path) -> dict:
+    """Env vars that keep a `config.py` import from touching the real home dir."""
     env = os.environ.copy()
     private_home = tmp_path / "home"
     private_data = tmp_path / "data"
@@ -79,16 +96,40 @@ def test_macos_stt_default_probes_packages_without_importing_them(
             "PYTHONPATH": str(PROJECT_ROOT),
         }
     )
+    return env
 
-    completed = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=PROJECT_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
 
-    assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip().splitlines()[-1] == f'"{expected}"'
+def test_non_macos_stt_default_fallback_is_hyphenated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every provider id actually dispatched on is hyphenated --
+    `console_voice_input.py`'s `LOCAL_PROVIDER_MODULES` (`"faster-whisper"`)
+    and `transcription_service.py`'s provider-branch matching. On a non-macOS
+    platform neither `if sys.platform == "darwin"` branch below the initial
+    assignment in `config.py` ever runs, so that initial value is exactly
+    what `STT_settings.default_stt_provider` resolves to.
+
+    This machine is darwin, so `sys.platform` is patched to prove the
+    fallback path (an unpatched test would prove nothing). It is patched
+    *in-process*, around a `load_settings(force_reload=True)` call on the
+    already-imported `config` module, not before a fresh interpreter imports
+    it: spawning a subprocess with `sys.platform` forced to a fake value
+    *before* `import config` (and everything it transitively imports --
+    `loguru`, `psutil`, ...) reliably crashes the interpreter itself, because
+    several of those packages pick a platform-specific C extension or probe
+    `sysconfig` at import time using the real build's platform tag. Patching
+    only around the call keeps every other import on the real platform and
+    exercises just the one `sys.platform` read this fix touches.
+    """
+    from tldw_chatbook import config as config_module
+
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
+    config_module._CONFIG_CACHE = None
+    config_module._CONFIG_CACHE_SOURCE = None
+    config_module._SETTINGS_CACHE = None
+    config_module._SETTINGS_CACHE_SOURCE = None
+    monkeypatch.setattr(config_module.sys, "platform", "linux")
+
+    settings = config_module.load_settings(force_reload=True)
+
+    assert settings["STT_settings"]["default_stt_provider"] == "faster-whisper"
