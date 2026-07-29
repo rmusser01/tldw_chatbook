@@ -1110,19 +1110,20 @@ class ModelArtifactService:
             reference: ArtifactRef,
             role: ArtifactRole,
         ) -> tuple[bool, bool, str | None]:
-            if role is not ArtifactRole.ROOT:
-                return False, False, None
+            is_root = role is ArtifactRole.ROOT
             ready = False
             active = False
             errors: list[str] = []
             try:
-                ready = self._read_readiness(reference).root == reference
+                readiness = self._read_readiness(reference)
+                ready = is_root and readiness.root == reference
             except ArtifactNotReadyError:
                 pass
             except ArtifactStateError as error:
                 errors.append(f"readiness: {error}")
             try:
-                active = self._read_active(reference.artifact_id) == reference
+                active_root = self._read_active(reference.artifact_id)
+                active = is_root and active_root == reference
             except ArtifactNotReadyError:
                 pass
             except ArtifactStateError as error:

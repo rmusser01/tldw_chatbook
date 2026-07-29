@@ -2083,6 +2083,32 @@ def test_inventory_ignores_forged_valid_state_for_dependency_role(
     assert installed[dependency.reference].active is False
 
 
+def test_inventory_reports_malformed_state_for_dependency_role(
+    tmp_path: Path,
+) -> None:
+    service, _root, dependency = installed_root_and_dependency(tmp_path)
+    dependency_readiness = service.readiness_path(dependency.reference)
+    dependency_readiness.parent.mkdir(parents=True)
+    dependency_readiness.write_text("{", encoding="utf-8")
+    service.active_path(dependency.reference.artifact_id).write_text(
+        "{",
+        encoding="utf-8",
+    )
+
+    installed = {
+        entry.descriptor.reference: entry
+        for entry in service.list_installed()
+        if entry.descriptor is not None
+    }
+    dependency_entry = installed[dependency.reference]
+
+    assert dependency_entry.ready is False
+    assert dependency_entry.active is False
+    assert dependency_entry.error
+    assert "readiness" in dependency_entry.error
+    assert "active" in dependency_entry.error
+
+
 def test_inventory_malformed_state_is_nonfatal_and_does_not_resolve_graph(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
