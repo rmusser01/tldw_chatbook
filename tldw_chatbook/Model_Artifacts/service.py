@@ -920,15 +920,33 @@ class ModelArtifactService:
                 visit(child, depth + 1)
 
         try:
+            self._assert_managed_path(self._artifacts_path)
+            before = _path_snapshot(self._artifacts_path.stat(follow_symlinks=False))
             roots = sorted(
                 (Path(entry.path) for entry in os.scandir(self._artifacts_path)),
                 key=lambda child: child.name,
             )
-        except OSError as error:
-            invalid(self._artifacts_path, f"cannot scan artifacts directory: {error}")
-        else:
+            self._assert_managed_path(self._artifacts_path)
+            if (
+                _path_snapshot(self._artifacts_path.stat(follow_symlinks=False))
+                != before
+            ):
+                raise ArtifactPathError(
+                    "artifacts directory changed during inventory scan"
+                )
             for root in roots:
                 visit(root, 1)
+            self._assert_managed_path(self._artifacts_path)
+            if (
+                _path_snapshot(self._artifacts_path.stat(follow_symlinks=False))
+                != before
+            ):
+                raise ArtifactPathError(
+                    "artifacts directory changed during inventory traversal"
+                )
+        except (ArtifactPathError, OSError, ValueError) as error:
+            installed.clear()
+            invalid(self._artifacts_path, f"cannot scan artifacts directory: {error}")
         return tuple(sorted(installed, key=lambda item: item.path.as_posix()))
 
     def disk_usage(self) -> ArtifactDiskUsage:

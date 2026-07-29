@@ -1061,6 +1061,53 @@ def test_inventory_is_deterministic_visible_strict_and_hash_free(
         assert by_path[path].active is False
 
 
+def test_inventory_rejects_replaced_artifacts_root_before_traversal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module.ModelArtifactService(tmp_path / "store")
+    item = descriptor(files=(artifact_file(b"model"),))
+    external_final = (
+        tmp_path
+        / "external"
+        / item.reference.artifact_id
+        / item.reference.revision
+        / item.reference.variant
+    )
+    external_final.mkdir(parents=True)
+    (external_final / "model.onnx").write_bytes(b"model")
+    (external_final / "manifest.json").write_text(
+        json.dumps(
+            {"schema_version": 1, "descriptor": item.to_dict()},
+        ),
+        encoding="utf-8",
+    )
+    service.artifacts_path.rmdir()
+    symlink_or_skip(
+        service.artifacts_path,
+        tmp_path / "external",
+        target_is_directory=True,
+    )
+    original_scandir = service_module.os.scandir
+    scan_calls: list[Path] = []
+
+    def record_scandir(path: str | os.PathLike[str]) -> object:
+        scan_calls.append(Path(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(service_module.os, "scandir", record_scandir)
+
+    installed = service.list_installed()
+
+    assert scan_calls == []
+    assert len(installed) == 1
+    assert installed[0].path == service.artifacts_path
+    assert installed[0].descriptor is None
+    assert installed[0].ready is False
+    assert installed[0].active is False
+    assert installed[0].error
+
+
 def test_disk_usage_counts_regular_bytes_without_following_symlinks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
