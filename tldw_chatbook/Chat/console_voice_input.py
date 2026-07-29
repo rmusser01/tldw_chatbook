@@ -8,8 +8,13 @@ testable without a running app.
 
 from __future__ import annotations
 
-import importlib.util
-import sys
+# Detection itself lives in `Utils/local_stt_providers`, but these two stay
+# imported here because they are the seams the provider-detection tests patch
+# (`monkeypatch.setattr(cvi.importlib.util, "find_spec", ...)` and
+# `monkeypatch.setattr(cvi.sys, "platform", ...)` both mutate the real module
+# objects, which the detection helpers then read).
+import importlib.util  # noqa: F401 - patched seam; see comment above
+import sys  # noqa: F401 - patched seam; see comment above
 import threading
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -18,47 +23,24 @@ from loguru import logger
 
 from ..config import get_cli_setting
 
+# The provider catalogue lives in `Utils/local_stt_providers.py`, not here: the
+# dictation service's privacy allowlist consumes the identical tuple, and when
+# these were two separate lists they drifted twice -- once on a misspelled id,
+# once on this module growing from three providers to seven while the service's
+# allowlist stayed at three. Re-exported under the old names because they are
+# this module's published surface (and the seams tests monkeypatch).
+from ..Utils.local_stt_providers import (  # noqa: F401 - re-exported API
+    DARWIN_ONLY_PROVIDERS,
+    LOCAL_PROVIDER_MODULES,
+    LOCAL_STT_PROVIDERS,
+    installed_local_providers,
+    module_installed as _module_installed,
+    provider_installed as _provider_installed,
+)
+
 # Capture backends, in preference order. AudioRecordingService picks between
 # them itself; we only need to know whether at least one exists.
 CAPTURE_MODULES: tuple[str, ...] = ("pyaudio", "sounddevice")
-
-# Provider id -> required import name(s), ALL of which must resolve for the
-# provider to count as installed. Mirrors `get_available_providers()` in
-# `Local_Ingestion/transcription_service.py` -- same providers, same
-# declaration order (also the resolve() fallback preference below), same
-# detection rule per provider:
-#   - parakeet-onnx           find_spec("onnx_asr")
-#   - parakeet-mlx            find_spec("parakeet_mlx"), darwin only
-#   - lightning-whisper-mlx   find_spec("lightning_whisper_mlx"), darwin only
-#   - faster-whisper          find_spec("faster_whisper")
-#   - qwen2audio              find_spec("torch") AND find_spec("transformers")
-#   - parakeet / canary       find_spec("nemo") (NVIDIA NeMo)
-#
-# `remote-whisper` is deliberately excluded even though the service lists it:
-# it needs only `requests`, so it would always resolve as "installed", and
-# the dictation service's privacy mode (local_only, default True) rejects
-# non-local providers outright. Adding it here would let resolve() hand it
-# back as the chosen provider, which the service would then silently swap
-# out for something else -- exactly the silent-substitution bug this module
-# exists to prevent. Do not "complete the set" by adding it.
-LOCAL_PROVIDER_MODULES: dict[str, tuple[str, ...]] = {
-    "parakeet-onnx": ("onnx_asr",),
-    "parakeet-mlx": ("parakeet_mlx",),
-    "lightning-whisper-mlx": ("lightning_whisper_mlx",),
-    "faster-whisper": ("faster_whisper",),
-    "qwen2audio": ("torch", "transformers"),
-    "parakeet": ("nemo",),
-    "canary": ("nemo",),
-}
-
-# Providers usable only on Apple Silicon. Mirrors
-# `transcription_service._optional_module_available()`'s
-# `sys.platform == "darwin"` gate: a force-installed package on Linux must
-# not be reported as usable, or the button would light up and then fail at
-# capture time.
-DARWIN_ONLY_PROVIDERS: frozenset[str] = frozenset(
-    {"parakeet-mlx", "lightning-whisper-mlx"}
-)
 
 CAPTURE_REASON = "No microphone backend installed."
 CAPTURE_REMEDY = (
@@ -92,18 +74,40 @@ WARMUP_PCM = b"\x00" * (
     WARMUP_SAMPLE_RATE * WARMUP_CHANNELS * WARMUP_SAMPLE_WIDTH * WARMUP_DURATION_MS
     // 1000
 )
-#: Shown while the model is loading for the first time in this process, where
-#: the cost can be a multi-gigabyte download. Deliberately open-ended: the real
-#: duration depends on the model and the network, and a hard-coded number would
-#: be a promise this cannot keep.
-WARMUP_MESSAGE_FIRST_RUN = "Preparing speech model (first run may take several minutes)…"
+# The chip these render into is `VOICE_CHIP_MAX_WIDTH = 42` cells and exactly
+# one row high, so anything longer is silently cut mid-sentence -- an earlier
+# draft of this ended on "...(first run may" and the duration warning, the only
+# reason a separate first-run string exists, never reached anyone. Keep both
+# under WARMUP_MESSAGE_MAX_CELLS *including* the chip's "◌ " prefix; the long
+# explanation goes in WARMUP_DETAIL_FIRST_RUN, which the screen shows as a
+# toast where it has room to be read.
+WARMUP_MESSAGE_MAX_CELLS = 40
+#: Shown in the chip while the model loads for the first time in this process.
+WARMUP_MESSAGE_FIRST_RUN = "Preparing speech model…"
 #: Shown on later presses, where the model is already on disk and only the
 #: per-instance load remains (~1 s measured).
 WARMUP_MESSAGE = "Loading speech model…"
+#: The part that does not fit in a 42-cell chip. Deliberately open-ended about
+#: duration: the real cost depends on the model and the network, and a
+#: hard-coded number would be a promise this cannot keep.
+WARMUP_DETAIL_FIRST_RUN = (
+    "Preparing the speech model for the first time. The first run downloads it "
+    "and can take several minutes. Nothing is being recorded yet — the "
+    "microphone opens once the model is ready."
+)
 WARMUP_REASON_TEMPLATE = "The '{provider}' speech model could not be prepared."
 WARMUP_REMEDY = (
     "Check the transcription provider and model in Settings, and that the "
     "model can be downloaded or is already on disk."
+)
+#: A warm-up that fails *after* the model loaded (the silence transcription
+#: itself erroring) is weak evidence: it costs the user nothing to try the real
+#: capture, and Fix 2/3 mean a degraded capture can no longer be misreported as
+#: a dead microphone. Fatal warm-up is reserved for a transcription service that
+#: cannot be built at all.
+WARMUP_DEGRADED_REASON_TEMPLATE = (
+    "Could not pre-load the '{provider}' speech model; the first part of this "
+    "capture may be slow."
 )
 
 # --- Stop-side outcomes ----------------------------------------------------
@@ -131,44 +135,9 @@ class Availability:
     remedy: str = ""
 
 
-def _module_installed(module_name: str) -> bool:
-    """Return True when `module_name` is importable, without importing it.
-
-    `find_spec` is required here rather than `optional_deps.check_dependency`,
-    which really imports the module and would drag torch/NeMo into app start.
-    """
-    try:
-        return importlib.util.find_spec(module_name) is not None
-    except (ImportError, ValueError):
-        # A namespace package with a broken parent raises rather than
-        # returning None; treat that as "not usable".
-        return False
-
-
 def capture_available() -> bool:
     """Return True when at least one audio capture backend is installed."""
     return any(_module_installed(name) for name in CAPTURE_MODULES)
-
-
-def _provider_installed(provider: str, module_names: tuple[str, ...]) -> bool:
-    """Return True when `provider`'s required module(s) all resolve.
-
-    Darwin-only providers additionally require `sys.platform == "darwin"`,
-    checked before touching `find_spec` at all so a non-darwin platform never
-    even looks at whether the module happens to be importable.
-    """
-    if provider in DARWIN_ONLY_PROVIDERS and sys.platform != "darwin":
-        return False
-    return all(_module_installed(name) for name in module_names)
-
-
-def installed_local_providers() -> tuple[str, ...]:
-    """Return the local transcription providers that are actually installed."""
-    return tuple(
-        provider
-        for provider, module_names in LOCAL_PROVIDER_MODULES.items()
-        if _provider_installed(provider, module_names)
-    )
 
 
 def probe() -> Availability:
@@ -210,10 +179,17 @@ def resolve() -> EffectiveConfig | None:
     """Choose the provider before the dictation service gets the chance.
 
     `LazyLiveDictationService._initialize_streaming_transcriber` rewrites the
-    provider to `parakeet-mlx` whenever privacy mode is on and the configured
-    provider is not on its allowlist -- silently, and to an Apple-Silicon-only
-    provider. Resolving here means the service is always handed a provider that
-    is both local and installed, so that branch never fires.
+    provider to `parakeet-mlx` whenever privacy mode is on and the chosen
+    provider is not local -- silently, and to an Apple-Silicon-only provider.
+    This function only ever returns something from `LOCAL_STT_PROVIDERS`, which
+    is the identical tuple that privacy check consumes, so that branch cannot
+    fire on anything this returns.
+
+    That guarantee is structural, not incidental: it held by luck when both
+    lists happened to name the same three providers, and broke the moment this
+    module's catalogue grew to seven while the service's allowlist stayed at
+    three -- the Console warmed and announced one model, then transcribed with
+    another. Both now read `Utils/local_stt_providers.LOCAL_STT_PROVIDERS`.
 
     Returns:
         The settings to run with, or None when no local provider is installed.
@@ -302,10 +278,31 @@ class VoiceModelPreparing:
     Emitted from `preparing`, so the UI can say *why* it is sitting there --
     a first-run model download is minutes long and looks exactly like a hang
     otherwise.
+
+    Attributes:
+        message: Chip-sized status text, short enough to paint whole in the
+            composer's one-row voice chip.
+        detail: The longer explanation, for a surface with room to show it.
+            Empty when there is nothing more to say than `message`.
+        first_run: True when this process has not loaded this model before.
     """
 
     message: str
+    detail: str = ""
     first_run: bool = False
+
+
+@dataclass(frozen=True)
+class VoiceModelWarmupFailed:
+    """Pre-loading the model failed, but the capture is going ahead anyway.
+
+    Not a `VoiceFailed`: nothing has gone wrong with the microphone or with the
+    session, and treating it as fatal would make one transient error render
+    dictation permanently unusable -- the Console warms on *every* press.
+    """
+
+    reason: str
+    remedy: str = ""
 
 
 @dataclass(frozen=True)
@@ -381,6 +378,23 @@ def warmup_target(service: Any) -> Any | None:
     return service.transcription_service
 
 
+def warm_before_capture_enabled() -> bool:
+    """Return whether the model should be pre-loaded before capture opens.
+
+    `dictation.warm_model_before_capture`, default True. The escape hatch
+    exists because warming runs on *every* press (the Console builds a fresh
+    service each time), so a provider that chokes on digital silence would
+    otherwise degrade every capture forever.
+
+    Returns:
+        True when the warm-up should run.
+    """
+    raw = get_cli_setting("dictation.warm_model_before_capture", True)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"false", "no", "0", "off"}
+    return bool(raw)
+
+
 def warm_transcription_model(transcriber: Any, effective: EffectiveConfig) -> None:
     """Load the speech model by transcribing silence through it.
 
@@ -446,9 +460,12 @@ class ConsoleVoiceInputController:
 
     Threading policy lives in the caller: `spawn` runs a thunk off the UI
     thread (a Textual worker in the app, a direct call in tests), because both
-    `start_dictation()` (cold model load) and `stop_dictation()` (a 2s thread
-    join) block.
+    `start_dictation()` and `stop_dictation()` (a thread join) block.
     """
+
+    #: How often the abandon-aware warm-up wait re-checks. Small enough that
+    #: quitting mid-download feels immediate, large enough not to spin.
+    WARMUP_POLL_SECONDS = 0.05
 
     def __init__(
         self,
@@ -667,8 +684,19 @@ class ConsoleVoiceInputController:
         1.4 GB download, and it used to happen lazily on the first audio chunk
         -- recording into a void, then losing the download to the stop-side
         thread join. Doing it here costs a warm press nothing extra (the load
-        it performs is the one the first chunk would have performed anyway),
-        and it can only fail as what it is: a model/provider problem.
+        it performs is the one the first chunk would have performed anyway).
+
+        Two failure modes, deliberately weighted differently:
+
+        * The transcription service cannot be *built* -- models genuinely
+          absent. Fatal, reported as a model/provider problem.
+        * The silence transcription itself errors after the service was built.
+          Not fatal: the Console warms on every press, so making this fatal
+          would turn one transient error into permanently unusable dictation.
+          It is announced and the capture proceeds, which is only safe because
+          an empty result can no longer be misreported as a dead microphone.
+
+        Opt out entirely with `dictation.warm_model_before_capture = false`.
 
         Args:
             service: The dictation service that is about to start capturing.
@@ -676,12 +704,18 @@ class ConsoleVoiceInputController:
 
         Returns:
             True when capture may proceed. False when this attempt is over --
-            either the model could not be prepared (already reported through
-            `_fail`) or `abandon()` landed while the model was loading.
+            either the model could not be prepared at all (already reported
+            through `_fail`) or `abandon()` landed while the model was loading.
         """
         if self._abandoned:
             self._release(service)
             return False
+        if not warm_before_capture_enabled():
+            logger.debug(
+                "Console dictation model warm-up disabled by "
+                "dictation.warm_model_before_capture"
+            )
+            return True
         try:
             transcriber = warmup_target(service)
         except Exception as exc:  # noqa: BLE001 - reported as a model failure
@@ -695,33 +729,100 @@ class ConsoleVoiceInputController:
             return True
 
         first_run = _is_first_warmup(effective)
-        try:
-            self._emit(
-                VoiceModelPreparing(
-                    message=WARMUP_MESSAGE_FIRST_RUN if first_run else WARMUP_MESSAGE,
-                    first_run=first_run,
-                )
-            )
-        except Exception:  # noqa: BLE001 - progress copy must never abort a start
-            logger.opt(exception=True).debug(
-                "Console dictation model-preparing notice could not be emitted"
-            )
+        self._emit_quietly(
+            VoiceModelPreparing(
+                message=WARMUP_MESSAGE_FIRST_RUN if first_run else WARMUP_MESSAGE,
+                detail=WARMUP_DETAIL_FIRST_RUN if first_run else "",
+                first_run=first_run,
+            ),
+            "model-preparing notice",
+        )
 
-        try:
-            warm_transcription_model(transcriber, effective)
-        except Exception as exc:  # noqa: BLE001 - reported as a model failure
-            logger.opt(exception=True).warning("Console dictation model warm-up failed")
-            self._release(service)
-            self._fail(self._warmup_failure(effective, exc), WARMUP_REMEDY)
-            return False
-        _mark_warmed(effective)
-
-        # A first-run warm-up runs for minutes; the screen can unmount inside
-        # it. Re-check before handing a live microphone to a torn-down machine.
+        error = self._run_warmup_off_the_executor(transcriber, effective)
         if self._abandoned:
+            # A first-run warm-up runs for minutes; the screen can unmount
+            # inside it. Never hand a live microphone to a torn-down machine.
             self._release(service)
             return False
+        if error is not None:
+            logger.opt(exception=error).warning("Console dictation model warm-up failed")
+            self._emit_quietly(
+                VoiceModelWarmupFailed(
+                    reason=(
+                        f"{WARMUP_DEGRADED_REASON_TEMPLATE.format(provider=effective.provider)}"
+                        f" {error}"
+                    ).strip(),
+                    remedy=WARMUP_REMEDY,
+                ),
+                "model warm-up warning",
+            )
+            return True
+        _mark_warmed(effective)
         return True
+
+    def _run_warmup_off_the_executor(
+        self, transcriber: Any, effective: EffectiveConfig
+    ) -> BaseException | None:
+        """Perform the warm-up on a daemon thread, waiting abandon-aware.
+
+        `_run_begin()` runs on the default asyncio executor (via the screen's
+        `asyncio.to_thread`), and `asyncio.run()` **joins that executor at
+        shutdown**. Doing a multi-minute model download directly on it means a
+        user who gets bored and quits sits in front of a dead terminal until
+        the download finishes -- `abandon()` cannot interrupt a blocking C
+        call. Running it on a daemon thread and waiting here means `abandon()`
+        releases this frame promptly, the executor thread returns, and the
+        process can exit; the orphaned download dies with it.
+
+        Args:
+            transcriber: The transcription service to warm.
+            effective: The provider/model/language the capture will run with.
+
+        Returns:
+            None when the model loaded, the exception when it did not, or a
+            `RuntimeError` placeholder when `abandon()` ended the wait early
+            (the caller checks `_abandoned` first, so that value is unused).
+        """
+        done = threading.Event()
+        box: dict[str, BaseException] = {}
+
+        def _work() -> None:
+            try:
+                warm_transcription_model(transcriber, effective)
+            except BaseException as exc:  # noqa: BLE001 - handed back to the caller
+                box["error"] = exc
+            finally:
+                done.set()
+
+        threading.Thread(
+            target=_work, daemon=True, name="ConsoleDictationModelWarmup"
+        ).start()
+        while not done.wait(self.WARMUP_POLL_SECONDS):
+            if self._abandoned:
+                logger.debug(
+                    "Console dictation abandoned while the speech model was loading; "
+                    "leaving the load to finish on its daemon thread"
+                )
+                return RuntimeError("abandoned during model warm-up")
+        return box.get("error")
+
+    def _emit_quietly(self, event: Any, description: str) -> None:
+        """Emit an advisory event, swallowing a plumbing failure.
+
+        Progress and degraded-mode notices are cosmetic: a raising `emit` must
+        never cost the user their capture. Real failures still go through
+        `_fail()`, whose raising-emit contract is deliberately different.
+
+        Args:
+            event: The event to emit.
+            description: What it was, for the log line if emitting fails.
+        """
+        try:
+            self._emit(event)
+        except Exception:  # noqa: BLE001 - advisory copy must never abort a start
+            logger.opt(exception=True).debug(
+                "Console dictation {} could not be emitted", description
+            )
 
     @staticmethod
     def _warmup_failure(effective: EffectiveConfig, exc: Exception) -> str:
@@ -846,6 +947,14 @@ class ConsoleVoiceInputController:
             result = service.stop_dictation() if service is not None else None
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=True).warning("Console dictation failed to stop")
+            # The service was already claimed, so nothing else will ever
+            # release it: without this, a `stop_dictation()` that raises
+            # (`Thread.join(timeout=nan)` -> ValueError is one real way to get
+            # here) leaves a live microphone behind an idle state machine.
+            # `_release` never raises, so it cannot disturb the raising-emit
+            # contract `_fail()` depends on.
+            if service is not None:
+                self._release(service)
             self._fail(str(exc))
             return
         # How many bytes the recorder delivered, and whether the transcription

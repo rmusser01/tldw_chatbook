@@ -4,6 +4,7 @@ Improved live dictation service with lazy initialization and better resource man
 This implementation addresses the issues identified in the architectural review.
 """
 
+import math
 import os
 import sys
 import threading
@@ -28,6 +29,15 @@ except ImportError:
 
 # Local imports
 from ..config import get_cli_setting, save_setting_to_cli_config
+
+# One catalogue of local providers, shared with the Console's resolver. Import
+# free of heavy dependencies by design (`find_spec` only), so this costs
+# nothing here and cannot drift from what the resolver picks.
+from ..Utils.local_stt_providers import (
+    LOCAL_STT_PROVIDERS,
+    installed_local_providers,
+    provider_is_local,
+)
 
 
 @dataclass
@@ -206,9 +216,16 @@ class LazyLiveDictationService:
                 cls.STOP_JOIN_TIMEOUT_SECONDS,
             )
             return cls.STOP_JOIN_TIMEOUT_SECONDS
-        if timeout <= 0:
+        # `nan` and `inf` are valid TOML floats and both survive `float()`.
+        # `nan <= 0` is False, so a bare positivity check waves them through --
+        # and `Thread.join(timeout=nan)` raises ValueError from inside the stop
+        # worker, which used to abandon a live microphone behind an idle state
+        # machine. `inf` would simply hang the stop forever.
+        if not math.isfinite(timeout) or timeout <= 0:
             logger.warning(
-                "dictation.stop_join_timeout_seconds must be positive; using {}s",
+                "dictation.stop_join_timeout_seconds must be a positive, finite "
+                "number (got {!r}); using {}s",
+                raw,
                 cls.STOP_JOIN_TIMEOUT_SECONDS,
             )
             return cls.STOP_JOIN_TIMEOUT_SECONDS
@@ -398,24 +415,40 @@ class LazyLiveDictationService:
             self._notify_error(e)
             return False
 
+    @staticmethod
+    def _preferred_local_provider() -> str:
+        """Pick a local provider to fall back to under privacy mode.
+
+        Prefers one that is actually installed on this machine. The old
+        hard-coded `parakeet-mlx` is Apple-Silicon-only, so on Linux it swapped
+        a working provider for one that fails on every chunk.
+
+        Returns:
+            An installed local provider id, or the first local provider when
+            none is installed (nothing will work either way; this at least
+            keeps the reported provider inside the local catalogue).
+        """
+        installed = installed_local_providers()
+        return installed[0] if installed else LOCAL_STT_PROVIDERS[0]
+
     def _initialize_streaming_transcriber(self):
         """Initialize streaming transcriber if available."""
         if self.privacy_settings["local_only"]:
-            # Only use local providers when in privacy mode
-            # Ids must match transcription_service's dispatch values exactly;
-            # "lightning-whisper" matched nothing and silently rewrote the
-            # user's provider to parakeet-mlx.
-            allowed_providers = [
-                "parakeet-mlx",
-                "faster-whisper",
-                "lightning-whisper-mlx",
-            ]
-            if self.transcription_provider not in allowed_providers:
+            # Privacy mode means "audio never leaves this machine", so the test
+            # is exactly `provider_is_local()` -- the same catalogue the Console
+            # resolver picks from (`Utils/local_stt_providers`). A second,
+            # hand-maintained list lived here and drifted twice: once on a
+            # misspelled id ("lightning-whisper"), and once by staying at three
+            # providers while the resolver grew to seven, which made the Console
+            # download and announce one model and then transcribe with another.
+            # Do not reintroduce a literal list here.
+            if not provider_is_local(self.transcription_provider):
+                fallback = self._preferred_local_provider()
                 logger.info(
-                    f"Provider '{self.transcription_provider}' not allowed in privacy mode. "
-                    f"Using local provider instead."
+                    f"Provider '{self.transcription_provider}' is not local; "
+                    f"privacy mode requires one. Using '{fallback}' instead."
                 )
-                self.transcription_provider = "parakeet-mlx"  # Default local provider
+                self.transcription_provider = fallback
 
         try:
             self.streaming_transcriber = (

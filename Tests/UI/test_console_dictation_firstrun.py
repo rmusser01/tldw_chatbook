@@ -81,9 +81,11 @@ class _WarmableDictationService:
         *,
         transcriber: _Transcriber | None = None,
         stop_result=None,
+        build_error: Exception | None = None,
     ) -> None:
         self.transcriber = transcriber or _Transcriber()
         self.stop_result = stop_result
+        self.build_error = build_error
         self.calls: list[str] = []
         self.on_partial = None
         self.on_final = None
@@ -96,6 +98,10 @@ class _WarmableDictationService:
 
     @property
     def transcription_service(self):
+        # `LazyLiveDictationService` raises `TranscriptionInitializationError`
+        # from this property when the models are genuinely absent.
+        if self.build_error is not None:
+            raise self.build_error
         return self.transcriber
 
     def start_dictation(
@@ -131,6 +137,17 @@ def _stop_result(*, captured_bytes: int, transcription_complete: bool = True):
         captured_bytes=captured_bytes,
         transcription_complete=transcription_complete,
     )
+
+
+def _painted(widget) -> str:
+    """Return the text the widget actually paints on its first (only) row.
+
+    Not `str(widget.renderable)`: that is the pre-truncation string, and a chip
+    is 42 cells wide and one row high. Asserting on `renderable` passed happily
+    while the visible line ended mid-sentence on "…(first run may" -- the third
+    time on this branch a test has believed `renderable` over the terminal.
+    """
+    return widget.render_line(0).text.rstrip()
 
 
 def _session(service) -> chat_screen_module.ConsoleStreamingDictationSession:
@@ -300,11 +317,80 @@ def test_the_model_is_warmed_before_capture_starts_at_the_session_boundary(
     assert service.calls == ["start_dictation"]
 
 
+async def _wait_for_painted(chip, pilot, expected: str, timeout: float = 4.0) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and expected not in _painted(chip):
+        await pilot.pause(0.01)
+    return _painted(chip)
+
+
 @pytest.mark.asyncio
 async def test_a_slow_first_run_shows_the_preparing_message_not_a_frozen_button(
     monkeypatch,
 ):
     """Minutes of nothing is a hang; minutes with an explanation is a download."""
+    gate = threading.Event()
+    transcriber = _Transcriber(gate=gate)
+    service = _WarmableDictationService(transcriber=transcriber)
+    _patch_availability(monkeypatch)
+    _install_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    try:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one(
+                "#console-native-composer", ConsoleComposerBar
+            )
+            chip = composer.query_one("#console-voice-status", Static)
+
+            await pilot.click("#console-dictation")
+            painted = await _wait_for_painted(chip, pilot, "speech model")
+
+            # The warm-up is provably still blocked...
+            assert transcriber.entered.is_set()
+            assert service.calls == [], "capture opened before the model was ready"
+            # ...and the user is being told why, in text that actually paints.
+            assert painted == f"◌ {voice_module.WARMUP_MESSAGE_FIRST_RUN}"
+            # Not cut off mid-sentence: the painted line ends where the string
+            # ends, and the chip is one row so there is no second line.
+            assert painted.endswith("…")
+            assert _painted(chip) == painted
+
+            # The duration warning is too long for a 42-cell chip, so it must
+            # reach the user somewhere else.
+            details = [
+                str(call.args[0])
+                for call in notify.call_args_list
+                if "minutes" in str(call.args[0])
+            ]
+            assert len(details) == 1
+            assert "recorded" in details[0]
+
+            # The button is pressable, so the download is escapable.
+            mic = composer.query_one("#console-dictation", Button)
+            assert str(mic.label) == "Mic…"
+            assert mic.disabled is False
+            assert "cancel" in str(mic.tooltip).lower()
+
+            gate.set()
+            await _wait_for_mic_label(composer, pilot, "Rec ●")
+            assert service.calls == ["start_dictation"]
+    finally:
+        gate.set()
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_ui_refresh_cannot_wipe_the_preparing_message(monkeypatch):
+    """Every control-bar refresh calls `sync_dictation_state("starting")`.
+
+    Changing a provider, collapsing a rail, most action-state refreshes: any of
+    them used to rewrite the chip back to "◌ Preparing microphone…" in the
+    middle of the multi-minute window this message exists for -- and that
+    replacement is also false, since nothing is preparing a microphone.
+    """
     gate = threading.Event()
     transcriber = _Transcriber(gate=gate)
     service = _WarmableDictationService(transcriber=transcriber)
@@ -321,34 +407,139 @@ async def test_a_slow_first_run_shows_the_preparing_message_not_a_frozen_button(
             chip = composer.query_one("#console-voice-status", Static)
 
             await pilot.click("#console-dictation")
+            before = await _wait_for_painted(chip, pilot, "speech model")
 
-            deadline = time.monotonic() + 4
-            while time.monotonic() < deadline and "speech model" not in str(
-                chip.renderable
-            ):
-                await pilot.pause(0.01)
+            console._sync_console_control_bar()
+            await pilot.pause()
 
-            # The warm-up is provably still blocked...
-            assert transcriber.entered.is_set()
-            assert service.calls == [], "capture opened before the model was ready"
-            # ...and the user is being told why, not staring at a dead button.
-            assert "speech model" in str(chip.renderable).lower()
-            assert str(
-                composer.query_one("#console-dictation", Button).label
-            ) in {"Mic…", "Rec ●"}
+            assert _painted(chip) == before
+            assert "microphone" not in _painted(chip).lower()
+            assert service.calls == [], "the warm-up finished too early to test this"
 
             gate.set()
             await _wait_for_mic_label(composer, pilot, "Rec ●")
-            assert service.calls == ["start_dictation"]
+            # And once recording really starts, the stale notice is gone.
+            assert "speech model" not in _painted(chip)
     finally:
         gate.set()
 
 
 @pytest.mark.asyncio
-async def test_a_warm_up_failure_is_reported_as_a_model_problem(monkeypatch):
-    """A model that cannot load must never be presented as a broken microphone."""
+async def test_cancelling_a_long_first_run_returns_to_idle_without_an_error(
+    monkeypatch,
+):
+    """A user who gets bored of a download needs a way out that is not quitting."""
+    gate = threading.Event()
+    transcriber = _Transcriber(gate=gate)
+    service = _WarmableDictationService(transcriber=transcriber)
+    _patch_availability(monkeypatch)
+    _install_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    try:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one(
+                "#console-native-composer", ConsoleComposerBar
+            )
+            chip = composer.query_one("#console-voice-status", Static)
+            composer.load_draft("keep this draft")
+
+            await pilot.click("#console-dictation")
+            await _wait_for_painted(chip, pilot, "speech model")
+            assert transcriber.entered.is_set()
+
+            # Pressing the mic again while it is preparing cancels. Textual's
+            # Button swallows a click while its own `-active` effect class is
+            # still set (0.2s), so let that clear or the press silently does
+            # nothing while `pilot.click` still reports success.
+            await pilot.pause(0.5)
+            assert await pilot.click("#console-dictation")
+            await _wait_for_mic_label(composer, pilot, "Mic")
+
+            assert console._console_dictation_state == "idle"
+            assert console._console_dictation_session is None
+            assert _painted(chip) == ""
+            assert composer.draft_text() == "keep this draft"
+
+            # A deliberate cancel is not a failure.
+            errors = [
+                call
+                for call in notify.call_args_list
+                if call.kwargs.get("severity") == "error"
+            ]
+            assert errors == []
+            assert any(
+                "cancel" in str(call.args[0]).lower()
+                for call in notify.call_args_list
+            )
+
+            # Releasing the model load afterwards must not resurrect anything.
+            gate.set()
+            for _ in range(10):
+                await pilot.pause(0.02)
+            assert console._console_dictation_state == "idle"
+            assert [
+                call
+                for call in notify.call_args_list
+                if call.kwargs.get("severity") == "error"
+            ] == []
+    finally:
+        gate.set()
+
+
+@pytest.mark.asyncio
+async def test_a_warm_up_failure_degrades_the_capture_instead_of_blocking_it(
+    monkeypatch,
+):
+    """The Console warms on every press, so a fatal warm-up is a permanent cliff.
+
+    A provider that dislikes 0.5 s of digital silence, or a transient blip with
+    the weights already on disk, must not make dictation unusable forever.
+    """
     transcriber = _Transcriber(error=RuntimeError("could not download model weights"))
     service = _WarmableDictationService(transcriber=transcriber)
+    _patch_availability(monkeypatch)
+    _install_session(monkeypatch, service)
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        await pilot.click("#console-dictation")
+        await _wait_for_mic_label(composer, pilot, "Rec ●")
+
+        # The capture went ahead.
+        assert service.calls == ["start_dictation"]
+        assert console._console_dictation_state == "recording"
+
+        warnings = [
+            call
+            for call in notify.call_args_list
+            if call.kwargs.get("severity") == "warning"
+        ]
+        assert len(warnings) == 1
+        text = str(warnings[0].args[0])
+        assert "could not download model weights" in text
+        assert "microphone" not in text.lower()
+        assert [
+            call
+            for call in notify.call_args_list
+            if call.kwargs.get("severity") == "error"
+        ] == []
+
+
+@pytest.mark.asyncio
+async def test_a_transcriber_that_cannot_be_built_blocks_the_capture(monkeypatch):
+    """Models genuinely absent stays fatal -- and is never a microphone claim."""
+    service = _WarmableDictationService(
+        build_error=RuntimeError("models are not installed")
+    )
     _patch_availability(monkeypatch)
     _install_session(monkeypatch, service)
     app, host = _ready_host()
@@ -369,7 +560,7 @@ async def test_a_warm_up_failure_is_reported_as_a_model_problem(monkeypatch):
         messages = [str(call.args[0]) for call in notify.call_args_list]
         assert len(messages) == 1
         assert "model" in messages[0].lower()
-        assert "could not download model weights" in messages[0]
+        assert "models are not installed" in messages[0]
         assert "microphone" not in messages[0].lower()
         assert notify.call_args_list[0].kwargs.get("severity") == "error"
 

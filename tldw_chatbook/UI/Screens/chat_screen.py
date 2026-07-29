@@ -180,13 +180,13 @@ from ...Chat.console_voice_input import (
     NO_CAPTURE_MESSAGE,
     NO_SPEECH_MESSAGE,
     STATE_LISTENING,
-    STATE_PREPARING,
     TRANSCRIPTION_INCOMPLETE_REASON,
     TRANSCRIPTION_INCOMPLETE_REMEDY,
     ConsoleVoiceInputController,
     VoiceFailed,
     VoiceFinal,
     VoiceModelPreparing,
+    VoiceModelWarmupFailed,
     VoicePartial,
     VoiceProviderOverridden,
     default_service_factory,
@@ -4591,12 +4591,26 @@ class ChatScreen(BaseAppScreen):
             # sitting on "Mic…" with no explanation is indistinguishable from
             # a hang. Only meaningful while the screen is still starting: a
             # notice that drains late must not repaint a live capture's chip.
-            if self._console_dictation_state == "starting":
-                composer = self._console_composer_or_none()
-                if composer is not None:
-                    composer.set_voice_status(
-                        STATE_PREPARING, message=f"◌ {event.message}"
-                    )
+            if self._console_dictation_state != "starting":
+                return
+            composer = self._console_composer_or_none()
+            if composer is not None:
+                # The composer *holds* this, so an unrelated control-bar
+                # refresh cannot wipe it mid-download.
+                composer.set_voice_preparing_message(f"◌ {event.message}")
+            # The chip is 42 cells and one row; the full explanation would be
+            # cut mid-sentence there, taking the duration warning with it. Send
+            # it somewhere with room, once.
+            if event.detail:
+                self.app_instance.notify(event.detail, severity="information")
+            return
+        if isinstance(event, VoiceModelWarmupFailed):
+            # Advisory, not fatal: the capture is going ahead. Making this
+            # fatal would mean one transient error permanently disables
+            # dictation, since the Console warms on every press.
+            self.app_instance.notify(
+                f"{event.reason} {event.remedy}".strip(), severity="warning"
+            )
             return
         if isinstance(event, VoiceFailed):
             # Only ever a mid-capture failure: the session forwards a
@@ -4664,20 +4678,33 @@ class ChatScreen(BaseAppScreen):
         )
 
     async def _start_console_dictation(self) -> None:
+        """Open the microphone for the capture the user just asked for.
+
+        Every exit path re-checks that this screen still owns `session`: a
+        first-run model load runs for minutes inside the `await`, and the user
+        can cancel (`_request_console_dictation_cancel`) at any point in it.
+        Whichever side loses that race must stay silent, or a deliberate cancel
+        surfaces as a failure toast the user did not cause.
+        """
+        session = (
+            self._console_dictation_session or self._create_console_dictation_session()
+        )
+        self._console_dictation_session = session
         try:
-            session = (
-                self._console_dictation_session
-                or self._create_console_dictation_session()
-            )
-            self._console_dictation_session = session
             await asyncio.to_thread(
                 session.start,
                 on_buffer_limit=self._on_console_dictation_buffer_limit,
             )
         except Exception as exc:
-            self._notify_console_dictation_error(exc)
+            if self._console_dictation_session is session:
+                self._notify_console_dictation_error(exc)
+            else:
+                logger.debug("Console dictation start skipped; the attempt was cancelled")
             return
-        if not self.is_mounted:
+        if not self.is_mounted or self._console_dictation_session is not session:
+            # Cancelled or unmounted while the model was loading: the capture
+            # may have opened a moment ago, so release it rather than leave a
+            # live microphone behind an idle button.
             await asyncio.to_thread(session.discard)
             return
         self._set_console_dictation_state("recording")
@@ -4798,6 +4825,37 @@ class ChatScreen(BaseAppScreen):
             group="console-dictation-stop",
             exit_on_error=False,
         )
+
+    def _request_console_dictation_cancel(self) -> None:
+        """Abandon a capture that is still preparing, without waiting for it.
+
+        The `starting` phase now covers a speech-model load, which is a
+        multi-gigabyte download on a fresh machine. `abandon()` returns
+        immediately (it never joins), and the load itself is on a daemon
+        thread, so this returns the UI to idle at once and lets the process
+        exit even if the download is still running.
+
+        Dropping the session first is what makes `_start_console_dictation`'s
+        re-checks fire, so the cancelled attempt cannot also raise a failure
+        toast on its way out.
+        """
+        if self._console_dictation_state != "starting":
+            return
+        session = self._console_dictation_session
+        self._cancel_console_dictation_timer()
+        self._cancel_console_dictation_elapsed_timer()
+        self._console_dictation_session = None
+        self._console_dictation_origin_session_id = None
+        self._console_dictation_partial = ""
+        self._set_console_dictation_state("idle")
+        if session is not None:
+            try:
+                session.discard()
+            except Exception:  # noqa: BLE001 - cancelling must never raise
+                logger.opt(exception=True).debug(
+                    "Console dictation could not be cancelled cleanly"
+                )
+        self.app_instance.notify("Dictation cancelled.", severity="information")
 
     def _request_console_dictation_start(self) -> None:
         if self._console_dictation_state != "idle":
@@ -17261,6 +17319,11 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             if self._console_dictation_state == "idle":
                 self._request_console_dictation_start()
+            elif self._console_dictation_state == "starting":
+                # A first-run model load runs for minutes; this is the only
+                # in-app way out of it. "transcribing" has no cancel -- the
+                # capture is already recorded and worth finishing.
+                self._request_console_dictation_cancel()
             elif self._console_dictation_state == "recording":
                 self._request_console_dictation_stop()
             return

@@ -1644,7 +1644,7 @@ def test_a_slow_warm_announces_itself_before_it_blocks(monkeypatch):
 
 
 def test_the_first_run_message_differs_from_later_presses(monkeypatch):
-    """"May take several minutes" is honest once, then it is just alarming."""
+    """A first-run download warrants different copy from a 1s disk load."""
     service = _WarmableService()
     controller, events, _ = _controller(monkeypatch, service=service)
 
@@ -1661,29 +1661,66 @@ def test_the_first_run_message_differs_from_later_presses(monkeypatch):
     assert first.message != second.message
     assert first.message == cvi.WARMUP_MESSAGE_FIRST_RUN
     assert second.message == cvi.WARMUP_MESSAGE
+    # The duration warning is the whole reason a separate first-run string
+    # exists, and it does not fit in the chip -- so it rides in `detail`.
+    assert "minutes" in first.detail
+    assert second.detail == ""
 
 
-def test_a_warm_up_failure_reads_as_a_model_problem_not_a_microphone_one(monkeypatch):
-    """The failure the user sees must name the component that actually failed."""
+@pytest.mark.parametrize(
+    "message", [cvi.WARMUP_MESSAGE_FIRST_RUN, cvi.WARMUP_MESSAGE]
+)
+def test_every_preparing_message_fits_the_one_row_chip(message):
+    """The chip is 42 cells and one row; longer copy is cut mid-sentence.
+
+    An earlier draft ended on "…(first run may" and lost the duration warning
+    entirely. The "◌ " prefix the screen adds counts against the budget.
+    """
+    assert len(f"◌ {message}") <= cvi.WARMUP_MESSAGE_MAX_CELLS
+
+
+def test_the_first_run_detail_says_what_the_chip_cannot(monkeypatch):
+    """It is only worth splitting if the long half carries the real warning."""
+    assert "minutes" in cvi.WARMUP_DETAIL_FIRST_RUN
+    assert "recorded" in cvi.WARMUP_DETAIL_FIRST_RUN
+    # And it is genuinely too long for the chip -- otherwise merge them.
+    assert len(cvi.WARMUP_DETAIL_FIRST_RUN) > cvi.WARMUP_MESSAGE_MAX_CELLS
+
+
+def test_a_failed_warm_up_degrades_instead_of_disabling_dictation(monkeypatch):
+    """A warm-up that fails after the service was built must not be fatal.
+
+    The Console warms on *every* press, so a fatal warm-up would turn one
+    transient error -- a provider that dislikes digital silence, a blip with
+    the weights already on disk -- into permanently unusable dictation. The
+    capture goes ahead; that is safe now only because an empty result can no
+    longer be misreported as a dead microphone.
+    """
     transcriber = _Transcriber(error=RuntimeError("could not download model weights"))
     service = _WarmableService(transcriber=transcriber)
     controller, events, _ = _controller(monkeypatch, service=service)
 
     controller.start()
 
-    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
-    assert len(failures) == 1
-    text = f"{failures[0].reason} {failures[0].remedy}".lower()
+    assert [e for e in events if isinstance(e, cvi.VoiceFailed)] == []
+    warnings = [e for e in events if isinstance(e, cvi.VoiceModelWarmupFailed)]
+    assert len(warnings) == 1
+    text = f"{warnings[0].reason} {warnings[0].remedy}".lower()
     assert "model" in text
     assert "could not download model weights" in text
     assert "microphone" not in text
-    # And the capture never opened.
-    assert service.started is False
-    assert controller.state == cvi.STATE_IDLE
+    # The capture still opened, and the machine is live.
+    assert service.started is True
+    assert controller.state == cvi.STATE_LISTENING
 
 
-def test_a_transcriber_that_cannot_be_built_is_also_a_model_problem(monkeypatch):
-    """`LazyLiveDictationService.transcription_service` raises on missing models."""
+def test_a_transcriber_that_cannot_be_built_is_a_fatal_model_problem(monkeypatch):
+    """`LazyLiveDictationService.transcription_service` raises on missing models.
+
+    This half stays fatal: models genuinely absent is strong evidence, and
+    opening a microphone against a transcriber that cannot exist would record
+    into a void -- the original defect.
+    """
     service = _WarmableService(build_error=RuntimeError("models are not installed"))
     controller, events, _ = _controller(monkeypatch, service=service)
 
@@ -1695,12 +1732,12 @@ def test_a_transcriber_that_cannot_be_built_is_also_a_model_problem(monkeypatch)
     assert "model" in text
     assert "microphone" not in text
     assert service.started is False
+    assert controller.state == cvi.STATE_IDLE
 
 
-def test_a_warm_up_failure_still_ends_idle_with_failed_first(monkeypatch):
+def test_a_fatal_warm_up_failure_still_ends_idle_with_failed_first(monkeypatch):
     """The ordering invariant the UI's deferred send depends on."""
-    transcriber = _Transcriber(error=RuntimeError("boom"))
-    service = _WarmableService(transcriber=transcriber)
+    service = _WarmableService(build_error=RuntimeError("boom"))
     controller, events, _ = _controller(monkeypatch, service=service)
 
     controller.start()
@@ -1715,6 +1752,91 @@ def test_a_warm_up_failure_still_ends_idle_with_failed_first(monkeypatch):
     assert controller.state == cvi.STATE_IDLE
 
 
+def test_warming_can_be_turned_off_entirely(monkeypatch):
+    """`dictation.warm_model_before_capture = false` is the escape hatch."""
+    service = _WarmableService()
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    _stub_settings(
+        monkeypatch,
+        {
+            "transcription.default_provider": "faster-whisper",
+            "dictation.warm_model_before_capture": False,
+        },
+    )
+    events = []
+    controller = cvi.ConsoleVoiceInputController(
+        emit=events.append,
+        spawn=lambda thunk: thunk(),
+        service_factory=lambda **kwargs: service,
+    )
+
+    controller.start()
+
+    assert service._transcriber.buffer_calls == []
+    assert service.calls == ["start_dictation"]
+    assert [e for e in events if isinstance(e, cvi.VoiceModelPreparing)] == []
+    assert controller.state == cvi.STATE_LISTENING
+
+
+@pytest.mark.parametrize("value", [True, "true", "yes", 1, None])
+def test_warming_stays_on_for_anything_but_an_explicit_off(monkeypatch, value):
+    """Default and truthy values must all warm; only an explicit off disables."""
+    service = _WarmableService()
+    monkeypatch.setattr(cvi, "capture_available", lambda: True)
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
+    settings = {"transcription.default_provider": "faster-whisper"}
+    if value is not None:
+        settings["dictation.warm_model_before_capture"] = value
+    _stub_settings(monkeypatch, settings)
+    controller = cvi.ConsoleVoiceInputController(
+        emit=lambda _e: None,
+        spawn=lambda thunk: thunk(),
+        service_factory=lambda **kwargs: service,
+    )
+
+    controller.start()
+
+    assert service._transcriber.buffer_calls, "warm-up was skipped"
+
+
+def test_the_warm_up_never_blocks_the_calling_thread_to_the_end(monkeypatch):
+    """The load runs on a daemon thread so quitting mid-download can exit.
+
+    `_run_begin` runs on the default asyncio executor, and `asyncio.run()`
+    joins that executor at shutdown -- a 155s download directly on it means a
+    dead terminal until it finishes. Abandoning must release this frame while
+    the load is still running.
+    """
+    gate = threading.Event()
+    entered = threading.Event()
+    transcriber = _Transcriber(gate=gate, entered=entered)
+    service = _WarmableService(transcriber=transcriber)
+    controller, _events, _ = _controller(
+        monkeypatch,
+        service=service,
+        spawn=lambda thunk: threading.Thread(target=thunk, daemon=True).start(),
+    )
+    warm_threads_before = {t.name for t in threading.enumerate()}
+
+    controller.start()
+    assert entered.wait(timeout=5)
+
+    # The load is on a *daemon* thread, so the interpreter can exit past it.
+    warm_threads = [
+        t
+        for t in threading.enumerate()
+        if t.name not in warm_threads_before and "Warmup" in t.name
+    ]
+    assert warm_threads, "the warm-up did not get its own thread"
+    assert all(t.daemon for t in warm_threads)
+
+    controller.abandon()
+    # Abandon returns while the load is still blocked -- that is the point.
+    assert not gate.is_set()
+    gate.set()
+
+
 def test_a_failed_warm_up_is_still_a_first_run_next_time(monkeypatch):
     """Only a model that actually loaded may downgrade the first-run message."""
     transcriber = _Transcriber(error=RuntimeError("boom"))
@@ -1722,6 +1844,7 @@ def test_a_failed_warm_up_is_still_a_first_run_next_time(monkeypatch):
     controller, events, _ = _controller(monkeypatch, service=service)
 
     controller.start()
+    controller.stop()
     events.clear()
     controller.start()
 
@@ -1848,3 +1971,37 @@ def test_capture_outcome_is_reset_by_the_next_start(monkeypatch):
 
     assert controller.last_capture_outcome.transcription_complete is True
     assert controller.last_capture_outcome.captured_bytes is None
+
+
+def test_a_raising_stop_dictation_still_releases_the_microphone(monkeypatch):
+    """The claimed service must not be orphaned when `stop_dictation()` throws.
+
+    `_run_finish()` claims the service before stopping it, so nothing else will
+    ever release it. `Thread.join(timeout=nan)` -> ValueError is one real way
+    to land here, and it used to leave a live recorder behind an idle machine.
+    """
+    released = []
+
+    class _ThrowingStopService(_WarmableService):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._audio_service = type(
+                "R", (), {"stop_recording": lambda s: released.append("stopped")}
+            )()
+
+        def stop_dictation(self):
+            raise ValueError("timeout must be a non-negative number")
+
+    controller, events, service = _controller(
+        monkeypatch, service=_ThrowingStopService()
+    )
+    controller.start()
+    released.clear()
+    events.clear()
+
+    controller.stop()
+
+    assert released == ["stopped"]
+    assert controller.state == cvi.STATE_IDLE
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1

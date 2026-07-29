@@ -200,9 +200,26 @@ def test_join_timeout_is_read_from_config(monkeypatch):
     assert service.stop_join_timeout_seconds == 7.5
 
 
-@pytest.mark.parametrize("bad", ["not-a-number", None, 0, -3])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "not-a-number",
+        None,
+        0,
+        -3,
+        # `nan` and `inf` are valid TOML floats that survive `float()`.
+        # `nan <= 0` is False, so a bare positivity check waves `nan` through
+        # to `Thread.join(timeout=nan)` -> ValueError, raised from inside the
+        # stop worker with a live microphone already claimed. `inf` would hang
+        # the stop forever.
+        float("nan"),
+        float("inf"),
+        "nan",
+        "inf",
+    ],
+)
 def test_a_nonsense_join_timeout_falls_back_to_the_default(monkeypatch, bad):
-    """A typo in config must not make the join instantaneous (or negative)."""
+    """A typo in config must not make the join instantaneous, infinite or NaN."""
     from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
 
     service = _build_service(
@@ -367,4 +384,29 @@ def test_stop_without_a_processing_thread_still_reports_complete(monkeypatch):
 
     result = service.stop_dictation()
 
+    assert result.transcription_complete is True
+
+
+def test_a_nan_timeout_never_reaches_thread_join(monkeypatch):
+    """Not just clamped in config: a real stop with `nan` set must succeed.
+
+    `Thread.join(timeout=nan)` raises ValueError from inside the stop worker,
+    which reported a failure *and* abandoned the microphone it had already
+    claimed. Drive a real capture with the poisoned value to prove it never
+    gets that far.
+    """
+    transcription = _InstantTranscriptionService(texts=["hello"])
+    recorder = _FakeRecorder()
+    service = _build_service(
+        monkeypatch,
+        transcription,
+        recorder,
+        **{"dictation.stop_join_timeout_seconds": float("nan")},
+    )
+    _start(service)
+    recorder.feed(b"\x00\x01" * 4000)
+
+    result = service.stop_dictation()
+
+    assert result.transcript == "hello"
     assert result.transcription_complete is True

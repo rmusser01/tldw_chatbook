@@ -156,6 +156,15 @@ class ConsoleComposerBar(Horizontal):
         #: cannot stomp the chip back to "0:00" mid-capture.
         self._voice_partial: str = ""
         self._voice_elapsed_seconds: int = 0
+        #: Latest model-preparation status for the chip, held for the same
+        #: reason `_voice_partial` is: `sync_dictation_state` is called
+        #: unconditionally by every control-bar refresh (changing a provider,
+        #: collapsing a rail), and without holding this a single keystroke
+        #: elsewhere would rewrite a multi-minute "Preparing speech model…" back
+        #: to "Preparing microphone…" -- which by then is also false, because
+        #: nothing is preparing a microphone. Cleared only on a genuine
+        #: transition into "starting", and on recording/idle.
+        self._voice_preparing_message: str = ""
         self._pending_attachment_label: str | None = None
         self._suppress_next_draft_click = False
         self._draft_selection_all = False
@@ -487,6 +496,7 @@ class ConsoleComposerBar(Horizontal):
             state: Current one-shot dictation lifecycle state.
         """
         entering_recording = state == "recording" and self._dictation_state != "recording"
+        entering_starting = state == "starting" and self._dictation_state != "starting"
         self._dictation_state = state
         try:
             button = self.query_one("#console-dictation", Button)
@@ -500,7 +510,10 @@ class ConsoleComposerBar(Horizontal):
         }
         tooltips = {
             "idle": self.DICTATION_IDLE_TOOLTIP,
-            "starting": "Starting the default microphone…",
+            # A first-run model download is minutes long, so this phase needs a
+            # way out. The button stays clickable here (unlike "transcribing",
+            # where there is nothing left to cancel) and a press cancels.
+            "starting": "Preparing the speech model — press to cancel.",
             "recording": "Stop microphone recording and transcribe.",
             "transcribing": "Transcribing locally with Parakeet v2 INT8…",
         }
@@ -517,7 +530,10 @@ class ConsoleComposerBar(Horizontal):
         button.tooltip = (
             self._dictation_unavailable_tooltip if unavailable else tooltips[state]
         )
-        button.disabled = state in {"starting", "transcribing"}
+        # "starting" stays enabled on purpose: it now covers a model load that
+        # can run for minutes on a first run, and a disabled button would leave
+        # the user with no in-app way out of it.
+        button.disabled = state == "transcribing"
         button.variant = "warning" if state == "recording" else "default"
         button.set_class(state == "recording", "console-dictation-recording")
         button.set_class(unavailable, "console-dictation-unavailable")
@@ -528,15 +544,25 @@ class ConsoleComposerBar(Horizontal):
         if state == "idle":
             self._voice_partial = ""
             self._voice_elapsed_seconds = 0
+            self._voice_preparing_message = ""
             self.set_voice_status(STATE_IDLE)
         elif state == "starting":
-            self._voice_partial = ""
-            self._voice_elapsed_seconds = 0
-            self.set_voice_status(STATE_PREPARING, message="◌ Preparing microphone…")
+            if entering_starting:
+                self._voice_partial = ""
+                self._voice_elapsed_seconds = 0
+                self._voice_preparing_message = ""
+            # Re-applied, not recomputed: a redundant resync (any control-bar
+            # refresh calls this) must not overwrite a live model-preparation
+            # message with the generic microphone one.
+            self.set_voice_status(
+                STATE_PREPARING,
+                message=self._voice_preparing_message or "◌ Preparing microphone…",
+            )
         elif state == "recording":
             if entering_recording:
                 self._voice_partial = ""
                 self._voice_elapsed_seconds = 0
+                self._voice_preparing_message = ""
             self.set_voice_status(
                 STATE_LISTENING,
                 partial=self._voice_partial,
@@ -566,6 +592,25 @@ class ConsoleComposerBar(Horizontal):
             "" if available else (tooltip or self.DICTATION_IDLE_TOOLTIP)
         )
         self.sync_dictation_state(self._dictation_state)
+
+    def set_voice_preparing_message(self, text: str) -> None:
+        """Show model-preparation progress in the chip, and keep showing it.
+
+        Held in `_voice_preparing_message` rather than written straight to the
+        chip: `sync_dictation_state("starting")` fires from every control-bar
+        refresh, and a one-shot write would be erased by the next unrelated UI
+        change -- during exactly the multi-minute window this message exists
+        for, and replaced by a "Preparing microphone…" that is not even true.
+
+        Args:
+            text: Chip-sized status text (the "◌ " prefix included). Ignored
+                outside the `starting` lifecycle state, so a notice that drains
+                late cannot repaint a chip that has moved on.
+        """
+        if self._dictation_state != "starting":
+            return
+        self._voice_preparing_message = text
+        self.set_voice_status(STATE_PREPARING, message=text)
 
     def set_voice_partial(self, text: str) -> None:
         """Render live recognizer text into the chip while recording.
