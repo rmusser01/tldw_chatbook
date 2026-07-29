@@ -55,8 +55,27 @@ through `LockFileEx`.
 All artifact readers and writers must use this API. In particular, the
 long-lived STT worker must hold shared leases for the root model and every
 loaded dependency for the complete resident-model lifetime, including idle
-reuse. Install, activation, replacement, and deletion paths must take the
-corresponding exclusive leases.
+reuse.
+
+`ModelArtifactService` applies the lease contract to lifecycle operations as
+follows:
+
+- Promotion and deletion take the lifecycle lease in `EXCLUSIVE` mode, then
+  the target artifact lease in `EXCLUSIVE` mode.
+- Activation takes the lifecycle lease in `EXCLUSIVE` mode, then the exact
+  root-and-dependency closure in `SHARED` mode while it verifies and publishes
+  readiness and active state.
+- Reconciliation holds the lifecycle lease in `EXCLUSIVE` mode for the
+  complete operation, then takes `SHARED` leases for exact closures or artifact
+  references when valid records make them known. Cleanup of malformed derived
+  state whose references cannot be trusted may use the lifecycle lease alone.
+- Acquire and resident load take the exact root-and-dependency closure in
+  `SHARED` mode and retain that lease set for the complete handle or resident
+  model lifetime, including idle reuse.
+
+The fixed acquisition order is the lifecycle lease first, followed by sorted
+artifact keys. Reader-only acquisition has no lifecycle lease and takes only
+sorted artifact keys. Sets release in reverse acquisition order.
 
 ## Qualification gate
 
@@ -86,14 +105,11 @@ set deadline.
 
 ### Current status
 
-Local macOS verification passes. Native qualification is still pending until
-the Ubuntu, macOS, and Windows matrix entries all pass for one final commit.
-Do not treat local success, the presence of the workflow, or a subset of the
-matrix as cross-platform proof.
-
-TASK-594 remains blocked while that native result is pending. Any native
-failure leaves TASK-505 in progress and requires the primitive or ADR-025 to be
-revisited before artifact-core implementation starts.
+Local macOS evidence allowed TASK-594 implementation to proceed by explicit
+user decision. This is not cross-platform proof. TASK-505 remains open for
+native Ubuntu and Windows qualification and any final matrix evidence it
+requires. The presence of the workflow, local success, or a subset of the
+matrix must not be reported as completion of that native gate.
 
 ## Scope and limitations
 
