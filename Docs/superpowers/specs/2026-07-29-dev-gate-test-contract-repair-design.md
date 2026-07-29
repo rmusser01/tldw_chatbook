@@ -37,6 +37,9 @@ The failures reproduce on an exact `origin/dev` checkout:
   module-level `settings` objects. The live Llama.cpp and DeepSeek adapters
   deliberately resolve `get_runtime_config_snapshot()` at each request
   boundary under ADR-029.
+- Four `Tests/LLM/test_local_llm_provider_config.py` cases repeat the deleted
+  `settings` pattern for the local-LLM adapter, which also resolves the
+  immutable runtime snapshot at each request boundary.
 - Three real-seam Notes fixtures pass a nonexistent `tmp_path/notes_base` to
   `NotesInteropService`. ADR-029's trusted-directory boundary correctly
   rejects missing directories instead of creating them implicitly.
@@ -83,7 +86,7 @@ Update the tests to describe current behavior:
    VAD for its tiny synthetic callback. Use a bounded event set by the mocked
    `InputStream` constructor before reading the captured callback, and stop the
    mocked recorder in `finally` before asserting that audio was queued.
-6. Update the stale provider request tests to patch
+6. Update the stale Llama.cpp, DeepSeek, and local-LLM request tests to patch
    `get_runtime_config_snapshot()` with a `RuntimeConfigSnapshot` containing
    their test configuration. Do not restore or emulate mutable module-level
    settings.

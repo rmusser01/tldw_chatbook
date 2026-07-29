@@ -38,6 +38,8 @@ regenerate the inventory before reviewing its changed owners and sink topology.
   behavior synchronous, VAD-independent, and exact.
 - Modify `Tests/Chat/test_chat_functions.py`: patch the live runtime-config
   snapshot seam instead of deleted module-level settings.
+- Modify `Tests/LLM/test_local_llm_provider_config.py`: patch the same live
+  runtime-config snapshot seam for local-LLM provider configuration.
 - Modify `Tests/Chat/test_scope_picker_listers.py`: create its fixture-owned
   trusted Notes base before service construction.
 - Modify `Tests/Library/test_library_rag_scope.py`: create both fixture-owned
@@ -324,6 +326,36 @@ git add Tests/Chat/test_chat_functions.py
 git commit -m "test(chat): patch runtime config snapshots"
 ```
 
+### Task 4c2: Patch the local-LLM runtime-config seam
+
+**Files:**
+- Modify: `Tests/LLM/test_local_llm_provider_config.py`
+
+- [ ] **Step 1: Reproduce RED**
+
+Run the module. Expected: all four cases fail because they try to monkeypatch
+the deleted `LLM_API_Calls_Local.settings` object.
+
+- [ ] **Step 2: Use the request-boundary contract**
+
+Import `RuntimeConfigSnapshot`. Replace the settings helper with a snapshot
+helper and monkeypatch `local_calls.get_runtime_config_snapshot` in each case.
+Preserve the documented `api_url`, legacy `api_ip`, precedence, and missing-URL
+assertions. Do not change production.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+../../.venv/bin/python -m pytest \
+  Tests/LLM/test_local_llm_provider_config.py -q
+../../.venv/bin/python -m ruff check \
+  Tests/LLM/test_local_llm_provider_config.py
+../../.venv/bin/python -m ruff format --check \
+  Tests/LLM/test_local_llm_provider_config.py
+git add Tests/LLM/test_local_llm_provider_config.py
+git commit -m "test(llm): patch local runtime config snapshot"
+```
+
 ### Task 4d: Create fixture-owned trusted Notes roots
 
 **Files:**
@@ -493,6 +525,7 @@ Include any conditionally required focused test/production files in that commit.
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
+  Tests/LLM/test_local_llm_provider_config.py \
   Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py \
@@ -510,6 +543,7 @@ Expected: all affected tests pass.
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
+  Tests/LLM/test_local_llm_provider_config.py \
   Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py
@@ -519,6 +553,7 @@ Expected: all affected tests pass.
   Tests/Chat/test_chat_functions.py \
   Tests/Chat/test_scope_picker_listers.py \
   Tests/Library/test_library_rag_scope.py \
+  Tests/LLM/test_local_llm_provider_config.py \
   Tests/DB/test_rag_indexing_db.py \
   Tests/Audio/test_audio_integration.py \
   Tests/Audio/test_recording_service.py
