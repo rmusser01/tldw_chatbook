@@ -1268,15 +1268,40 @@ async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection()
 
 
 @pytest.mark.asyncio
-async def test_mark_unread_refuses_to_overwrite_an_ingested_item():
-    """Data loss. `_mark_item_read_on_open` already declines to downgrade
-    anything but `new`; the unread toggle wrote `new` unconditionally, so a
-    user who ingested an item and then clicked it lost that record and the
-    Ingested filter could no longer find it.
+async def test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_gesture():
+    """Data loss, driven end to end through the gestures a user actually makes.
+
+    Re-review, Important: the first version of this test set the item up with
+    `_update_item_status(..., patch_item=item)`, and `patch_item=` is passed
+    by exactly ONE caller in the whole app -- `_mark_item_read_on_open`. Never
+    by Ingest, never by Ignore. So it only exercised the branch where the
+    reader's cached dict happens to be fresh, which the real flow never
+    produces, and it certified a data-loss path as closed while the loss was
+    still there.
+
+    The real sequence, and what it used to do:
+
+        select the item        -> reader opens it, marks it read
+        Ingest (Inspector)     -> DB says `ingested`; the Items table
+                                  correctly re-renders as `ingested`; but
+                                  `ContentPane.item` / `_selected_content_item`
+                                  still say `reviewed`, because Ingest passes
+                                  no `patch_item=`
+        press "Mark unread"    -> the guard reads the stale `reviewed`, does
+                                  not fire, and destroys the ingest
+
+    So this drives `IngestRequested(screen.selected_entity)` exactly as the
+    Inspector button does, then presses the real `#content-mark-unread-button`,
+    and asserts the DB is untouched. It also asserts the staleness itself, so
+    a future change that happens to keep the dict fresh cannot make this test
+    silently stop testing the thing it exists for.
     """
+    from textual.widgets import Button
+
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.test_screen_navigation import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import UnreadToggleRequested
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import IngestRequested
 
     app = _build_test_app()
     db = app.local_watchlists_service._db()
@@ -1284,26 +1309,131 @@ async def test_mark_unread_refuses_to_overwrite_an_ingested_item():
 
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
-        screen, _pane = await _mount_items_screen(pilot, host)
+        screen, pane = await _mount_items_screen(pilot, host)
         item = screen._loaded_items[0]
+        raw_id = item["item_id"]
 
-        await screen._update_item_status(
-            item["id"], "ingested", notify_toast=False, refresh=False, patch_item=item
+        # 1. Open it in the reader, exactly as a click does.
+        pane.select_item_by_id(str(item["id"]))
+        await pilot.pause(0.5)
+        assert screen.selected_entity is not None
+        assert screen.selected_entity["id"] == item["id"]
+
+        # 2. Ingest it through the Inspector's own message. NO `patch_item=`:
+        #    that is the whole point.
+        screen.post_message(IngestRequested(screen.selected_entity))
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if raw_id in {row["id"] for row in db.get_new_items(status="ingested", limit=10)}:
+                break
+        assert raw_id in {
+            row["id"] for row in db.get_new_items(status="ingested", limit=10)
+        }, "the precondition: the real Ingest gesture really did write `ingested`"
+
+        # The staleness this fix exists for -- assert it, do not assume it.
+        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
+        assert str(content_pane.item.get("status")).lower() != "ingested", (
+            "the reader's cached dict is stale after Ingest -- if this ever "
+            "stops being true, this test is no longer covering the real bug"
         )
-        await pilot.pause(0.3)
-        assert {row["id"] for row in db.get_new_items(status="ingested", limit=10)} == {
-            item["item_id"]
-        }, "the precondition: the item really is ingested"
 
-        screen.post_message(UnreadToggleRequested(dict(item)))
-        await pilot.pause(0.6)
+        # 3. Press the real button.
+        screen.query_one("#content-mark-unread-button", Button).press()
+        await pilot.pause(0.8)
 
-        assert {row["id"] for row in db.get_new_items(status="ingested", limit=10)} == {
-            item["item_id"]
+        assert raw_id in {
+            row["id"] for row in db.get_new_items(status="ingested", limit=10)
         }, "Mark unread must not overwrite an ingested item's status"
-        assert item["item_id"] not in {
+        assert raw_id not in {
             row["id"] for row in db.get_new_items(status="new", limit=10)
         }, "the ingested item must not have been pushed back to new"
+
+
+@pytest.mark.asyncio
+async def test_mark_unread_still_works_on_an_item_that_is_merely_read():
+    """The other side of the guard: the normal case must not be refused.
+
+    A re-read that refuses everything would pass the data-loss test above and
+    break the feature.
+    """
+    from textual.widgets import Button
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        item = screen._loaded_items[0]
+        raw_id = item["item_id"]
+
+        pane.select_item_by_id(str(item["id"]))
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if raw_id in {row["id"] for row in db.get_new_items(status="reviewed", limit=10)}:
+                break
+        assert raw_id in {row["id"] for row in db.get_new_items(status="reviewed", limit=10)}
+
+        screen.query_one("#content-mark-unread-button", Button).press()
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if raw_id in {row["id"] for row in db.get_new_items(status="new", limit=10)}:
+                break
+
+        assert raw_id in {
+            row["id"] for row in db.get_new_items(status="new", limit=10)
+        }, "Mark unread must still work on an item that is simply read"
+
+
+@pytest.mark.asyncio
+async def test_mark_unread_fails_closed_when_the_status_cannot_be_confirmed():
+    """An unanswerable question must not resolve in favour of the destructive
+    branch.
+
+    Marking unread is a convenience the user can simply repeat; overwriting an
+    ingest is not recoverable. So if the backend cannot be asked what the item
+    currently is, the write is refused rather than attempted.
+    """
+    from textual.widgets import Button
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    db = app.local_watchlists_service._db()
+    _seed_three_items(db)
+
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen, pane = await _mount_items_screen(pilot, host)
+        item = screen._loaded_items[0]
+        raw_id = item["item_id"]
+
+        pane.select_item_by_id(str(item["id"]))
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if raw_id in {r["id"] for r in db.get_new_items(status="reviewed", limit=10)}:
+                break
+        assert raw_id in {r["id"] for r in db.get_new_items(status="reviewed", limit=10)}
+
+        async def _unavailable(**_kwargs):
+            raise RuntimeError("backend unavailable")
+
+        screen._controller.list_items = _unavailable
+
+        screen.query_one("#content-mark-unread-button", Button).press()
+        await pilot.pause(0.8)
+
+        assert raw_id in {
+            r["id"] for r in db.get_new_items(status="reviewed", limit=10)
+        }, "an unconfirmable status must be left exactly as it was"
+        assert raw_id not in {
+            r["id"] for r in db.get_new_items(status="new", limit=10)
+        }, "the write must be refused, not attempted, when it cannot be checked"
 
 
 @pytest.mark.asyncio

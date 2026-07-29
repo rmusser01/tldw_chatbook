@@ -123,8 +123,16 @@ WC_SNAPSHOT_TIMEOUT_SECONDS = 1.5
 _ITEM_STATUS_WORKER_GROUP = "wl-item-status"
 
 #: Item statuses the reader's "Mark unread" button must never overwrite: they
-#: are not read/unread states at all, and `new` would destroy the record.
-_NON_READ_STATE_STATUSES = frozenset({"ingested", "ignored", "error"})
+#: are not read/unread states at all, and `new` would destroy the record. A
+#: tuple, not a set, so the lookup in `_blocking_status_for` runs in a fixed
+#: order and its result is reproducible.
+_NON_READ_STATE_STATUSES: tuple[str, ...] = ("ingested", "ignored", "error")
+
+#: How deep to look when asking the backend whether one item currently holds
+#: one of the statuses above. The lookup is narrowed to the item's own source
+#: whenever the item carries one, so this is a per-feed depth, not a global
+#: one -- see `_blocking_status_for`.
+_ITEM_STATUS_LOOKUP_LIMIT = 500
 
 
 def watchlist_delete_consequence(source_count: int) -> str:
@@ -2965,6 +2973,17 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         that happened to the item, and this button would overwrite them with
         `new`, losing the fact of an ingest and dropping the item out of the
         Ingested filter that was the only way to find it again.
+
+        The refusal is decided in `_mark_item_unread`, by asking the backend,
+        NOT from `event.item` (re-review, Important). `event.item` is
+        `ContentPane.item` -- the dict the screen has held since the item was
+        selected -- and `handle_ingest_requested`/`handle_ignore_requested`
+        call `_update_item_status` with no `patch_item=`, so that dict is
+        never updated when they run. `patch_item=` is passed by exactly one
+        caller in the whole app (`_mark_item_read_on_open`) and by neither of
+        those two. Ingest an open item and the reader's dict still says
+        `reviewed`, so a guard reading `event.item` never fires and the button
+        destroys the ingest anyway -- reproduced end to end.
         """
         event.stop()
         item = event.item
@@ -2973,19 +2992,95 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         item_id = item.get("id")
         if item_id is None:
             return
-        status = str(item.get("status") or "").strip().lower()
-        if status in _NON_READ_STATE_STATUSES:
+        self.run_worker(
+            self._mark_item_unread(item_id, item.get("source_id")),
+            exclusive=True,
+            group=_ITEM_STATUS_WORKER_GROUP,
+        )
+
+    async def _mark_item_unread(self, item_id: Any, source_id: Any) -> None:
+        """Ask the backend for the item's real status, then refuse or write.
+
+        Deciding here, from a live query, rather than keeping the screen's
+        cached dicts patched at every status writer (re-review, Important).
+        Both were on the table; this leaves strictly fewer places able to
+        drift:
+
+        * Patching would have to keep the reader's dict in step for every
+          present and future writer of an item status, and it structurally
+          cannot cover a status this screen did not write at all -- a
+          scheduled run marking an item `error`, the server backend, or a
+          second screen.
+        * Asking has exactly one decision point, and it asks the system of
+          record, so it is right no matter who moved the item or when.
+
+        `_loaded_items` is NOT the system of record and cannot be used here:
+        `local_watchlists_service.list_items` collapses `status=None` to
+        `status="new"` (verified), so an ingested item is not merely stale in
+        that cache -- it is absent from it entirely, along with every other
+        non-`new` item. An earlier version of this fix read `_loaded_items`
+        after an awaited `_load_items()` and still wrote `new` over a live
+        ingest, for exactly that reason.
+
+        Fails CLOSED. If the backend cannot be asked, the write is refused
+        and the user is told to retry: marking unread is a convenience the
+        user can repeat, whereas overwriting an ingest is not recoverable, so
+        an unanswered question must not resolve in favour of the destructive
+        branch.
+
+        Args:
+            item_id: Normalized id of the item to mark unread.
+            source_id: The item's own source, used to narrow the lookup. May
+                be None, in which case the lookup is unscoped.
+        """
+        try:
+            blocking = await self._blocking_status_for(item_id, source_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Could not confirm an item's status before marking it unread."
+            )
             self.notify(
-                f"This item is marked {status}; leaving it as it is rather "
+                "Could not confirm this item's current status, so it was left "
+                "unchanged. Try again.",
+                severity="warning",
+            )
+            return
+        if blocking is not None:
+            self.notify(
+                f"This item is marked {blocking}; leaving it as it is rather "
                 "than overwriting that with unread.",
                 severity="warning",
             )
             return
-        self.run_worker(
-            self._update_item_status(item_id, "new"),
-            exclusive=True,
-            group=_ITEM_STATUS_WORKER_GROUP,
-        )
+        await self._update_item_status(item_id, "new")
+
+    async def _blocking_status_for(self, item_id: Any, source_id: Any) -> str | None:
+        """Which `_NON_READ_STATE_STATUSES` value the backend holds for this item.
+
+        One bounded query per candidate status, because the backend's item
+        listing is status-filtered by construction (see `_mark_item_unread`)
+        and there is no single-item read on the controller. An item holds one
+        status, so the first hit is the answer.
+
+        Scoped to the item's own source when it has one, which turns
+        `_ITEM_STATUS_LOOKUP_LIMIT` into a per-feed depth rather than a
+        global one.
+
+        Raises:
+            Exception: Whatever the controller raises. The caller treats an
+                unanswerable question as a refusal, not as a green light.
+        """
+        target = str(item_id)
+        for status in _NON_READ_STATE_STATUSES:
+            rows = await self._controller.list_items(
+                runtime_backend=self.runtime_backend,
+                source_id=source_id,
+                status=status,
+                limit=_ITEM_STATUS_LOOKUP_LIMIT,
+            )
+            if any(str(row.get("id")) == target for row in rows):
+                return status
+        return None
 
     @on(ItemsFilterChanged)
     def handle_items_filter_changed(self, event: ItemsFilterChanged) -> None:
