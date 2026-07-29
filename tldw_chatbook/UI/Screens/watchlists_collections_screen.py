@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from loguru import logger
@@ -1368,7 +1369,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 )
             attach_disabled, attach_tooltip = self._wc_attach_state()
             yield WatchlistsWorkbench(
-                self.region_layout,
+                self._visible_region_layout(),
                 content={
                     # Factories, not instances: `region_layout` is
                     # `recompose=True`, so any collapse/solo/rail toggle
@@ -1388,6 +1389,46 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 id="wl-workbench",
             )
 
+    def _visible_region_layout(self) -> RegionLayout:
+        """The layout actually rendered — `region_layout` with CONTENT
+        gated to the Read tab (fix round 1, Task 4).
+
+        Per the approved design spec (`### Tabs`): "Only Read uses the
+        three-pane split. Sources, Runs, Rules, and Artifacts take the full
+        centre width — they have no collection→feed→item relationship."
+        `active_section == "items"` is this implementation's Read tab (the
+        spec's five sections don't literally match today's six — Overview
+        and Notifications aren't in the spec's list either — but Items is
+        unambiguously the one with an items-to-read relationship, and the
+        only section `ContentPane` is ever fed from; see
+        `handle_item_selected`). On every OTHER section, CONTENT force-
+        collapses regardless of what the user has expanded/collapsed it to,
+        because the reader has nothing to show there and, before this fix,
+        its mere presence (even idle) taxed the Sources create-form's
+        already-zero-slack layout at 160x42.
+
+        This is a DERIVED view layered on top of `self.region_layout`, the
+        same shape `RegionLayout.solo` already establishes for its own
+        collapsed-view-vs-pre-solo-baseline split: the override must never
+        reach `_schedule_layout_persist` (only `_apply_layout`'s own
+        `layout` argument — the real, un-derived preference — does), or a
+        user's real "CONTENT expanded" choice would be silently overwritten
+        on disk just because they happened to be looking at Sources when
+        some unrelated toggle fired a save.
+
+        `FEEDS` has the identical spec violation -- it is unconditionally
+        built by `_build_list_pane` regardless of `active_section`, so it
+        also occupies space on every tab the spec says should be full-width.
+        That predates this change (Phase C) and is NOT fixed here; scoping
+        this fix to CONTENT only, since that is what Task 4 introduced.
+        """
+        if self.active_section == "items":
+            return self.region_layout
+        return replace(
+            self.region_layout,
+            collapsed=frozenset(self.region_layout.collapsed | {Region.CONTENT}),
+        )
+
     def _apply_layout(self, layout: RegionLayout) -> None:
         """Set the layout, push it to the workbench, and persist any change.
 
@@ -1404,7 +1445,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # `Widget.layout` is an existing read-only Textual property the
             # compositor calls `.arrange()` on every render, so shadowing it
             # breaks rendering outright. Verified empirically in Task 3.
-            self.query_one(WatchlistsWorkbench).region_layout = layout
+            #
+            # Pushes the VISIBLE (tab-gated) layout, not the raw `layout`
+            # argument -- see `_visible_region_layout`. Persistence just
+            # below still persists the real, un-derived `layout`.
+            self.query_one(WatchlistsWorkbench).region_layout = self._visible_region_layout()
         except Exception:
             logger.debug("Workbench not mounted yet; layout applies on compose.")
         self._schedule_layout_persist(layout)

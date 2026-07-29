@@ -1058,22 +1058,24 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         # structural landmarks instead: the workbench container, and each
         # region wrapper.
         #
-        # CONTENT no longer starts collapsed on a genuinely fresh config
-        # (Task 4): it now hosts a real reader (`ContentPane`), not the
-        # Phase C placeholder stub, so a first-run user sees it expanded like
-        # every other region — the same first-run default
-        # `region_layout_store.load_region_layout` applies for a never-saved
-        # key. So the body, not the header, is asserted here.
+        # CONTENT starts on this screen's default section (Overview), not
+        # Items -- Task 4's fix round 1: per the approved design spec
+        # ("### Tabs"), only Read (this implementation's Items tab) uses the
+        # three-pane split; every other section is gated to CONTENT's
+        # collapsed header regardless of the underlying `region_layout`
+        # default (which IS expanded now -- see
+        # `WatchlistsCollectionsScreen._visible_region_layout`). So the
+        # header, not the body, is asserted here.
         assert screen.query_one("#wl-workbench")
         for region_id in (
             "wl-region-left_rail",
             "wl-region-feeds",
             "wl-region-items",
-            "wl-region-content",
             "wl-region-right_rail",
         ):
             assert screen.query_one(f"#{region_id}")
-        assert not screen.query("#wl-header-content")
+        assert screen.query_one("#wl-header-content")
+        assert not screen.query("#wl-region-content")
 
 
 @pytest.mark.asyncio
@@ -1091,6 +1093,14 @@ async def test_watchlists_centre_regions_stack_vertically_in_order():
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        # CONTENT only occupies space on the Items (Read) tab -- Task 4 fix
+        # round 1, `WatchlistsCollectionsScreen._visible_region_layout`. This
+        # test is specifically about the three-region stack, so it must be
+        # on that tab, independent of whatever the section otherwise
+        # defaults to.
+        screen.active_section = "items"
+        await pilot.pause()
 
         # Force every region open so all three centre regions have real
         # geometry to compare — independent of whatever CONTENT's first-run
@@ -1309,6 +1319,12 @@ async def test_watchlists_every_region_draws_exactly_one_round_border():
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wc-empty-state")
 
+        # CONTENT only occupies space (and therefore only draws a border) on
+        # the Items (Read) tab -- Task 4 fix round 1. This test iterates
+        # every `Region`, CONTENT included, so it must be on that tab.
+        screen.active_section = "items"
+        await pilot.pause()
+
         screen._apply_layout(RegionLayout())
         await pilot.pause()
         # Regions are focusable, and the app-wide focus affordance is
@@ -1450,6 +1466,11 @@ async def test_watchlists_soloed_feeds_fills_the_centre(size):
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
 
+        # CONTENT only occupies space on the Items (Read) tab -- Task 4 fix
+        # round 1. Soloing/un-soloing it below needs it genuinely present.
+        screen.active_section = "items"
+        await pilot.pause()
+
         screen._apply_layout(RegionLayout())
         await pilot.pause()
         screen._apply_local_wc_snapshot(_WL_OVERFLOW_RECORDS, 40, True)
@@ -1518,6 +1539,12 @@ async def test_watchlists_feeds_cap_keeps_items_taller_when_it_actually_binds(
     async with host.run_test(size=(160, height)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#wl-workbench")
+
+        # CONTENT only occupies space on the Items (Read) tab -- Task 4 fix
+        # round 1. This derivation is specifically about the three-region
+        # split, so it must be on that tab.
+        screen.active_section = "items"
+        await pilot.pause()
 
         screen._apply_layout(RegionLayout())
         await pilot.pause()

@@ -251,3 +251,86 @@ async def test_selecting_an_item_renders_it_in_the_content_region():
         assert content_pane.item is None
         empty_placeholder = content_pane.query_one("#content-empty", Static)
         assert str(empty_placeholder.renderable) == "Select an item to read it."
+
+
+@pytest.mark.asyncio
+async def test_content_region_is_gated_to_the_items_read_tab():
+    """Fix round 1 (coordinator review): per the approved design spec
+    ("### Tabs"), only Read uses the three-pane split -- Sources, Runs,
+    Rules, and Artifacts take the full centre width, with no
+    collection->feed->item relationship to show a reader for. This
+    implementation's Items tab is that Read tab (the only section
+    `ItemSelected` ever comes from), so CONTENT must occupy real space
+    there and nowhere else, regardless of the user's stored collapse
+    preference for it.
+    """
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        # Default section is "overview" -- not Read -- so CONTENT must be
+        # gated to its collapsed header despite the un-gated default
+        # (`region_layout`) being expanded.
+        assert not screen.region_layout.is_collapsed(Region.CONTENT)
+        assert screen.query("#wl-header-content")
+        assert not screen.query("#wl-region-content")
+
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+        assert screen.query("#wl-region-content")
+        assert not screen.query("#wl-header-content")
+
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        assert screen.query("#wl-header-content")
+        assert not screen.query("#wl-region-content")
+
+
+@pytest.mark.asyncio
+async def test_content_region_gating_does_not_clobber_a_real_collapse_preference():
+    """The tab gate is display-only: a user's REAL choice to collapse
+    CONTENT (made on the Items tab) must survive a trip through a non-Read
+    tab and back -- not get silently re-expanded just because the gate
+    also forces it collapsed everywhere else.
+    """
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+
+    from Tests.UI.test_destination_shells import DestinationHarness
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.2)
+        screen = host.screen_stack[-1]
+
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+        assert screen.query("#wl-region-content"), "CONTENT should start expanded on Items"
+
+        # The user deliberately collapses CONTENT while actually on Items.
+        screen._apply_layout(screen.region_layout.toggle(Region.CONTENT))
+        await pilot.pause(0.2)
+        assert screen.region_layout.is_collapsed(Region.CONTENT)
+        assert screen.query("#wl-header-content")
+
+        screen.active_section = "sources"
+        await pilot.pause(0.2)
+        assert screen.query("#wl-header-content")
+
+        screen.active_section = "items"
+        await pilot.pause(0.2)
+        assert screen.region_layout.is_collapsed(Region.CONTENT), (
+            "the real preference must still read collapsed -- the gate must "
+            "never have touched it"
+        )
+        assert screen.query("#wl-header-content"), (
+            "returning to Items must restore the user's own collapse choice, "
+            "not silently force CONTENT back open"
+        )
