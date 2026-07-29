@@ -4,7 +4,7 @@ title: Polish File Notes prepare-session-for-commit UX
 status: Done
 assignee: []
 created_date: '2026-07-28 15:51'
-updated_date: '2026-07-28 20:41'
+updated_date: '2026-07-29 00:35'
 labels:
   - notes
   - git
@@ -72,4 +72,12 @@ Implemented the approved prepare-session UX polish without changing Git ownershi
 - ADR required: no. This is a presentation/lifecycle repair within ADR-035, ADR-033, ADR-011, and ADR-029; no storage, sync, ownership, service-contract, or long-lived architectural boundary changed.
 
 Primary modified files: tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py, tldw_chatbook/Widgets/Library/library_file_notes_workspace.py, and Tests/UI/test_library_file_notes_git.py.
+
+PR #1076 review follow-up:
+
+- Addressed Qodo inline comment 3670053454 by documenting `render_checking` parameters in the required Google-style `Args:` format.
+- Addressed inline comment 3670053457 with a RED/GREEN mounted regression: unexpected admitted Git action exceptions now survive the automatic postflight refresh in the independent `Last action: FAILED` surface only while the admission-captured binding, complete repository identity, and exact session changes remain current.
+- Focused review exposed the corresponding hidden-completion case before push. A second RED/GREEN regression now proves reopening consumes the deferred refresh before cached status rehydration, preserves keyed failure feedback, and restores current rows/focus.
+- Follow-up verification: 85 focused tests passed; adjacent real-service delete/restore tests passed; compileall, Ruff lint, and diff checks passed. Focused fix re-review approved with no open issues.
+- ADR decision remains unchanged: no new ADR; the fixes enforce the existing ADR-035/033 status and authority contracts.
 <!-- SECTION:NOTES:END -->
