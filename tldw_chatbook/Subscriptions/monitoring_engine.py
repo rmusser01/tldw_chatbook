@@ -11,11 +11,13 @@
 # Imports
 import hashlib
 import json
+import re
+import textwrap
 import time
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
-from difflib import SequenceMatcher
+from difflib import SequenceMatcher, unified_diff
 
 #
 # Third-Party Imports
@@ -42,6 +44,12 @@ from ..DB.Subscriptions_DB import (
     SubscriptionError,
 )
 from ..Metrics.metrics_logger import log_histogram, log_counter
+from .item_persist import (
+    CONTENT_FORMAT_DIFF,
+    CONTENT_FORMAT_TEXT,
+    CONTENT_KIND_ARTICLE,
+    CONTENT_KIND_CHANGE,
+)
 from ..Utils.egress import (
     EgressBlockedError,
     EgressFetchError,
@@ -233,6 +241,176 @@ class ContentExtractor:
         matcher = SequenceMatcher(None, old_content, new_content)
         similarity = matcher.ratio()
         return 1.0 - similarity
+
+
+########################################################################################################################
+#
+# content_kind / content_format production (TASK-1343)
+#
+########################################################################################################################
+
+# `content_pane.render_change` styles a diff line by its leading `+` or `-`, so
+# what `check_url` writes to `content` is a unified-diff *body*: `+`/`-` for
+# changed segments, a leading space for context, `@@` for position. The
+# `---`/`+++` file headers `difflib.unified_diff` emits first are dropped
+# deliberately -- they begin with `-` and `+`, so the renderer would paint them
+# red and green as if the header itself were part of the change.
+_DIFF_CONTEXT_SEGMENTS = 1
+
+# `ContentExtractor.extract_text_from_html` joins every chunk of a page with a
+# single space, so the extracted text of a whole page is ONE line containing no
+# newlines at all. A line-based diff of two such snapshots is therefore always
+# exactly `-<the entire old page>` / `+<the entire new page>`: the full text
+# twice, which is simultaneously the least readable and the largest possible
+# thing to store. Both sides are re-segmented before diffing -- on real line
+# breaks when the text has any (`extraction_method` other than full/auto),
+# otherwise on sentence boundaries, which stay aligned under a local edit in a
+# way fixed-width chunking does not.
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+
+# A segment longer than this is wrapped at word boundaries, so no single diff
+# line is wider than the narrow reader pane can show without wrapping mid-word.
+_MAX_DIFF_SEGMENT_CHARS = 110
+
+# Bounds on the stored diff. The body goes into a TEXT column and into a pane
+# roughly nine rows tall, and the full page it was computed from is already
+# kept in `url_snapshots` (`_store_snapshot`) -- so the diff is a summary, not
+# an archive, and losing its tail loses nothing recoverable. 400 lines is far
+# more than a reader scrolls and ~40x the pane's height; 20,000 characters
+# keeps the item row small beside the snapshot. Whichever bound is reached
+# first wins, and the truncation is stated IN the body (see
+# `_DIFF_TRUNCATION_NOTICE`) so a partial change is never presented as a
+# complete one.
+_MAX_DIFF_LINES = 400
+_MAX_DIFF_CHARS = 20_000
+
+# Both notices are worded to start with `[` rather than `+`/`-`, so the
+# renderer does not colour them as though they were themselves a change.
+_DIFF_TRUNCATION_NOTICE = (
+    "[diff truncated: showing the first {kept} of {total} diff lines "
+    "(cap {max_lines} lines / {max_chars} characters). This is a partial "
+    "view of the change; the full page is in this source's snapshot history.]"
+)
+_NO_TEXTUAL_CHANGE_NOTICE = (
+    "[the page changed, but its extracted text is identical once whitespace "
+    "is normalized -- the difference was in markup or spacing only]"
+)
+
+
+def _segment_for_diff(text: str) -> List[str]:
+    """Split one side of a comparison into diffable, pane-width segments.
+
+    Args:
+        text: Extracted page text, which may be a single very long line.
+
+    Returns:
+        Non-empty, whitespace-trimmed segments, none longer than
+        ``_MAX_DIFF_SEGMENT_CHARS``.
+    """
+    source = text or ""
+    units = source.splitlines() if "\n" in source else _SENTENCE_BOUNDARY.split(source)
+    segments: List[str] = []
+    for unit in units:
+        stripped = unit.strip()
+        if not stripped:
+            continue
+        if len(stripped) <= _MAX_DIFF_SEGMENT_CHARS:
+            segments.append(stripped)
+            continue
+        segments.extend(textwrap.wrap(stripped, _MAX_DIFF_SEGMENT_CHARS) or [stripped])
+    return segments
+
+
+def build_change_diff(previous_text: str, current_text: str) -> tuple[str, str]:
+    """Produce the stored diff body and its one-line summary for a site change.
+
+    Before TASK-1343 the site-change path stored the *entire new page text* as
+    the item's ``content``, which meant the reader could see what the page says
+    now but never what actually changed, and the change renderer it was written
+    for was never even dispatched to (nothing wrote ``content_kind``).
+
+    Args:
+        previous_text: The previous snapshot's ``extracted_content``.
+        current_text: The freshly fetched extracted text.
+
+    Returns:
+        ``(diff_body, diff_summary)``. ``diff_body`` is a bounded unified-diff
+        body whose changed lines start with ``+``/``-`` for
+        ``content_pane.render_change`` to colour; ``diff_summary`` is a single
+        line naming how many lines were added and removed, counted over the
+        *whole* diff so it stays true even when the body is truncated.
+    """
+    old_segments = _segment_for_diff(previous_text)
+    new_segments = _segment_for_diff(current_text)
+    lines = [
+        line
+        for line in unified_diff(
+            old_segments,
+            new_segments,
+            n=_DIFF_CONTEXT_SEGMENTS,
+            lineterm="",
+        )
+        # See `_DIFF_CONTEXT_SEGMENTS`: the file headers would be coloured.
+        if not line.startswith(("---", "+++"))
+    ]
+    if not lines:
+        # Reachable: the content hash is taken over the raw extracted text,
+        # while segmentation trims and normalizes whitespace, so a
+        # whitespace-only or markup-only change hashes differently and diffs
+        # to nothing. Saying so beats an empty body, which `render_change`
+        # would replace with "no body captured for this item" -- a claim that
+        # content was never captured, when in fact it was and it matched.
+        return _NO_TEXTUAL_CHANGE_NOTICE, "no textual change after normalization"
+
+    added = sum(1 for line in lines if line.startswith("+"))
+    removed = sum(1 for line in lines if line.startswith("-"))
+    summary = f"{added} line(s) added, {removed} removed"
+
+    kept: List[str] = []
+    chars = 0
+    for line in lines:
+        if len(kept) >= _MAX_DIFF_LINES or chars + len(line) + 1 > _MAX_DIFF_CHARS:
+            break
+        kept.append(line)
+        chars += len(line) + 1
+    if len(kept) < len(lines):
+        kept.append(
+            _DIFF_TRUNCATION_NOTICE.format(
+                kept=len(kept),
+                total=len(lines),
+                max_lines=_MAX_DIFF_LINES,
+                max_chars=_MAX_DIFF_CHARS,
+            )
+        )
+    return "\n".join(kept), summary
+
+
+def classify_change_type(previous_text: str, current_text: str) -> str:
+    """Name what kind of change this is, from what ``check_url`` already has.
+
+    This replaces a hardcoded ``"content"`` literal. Only the three cases the
+    two snapshots can actually distinguish are reported: the richer vocabulary
+    in ``baseline_manager.ChangeReport`` also carries ``'structural'`` and
+    ``'semantic'``, but those need DOM-shape and embedding analysis that
+    ``check_url`` does not do, so claiming them here would be a guess. (That
+    module has no importers at all and its fate is TASK-1360; it is
+    deliberately not extended from here.)
+
+    Args:
+        previous_text: The previous snapshot's extracted text.
+        current_text: The freshly fetched extracted text.
+
+    Returns:
+        ``"new"`` when text appeared where there was none, ``"removed"`` when
+        it disappeared entirely, otherwise ``"content"``.
+    """
+    had_text = bool((previous_text or "").strip())
+    has_text = bool((current_text or "").strip())
+    if not had_text and has_text:
+        return "new"
+    if had_text and not has_text:
+        return "removed"
+    return "content"
 
 
 class FeedMonitor:
@@ -494,6 +672,15 @@ class FeedMonitor:
                     cat.text for cat in item_elem.findall("category") if cat.text
                 ],
                 "enclosures": [],
+                # TASK-1343. Every feed item is an article, and `description`
+                # is whatever the publisher wrote -- plain text or HTML.
+                # Nothing on this path converts it to markdown, and
+                # `_VALID_PAIRINGS` allows only "text" or "markdown" for an
+                # article, so "text" is what was honestly captured; claiming
+                # "markdown" would make `render_article` hand publisher HTML
+                # to a CommonMark parser.
+                "content_kind": CONTENT_KIND_ARTICLE,
+                "content_format": CONTENT_FORMAT_TEXT,
             }
 
             # Get enclosures
@@ -535,6 +722,10 @@ class FeedMonitor:
                 ),
                 "categories": [],
                 "enclosures": [],
+                # TASK-1343, same reasoning as `_parse_rss_item`: `atom:content`
+                # arrives as the publisher's text or HTML, unconverted.
+                "content_kind": CONTENT_KIND_ARTICLE,
+                "content_format": CONTENT_FORMAT_TEXT,
             }
 
             # Get link
@@ -583,6 +774,12 @@ class FeedMonitor:
                     "published_date": self._parse_date(feed_item.get("date_published")),
                     "categories": feed_item.get("tags", []),
                     "enclosures": [],
+                    # TASK-1343. JSON Feed's `content_html` is HTML by
+                    # definition and `content_text` is plain; neither is
+                    # markdown and nothing converts them, so "text" is the
+                    # honest format for both.
+                    "content_kind": CONTENT_KIND_ARTICLE,
+                    "content_format": CONTENT_FORMAT_TEXT,
                 }
 
                 # Get author
@@ -739,27 +936,54 @@ class URLMonitor:
                 return None
 
             # Calculate change details
+            previous_text = previous["extracted_content"] or ""
             change_percentage = ContentExtractor.calculate_change_percentage(
-                previous["extracted_content"] or "", current_content["text"]
+                previous_text, current_content["text"]
             )
 
-            # Check if change exceeds threshold
+            # Check if change exceeds threshold. Both sides of this comparison
+            # are 0.0-1.0 ratios (`change_threshold` defaults to 0.1, i.e. 10%)
+            # -- the scaling to a percentage happens only where the value is
+            # handed to the reader, below.
             threshold = subscription.get("change_threshold", 0.1)
             if change_percentage < threshold:
                 # Change too small
                 breaker.record_success()
                 return None
 
-            # Significant change detected
+            # Significant change detected. TASK-1343: `content` is the DIFF, not
+            # the new page. The full page continues to live in `url_snapshots`
+            # (`_store_snapshot`, immediately below), which is where the
+            # reader's `[full page]` / `[previous snapshot]` affordances read
+            # from; storing it a second time here bought nothing and left the
+            # reader unable to see what had actually changed.
+            diff_body, diff_summary = build_change_diff(
+                previous_text, current_content["text"]
+            )
             change_info = {
                 "type": "url_change",
                 "url": url,
                 "title": f"Change detected: {subscription['name']}",
-                "content": current_content["text"],
+                "content": diff_body,
+                # Without these two, `content_pane.render_for` fell through to
+                # the article renderer for every site change ever detected, and
+                # `render_change` was unreachable in production.
+                "content_kind": CONTENT_KIND_CHANGE,
+                "content_format": CONTENT_FORMAT_DIFF,
                 "content_hash": current_hash,
                 "previous_hash": previous["content_hash"],
-                "change_percentage": change_percentage,
-                "change_type": "content",
+                # Scaled to a percentage, as the column name
+                # (`change_percentage`), the reader's headline
+                # (`f"{float(pct):.0f}% changed"`) and every renderer test
+                # fixture all read it. `calculate_change_percentage` returns a
+                # 0.0-1.0 ratio, so before TASK-1343 made the change renderer
+                # reachable at all, a real 35% change would have displayed as
+                # "0% changed" and a total rewrite as "1% changed".
+                "change_percentage": change_percentage * 100.0,
+                "change_type": classify_change_type(
+                    previous_text, current_content["text"]
+                ),
+                "diff_summary": diff_summary,
                 "published_date": datetime.now(timezone.utc).isoformat(),
             }
 
