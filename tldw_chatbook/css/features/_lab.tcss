@@ -771,3 +771,47 @@ Input.speech-axis-control {
     width: 1fr;
     color: $text-muted;
 }
+
+/* --- Speech: TTS Settings --------------------------------------------- */
+
+/* One row per setting. The legacy form spent FOUR on each -- a blank row,
+ * the input's top border, the label+value row, the bottom border -- which
+ * is what put `save-settings-btn` at y=102 in a 26-row viewport. */
+.speech-setting-row {
+    height: 1;
+    padding: 0 1;
+}
+
+.speech-setting-label {
+    width: 28;
+    color: $text-muted;
+}
+
+.speech-setting-control {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+/* `border: none` on a Select does not reach its inner SelectCurrent, which
+ * keeps its own three-row box and, clipped to `height: 1`, paints only its
+ * top border. */
+.speech-setting-control SelectCurrent {
+    border: none;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}
+
+Input.speech-setting-control {
+    padding: 0 1;
+}
+
+.speech-settings-group {
+    height: auto;
+    border: none;
+    background: transparent;
+    margin-bottom: 1;
+}
