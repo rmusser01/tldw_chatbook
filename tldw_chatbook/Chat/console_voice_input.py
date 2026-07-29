@@ -42,6 +42,14 @@ from ..Utils.local_stt_providers import (  # noqa: F401 - re-exported API
 # them itself; we only need to know whether at least one exists.
 CAPTURE_MODULES: tuple[str, ...] = ("pyaudio", "sounddevice")
 
+# `AudioRecordingService.__init__` raises `AudioRecordingError` unconditionally
+# when NumPy is missing (`Audio/recording_service.py:127`), regardless of which
+# backend was chosen -- so a backend resolving is not sufficient for capture to
+# actually work. Without this, `capture_available()` could report a live
+# microphone that deterministically fails the instant `start()` builds the
+# service.
+CAPTURE_REQUIRED_MODULES: tuple[str, ...] = ("numpy",)
+
 CAPTURE_REASON = "No microphone backend installed."
 CAPTURE_REMEDY = (
     "Microphone support isn't installed. "
@@ -136,12 +144,28 @@ class Availability:
 
 
 def capture_available() -> bool:
-    """Return True when at least one audio capture backend is installed."""
+    """Return True when at least one audio capture backend is installed.
+
+    Returns:
+        True when a `CAPTURE_MODULES` backend resolves AND every module in
+        `CAPTURE_REQUIRED_MODULES` (NumPy) also resolves -- a backend alone
+        is not enough, since `AudioRecordingService` refuses to construct
+        without NumPy no matter which backend it picked.
+    """
+    if not all(_module_installed(name) for name in CAPTURE_REQUIRED_MODULES):
+        return False
     return any(_module_installed(name) for name in CAPTURE_MODULES)
 
 
 def probe() -> Availability:
-    """Report whether dictation is usable, distinguishing the two failures."""
+    """Report whether dictation is usable, distinguishing the two failures.
+
+    Returns:
+        `Availability(ok=True)` when a capture backend and a transcription
+        provider are both present; otherwise `ok=False` with `kind` set to
+        `"missing-capture"` or `"missing-provider"` and a UI-ready
+        `reason`/`remedy` pair for whichever is absent.
+    """
     if not capture_available():
         logger.debug("Console dictation unavailable: no capture backend")
         return Availability(
@@ -256,17 +280,23 @@ class VoiceFinal:
 
 @dataclass(frozen=True)
 class VoiceStateChanged:
+    """The controller's state machine transitioned to `state`."""
+
     state: str
 
 
 @dataclass(frozen=True)
 class VoiceFailed:
+    """Dictation could not proceed; `reason`/`remedy` are UI-ready text."""
+
     reason: str
     remedy: str = ""
 
 
 @dataclass(frozen=True)
 class VoiceProviderOverridden:
+    """The `configured` provider was unavailable; `effective` is what ran instead."""
+
     configured: str
     effective: str
 
@@ -449,6 +479,14 @@ def default_service_factory(**kwargs: Any) -> Any:
     (the package) chains to `transcription_service`, which imports
     faster-whisper and NeMo at module scope. Importing the submodule directly,
     at call time, keeps that cost off app start entirely.
+
+    Args:
+        **kwargs: Forwarded verbatim to `LazyLiveDictationService.__init__`
+            (e.g. `transcription_provider`, `transcription_model`, `language`,
+            `enable_commands`).
+
+    Returns:
+        The constructed `LazyLiveDictationService`.
     """
     from ..Audio.dictation_service_lazy import LazyLiveDictationService
 
@@ -500,6 +538,13 @@ class ConsoleVoiceInputController:
 
     @property
     def state(self) -> str:
+        """The controller's current state.
+
+        Returns:
+            One of the `STATE_*` constants (`STATE_UNAVAILABLE`, `STATE_IDLE`,
+            `STATE_PREPARING`, `STATE_LISTENING`, `STATE_FINISHING`,
+            `STATE_ERROR`).
+        """
         return self._state
 
     @property

@@ -131,10 +131,13 @@ def test_capture_available_true_with_only_one_backend_installed(monkeypatch):
     Drives the real `capture_available()`/`_module_installed()` by patching
     the `importlib.util.find_spec` seam, rather than patching
     `capture_available` itself, so an `any()` -> `all()` mutation would fail
-    this test.
+    this test. NumPy is also resolved here because `capture_available()`
+    unconditionally requires it (`CAPTURE_REQUIRED_MODULES`); pyaudio is
+    deliberately left unresolved so this still proves any(), not all(), over
+    `CAPTURE_MODULES` specifically.
     """
     def fake_find_spec(name, *args, **kwargs):
-        return object() if name == "sounddevice" else None
+        return object() if name in {"sounddevice", "numpy"} else None
 
     monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
 
@@ -146,6 +149,54 @@ def test_capture_available_false_with_no_backend_installed(monkeypatch):
     monkeypatch.setattr(cvi.importlib.util, "find_spec", lambda name, *a, **k: None)
 
     assert cvi.capture_available() is False
+
+
+def test_capture_available_false_when_numpy_missing_even_with_backend_present(monkeypatch):
+    """A resolvable capture backend is not enough on its own.
+
+    `AudioRecordingService.__init__` raises `AudioRecordingError` when NumPy
+    is absent (`Audio/recording_service.py:127`), regardless of which backend
+    was chosen. Without this check, `probe()` would report OK and the Mic
+    button would light up for a start that deterministically fails.
+    """
+    def fake_find_spec(name, *args, **kwargs):
+        return object() if name == "pyaudio" else None  # numpy stays unresolved
+
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+
+    assert cvi.capture_available() is False
+
+
+def test_capture_available_true_when_backend_and_numpy_both_present(monkeypatch):
+    """Positive case, pinned so the NumPy check can't pass vacuously.
+
+    Only "pyaudio" and "numpy" resolve here (everything else, including
+    "sounddevice", stays unresolved), proving both are genuinely consulted
+    rather than the fake happening to resolve everything.
+    """
+    def fake_find_spec(name, *args, **kwargs):
+        return object() if name in {"pyaudio", "numpy"} else None
+
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+
+    assert cvi.capture_available() is True
+
+
+def test_probe_reports_missing_capture_when_numpy_missing(monkeypatch):
+    """`probe()` must route a numpy-less machine through the same
+    "missing-capture" outcome as a machine with no backend at all -- the
+    underlying failure (`AudioRecordingService` refuses to construct) is
+    identical either way.
+    """
+    def fake_find_spec(name, *args, **kwargs):
+        return object() if name == "sounddevice" else None  # numpy stays unresolved
+
+    monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
+
+    availability = cvi.probe()
+
+    assert availability.ok is False
+    assert availability.kind == "missing-capture"
 
 
 def test_installed_local_providers_returns_subset_in_declared_order(monkeypatch):
