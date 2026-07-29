@@ -5,14 +5,27 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import math
+import os
 import re
+import shutil
+import stat
+import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import TypeVar
 from urllib.parse import urlsplit
 
-from .leases import ArtifactLeaseKey
+from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
+
+from .leases import (
+    ArtifactLeaseError,
+    ArtifactLeaseKey,
+    ArtifactOperationLease,
+    LeaseMode,
+)
 
 
 _CANONICAL_COMPONENT = re.compile(
@@ -84,6 +97,9 @@ _DESCRIPTOR_KEYS = frozenset(
         "dependencies",
     }
 )
+_MANIFEST_SCHEMA_VERSION = 1
+_MANIFEST_KEYS = frozenset({"schema_version", "descriptor"})
+_LIFECYCLE_LEASE_KEY = ArtifactLeaseKey("!lifecycle", "1", "writer")
 
 
 class ArtifactDescriptorError(ValueError):
@@ -96,6 +112,26 @@ class ArtifactDescriptorValidationError(ArtifactDescriptorError):
 
 class ArtifactDescriptorParseError(ArtifactDescriptorError):
     """Raised when a serialized descriptor does not match the versioned shape."""
+
+
+class ArtifactError(RuntimeError):
+    """Base error for stable model-artifact service failures."""
+
+
+class ArtifactPathError(ArtifactError):
+    """Raised when a managed or source path is unsafe or invalid."""
+
+
+class ArtifactIntegrityError(ArtifactError):
+    """Raised when artifact payload bytes do not match their descriptor."""
+
+
+class ArtifactConflictError(ArtifactError):
+    """Raised when an immutable destination already contains other state."""
+
+
+class ArtifactStateError(ArtifactError):
+    """Raised when a managed-store operation cannot complete safely."""
 
 
 class ArtifactRole(str, Enum):
@@ -686,3 +722,480 @@ def closure_fingerprint(
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(b"artifact-closure-v1\0" + payload).hexdigest()
+
+
+@dataclass(frozen=True)
+class InstalledArtifact:
+    """One visible entry in the managed installed-artifact tree."""
+
+    path: Path
+    descriptor: ArtifactDescriptor | None
+    ready: bool
+    active: bool
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class ArtifactDiskUsage:
+    """Logical managed-store byte totals and current filesystem capacity."""
+
+    installed_bytes: int
+    staging_bytes: int
+    free_bytes: int
+
+
+class ModelArtifactService:
+    """Own verified immutable artifacts beneath one resolved local root."""
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        lease_timeout_seconds: float = 5.0,
+    ) -> None:
+        """Create or open a managed artifact store.
+
+        Args:
+            root: Service-owned local store root.
+            lease_timeout_seconds: Maximum wait for each writer lease.
+
+        Raises:
+            TypeError: If ``root`` is not a path.
+            ValueError: If the timeout is invalid.
+            ArtifactPathError: If the store layout cannot be established safely.
+        """
+
+        if not isinstance(root, Path):
+            raise TypeError("root must be a Path")
+        if (
+            isinstance(lease_timeout_seconds, bool)
+            or not isinstance(lease_timeout_seconds, (int, float))
+            or not math.isfinite(lease_timeout_seconds)
+            or lease_timeout_seconds < 0
+        ):
+            raise ValueError("lease_timeout_seconds must be finite and nonnegative")
+        try:
+            self._root = root.resolve(strict=False)
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ArtifactPathError("failed to resolve artifact store root") from error
+        self._lease_timeout_seconds = float(lease_timeout_seconds)
+        self._artifacts_path = self._root / "artifacts"
+        self._active_path = self._root / "active"
+        self._ready_path = self._root / "ready"
+        self._staging_path = self._root / "staging"
+        self._locks_path = self._root / "locks"
+        for path in (
+            self._artifacts_path,
+            self._active_path,
+            self._ready_path,
+            self._staging_path,
+            self._locks_path,
+        ):
+            self._ensure_owned_directory(path)
+
+    @property
+    def artifacts_path(self) -> Path:
+        """Return the managed immutable-artifact directory."""
+
+        return self._artifacts_path
+
+    @property
+    def staging_path(self) -> Path:
+        """Return the non-loadable same-filesystem staging directory."""
+
+        return self._staging_path
+
+    def artifact_path(self, reference: ArtifactRef) -> Path:
+        """Return the contained final path for one validated reference."""
+
+        if type(reference) is not ArtifactRef:
+            raise TypeError("reference must be an ArtifactRef")
+        return (
+            self._artifacts_path
+            / reference.artifact_id
+            / reference.revision
+            / reference.variant
+        )
+
+    def list_installed(self) -> tuple[InstalledArtifact, ...]:
+        """Return a deterministic manifest-only installed inventory."""
+
+        installed: list[InstalledArtifact] = []
+
+        def invalid(path: Path, message: str) -> None:
+            installed.append(
+                InstalledArtifact(
+                    path=path,
+                    descriptor=None,
+                    ready=False,
+                    active=False,
+                    error=message,
+                )
+            )
+
+        def visit(path: Path, depth: int) -> None:
+            try:
+                mode = path.stat(follow_symlinks=False).st_mode
+            except OSError as error:
+                invalid(path, f"cannot inspect managed entry: {error}")
+                return
+            if stat.S_ISLNK(mode):
+                invalid(path, "managed entry is a symlink")
+                return
+            if not stat.S_ISDIR(mode):
+                invalid(path, "managed entry is not a directory")
+                return
+            if depth == 3:
+                try:
+                    relative = path.relative_to(self._artifacts_path)
+                    reference = ArtifactRef(*relative.parts)
+                    descriptor = self._read_manifest(path)
+                    if descriptor.reference != reference:
+                        raise ArtifactConflictError(
+                            "manifest reference does not match its directory"
+                        )
+                except (
+                    ArtifactDescriptorError,
+                    ArtifactError,
+                    TypeError,
+                    ValueError,
+                ) as error:
+                    invalid(path, str(error))
+                    return
+                installed.append(
+                    InstalledArtifact(
+                        path=path,
+                        descriptor=descriptor,
+                        ready=False,
+                        active=False,
+                    )
+                )
+                return
+            try:
+                children = sorted(
+                    (Path(entry.path) for entry in os.scandir(path)),
+                    key=lambda child: child.name,
+                )
+            except OSError as error:
+                invalid(path, f"cannot scan managed entry: {error}")
+                return
+            if not children:
+                invalid(path, "managed entry has an incomplete directory identity")
+                return
+            for child in children:
+                visit(child, depth + 1)
+
+        try:
+            roots = sorted(
+                (Path(entry.path) for entry in os.scandir(self._artifacts_path)),
+                key=lambda child: child.name,
+            )
+        except OSError as error:
+            invalid(self._artifacts_path, f"cannot scan artifacts directory: {error}")
+        else:
+            for root in roots:
+                visit(root, 1)
+        return tuple(sorted(installed, key=lambda item: item.path.as_posix()))
+
+    def disk_usage(self) -> ArtifactDiskUsage:
+        """Return logical managed regular-file bytes and current free space."""
+
+        try:
+            return ArtifactDiskUsage(
+                installed_bytes=self._regular_tree_bytes(self._artifacts_path),
+                staging_bytes=self._regular_tree_bytes(self._staging_path),
+                free_bytes=shutil.disk_usage(self._root)[2],
+            )
+        except OSError as error:
+            raise ArtifactStateError("failed to account artifact disk usage") from error
+
+    def install(
+        self,
+        descriptor: ArtifactDescriptor,
+        source_directory: Path,
+    ) -> ArtifactRef:
+        """Verify and promote one local source directory immutably."""
+
+        if type(descriptor) is not ArtifactDescriptor:
+            raise TypeError("descriptor must be an ArtifactDescriptor")
+        if not isinstance(source_directory, Path):
+            raise TypeError("source_directory must be a Path")
+        self._validate_payload_tree(source_directory, descriptor.files)
+
+        staging: Path | None = None
+        try:
+            staging = Path(
+                tempfile.mkdtemp(
+                    prefix="install-",
+                    dir=self._staging_path,
+                )
+            )
+            self._copy_payload(descriptor, source_directory, staging)
+            destination = self.artifact_path(descriptor.reference)
+
+            # ponytail: one lifecycle writer lock is enough until measured install throughput
+            # justifies per-artifact writer coordination.
+            with ArtifactOperationLease(
+                self._locks_path,
+                _LIFECYCLE_LEASE_KEY,
+                LeaseMode.EXCLUSIVE,
+                timeout_seconds=self._lease_timeout_seconds,
+            ):
+                with ArtifactOperationLease(
+                    self._locks_path,
+                    descriptor.reference.lease_key(),
+                    LeaseMode.EXCLUSIVE,
+                    timeout_seconds=self._lease_timeout_seconds,
+                ):
+                    if destination.exists() or destination.is_symlink():
+                        self._verify_existing_destination(
+                            destination,
+                            descriptor,
+                        )
+                        return descriptor.reference
+                    self._verify_payload(staging, descriptor.files)
+                    atomic_write_json(
+                        staging / "manifest.json",
+                        {
+                            "schema_version": _MANIFEST_SCHEMA_VERSION,
+                            "descriptor": descriptor.to_dict(),
+                        },
+                    )
+                    self._ensure_final_parent(destination.parent)
+                    if destination.exists() or destination.is_symlink():
+                        raise ArtifactConflictError(
+                            "immutable artifact destination already exists"
+                        )
+                    self._promote(staging, destination)
+                    staging = None
+            return descriptor.reference
+        except ArtifactError:
+            raise
+        except ArtifactLeaseError as error:
+            raise ArtifactStateError(
+                "failed to acquire artifact writer leases"
+            ) from error
+        except OSError as error:
+            raise ArtifactStateError("artifact installation I/O failed") from error
+        finally:
+            if staging is not None:
+                try:
+                    shutil.rmtree(staging)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+
+    def _ensure_owned_directory(self, path: Path) -> None:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            mode = path.stat(follow_symlinks=False).st_mode
+        except OSError as error:
+            raise ArtifactPathError(
+                f"failed to create managed directory {path.name}"
+            ) from error
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise ArtifactPathError(f"managed path {path.name} must be a directory")
+
+    def _regular_tree_bytes(self, root: Path) -> int:
+        total = 0
+        for entry in os.scandir(root):
+            entry_stat = entry.stat(follow_symlinks=False)
+            if stat.S_ISREG(entry_stat.st_mode):
+                total += entry_stat.st_size
+            elif stat.S_ISDIR(entry_stat.st_mode):
+                total += self._regular_tree_bytes(Path(entry.path))
+        return total
+
+    def _ensure_final_parent(self, parent: Path) -> None:
+        relative = parent.relative_to(self._artifacts_path)
+        current = self._artifacts_path
+        for component in relative.parts:
+            current = current / component
+            self._ensure_owned_directory(current)
+
+    def _validate_payload_tree(
+        self,
+        root: Path,
+        files: tuple[ArtifactFile, ...],
+        *,
+        allowed_files: frozenset[str] = frozenset(),
+    ) -> None:
+        try:
+            root_mode = root.stat(follow_symlinks=False).st_mode
+        except (FileNotFoundError, NotADirectoryError) as error:
+            raise ArtifactPathError(
+                "source_directory must be an existing directory"
+            ) from error
+        except (OSError, ValueError) as error:
+            raise ArtifactPathError("failed to inspect source_directory") from error
+        if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
+            raise ArtifactPathError("source_directory must be a non-symlink directory")
+        expected_files = {item.path for item in files}
+        permitted_files = expected_files | allowed_files
+        expected_directories = {
+            "/".join(Path(path).parts[:index])
+            for path in expected_files
+            for index in range(1, len(Path(path).parts))
+        }
+        actual_files: set[str] = set()
+
+        def scan(directory: Path, prefix: str = "") -> None:
+            try:
+                entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+            except OSError as error:
+                raise ArtifactPathError("failed to scan source_directory") from error
+            for entry in entries:
+                relative = f"{prefix}/{entry.name}" if prefix else entry.name
+                try:
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                except OSError as error:
+                    raise ArtifactPathError(
+                        f"failed to inspect source entry {relative}"
+                    ) from error
+                if stat.S_ISLNK(mode):
+                    raise ArtifactPathError(f"source entry is a symlink: {relative}")
+                if stat.S_ISDIR(mode):
+                    if relative not in expected_directories:
+                        raise ArtifactPathError(
+                            f"source contains an undeclared directory: {relative}"
+                        )
+                    scan(Path(entry.path), relative)
+                elif stat.S_ISREG(mode):
+                    if relative not in permitted_files:
+                        raise ArtifactPathError(
+                            f"source contains an undeclared file: {relative}"
+                        )
+                    actual_files.add(relative)
+                else:
+                    raise ArtifactPathError(
+                        f"source contains a special entry: {relative}"
+                    )
+
+        scan(root)
+        missing = expected_files - actual_files
+        if missing:
+            raise ArtifactPathError(
+                f"source is missing declared files: {sorted(missing)}"
+            )
+
+    def _copy_payload(
+        self,
+        descriptor: ArtifactDescriptor,
+        source: Path,
+        staging: Path,
+    ) -> None:
+        for item in descriptor.files:
+            destination = staging / item.path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source / item.path, destination, follow_symlinks=False)
+
+    def _verify_payload(
+        self,
+        root: Path,
+        files: tuple[ArtifactFile, ...],
+        *,
+        allowed_files: frozenset[str] = frozenset(),
+    ) -> None:
+        self._validate_payload_tree(
+            root,
+            files,
+            allowed_files=allowed_files,
+        )
+        for item in files:
+            path = root / item.path
+            try:
+                size = path.stat(follow_symlinks=False).st_size
+                digest = hashlib.sha256()
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError as error:
+                raise ArtifactIntegrityError(
+                    f"failed to verify payload file {item.path}"
+                ) from error
+            if size != item.size_bytes or digest.hexdigest() != item.sha256:
+                raise ArtifactIntegrityError(
+                    f"payload file does not match descriptor: {item.path}"
+                )
+
+    def _verify_existing_destination(
+        self,
+        destination: Path,
+        descriptor: ArtifactDescriptor,
+    ) -> None:
+        existing = self._read_manifest(destination)
+        if existing != descriptor:
+            raise ArtifactConflictError(
+                "immutable artifact destination has a different descriptor"
+            )
+        try:
+            self._verify_payload(
+                destination,
+                descriptor.files,
+                allowed_files=frozenset({"manifest.json"}),
+            )
+        except ArtifactPathError as error:
+            raise ArtifactIntegrityError(
+                "existing artifact payload tree is invalid"
+            ) from error
+
+    def _read_manifest(self, directory: Path) -> ArtifactDescriptor:
+        try:
+            directory_mode = directory.stat(follow_symlinks=False).st_mode
+            manifest_path = directory / "manifest.json"
+            manifest_mode = manifest_path.stat(follow_symlinks=False).st_mode
+            if (
+                stat.S_ISLNK(directory_mode)
+                or not stat.S_ISDIR(directory_mode)
+                or stat.S_ISLNK(manifest_mode)
+                or not stat.S_ISREG(manifest_mode)
+            ):
+                raise ArtifactConflictError(
+                    "immutable artifact destination has no valid manifest"
+                )
+            with manifest_path.open("r", encoding="utf-8") as handle:
+                raw = json.load(handle, object_pairs_hook=_reject_duplicate_json_keys)
+            _require_exact_keys(raw, _MANIFEST_KEYS, "manifest")
+            assert isinstance(raw, Mapping)
+            if (
+                raw["schema_version"] != _MANIFEST_SCHEMA_VERSION
+                or type(raw["schema_version"]) is not int
+            ):
+                raise ArtifactDescriptorParseError(
+                    "manifest schema_version must be the integer 1"
+                )
+            descriptor_raw = raw["descriptor"]
+            if not isinstance(descriptor_raw, Mapping):
+                raise ArtifactDescriptorParseError(
+                    "manifest descriptor must be a mapping"
+                )
+            return ArtifactDescriptor.from_dict(descriptor_raw)
+        except ArtifactConflictError:
+            raise
+        except (
+            ArtifactDescriptorError,
+            FileNotFoundError,
+            NotADirectoryError,
+            OSError,
+            UnicodeError,
+            json.JSONDecodeError,
+            ValueError,
+        ) as error:
+            raise ArtifactConflictError(
+                "immutable artifact destination has no valid matching manifest"
+            ) from error
+
+    def _promote(self, staging: Path, destination: Path) -> None:
+        os.rename(staging, destination)
+
+
+def _reject_duplicate_json_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
