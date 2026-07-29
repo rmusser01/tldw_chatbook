@@ -488,42 +488,38 @@ class TestAudioRecordingIntegration:
                 with patch(
                     "tldw_chatbook.Audio.recording_service.sd.InputStream"
                 ) as mock_stream_class:
-                    # Setup context manager mock
                     mock_stream = MagicMock()
-                    mock_stream_class.return_value.__enter__.return_value = mock_stream
-                    mock_stream_class.return_value.__exit__.return_value = None
+                    mock_stream.__enter__.return_value = mock_stream
+                    mock_stream.__exit__.return_value = None
+                    callback_ready = threading.Event()
+                    captured_callback = {}
 
                     # use_vad=False for the same reason as the pyaudio flow test
                     # above (task-1466): the 4-sample chunk below is smaller
                     # than one 20ms VAD frame, so with VAD on the frame loop
                     # never executes and nothing reaches the queue — the
                     # assertion fails whenever webrtcvad is installed.
+
+                    def create_input_stream(*args, **kwargs):
+                        captured_callback["callback"] = kwargs["callback"]
+                        callback_ready.set()
+                        return mock_stream
+
+                    mock_stream_class.side_effect = create_input_stream
                     service = AudioRecordingService(
                         backend="sounddevice", use_vad=False
                     )
-
-                    def stop_recording_loop(_interval):
-                        service.is_recording = False
-
-                    service.is_recording = True
-                    with patch(
-                        "tldw_chatbook.Audio.recording_service.time.sleep",
-                        side_effect=stop_recording_loop,
-                    ):
-                        service._sounddevice_recording_loop()
-
-                    # Simulate callback being called
-                    callback_func = mock_stream_class.call_args[1]["callback"]
                     test_data = np.array(
                         [[0.5], [-0.5], [0.25], [-0.25]], dtype=np.float32
                     )
-                    service.is_recording = True
-                    callback_func(test_data, 4, None, None)
 
-                    # Stop recording
-                    service.is_recording = False
+                    try:
+                        assert service.start_recording() is True
+                        assert callback_ready.wait(timeout=1.0)
+                        captured_callback["callback"](test_data, 4, None, None)
+                    finally:
+                        service.stop_recording()
 
-                    # Check that audio was processed
                     assert not service.audio_queue.empty()
 
 
