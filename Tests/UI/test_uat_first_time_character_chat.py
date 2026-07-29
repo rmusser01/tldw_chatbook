@@ -189,7 +189,13 @@ async def test_first_time_user_character_chat_journey(
         # -- 2. Navigate to Personas (Characters mode is the default) -------
         app.post_message(NavigateToScreen("personas"))
         await _wait_for(
-            pilot, lambda: type(app.screen).__name__ == "PersonasScreen"
+            pilot,
+            lambda: (
+                app.screen
+                if type(app.screen).__name__ == "PersonasScreen"
+                and app.screen.is_mounted
+                else None
+            ),
         )
         personas = app.screen
         assert personas.state.active_mode == "characters"
