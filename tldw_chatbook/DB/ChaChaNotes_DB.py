@@ -5927,6 +5927,7 @@ UPDATE db_schema_version
         assistant_authority_id: Any = _UNSET,
         persona_memory_mode: Any = _UNSET,
         runtime_backend: Any = _UNSET,
+        existing_conversation: bool = False,
         existing_character_id: Any = None,
         existing_assistant_kind: Any = None,
         existing_assistant_id: Any = None,
@@ -6041,8 +6042,35 @@ UPDATE db_schema_version
                         "character_id canonical decimal form."
                     )
 
+                existing_kind = self._normalize_nullable_text(
+                    existing_assistant_kind
+                )
+                if existing_kind is not None:
+                    existing_kind = existing_kind.lower()
+                existing_local_identity_unchanged = (
+                    existing_conversation
+                    and self._normalize_runtime_backend(
+                        existing_runtime_backend
+                    )
+                    == "local"
+                    and existing_kind == "character"
+                    and self._normalize_positive_character_id(
+                        existing_character_id
+                    )
+                    == normalized_character_id
+                    and self._normalize_conversation_identity_text(
+                        existing_assistant_id,
+                        field_name="assistant_id",
+                    )
+                    == normalized_assistant_id
+                )
+
                 if authority_was_supplied and supplied_authority is None:
                     normalized_authority = None
+                elif existing_local_identity_unchanged and not authority_was_supplied:
+                    normalized_authority = self._normalize_conversation_authority(
+                        existing_assistant_authority_id
+                    )
                 else:
                     local_authority = self.get_local_authority_id()
                     if (
@@ -7074,6 +7102,7 @@ UPDATE db_schema_version
                             _UNSET,
                         ),
                         runtime_backend=runtime_backend,
+                        existing_conversation=True,
                         existing_character_id=current_state["character_id"],
                         existing_assistant_kind=current_state["assistant_kind"],
                         existing_assistant_id=current_state["assistant_id"],

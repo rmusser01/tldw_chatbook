@@ -368,6 +368,120 @@ def test_local_character_explicit_null_stays_unassignable_and_title_update_prese
     assert updated["assistant_authority_id"] is None
 
 
+def test_local_character_omitted_authority_survives_noop_runtime_update(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "local-null-runtime.sqlite", client_id="crud")
+    conversation_id = db.add_conversation(
+        {
+            "character_id": 1,
+            "assistant_kind": "character",
+            "assistant_authority_id": None,
+        }
+    )
+    created = db.get_conversation_by_id(conversation_id)
+
+    assert db.update_conversation(
+        conversation_id,
+        {"runtime_backend": "local"},
+        expected_version=created["version"],
+    )
+    updated = db.get_conversation_by_id(conversation_id)
+    assert updated["assistant_authority_id"] is None
+
+
+def test_local_character_omitted_authority_survives_redundant_identity_update(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "local-null-identity.sqlite", client_id="crud")
+    conversation_id = db.add_conversation(
+        {
+            "character_id": 1,
+            "assistant_kind": "character",
+            "assistant_authority_id": None,
+        }
+    )
+    created = db.get_conversation_by_id(conversation_id)
+
+    assert db.update_conversation(
+        conversation_id,
+        {
+            "runtime_backend": " LOCAL ",
+            "assistant_kind": " CHARACTER ",
+            "character_id": "1",
+            "assistant_id": " 1 ",
+        },
+        expected_version=created["version"],
+    )
+    updated = db.get_conversation_by_id(conversation_id)
+    assert updated["runtime_backend"] == "local"
+    assert updated["assistant_kind"] == "character"
+    assert updated["character_id"] == 1
+    assert updated["assistant_id"] == "1"
+    assert updated["assistant_authority_id"] is None
+
+
+@pytest.mark.parametrize(
+    ("source_kind", "source_id"),
+    [("generic", "console"), ("persona", "persona-1")],
+)
+def test_noncharacter_to_local_character_transition_infers_omitted_authority(
+    tmp_path: Path,
+    source_kind: str,
+    source_id: str,
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / f"{source_kind}-to-local.sqlite",
+        client_id="crud",
+    )
+    conversation_id = db.add_conversation(
+        {
+            "assistant_kind": source_kind,
+            "assistant_id": source_id,
+        }
+    )
+    source = db.get_conversation_by_id(conversation_id)
+
+    assert db.update_conversation(
+        conversation_id,
+        {
+            "runtime_backend": "local",
+            "assistant_kind": "character",
+            "character_id": 1,
+        },
+        expected_version=source["version"],
+    )
+    local = db.get_conversation_by_id(conversation_id)
+    assert local["assistant_id"] == "1"
+    assert local["assistant_authority_id"] == db.get_local_authority_id()
+
+
+def test_local_character_identity_change_infers_omitted_authority(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "local-character-change.sqlite", client_id="crud")
+    first_character_id = db.add_character_card({"name": "Imported Character"})
+    second_character_id = db.add_character_card({"name": "Replacement Character"})
+    conversation_id = db.add_conversation(
+        {
+            "character_id": first_character_id,
+            "assistant_kind": "character",
+            "assistant_authority_id": None,
+        }
+    )
+    imported = db.get_conversation_by_id(conversation_id)
+
+    assert db.update_conversation(
+        conversation_id,
+        {"character_id": second_character_id},
+        expected_version=imported["version"],
+    )
+    changed = db.get_conversation_by_id(conversation_id)
+    assert changed["character_id"] == second_character_id
+    assert changed["assistant_id"] == str(second_character_id)
+    assert changed["assistant_authority_id"] == db.get_local_authority_id()
+
+
 def test_local_character_rejects_noncanonical_identity_or_wrong_authority(
     tmp_path: Path,
 ) -> None:
