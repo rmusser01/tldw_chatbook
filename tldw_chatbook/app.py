@@ -205,6 +205,7 @@ from tldw_chatbook.Utils.Emoji_Handling import (
 )
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
+from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.TTS import TTSProfileService
 from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
@@ -6682,6 +6683,10 @@ class TldwCli(
         self._bind_tts_service()
         mount_start = time.perf_counter()
 
+        # TASK-1240. Anchors a session in the persistent log; its absence dates
+        # a crash to before this point.
+        persist_event("app", "app_started")
+
         # Restore persisted Library ingest job history (self.library_ingest_jobs
         # already exists -- constructed store-less in __init__). Never raises:
         # a corrupt/unreadable store falls back to starting empty.
@@ -7682,6 +7687,9 @@ class TldwCli(
         import asyncio
 
         logging.info("--- App Unmounting ---")
+        # TASK-1240. Distinguishes a clean exit from a kill: a log whose last
+        # line is app_started ended abruptly.
+        persist_event("app", "app_stopping")
         try:
             await self._shutdown_file_notes_session_owner()
         except Exception as error:
