@@ -466,6 +466,32 @@ class LazyLiveDictationService:
                 logger.error(f"Processing loop error: {e}")
                 self._notify_error(e)
 
+        # `stop_dictation()` sets `stop_processing` and the `while` above
+        # exits on its very next iteration, abandoning whatever is still in
+        # `accumulated_audio` plus anything left unread in
+        # `processing_queue`. Without this, a capture shorter than one
+        # `buffer_duration_ms` window is transcribed as nothing at all, and
+        # the tail of every longer capture (audio queued since the last
+        # periodic flush) is silently dropped. Drain the queue and flush
+        # whatever remains before the thread returns.
+        try:
+            while True:
+                try:
+                    item_type, data = self.processing_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+                if item_type == "audio":
+                    accumulated_audio.append(data)
+
+            if accumulated_audio:
+                audio_data = b"".join(accumulated_audio)
+                self._process_audio_buffer(audio_data)
+                accumulated_audio = []
+        except Exception as e:
+            logger.error(f"Processing loop final flush error: {e}")
+            self._notify_error(e)
+
     def _cleanup(self):
         """Clean up resources with privacy considerations."""
         with self.state_lock:
