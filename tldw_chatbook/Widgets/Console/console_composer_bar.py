@@ -11,6 +11,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.events import Click, DescendantBlur, DescendantFocus, MouseUp
 from textual.geometry import Region
@@ -100,7 +101,13 @@ class ConsoleComposerBar(Horizontal):
     #: `sync_dictation_state`'s idle tooltip, and used as the fallback in
     #: `set_dictation_availability` -- an `Availability(ok=False)` with no
     #: `remedy` text must not blank the tooltip entirely.
-    DICTATION_IDLE_TOOLTIP = "Record one English utterance with local Parakeet v2."
+    #: Deliberately names no provider, model or language: dictation now streams
+    #: through whichever speech-to-text provider `console_voice_input.resolve()`
+    #: picks, in `transcription.default_language`. Any static claim about
+    #: "English" or "Parakeet v2" here is false on most machines.
+    DICTATION_IDLE_TOOLTIP = (
+        "Dictate into the draft with the configured speech-to-text provider."
+    )
 
     def __init__(
         self,
@@ -515,7 +522,9 @@ class ConsoleComposerBar(Horizontal):
             # where there is nothing left to cancel) and a press cancels.
             "starting": "Preparing the speech model — press to cancel.",
             "recording": "Stop microphone recording and transcribe.",
-            "transcribing": "Transcribing locally with Parakeet v2 INT8…",
+            # No provider name here either: the transcribing phase runs on the
+            # same resolved provider the idle tooltip declines to name.
+            "transcribing": "Transcribing…",
         }
         # Unavailability is cosmetic-only, and only shown at idle: the button
         # stays real-clickable (never Textual `disabled`) so a press can
@@ -2150,6 +2159,17 @@ class ConsoleComposerBar(Horizontal):
     ) -> None:
         """Render the dictation state into the inline voice chip.
 
+        Every write goes through `textual.content.Content`, never a bare string:
+        a `Static` parses strings as Textual markup, and `rich.markup.escape`
+        (which used to guard this) only escapes tags opening with `[a-z#/@]`.
+        Whisper's own tokens are uppercase, so `[BLANK_AUDIO]` and `[Music]`
+        survived escaping untouched and were then *stripped at paint time* --
+        the chip showed "● 0:03    hi" for "● 0:03  [BLANK_AUDIO] [Music] hi".
+        `Content` carries plain text with no markup semantics at all, so it
+        fixes the swallowing and the opposite failure (`[/tmp/x]` raising
+        `MarkupError`) in one move. Nothing in this chip is ever markup: the
+        text is either our own constants or recognizer output.
+
         Args:
             state: One of the `STATE_*` constants from `console_voice_input`.
             partial: In-flight recognizer text. Truncated from the left so the
@@ -2167,7 +2187,7 @@ class ConsoleComposerBar(Horizontal):
             chip.styles.display = "none"
             chip.styles.width = 0
             chip.styles.min_width = 0
-            chip.update("")
+            chip.update(Content(""))
             return
 
         # `size` is (0, 0) before the first layout; fall back to the ceiling
@@ -2196,7 +2216,7 @@ class ConsoleComposerBar(Horizontal):
         chip.styles.height = 1
         chip.styles.min_height = 1
         chip.set_class(state == "error", "console-voice-status-error")
-        chip.update(escape(body))
+        chip.update(Content(body))
 
     def compose(self) -> ComposeResult:
         expanded = Horizontal(

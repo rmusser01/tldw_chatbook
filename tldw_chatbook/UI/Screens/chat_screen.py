@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 import asyncio
+from functools import partial
 import inspect
 import os
 from pathlib import Path
@@ -417,6 +418,28 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="ChatScreen")
 CONSOLE_DICTATION_MAX_SECONDS = 60.0
+#: `AudioRecordingService`'s own capture defaults, restated rather than
+#: imported: `tldw_chatbook.Audio` pulls in the transcription stack at module
+#: scope, and this module must stay importable without it (see
+#: `Tests/UI/test_console_dictation_streaming.py`'s subprocess import guard).
+CONSOLE_DICTATION_SAMPLE_RATE = 16_000
+CONSOLE_DICTATION_CHANNELS = 1
+CONSOLE_DICTATION_SAMPLE_WIDTH = 2
+#: Slack over the wall-clock cap so the bound is a *memory* backstop and never
+#: the thing that ends an ordinary capture: the 60 s timer below should always
+#: win first, and only a recorder that outruns its own clock (a wedged timer, a
+#: device delivering faster than real time) should ever reach this.
+CONSOLE_DICTATION_BUFFER_HEADROOM = 1.5
+#: The PCM bound handed to the recorder. Without it `AudioRecordingService`
+#: retains every chunk for the whole capture -- and so do its undrained
+#: `audio_queue` and `LazyLiveDictationService.audio_buffer`, at ~32 KB/s each.
+CONSOLE_DICTATION_MAX_BYTES = int(
+    CONSOLE_DICTATION_SAMPLE_RATE
+    * CONSOLE_DICTATION_CHANNELS
+    * CONSOLE_DICTATION_SAMPLE_WIDTH
+    * CONSOLE_DICTATION_MAX_SECONDS
+    * CONSOLE_DICTATION_BUFFER_HEADROOM
+)
 CONSOLE_LIBRARY_RAG_SOURCE_SCOPE = ("notes", "media", "conversations")
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 CONSOLE_LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
@@ -555,6 +578,34 @@ class ConsoleDictationEvent(Message):
         self.event = event
 
 
+class ConsoleDictationLimitSignal(Message):
+    """Carry a recorder PCM-bound signal onto the Console screen's thread.
+
+    `AudioRecordingService` invokes its `on_buffer_limit` callback from a
+    freshly spawned notification thread, so the same rule as
+    `ConsoleDictationEvent` applies: `post_message`, never `call_from_thread`
+    (which blocks its caller until the UI thread gets round to it).
+
+    Named to avoid `Message.handler_name`: Textual derives
+    `on_<snake_case_class_name>` from this class and dispatches both that and
+    its `_on_`-prefixed private twin. A `ConsoleDictationBufferLimit` would
+    therefore have been delivered straight into
+    `_on_console_dictation_buffer_limit` -- the recorder callback that *posts*
+    this message -- with the message itself as the `session` argument, i.e. an
+    unbounded message loop (8 GB of RSS in three minutes, measured).
+    """
+
+    def __init__(self, session: Any) -> None:
+        """Wrap one buffer-limit signal.
+
+        Args:
+            session: The session whose recorder hit the bound, so the screen
+                can drop a signal from a capture it has already torn down.
+        """
+        super().__init__()
+        self.session = session
+
+
 class ConsoleStreamingDictationSession:
     """Drive `ConsoleVoiceInputController` through the one-shot session port.
 
@@ -590,6 +641,7 @@ class ConsoleStreamingDictationSession:
         *,
         on_event: Callable[[Any, Any], None],
         service_factory: Callable[..., Any] = default_service_factory,
+        max_buffer_bytes: int | None = CONSOLE_DICTATION_MAX_BYTES,
     ) -> None:
         """Build a session over a fresh controller.
 
@@ -597,6 +649,10 @@ class ConsoleStreamingDictationSession:
             on_event: Called with `(session, event)` for every controller
                 event, from whatever thread emitted it.
             service_factory: Builds the dictation service; injected by tests.
+            max_buffer_bytes: Hard cap on the PCM the recorder retains for one
+                capture, passed through to the dictation service. `None`
+                leaves the recorder unbounded (the service default, which the
+                non-Console dictation callers still use).
         """
         self._on_event = on_event
         self._lock = threading.Lock()
@@ -604,11 +660,33 @@ class ConsoleStreamingDictationSession:
         self._failure = ""
         self._in_blocking_call = False
         self._heard_recognizer_output = False
+        self._service_factory = service_factory
+        self._max_buffer_bytes = max_buffer_bytes
+        self._on_buffer_limit: Callable[[], None] | None = None
         self._controller = ConsoleVoiceInputController(
             emit=self._handle_event,
             spawn=lambda thunk: thunk(),
-            service_factory=service_factory,
+            # Not `service_factory` directly: the controller builds the service
+            # deep inside `start()`, long after the caller handed us its
+            # buffer-limit callback, so the bound has to be attached here.
+            service_factory=self._build_service,
         )
+
+    def _build_service(self, **kwargs: Any) -> Any:
+        """Build the dictation service with this session's PCM bound attached.
+
+        Args:
+            **kwargs: Provider, model and language keywords chosen by the
+                controller. Passed through untouched.
+
+        Returns:
+            The dictation service the controller will drive.
+        """
+        if self._max_buffer_bytes is not None:
+            kwargs.setdefault("max_buffer_bytes", self._max_buffer_bytes)
+        if self._on_buffer_limit is not None:
+            kwargs.setdefault("on_buffer_limit", self._on_buffer_limit)
+        return self._service_factory(**kwargs)
 
     def _handle_event(self, event: Any) -> None:
         """Record what the screen cannot see, then forward. Never raises.
@@ -674,14 +752,19 @@ class ConsoleStreamingDictationSession:
         """Open the microphone, blocking until it is live or has failed.
 
         Args:
-            on_buffer_limit: Accepted for the session port the screen drives.
-                Unused: the streaming backend transcribes continuously and
-                keeps no unbounded PCM buffer to overrun. The screen's
-                wall-clock timer is unaffected and still bounds a capture.
+            on_buffer_limit: Invoked once, from a recorder notification thread,
+                if the capture reaches `max_buffer_bytes`. Wired through to
+                `AudioRecordingService`, which stops taking audio at the bound.
+                Streaming does *not* make the PCM go away: the recorder's own
+                `audio_buffer`, its undrained `audio_queue`, and
+                `LazyLiveDictationService.audio_buffer` all grow for the whole
+                capture at ~32 KB/s each, and the screen's wall-clock timer is
+                the only other thing bounding them.
 
         Raises:
             RuntimeError: The controller refused or could not start capture.
         """
+        self._on_buffer_limit = on_buffer_limit
         with self._lock:
             self._segments.clear()
             self._failure = ""
@@ -4650,12 +4733,38 @@ class ChatScreen(BaseAppScreen):
                     severity="warning",
                 )
 
-    def _on_console_dictation_buffer_limit(self) -> None:
-        """Marshal a recorder-thread memory-limit signal onto the UI thread."""
+    def _on_console_dictation_buffer_limit(self, session: Any) -> None:
+        """Marshal a recorder-thread memory-limit signal onto the UI thread.
+
+        `post_message`, not `call_from_thread`: this runs on the recorder's
+        notification thread, and `call_from_thread` blocks its caller until the
+        UI thread services it -- the same rule `ConsoleDictationEvent` exists
+        to enforce for the recognizer's callbacks.
+
+        Args:
+            session: The dictation session whose recorder hit its PCM bound.
+        """
         try:
-            self.app.call_from_thread(self._handle_console_dictation_limit)
-        except NoActiveAppError:
+            self.post_message(ConsoleDictationLimitSignal(session))
+        except Exception:  # noqa: BLE001 - the audio path must never see this
+            logger.opt(exception=True).debug(
+                "Console dictation buffer limit could not be posted"
+            )
+
+    @on(ConsoleDictationLimitSignal)
+    def _handle_console_dictation_buffer_limit(
+        self, message: ConsoleDictationLimitSignal
+    ) -> None:
+        """Stop the capture whose recorder ran out of its PCM budget.
+
+        Args:
+            message: The posted buffer-limit signal.
+        """
+        if message.session is not self._console_dictation_session:
+            # A capture the screen has already torn down; its recorder's late
+            # signal must not stop whatever is recording now.
             return
+        self._handle_console_dictation_limit()
 
     def _handle_console_dictation_limit(self) -> None:
         """Stop and transcribe when the wall-clock or memory bound is reached."""
@@ -4680,11 +4789,17 @@ class ChatScreen(BaseAppScreen):
     async def _start_console_dictation(self) -> None:
         """Open the microphone for the capture the user just asked for.
 
-        Every exit path re-checks that this screen still owns `session`: a
-        first-run model load runs for minutes inside the `await`, and the user
-        can cancel (`_request_console_dictation_cancel`) at any point in it.
-        Whichever side loses that race must stay silent, or a deliberate cancel
-        surfaces as a failure toast the user did not cause.
+        `session` is captured up front and re-checked after the await, exactly
+        as `_stop_console_dictation` does: this one await covers the speech-model
+        load (minutes on a fresh machine) *and* the capture opening, and two
+        different things can null the screen's session inside it -- a deliberate
+        cancel (`_request_console_dictation_cancel`) and a mid-capture
+        `VoiceFailed` draining through `_notify_console_dictation_error`. Both
+        have already told the user and cleaned up, so whichever side loses that
+        race must stay silent; announcing "recording" and arming the timers
+        afterwards would leave a ticking chip and a `Rec ●` button over a
+        capture that is already dead, and the next press would surface an
+        internal string ("Microphone dictation is not recording.").
         """
         session = (
             self._console_dictation_session or self._create_console_dictation_session()
@@ -4693,7 +4808,9 @@ class ChatScreen(BaseAppScreen):
         try:
             await asyncio.to_thread(
                 session.start,
-                on_buffer_limit=self._on_console_dictation_buffer_limit,
+                on_buffer_limit=partial(
+                    self._on_console_dictation_buffer_limit, session
+                ),
             )
         except Exception as exc:
             if self._console_dictation_session is session:
@@ -4702,9 +4819,9 @@ class ChatScreen(BaseAppScreen):
                 logger.debug("Console dictation start skipped; the attempt was cancelled")
             return
         if not self.is_mounted or self._console_dictation_session is not session:
-            # Cancelled or unmounted while the model was loading: the capture
-            # may have opened a moment ago, so release it rather than leave a
-            # live microphone behind an idle button.
+            # Cancelled, failed or unmounted while the model was loading: the
+            # capture may have opened a moment ago, so release it rather than
+            # leave a live microphone behind an idle button.
             await asyncio.to_thread(session.discard)
             return
         self._set_console_dictation_state("recording")
@@ -4826,6 +4943,25 @@ class ChatScreen(BaseAppScreen):
             exit_on_error=False,
         )
 
+    async def _discard_console_dictation_session(self, session: Any) -> None:
+        """Release a cancelled capture's microphone off the UI thread.
+
+        `discard()` is documented as non-blocking (`abandon()` never joins), but
+        it still reaches the audio backend to close the stream: measured at
+        1.51 s of frozen UI when called inline. Every other call site already
+        goes through `asyncio.to_thread`; this is the one that did not.
+
+        Args:
+            session: The session to abandon. Failures are logged, never raised
+                -- cancelling must not produce an error the user did not cause.
+        """
+        try:
+            await asyncio.to_thread(session.discard)
+        except Exception:  # noqa: BLE001 - cancelling must never raise
+            logger.opt(exception=True).debug(
+                "Console dictation could not be cancelled cleanly"
+            )
+
     def _request_console_dictation_cancel(self) -> None:
         """Abandon a capture that is still preparing, without waiting for it.
 
@@ -4837,7 +4973,9 @@ class ChatScreen(BaseAppScreen):
 
         Dropping the session first is what makes `_start_console_dictation`'s
         re-checks fire, so the cancelled attempt cannot also raise a failure
-        toast on its way out.
+        toast on its way out. The release itself is handed to a worker: the UI
+        is already back at idle by then, so nothing the user can see is waiting
+        on the audio backend letting go of the device.
         """
         if self._console_dictation_state != "starting":
             return
@@ -4849,12 +4987,11 @@ class ChatScreen(BaseAppScreen):
         self._console_dictation_partial = ""
         self._set_console_dictation_state("idle")
         if session is not None:
-            try:
-                session.discard()
-            except Exception:  # noqa: BLE001 - cancelling must never raise
-                logger.opt(exception=True).debug(
-                    "Console dictation could not be cancelled cleanly"
-                )
+            self.run_worker(
+                self._discard_console_dictation_session(session),
+                group="console-dictation-cancel",
+                exit_on_error=False,
+            )
         self.app_instance.notify("Dictation cancelled.", severity="information")
 
     def _request_console_dictation_start(self) -> None:

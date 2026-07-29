@@ -113,6 +113,8 @@ class LazyLiveDictationService:
     #: instead of raising AttributeError while releasing the microphone.
     stop_join_timeout_seconds = STOP_JOIN_TIMEOUT_SECONDS
     captured_bytes = 0
+    max_buffer_bytes: Optional[int] = None
+    on_buffer_limit: Optional[Callable[[], None]] = None
 
     # Privacy settings keys
     PRIVACY_KEY_PREFIX = "dictation.privacy"
@@ -125,11 +127,30 @@ class LazyLiveDictationService:
         enable_punctuation: bool = True,
         enable_commands: bool = True,
         audio_backend: Optional[str] = None,
+        max_buffer_bytes: Optional[int] = None,
+        on_buffer_limit: Optional[Callable[[], None]] = None,
     ):
-        """
-        Initialize dictation service with lazy loading.
+        """Initialize dictation service with lazy loading.
 
         Audio and transcription services are not initialized until first use.
+
+        Args:
+            transcription_provider: Provider name, or "auto" to let the
+                transcription service choose.
+            transcription_model: Model identifier for that provider.
+            language: Language code passed to the recognizer.
+            enable_punctuation: Whether to ask the provider to punctuate.
+            enable_commands: Whether spoken commands are interpreted.
+            audio_backend: Preferred capture backend, or None to auto-detect.
+            max_buffer_bytes: Hard cap on the PCM the recorder retains for one
+                capture. `None` (the default, and what every non-Console
+                caller uses) leaves the recorder unbounded, which is only safe
+                for captures bounded some other way -- a continuous capture
+                accumulates ~32 KB/s in the recorder's buffer, again in its
+                undrained queue, and again in `self.audio_buffer`.
+            on_buffer_limit: Invoked once when `max_buffer_bytes` is reached,
+                from a daemon notification thread the recorder spawns. Ignored
+                unless `max_buffer_bytes` is set.
         """
         self.transcription_provider = transcription_provider
         self.transcription_model = transcription_model
@@ -137,6 +158,8 @@ class LazyLiveDictationService:
         self.enable_punctuation = enable_punctuation
         self.enable_commands = enable_commands
         self.audio_backend_preference = audio_backend
+        self.max_buffer_bytes = max_buffer_bytes
+        self.on_buffer_limit = on_buffer_limit
 
         # Lazy-loaded services
         self._audio_service = None
@@ -263,6 +286,10 @@ class LazyLiveDictationService:
                     chunk_size=int(
                         self.buffer_duration_ms * 16
                     ),  # 16 samples/ms at 16kHz
+                    # Both default to None, so every caller that does not ask
+                    # for a bound gets exactly the behaviour it had before.
+                    max_buffer_bytes=self.max_buffer_bytes,
+                    on_buffer_limit=self.on_buffer_limit,
                 )
                 logger.info("Audio recording service initialized successfully")
             except Exception as e:
