@@ -27,7 +27,10 @@ from tldw_chatbook.Utils.private_paths import (
     open_private_text_append_stream,
     secure_private_directory,
 )
-from tldw_chatbook.Utils.persistent_diagnostics import PersistentDiagnosticFilter
+from tldw_chatbook.Utils.persistent_diagnostics import (
+    PersistentDiagnosticFilter,
+    persist_event,
+)
 #
 ########################################################################################################################
 #
@@ -307,6 +310,11 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
             "Private rotating file logging installed at level %s.",
             logging.getLevelName(file_log_level),
         )
+        # TASK-1240. Written the moment the sink is live, so an empty file means
+        # "the sink did not install" rather than "nothing has happened yet".
+        # This function swallows install failures (it warns and returns False),
+        # so without this line those two states are indistinguishable.
+        persist_event("logging", "persistent_sink_installed", status="ok")
         return True
     except PrivatePathError as exc:
         root_logger.warning(

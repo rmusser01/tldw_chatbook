@@ -218,3 +218,49 @@ def test_existing_private_handler_is_reconciled_with_metadata_filter(
         )
     finally:
         handler.close()
+
+
+def test_successful_install_writes_its_own_first_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-1240: an empty log must mean "the sink did not install".
+
+    `_configure_private_file_logging` catches Exception, warns, and returns
+    False, so a permissions or path problem yields an empty file forever -- the
+    same silent-failure class this task exists to fix. Emitting one event the
+    moment the sink installs makes the two states distinguishable.
+
+    This must exercise the *real* root logger: `persist_event` logs on its own
+    `tldw_chatbook.diagnostics.*` namespace and reaches the private file
+    handler only via propagation up to wherever that handler is attached
+    (the real root, in production). A handler attached to some other named
+    logger -- a sibling of `tldw_chatbook.diagnostics.logging`, not an
+    ancestor -- would never see it, and the assertions below would fail for a
+    reason unrelated to whether the event is actually emitted.
+    """
+    log_path = tmp_path / "tldw_cli_app.log"
+    monkeypatch.setattr(
+        "tldw_chatbook.Logging_Config.get_cli_log_file_path", lambda: log_path
+    )
+    root_logger = logging.getLogger()
+    old_level = root_logger.level
+    root_logger.setLevel(logging.INFO)
+    installed_handler: PrivateRotatingFileHandler | None = None
+    try:
+        assert _configure_private_file_logging(root_logger) is True
+        installed_handler = next(
+            handler
+            for handler in root_logger.handlers
+            if isinstance(handler, PrivateRotatingFileHandler)
+        )
+        installed_handler.flush()
+
+        written = log_path.read_text()
+        assert "event=persistent_sink_installed" in written
+        assert "component=logging" in written
+    finally:
+        if installed_handler is not None:
+            root_logger.removeHandler(installed_handler)
+            installed_handler.close()
+        root_logger.setLevel(old_level)
