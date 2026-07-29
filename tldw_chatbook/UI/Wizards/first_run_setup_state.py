@@ -97,3 +97,123 @@ def should_show_resume_toast(
     return _wizard_flag(app_config, SETUP_STARTED_KEY) and not _wizard_flag(
         app_config, SETUP_COMPLETED_KEY
     )
+
+
+TRACK_QUICK = "quick"
+TRACK_FULL = "full"
+
+STEP_WELCOME = "welcome"
+STEP_PROVIDER = "provider"
+STEP_MODEL = "model"
+STEP_RAG = "rag"
+STEP_TOOLS = "tools"
+STEP_NOTES = "notes"
+STEP_APPEARANCE = "appearance"
+STEP_PROTECT = "protect-keys"
+STEP_SUMMARY = "summary"
+
+_FULL_TRACK = (
+    STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_RAG, STEP_TOOLS,
+    STEP_NOTES, STEP_APPEARANCE, STEP_PROTECT, STEP_SUMMARY,
+)
+_QUICK_TRACK = (STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_PROTECT, STEP_SUMMARY)
+
+WIZARD_OWNED_SECTIONS = frozenset(
+    {"chat_defaults", "embedding_config", "tools", "notes", "general",
+     "splash_screen", WIZARD_STATE_SECTION}
+)
+_API_SETTINGS_PREFIX = "api_settings."
+
+
+def active_step_ids(track: str, *, key_entered: bool) -> tuple[str, ...]:
+    """Resolve the ordered active step ids for a track.
+
+    Args:
+        track: TRACK_QUICK or TRACK_FULL (anything else falls back to full).
+        key_entered: Whether any secret was entered this run; gates STEP_PROTECT.
+    """
+    base = _QUICK_TRACK if track == TRACK_QUICK else _FULL_TRACK
+    if key_entered:
+        return base
+    return tuple(step for step in base if step != STEP_PROTECT)
+
+
+def build_provider_commit(
+    *, provider_key: str, api_key: str | None, api_url: str | None
+) -> dict[str, dict[str, Any]]:
+    """Mutation for the provider step. Empty when the key lives in the env."""
+    values: dict[str, Any] = {}
+    if api_key:
+        values["api_key"] = api_key
+    if api_url:
+        values["api_url"] = api_url
+    if not values:
+        return {}
+    return {f"{_API_SETTINGS_PREFIX}{provider_key}": values}
+
+
+def build_model_commit(*, provider_value: str, model_id: str) -> dict[str, dict[str, Any]]:
+    return {"chat_defaults": {"provider": provider_value, "model": model_id}}
+
+
+def build_rag_commit(*, default_model_id: str) -> dict[str, dict[str, Any]]:
+    return {"embedding_config": {"default_model_id": default_model_id}}
+
+
+def build_tools_commit(*, gate_values: Mapping[str, bool]) -> dict[str, dict[str, Any]]:
+    return {"tools": {key: bool(value) for key, value in gate_values.items()}}
+
+
+def build_notes_commit(
+    *, sync_directory: str, auto_sync_enabled: bool
+) -> dict[str, dict[str, Any]]:
+    return {"notes": {"sync_directory": sync_directory, "auto_sync_enabled": auto_sync_enabled}}
+
+
+def build_appearance_commit(
+    *, default_theme: str, splash_card: str | None
+) -> dict[str, dict[str, Any]]:
+    commit: dict[str, dict[str, Any]] = {"general": {"default_theme": default_theme}}
+    if splash_card:
+        commit["splash_screen"] = {"card_selection": splash_card}
+    return commit
+
+
+def build_wizard_state_commit(
+    *, started: bool | None = None, completed: bool | None = None
+) -> dict[str, dict[str, Any]]:
+    values: dict[str, Any] = {}
+    if started is not None:
+        values[SETUP_STARTED_KEY] = started
+    if completed is not None:
+        values[SETUP_COMPLETED_KEY] = completed
+    return {WIZARD_STATE_SECTION: values} if values else {}
+
+
+def invalidate_model_for_provider_change(
+    commit: dict[str, dict[str, Any]],
+    *,
+    previous_provider_value: str | None,
+    new_provider_value: str,
+) -> dict[str, dict[str, Any]]:
+    """Supersede a stale model when the committed provider changes.
+
+    Without this, Back-and-switch leaves chat_defaults pairing the new
+    provider with the old provider's model.
+    """
+    if previous_provider_value and previous_provider_value != new_provider_value:
+        merged = dict(commit)
+        merged["chat_defaults"] = {"provider": new_provider_value, "model": ""}
+        return merged
+    return commit
+
+
+def commit_sections_allowed(section_values: Mapping[str, Mapping[Any, Any]]) -> bool:
+    """The invariant oracle: wizard commits touch only wizard-owned sections."""
+    for section in section_values:
+        if section in WIZARD_OWNED_SECTIONS:
+            continue
+        if section.startswith(_API_SETTINGS_PREFIX) and len(section) > len(_API_SETTINGS_PREFIX):
+            continue
+        return False
+    return True

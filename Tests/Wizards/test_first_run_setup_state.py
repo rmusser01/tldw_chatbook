@@ -83,3 +83,130 @@ class TestShouldShowResumeToast:
 
     def test_never_started_never_shows_toast(self):
         assert should_show_resume_toast(_config(), {}) is False
+
+
+from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+    STEP_APPEARANCE,
+    STEP_MODEL,
+    STEP_NOTES,
+    STEP_PROTECT,
+    STEP_PROVIDER,
+    STEP_RAG,
+    STEP_SUMMARY,
+    STEP_TOOLS,
+    STEP_WELCOME,
+    TRACK_FULL,
+    TRACK_QUICK,
+    active_step_ids,
+    build_appearance_commit,
+    build_model_commit,
+    build_notes_commit,
+    build_provider_commit,
+    build_rag_commit,
+    build_tools_commit,
+    build_wizard_state_commit,
+    commit_sections_allowed,
+    invalidate_model_for_provider_change,
+)
+
+
+class TestActiveStepIds:
+    def test_full_track_without_key(self):
+        assert active_step_ids(TRACK_FULL, key_entered=False) == (
+            STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_RAG, STEP_TOOLS,
+            STEP_NOTES, STEP_APPEARANCE, STEP_SUMMARY,
+        )
+
+    def test_full_track_with_key_includes_protect(self):
+        assert STEP_PROTECT in active_step_ids(TRACK_FULL, key_entered=True)
+
+    def test_quick_track(self):
+        assert active_step_ids(TRACK_QUICK, key_entered=False) == (
+            STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_SUMMARY,
+        )
+
+    def test_quick_track_with_key(self):
+        assert active_step_ids(TRACK_QUICK, key_entered=True) == (
+            STEP_WELCOME, STEP_PROVIDER, STEP_MODEL, STEP_PROTECT, STEP_SUMMARY,
+        )
+
+
+class TestCommitBuilders:
+    def test_provider_commit_cloud(self):
+        commit = build_provider_commit(provider_key="openai", api_key="sk-x", api_url=None)
+        assert commit == {"api_settings.openai": {"api_key": "sk-x"}}
+
+    def test_provider_commit_local(self):
+        commit = build_provider_commit(
+            provider_key="llama_cpp", api_key=None, api_url="http://127.0.0.1:8080"
+        )
+        assert commit == {"api_settings.llama_cpp": {"api_url": "http://127.0.0.1:8080"}}
+
+    def test_provider_commit_env_key_writes_nothing_secret(self):
+        commit = build_provider_commit(provider_key="openai", api_key=None, api_url=None)
+        assert commit == {}
+
+    def test_model_commit(self):
+        commit = build_model_commit(provider_value="OpenAI", model_id="gpt-5.6-terra")
+        assert commit == {"chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"}}
+
+    def test_tools_commit_only_gate_keys(self):
+        commit = build_tools_commit(gate_values={"read_file_enabled": True, "write_file_enabled": False})
+        assert commit == {"tools": {"read_file_enabled": True, "write_file_enabled": False}}
+
+    def test_notes_commit(self):
+        commit = build_notes_commit(sync_directory="~/Notes", auto_sync_enabled=True)
+        assert commit == {"notes": {"sync_directory": "~/Notes", "auto_sync_enabled": True}}
+
+    def test_appearance_commit_with_splash(self):
+        commit = build_appearance_commit(default_theme="textual-dark", splash_card="matrix")
+        assert commit == {
+            "general": {"default_theme": "textual-dark"},
+            "splash_screen": {"card_selection": "matrix"},
+        }
+
+    def test_appearance_commit_without_splash(self):
+        commit = build_appearance_commit(default_theme="textual-dark", splash_card=None)
+        assert commit == {"general": {"default_theme": "textual-dark"}}
+
+    def test_rag_commit(self):
+        commit = build_rag_commit(default_model_id="e5-small-v2")
+        assert commit == {"embedding_config": {"default_model_id": "e5-small-v2"}}
+
+    def test_state_commit(self):
+        assert build_wizard_state_commit(started=True) == {"first_run": {"setup_started": True}}
+        assert build_wizard_state_commit(completed=True) == {"first_run": {"setup_completed": True}}
+
+
+class TestDependencyInvalidation:
+    def test_provider_change_clears_stale_model(self):
+        commit = build_provider_commit(provider_key="anthropic", api_key="sk-a", api_url=None)
+        merged = invalidate_model_for_provider_change(
+            commit, previous_provider_value="OpenAI", new_provider_value="Anthropic"
+        )
+        assert merged["chat_defaults"] == {"provider": "Anthropic", "model": ""}
+
+    def test_same_provider_leaves_model_alone(self):
+        commit = build_provider_commit(provider_key="openai", api_key="sk-x", api_url=None)
+        merged = invalidate_model_for_provider_change(
+            commit, previous_provider_value="OpenAI", new_provider_value="OpenAI"
+        )
+        assert "chat_defaults" not in merged
+
+
+class TestSectionAllowlist:
+    def test_all_builders_stay_in_allowlist(self):
+        commits = [
+            build_provider_commit(provider_key="openai", api_key="sk", api_url=None),
+            build_model_commit(provider_value="OpenAI", model_id="m"),
+            build_rag_commit(default_model_id="e5-small-v2"),
+            build_tools_commit(gate_values={"read_file_enabled": True}),
+            build_notes_commit(sync_directory="~/n", auto_sync_enabled=False),
+            build_appearance_commit(default_theme="t", splash_card="c"),
+            build_wizard_state_commit(started=True),
+        ]
+        for commit in commits:
+            assert commit_sections_allowed(commit), commit
+
+    def test_foreign_section_rejected(self):
+        assert commit_sections_allowed({"database": {"x": 1}}) is False
